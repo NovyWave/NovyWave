@@ -1,0 +1,2 @@
+# FastWave
+Modern GTKWave alternative
