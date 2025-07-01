@@ -1,0 +1,27 @@
+# Rust build artifacts
+/target/
+
+# MoonZoon build artifacts
+/frontend/pkg/
+/frontend_dist/
+/mzoon/
+
+# Backend build artifacts
+/backend/private/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Environment files
+.env
+.env.local

@@ -1,0 +1,36 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "NovyWave",
+  "version": "0.1.0",
+  "identifier": "com.novywave.app",
+  "build": {
+    "frontendDist": "../frontend_dist",
+    "devUrl": "http://localhost:8080",
+    "beforeDevCommand": "cd .. && makers start",
+    "beforeBuildCommand": "cd .. && makers build"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "NovyWave - Fast2D Demo",
+        "width": 800,
+        "height": 600
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}
