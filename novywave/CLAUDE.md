@@ -69,3 +69,28 @@ public/       - Static assets (fonts: FiraCode, Inter family)
 - `MoonZoon.toml` - MoonZoon dev server configuration (port 8080, CORS, file watching)
 - `tauri.conf.json` - Tauri app configuration (window size 800x600, build commands)
 - `Makefile.toml` - Task runner configuration with all development commands
+- `.mcp.json` - MCP server configuration with memory storage at `novywave/ai-memory.json`
+
+## AI Memory System
+
+This repository uses the Memory MCP server to maintain persistent knowledge across Claude Code sessions. The memory is stored locally in `novywave/ai-memory.json` as a knowledge graph.
+
+**Memory Structure:**
+- **Entities**: Key components (e.g., "NovyWave project", "Martin Kavik", "Fast2D library")
+- **Relations**: Connections between entities (e.g., "Martin Kavik" -> "maintains" -> "NovyWave project")
+- **Observations**: Specific facts about entities (e.g., development preferences, architectural decisions)
+
+**Key Information to Remember:**
+- Development workflow preferences and patterns
+- Architectural decisions and their rationale
+- Performance considerations and optimizations
+- User feedback and feature requests
+- Common issues and their solutions
+- Project milestones and progress
+
+**Memory Categories for This Project:**
+- **Identity**: Key people involved (developer, contributors)
+- **Technical**: Framework choices, library decisions, build system preferences
+- **Behavioral**: Development patterns, testing approaches, code style preferences
+- **Goals**: Project objectives, feature roadmap, performance targets
+- **Relationships**: Dependencies between components, integration patterns

@@ -15,7 +15,9 @@
         "-y",
         "@modelcontextprotocol/server-memory"
       ],
-      "env": {}
+      "env": {
+        "MEMORY_FILE_PATH": "/path/to/your/repo/novywave/ai-memory.json"
+      }
     }
   }
 }
