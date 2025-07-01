@@ -82,13 +82,13 @@ impl ButtonBuilder {
         self
     }
 
-    pub fn left_icon(mut self, icon: &'static str) -> Self {
-        self.left_icon = Some(icon);
+    pub fn left_icon(mut self, icon: IconName) -> Self {
+        self.left_icon = Some(icon.to_kebab_case());
         self
     }
 
-    pub fn right_icon(mut self, icon: &'static str) -> Self {
-        self.right_icon = Some(icon);
+    pub fn right_icon(mut self, icon: IconName) -> Self {
+        self.right_icon = Some(icon.to_kebab_case());
         self
     }
 

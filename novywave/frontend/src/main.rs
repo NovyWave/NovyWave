@@ -283,7 +283,7 @@ fn novyui_buttons_demo() -> impl Element {
                         .item(
                             button()
                                 .label("Icon Check")
-                                .left_icon("check")
+                                .left_icon(IconName::Check)
                                 .size(ButtonSize::Medium)
                                 .on_press(|| zoon::println!("Button with icon clicked!"))
                                 .build()
@@ -400,7 +400,7 @@ fn files_panel() -> impl Element {
                     .item(
                         button()
                             .label("Load Files")
-                            .left_icon("folder")
+                            .left_icon(IconName::Folder)
                             .variant(ButtonVariant::Secondary)
                             .size(ButtonSize::Small)
                             .on_press(|| zoon::println!("Load Files clicked"))
@@ -414,7 +414,7 @@ fn files_panel() -> impl Element {
                     .item(
                         button()
                             .label("Remove All")
-                            .left_icon("x")
+                            .left_icon(IconName::X)
                             .variant(ButtonVariant::Destructive)
                             .size(ButtonSize::Small)
                             .on_press(|| zoon::println!("Remove All clicked"))
@@ -510,15 +510,28 @@ fn variables_panel() -> impl Element {
         .s(Height::fill())
         .child(
             create_panel(
-                Text::new("Variables"),
-                Column::new()
-                    .s(Gap::new().y(6))
-                    .s(Padding::all(12))
+                Row::new()
+                    .s(Gap::new().x(8))
+                    .s(Align::new().center_y())
+                    .item(
+                        El::new()
+                            .s(Font::new().no_wrap())
+                            .child("Variables")
+                    )
+                    .item(
+                        El::new()
+                            .s(Width::fill())
+                    )
                     .item(
                         input()
                             .placeholder("variable_name")
+                            .left_icon(IconName::Search)
+                            .size(InputSize::Small)
                             .build()
-                    )
+                    ),
+                Column::new()
+                    .s(Gap::new().y(6))
+                    .s(Padding::all(12))
                     .item(
                         Column::new()
                             .s(Gap::new().y(4))
@@ -604,7 +617,7 @@ fn selected_variables_with_waveform_panel() -> impl Element {
                     .item(
                         button()
                             .label("Dock to Bottom")
-                            .left_icon("arrow-down-to-line")
+                            .left_icon(IconName::ArrowDownToLine)
                             .variant(ButtonVariant::Outline)
                             .size(ButtonSize::Small)
                             .on_press(|| zoon::println!("Dock to Bottom clicked"))
@@ -618,7 +631,7 @@ fn selected_variables_with_waveform_panel() -> impl Element {
                     .item(
                         button()
                             .label("Remove All")
-                            .left_icon("x")
+                            .left_icon(IconName::X)
                             .variant(ButtonVariant::Destructive)
                             .size(ButtonSize::Small)
                             .on_press(|| zoon::println!("Remove All clicked"))
@@ -904,7 +917,7 @@ fn waveform_panel() -> impl Element {
                     .item(
                         button()
                             .label("Zoom In")
-                            .left_icon("zoom-in")
+                            .left_icon(IconName::ZoomIn)
                             .variant(ButtonVariant::Outline)
                             .size(ButtonSize::Small)
                             .on_press(|| zoon::println!("Zoom In clicked"))
@@ -913,7 +926,7 @@ fn waveform_panel() -> impl Element {
                     .item(
                         button()
                             .label("Zoom Out")
-                            .left_icon("zoom-out")
+                            .left_icon(IconName::ZoomOut)
                             .variant(ButtonVariant::Outline)
                             .size(ButtonSize::Small)
                             .on_press(|| zoon::println!("Zoom Out clicked"))
