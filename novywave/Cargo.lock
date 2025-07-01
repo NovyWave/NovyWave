@@ -1467,6 +1467,7 @@ name = "frontend"
 version = "0.1.0"
 dependencies = [
  "fast2d",
+ "moonzoon-novyui",
  "zoon",
 ]
 
@@ -2798,6 +2799,13 @@ dependencies = [
  "rusty_ulid",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "moonzoon-novyui"
+version = "0.1.0"
+dependencies = [
+ "zoon",
 ]
 
 [[package]]

@@ -1,6 +1,7 @@
 use zoon::{*, futures_util::future::try_join_all};
 use std::f32::consts::PI;
 use std::mem;
+use moonzoon_novyui::*;
 
 // Type alias for clarity
 // Represents a collection of 2D objects for fast2d canvas
@@ -192,6 +193,121 @@ fn example_sine_wave() -> ExampleObjects {
 
 // --- UI Layout ---
 
+fn novyui_buttons_demo() -> impl Element {
+    El::new()
+        .s(Background::new().color(hsluv!(0, 0, 10)))
+        .s(RoundedCorners::all(15))
+        .s(Padding::all(20))
+        .s(Width::fill().max(650))
+        .s(Align::center())
+        .child(
+            Column::new()
+                .s(Gap::new().y(20))
+                .item(
+                    El::new()
+                        .s(Font::new().color(color!("White")).size(24).weight(FontWeight::Bold))
+                        .child("NovyUI Buttons Demo")
+                )
+                .item(
+                    Row::new()
+                        .s(Gap::new().x(10))
+                        .item(
+                            button()
+                                .label("Primary")
+                                .variant(ButtonVariant::Primary)
+                                .size(ButtonSize::Medium)
+                                .on_press(|| zoon::println!("Primary button clicked!"))
+                                .build()
+                        )
+                        .item(
+                            button()
+                                .label("Secondary")
+                                .variant(ButtonVariant::Secondary)
+                                .size(ButtonSize::Medium)
+                                .on_press(|| zoon::println!("Secondary button clicked!"))
+                                .build()
+                        )
+                        .item(
+                            button()
+                                .label("Outline")
+                                .variant(ButtonVariant::Outline)
+                                .size(ButtonSize::Medium)
+                                .on_press(|| zoon::println!("Outline button clicked!"))
+                                .build()
+                        )
+                        .item(
+                            button()
+                                .label("Link")
+                                .variant(ButtonVariant::Link)
+                                .size(ButtonSize::Medium)
+                                .on_press(|| zoon::println!("Link button clicked!"))
+                                .build()
+                        )
+                        .item(
+                            button()
+                                .label("Destructive")
+                                .variant(ButtonVariant::Destructive)
+                                .size(ButtonSize::Medium)
+                                .on_press(|| zoon::println!("Destructive button clicked!"))
+                                .build()
+                        )
+                )
+                .item(
+                    Row::new()
+                        .s(Gap::new().x(10))
+                        .item(
+                            button()
+                                .label("Small")
+                                .size(ButtonSize::Small)
+                                .on_press(|| zoon::println!("Small button clicked!"))
+                                .build()
+                        )
+                        .item(
+                            button()
+                                .label("Medium")
+                                .size(ButtonSize::Medium)
+                                .on_press(|| zoon::println!("Medium button clicked!"))
+                                .build()
+                        )
+                        .item(
+                            button()
+                                .label("Large")
+                                .size(ButtonSize::Large)
+                                .on_press(|| zoon::println!("Large button clicked!"))
+                                .build()
+                        )
+                )
+                .item(
+                    Row::new()
+                        .s(Gap::new().x(10))
+                        .item(
+                            button()
+                                .label("Icon Check")
+                                .left_icon("check")
+                                .size(ButtonSize::Medium)
+                                .on_press(|| zoon::println!("Button with icon clicked!"))
+                                .build()
+                        )
+                        .item(
+                            button()
+                                .label("Ghost")
+                                .variant(ButtonVariant::Ghost)
+                                .size(ButtonSize::Medium)
+                                .on_press(|| zoon::println!("Ghost button clicked!"))
+                                .build()
+                        )
+                        .item(
+                            button()
+                                .label("Disabled")
+                                .disabled(true)
+                                .size(ButtonSize::Medium)
+                                .on_press(|| zoon::println!("This won't print"))
+                                .build()
+                        )
+                )
+        )
+}
+
 fn root() -> impl Element {
     El::new()
         .s(Height::fill())
@@ -203,6 +319,7 @@ fn root() -> impl Element {
                 .s(Gap::both(10))
                 .s(Scrollbars::both())
                 .s(Padding::all(10))
+                .item(novyui_buttons_demo())
                 .items(examples().map(panel_with_canvas))
         )
 }

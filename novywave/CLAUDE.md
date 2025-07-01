@@ -49,6 +49,10 @@ public/       - Static assets (fonts: FiraCode, Inter family)
 - Three visual examples: Simple Rectangle, Face with Hat, Sine Wave
 - Each example renders to a Fast2D canvas wrapped in Zoon UI elements
 
+**WASM/Frontend Development Notes:**
+- Use `zoon::println!()` for console logging, NOT `std::println!()` (which does nothing in WASM)
+- All frontend code compiles to WebAssembly and runs in browser environment
+
 **Rendering Pipeline:**
 1. Fonts loaded asynchronously from `/public/fonts/`
 2. Fast2D objects created in pure Rust
@@ -74,6 +78,17 @@ public/       - Static assets (fonts: FiraCode, Inter family)
 ## MCP Server Configuration
 
 This repository uses two MCP servers configured in `.mcp.json` (see `.mcp.example.json` for team setup):
+
+**IMPORTANT REMINDER**: Use the Memory MCP server frequently throughout development sessions to:
+- Save difficult-to-remember patterns and usage examples
+- Store architectural decisions and their rationale  
+- Preserve debugging solutions and workarounds
+- Document component integration patterns
+- Remember team preferences and workflow decisions
+
+**What to Save Where:**
+- **Memory MCP**: Component-specific patterns, debugging solutions, library usage examples, temporary workarounds, session-specific discoveries
+- **CLAUDE.md**: General project rules, architecture decisions, permanent development guidelines, framework-wide patterns that apply across the entire codebase
 
 @ai-docs/memory-mcp.md
 
