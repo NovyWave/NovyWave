@@ -1,0 +1,11 @@
+[tasks.start]
+description = "Start the development server from parent directory"
+command = "makers"
+args = ["start"]
+cwd = ".."
+
+[tasks.build]
+description = "Build the project from parent directory"
+command = "makers"
+args = ["build"]
+cwd = ".."

@@ -4,6 +4,7 @@ members = [
     "frontend",
     "backend",
     "shared",
+    "src-tauri",
 ]
 
 [workspace.package]

@@ -1,6 +1,6 @@
-# NovyWave - Fast2D Universal Example
+# NovyWave
 
-A unified Fast2D example that can run both as a web application in the browser and as a native desktop application using Tauri.
+A cross-platform application for web browsers and desktop.
 
 ## Prerequisites
 
@@ -58,7 +58,7 @@ makers tauri-build
 
 ## Features
 
-This example demonstrates Fast2D's capabilities with three visual examples:
+Three visual examples:
 
 1. **Simple Rectangle** - Basic shape rendering with text overlay
 2. **Face with Hat** - Complex composition using circles, rectangles, and lines

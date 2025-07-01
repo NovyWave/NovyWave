@@ -6,14 +6,14 @@
   "build": {
     "frontendDist": "../frontend_dist",
     "devUrl": "http://localhost:8080",
-    "beforeDevCommand": "cd .. && makers start",
-    "beforeBuildCommand": "cd .. && makers build"
+    "beforeDevCommand": "makers start",
+    "beforeBuildCommand": "makers build"
   },
   "app": {
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "NovyWave - Fast2D Demo",
+        "title": "NovyWave",
         "width": 800,
         "height": 600
       }

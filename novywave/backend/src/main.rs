@@ -2,7 +2,7 @@ use moon::*;
 
 async fn frontend() -> Frontend {
     Frontend::new()
-        .title("NovyWave - Fast2D Demo")
+        .title("NovyWave")
         .index_by_robots(false)
 }
 
