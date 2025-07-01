@@ -48,6 +48,7 @@ pub enum IconName {
     ArrowRight,
     ArrowUp,
     ArrowDown,
+    ArrowDownToLine,
     House,
     File,
     Folder,
@@ -129,6 +130,7 @@ impl IconName {
             IconName::ArrowRight => "arrow-right",
             IconName::ArrowUp => "arrow-up",
             IconName::ArrowDown => "arrow-down",
+            IconName::ArrowDownToLine => "arrow-down-to-line",
             IconName::House => "house",
             IconName::File => "file",
             IconName::Folder => "folder",
@@ -335,6 +337,7 @@ fn get_svg_content(name: IconName, size_px: u32) -> String {
         IconName::ArrowRight => include_str!("../../assets/icons/arrow-right.svg"),
         IconName::ArrowUp => include_str!("../../assets/icons/arrow-up.svg"),
         IconName::ArrowDown => include_str!("../../assets/icons/arrow-down.svg"),
+        IconName::ArrowDownToLine => include_str!("../../assets/icons/arrow-down-to-line.svg"),
         IconName::House => include_str!("../../assets/icons/house.svg"),
         IconName::File => include_str!("../../assets/icons/file.svg"),
         IconName::Folder => include_str!("../../assets/icons/folder.svg"),
@@ -443,6 +446,7 @@ pub fn icon_name_from_str(name: &str) -> IconName {
         "arrow-right" => IconName::ArrowRight,
         "arrow-up" => IconName::ArrowUp,
         "arrow-down" => IconName::ArrowDown,
+        "arrow-down-to-line" => IconName::ArrowDownToLine,
         "house" => IconName::House,
         "file" => IconName::File,
         "folder" => IconName::Folder,
@@ -480,7 +484,12 @@ pub fn icon_name_from_str(name: &str) -> IconName {
         "asterisk" => IconName::Asterisk,
         "moon" => IconName::Moon,
         "sun" => IconName::Sun,
-        _ => IconName::CircleHelp, // Default fallback
+        _ => {
+            // Runtime check: warn about unregistered icons
+            zoon::println!("⚠️  NovyUI Icon Warning: Icon '{}' not found in registry, falling back to CircleHelp", name);
+            zoon::println!("   Available icons include: arrow-down, arrow-down-to-line, arrow-left, arrow-right, arrow-up, check, x, folder, etc.");
+            IconName::CircleHelp // Default fallback
+        }
     }
 }
 
@@ -492,6 +501,39 @@ pub fn icon(name: IconName) -> IconBuilder {
 // String-based icon function for backward compatibility
 pub fn icon_str(name: &str) -> IconBuilder {
     IconBuilder::new(icon_name_from_str(name))
+}
+
+// Development helper: validate that commonly used icons are registered
+#[cfg(debug_assertions)]
+pub fn validate_icon_registry() {
+    let commonly_used_icons = [
+        "arrow-down-to-line",
+        "arrow-down", 
+        "arrow-left",
+        "arrow-right", 
+        "arrow-up",
+        "check",
+        "x", 
+        "folder",
+        "download"
+    ];
+    
+    zoon::println!("🔍 Validating NovyUI icon registry...");
+    let mut missing_icons = Vec::new();
+    
+    for icon_name in commonly_used_icons.iter() {
+        let resolved = icon_name_from_str(icon_name);
+        if matches!(resolved, IconName::CircleHelp) && *icon_name != "circle-help" {
+            missing_icons.push(*icon_name);
+        }
+    }
+    
+    if missing_icons.is_empty() {
+        zoon::println!("✅ All commonly used icons are properly registered");
+    } else {
+        zoon::println!("❌ Missing icons in registry: {:?}", missing_icons);
+        zoon::println!("   Add these to the IconName enum and mapping functions");
+    }
 }
 
 // Common icon shortcuts matching Vue Storybook exactly

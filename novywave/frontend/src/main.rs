@@ -312,15 +312,640 @@ fn root() -> impl Element {
     El::new()
         .s(Height::fill())
         .s(Width::fill())
-        .s(Scrollbars::both())
-        .s(Background::new().color(color!("Black")))
+        .s(Background::new().color(hsluv!(220, 15, 8)))
+        .child(main_layout())
+}
+
+// --- Waveform Viewer Layout ---
+
+fn create_panel(header_content: impl Element, content: impl Element) -> impl Element {
+    El::new()
+        .s(Background::new().color(hsluv!(220, 15, 11)))
+        .s(RoundedCorners::all(6))
+        .s(Borders::all(Border::new().width(1).color(hsluv!(220, 10, 25))))
         .child(
             Column::new()
-                .s(Gap::both(10))
-                .s(Scrollbars::both())
-                .s(Padding::all(10))
-                .item(novyui_buttons_demo())
-                .items(examples().map(panel_with_canvas))
+                .item(
+                    El::new()
+                        .s(Padding::new().x(12).y(8))
+                        .s(Background::new().color(hsluv!(220, 15, 13)))
+                        .s(Borders::new().bottom(Border::new().width(1).color(hsluv!(220, 10, 25))))
+                        .s(RoundedCorners::new().top(6))
+                        .s(Font::new().weight(FontWeight::SemiBold).size(14).color(hsluv!(220, 5, 80)))
+                        .child(header_content)
+                )
+                .item(content)
+        )
+}
+
+fn app_header() -> impl Element {
+    Row::new()
+        .s(Height::exact(40))
+        .s(Width::fill())
+        .s(Background::new().color(hsluv!(220, 15, 12)))
+        .s(Borders::new().bottom(Border::new().width(1).color(hsluv!(220, 15, 20))))
+        .s(Padding::new().x(16).y(8))
+        .item(
+            Row::new()
+                .s(Gap::new().x(8))
+                .s(Align::center())
+                .item(
+                    button()
+                        .label("📁 Load files")
+                        .variant(ButtonVariant::Secondary)
+                        .size(ButtonSize::Small)
+                        .on_press(|| zoon::println!("Load files clicked"))
+                        .build()
+                )
+        )
+        .item(
+            El::new()
+                .s(Width::fill())
+        )
+}
+
+fn main_layout() -> impl Element {
+    Row::new()
+        .s(Height::fill())
+        .s(Width::fill())
+        .s(Gap::new().x(1))
+        .item(
+            Column::new()
+                .s(Width::exact(470))
+                .s(Height::fill())
+                .s(Gap::new().y(1))
+                .item(files_panel())
+                .item(variables_panel())
+        )
+        .item(selected_variables_with_waveform_panel())
+}
+
+fn files_panel() -> impl Element {
+    El::new()
+        .s(Height::fill().min(250).max(350))
+        .child(
+            create_panel(
+                Row::new()
+                    .s(Gap::new().x(8))
+                    .s(Align::new().center_y())
+                    .item(
+                        El::new()
+                            .s(Font::new().no_wrap())
+                            .child("Files & Scopes")
+                    )
+                    .item(
+                        El::new()
+                            .s(Width::fill())
+                    )
+                    .item(
+                        button()
+                            .label("Load Files")
+                            .left_icon("folder")
+                            .variant(ButtonVariant::Secondary)
+                            .size(ButtonSize::Small)
+                            .on_press(|| zoon::println!("Load Files clicked"))
+                            .align(Align::center())
+                            .build()
+                    )
+                    .item(
+                        El::new()
+                            .s(Width::fill())
+                    )
+                    .item(
+                        button()
+                            .label("Remove All")
+                            .left_icon("x")
+                            .variant(ButtonVariant::Destructive)
+                            .size(ButtonSize::Small)
+                            .on_press(|| zoon::println!("Remove All clicked"))
+                            .build()
+                    ),
+                Column::new()
+                    .s(Gap::new().y(4))
+                    .s(Padding::all(12))
+                    .item(
+                        // Tree structure matching Figma
+                        Column::new()
+                            .s(Gap::new().y(2))
+                            .item(
+                                Row::new()
+                                    .s(Gap::new().x(4))
+                                    .item("▼")
+                                    .item("📄")
+                                    .item(
+                                        El::new()
+                                            .s(Font::new().color(hsluv!(220, 10, 85)).size(13))
+                                            .child("wave_21.fst")
+                                    )
+                            )
+                            .item(
+                                Column::new()
+                                    .s(Padding::new().left(20))
+                                    .s(Gap::new().y(2))
+                                    .item(
+                                        Row::new()
+                                            .s(Gap::new().x(4))
+                                            .item("▼")
+                                            .item("📁")
+                                            .item(
+                                                El::new()
+                                                    .s(Font::new().color(hsluv!(220, 10, 85)).size(13))
+                                                    .child("VexRiscv")
+                                            )
+                                    )
+                                    .item(
+                                        Column::new()
+                                            .s(Padding::new().left(20))
+                                            .s(Gap::new().y(2))
+                                            .item(
+                                                Row::new()
+                                                    .s(Gap::new().x(4))
+                                                    .item("📄")
+                                                    .item(
+                                                        El::new()
+                                                            .s(Font::new().color(hsluv!(220, 10, 75)).size(13))
+                                                            .child("EntitledRiscvHazardDebugCd_dmDirect_logic")
+                                                    )
+                                            )
+                                            .item(
+                                                Row::new()
+                                                    .s(Gap::new().x(4))
+                                                    .item("📄")
+                                                    .item(
+                                                        El::new()
+                                                            .s(Font::new().color(hsluv!(220, 10, 75)).size(13))
+                                                            .child("inputArea_target_buffercc")
+                                                    )
+                                            )
+                                            .item(
+                                                Row::new()
+                                                    .s(Gap::new().x(4))
+                                                    .item("📄")
+                                                    .item(
+                                                        El::new()
+                                                            .s(Font::new().color(hsluv!(220, 10, 75)).size(13))
+                                                            .child("bufferCC_4")
+                                                    )
+                                            )
+                                    )
+                            )
+                            .item(
+                                Row::new()
+                                    .s(Gap::new().x(4))
+                                    .item("+")
+                                    .item("📄")
+                                    .item(
+                                        El::new()
+                                            .s(Font::new().color(hsluv!(220, 10, 85)).size(13))
+                                            .child("simple.vcd")
+                                    )
+                            )
+                    )
+            )
+        )
+}
+
+fn variables_panel() -> impl Element {
+    El::new()
+        .s(Height::fill())
+        .child(
+            create_panel(
+                Text::new("Variables"),
+                Column::new()
+                    .s(Gap::new().y(6))
+                    .s(Padding::all(12))
+                    .item(
+                        input()
+                            .placeholder("variable_name")
+                            .build()
+                    )
+                    .item(
+                        Column::new()
+                            .s(Gap::new().y(4))
+                            .item(
+                                Row::new()
+                                    .s(Gap::new().x(8))
+                                    .item(
+                                        El::new()
+                                            .s(Font::new().color(hsluv!(220, 10, 85)).size(13))
+                                            .child("io_bus_cmd_valid")
+                                    )
+                                    .item(
+                                        badge("Wire 1-bit Input")
+                                            .variant(BadgeVariant::Primary)
+                                            .build()
+                                    )
+                            )
+                            .item(
+                                Row::new()
+                                    .s(Gap::new().x(8))
+                                    .item(
+                                        El::new()
+                                            .s(Font::new().color(hsluv!(220, 10, 85)).size(13))
+                                            .child("io_bus_cmd_ready")
+                                    )
+                                    .item(
+                                        badge("Wire 1-bit Output")
+                                            .variant(BadgeVariant::Success)
+                                            .build()
+                                    )
+                            )
+                            .item(
+                                Row::new()
+                                    .s(Gap::new().x(8))
+                                    .item(
+                                        El::new()
+                                            .s(Font::new().color(hsluv!(220, 10, 85)).size(13))
+                                            .child("io_jtag_data")
+                                    )
+                                    .item(
+                                        badge("Wire 1-bit Output")
+                                            .variant(BadgeVariant::Success)
+                                            .build()
+                                    )
+                            )
+                            .item(
+                                Row::new()
+                                    .s(Gap::new().x(8))
+                                    .item(
+                                        El::new()
+                                            .s(Font::new().color(hsluv!(220, 10, 85)).size(13))
+                                            .child("clk")
+                                    )
+                                    .item(
+                                        badge("Wire 1-bit Output")
+                                            .variant(BadgeVariant::Success)
+                                            .build()
+                                    )
+                            )
+                    )
+            )
+        )
+}
+
+fn selected_variables_with_waveform_panel() -> impl Element {
+    El::new()
+        .s(Width::fill())
+        .s(Height::fill())
+        .child(
+            create_panel(
+                Row::new()
+                    .s(Gap::new().x(8))
+                    .s(Align::new().center_y())
+                    .item(
+                        El::new()
+                            .s(Font::new().no_wrap())
+                            .child("Selected Variables")
+                    )
+                    .item(
+                        El::new()
+                            .s(Width::fill())
+                    )
+                    .item(
+                        button()
+                            .label("Dock to Bottom")
+                            .left_icon("arrow-down-to-line")
+                            .variant(ButtonVariant::Outline)
+                            .size(ButtonSize::Small)
+                            .on_press(|| zoon::println!("Dock to Bottom clicked"))
+                            .align(Align::center())
+                            .build()
+                    )
+                    .item(
+                        El::new()
+                            .s(Width::fill())
+                    )
+                    .item(
+                        button()
+                            .label("Remove All")
+                            .left_icon("x")
+                            .variant(ButtonVariant::Destructive)
+                            .size(ButtonSize::Small)
+                            .on_press(|| zoon::println!("Remove All clicked"))
+                            .build()
+                    ),
+                Column::new()
+                    .s(Gap::new().y(0))
+                    .item(
+                        // Selected variables list
+                        Column::new()
+                            .s(Gap::new().y(2))
+                            .s(Padding::all(8))
+                            .item(
+                                Row::new()
+                                    .s(Gap::new().x(8))
+                                    .s(Align::new().center_y())
+                                    .s(Padding::new().y(2))
+                                    .item("⋮⋮")
+                                    .item(
+                                        El::new()
+                                            .s(Font::new().color(hsluv!(220, 10, 85)).size(13))
+                                            .child("LsuPlugin_logic_bus_rsp_payload_error")
+                                    )
+                                    .item("0")
+                                    .item("❌")
+                                    .item(
+                                        El::new()
+                                            .s(Width::fill())
+                                    )
+                                    .item(
+                                        El::new()
+                                            .s(Font::new().color(hsluv!(220, 10, 70)).size(12))
+                                            .child("14x2106624")
+                                    )
+                            )
+                            // Add more variable rows...
+                            .items((0..8).map(|i| {
+                                let var_names = [
+                                    "LsuPlugin_logic_bus_rsp_payload_data",
+                                    "io_writes_0_payload_data", 
+                                    "LsuPlugin_logic_bus_rsp_payload_data",
+                                    "logic_logic_onDebugCd_dmiStat_value_string",
+                                    "LsuPlugin_logic_bus_rsp_payload_error",
+                                    "LsuPlugin_logic_bus_rsp_payload_data",
+                                    "io_writes_0_payload_data",
+                                    "final_var"
+                                ];
+                                
+                                Row::new()
+                                    .s(Gap::new().x(8))
+                                    .s(Align::new().center_y())
+                                    .s(Padding::new().y(2))
+                                    .item("⋮⋮")
+                                    .item(
+                                        El::new()
+                                            .s(Font::new().color(hsluv!(220, 10, 85)).size(13))
+                                            .child(var_names[i as usize])
+                                    )
+                                    .item("0")
+                                    .item("❌")
+                                    .item(
+                                        El::new()
+                                            .s(Width::fill())
+                                    )
+                                    .item(
+                                        El::new()
+                                            .s(Font::new().color(hsluv!(220, 10, 70)).size(12))
+                                            .child("14x2106624")
+                                    )
+                            }))
+                    )
+                    .item(
+                        // Waveform display area
+                        Column::new()
+                            .s(Gap::new().y(4))
+                            .s(Padding::all(8))
+                            .s(Background::new().color(hsluv!(220, 15, 8)))
+                            .item(
+                                // Timeline
+                                Row::new()
+                                    .s(Gap::new().x(40))
+                                    .s(Padding::new().x(50))
+                                    .item(
+                                        El::new()
+                                            .s(Font::new().color(hsluv!(220, 10, 60)).size(12))
+                                            .child("0 s")
+                                    )
+                                    .item(
+                                        El::new()
+                                            .s(Font::new().color(hsluv!(220, 10, 60)).size(12))
+                                            .child("10 s")
+                                    )
+                                    .item(
+                                        El::new()
+                                            .s(Font::new().color(hsluv!(220, 10, 60)).size(12))
+                                            .child("20 s")
+                                    )
+                                    .item(
+                                        El::new()
+                                            .s(Font::new().color(hsluv!(220, 10, 60)).size(12))
+                                            .child("30 s")
+                                    )
+                                    .item(
+                                        El::new()
+                                            .s(Font::new().color(hsluv!(220, 10, 60)).size(12))
+                                            .child("40 s")
+                                    )
+                                    .item(
+                                        El::new()
+                                            .s(Font::new().color(hsluv!(220, 10, 60)).size(12))
+                                            .child("50 s")
+                                    )
+                                    .item(
+                                        El::new()
+                                            .s(Font::new().color(hsluv!(220, 10, 60)).size(12))
+                                            .child("60 s")
+                                    )
+                            )
+                            .item(
+                                // Waveform visualization with blue rectangles
+                                El::new()
+                                    .s(Height::exact(200))
+                                    .s(Width::fill())
+                                    .s(Background::new().color(hsluv!(220, 15, 6)))
+                                    .s(RoundedCorners::all(4))
+                                    .s(Padding::all(8))
+                                    .child(
+                                        Column::new()
+                                            .s(Gap::new().y(1))
+                                            .items((0..9).map(|i| {
+                                                Row::new()
+                                                    .s(Gap::new().x(1))
+                                                    .s(Height::exact(20))
+                                                    .s(Width::fill())
+                                                    .items((0..12).map(|j| {
+                                                        El::new()
+                                                            .s(Width::fill())
+                                                            .s(Height::exact(18))
+                                                            .s(Background::new().color(
+                                                                if (i + j) % 3 == 0 {
+                                                                    hsluv!(220, 80, 55) // Bright blue
+                                                                } else if (i + j) % 2 == 0 {
+                                                                    hsluv!(220, 60, 45) // Medium blue  
+                                                                } else {
+                                                                    hsluv!(220, 15, 8) // Dark background
+                                                                }
+                                                            ))
+                                                            .s(RoundedCorners::all(2))
+                                                    }))
+                                            }))
+                                    )
+                            )
+                            .item(
+                                // Bottom controls
+                                Row::new()
+                                    .s(Gap::new().x(10))
+                                    .s(Align::center())
+                                    .item(
+                                        El::new()
+                                            .s(Font::new().color(hsluv!(220, 10, 70)).size(12))
+                                            .child("W")
+                                    )
+                                    .item("@")
+                                    .item(
+                                        El::new()
+                                            .s(Font::new().color(hsluv!(220, 10, 70)).size(12))
+                                            .child("100")
+                                    )
+                                    .item("%")
+                                    .item("⬛")
+                                    .item(
+                                        El::new()
+                                            .s(Font::new().color(hsluv!(220, 10, 70)).size(12))
+                                            .child("S")
+                                    )
+                                    .item(
+                                        El::new()
+                                            .s(Width::fill())
+                                    )
+                                    .item(
+                                        El::new()
+                                            .s(Font::new().color(hsluv!(220, 10, 70)).size(12))
+                                            .child("A")
+                                    )
+                                    .item("◀")
+                                    .item(
+                                        El::new()
+                                            .s(Font::new().color(hsluv!(220, 10, 70)).size(12))
+                                            .child("55")
+                                    )
+                                    .item("/")
+                                    .item(
+                                        El::new()
+                                            .s(Font::new().color(hsluv!(220, 10, 70)).size(12))
+                                            .child("88 s")
+                                    )
+                                    .item("▶")
+                                    .item(
+                                        El::new()
+                                            .s(Font::new().color(hsluv!(220, 10, 70)).size(12))
+                                            .child("D")
+                                    )
+                            )
+                    )
+            )
+        )
+}
+
+fn selected_panel() -> impl Element {
+    El::new()
+        .s(Height::fill())
+        .child(
+            create_panel(
+                Row::new()
+                    .s(Gap::new().x(10))
+                    .item(
+                        Text::new("Selected Variables")
+                    )
+                    .item(
+                        button()
+                            .label("Dock to Bottom")
+                            .variant(ButtonVariant::Outline)
+                            .size(ButtonSize::Small)
+                            .on_press(|| zoon::println!("Dock to Bottom clicked"))
+                            .build()
+                    ),
+                Column::new()
+                    .s(Gap::new().y(8))
+                    .s(Padding::all(16))
+                    .item(
+                        Row::new()
+                            .s(Gap::new().x(8))
+                            .s(Align::new().center_y())
+                            .item("⋮⋮")
+                            .item(
+                                El::new()
+                                    .s(Font::new().color(hsluv!(0, 0, 80)).size(14))
+                                    .child("clock")
+                            )
+                            .item(
+                                button()
+                                    .label("×")
+                                    .variant(ButtonVariant::Ghost)
+                                    .size(ButtonSize::Small)
+                                    .on_press(|| zoon::println!("Remove clock"))
+                                    .build()
+                            )
+                    )
+                    .item(
+                        Row::new()
+                            .s(Gap::new().x(8))
+                            .s(Align::new().center_y())
+                            .item("⋮⋮")
+                            .item(
+                                El::new()
+                                    .s(Font::new().color(hsluv!(0, 0, 80)).size(14))
+                                    .child("reset")
+                            )
+                            .item(
+                                button()
+                                    .label("×")
+                                    .variant(ButtonVariant::Ghost)
+                                    .size(ButtonSize::Small)
+                                    .on_press(|| zoon::println!("Remove reset"))
+                                    .build()
+                            )
+                    )
+            )
+        )
+}
+
+fn waveform_panel() -> impl Element {
+    El::new()
+        .s(Width::fill().min(500))
+        .s(Height::fill())
+        .child(
+            create_panel(
+                Row::new()
+                    .s(Gap::new().x(10))
+                    .item(
+                        Text::new("Waveform")
+                    )
+                    .item(
+                        button()
+                            .label("Zoom In")
+                            .left_icon("zoom-in")
+                            .variant(ButtonVariant::Outline)
+                            .size(ButtonSize::Small)
+                            .on_press(|| zoon::println!("Zoom In clicked"))
+                            .build()
+                    )
+                    .item(
+                        button()
+                            .label("Zoom Out")
+                            .left_icon("zoom-out")
+                            .variant(ButtonVariant::Outline)
+                            .size(ButtonSize::Small)
+                            .on_press(|| zoon::println!("Zoom Out clicked"))
+                            .build()
+                    ),
+                Column::new()
+                    .s(Gap::new().y(16))
+                    .s(Padding::all(16))
+                    .item(
+                        Row::new()
+                            .s(Gap::new().x(20))
+                            .item("0s")
+                            .item("10s")
+                            .item("20s")
+                            .item("30s")
+                            .item("40s")
+                            .item("50s")
+                    )
+                    .item(
+                        El::new()
+                            .s(Background::new().color(hsluv!(0, 0, 15)))
+                            .s(Height::exact(200))
+                            .s(Width::fill())
+                            .s(Align::center())
+                            .s(RoundedCorners::all(4))
+                            .child(
+                                El::new()
+                                    .s(Font::new().color(hsluv!(0, 0, 50)).size(16))
+                                    .child("Waveform display area")
+                            )
+                    )
+            )
         )
 }
 

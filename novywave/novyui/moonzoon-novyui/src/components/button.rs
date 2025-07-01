@@ -36,6 +36,7 @@ pub struct ButtonBuilder {
     right_icon_aria_label: Option<String>,
     on_press: Option<Box<dyn Fn()>>,
     min_width: Option<u32>,
+    align: Option<Align>,
 }
 
 impl ButtonBuilder {
@@ -52,6 +53,7 @@ impl ButtonBuilder {
             right_icon_aria_label: None,
             on_press: None,
             min_width: None,
+            align: None,
         }
     }
 
@@ -113,7 +115,13 @@ impl ButtonBuilder {
         self
     }
 
-    pub fn build(self) -> impl Element {
+    pub fn align(mut self, align: Align) -> Self {
+        self.align = Some(align);
+        self
+    }
+
+
+    pub fn build(mut self) -> impl Element {
         let (hovered, hovered_signal) = Mutable::new_and_signal(false);
         let (focused, focused_signal) = Mutable::new_and_signal(false);
         let (pressed, pressed_signal) = Mutable::new_and_signal(false);
@@ -151,7 +159,7 @@ impl ButtonBuilder {
     }
 
     fn create_button_element(
-        self,
+        mut self,
         hovered_signal: impl Signal<Item = bool> + Unpin + 'static,
         focused_signal: impl Signal<Item = bool> + Unpin + 'static,
         pressed_signal: impl Signal<Item = bool> + Unpin + 'static,
@@ -207,14 +215,24 @@ impl ButtonBuilder {
 
         // Create button content with icons and text
         let button_content = self.create_button_content(icon_size);
+        
+        // Extract align before building button to avoid partial move
+        let align = self.align.take();
 
 
 
-        Button::new()
+        let mut button = Button::new()
             .s(Padding::new().x(padding_x).y(padding_y))
             .s(RoundedCorners::all(CORNER_RADIUS_6))
             .s(Font::new().size(font_size).weight(FontWeight::Medium))
-            .s(transition_colors())
+            .s(transition_colors());
+
+        // Add align if specified
+        if let Some(align) = align {
+            button = button.s(align);
+        }
+
+        button
             .s(Background::new().color_signal(
                 if is_disabled {
                     // Disabled state - use exact Vue colors: neutral-5
@@ -367,7 +385,11 @@ impl ButtonBuilder {
                             .color(IconColor::Current)
                             .build()
                     )
-                    .item(Text::new(self.label.as_ref().unwrap()))
+                    .item(
+                        El::new()
+                            .s(Font::new().no_wrap())
+                            .child(Text::new(self.label.as_ref().unwrap()))
+                    )
                     .unify()
             }
             // Label with right icon
@@ -375,7 +397,11 @@ impl ButtonBuilder {
                 Row::new()
                     .s(Align::new().center_y())
                     .s(Gap::new().x(SPACING_8))
-                    .item(Text::new(self.label.as_ref().unwrap()))
+                    .item(
+                        El::new()
+                            .s(Font::new().no_wrap())
+                            .child(Text::new(self.label.as_ref().unwrap()))
+                    )
                     .item(
                         icon_str(self.right_icon.unwrap())
                             .size(icon_size)
@@ -395,7 +421,11 @@ impl ButtonBuilder {
                             .color(IconColor::Current)
                             .build()
                     )
-                    .item(Text::new(self.label.as_ref().unwrap()))
+                    .item(
+                        El::new()
+                            .s(Font::new().no_wrap())
+                            .child(Text::new(self.label.as_ref().unwrap()))
+                    )
                     .item(
                         icon_str(self.right_icon.unwrap())
                             .size(icon_size)
@@ -406,7 +436,10 @@ impl ButtonBuilder {
             }
             // Label only
             (false, true, false) => {
-                Text::new(self.label.as_ref().unwrap()).unify()
+                El::new()
+                    .s(Font::new().no_wrap())
+                    .child(Text::new(self.label.as_ref().unwrap()))
+                    .unify()
             }
             // Empty button (fallback)
             (false, false, false) => {
