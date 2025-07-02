@@ -21,8 +21,8 @@ type ExampleObjects = Vec<fast2d::Object2d>;
 pub fn main() {
     Task::start(async {
         load_and_register_fonts().await;
-        // Force the default docked state
-        IS_DOCKED_TO_BOTTOM.set(true);
+        // Force the default "Docked to Right" state
+        IS_DOCKED_TO_BOTTOM.set(false);
         
         start_app("app", root);
     });
@@ -229,7 +229,7 @@ fn novyui_buttons_demo() -> impl Element {
                                 .label("Primary")
                                 .variant(ButtonVariant::Primary)
                                 .size(ButtonSize::Medium)
-                                .on_press(|| zoon::println!("Primary button clicked!"))
+                                .on_press(|| {})
                                 .build()
                         )
                         .item(
@@ -237,7 +237,7 @@ fn novyui_buttons_demo() -> impl Element {
                                 .label("Secondary")
                                 .variant(ButtonVariant::Secondary)
                                 .size(ButtonSize::Medium)
-                                .on_press(|| zoon::println!("Secondary button clicked!"))
+                                .on_press(|| {})
                                 .build()
                         )
                         .item(
@@ -245,7 +245,7 @@ fn novyui_buttons_demo() -> impl Element {
                                 .label("Outline")
                                 .variant(ButtonVariant::Outline)
                                 .size(ButtonSize::Medium)
-                                .on_press(|| zoon::println!("Outline button clicked!"))
+                                .on_press(|| {})
                                 .build()
                         )
                         .item(
@@ -253,7 +253,7 @@ fn novyui_buttons_demo() -> impl Element {
                                 .label("Link")
                                 .variant(ButtonVariant::Link)
                                 .size(ButtonSize::Medium)
-                                .on_press(|| zoon::println!("Link button clicked!"))
+                                .on_press(|| {})
                                 .build()
                         )
                         .item(
@@ -261,7 +261,7 @@ fn novyui_buttons_demo() -> impl Element {
                                 .label("Destructive")
                                 .variant(ButtonVariant::Destructive)
                                 .size(ButtonSize::Medium)
-                                .on_press(|| zoon::println!("Destructive button clicked!"))
+                                .on_press(|| {})
                                 .build()
                         )
                 )
@@ -272,21 +272,21 @@ fn novyui_buttons_demo() -> impl Element {
                             button()
                                 .label("Small")
                                 .size(ButtonSize::Small)
-                                .on_press(|| zoon::println!("Small button clicked!"))
+                                .on_press(|| {})
                                 .build()
                         )
                         .item(
                             button()
                                 .label("Medium")
                                 .size(ButtonSize::Medium)
-                                .on_press(|| zoon::println!("Medium button clicked!"))
+                                .on_press(|| {})
                                 .build()
                         )
                         .item(
                             button()
                                 .label("Large")
                                 .size(ButtonSize::Large)
-                                .on_press(|| zoon::println!("Large button clicked!"))
+                                .on_press(|| {})
                                 .build()
                         )
                 )
@@ -298,7 +298,7 @@ fn novyui_buttons_demo() -> impl Element {
                                 .label("Icon Check")
                                 .left_icon(IconName::Check)
                                 .size(ButtonSize::Medium)
-                                .on_press(|| zoon::println!("Button with icon clicked!"))
+                                .on_press(|| {})
                                 .build()
                         )
                         .item(
@@ -306,7 +306,7 @@ fn novyui_buttons_demo() -> impl Element {
                                 .label("Ghost")
                                 .variant(ButtonVariant::Ghost)
                                 .size(ButtonSize::Medium)
-                                .on_press(|| zoon::println!("Ghost button clicked!"))
+                                .on_press(|| {})
                                 .build()
                         )
                         .item(
@@ -314,7 +314,7 @@ fn novyui_buttons_demo() -> impl Element {
                                 .label("Disabled")
                                 .disabled(true)
                                 .size(ButtonSize::Medium)
-                                .on_press(|| zoon::println!("This won't print"))
+                                .on_press(|| {})
                                 .build()
                         )
                 )
@@ -323,7 +323,7 @@ fn novyui_buttons_demo() -> impl Element {
 
 fn root() -> impl Element {
     El::new()
-        .s(Height::fill())
+        .s(Height::screen())
         .s(Width::fill())
         .s(Background::new().color(hsluv!(220, 15, 8)))
         .child(main_layout())
@@ -333,11 +333,13 @@ fn root() -> impl Element {
 
 fn create_panel(header_content: impl Element, content: impl Element) -> impl Element {
     El::new()
+        .s(Height::fill())
         .s(Background::new().color(hsluv!(220, 15, 11)))
         .s(RoundedCorners::all(6))
         .s(Borders::all(Border::new().width(1).color(hsluv!(220, 10, 25))))
         .child(
             Column::new()
+                .s(Height::fill())
                 .item(
                     El::new()
                         .s(Padding::new().x(12).y(8))
@@ -367,7 +369,7 @@ fn app_header() -> impl Element {
                         .label("📁 Load files")
                         .variant(ButtonVariant::Secondary)
                         .size(ButtonSize::Small)
-                        .on_press(|| zoon::println!("Load files clicked"))
+                        .on_press(|| {})
                         .build()
                 )
         )
@@ -385,7 +387,7 @@ fn main_layout() -> impl Element {
     };
 
     El::new()
-        .s(Height::fill())
+        .s(Height::screen())
         .s(Width::fill())
         .text_content_selecting_signal(
             is_any_divider_dragging.map(|is_dragging| {
@@ -425,13 +427,13 @@ fn main_layout() -> impl Element {
                 });
             } else if HORIZONTAL_DIVIDER_DRAGGING.get() {
                 if IS_DOCKED_TO_BOTTOM.get() {
-                    // In docked mode, horizontal divider controls main area height
+                    // In "Docked to Bottom" mode, horizontal divider controls main area height
                     MAIN_AREA_HEIGHT.update(|height| {
                         let new_height = height as i32 + event.movement_y();
                         u32::max(50, u32::try_from(new_height).unwrap_or(50))
                     });
                 } else {
-                    // In undocked mode, horizontal divider controls files panel height
+                    // In "Docked to Right" mode, horizontal divider controls files panel height
                     FILES_PANEL_HEIGHT.update(|height| {
                         let new_height = height as i32 + event.movement_y();
                         u32::max(50, u32::try_from(new_height).unwrap_or(50))
@@ -449,8 +451,9 @@ fn docked_layout_wrapper() -> impl Element {
         .s(Width::fill())
         .child_signal(IS_DOCKED_TO_BOTTOM.signal().map(|is_docked| {
             if is_docked {
-                // Docked layout
+                // Docked to Bottom layout
                 El::new()
+                    .s(Height::fill())
                     .child(
                         Column::new()
                             .s(Height::fill())
@@ -467,22 +470,32 @@ fn docked_layout_wrapper() -> impl Element {
                             .item(selected_variables_with_waveform_panel())
                     )
             } else {
-                // Undocked layout
+                // Docked to Right layout
                 El::new()
+                    .s(Height::fill())
                     .child(
                         Row::new()
                             .s(Height::fill())
                             .s(Width::fill())
                             .item(
-                                Column::new()
+                                El::new()
                                     .s(Width::exact_signal(LEFT_PANEL_WIDTH.signal()))
                                     .s(Height::fill())
-                                    .item(files_panel_with_height())
-                                    .item(horizontal_divider(HORIZONTAL_DIVIDER_DRAGGING.clone()))
-                                    .item(variables_panel_with_fill())
+                                    .child(
+                                        Column::new()
+                                            .s(Height::fill())
+                                            .item(files_panel_with_height())
+                                            .item(horizontal_divider(HORIZONTAL_DIVIDER_DRAGGING.clone()))
+                                            .item(variables_panel_with_fill())
+                                    )
                             )
                             .item(vertical_divider(VERTICAL_DIVIDER_DRAGGING.clone()))
-                            .item(selected_variables_with_waveform_panel())
+                            .item(
+                                El::new()
+                                    .s(Width::fill())
+                                    .s(Height::fill())
+                                    .child(selected_variables_with_waveform_panel())
+                            )
                     )
             }
         }))
@@ -562,7 +575,7 @@ fn variables_panel_docked() -> impl Element {
 
 fn files_panel() -> impl Element {
     El::new()
-        .s(Height::fill().min(250).max(350))
+        .s(Height::fill())
         .child(
             create_panel(
                 Row::new()
@@ -583,7 +596,7 @@ fn files_panel() -> impl Element {
                             .left_icon(IconName::Folder)
                             .variant(ButtonVariant::Secondary)
                             .size(ButtonSize::Small)
-                            .on_press(|| zoon::println!("Load Files clicked"))
+                            .on_press(|| {})
                             .align(Align::center())
                             .build()
                     )
@@ -597,12 +610,13 @@ fn files_panel() -> impl Element {
                             .left_icon(IconName::X)
                             .variant(ButtonVariant::Destructive)
                             .size(ButtonSize::Small)
-                            .on_press(|| zoon::println!("Remove All clicked"))
+                            .on_press(|| {})
                             .build()
                     ),
                 Column::new()
                     .s(Gap::new().y(4))
                     .s(Padding::all(12))
+                    .s(Height::fill())  // Make the column fill available height
                     .item(
                         // Tree structure matching Figma
                         Column::new()
@@ -712,6 +726,7 @@ fn variables_panel() -> impl Element {
                 Column::new()
                     .s(Gap::new().y(6))
                     .s(Padding::all(12))
+                    .s(Height::fill())  // Make the column fill available height
                     .item(
                         Column::new()
                             .s(Gap::new().y(4))
@@ -832,11 +847,7 @@ fn selected_variables_panel() -> impl Element {
                                     .variant(ButtonVariant::Outline)
                                     .size(ButtonSize::Small)
                                     .on_press(|| {
-                                        zoon::println!("BUTTON CLICKED!");
-                                        let old_value = IS_DOCKED_TO_BOTTOM.get();
                                         IS_DOCKED_TO_BOTTOM.update(|is_docked| !is_docked);
-                                        let new_value = IS_DOCKED_TO_BOTTOM.get();
-                                        zoon::println!("Toggled IS_DOCKED_TO_BOTTOM from {} to {}", old_value, new_value);
                                     })
                                     .align(Align::center())
                                     .build()
@@ -853,7 +864,7 @@ fn selected_variables_panel() -> impl Element {
                             .left_icon(IconName::X)
                             .variant(ButtonVariant::Destructive)
                             .size(ButtonSize::Small)
-                            .on_press(|| zoon::println!("Remove All clicked"))
+                            .on_press(|| {})
                             .build()
                     ),
                 Column::new()
@@ -943,11 +954,7 @@ fn selected_variables_with_waveform_panel() -> impl Element {
                                     .variant(ButtonVariant::Outline)
                                     .size(ButtonSize::Small)
                                     .on_press(|| {
-                                        zoon::println!("BUTTON CLICKED!");
-                                        let old_value = IS_DOCKED_TO_BOTTOM.get();
                                         IS_DOCKED_TO_BOTTOM.update(|is_docked| !is_docked);
-                                        let new_value = IS_DOCKED_TO_BOTTOM.get();
-                                        zoon::println!("Toggled IS_DOCKED_TO_BOTTOM from {} to {}", old_value, new_value);
                                     })
                                     .align(Align::center())
                                     .build()
@@ -964,15 +971,19 @@ fn selected_variables_with_waveform_panel() -> impl Element {
                             .left_icon(IconName::X)
                             .variant(ButtonVariant::Destructive)
                             .size(ButtonSize::Small)
-                            .on_press(|| zoon::println!("Remove All clicked"))
+                            .on_press(|| {})
                             .build()
                     ),
                 // 3-column table layout: Variable Name | Value | Waveform
-                Column::new()
-                    .s(Gap::new().y(0))
-                    .s(Padding::all(8))
-                    .item(
-                        // Timeline header
+                El::new()
+                    .s(Height::fill())
+                    .child(
+                        Column::new()
+                            .s(Gap::new().y(0))
+                            .s(Padding::all(8))
+                            .s(Height::fill())  // Make the column fill available height
+                            .item(
+                                // Timeline header
                         Row::new()
                             .s(Gap::new().x(0))
                             .s(Align::new().center_y())
@@ -1098,6 +1109,7 @@ fn selected_variables_with_waveform_panel() -> impl Element {
                                     }))
                             )
                     }))
+                    )
             )
         )
 }
@@ -1120,11 +1132,7 @@ fn selected_panel() -> impl Element {
                                     .variant(ButtonVariant::Outline)
                                     .size(ButtonSize::Small)
                                     .on_press(|| {
-                                        zoon::println!("BUTTON CLICKED!");
-                                        let old_value = IS_DOCKED_TO_BOTTOM.get();
                                         IS_DOCKED_TO_BOTTOM.update(|is_docked| !is_docked);
-                                        let new_value = IS_DOCKED_TO_BOTTOM.get();
-                                        zoon::println!("Toggled IS_DOCKED_TO_BOTTOM from {} to {}", old_value, new_value);
                                     })
                                     .build()
                                     .into_element()
@@ -1148,7 +1156,7 @@ fn selected_panel() -> impl Element {
                                     .label("×")
                                     .variant(ButtonVariant::Ghost)
                                     .size(ButtonSize::Small)
-                                    .on_press(|| zoon::println!("Remove clock"))
+                                    .on_press(|| {})
                                     .build()
                             )
                     )
@@ -1167,7 +1175,7 @@ fn selected_panel() -> impl Element {
                                     .label("×")
                                     .variant(ButtonVariant::Ghost)
                                     .size(ButtonSize::Small)
-                                    .on_press(|| zoon::println!("Remove reset"))
+                                    .on_press(|| {})
                                     .build()
                             )
                     )
@@ -1192,7 +1200,7 @@ fn waveform_panel() -> impl Element {
                             .left_icon(IconName::ZoomIn)
                             .variant(ButtonVariant::Outline)
                             .size(ButtonSize::Small)
-                            .on_press(|| zoon::println!("Zoom In clicked"))
+                            .on_press(|| {})
                             .build()
                     )
                     .item(
@@ -1201,7 +1209,7 @@ fn waveform_panel() -> impl Element {
                             .left_icon(IconName::ZoomOut)
                             .variant(ButtonVariant::Outline)
                             .size(ButtonSize::Small)
-                            .on_press(|| zoon::println!("Zoom Out clicked"))
+                            .on_press(|| {})
                             .build()
                     ),
                 Column::new()
