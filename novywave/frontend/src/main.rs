@@ -3,6 +3,16 @@ use std::f32::consts::PI;
 use std::mem;
 use moonzoon_novyui::*;
 
+// Panel resizing state
+static LEFT_PANEL_WIDTH: Lazy<Mutable<u32>> = Lazy::new(|| 470.into());
+static FILES_PANEL_HEIGHT: Lazy<Mutable<u32>> = Lazy::new(|| 300.into());
+static VERTICAL_DIVIDER_DRAGGING: Lazy<Mutable<bool>> = lazy::default();
+static HORIZONTAL_DIVIDER_DRAGGING: Lazy<Mutable<bool>> = lazy::default();
+
+// Dock state management - DEFAULT TO DOCKED MODE  
+static IS_DOCKED_TO_BOTTOM: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(true));
+static MAIN_AREA_HEIGHT: Lazy<Mutable<u32>> = Lazy::new(|| 350.into());
+
 // Type alias for clarity
 // Represents a collection of 2D objects for fast2d canvas
 type ExampleObjects = Vec<fast2d::Object2d>;
@@ -11,6 +21,9 @@ type ExampleObjects = Vec<fast2d::Object2d>;
 pub fn main() {
     Task::start(async {
         load_and_register_fonts().await;
+        // Force the default docked state
+        IS_DOCKED_TO_BOTTOM.set(true);
+        
         start_app("app", root);
     });
 }
@@ -365,19 +378,186 @@ fn app_header() -> impl Element {
 }
 
 fn main_layout() -> impl Element {
+    let is_any_divider_dragging = map_ref! {
+        let vertical = VERTICAL_DIVIDER_DRAGGING.signal(),
+        let horizontal = HORIZONTAL_DIVIDER_DRAGGING.signal() =>
+        *vertical || *horizontal
+    };
+
+    El::new()
+        .s(Height::fill())
+        .s(Width::fill())
+        .text_content_selecting_signal(
+            is_any_divider_dragging.map(|is_dragging| {
+                if is_dragging {
+                    TextContentSelecting::none()
+                } else {
+                    TextContentSelecting::auto()
+                }
+            })
+        )
+        .s(Cursor::with_signal(
+            map_ref! {
+                let vertical = VERTICAL_DIVIDER_DRAGGING.signal(),
+                let horizontal = HORIZONTAL_DIVIDER_DRAGGING.signal() =>
+                if *vertical {
+                    Some(CursorIcon::ColumnResize)
+                } else if *horizontal {
+                    Some(CursorIcon::RowResize)
+                } else {
+                    None
+                }
+            }
+        ))
+        .on_pointer_up(|| {
+            VERTICAL_DIVIDER_DRAGGING.set_neq(false);
+            HORIZONTAL_DIVIDER_DRAGGING.set_neq(false);
+        })
+        .on_pointer_leave(|| {
+            VERTICAL_DIVIDER_DRAGGING.set_neq(false);
+            HORIZONTAL_DIVIDER_DRAGGING.set_neq(false);
+        })
+        .on_pointer_move_event(|event| {
+            if VERTICAL_DIVIDER_DRAGGING.get() {
+                LEFT_PANEL_WIDTH.update(|width| {
+                    let new_width = width as i32 + event.movement_x();
+                    u32::max(50, u32::try_from(new_width).unwrap_or(50))
+                });
+            } else if HORIZONTAL_DIVIDER_DRAGGING.get() {
+                if IS_DOCKED_TO_BOTTOM.get() {
+                    // In docked mode, horizontal divider controls main area height
+                    MAIN_AREA_HEIGHT.update(|height| {
+                        let new_height = height as i32 + event.movement_y();
+                        u32::max(50, u32::try_from(new_height).unwrap_or(50))
+                    });
+                } else {
+                    // In undocked mode, horizontal divider controls files panel height
+                    FILES_PANEL_HEIGHT.update(|height| {
+                        let new_height = height as i32 + event.movement_y();
+                        u32::max(50, u32::try_from(new_height).unwrap_or(50))
+                    });
+                }
+            }
+        })
+        .child(docked_layout_wrapper())
+}
+
+// Wrapper function that switches between docked and undocked layouts
+fn docked_layout_wrapper() -> impl Element {
+    El::new()
+        .s(Height::fill())
+        .s(Width::fill())
+        .child_signal(IS_DOCKED_TO_BOTTOM.signal().map(|is_docked| {
+            if is_docked {
+                // Docked layout
+                El::new()
+                    .child(
+                        Column::new()
+                            .s(Height::fill())
+                            .s(Width::fill())
+                            .item(
+                                Row::new()
+                                    .s(Height::exact_signal(MAIN_AREA_HEIGHT.signal()))
+                                    .s(Width::fill())
+                                    .item(files_panel_docked())
+                                    .item(vertical_divider(VERTICAL_DIVIDER_DRAGGING.clone()))
+                                    .item(variables_panel_docked())
+                            )
+                            .item(horizontal_divider(HORIZONTAL_DIVIDER_DRAGGING.clone()))
+                            .item(selected_variables_with_waveform_panel())
+                    )
+            } else {
+                // Undocked layout
+                El::new()
+                    .child(
+                        Row::new()
+                            .s(Height::fill())
+                            .s(Width::fill())
+                            .item(
+                                Column::new()
+                                    .s(Width::exact_signal(LEFT_PANEL_WIDTH.signal()))
+                                    .s(Height::fill())
+                                    .item(files_panel_with_height())
+                                    .item(horizontal_divider(HORIZONTAL_DIVIDER_DRAGGING.clone()))
+                                    .item(variables_panel_with_fill())
+                            )
+                            .item(vertical_divider(VERTICAL_DIVIDER_DRAGGING.clone()))
+                            .item(selected_variables_with_waveform_panel())
+                    )
+            }
+        }))
+}
+
+// Docked layout: Top area (Files & Scopes | Variables) + Bottom area (Selected Variables)
+fn docked_layout() -> impl Element {
+    Column::new()
+        .s(Height::fill())
+        .s(Width::fill())
+        .item(
+            Row::new()
+                .s(Height::exact_signal(MAIN_AREA_HEIGHT.signal()))
+                .s(Width::fill())
+                .item(files_panel_docked())
+                .item(vertical_divider(VERTICAL_DIVIDER_DRAGGING.clone()))
+                .item(variables_panel_docked())
+        )
+        .item(horizontal_divider(HORIZONTAL_DIVIDER_DRAGGING.clone()))
+        .item(selected_variables_with_waveform_panel())
+}
+
+// Undocked layout: (Files & Scopes + Variables) | Selected Variables
+fn undocked_layout() -> impl Element {
     Row::new()
         .s(Height::fill())
         .s(Width::fill())
-        .s(Gap::new().x(1))
         .item(
             Column::new()
-                .s(Width::exact(470))
+                .s(Width::exact_signal(LEFT_PANEL_WIDTH.signal()))
                 .s(Height::fill())
-                .s(Gap::new().y(1))
-                .item(files_panel())
-                .item(variables_panel())
+                .item(files_panel_with_height())
+                .item(horizontal_divider(HORIZONTAL_DIVIDER_DRAGGING.clone()))
+                .item(variables_panel_with_fill())
         )
+        .item(vertical_divider(VERTICAL_DIVIDER_DRAGGING.clone()))
         .item(selected_variables_with_waveform_panel())
+}
+
+// Helper functions for different panel configurations
+
+fn files_panel_with_width() -> impl Element {
+    El::new()
+        .s(Width::exact_signal(LEFT_PANEL_WIDTH.signal()))
+        .s(Height::fill())
+        .child(files_panel())
+}
+
+fn files_panel_with_height() -> impl Element {
+    El::new()
+        .s(Height::exact_signal(FILES_PANEL_HEIGHT.signal()))
+        .s(Width::fill())
+        .child(files_panel())
+}
+
+fn variables_panel_with_fill() -> impl Element {
+    El::new()
+        .s(Width::fill())
+        .s(Height::fill())
+        .child(variables_panel())
+}
+
+// Docked mode specific panels with proper sizing
+fn files_panel_docked() -> impl Element {
+    El::new()
+        .s(Width::exact_signal(LEFT_PANEL_WIDTH.signal()))  // Use draggable width in docked mode too
+        .s(Height::fill())
+        .child(files_panel())
+}
+
+fn variables_panel_docked() -> impl Element {
+    El::new()
+        .s(Width::fill())  // Variables takes remaining space
+        .s(Height::fill())
+        .child(variables_panel())
 }
 
 fn files_panel() -> impl Element {
@@ -596,6 +776,146 @@ fn variables_panel() -> impl Element {
         )
 }
 
+fn vertical_divider(is_dragging: Mutable<bool>) -> impl Element {
+    El::new()
+        .s(Width::exact(4))  // Back to original 4px width
+        .s(Height::fill())
+        .s(Background::new().color_signal(
+            is_dragging.signal().map_bool(
+                || hsluv!(220, 100, 75), // Brighter blue when dragging
+                || hsluv!(220, 85, 60)   // Default blue matching Figma exactly
+            )
+        ))
+        .s(Cursor::new(CursorIcon::ColumnResize))
+        .s(Padding::all(0))  // Ensure no padding interferes
+        .on_pointer_down(move || is_dragging.set_neq(true))
+}
+
+fn horizontal_divider(is_dragging: Mutable<bool>) -> impl Element {
+    El::new()
+        .s(Width::fill())
+        .s(Height::exact(4))
+        .s(Background::new().color_signal(
+            is_dragging.signal().map_bool(
+                || hsluv!(220, 100, 75), // Brighter blue when dragging
+                || hsluv!(220, 85, 60)   // Default blue matching Figma exactly
+            )
+        ))
+        .s(Cursor::new(CursorIcon::RowResize))
+        .on_pointer_down(move || is_dragging.set_neq(true))
+}
+
+fn selected_variables_panel() -> impl Element {
+    El::new()
+        .s(Width::fill())
+        .s(Height::fill())
+        .child(
+            create_panel(
+                Row::new()
+                    .s(Gap::new().x(8))
+                    .s(Align::new().center_y())
+                    .item(
+                        El::new()
+                            .s(Font::new().no_wrap())
+                            .child("Selected Variables")
+                    )
+                    .item(
+                        El::new()
+                            .s(Width::fill())
+                    )
+                    .item(
+                        El::new()
+                            .child_signal(IS_DOCKED_TO_BOTTOM.signal().map(|is_docked| {
+                                button()
+                                    .label(if is_docked { "Dock to Right" } else { "Dock to Bottom" })
+                                    .left_icon(IconName::ArrowDownToLine)
+                                    .variant(ButtonVariant::Outline)
+                                    .size(ButtonSize::Small)
+                                    .on_press(|| {
+                                        zoon::println!("BUTTON CLICKED!");
+                                        let old_value = IS_DOCKED_TO_BOTTOM.get();
+                                        IS_DOCKED_TO_BOTTOM.update(|is_docked| !is_docked);
+                                        let new_value = IS_DOCKED_TO_BOTTOM.get();
+                                        zoon::println!("Toggled IS_DOCKED_TO_BOTTOM from {} to {}", old_value, new_value);
+                                    })
+                                    .align(Align::center())
+                                    .build()
+                                    .into_element()
+                            }))
+                    )
+                    .item(
+                        El::new()
+                            .s(Width::fill())
+                    )
+                    .item(
+                        button()
+                            .label("Remove All")
+                            .left_icon(IconName::X)
+                            .variant(ButtonVariant::Destructive)
+                            .size(ButtonSize::Small)
+                            .on_press(|| zoon::println!("Remove All clicked"))
+                            .build()
+                    ),
+                Column::new()
+                    .s(Gap::new().y(2))
+                    .s(Padding::all(8))
+                    .item(
+                        Row::new()
+                            .s(Gap::new().x(8))
+                            .s(Align::new().center_y())
+                            .s(Padding::new().y(2))
+                            .item("⋮⋮")
+                            .item(
+                                El::new()
+                                    .s(Font::new().color(hsluv!(220, 10, 85)).size(13))
+                                    .child("LsuPlugin_logic_bus_rsp_payload_error")
+                            )
+                            .item("0")
+                            .item("❌")
+                            .item(
+                                El::new()
+                                    .s(Width::fill())
+                            )
+                            .item(
+                                El::new()
+                                    .s(Font::new().color(hsluv!(220, 10, 70)).size(12))
+                                    .child("14x2106624")
+                            )
+                    )
+                    .items((0..4).map(|i| {
+                        let var_names = [
+                            "LsuPlugin_logic_bus_rsp_payload_data",
+                            "io_writes_0_payload_data", 
+                            "logic_logic_onDebugCd_dmiStat_value_string",
+                            "clk"
+                        ];
+                        
+                        Row::new()
+                            .s(Gap::new().x(8))
+                            .s(Align::new().center_y())
+                            .s(Padding::new().y(2))
+                            .item("⋮⋮")
+                            .item(
+                                El::new()
+                                    .s(Font::new().color(hsluv!(220, 10, 85)).size(13))
+                                    .child(var_names[i as usize])
+                            )
+                            .item("0")
+                            .item("❌")
+                            .item(
+                                El::new()
+                                    .s(Width::fill())
+                            )
+                            .item(
+                                El::new()
+                                    .s(Font::new().color(hsluv!(220, 10, 70)).size(12))
+                                    .child("14x2106624")
+                            )
+                    }))
+            )
+        )
+}
+
 fn selected_variables_with_waveform_panel() -> impl Element {
     El::new()
         .s(Width::fill())
@@ -615,14 +935,24 @@ fn selected_variables_with_waveform_panel() -> impl Element {
                             .s(Width::fill())
                     )
                     .item(
-                        button()
-                            .label("Dock to Bottom")
-                            .left_icon(IconName::ArrowDownToLine)
-                            .variant(ButtonVariant::Outline)
-                            .size(ButtonSize::Small)
-                            .on_press(|| zoon::println!("Dock to Bottom clicked"))
-                            .align(Align::center())
-                            .build()
+                        El::new()
+                            .child_signal(IS_DOCKED_TO_BOTTOM.signal().map(|is_docked| {
+                                button()
+                                    .label(if is_docked { "Dock to Right" } else { "Dock to Bottom" })
+                                    .left_icon(IconName::ArrowDownToLine)
+                                    .variant(ButtonVariant::Outline)
+                                    .size(ButtonSize::Small)
+                                    .on_press(|| {
+                                        zoon::println!("BUTTON CLICKED!");
+                                        let old_value = IS_DOCKED_TO_BOTTOM.get();
+                                        IS_DOCKED_TO_BOTTOM.update(|is_docked| !is_docked);
+                                        let new_value = IS_DOCKED_TO_BOTTOM.get();
+                                        zoon::println!("Toggled IS_DOCKED_TO_BOTTOM from {} to {}", old_value, new_value);
+                                    })
+                                    .align(Align::center())
+                                    .build()
+                                    .into_element()
+                            }))
                     )
                     .item(
                         El::new()
@@ -637,205 +967,137 @@ fn selected_variables_with_waveform_panel() -> impl Element {
                             .on_press(|| zoon::println!("Remove All clicked"))
                             .build()
                     ),
+                // 3-column table layout: Variable Name | Value | Waveform
                 Column::new()
                     .s(Gap::new().y(0))
+                    .s(Padding::all(8))
                     .item(
-                        // Selected variables list
-                        Column::new()
-                            .s(Gap::new().y(2))
-                            .s(Padding::all(8))
+                        // Timeline header
+                        Row::new()
+                            .s(Gap::new().x(0))
+                            .s(Align::new().center_y())
+                            .s(Padding::new().y(4))
                             .item(
+                                // Variable Name column header
+                                El::new()
+                                    .s(Width::exact(250))
+                                    .s(Font::new().color(hsluv!(220, 10, 60)).size(12))
+                                    .child("Variable")
+                            )
+                            .item(
+                                // Value column header  
+                                El::new()
+                                    .s(Width::exact(60))
+                                    .s(Font::new().color(hsluv!(220, 10, 60)).size(12))
+                                    .child("Value")
+                            )
+                            .item(
+                                // Timeline markers for waveform column
                                 Row::new()
-                                    .s(Gap::new().x(8))
-                                    .s(Align::new().center_y())
-                                    .s(Padding::new().y(2))
-                                    .item("⋮⋮")
+                                    .s(Width::fill())
+                                    .s(Gap::new().x(40))
+                                    .s(Padding::new().x(10))
                                     .item(
                                         El::new()
-                                            .s(Font::new().color(hsluv!(220, 10, 85)).size(13))
-                                            .child("LsuPlugin_logic_bus_rsp_payload_error")
-                                    )
-                                    .item("0")
-                                    .item("❌")
-                                    .item(
-                                        El::new()
-                                            .s(Width::fill())
+                                            .s(Font::new().color(hsluv!(220, 10, 60)).size(12))
+                                            .child("0s")
                                     )
                                     .item(
                                         El::new()
-                                            .s(Font::new().color(hsluv!(220, 10, 70)).size(12))
-                                            .child("14x2106624")
+                                            .s(Font::new().color(hsluv!(220, 10, 60)).size(12))
+                                            .child("10s")
+                                    )
+                                    .item(
+                                        El::new()
+                                            .s(Font::new().color(hsluv!(220, 10, 60)).size(12))
+                                            .child("20s")
+                                    )
+                                    .item(
+                                        El::new()
+                                            .s(Font::new().color(hsluv!(220, 10, 60)).size(12))
+                                            .child("30s")
+                                    )
+                                    .item(
+                                        El::new()
+                                            .s(Font::new().color(hsluv!(220, 10, 60)).size(12))
+                                            .child("40s")
+                                    )
+                                    .item(
+                                        El::new()
+                                            .s(Font::new().color(hsluv!(220, 10, 60)).size(12))
+                                            .child("50s")
+                                    )
+                                    .item(
+                                        El::new()
+                                            .s(Font::new().color(hsluv!(220, 10, 60)).size(12))
+                                            .child("60s")
                                     )
                             )
-                            // Add more variable rows...
-                            .items((0..8).map(|i| {
-                                let var_names = [
-                                    "LsuPlugin_logic_bus_rsp_payload_data",
-                                    "io_writes_0_payload_data", 
-                                    "LsuPlugin_logic_bus_rsp_payload_data",
-                                    "logic_logic_onDebugCd_dmiStat_value_string",
-                                    "LsuPlugin_logic_bus_rsp_payload_error",
-                                    "LsuPlugin_logic_bus_rsp_payload_data",
-                                    "io_writes_0_payload_data",
-                                    "final_var"
-                                ];
-                                
+                    )
+                    .items((0..8).map(|i| {
+                        let var_names = [
+                            "LsuPlugin_logic_bus_rsp_payload_error",
+                            "LsuPlugin_logic_bus_rsp_payload_data",
+                            "io_writes_0_payload_data", 
+                            "logic_logic_onDebugCd_dmiStat_value_string",
+                            "LsuPlugin_logic_bus_rsp_payload_error",
+                            "LsuPlugin_logic_bus_rsp_payload_data",
+                            "io_writes_0_payload_data",
+                            "clk"
+                        ];
+                        
+                        let values = ["0", "14x2106624", "0", "success", "0", "14x2106624", "0", "1"];
+                        
+                        // Each row: Variable Name | Value | Waveform
+                        Row::new()
+                            .s(Gap::new().x(0))
+                            .s(Align::new().center_y())
+                            .s(Padding::new().y(1))
+                            .item(
+                                // Variable Name column (250px width)
                                 Row::new()
+                                    .s(Width::exact(250))
                                     .s(Gap::new().x(8))
                                     .s(Align::new().center_y())
-                                    .s(Padding::new().y(2))
                                     .item("⋮⋮")
                                     .item(
                                         El::new()
                                             .s(Font::new().color(hsluv!(220, 10, 85)).size(13))
                                             .child(var_names[i as usize])
                                     )
-                                    .item("0")
                                     .item("❌")
-                                    .item(
-                                        El::new()
-                                            .s(Width::fill())
-                                    )
-                                    .item(
-                                        El::new()
-                                            .s(Font::new().color(hsluv!(220, 10, 70)).size(12))
-                                            .child("14x2106624")
-                                    )
-                            }))
-                    )
-                    .item(
-                        // Waveform display area
-                        Column::new()
-                            .s(Gap::new().y(4))
-                            .s(Padding::all(8))
-                            .s(Background::new().color(hsluv!(220, 15, 8)))
-                            .item(
-                                // Timeline
-                                Row::new()
-                                    .s(Gap::new().x(40))
-                                    .s(Padding::new().x(50))
-                                    .item(
-                                        El::new()
-                                            .s(Font::new().color(hsluv!(220, 10, 60)).size(12))
-                                            .child("0 s")
-                                    )
-                                    .item(
-                                        El::new()
-                                            .s(Font::new().color(hsluv!(220, 10, 60)).size(12))
-                                            .child("10 s")
-                                    )
-                                    .item(
-                                        El::new()
-                                            .s(Font::new().color(hsluv!(220, 10, 60)).size(12))
-                                            .child("20 s")
-                                    )
-                                    .item(
-                                        El::new()
-                                            .s(Font::new().color(hsluv!(220, 10, 60)).size(12))
-                                            .child("30 s")
-                                    )
-                                    .item(
-                                        El::new()
-                                            .s(Font::new().color(hsluv!(220, 10, 60)).size(12))
-                                            .child("40 s")
-                                    )
-                                    .item(
-                                        El::new()
-                                            .s(Font::new().color(hsluv!(220, 10, 60)).size(12))
-                                            .child("50 s")
-                                    )
-                                    .item(
-                                        El::new()
-                                            .s(Font::new().color(hsluv!(220, 10, 60)).size(12))
-                                            .child("60 s")
-                                    )
                             )
                             .item(
-                                // Waveform visualization with blue rectangles
+                                // Value column (60px width)
                                 El::new()
-                                    .s(Height::exact(200))
-                                    .s(Width::fill())
-                                    .s(Background::new().color(hsluv!(220, 15, 6)))
-                                    .s(RoundedCorners::all(4))
-                                    .s(Padding::all(8))
-                                    .child(
-                                        Column::new()
-                                            .s(Gap::new().y(1))
-                                            .items((0..9).map(|i| {
-                                                Row::new()
-                                                    .s(Gap::new().x(1))
-                                                    .s(Height::exact(20))
-                                                    .s(Width::fill())
-                                                    .items((0..12).map(|j| {
-                                                        El::new()
-                                                            .s(Width::fill())
-                                                            .s(Height::exact(18))
-                                                            .s(Background::new().color(
-                                                                if (i + j) % 3 == 0 {
-                                                                    hsluv!(220, 80, 55) // Bright blue
-                                                                } else if (i + j) % 2 == 0 {
-                                                                    hsluv!(220, 60, 45) // Medium blue  
-                                                                } else {
-                                                                    hsluv!(220, 15, 8) // Dark background
-                                                                }
-                                                            ))
-                                                            .s(RoundedCorners::all(2))
-                                                    }))
-                                            }))
-                                    )
+                                    .s(Width::exact(60))
+                                    .s(Font::new().color(hsluv!(220, 10, 75)).size(13))
+                                    .child(values[i as usize])
                             )
                             .item(
-                                // Bottom controls
+                                // Waveform column (fills remaining width)
                                 Row::new()
-                                    .s(Gap::new().x(10))
-                                    .s(Align::center())
-                                    .item(
-                                        El::new()
-                                            .s(Font::new().color(hsluv!(220, 10, 70)).size(12))
-                                            .child("W")
-                                    )
-                                    .item("@")
-                                    .item(
-                                        El::new()
-                                            .s(Font::new().color(hsluv!(220, 10, 70)).size(12))
-                                            .child("100")
-                                    )
-                                    .item("%")
-                                    .item("⬛")
-                                    .item(
-                                        El::new()
-                                            .s(Font::new().color(hsluv!(220, 10, 70)).size(12))
-                                            .child("S")
-                                    )
-                                    .item(
+                                    .s(Width::fill())
+                                    .s(Height::exact(20))
+                                    .s(Gap::new().x(1))
+                                    .s(Padding::new().x(10))
+                                    .items((0..12).map(|j| {
                                         El::new()
                                             .s(Width::fill())
-                                    )
-                                    .item(
-                                        El::new()
-                                            .s(Font::new().color(hsluv!(220, 10, 70)).size(12))
-                                            .child("A")
-                                    )
-                                    .item("◀")
-                                    .item(
-                                        El::new()
-                                            .s(Font::new().color(hsluv!(220, 10, 70)).size(12))
-                                            .child("55")
-                                    )
-                                    .item("/")
-                                    .item(
-                                        El::new()
-                                            .s(Font::new().color(hsluv!(220, 10, 70)).size(12))
-                                            .child("88 s")
-                                    )
-                                    .item("▶")
-                                    .item(
-                                        El::new()
-                                            .s(Font::new().color(hsluv!(220, 10, 70)).size(12))
-                                            .child("D")
-                                    )
+                                            .s(Height::exact(18))
+                                            .s(Background::new().color(
+                                                if (i + j) % 3 == 0 {
+                                                    hsluv!(220, 80, 55) // Bright blue
+                                                } else if (i + j) % 2 == 0 {
+                                                    hsluv!(220, 60, 45) // Medium blue  
+                                                } else {
+                                                    hsluv!(220, 15, 8) // Dark background
+                                                }
+                                            ))
+                                            .s(RoundedCorners::all(2))
+                                    }))
                             )
-                    )
+                    }))
             )
         )
 }
@@ -851,12 +1113,22 @@ fn selected_panel() -> impl Element {
                         Text::new("Selected Variables")
                     )
                     .item(
-                        button()
-                            .label("Dock to Bottom")
-                            .variant(ButtonVariant::Outline)
-                            .size(ButtonSize::Small)
-                            .on_press(|| zoon::println!("Dock to Bottom clicked"))
-                            .build()
+                        El::new()
+                            .child_signal(IS_DOCKED_TO_BOTTOM.signal().map(|is_docked| {
+                                button()
+                                    .label(if is_docked { "Dock to Right" } else { "Dock to Bottom" })
+                                    .variant(ButtonVariant::Outline)
+                                    .size(ButtonSize::Small)
+                                    .on_press(|| {
+                                        zoon::println!("BUTTON CLICKED!");
+                                        let old_value = IS_DOCKED_TO_BOTTOM.get();
+                                        IS_DOCKED_TO_BOTTOM.update(|is_docked| !is_docked);
+                                        let new_value = IS_DOCKED_TO_BOTTOM.get();
+                                        zoon::println!("Toggled IS_DOCKED_TO_BOTTOM from {} to {}", old_value, new_value);
+                                    })
+                                    .build()
+                                    .into_element()
+                            }))
                     ),
                 Column::new()
                     .s(Gap::new().y(8))

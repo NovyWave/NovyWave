@@ -53,7 +53,9 @@ public/       - Static assets (fonts: FiraCode, Inter family)
 - Use `zoon::println!()` for console logging, NOT `std::println!()` (which does nothing in WASM)
 - All frontend code compiles to WebAssembly and runs in browser environment
 - **Development Workflow:** 
-  - Run `makers start` as BACKGROUND PROCESS - needed for checking compilation errors and auto-reload
+  - **BEST PRACTICE:** Run `makers start > dev_server.log 2>&1 &` as BACKGROUND PROCESS with output logging
+  - Monitor compilation with `tail -f dev_server.log` or read file content periodically
+  - This allows Claude to see compilation errors immediately without managing terminal processes
   - Auto-reload ONLY triggers after successful compilation
   - Always test changes with browser MCP after making changes to verify compilation succeeded
   - Read compilation errors from the running command output, don't restart it repeatedly
@@ -83,6 +85,16 @@ public/       - Static assets (fonts: FiraCode, Inter family)
 - `tauri.conf.json` - Tauri app configuration (window size 800x600, build commands)
 - `Makefile.toml` - Task runner configuration with all development commands
 - `.mcp.json` - MCP server configuration with memory storage at `novywave/ai-memory.json`
+
+## NovyUI Component Library
+
+**Icon Design Tokens:**
+- ALL components use `IconName` enum tokens, never magic strings
+- Button: `button().left_icon(IconName::Folder)` 
+- Input: `input().left_icon(IconName::Search)`
+- Available icons: Check, X, Folder, Search, ArrowDownToLine, ZoomIn, ZoomOut, etc.
+- Adding new icons requires: enum entry, to_kebab_case() mapping, SVG file mapping, string parsing
+- Icon registry provides compile-time safety and IDE autocompletion
 
 ## MCP Server Configuration
 
