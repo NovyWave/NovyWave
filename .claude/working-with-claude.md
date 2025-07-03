@@ -19,11 +19,11 @@ This guide explains how to work efficiently with Claude Code in the NovyWave pro
 ### Understanding the Focused Memory Structure
 The system maintains 5 focused entities for maximum productivity:
 
-- **`current_session_state`** - What you're working on right now
-- **`recent_solutions`** - Last bug fixes (don't repeat these mistakes)
-- **`active_blockers`** - Current issues blocking progress  
-- **`daily_patterns`** - Essential rules to remember (5 max)
-- **`next_steps`** - Immediate actions to take
+- **`current_session_state`** - What you're working on right now (1 item, overwrites)
+- **`recent_solutions`** - Last bug fixes (don't repeat these mistakes) (5 max, smart archiving)
+- **`active_blockers`** - Current issues blocking progress (5 max, resolved → recent_solutions)
+- **`daily_patterns`** - Essential rules to remember (5 max, all archived to comprehensive storage)
+- **`next_steps`** - Immediate actions to take (5 max, enhanced TODO/Plan prefixes)
 
 ### Why Focus Context File Exists
 Instead of overwhelming Claude with comprehensive project data, the focus context provides exactly what's needed for productivity:
@@ -36,7 +36,22 @@ Instead of overwhelming Claude with comprehensive project data, the focus contex
 
 ## 📋 Available Slash Commands
 
-### When to Use Each Command
+### Development Commands
+
+#### `/start`
+**Start development server:**
+- Compiles Rust/WASM frontend and starts MoonZoon server
+- Waits for successful compilation before opening browser
+- Shows current server status if already running
+- Opens browser at http://localhost:8080
+
+#### `/stop`
+**Stop development server:**
+- Reliably kills all makers, mzoon, and backend processes
+- Frees port 8080 and cleans up dev_server.log
+- Shows confirmation of complete shutdown
+
+### Memory Management Commands
 
 #### `/focus` 
 **Display current productivity context:**
@@ -45,12 +60,18 @@ Instead of overwhelming Claude with comprehensive project data, the focus contex
 - Read-only overview of what you need to be productive
 
 #### `/note "description"`
-**Add discoveries to focused entities:**
+**Add discoveries to focused entities with smart archiving:**
 - Bug fixes: `/note "Fixed compilation by adding mut self"` → recent_solutions
 - Essential patterns: `/note "Always use Width::fill()"` → daily_patterns  
 - Work updates: `/note "Working on panel resize"` → current_session_state
 - Blockers: `/note "Blocked by missing Timeline component"` → active_blockers
-- Planning: `/note "Next: implement drag-and-drop"` → next_steps
+- Planning: `/note "TODO: test focus command"` → next_steps (enhanced to "Test focus command functionality")
+
+**Smart Archiving:** When entities reach 5 observations:
+- `daily_patterns` → archived to `comprehensive_development_patterns`
+- `recent_solutions` → important ones to `comprehensive_solutions`
+- `active_blockers` → resolved ones to `resolved_blockers`
+- `next_steps` → completed ones to `completed_tasks`
 
 #### `/memory-search [term]`
 **Search Memory MCP for specific patterns:**
@@ -62,7 +83,7 @@ Instead of overwhelming Claude with comprehensive project data, the focus contex
 #### `/memory-cleanup`
 **Monthly maintenance:**
 - Optimizes Memory MCP entities (removes outdated observations)
-- Keeps focused entities clean with 3-5 observations max
+- Keeps focused entities clean with 5 observations max
 - Archives old patterns that are no longer relevant
 
 ## 🚀 Optimal Claude Code Workflow
@@ -154,10 +175,11 @@ Instead of overwhelming Claude with comprehensive project data, the focus contex
 ## 📊 Current System Status
 
 **Focused Productivity System:**
-- CLAUDE.md: 74 lines with automatic memory update rules
-- Memory entities: 5 focused entities (current_session_state, recent_solutions, active_blockers, daily_patterns, next_steps)
+- CLAUDE.md: Automatic memory update rules with smart archiving
+- Memory entities: 5 focused entities (5 observations max each) + comprehensive archives
 - AI documentation: 7 organized files in .claude/ai-docs/
 - Automation: PostToolUse hook triggers after Memory MCP usage
 - Context: Focused 30-line productivity overview, not comprehensive data dump
+- Commands: /start, /stop for development; /focus, /note, /memory-search, /memory-cleanup for memory
 
 The system is designed to keep you productive by providing exactly what you need to know right now, not everything that could possibly be relevant. Just code, ask questions, and store discoveries - the focus context maintains itself automatically.
