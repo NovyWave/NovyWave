@@ -15,29 +15,21 @@ Lightning-fast work-in-progress saves for rapid iteration without thinking about
 
 ## Your Task
 
-### Ultra-Fast Checkpoint Workflow:
+**Execute this single command:**
+```bash
+git add . && \
+if [ "$(git log -1 --pretty=format:'%s')" = "CHECKPOINT" ]; then \
+  git commit --amend --no-edit && echo "✅ Updated CHECKPOINT"; \
+else \
+  git commit -m "CHECKPOINT" && echo "✅ Created CHECKPOINT"; \
+fi
+```
 
-1. **Check Last Commit:**
-   - Run `git log -1 --pretty=format:"%s"` to get last commit message
-
-2. **Checkpoint Logic:**
-   
-   **If last commit ≠ "CHECKPOINT":**
-   - Stage all changes: `git add .`
-   - Create new checkpoint: `git commit -m "CHECKPOINT"`
-   - Show: "✅ Created CHECKPOINT"
-
-   **If last commit = "CHECKPOINT":**
-   - Stage all changes: `git add .`  
-   - Amend to existing: `git commit --amend --no-edit`
-   - Show: "✅ Updated CHECKPOINT"
-
-3. **No Analysis:**
-   - No diff analysis
-   - No scope checking
-   - No conventional commit formatting
-   - No user confirmation
-   - Just fast, reliable saves
+**Logic:**
+- Always stage all changes first
+- If last commit is "CHECKPOINT": amend it
+- If last commit is not "CHECKPOINT": create new one
+- Fast, atomic operation with no analysis
 
 ## Examples
 

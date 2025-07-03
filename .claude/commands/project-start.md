@@ -1,24 +1,29 @@
 ---
 allowed-tools: Bash(*), mcp__browsermcp__browser_navigate
-description: Start NovyWave development server with auto-reload
+description: Start NovyWave development server (fast startup)
 ---
-
-## Current Status
-- Check server status: !`pgrep -f "makers start" > /dev/null 2>&1 && echo "Running" || echo "Stopped"`
-- Port 8080 status: !`netstat -tlnp 2>/dev/null | grep :8080 | awk '{print $7}' | cut -d'/' -f2 || echo "free"`
 
 ## Your Task
 Start the NovyWave development server:
 
-1. **If already running**: Just open browser at http://localhost:8080
-2. **If not running**: 
-   - Clean up old log: `rm -f dev_server.log`
-   - Start server: `makers start > dev_server.log 2>&1 &`
-   - Wait for compilation success (check for "Server is running on" in log)
-   - Open browser at http://localhost:8080 when ready
+**Simple start logic:**
+```bash
+if [ -f .novywave.pid ] && kill -0 $(cat .novywave.pid) 2>/dev/null; then
+  echo "Server already running (PID: $(cat .novywave.pid))"
+  # Extract URLs from log and show them
+else
+  rm -f dev_server.log
+  makers start > dev_server.log 2>&1 & echo $! > .novywave.pid
+  sleep 5 && cat dev_server.log
+  # Show server output with QR code
+fi
+```
 
-## Important Notes
-- Server compiles Rust/WASM frontend with MoonZoon
+**Open browser when ready:**
+- Extract URL from log and navigate to it
+- Show mobile URL and QR code in summary
+
+## Notes
+- Uses PID file (.novywave.pid) for reliable process tracking
+- Shows complete QR code and URLs from server log
 - Auto-reload enabled for development
-- Use `tail -f dev_server.log` to monitor compilation
-- Stop with `/stop` command

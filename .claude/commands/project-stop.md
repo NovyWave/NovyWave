@@ -1,31 +1,41 @@
 ---
 allowed-tools: Bash(*)
-description: Stop NovyWave development server and clean up resources
+description: Stop NovyWave development server (fast shutdown)
 ---
-
-## Current Status
-- Makers processes: !`pgrep -f "makers start" | wc -l`
-- Mzoon processes: !`pgrep -f "mzoon" | wc -l`
-- Port 8080 usage: !`netstat -tlnp 2>/dev/null | grep :8080 | awk '{print $7}' | cut -d'/' -f2 || echo "free"`
 
 ## Your Task
 Stop the NovyWave development server:
 
-1. **Kill all related processes**:
-   - `pkill -f "makers start"`
-   - `pkill -f "mzoon"`
-   - Kill any process using port 8080
+**Kill only our server processes:**
+```bash
+if [ -f .novywave.pid ]; then
+  PID=$(cat .novywave.pid)
+  # Find all child processes of our PID
+  CHILDREN=$(pgrep -P $PID)
+  if [ -n "$CHILDREN" ]; then
+    # Kill children first (mzoon, backend)
+    for CHILD in $CHILDREN; do
+      GRANDCHILDREN=$(pgrep -P $CHILD)
+      [ -n "$GRANDCHILDREN" ] && kill -9 $GRANDCHILDREN 2>/dev/null || true
+      kill -9 $CHILD 2>/dev/null || true
+    done
+  fi
+  # Kill the parent process
+  kill -9 $PID 2>/dev/null || true
+  echo "Server process tree stopped"
+  rm -f .novywave.pid
+else
+  echo "No .novywave.pid file - server not managed by project commands"
+  PORT=$(grep "^port = " MoonZoon.toml | head -1 | cut -d' ' -f3)
+  if lsof -i:$PORT >/dev/null 2>&1; then
+    echo "Warning: Something is still using port $PORT"
+    echo "Run 'lsof -i:$PORT' to see what process it is"
+  fi
+fi
+```
 
-2. **Clean up resources**:
-   - Remove `dev_server.log` if it exists
-   - Wait 2 seconds, then force kill any remaining processes
-
-3. **Verify shutdown**:
-   - Check no makers/mzoon processes remain
-   - Confirm port 8080 is free
-   - Show final status
-
-## Important Notes
-- Use graceful shutdown first, then force kill if needed
-- Always verify complete shutdown
-- Clean up log files to prevent confusion
+## Notes
+- Uses PID file (.novywave.pid) for reliable process tracking
+- Only kills processes started by project commands
+- Handles manual/orphaned processes safely by asking user
+- No log file removal - preserves development history

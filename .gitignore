@@ -22,6 +22,9 @@ frontend_dist/_api
 frontend_dist/index.html
 mzoon
 
+# Development server PID file
+.novywave.pid
+
 # Tauri files
 tauri
 
