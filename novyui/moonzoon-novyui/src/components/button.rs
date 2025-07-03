@@ -33,6 +33,7 @@ pub struct ButtonBuilder {
     left_icon: Option<&'static str>,
     left_icon_element: Option<Box<dyn Fn() -> RawElOrText>>,
     right_icon: Option<&'static str>,
+    right_icon_element: Option<Box<dyn Fn() -> RawElOrText>>,
     left_icon_aria_label: Option<String>,
     right_icon_aria_label: Option<String>,
     on_press: Option<Box<dyn Fn()>>,
@@ -51,6 +52,7 @@ impl ButtonBuilder {
             left_icon: None,
             left_icon_element: None,
             right_icon: None,
+            right_icon_element: None,
             left_icon_aria_label: None,
             right_icon_aria_label: None,
             on_press: None,
@@ -100,6 +102,12 @@ impl ButtonBuilder {
         self
     }
 
+    pub fn right_icon_element(mut self, element_fn: impl Fn() -> RawElOrText + 'static) -> Self {
+        self.right_icon_element = Some(Box::new(element_fn));
+        self.right_icon = None; // Clear static icon when using dynamic element
+        self
+    }
+
     pub fn left_icon_aria_label(mut self, label: impl Into<String>) -> Self {
         self.left_icon_aria_label = Some(label.into());
         self
@@ -142,7 +150,7 @@ impl ButtonBuilder {
         };
 
         // Determine if this is an icon-only button
-        let is_icon_only = self.label.is_none() && (self.left_icon.is_some() || self.left_icon_element.is_some() || self.right_icon.is_some());
+        let is_icon_only = self.label.is_none() && (self.left_icon.is_some() || self.left_icon_element.is_some() || self.right_icon.is_some() || self.right_icon_element.is_some());
 
         // Adjust padding for icon-only buttons
         let (final_padding_x, final_padding_y) = if is_icon_only {
@@ -350,10 +358,24 @@ impl ButtonBuilder {
         }
     }
 
+    fn create_right_icon_element(&self, icon_size: IconSize) -> RawElOrText {
+        if let Some(element_fn) = &self.right_icon_element {
+            element_fn()
+        } else if let Some(icon_name) = self.right_icon {
+            icon_str(icon_name)
+                .size(icon_size)
+                .color(IconColor::Current)
+                .build()
+                .unify()
+        } else {
+            panic!("create_right_icon_element called when no right icon is set")
+        }
+    }
+
     fn create_button_content(&self, icon_size: IconSize) -> RawElOrText {
         let has_label = self.label.is_some();
         let has_left_icon = self.left_icon.is_some() || self.left_icon_element.is_some();
-        let has_right_icon = self.right_icon.is_some();
+        let has_right_icon = self.right_icon.is_some() || self.right_icon_element.is_some();
         let loading = self.loading;
 
         // If loading, show spinner instead of normal content
@@ -367,11 +389,7 @@ impl ButtonBuilder {
                 self.create_left_icon_element(icon_size)
             }
             (false, false, true) => {
-                icon_str(self.right_icon.unwrap())
-                    .size(icon_size)
-                    .color(IconColor::Current)
-                    .build()
-                    .unify()
+                self.create_right_icon_element(icon_size)
             }
             // Both icons, no label (rare case)
             (true, false, true) => {
@@ -382,10 +400,7 @@ impl ButtonBuilder {
                         self.create_left_icon_element(icon_size)
                     )
                     .item(
-                        icon_str(self.right_icon.unwrap())
-                            .size(icon_size)
-                            .color(IconColor::Current)
-                            .build()
+                        self.create_right_icon_element(icon_size)
                     )
                     .unify()
             }
@@ -415,10 +430,7 @@ impl ButtonBuilder {
                             .child(Text::new(self.label.as_ref().unwrap()))
                     )
                     .item(
-                        icon_str(self.right_icon.unwrap())
-                            .size(icon_size)
-                            .color(IconColor::Current)
-                            .build()
+                        self.create_right_icon_element(icon_size)
                     )
                     .unify()
             }
@@ -436,10 +448,7 @@ impl ButtonBuilder {
                             .child(Text::new(self.label.as_ref().unwrap()))
                     )
                     .item(
-                        icon_str(self.right_icon.unwrap())
-                            .size(icon_size)
-                            .color(IconColor::Current)
-                            .build()
+                        self.create_right_icon_element(icon_size)
                     )
                     .unify()
             }

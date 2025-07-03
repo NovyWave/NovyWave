@@ -1,41 +1,32 @@
 ---
 allowed-tools: Bash(*)
-description: Stop NovyWave development server (fast shutdown)
+description: Stop NovyWave development server (brutal shutdown)
 ---
 
-## Your Task
-Stop the NovyWave development server:
+Stop NovyWave development server brutally and clean up files.
 
-**Kill only our server processes:**
 ```bash
-if [ -f .novywave.pid ]; then
-  PID=$(cat .novywave.pid)
-  # Find all child processes of our PID
-  CHILDREN=$(pgrep -P $PID)
-  if [ -n "$CHILDREN" ]; then
-    # Kill children first (mzoon, backend)
-    for CHILD in $CHILDREN; do
-      GRANDCHILDREN=$(pgrep -P $CHILD)
-      [ -n "$GRANDCHILDREN" ] && kill -9 $GRANDCHILDREN 2>/dev/null || true
-      kill -9 $CHILD 2>/dev/null || true
+echo "Stopping NovyWave development server..."
+
+# Read port from MoonZoon.toml and kill process using that port
+PORT=$(grep "^port = " MoonZoon.toml | head -1 | cut -d' ' -f3)
+if [ -n "$PORT" ]; then
+    # Handle multiple PIDs returned by lsof (space-separated)
+    for PID in $(lsof -ti:$PORT 2>/dev/null); do
+        kill -9 $PID 2>/dev/null && echo "Killed process $PID using port $PORT"
     done
-  fi
-  # Kill the parent process
-  kill -9 $PID 2>/dev/null || true
-  echo "Server process tree stopped"
-  rm -f .novywave.pid
-else
-  echo "No .novywave.pid file - server not managed by project commands"
-  PORT=$(grep "^port = " MoonZoon.toml | head -1 | cut -d' ' -f3)
-  if lsof -i:$PORT >/dev/null 2>&1; then
-    echo "Warning: Something is still using port $PORT"
-    echo "Run 'lsof -i:$PORT' to see what process it is"
-  fi
 fi
+
+# Kill all related processes directly
+pkill -9 -f "makers" || true
+pkill -9 -f "mzoon" || true
+
+# Remove log file
+rm -f dev_server.log
+echo "Removed dev_server.log"
+
+echo "Server stopped brutally"
+exit 0
 ```
 
-## Notes
-- Uses PID file (.novywave.pid) for reliable process tracking
-- Only kills processes started by project commands
-- Handles manual/orphaned processes safely by asking user
-- No log file removal - preserves development history
+Simple and brutal: kill all processes, remove files.
