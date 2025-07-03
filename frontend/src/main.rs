@@ -843,7 +843,21 @@ fn selected_variables_panel() -> impl Element {
                             .child_signal(IS_DOCKED_TO_BOTTOM.signal().map(|is_docked| {
                                 button()
                                     .label(if is_docked { "Dock to Right" } else { "Dock to Bottom" })
-                                    .left_icon(IconName::ArrowDownToLine)
+                                    .left_icon_element(|| {
+                                        El::new()
+                                            .child_signal(IS_DOCKED_TO_BOTTOM.signal().map(|is_docked| {
+                                                let icon_el = icon(IconName::ArrowDownToLine).size(IconSize::Small).build();
+                                                if is_docked {
+                                                    El::new()
+                                                        .s(Transform::new().rotate(-90))
+                                                        .child(icon_el)
+                                                        .into_element()
+                                                } else {
+                                                    El::new().child(icon_el).into_element()
+                                                }
+                                            }))
+                                            .unify()
+                                    })
                                     .variant(ButtonVariant::Outline)
                                     .size(ButtonSize::Small)
                                     .on_press(|| {
@@ -950,7 +964,21 @@ fn selected_variables_with_waveform_panel() -> impl Element {
                             .child_signal(IS_DOCKED_TO_BOTTOM.signal().map(|is_docked| {
                                 button()
                                     .label(if is_docked { "Dock to Right" } else { "Dock to Bottom" })
-                                    .left_icon(IconName::ArrowDownToLine)
+                                    .left_icon_element(|| {
+                                        El::new()
+                                            .child_signal(IS_DOCKED_TO_BOTTOM.signal().map(|is_docked| {
+                                                let icon_el = icon(IconName::ArrowDownToLine).size(IconSize::Small).build();
+                                                if is_docked {
+                                                    El::new()
+                                                        .s(Transform::new().rotate(-90))
+                                                        .child(icon_el)
+                                                        .into_element()
+                                                } else {
+                                                    El::new().child(icon_el).into_element()
+                                                }
+                                            }))
+                                            .unify()
+                                    })
                                     .variant(ButtonVariant::Outline)
                                     .size(ButtonSize::Small)
                                     .on_press(|| {
@@ -1129,6 +1157,7 @@ fn selected_panel() -> impl Element {
                             .child_signal(IS_DOCKED_TO_BOTTOM.signal().map(|is_docked| {
                                 button()
                                     .label(if is_docked { "Dock to Right" } else { "Dock to Bottom" })
+                                    .left_icon(IconName::ArrowDownToLine)
                                     .variant(ButtonVariant::Outline)
                                     .size(ButtonSize::Small)
                                     .on_press(|| {

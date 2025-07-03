@@ -31,6 +31,7 @@ pub struct ButtonBuilder {
     disabled: bool,
     loading: bool,
     left_icon: Option<&'static str>,
+    left_icon_element: Option<Box<dyn Fn() -> RawElOrText>>,
     right_icon: Option<&'static str>,
     left_icon_aria_label: Option<String>,
     right_icon_aria_label: Option<String>,
@@ -48,6 +49,7 @@ impl ButtonBuilder {
             disabled: false,
             loading: false,
             left_icon: None,
+            left_icon_element: None,
             right_icon: None,
             left_icon_aria_label: None,
             right_icon_aria_label: None,
@@ -84,6 +86,12 @@ impl ButtonBuilder {
 
     pub fn left_icon(mut self, icon: IconName) -> Self {
         self.left_icon = Some(icon.to_kebab_case());
+        self
+    }
+
+    pub fn left_icon_element(mut self, element_fn: impl Fn() -> RawElOrText + 'static) -> Self {
+        self.left_icon_element = Some(Box::new(element_fn));
+        self.left_icon = None; // Clear static icon when using dynamic element
         self
     }
 
@@ -134,7 +142,7 @@ impl ButtonBuilder {
         };
 
         // Determine if this is an icon-only button
-        let is_icon_only = self.label.is_none() && (self.left_icon.is_some() || self.right_icon.is_some());
+        let is_icon_only = self.label.is_none() && (self.left_icon.is_some() || self.left_icon_element.is_some() || self.right_icon.is_some());
 
         // Adjust padding for icon-only buttons
         let (final_padding_x, final_padding_y) = if is_icon_only {
@@ -328,9 +336,23 @@ impl ButtonBuilder {
             })
     }
 
+    fn create_left_icon_element(&self, icon_size: IconSize) -> RawElOrText {
+        if let Some(element_fn) = &self.left_icon_element {
+            element_fn()
+        } else if let Some(icon_name) = self.left_icon {
+            icon_str(icon_name)
+                .size(icon_size)
+                .color(IconColor::Current)
+                .build()
+                .unify()
+        } else {
+            panic!("create_left_icon_element called when no left icon is set")
+        }
+    }
+
     fn create_button_content(&self, icon_size: IconSize) -> RawElOrText {
         let has_label = self.label.is_some();
-        let has_left_icon = self.left_icon.is_some();
+        let has_left_icon = self.left_icon.is_some() || self.left_icon_element.is_some();
         let has_right_icon = self.right_icon.is_some();
         let loading = self.loading;
 
@@ -342,11 +364,7 @@ impl ButtonBuilder {
         match (has_left_icon, has_label, has_right_icon) {
             // Icon-only buttons
             (true, false, false) => {
-                icon_str(self.left_icon.unwrap())
-                    .size(icon_size)
-                    .color(IconColor::Current)
-                    .build()
-                    .unify()
+                self.create_left_icon_element(icon_size)
             }
             (false, false, true) => {
                 icon_str(self.right_icon.unwrap())
@@ -361,10 +379,7 @@ impl ButtonBuilder {
                     .s(Align::new().center_y())
                     .s(Gap::new().x(SPACING_8))
                     .item(
-                        icon_str(self.left_icon.unwrap())
-                            .size(icon_size)
-                            .color(IconColor::Current)
-                            .build()
+                        self.create_left_icon_element(icon_size)
                     )
                     .item(
                         icon_str(self.right_icon.unwrap())
@@ -380,10 +395,7 @@ impl ButtonBuilder {
                     .s(Align::new().center_y())
                     .s(Gap::new().x(SPACING_8))
                     .item(
-                        icon_str(self.left_icon.unwrap())
-                            .size(icon_size)
-                            .color(IconColor::Current)
-                            .build()
+                        self.create_left_icon_element(icon_size)
                     )
                     .item(
                         El::new()
@@ -416,10 +428,7 @@ impl ButtonBuilder {
                     .s(Align::new().center_y())
                     .s(Gap::new().x(SPACING_8))
                     .item(
-                        icon_str(self.left_icon.unwrap())
-                            .size(icon_size)
-                            .color(IconColor::Current)
-                            .build()
+                        self.create_left_icon_element(icon_size)
                     )
                     .item(
                         El::new()
