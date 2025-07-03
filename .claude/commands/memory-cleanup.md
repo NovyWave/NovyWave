@@ -35,4 +35,10 @@ Optimize CLAUDE.md and Memory MCP for better context efficiency.
    - Remove temporary debugging info
    - Keep only persistent, actionable patterns
 
-**Result:** Faster session starts, better context efficiency, cleaner knowledge base
+4. **Temporary File Cleanup:**
+   - Review files in `.claude/tmp/` directory
+   - Archive completed planning documents
+   - Extract valuable insights to Memory MCP
+   - Remove outdated temporary files
+
+**Result:** Faster session starts, better context efficiency, cleaner knowledge base, organized workspace

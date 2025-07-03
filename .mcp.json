@@ -16,7 +16,7 @@
         "@modelcontextprotocol/server-memory"
       ],
       "env": {
-        "MEMORY_FILE_PATH": "/home/martinkavik/repos/NovyWave/ai-memory.json"
+        "MEMORY_FILE_PATH": "/home/martinkavik/repos/NovyWave/.claude/ai-memory.json"
       }
     }
   }

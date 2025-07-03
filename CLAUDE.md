@@ -47,10 +47,28 @@ public/       - Static assets
 - NEVER use `cargo build` or `cargo check` - only mzoon handles WASM properly
 - Auto-reload only triggers after successful compilation
 
-**Session Start Pattern:**
-- AUTOMATIC: Hook generates fresh context on first tool use
-- Context always available via @ai-docs/session-context.md import
-- Store solved bugs, new patterns, architectural decisions immediately in Memory MCP
+**Focused Productivity System:**
+- AUTOMATIC: Hook generates focused productivity context on Memory MCP usage
+- Context always available via @.claude/ai-docs/focus-context.md import
+- Shows: Current State, Recent Solutions, Active Blockers, Daily Patterns, Next Steps
+
+**Automatic Memory Updates:**
+- Update `current_session_state` when switching major tasks or focus areas
+- Add to `recent_solutions` immediately after fixing any bugs or compilation errors
+- Update `active_blockers` when encountering issues or when resolving existing ones
+- Add to `daily_patterns` when discovering essential rules or patterns to remember
+- Update `next_steps` when completing current tasks or planning immediate actions
+
+**Memory MCP Entity Focus:**
+- Keep focused entities with 3-5 observations maximum
+- Store discoveries immediately using focused entity types
+- Archive old observations to maintain productivity focus
+
+**Planning Documents & Temporary Files:**
+- Create planning documents in `.claude/tmp/` folder (not project root)
+- Extract key insights to Memory MCP entities for searchable storage
+- Use `/memory-cleanup` to review and clean temporary files periodically
+- Keep project root clean with only essential files
 
 **Component Usage:**
 - ALL icons use `IconName` enum tokens, never strings
@@ -59,10 +77,10 @@ public/       - Static assets
 
 ## Documentation
 
-@ai-docs/session-context.md
-@ai-docs/development-workflow.md
-@ai-docs/novyui-patterns.md  
-@ai-docs/zoon-framework-patterns.md
-@ai-docs/memory-best-practices.md
-@ai-docs/memory-mcp.md
-@ai-docs/browser-mcp.md
+@.claude/ai-docs/focus-context.md
+@.claude/ai-docs/development-workflow.md
+@.claude/ai-docs/novyui-patterns.md  
+@.claude/ai-docs/zoon-framework-patterns.md
+@.claude/ai-docs/memory-best-practices.md
+@.claude/ai-docs/memory-mcp.md
+@.claude/ai-docs/browser-mcp.md
