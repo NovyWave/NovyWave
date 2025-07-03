@@ -15,6 +15,7 @@ Based on the note content, select the appropriate entity:
 - **current_session_state**: Contains "working on", "focusing on", "implementing", "current"
 - **active_blockers**: Contains "blocked", "stuck", "issue", "problem", "can't"
 - **next_steps**: Contains "next", "todo", "plan", "test", "implement", "will"
+- **session_planning**: Contains "planning", "strategy", "analysis", "design", "approach", or is longer than 200 characters
 
 ### 2. Enhance Content (for next_steps only)
 
@@ -46,6 +47,10 @@ Before adding, check if the entity has 5 observations. If yes:
 1. If oldest task seems completed: Archive to `completed_tasks`
 2. Otherwise: Just remove it
 
+**For session_planning:**
+1. Archive oldest to `archived_planning`
+2. Planning always preserved, never deleted
+
 ### 4. Add New Observation
 
 Add the new (possibly enhanced) observation to the focused entity.
@@ -59,9 +64,10 @@ Show confirmation in format:
 
 ## Important
 - Never create new entities (except comprehensive archives)
-- Maintain exactly 5 observations per focused entity
+- Maintain exactly 5 observations per focused entity  
 - Preserve valuable patterns through smart archiving
 - current_session_state is special: only 1 observation (overwrite)
+- session_planning handles long-form content and complex analysis
 
 ## Quick Examples:
 

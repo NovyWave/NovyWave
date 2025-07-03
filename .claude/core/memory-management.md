@@ -6,7 +6,7 @@
 - Context always available via @.claude/ai-docs/focus-context.md import
 - Shows: Current State, Recent Solutions, Active Blockers, Daily Patterns, Next Steps
 
-## The 5 Focused Entities
+## The 6 Focused Entities
 
 **`current_session_state`** - What you're working on right now
 - Only 1 observation (overwrites previous)
@@ -33,6 +33,12 @@
 - Enhanced TODO/Plan prefixes for clarity
 - Completed tasks → `completed_tasks`
 
+**`session_planning`** - Long-form planning and analysis
+- Keep 5 observations maximum
+- Store detailed planning, design decisions, strategy analysis
+- Use for complex planning that needs persistence across sessions
+- Archived to `archived_planning` when limit reached
+
 ## Automatic Memory Updates
 
 Update entities immediately when:
@@ -41,6 +47,7 @@ Update entities immediately when:
 - Finding patterns → daily_patterns
 - Encountering blockers → active_blockers
 - Planning actions → next_steps
+- Complex planning → session_planning
 
 ## Smart Archiving Rules
 
@@ -63,6 +70,10 @@ When entities reach 5 observations:
 - Completed → `completed_tasks`
 - Outdated → deleted
 
+**session_planning** → Planning archival
+- Archived → `archived_planning`
+- Outdated planning → deleted during cleanup
+
 ## Memory MCP Best Practices
 
 - Keep focused entities with 5 observations maximum
@@ -70,9 +81,10 @@ When entities reach 5 observations:
 - Archive old observations to maintain productivity focus
 - Never create new entities (except comprehensive archives)
 
-## Planning Documents & Temporary Files
+## Planning and Analysis
 
-- Create planning documents in `.claude/tmp/` folder (not project root)
-- Extract key insights to Memory MCP entities for searchable storage
-- Use `/memory-cleanup` to review and clean temporary files periodically
-- Keep project root clean with only essential files
+- Store all planning in Memory MCP using `session_planning` entity
+- Use `/core-note` for both short insights and long-form planning
+- Complex analysis and design decisions go in `session_planning`
+- All planning is searchable and persistent across sessions
+- No temporary files needed - Memory MCP handles everything

@@ -17,13 +17,14 @@ This guide explains how to work efficiently with Claude Code in the NovyWave pro
 4. **Auto Updates:** CLAUDE.md rules guide automatic memory updates
 
 ### Understanding the Focused Memory Structure
-The system maintains 5 focused entities for maximum productivity:
+The system maintains 6 focused entities for maximum productivity:
 
 - **`current_session_state`** - What you're working on right now (1 item, overwrites)
 - **`recent_solutions`** - Last bug fixes (don't repeat these mistakes) (5 max, smart archiving)
 - **`active_blockers`** - Current issues blocking progress (5 max, resolved → recent_solutions)
 - **`daily_patterns`** - Essential rules to remember (5 max, all archived to comprehensive storage)
 - **`next_steps`** - Immediate actions to take (5 max, enhanced TODO/Plan prefixes)
+- **`session_planning`** - Long-form planning and analysis (5 max, archived to archived_planning)
 
 ### Why Focus Context File Exists
 Instead of overwhelming Claude with comprehensive project data, the focus context provides exactly what's needed for productivity:
@@ -178,7 +179,7 @@ Instead of overwhelming Claude with comprehensive project data, the focus contex
 
 **Focused Productivity System:**
 - CLAUDE.md: Modular import structure with core/framework/project separation
-- Memory entities: 5 focused entities (5 observations max each) + comprehensive archives
+- Memory entities: 6 focused entities (5 observations max each) + comprehensive archives
 - AI documentation: Organized in modular .claude/ structure
 - Automation: PostToolUse hook triggers after Memory MCP usage
 - Context: Focused 30-line productivity overview, not comprehensive data dump
