@@ -29,7 +29,7 @@ cat > "$CONTEXT_FILE" << EOF
 **Memory Management:**
 - MANDATORY: Store immediately after solving bugs or discovering patterns
 - Entity limit: 3-5 observations maximum per entity
-- Use \`/project:store-pattern "description"\` for quick storage
+- Use \`/store-pattern "description"\` for quick storage
 - Memory MCP vs CLAUDE.md: persistent patterns vs core rules
 
 **Current Architecture:**

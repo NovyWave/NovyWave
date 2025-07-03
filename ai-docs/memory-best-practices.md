@@ -99,14 +99,14 @@ Observations: [20+ verbose debugging steps] (too detailed)
 ## Custom Slash Commands
 
 **Available Commands:**
-- `/project:memory-cleanup` - Optimize CLAUDE.md and Memory MCP
-- `/project:session-start [term]` - Mandatory context retrieval for session start
-- `/project:store-pattern "description"` - Immediately store discoveries in Memory MCP
+- `/memory-cleanup` - Optimize CLAUDE.md and Memory MCP
+- `/memory-search [term]` - Search Memory MCP for relevant patterns
+- `/store-pattern "description"` - Immediately store discoveries in Memory MCP
 
 **Usage Examples:**
 ```
-/project:session-start
-/project:session-start "button"
-/project:store-pattern "Fixed compilation by adding mut self"
-/project:memory-cleanup
+/memory-search
+/memory-search "button"
+/store-pattern "Fixed compilation by adding mut self"
+/memory-cleanup
 ```

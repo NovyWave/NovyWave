@@ -1,10 +1,12 @@
-# Refresh Context Command
+# Refresh Context - When Claude seems uninformed about recent patterns
 
-Manually refresh the session context file from Memory MCP patterns.
+Prompt Claude to manually regenerate session context from latest Memory MCP.
 
-## What it does:
+**Usage examples:** `/refresh-context`
 
-**Regenerates session-context.md with latest patterns:**
+## What this prompts Claude to do:
+
+**Regenerate session-context.md with latest patterns:**
 
 1. **Extract Current Patterns:**
    - Read latest Memory MCP entities and observations
@@ -12,21 +14,19 @@ Manually refresh the session context file from Memory MCP patterns.
    - Generate fresh summary of key development patterns
 
 2. **Update Session File:**
-   - Overwrites `ai-docs/session-context.md` with current state
-   - Includes recent bug fixes, component patterns, framework rules
-   - Ensures Claude has up-to-date project knowledge
+   - Update `ai-docs/session-context.md` with current state
+   - Include recent bug fixes, component patterns, framework rules
+   - Ensure fresh project knowledge is available
 
-## When to use:
+## Quick Examples:
 
-- **After major discoveries** but before using Memory MCP tools
-- **When Claude seems uninformed** about recent patterns
-- **Before important sessions** to ensure fresh context
-- **Alternative to** waiting for PostToolUse hook to trigger
-
-## Usage:
-
-```
-/project:refresh-context
+```bash
+/refresh-context                   # Prompt context regeneration
 ```
 
-**Note:** This runs the same script as the PostToolUse hook, but manually.
+**Perfect timing:**
+- Before important coding sessions
+- After storing several patterns with /store-pattern
+- When Claude doesn't know about recent discoveries
+- If session context feels outdated
+- When automatic hooks aren't sufficient

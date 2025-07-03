@@ -14,7 +14,7 @@ This guide explains how to work efficiently with Claude Code in the NovyWave pro
 1. **Static Context File:** `session-context.md` exists with current project patterns 
 2. **Memory Sync Hook:** Updates the session file whenever Memory MCP patterns are modified  
 3. **CLAUDE.md Import:** Always includes `@ai-docs/session-context.md` so Claude reads it
-4. **Manual Refresh:** Use `/project:store-pattern` or `/project:memory-cleanup` to update context
+4. **Manual Refresh:** Use `/store-pattern` or `/memory-cleanup` to update context
 
 ### Understanding the Different "Contexts"
 - **Claude's Conversation Context:** Limited token window for our current chat
@@ -29,7 +29,7 @@ The Memory MCP stores patterns in a structured knowledge graph format that's opt
 - **Combines** recent discoveries with core architecture patterns
 - **Provides** immediate project knowledge without needing tool calls
 - **Updates** automatically when Memory MCP changes via hooks
-- **Bridges** the gap between structured data storage and session-start accessibility
+- **Bridges** the gap between structured data storage and immediate accessibility
 
 ## 📋 Available Slash Commands
 
@@ -42,7 +42,7 @@ The Memory MCP stores patterns in a structured knowledge graph format that's opt
 - Moves detailed patterns to organized ai-docs files
 - **Result:** Faster session starts, better context efficiency
 
-#### `/session-start`
+#### `/memory-search`
 **Shows status of the automated system:**
 - Explains how the session context system works
 - **Not needed for loading context** - that's automatic via CLAUDE.md imports
@@ -128,7 +128,7 @@ The Memory MCP stores patterns in a structured knowledge graph format that's opt
 5. Check that Memory MCP contains recent patterns (`ai-memory.json`)
 
 ### If Memory Gets Bloated:
-1. Run `/project:memory-cleanup` to streamline
+1. Run `/memory-cleanup` to streamline
 2. Review `ai-memory.json` for redundant entities
 3. Ensure observations are atomic facts, not verbose explanations
 

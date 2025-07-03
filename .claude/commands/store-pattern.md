@@ -1,6 +1,8 @@
-# Store Pattern Command
+# Store Pattern "Fixed IconName compilation" - Immediately after solving bugs or discovering patterns
 
-Immediately store discoveries, solutions, and patterns in Memory MCP.
+Store important discoveries in Memory MCP for future sessions.
+
+**Usage examples:** `/store-pattern "Fixed compilation error"`
 
 ## What it does:
 
@@ -26,15 +28,18 @@ Immediately store discoveries, solutions, and patterns in Memory MCP.
    - **Process:** Development workflow and testing
    - **Bug Solution:** Specific problem-solution pairs
 
-## Usage:
+## Quick Examples:
 
+```bash
+/store-pattern "Fixed compilation by adding mut self"
+/store-pattern "Responsive layout needs Width::fill()"  
+/store-pattern "NovyUI buttons use IconName tokens"
+/store-pattern "Height::screen() + Height::fill() pattern"
 ```
-/project:store-pattern "description of what was discovered/solved"
-```
 
-Examples:
-- `/project:store-pattern "Fixed IconName enum compilation by adding mut self to build()"`
-- `/project:store-pattern "Responsive layout requires Width::fill() + Height::screen() pattern"`
-- `/project:store-pattern "NovyUI buttons use .left_icon(IconName::X) not string literals"`
-
-**Use immediately after solving problems or discovering new patterns.**
+**Perfect timing:**
+- Right after fixing a compilation error
+- When you discover a new component pattern
+- After solving a layout/responsive issue
+- When you figure out framework-specific behavior
+- After making architectural decisions

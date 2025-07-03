@@ -1,16 +1,31 @@
-# Memory Cleanup Command
+# Memory Cleanup - Monthly maintenance or when feeling context bloat
 
 Optimize CLAUDE.md and Memory MCP for better context efficiency.
+
+**Usage examples:** `/memory-cleanup`
+
+## Quick Examples:
+
+```bash
+/memory-cleanup                    # Full system optimization
+```
+
+**Perfect timing:**
+- After 3-4 weeks of active development
+- When CLAUDE.md exceeds 80 lines
+- When Memory MCP has 20+ entities
+- Before starting major new features
+- When Claude responses feel slow/unfocused
 
 ## What it does:
 
 1. **Analyze Current State:**
    - Check CLAUDE.md line count and verbosity
-   - Review Memory MCP entities and observations
+   - Review Memory MCP entities and observations  
    - Identify redundant or outdated information
 
 2. **CLAUDE.md Optimization:**
-   - Move verbose sections to `docs/` with `@` imports
+   - Move verbose sections to `ai-docs/` with `@` imports
    - Keep only: commands, core architecture, critical rules
    - Target: 50-65 lines maximum
 
@@ -20,21 +35,4 @@ Optimize CLAUDE.md and Memory MCP for better context efficiency.
    - Remove temporary debugging info
    - Keep only persistent, actionable patterns
 
-4. **Create Documentation Structure:**
-   - `docs/development-workflow.md` - WASM workflow, testing patterns
-   - `docs/novyui-patterns.md` - Component API, layout patterns
-   - `docs/zoon-framework-patterns.md` - Framework fundamentals
-   - `docs/memory-best-practices.md` - Session patterns, storage decisions
-
-5. **Implement Session Start Pattern:**
-   - Add mandatory `mcp__memory__search_nodes` at session beginning
-   - Create storage decision matrix
-   - Establish immediate storage triggers
-
-## Usage:
-
-```
-/project:memory-cleanup
-```
-
-This command will systematically optimize your Claude Code memory system for maximum efficiency and minimal context usage.
+**Result:** Faster session starts, better context efficiency, cleaner knowledge base

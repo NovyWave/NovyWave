@@ -23,7 +23,7 @@ cat > "$CONTEXT_FILE" << 'EOF'
 **Memory Storage Triggers:**
 - Store immediately: solved bugs, new patterns, architectural decisions
 - Entity limit: 3-5 observations maximum per entity
-- Use `/project:store-pattern "description"` after discoveries
+- Use `/store-pattern "description"` after discoveries
 
 **Current Architecture:**
 - Dual-platform: Web + Tauri desktop using shared Rust/WASM frontend
