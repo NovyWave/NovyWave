@@ -1,3 +1,8 @@
+---
+allowed-tools: mcp__memory__open_nodes
+description: Display current work focus and productivity context
+---
+
 # Focus - Display current work focus and productivity context
 
 Show the current state of all focused Memory MCP entities for quick overview.

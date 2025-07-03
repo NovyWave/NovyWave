@@ -1,6 +1,6 @@
 ---
 allowed-tools: mcp__memory__search_nodes, mcp__memory__create_entities, mcp__memory__add_observations, mcp__memory__delete_observations, mcp__memory__open_nodes
-description: Store discoveries in focused Memory MCP with smart archiving
+description: 'Store discoveries: /core-note "Fixed blank page by restarting mzoon" or "Working on panel resizing"'
 ---
 
 ## Your Task

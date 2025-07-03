@@ -1,3 +1,8 @@
+---
+allowed-tools: mcp__memory__search_nodes, mcp__memory__open_nodes
+description: 'Search Memory MCP: /core-memory-search [optional-term]'
+---
+
 # Memory Search [search-term] - Search Memory MCP for relevant patterns
 
 Search Memory MCP for relevant project context and patterns.

@@ -1,3 +1,8 @@
+---
+allowed-tools: mcp__memory__read_graph, mcp__memory__delete_entities, mcp__memory__delete_observations, mcp__memory__create_entities, mcp__memory__add_observations
+description: Monthly maintenance or when feeling context bloat
+---
+
 # Memory Cleanup - Monthly maintenance or when feeling context bloat
 
 Optimize CLAUDE.md and Memory MCP for better context efficiency.
