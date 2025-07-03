@@ -10,6 +10,16 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ./.claude/hooks/claude-finished-notification.sh"
+          }
+        ]
+      }
     ]
   }
 }
