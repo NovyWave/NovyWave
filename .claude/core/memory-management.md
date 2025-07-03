@@ -39,15 +39,27 @@
 - Use for complex planning that needs persistence across sessions
 - Archived to `archived_planning` when limit reached
 
-## Automatic Memory Updates
+## Automatic Memory Updates - MANDATORY BEHAVIOR
+
+**CRITICAL: Always update Memory MCP immediately and proactively as you work. Never wait for user commands.**
 
 Update entities immediately when:
 - Solving bugs → recent_solutions
-- Switching tasks → current_session_state
+- Switching tasks → current_session_state  
 - Finding patterns → daily_patterns
 - Encountering blockers → active_blockers
 - Planning actions → next_steps
 - Complex planning → session_planning
+
+**Examples of required proactive updates:**
+- Fix compilation error → immediately store in recent_solutions
+- Change focus from UI to backend → update current_session_state
+- Discover "always use Width::fill()" → store in daily_patterns
+- Can't find component → add to active_blockers
+- Plan next implementation step → update next_steps
+- Design architecture → store in session_planning
+
+**Never require user to use /core-note or manual commands - Claude must be completely proactive with memory management.**
 
 ## Smart Archiving Rules
 
