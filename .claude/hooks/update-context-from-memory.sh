@@ -5,13 +5,10 @@ CONTEXT_FILE="./.claude/ai-docs/focus-context.md"
 MEMORY_FILE="./.claude/ai-memory.json"
 TIMESTAMP=$(date)
 
-# Only update timestamp if file exists, otherwise regenerate focused context
+# Only regenerate if file missing - avoid timestamp noise in git
 if [ -f "$CONTEXT_FILE" ]; then
-    # Update timestamp in existing file
-    sed -i "s/\*Last updated:.*\*/\*Last updated: $TIMESTAMP\*/" "$CONTEXT_FILE"
-    
-    # Log the quick update
-    echo "🔄 Context timestamp updated after Memory MCP usage: $TIMESTAMP" >> ./.claude/hooks.log
+    # File exists - skip update to avoid git noise from timestamp changes
+    echo "✅ Context file exists - skipping timestamp update to avoid git noise: $TIMESTAMP" >> ./.claude/hooks.log
 else
     # File doesn't exist - regenerate focused productivity context
     echo "🔄 Context file missing - regenerating focused context: $TIMESTAMP" >> ./.claude/hooks.log

@@ -50,7 +50,7 @@ When the user asks you to create a new git commit, follow these steps carefully:
 
 3. Run the following commands in parallel:
    - Add relevant untracked files to the staging area
-   - Create the commit with proper formatting
+   - Create clean commit with no Claude mentions or boilerplate
    - Run git status to verify success
 
 Important notes:
@@ -79,6 +79,17 @@ Users may configure 'hooks', shell commands that execute in response to events l
 - NEVER create files unless they're absolutely necessary
 - ALWAYS prefer editing an existing file to creating a new one
 - NEVER proactively create documentation files (*.md) or README files unless explicitly requested
+
+### Claude Code System Maintenance
+
+**IMPORTANT: When updating Claude Code infrastructure files, always update the human documentation:**
+
+- Commands added/modified → Update `docs/working-with-claude.md`
+- Memory system changes → Update `docs/working-with-claude.md` 
+- Hook system changes → Update `docs/working-with-claude.md`
+- New slash commands → Update `docs/working-with-claude.md`
+
+The human documentation must stay synchronized with the actual system capabilities so users know what's available.
 
 ### Planning
 - Use the Task tool when you are in plan mode
