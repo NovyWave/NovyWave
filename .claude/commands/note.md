@@ -1,6 +1,7 @@
-# Note "Fixed IconName compilation" - Add discoveries to focused Memory MCP
+# Note - Store discoveries in focused Memory MCP (storage only)
 
-Note important discoveries in the focused Memory MCP entities for productivity.
+Store important discoveries in the focused Memory MCP entities for productivity tracking.
+This command only stores notes - it does not execute any commands mentioned in the note.
 
 **Usage examples:** `/note "Fixed compilation error"`
 
@@ -29,7 +30,18 @@ Note important discoveries in the focused Memory MCP entities for productivity.
 /note "Working on panel resize functionality"         # → current_session_state
 /note "Blocked by missing Timeline component"         # → active_blockers
 /note "Next: implement drag-and-drop for variables"   # → next_steps
+/note "TODO: test /focus command later"                # → next_steps (stored as-is)
+/note "Plan: run makers build tomorrow"                # → next_steps (stored as-is)
 ```
+
+**Confirmation format:**
+```
+✓ Stored note in FOCUSED current_session_state: "i'll test /focus to see this note"
+✓ Stored note in FOCUSED recent_solutions: "Fixed compilation by adding mut self"
+✓ Stored note in library_examples: "Fast2D circle rendering example"  # non-focused entity
+```
+
+Note: "FOCUSED" appears only for the 5 productivity entities (current_session_state, recent_solutions, active_blockers, daily_patterns, next_steps)
 
 **Perfect timing:**
 - Right after fixing any bug or compilation error

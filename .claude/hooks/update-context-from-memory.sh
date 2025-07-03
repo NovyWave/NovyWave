@@ -34,9 +34,9 @@ EOF
 
     # Extract productivity-focused data using jq if available
     if command -v jq >/dev/null 2>&1; then
-        # Current project state
+        # Current project state (limit to last 5)
         echo "**Current State:**" >> "$CONTEXT_FILE"
-        jq -r 'select(.type == "entity" and .entityType == "current_session_state") | "- " + (.observations | join("\n- "))' "$MEMORY_FILE" >> "$CONTEXT_FILE" 2>/dev/null || echo "- No current session state recorded" >> "$CONTEXT_FILE"
+        jq -r 'select(.type == "entity" and .entityType == "current_session_state") | .observations[-5:] | .[] | "- " + .' "$MEMORY_FILE" >> "$CONTEXT_FILE" 2>/dev/null || echo "- No current session state recorded" >> "$CONTEXT_FILE"
         echo "" >> "$CONTEXT_FILE"
         
         # Recent solutions (limit to 3 most recent)
@@ -44,19 +44,19 @@ EOF
         jq -r 'select(.type == "entity" and .entityType == "recent_solutions") | .observations[-3:] | .[] | "- " + .' "$MEMORY_FILE" >> "$CONTEXT_FILE" 2>/dev/null || echo "- No recent solutions recorded" >> "$CONTEXT_FILE"
         echo "" >> "$CONTEXT_FILE"
         
-        # Active blockers
+        # Active blockers (limit to last 3)
         echo "**Current Blockers:**" >> "$CONTEXT_FILE"
-        jq -r 'select(.type == "entity" and .entityType == "active_blockers") | "- " + (.observations | join("\n- "))' "$MEMORY_FILE" >> "$CONTEXT_FILE" 2>/dev/null || echo "- None" >> "$CONTEXT_FILE"
+        jq -r 'select(.type == "entity" and .entityType == "active_blockers") | .observations[-3:] | .[] | "- " + .' "$MEMORY_FILE" >> "$CONTEXT_FILE" 2>/dev/null || echo "- None" >> "$CONTEXT_FILE"
         echo "" >> "$CONTEXT_FILE"
         
-        # Daily patterns (essential rules)
+        # Daily patterns (limit to 5)
         echo "**Essential Daily Patterns:**" >> "$CONTEXT_FILE"
-        jq -r 'select(.type == "entity" and .entityType == "daily_patterns") | .observations[0:5] | .[] | "- " + .' "$MEMORY_FILE" >> "$CONTEXT_FILE" 2>/dev/null || echo "- No daily patterns recorded" >> "$CONTEXT_FILE"
+        jq -r 'select(.type == "entity" and .entityType == "daily_patterns") | .observations[-5:] | .[] | "- " + .' "$MEMORY_FILE" >> "$CONTEXT_FILE" 2>/dev/null || echo "- No daily patterns recorded" >> "$CONTEXT_FILE"
         echo "" >> "$CONTEXT_FILE"
         
-        # Next steps
+        # Next steps (limit to last 5)
         echo "**Next Steps:**" >> "$CONTEXT_FILE"
-        jq -r 'select(.type == "entity" and .entityType == "next_steps") | "- " + (.observations | join("\n- "))' "$MEMORY_FILE" >> "$CONTEXT_FILE" 2>/dev/null || echo "- Continue with current implementation" >> "$CONTEXT_FILE"
+        jq -r 'select(.type == "entity" and .entityType == "next_steps") | .observations[-5:] | .[] | "- " + .' "$MEMORY_FILE" >> "$CONTEXT_FILE" 2>/dev/null || echo "- Continue with current implementation" >> "$CONTEXT_FILE"
         
     else
         echo "**Memory MCP Data:**" >> "$CONTEXT_FILE"
