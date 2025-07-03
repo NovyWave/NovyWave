@@ -1,14 +1,11 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Core guidance for Claude Code when working with NovyWave.
 
 ## Development Commands
 
-The project uses `cargo make` (`makers`) for task automation. Key commands:
-
 **Browser Mode (default):**
 - `makers start` - Start development server with auto-reload at http://localhost:8080
-- `makers open` - Start server and automatically open browser
 - `makers build` - Production build for browser deployment
 
 **Desktop Mode (Tauri):**
@@ -17,114 +14,55 @@ The project uses `cargo make` (`makers`) for task automation. Key commands:
 
 **Utilities:**
 - `makers install` - Install all dependencies (MoonZoon CLI, Rust WASM target, etc.)
-- `makers clean` - Clean all build artifacts from both browser and desktop builds
+- `makers clean` - Clean all build artifacts
 
-## Architecture Overview
+## Architecture
 
-**Dual-Platform Application:** NovyWave runs as both a web application and desktop application using the same frontend codebase.
+**Dual-Platform:** Web application + Tauri desktop using shared Rust/WASM frontend
 
 **Framework Stack:**
-- **Frontend:** Rust + WASM using Zoon framework (MoonZoon's frontend library)
-- **Backend (Browser mode):** Moon framework (MoonZoon's backend)
-- **Desktop:** Tauri v2 wrapper around the web frontend
-- **Graphics:** Fast2D rendering library (custom 2D graphics engine)
+- **Frontend:** Rust + WASM using Zoon framework 
+- **Backend:** Moon framework (browser mode only)
+- **Desktop:** Tauri v2 wrapper
+- **Graphics:** Fast2D rendering library
 
 **Project Structure:**
 ```
-frontend/     - Rust/WASM frontend code (shared between browser and desktop)
-backend/      - MoonZoon backend for browser mode only
-src-tauri/    - Tauri desktop wrapper and configuration
-shared/       - Code shared between frontend and backend (currently empty)
-public/       - Static assets (fonts: FiraCode, Inter family)
+frontend/     - Rust/WASM frontend (shared)
+backend/      - MoonZoon backend (browser only)
+src-tauri/    - Tauri desktop wrapper
+novyui/       - Custom UI component library
+public/       - Static assets
 ```
 
 **Key Dependencies:**
-- MoonZoon pinned to specific git revision `7c5178d891cf4afbc2bbbe864ca63588b6c10f2a`
-- Fast2D graphics library from NovyWave/Fast2D repository
-- Tauri CLI 2.x for desktop builds
+- MoonZoon pinned to git revision `7c5178d891cf4afbc2bbbe864ca63588b6c10f2a`
+- Fast2D graphics from NovyWave/Fast2D
+- NovyUI component library with IconName tokens
 
-**Frontend Architecture:**
-- Entry point: `frontend/src/main.rs:10` - loads fonts then starts app
-- Root UI: Column layout with scrollable panels containing Fast2D canvas examples
-- Three visual examples: Simple Rectangle, Face with Hat, Sine Wave
-- Each example renders to a Fast2D canvas wrapped in Zoon UI elements
+## Critical Development Rules
 
-**WASM/Frontend Development Notes:**
-- Use `zoon::println!()` for console logging, NOT `std::println!()` (which does nothing in WASM)
-- All frontend code compiles to WebAssembly and runs in browser environment
-- **Development Workflow:** 
-  - **BEST PRACTICE:** Run `makers start > dev_server.log 2>&1 &` as BACKGROUND PROCESS with output logging
-  - Monitor compilation with `tail -f dev_server.log` or read file content periodically
-  - This allows Claude to see compilation errors immediately without managing terminal processes
-  - Auto-reload ONLY triggers after successful compilation
-  - Always test changes with browser MCP after making changes to verify compilation succeeded
-  - Read compilation errors from the running command output, don't restart it repeatedly
-  - NEVER use `cargo build` or `cargo check` - they cannot check WASM compilation properly (IDE has same issue)
-  - Only read compilation errors from mzoon output for accurate WASM build status
-  - **NEVER check browser until compilation succeeds** - auto-reload only happens after successful compilation
-  - **Kill dev server properly:** `pkill -f "makers start" && pkill -f mzoon` or find PIDs with `ps aux | grep -E "(mzoon|makers)" | grep -v grep` then `kill <PIDs>`
+**WASM Compilation:**
+- Use `zoon::println!()` for logging, NOT `std::println!()`
+- NEVER use `cargo build` or `cargo check` - only mzoon handles WASM properly
+- Auto-reload only triggers after successful compilation
 
-**Rendering Pipeline:**
-1. Fonts loaded asynchronously from `/public/fonts/`
-2. Fast2D objects created in pure Rust
-3. Canvas wrapper integrates Fast2D with Zoon's DOM canvas element
-4. Objects swapped into canvas and rendered via Fast2D engine
+**Session Start Pattern:**
+- AUTOMATIC: Hook generates fresh context on first tool use
+- Context always available via @ai-docs/session-context.md import
+- Store solved bugs, new patterns, architectural decisions immediately in Memory MCP
 
-**Development Modes:**
-- Browser mode uses MoonZoon's dev server with hot reload
-- Desktop mode uses Tauri dev command which launches the desktop app
-- Both modes share the same frontend codebase but different build pipelines
+**Component Usage:**
+- ALL icons use `IconName` enum tokens, never strings
+- Use `Width::fill()` for responsive layouts, never fixed widths
+- Apply `Font::new().no_wrap()` to prevent text wrapping
 
-**Testing and Quality:**
-- No automated test suite is currently configured
-- Manual testing is done through visual examples in the UI
-- For development verification, use the three built-in examples: Simple Rectangle, Face with Hat, and Sine Wave
+## Documentation
 
-**Configuration Files:**
-- `MoonZoon.toml` - MoonZoon dev server configuration (port 8080, CORS, file watching)
-- `tauri.conf.json` - Tauri app configuration (window size 800x600, build commands)
-- `Makefile.toml` - Task runner configuration with all development commands
-- `.mcp.json` - MCP server configuration with memory storage at `novywave/ai-memory.json`
-
-## NovyUI Component Library
-
-**Icon Design Tokens:**
-- ALL components use `IconName` enum tokens, never magic strings
-- Button: `button().left_icon(IconName::Folder)` 
-- Input: `input().left_icon(IconName::Search)`
-- Available icons: Check, X, Folder, Search, ArrowDownToLine, ZoomIn, ZoomOut, etc.
-- Adding new icons requires: enum entry, to_kebab_case() mapping, SVG file mapping, string parsing
-- Icon registry provides compile-time safety and IDE autocompletion
-
-## MCP Server Configuration
-
-This repository uses two MCP servers configured in `.mcp.json` (see `.mcp.example.json` for team setup):
-
-**MEMORY MCP TRIGGERS - MANDATORY USAGE PATTERNS**:
-
-**SESSION START**: Always begin with "Remembering..." and retrieve relevant memory context using mcp__memory__search_nodes
-
-**IMMEDIATE STORAGE TRIGGERS** - Store in Memory MCP immediately when you:
-- Solve any bug or compilation error (store both problem and solution)
-- Create new UI patterns or component usage examples  
-- Make architectural decisions or choose between alternatives
-- Discover framework-specific patterns (Zoon, NovyUI, Fast2D)
-- Fix responsive design issues or layout problems
-- Implement new features or modify existing ones
-
-**WHAT TO STORE**:
-- Save difficult-to-remember patterns and usage examples
-- Store architectural decisions and their rationale  
-- Preserve debugging solutions and workarounds
-- Document component integration patterns
-- Remember team preferences and workflow decisions
-
-**STORAGE FORMAT**: Use atomic observations connected to existing entities (NovyWave project, framework entities, developer preferences)
-
-**What to Save Where:**
-- **Memory MCP**: Component-specific patterns, debugging solutions, library usage examples, temporary workarounds, session-specific discoveries
-- **CLAUDE.md**: General project rules, architecture decisions, permanent development guidelines, framework-wide patterns that apply across the entire codebase
-
+@ai-docs/session-context.md
+@ai-docs/development-workflow.md
+@ai-docs/novyui-patterns.md  
+@ai-docs/zoon-framework-patterns.md
+@ai-docs/memory-best-practices.md
 @ai-docs/memory-mcp.md
-
 @ai-docs/browser-mcp.md

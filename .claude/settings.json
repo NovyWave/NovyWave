@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "mcp__memory__.*",
+        "hooks": [
+          {
+            "type": "command", 
+            "command": "bash ./.claude/hooks/update-context-from-memory.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
