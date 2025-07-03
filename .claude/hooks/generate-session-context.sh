@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Auto-generate session context from Memory MCP
-CONTEXT_FILE="./novywave/ai-docs/session-context.md"
+CONTEXT_FILE="./ai-docs/session-context.md"
 
 cat > "$CONTEXT_FILE" << 'EOF'
 # Auto-Generated Session Context

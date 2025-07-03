@@ -1,0 +1,17 @@
+[package]
+name = "moonzoon-novyui"
+version.workspace = true
+edition.workspace = true
+publish = false
+description = "Type-safe UI component library for MoonZoon applications"
+license = "MIT"
+repository = "https://github.com/NovyUI/NovyUI"
+keywords = ["ui", "components", "moonzoon", "web", "frontend"]
+categories = ["web-programming", "gui"]
+
+[dependencies]
+zoon.workspace = true
+
+[lib]
+name = "moonzoon_novyui"
+path = "src/lib.rs"

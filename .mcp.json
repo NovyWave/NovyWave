@@ -1,0 +1,23 @@
+{
+  "mcpServers": {
+    "browsermcp": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "@browsermcp/mcp@latest"
+      ],
+      "env": {}
+    },
+    "memory": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-memory"
+      ],
+      "env": {
+        "MEMORY_FILE_PATH": "/home/martinkavik/repos/NovyWave/ai-memory.json"
+      }
+    }
+  }
+}

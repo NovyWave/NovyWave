@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Update context whenever Memory MCP is used
-CONTEXT_FILE="./novywave/ai-docs/session-context.md"
+CONTEXT_FILE="./ai-docs/session-context.md"
 
 # Extract timestamp
 TIMESTAMP=$(date)
