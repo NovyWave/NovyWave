@@ -227,10 +227,7 @@ impl TreeViewBuilder {
         match variant {
             TreeViewVariant::Basic => {
                 tree_container
-                    .s(Background::new().color_signal(theme().map(|t| match t {
-                        Theme::Light => "oklch(100% 0 0)", // neutral_1 light
-                        Theme::Dark => "oklch(10% 0 0)", // neutral_1 dark
-                    })))
+                    .s(Background::new().color("transparent"))
             }
             TreeViewVariant::Bordered => {
                 tree_container

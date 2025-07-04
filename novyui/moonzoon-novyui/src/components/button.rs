@@ -15,6 +15,7 @@ pub enum ButtonVariant {
     Ghost,
     Link,
     Destructive,
+    DestructiveGhost,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -202,6 +203,7 @@ impl ButtonBuilder {
             ButtonVariant::Ghost => always(transparent()).boxed_local(),
             ButtonVariant::Link => always(transparent()).boxed_local(),
             ButtonVariant::Destructive => error_7().boxed_local(),
+            ButtonVariant::DestructiveGhost => always(transparent()).boxed_local(),
         };
 
         let hover_bg_color_signal = match variant {
@@ -211,6 +213,7 @@ impl ButtonBuilder {
             ButtonVariant::Ghost => primary_2().boxed_local(),
             ButtonVariant::Link => primary_2().boxed_local(),
             ButtonVariant::Destructive => error_8().boxed_local(),
+            ButtonVariant::DestructiveGhost => error_2().boxed_local(),
         };
 
         let text_color_signal = match variant {
@@ -220,6 +223,7 @@ impl ButtonBuilder {
             ButtonVariant::Ghost => primary_7().boxed_local(),
             ButtonVariant::Link => primary_7().boxed_local(),
             ButtonVariant::Destructive => neutral_1().boxed_local(),
+            ButtonVariant::DestructiveGhost => error_7().boxed_local(),
         };
 
         // Border color for Outline and Secondary variants
@@ -510,7 +514,7 @@ impl ButtonBuilder {
                 ],
 
                 // Ghost and Link buttons get no shadows for minimal appearance
-                (ButtonVariant::Ghost, _) | (ButtonVariant::Link, _) => vec![],
+                (ButtonVariant::Ghost, _) | (ButtonVariant::Link, _) | (ButtonVariant::DestructiveGhost, _) => vec![],
             }
         })
     }

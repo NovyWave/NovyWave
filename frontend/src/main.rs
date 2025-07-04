@@ -573,6 +573,47 @@ fn variables_panel_docked() -> impl Element {
         .child(variables_panel())
 }
 
+fn remove_all_button() -> impl Element {
+    button()
+        .label("Remove All")
+        .left_icon(IconName::X)
+        .variant(ButtonVariant::DestructiveGhost)
+        .size(ButtonSize::Small)
+        .on_press(|| {})
+        .build()
+}
+
+fn dock_toggle_button() -> impl Element {
+    El::new()
+        .child_signal(IS_DOCKED_TO_BOTTOM.signal().map(|is_docked| {
+            button()
+                .label(if is_docked { "Dock to Right" } else { "Dock to Bottom" })
+                .left_icon_element(|| {
+                    El::new()
+                        .child_signal(IS_DOCKED_TO_BOTTOM.signal().map(|is_docked| {
+                            let icon_el = icon(IconName::ArrowDownToLine).size(IconSize::Small).build();
+                            if is_docked {
+                                El::new()
+                                    .s(Transform::new().rotate(-90))
+                                    .child(icon_el)
+                                    .into_element()
+                            } else {
+                                El::new().child(icon_el).into_element()
+                            }
+                        }))
+                        .unify()
+                })
+                .variant(ButtonVariant::Outline)
+                .size(ButtonSize::Small)
+                .on_press(|| {
+                    IS_DOCKED_TO_BOTTOM.update(|is_docked| !is_docked);
+                })
+                .align(Align::center())
+                .build()
+                .into_element()
+        }))
+}
+
 fn files_panel() -> impl Element {
     El::new()
         .s(Height::fill())
@@ -605,95 +646,38 @@ fn files_panel() -> impl Element {
                             .s(Width::fill())
                     )
                     .item(
-                        button()
-                            .label("Remove All")
-                            .left_icon(IconName::X)
-                            .variant(ButtonVariant::Destructive)
-                            .size(ButtonSize::Small)
-                            .on_press(|| {})
-                            .build()
+                        remove_all_button()
                     ),
                 Column::new()
                     .s(Gap::new().y(4))
                     .s(Padding::all(12))
                     .s(Height::fill())  // Make the column fill available height
                     .item(
-                        // Tree structure matching Figma
-                        Column::new()
-                            .s(Gap::new().y(2))
-                            .item(
-                                Row::new()
-                                    .s(Gap::new().x(4))
-                                    .item("▼")
-                                    .item("📄")
-                                    .item(
-                                        El::new()
-                                            .s(Font::new().color(hsluv!(220, 10, 85)).size(13))
-                                            .child("wave_21.fst")
-                                    )
-                            )
-                            .item(
-                                Column::new()
-                                    .s(Padding::new().left(20))
-                                    .s(Gap::new().y(2))
-                                    .item(
-                                        Row::new()
-                                            .s(Gap::new().x(4))
-                                            .item("▼")
-                                            .item("📁")
-                                            .item(
-                                                El::new()
-                                                    .s(Font::new().color(hsluv!(220, 10, 85)).size(13))
-                                                    .child("VexRiscv")
-                                            )
-                                    )
-                                    .item(
-                                        Column::new()
-                                            .s(Padding::new().left(20))
-                                            .s(Gap::new().y(2))
-                                            .item(
-                                                Row::new()
-                                                    .s(Gap::new().x(4))
-                                                    .item("📄")
-                                                    .item(
-                                                        El::new()
-                                                            .s(Font::new().color(hsluv!(220, 10, 75)).size(13))
-                                                            .child("EntitledRiscvHazardDebugCd_dmDirect_logic")
-                                                    )
-                                            )
-                                            .item(
-                                                Row::new()
-                                                    .s(Gap::new().x(4))
-                                                    .item("📄")
-                                                    .item(
-                                                        El::new()
-                                                            .s(Font::new().color(hsluv!(220, 10, 75)).size(13))
-                                                            .child("inputArea_target_buffercc")
-                                                    )
-                                            )
-                                            .item(
-                                                Row::new()
-                                                    .s(Gap::new().x(4))
-                                                    .item("📄")
-                                                    .item(
-                                                        El::new()
-                                                            .s(Font::new().color(hsluv!(220, 10, 75)).size(13))
-                                                            .child("bufferCC_4")
-                                                    )
-                                            )
-                                    )
-                            )
-                            .item(
-                                Row::new()
-                                    .s(Gap::new().x(4))
-                                    .item("+")
-                                    .item("📄")
-                                    .item(
-                                        El::new()
-                                            .s(Font::new().color(hsluv!(220, 10, 85)).size(13))
-                                            .child("simple.vcd")
-                                    )
-                            )
+                        tree_view()
+                            .data(vec![
+                                tree_view_item("wave_21", "wave_21.fst")
+                                    .item_type(TreeViewItemType::File)
+                                    .with_children(vec![
+                                        tree_view_item("vexriscv", "VexRiscv")
+                                            .item_type(TreeViewItemType::Folder)
+                                            .with_children(vec![
+                                                tree_view_item("entitled_logic", "EntitledRiscvHazardDebugCd_dmDirect_logic")
+                                                    .item_type(TreeViewItemType::File),
+                                                tree_view_item("input_area", "inputArea_target_buffercc")
+                                                    .item_type(TreeViewItemType::File),
+                                                tree_view_item("buffer_cc", "bufferCC_4")
+                                                    .item_type(TreeViewItemType::File),
+                                            ])
+                                    ]),
+                                tree_view_item("simple_vcd", "simple.vcd")
+                                    .item_type(TreeViewItemType::File)
+                            ])
+                            .size(TreeViewSize::Medium)
+                            .variant(TreeViewVariant::Basic)
+                            .show_icons(true)
+                            .show_checkboxes(false)
+                            .default_expanded(vec!["wave_21".to_string(), "vexriscv".to_string()])
+                            .build()
                     )
             )
         )
@@ -820,126 +804,6 @@ fn horizontal_divider(is_dragging: Mutable<bool>) -> impl Element {
         .on_pointer_down(move || is_dragging.set_neq(true))
 }
 
-fn selected_variables_panel() -> impl Element {
-    El::new()
-        .s(Width::fill())
-        .s(Height::fill())
-        .child(
-            create_panel(
-                Row::new()
-                    .s(Gap::new().x(8))
-                    .s(Align::new().center_y())
-                    .item(
-                        El::new()
-                            .s(Font::new().no_wrap())
-                            .child("Selected Variables")
-                    )
-                    .item(
-                        El::new()
-                            .s(Width::fill())
-                    )
-                    .item(
-                        El::new()
-                            .child_signal(IS_DOCKED_TO_BOTTOM.signal().map(|is_docked| {
-                                button()
-                                    .label(if is_docked { "Dock to Right" } else { "Dock to Bottom" })
-                                    .left_icon_element(|| {
-                                        El::new()
-                                            .child_signal(IS_DOCKED_TO_BOTTOM.signal().map(|is_docked| {
-                                                let icon_el = icon(IconName::ArrowDownToLine).size(IconSize::Small).build();
-                                                if is_docked {
-                                                    El::new()
-                                                        .s(Transform::new().rotate(-90))
-                                                        .child(icon_el)
-                                                        .into_element()
-                                                } else {
-                                                    El::new().child(icon_el).into_element()
-                                                }
-                                            }))
-                                            .unify()
-                                    })
-                                    .variant(ButtonVariant::Outline)
-                                    .size(ButtonSize::Small)
-                                    .on_press(|| {
-                                        IS_DOCKED_TO_BOTTOM.update(|is_docked| !is_docked);
-                                    })
-                                    .align(Align::center())
-                                    .build()
-                                    .into_element()
-                            }))
-                    )
-                    .item(
-                        El::new()
-                            .s(Width::fill())
-                    )
-                    .item(
-                        button()
-                            .label("Remove All")
-                            .left_icon(IconName::X)
-                            .variant(ButtonVariant::Destructive)
-                            .size(ButtonSize::Small)
-                            .on_press(|| {})
-                            .build()
-                    ),
-                Column::new()
-                    .s(Gap::new().y(2))
-                    .s(Padding::all(8))
-                    .item(
-                        Row::new()
-                            .s(Gap::new().x(8))
-                            .s(Align::new().center_y())
-                            .s(Padding::new().y(2))
-                            .item("⋮⋮")
-                            .item(
-                                El::new()
-                                    .s(Font::new().color(hsluv!(220, 10, 85)).size(13))
-                                    .child("LsuPlugin_logic_bus_rsp_payload_error")
-                            )
-                            .item("0")
-                            .item("❌")
-                            .item(
-                                El::new()
-                                    .s(Width::fill())
-                            )
-                            .item(
-                                El::new()
-                                    .s(Font::new().color(hsluv!(220, 10, 70)).size(12))
-                                    .child("14x2106624")
-                            )
-                    )
-                    .items((0..4).map(|i| {
-                        let var_names = [
-                            "LsuPlugin_logic_bus_rsp_payload_data",
-                            "io_writes_0_payload_data", 
-                            "logic_logic_onDebugCd_dmiStat_value_string",
-                            "clk"
-                        ];
-                        
-                        Row::new()
-                            .s(Gap::new().x(8))
-                            .s(Align::new().center_y())
-                            .s(Padding::new().y(2))
-                            .item("⋮⋮")
-                            .item(
-                                El::new()
-                                    .s(Font::new().color(hsluv!(220, 10, 85)).size(13))
-                                    .child(var_names[i as usize])
-                            )
-                            .item("0")
-                            .item("❌")
-                            .item(
-                                El::new()
-                                    .s(Width::fill())
-                            )
-                            .item(
-                                El::new()
-                                    .s(Font::new().color(hsluv!(220, 10, 70)).size(12))
-                                    .child("14x2106624")
-                            )
-                    }))
-            )
-        )
-}
 
 fn selected_variables_with_waveform_panel() -> impl Element {
     El::new()
@@ -960,47 +824,14 @@ fn selected_variables_with_waveform_panel() -> impl Element {
                             .s(Width::fill())
                     )
                     .item(
-                        El::new()
-                            .child_signal(IS_DOCKED_TO_BOTTOM.signal().map(|is_docked| {
-                                button()
-                                    .label(if is_docked { "Dock to Right" } else { "Dock to Bottom" })
-                                    .left_icon_element(|| {
-                                        El::new()
-                                            .child_signal(IS_DOCKED_TO_BOTTOM.signal().map(|is_docked| {
-                                                let icon_el = icon(IconName::ArrowDownToLine).size(IconSize::Small).build();
-                                                if is_docked {
-                                                    El::new()
-                                                        .s(Transform::new().rotate(-90))
-                                                        .child(icon_el)
-                                                        .into_element()
-                                                } else {
-                                                    El::new().child(icon_el).into_element()
-                                                }
-                                            }))
-                                            .unify()
-                                    })
-                                    .variant(ButtonVariant::Outline)
-                                    .size(ButtonSize::Small)
-                                    .on_press(|| {
-                                        IS_DOCKED_TO_BOTTOM.update(|is_docked| !is_docked);
-                                    })
-                                    .align(Align::center())
-                                    .build()
-                                    .into_element()
-                            }))
+                        dock_toggle_button()
                     )
                     .item(
                         El::new()
                             .s(Width::fill())
                     )
                     .item(
-                        button()
-                            .label("Remove All")
-                            .left_icon(IconName::X)
-                            .variant(ButtonVariant::Destructive)
-                            .size(ButtonSize::Small)
-                            .on_press(|| {})
-                            .build()
+                        remove_all_button()
                     ),
                 // 3-column table layout: Variable Name | Value | Waveform
                 El::new()
@@ -1153,19 +984,7 @@ fn selected_panel() -> impl Element {
                         Text::new("Selected Variables")
                     )
                     .item(
-                        El::new()
-                            .child_signal(IS_DOCKED_TO_BOTTOM.signal().map(|is_docked| {
-                                button()
-                                    .label(if is_docked { "Dock to Right" } else { "Dock to Bottom" })
-                                    .left_icon(IconName::ArrowDownToLine)
-                                    .variant(ButtonVariant::Outline)
-                                    .size(ButtonSize::Small)
-                                    .on_press(|| {
-                                        IS_DOCKED_TO_BOTTOM.update(|is_docked| !is_docked);
-                                    })
-                                    .build()
-                                    .into_element()
-                            }))
+                        dock_toggle_button()
                     ),
                 Column::new()
                     .s(Gap::new().y(8))
