@@ -98,6 +98,14 @@ Instead of overwhelming Claude with comprehensive project data, the focus contex
 - `active_blockers` → resolved ones to `resolved_blockers`
 - `next_steps` → completed ones to `completed_tasks`
 
+#### `/core-todos`
+**Display all task-related information from Memory MCP:**
+- Shows next steps (immediate actions to take)
+- Shows active blockers (current issues)
+- Shows incomplete tasks (backlog items)
+- Shows recently completed tasks for context
+- Perfect for session starts, planning work, or reviewing progress
+
 #### `/core-memory-search [term]`
 **Search Memory MCP for specific patterns:**
 - `/core-memory-search "IconName"` - Find component-specific context
