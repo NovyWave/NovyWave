@@ -44,13 +44,18 @@
 - **Pattern Discovered** → Add to `daily_patterns`
 - **Work Completed** → Update `next_steps`
 
-### Manual Storage via `/note`:
+### Manual Storage via `/core-note`:
 ```bash
-/note "Fixed compilation by adding mut self"           # → recent_solutions
-/note "Working on panel resize functionality"         # → current_session_state
-/note "Blocked by missing Timeline component"         # → active_blockers
-/note "Always use Width::fill() for responsive"       # → daily_patterns
-/note "Next: implement drag-and-drop variables"       # → next_steps
+# Single notes:
+/core-note "Fixed compilation by adding mut self"           # → recent_solutions
+/core-note "Working on panel resize functionality"         # → current_session_state
+/core-note "Blocked by missing Timeline component"         # → active_blockers
+/core-note "Always use Width::fill() for responsive"       # → daily_patterns
+/core-note "Next: implement drag-and-drop variables"       # → next_steps
+
+# Multiple notes (new):
+/core-note "Working on UI" | "Fixed WASM error" | "TODO: test buttons"
+# Stores to: current_session_state, recent_solutions, and next_steps respectively
 ```
 
 ## Entity Maintenance
@@ -94,17 +99,18 @@ Observations: [15+ verbose debugging steps and historical decisions]
 ## Available Slash Commands
 
 **Core Commands:**
-- `/focus` - Display current productivity context
-- `/note "description"` - Update focused entities
-- `/memory-search [term]` - Search comprehensive Memory MCP
-- `/memory-cleanup` - Monthly maintenance
+- `/core-focus` - Display current productivity context
+- `/core-note "description"` - Update focused entities (supports multiple notes with ` | `)
+- `/core-memory-search [term]` - Search comprehensive Memory MCP
+- `/core-memory-cleanup` - Monthly maintenance
 
 **Usage Examples:**
 ```bash
-/focus                                                    # Show current productivity context
-/note "Fixed compilation by adding mut self"    # Store recent solution
-/memory-search "IconName"                                # Search historical patterns
-/memory-cleanup                                          # Monthly optimization
+/core-focus                                                    # Show current productivity context
+/core-note "Fixed compilation by adding mut self"             # Store single note
+/core-note "Working on UI" | "Fixed bug" | "TODO: test"      # Store multiple notes
+/core-memory-search "IconName"                                # Search historical patterns
+/core-memory-cleanup                                          # Monthly optimization
 ```
 
 ## Productivity Philosophy

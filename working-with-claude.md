@@ -41,16 +41,35 @@ Instead of overwhelming Claude with comprehensive project data, the focus contex
 
 #### `/project-start`
 **Start development server:**
+- Uses atomic file locking (`flock`) to prevent multiple instances
+- Kills any existing server processes to ensure clean startup
 - Compiles Rust/WASM frontend and starts MoonZoon server
-- Waits for successful compilation before opening browser
+- Monitors compilation progress with background logging
+- Waits for successful compilation before reporting ready
 - Shows current server status if already running
-- Opens browser at http://localhost:8080
+- Server runs at http://localhost:8080 (or port from MoonZoon.toml)
+
+**Technical Details:**
+- Uses `flock` on `dev_server.log` to prevent corruption from multiple instances
+- Detects orphaned processes and cleans them up automatically
+- Reads port configuration from `MoonZoon.toml` dynamically
+- Runs `makers start` in background with output logging
+- Safe to run multiple times - handles existing processes gracefully
 
 #### `/project-stop`
 **Stop development server:**
+- Uses atomic file locking to prevent conflicts during shutdown
 - Reliably kills all makers, mzoon, and backend processes
-- Frees port 8080 and cleans up dev_server.log
-- Shows confirmation of complete shutdown
+- Port-based detection using `lsof` for foolproof process identification
+- Frees configured port and cleans up dev_server.log
+- Shows confirmation of complete shutdown with process count
+
+**Technical Details:**
+- Reads port from `MoonZoon.toml` instead of hardcoding 8080
+- Uses `lsof -ti:PORT` for precise process identification
+- Handles multiple PIDs returned by lsof correctly
+- Removes lock file and log file for clean state
+- Graceful handling of already-stopped servers
 
 ### Memory Management Commands
 
@@ -67,6 +86,11 @@ Instead of overwhelming Claude with comprehensive project data, the focus contex
 - Work updates: `/core-note "Working on panel resize"` → current_session_state
 - Blockers: `/core-note "Blocked by missing Timeline component"` → active_blockers
 - Planning: `/core-note "TODO: test focus command"` → next_steps (enhanced to "Test focus command functionality")
+
+**Multiple notes support (new):**
+- Separate with ` | ` (pipe with spaces): `/core-note "Working on UI" | "Fixed WASM error" | "TODO: test buttons"`
+- Each note stored in appropriate entity based on content
+- Perfect for storing multiple discoveries at once
 
 **Smart Archiving:** When entities reach 5 observations:
 - `daily_patterns` → archived to `comprehensive_development_patterns`

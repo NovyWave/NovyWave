@@ -1,11 +1,19 @@
 ---
 allowed-tools: mcp__memory__search_nodes, mcp__memory__create_entities, mcp__memory__add_observations, mcp__memory__delete_observations, mcp__memory__open_nodes
-description: 'Store discoveries: /core-note "Fixed blank page by restarting mzoon" or "Working on panel resizing"'
+description: 'Store discoveries: /core-note "Fixed compilation bug" OR multiple: /core-note "Working on UI" | "Fixed WASM error" | "TODO: test buttons"'
 ---
 
 ## Your Task
 
-Analyze the note: "$ARGUMENTS" and store it in the appropriate focused Memory MCP entity.
+Process the note(s): "$ARGUMENTS" and store in appropriate focused Memory MCP entities.
+
+### Multiple Notes Support
+
+Notes can be separated by ` | ` (pipe with spaces):
+- Single: `/core-note "Fixed compilation by adding mut self"`
+- Multiple: `/core-note "Working on UI" | "Fixed WASM error" | "TODO: test buttons"`
+
+First, split the input by ` | ` to handle each note separately.
 
 ### 1. Determine Target Entity
 
@@ -71,23 +79,34 @@ Show confirmation in format:
 
 ## Quick Examples:
 
+**Single note:**
 ```bash
-/note "Fixed compilation by adding mut self"           # → recent_solutions
-/note "Always use Width::fill() for responsive"       # → daily_patterns  
-/note "Working on panel resize functionality"         # → current_session_state
-/note "Blocked by missing Timeline component"         # → active_blockers
-/note "Next: implement drag-and-drop for variables"   # → next_steps
-/note "TODO: test /focus command later"                # → next_steps ("Test /focus command functionality")
-/note "Plan: run makers build tomorrow"                # → next_steps ("Run makers build to verify production")
+/core-note "Fixed compilation by adding mut self"           # → recent_solutions
+/core-note "Always use Width::fill() for responsive"       # → daily_patterns  
+/core-note "Working on panel resize functionality"         # → current_session_state
+/core-note "Blocked by missing Timeline component"         # → active_blockers
+/core-note "Next: implement drag-and-drop for variables"   # → next_steps
+/core-note "TODO: test /focus command later"                # → next_steps (enhanced)
+```
+
+**Multiple notes:**
+```bash
+/core-note "Working on UI refactor" | "Fixed button icon bug" | "TODO: test dock functionality"
+# Stores to: current_session_state, recent_solutions, and next_steps respectively
+
+/core-note "Always use IconName tokens" | "Never use std::println in WASM" | "Blocked by missing TreeView"
+# Stores to: daily_patterns (2x) and active_blockers
 ```
 
 **Confirmation format:**
 ```
-✓ Stored note in FOCUSED current_session_state: "i'll test /focus to see this note"
-✓ Stored note in FOCUSED recent_solutions: "Fixed compilation by adding mut self"
-✓ Stored note in FOCUSED next_steps: "Test /focus command functionality" (enhanced from "TODO: test /focus")
-✓ Archived to comprehensive_development_patterns: "Use IconName enum tokens, never strings"
-✓ Stored note in library_examples: "Fast2D circle rendering example"  # non-focused entity
+Processing 3 notes...
+
+✓ Stored note in FOCUSED current_session_state: "Working on UI refactor"
+✓ Stored note in FOCUSED recent_solutions: "Fixed button icon bug"
+✓ Stored note in FOCUSED next_steps: "Test dock functionality" (enhanced from "TODO: test dock functionality")
+
+3 notes stored successfully.
 ```
 
 Note: "FOCUSED" appears only for the 5 productivity entities (current_session_state, recent_solutions, active_blockers, daily_patterns, next_steps)
