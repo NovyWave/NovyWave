@@ -41,4 +41,4 @@ Daily Patterns: IconName tokens, zoon::println!(), etc.
 Next Steps: Test focused system, continue UI work
 ```
 
-**Note:** This is read-only - use `/note` to update the focused entities.
+**Note:** This is read-only - use `/core-note` to update the focused entities.
