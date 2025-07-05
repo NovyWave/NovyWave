@@ -501,6 +501,7 @@ version = "0.1.0"
 dependencies = [
  "moon",
  "serde",
+ "toml",
  "wellen",
 ]
 

@@ -1,6 +1,7 @@
 use zoon::{*, futures_util::future::try_join_all};
 use moonzoon_novyui::*;
 use serde::{Serialize, Deserialize};
+use std::collections::{HashSet, HashMap};
 
 // Panel resizing state
 static LEFT_PANEL_WIDTH: Lazy<Mutable<u32>> = Lazy::new(|| 470.into());
@@ -22,6 +23,29 @@ static IS_LOADING: Lazy<Mutable<bool>> = lazy::default();
 
 // Loaded files hierarchy for TreeView
 static LOADED_FILES: Lazy<MutableVec<WaveformFile>> = lazy::default();
+static SELECTED_SCOPE_ID: Lazy<Mutable<Option<String>>> = lazy::default();
+static TREE_SELECTED_ITEMS: Lazy<Mutable<HashSet<String>>> = lazy::default();
+
+// Track file ID to full path mapping for config persistence
+static FILE_PATHS: Lazy<Mutable<HashMap<String, String>>> = lazy::default();
+
+// Track expanded scopes for TreeView persistence
+static EXPANDED_SCOPES: Lazy<Mutable<HashSet<String>>> = lazy::default();
+
+// Store scope selections from config to apply after files load
+static SAVED_SCOPE_SELECTIONS: Lazy<Mutable<HashMap<String, String>>> = lazy::default();
+
+// Store the loaded config to preserve inactive mode settings when saving
+static LOADED_CONFIG: Lazy<Mutable<Option<AppConfig>>> = lazy::default();
+
+fn generate_file_id(file_path: &str) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    
+    let mut hasher = DefaultHasher::new();
+    file_path.hash(&mut hasher);
+    format!("file_{:x}", hasher.finish())
+}
 
 #[derive(Clone, Debug)]
 pub struct LoadingFile {
@@ -44,6 +68,8 @@ pub enum LoadingStatus {
 pub enum UpMsg {
     LoadWaveformFile(String),
     GetParsingProgress(String),
+    LoadConfig,
+    SaveConfig(AppConfig),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -52,6 +78,9 @@ pub enum DownMsg {
     ParsingProgress { file_id: String, progress: f32 },
     FileLoaded { file_id: String, hierarchy: FileHierarchy },
     ParsingError { file_id: String, error: String },
+    ConfigLoaded(AppConfig),
+    ConfigSaved,
+    ConfigError(String),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -64,7 +93,7 @@ pub struct WaveformFile {
     pub id: String,
     pub filename: String,
     pub format: FileFormat,
-    pub signals: Vec<Signal>,
+    pub scopes: Vec<ScopeData>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -74,11 +103,83 @@ pub enum FileFormat {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ScopeData {
+    pub id: String,
+    pub name: String,
+    pub full_name: String,
+    pub children: Vec<ScopeData>,
+    pub variables: Vec<Signal>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Signal {
     pub id: String,
     pub name: String,
     pub signal_type: String,
     pub width: u32,
+}
+
+// Configuration structures (matching backend)
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+pub struct AppConfig {
+    pub app: AppSection,
+    pub ui: UiSection,
+    pub files: FilesSection,
+    pub workspace: WorkspaceSection,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct AppSection {
+    pub version: String,
+    pub auto_load_previous_files: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct UiSection {
+    pub theme: String, // "dark" or "light"
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+pub struct FilesSection {
+    pub opened_files: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+pub struct WorkspaceSection {
+    pub dock_to_bottom: bool,
+    pub docked_to_bottom: DockedToBottomLayout,
+    pub docked_to_right: DockedToRightLayout,
+    pub scope_selection: std::collections::HashMap<String, String>,
+    pub expanded_scopes: std::collections::HashMap<String, Vec<String>>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+pub struct DockedToBottomLayout {
+    pub main_area_height: u32,
+    pub files_panel_width: u32,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+pub struct DockedToRightLayout {
+    pub files_panel_height: u32,
+    pub files_panel_width: u32,
+}
+
+impl Default for AppSection {
+    fn default() -> Self {
+        Self {
+            version: "0.1.0".to_string(),
+            auto_load_previous_files: true,
+        }
+    }
+}
+
+impl Default for UiSection {
+    fn default() -> Self {
+        Self {
+            theme: "dark".to_string(),
+        }
+    }
 }
 
 
@@ -103,6 +204,11 @@ fn process_file_paths() {
     
     for path in paths {
         zoon::println!("Loading file: {}", path);
+        
+        // Generate file ID and store path mapping for config persistence
+        let file_id = generate_file_id(&path);
+        FILE_PATHS.lock_mut().insert(file_id, path.clone());
+        
         send_up_msg(UpMsg::LoadWaveformFile(path));
     }
     
@@ -145,8 +251,20 @@ static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 
                 // Add loaded files to the TreeView state
                 for file in hierarchy.files {
-                    zoon::println!("  - {}: {} signals", file.filename, file.signals.len());
-                    LOADED_FILES.lock_mut().push_cloned(file);
+                    let total_variables = count_variables_in_scopes(&file.scopes);
+                    zoon::println!("  - {}: {} variables", file.filename, total_variables);
+                    LOADED_FILES.lock_mut().push_cloned(file.clone());
+                    
+                    // Check if this file has a saved scope selection to restore
+                    if let Some(scope_id) = SAVED_SCOPE_SELECTIONS.lock_ref().get(&file.id) {
+                        zoon::println!("Restoring scope selection for file {}: {}", file.id, scope_id);
+                        
+                        // Set the selected scope ID
+                        SELECTED_SCOPE_ID.set_neq(Some(scope_id.clone()));
+                        
+                        // Add the scope to TreeView selection
+                        TREE_SELECTED_ITEMS.lock_mut().insert(scope_id.clone());
+                    }
                 }
                 
                 // Mark file as completed
@@ -162,6 +280,9 @@ static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 
                 // Check if all files are completed
                 check_loading_complete();
+                
+                // Auto-save config with updated file list
+                save_current_config();
             }
             DownMsg::ParsingError { file_id, error } => {
                 zoon::println!("Error parsing file {}: {}", file_id, error);
@@ -178,6 +299,16 @@ static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 
                 // Check if all files are completed
                 check_loading_complete();
+            }
+            DownMsg::ConfigLoaded(config) => {
+                zoon::println!("Config loaded: {:?}", config);
+                apply_config(config);
+            }
+            DownMsg::ConfigSaved => {
+                zoon::println!("Config saved successfully");
+            }
+            DownMsg::ConfigError(error) => {
+                zoon::println!("Config error: {}", error);
             }
         }
     })
@@ -254,15 +385,170 @@ fn send_up_msg(up_msg: UpMsg) {
     });
 }
 
+fn apply_config(config: AppConfig) {
+    zoon::println!("Applying configuration...");
+    
+    // Store the loaded config to preserve inactive mode settings when saving
+    LOADED_CONFIG.set_neq(Some(config.clone()));
+    
+    // Apply UI settings
+    zoon::println!("Theme: {}", config.ui.theme);
+    // TODO: Apply theme when theme system is implemented
+    
+    // Apply workspace settings
+    IS_DOCKED_TO_BOTTOM.set_neq(config.workspace.dock_to_bottom);
+    
+    // Apply layout-specific settings based on current mode
+    if config.workspace.dock_to_bottom {
+        // Docked to bottom mode
+        LEFT_PANEL_WIDTH.set_neq(config.workspace.docked_to_bottom.files_panel_width);
+        MAIN_AREA_HEIGHT.set_neq(config.workspace.docked_to_bottom.main_area_height);
+    } else {
+        // Docked to right mode  
+        LEFT_PANEL_WIDTH.set_neq(config.workspace.docked_to_right.files_panel_width);
+        FILES_PANEL_HEIGHT.set_neq(config.workspace.docked_to_right.files_panel_height);
+    }
+    
+    // Restore expanded scopes
+    if let Some(expanded_items) = config.workspace.expanded_scopes.get("current_session") {
+        let expanded_set: HashSet<String> = expanded_items.iter().cloned().collect();
+        EXPANDED_SCOPES.set_neq(expanded_set);
+    }
+    
+    // Restore scope selections - store them to apply after files are loaded
+    SAVED_SCOPE_SELECTIONS.set_neq(config.workspace.scope_selection);
+    
+    // Auto-load files if enabled
+    if config.app.auto_load_previous_files && !config.files.opened_files.is_empty() {
+        zoon::println!("Auto-loading {} files from config", config.files.opened_files.len());
+        for file_path in config.files.opened_files {
+            zoon::println!("Loading file from config: {}", file_path);
+            
+            // Generate file ID and store path mapping for config persistence
+            let file_id = generate_file_id(&file_path);
+            FILE_PATHS.lock_mut().insert(file_id, file_path.clone());
+            
+            send_up_msg(UpMsg::LoadWaveformFile(file_path));
+        }
+    }
+}
+
+fn save_current_config() {
+    // Collect current state - use full paths from FILE_PATHS mapping
+    let file_paths = FILE_PATHS.lock_ref();
+    let opened_files: Vec<String> = LOADED_FILES.lock_ref()
+        .iter()
+        .filter_map(|file| file_paths.get(&file.id).cloned())
+        .collect();
+    
+    // Build scope selection mapping - find which file the selected scope belongs to
+    let mut scope_selection = std::collections::HashMap::new();
+    if let Some(scope_id) = SELECTED_SCOPE_ID.lock_ref().as_ref() {
+        // Find which file contains this scope
+        for file in LOADED_FILES.lock_ref().iter() {
+            if file_contains_scope(&file.scopes, scope_id) {
+                scope_selection.insert(file.id.clone(), scope_id.clone());
+                break;
+            }
+        }
+    }
+    
+    let is_docked = *IS_DOCKED_TO_BOTTOM.lock_ref();
+    
+    let config = AppConfig {
+        app: AppSection {
+            version: "0.1.0".to_string(),
+            auto_load_previous_files: true,
+        },
+        ui: UiSection {
+            theme: "dark".to_string(),
+        },
+        files: FilesSection {
+            opened_files,
+        },
+        workspace: {
+            // Get existing config to preserve inactive mode settings
+            let existing_config = LOADED_CONFIG.lock_ref().clone().unwrap_or_default();
+            
+            WorkspaceSection {
+                dock_to_bottom: is_docked,
+                docked_to_bottom: if is_docked {
+                    // Active mode: update with current values
+                    DockedToBottomLayout {
+                        main_area_height: *MAIN_AREA_HEIGHT.lock_ref(),
+                        files_panel_width: *LEFT_PANEL_WIDTH.lock_ref(),
+                    }
+                } else {
+                    // Inactive mode: preserve existing values
+                    existing_config.workspace.docked_to_bottom
+                },
+                docked_to_right: if !is_docked {
+                    // Active mode: update with current values
+                    DockedToRightLayout {
+                        files_panel_height: *FILES_PANEL_HEIGHT.lock_ref(),
+                        files_panel_width: *LEFT_PANEL_WIDTH.lock_ref(),
+                    }
+                } else {
+                    // Inactive mode: preserve existing values
+                    existing_config.workspace.docked_to_right
+                },
+                scope_selection,
+                expanded_scopes: {
+                    let mut expanded_scopes = std::collections::HashMap::new();
+                    let expanded_items: Vec<String> = EXPANDED_SCOPES.lock_ref().iter().cloned().collect();
+                    if !expanded_items.is_empty() {
+                        expanded_scopes.insert("current_session".to_string(), expanded_items);
+                    }
+                    expanded_scopes
+                },
+            }
+        },
+    };
+    
+    zoon::println!("Auto-saving config with {} opened files", config.files.opened_files.len());
+    send_up_msg(UpMsg::SaveConfig(config));
+}
+
 /// Entry point: loads fonts and starts the app.
 pub fn main() {
     Task::start(async {
         load_and_register_fonts().await;
-        // Force the default "Docked to Right" state
-        IS_DOCKED_TO_BOTTOM.set(false);
+        
+        // Connect TreeView selections to scope selection
+        init_scope_selection();
         
         start_app("app", root);
         CONNECTION.init_lazy();
+        
+        // Load configuration on startup
+        send_up_msg(UpMsg::LoadConfig);
+    });
+}
+
+fn init_scope_selection() {
+    Task::start(async {
+        TREE_SELECTED_ITEMS.signal_ref(|selected_items| {
+            selected_items.clone()
+        }).for_each_sync(|selected_items| {
+            // Find the first selected scope (not file)
+            if let Some(scope_id) = selected_items.iter().find(|id| !id.starts_with("file_")) {
+                SELECTED_SCOPE_ID.set_neq(Some(scope_id.clone()));
+                save_current_config();
+            } else {
+                SELECTED_SCOPE_ID.set_neq(None);
+                save_current_config();
+            }
+        }).await
+    });
+    
+    // Auto-save when expanded scopes change
+    Task::start(async {
+        EXPANDED_SCOPES.signal_ref(|expanded_scopes| {
+            expanded_scopes.clone()
+        }).for_each_sync(|_expanded_scopes| {
+            zoon::println!("Expanded scopes changed, auto-saving config");
+            save_current_config();
+        }).await
     });
 }
 
@@ -438,6 +724,7 @@ fn main_layout() -> impl Element {
                     let new_width = width as i32 + event.movement_x();
                     u32::max(50, u32::try_from(new_width).unwrap_or(50))
                 });
+                save_current_config();
             } else if HORIZONTAL_DIVIDER_DRAGGING.get() {
                 if IS_DOCKED_TO_BOTTOM.get() {
                     // In "Docked to Bottom" mode, horizontal divider controls main area height
@@ -445,12 +732,14 @@ fn main_layout() -> impl Element {
                         let new_height = height as i32 + event.movement_y();
                         u32::max(50, u32::try_from(new_height).unwrap_or(50))
                     });
+                    save_current_config();
                 } else {
                     // In "Docked to Right" mode, horizontal divider controls files panel height
                     FILES_PANEL_HEIGHT.update(|height| {
                         let new_height = height as i32 + event.movement_y();
                         u32::max(50, u32::try_from(new_height).unwrap_or(50))
                     });
+                    save_current_config();
                 }
             }
         })
@@ -594,7 +883,10 @@ fn remove_all_button() -> impl Element {
         .size(ButtonSize::Small)
         .on_press(|| {
             LOADED_FILES.lock_mut().clear();
+            FILE_PATHS.lock_mut().clear();
+            EXPANDED_SCOPES.lock_mut().clear();
             zoon::println!("Cleared all loaded files");
+            save_current_config();
         })
         .build()
 }
@@ -622,7 +914,32 @@ fn dock_toggle_button() -> impl Element {
                 .variant(ButtonVariant::Outline)
                 .size(ButtonSize::Small)
                 .on_press(|| {
-                    IS_DOCKED_TO_BOTTOM.update(|is_docked| !is_docked);
+                    let new_is_docked = !IS_DOCKED_TO_BOTTOM.get();
+                    IS_DOCKED_TO_BOTTOM.set_neq(new_is_docked);
+                    
+                    // Load appropriate panel sizes for the new mode
+                    if let Some(config) = LOADED_CONFIG.lock_ref().clone() {
+                        if new_is_docked {
+                            // Switching to "Docked to Bottom" mode
+                            LEFT_PANEL_WIDTH.set_neq(u32::max(50, config.workspace.docked_to_bottom.files_panel_width));
+                            MAIN_AREA_HEIGHT.set_neq(u32::max(50, config.workspace.docked_to_bottom.main_area_height));
+                        } else {
+                            // Switching to "Docked to Right" mode  
+                            LEFT_PANEL_WIDTH.set_neq(u32::max(50, config.workspace.docked_to_right.files_panel_width));
+                            FILES_PANEL_HEIGHT.set_neq(u32::max(50, config.workspace.docked_to_right.files_panel_height));
+                        }
+                    } else {
+                        // Fallback to defaults if no config available
+                        if new_is_docked {
+                            LEFT_PANEL_WIDTH.set_neq(470);
+                            MAIN_AREA_HEIGHT.set_neq(350);
+                        } else {
+                            LEFT_PANEL_WIDTH.set_neq(470);
+                            FILES_PANEL_HEIGHT.set_neq(300);
+                        }
+                    }
+                    
+                    save_current_config();
                 })
                 .align(Align::center())
                 .build()
@@ -632,69 +949,27 @@ fn dock_toggle_button() -> impl Element {
 
 fn convert_files_to_tree_data(files: &[WaveformFile]) -> Vec<TreeViewItemData> {
     files.iter().map(|file| {
-        let format_label = match file.format {
-            FileFormat::VCD => "VCD",
-            FileFormat::FST => "FST",
-        };
-        
-        // Group signals by their path components (if they have hierarchy)
-        let mut signal_groups: std::collections::HashMap<String, Vec<&Signal>> = std::collections::HashMap::new();
-        
-        for signal in &file.signals {
-            // For now, just put all signals at the root level
-            // Later we can parse signal names for hierarchy (e.g., "cpu.core.alu" -> nested structure)
-            signal_groups.entry("signals".to_string()).or_default().push(signal);
-        }
-        
-        let mut children = vec![];
-        
-        // Add a summary item
-        children.push(
-            TreeViewItemData::new(
-                format!("{}_info", file.id),
-                format!("{} - {} signals", format_label, file.signals.len())
-            )
-            .item_type(TreeViewItemType::File)
-        );
-        
-        // Add signal groups
-        for (group_name, signals) in signal_groups {
-            if signals.len() > 10 {
-                // If too many signals, create a folder
-                children.push(
-                    TreeViewItemData::new(
-                        format!("{}_{}", file.id, group_name),
-                        format!("Signals ({} items)", signals.len())
-                    )
-                    .item_type(TreeViewItemType::Folder)
-                    .with_children(
-                        signals.iter().take(20).map(|signal| {
-                            TreeViewItemData::new(
-                                format!("signal_{}", signal.id),
-                                format!("{} [{}:0]", signal.name, signal.width - 1)
-                            )
-                            .item_type(TreeViewItemType::File)
-                        }).collect()
-                    )
-                );
-            } else {
-                // Add signals directly
-                for signal in signals {
-                    children.push(
-                        TreeViewItemData::new(
-                            format!("signal_{}", signal.id),
-                            format!("{} [{}:0]", signal.name, signal.width - 1)
-                        )
-                        .item_type(TreeViewItemType::File)
-                    );
-                }
-            }
-        }
+        let children = file.scopes.iter().map(|scope| {
+            convert_scope_to_tree_data(scope)
+        }).collect();
         
         TreeViewItemData::new(file.id.clone(), file.filename.clone())
             .item_type(TreeViewItemType::File)
             .with_children(children)
     }).collect()
+}
+
+fn convert_scope_to_tree_data(scope: &ScopeData) -> TreeViewItemData {
+    let mut children = Vec::new();
+    
+    // Add child scopes first
+    for child_scope in &scope.children {
+        children.push(convert_scope_to_tree_data(child_scope));
+    }
+    
+    TreeViewItemData::new(scope.id.clone(), scope.name.clone())
+        .item_type(TreeViewItemType::Folder)
+        .with_children(children)
 }
 
 fn files_panel() -> impl Element {
@@ -749,18 +1024,15 @@ fn files_panel() -> impl Element {
                                                 .child("No files loaded. Click 'Load Files' to add waveform files.")
                                                 .unify()
                                         } else {
-                                            // Show TreeView with loaded files
-                                            let expanded_ids: Vec<String> = files.iter()
-                                                .map(|f| f.id.clone())
-                                                .collect();
-                                            
+                                            // Show TreeView with loaded files 
                                             tree_view()
                                                 .data(tree_data)
                                                 .size(TreeViewSize::Medium)
                                                 .variant(TreeViewVariant::Basic)
                                                 .show_icons(true)
-                                                .show_checkboxes(false)
-                                                .default_expanded(expanded_ids)
+                                                .show_checkboxes(true)
+                                                .external_expanded(EXPANDED_SCOPES.clone())
+                                                .external_selected(TREE_SELECTED_ITEMS.clone())
                                                 .build()
                                                 .unify()
                                         }
@@ -769,6 +1041,65 @@ fn files_panel() -> impl Element {
                     )
             )
         )
+}
+
+fn get_all_variables_from_files() -> Vec<Signal> {
+    let mut all_variables = Vec::new();
+    for file in LOADED_FILES.lock_ref().iter() {
+        collect_variables_from_scopes(&file.scopes, &mut all_variables);
+    }
+    all_variables
+}
+
+fn get_variables_from_selected_scope(selected_scope_id: &str) -> Vec<Signal> {
+    for file in LOADED_FILES.lock_ref().iter() {
+        if let Some(variables) = find_variables_in_scope(&file.scopes, selected_scope_id) {
+            return variables;
+        }
+    }
+    Vec::new()
+}
+
+fn find_variables_in_scope(scopes: &[ScopeData], scope_id: &str) -> Option<Vec<Signal>> {
+    for scope in scopes {
+        if scope.id == scope_id {
+            return Some(scope.variables.clone());
+        }
+        if let Some(variables) = find_variables_in_scope(&scope.children, scope_id) {
+            return Some(variables);
+        }
+    }
+    None
+}
+
+fn collect_variables_from_scopes(scopes: &[ScopeData], variables: &mut Vec<Signal>) {
+    for scope in scopes {
+        variables.extend(scope.variables.clone());
+        collect_variables_from_scopes(&scope.children, variables);
+    }
+}
+
+fn file_contains_scope(scopes: &[ScopeData], scope_id: &str) -> bool {
+    for scope in scopes {
+        if scope.id == scope_id {
+            return true;
+        }
+        
+        // Recursively search in child scopes
+        if file_contains_scope(&scope.children, scope_id) {
+            return true;
+        }
+    }
+    false
+}
+
+fn count_variables_in_scopes(scopes: &[ScopeData]) -> usize {
+    let mut count = 0;
+    for scope in scopes {
+        count += scope.variables.len();
+        count += count_variables_in_scopes(&scope.children);
+    }
+    count
 }
 
 fn variables_panel() -> impl Element {
@@ -798,66 +1129,53 @@ fn variables_panel() -> impl Element {
                 Column::new()
                     .s(Gap::new().y(6))
                     .s(Padding::all(12))
-                    .s(Height::fill())  // Make the column fill available height
-                    .item(
-                        Column::new()
-                            .s(Gap::new().y(4))
-                            .item(
-                                Row::new()
-                                    .s(Gap::new().x(8))
+                    .s(Height::fill())
+                    .item_signal(
+                        SELECTED_SCOPE_ID.signal_ref(|selected_scope_id| {
+                            if let Some(scope_id) = selected_scope_id {
+                                let variables = get_variables_from_selected_scope(scope_id);
+                                if variables.is_empty() {
+                                    Column::new()
+                                        .s(Gap::new().y(4))
+                                        .item(
+                                            El::new()
+                                                .s(Font::new().color(hsluv!(220, 10, 70)).size(13))
+                                                .child("No variables in selected scope")
+                                        )
+                                        .into_element()
+                                } else {
+                                    let variable_items: Vec<_> = variables.iter().map(|signal| {
+                                        Row::new()
+                                            .s(Gap::new().x(8))
+                                            .item(
+                                                El::new()
+                                                    .s(Font::new().color(hsluv!(220, 10, 85)).size(13))
+                                                    .child(signal.name.clone())
+                                            )
+                                            .item(
+                                                badge(format!("{} {}-bit", signal.signal_type, signal.width))
+                                                    .variant(BadgeVariant::Primary)
+                                                    .build()
+                                            )
+                                            .into_element()
+                                    }).collect();
+                                    
+                                    Column::new()
+                                        .s(Gap::new().y(4))
+                                        .items(variable_items)
+                                        .into_element()
+                                }
+                            } else {
+                                Column::new()
+                                    .s(Gap::new().y(4))
                                     .item(
                                         El::new()
-                                            .s(Font::new().color(hsluv!(220, 10, 85)).size(13))
-                                            .child("io_bus_cmd_valid")
+                                            .s(Font::new().color(hsluv!(220, 10, 70)).size(13))
+                                            .child("Select a scope to view variables")
                                     )
-                                    .item(
-                                        badge("Wire 1-bit Input")
-                                            .variant(BadgeVariant::Primary)
-                                            .build()
-                                    )
-                            )
-                            .item(
-                                Row::new()
-                                    .s(Gap::new().x(8))
-                                    .item(
-                                        El::new()
-                                            .s(Font::new().color(hsluv!(220, 10, 85)).size(13))
-                                            .child("io_bus_cmd_ready")
-                                    )
-                                    .item(
-                                        badge("Wire 1-bit Output")
-                                            .variant(BadgeVariant::Success)
-                                            .build()
-                                    )
-                            )
-                            .item(
-                                Row::new()
-                                    .s(Gap::new().x(8))
-                                    .item(
-                                        El::new()
-                                            .s(Font::new().color(hsluv!(220, 10, 85)).size(13))
-                                            .child("io_jtag_data")
-                                    )
-                                    .item(
-                                        badge("Wire 1-bit Output")
-                                            .variant(BadgeVariant::Success)
-                                            .build()
-                                    )
-                            )
-                            .item(
-                                Row::new()
-                                    .s(Gap::new().x(8))
-                                    .item(
-                                        El::new()
-                                            .s(Font::new().color(hsluv!(220, 10, 85)).size(13))
-                                            .child("clk")
-                                    )
-                                    .item(
-                                        badge("Wire 1-bit Output")
-                                            .variant(BadgeVariant::Success)
-                                            .build()
-                                    )
-                            )
+                                    .into_element()
+                            }
+                        })
                     )
             )
         )

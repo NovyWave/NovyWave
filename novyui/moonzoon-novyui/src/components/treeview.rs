@@ -381,13 +381,17 @@ fn render_tree_item(
                     .unify()
             }
         )
-        // Checkbox (if enabled) - properly connected to selection state
+        // Checkbox (if enabled) - only for non-file items
         .item_signal(
             selected_items.signal_ref({
                 let item_id = item_id.clone();
                 move |selected| selected.contains(&item_id)
             }).map(move |is_selected| {
-                if show_checkboxes {
+                // Show checkboxes only for scopes (folders), not files
+                let should_show_checkbox = show_checkboxes && 
+                    !matches!(item.item_type, Some(TreeViewItemType::File));
+                
+                if should_show_checkbox {
                     Some(
                         CheckboxBuilder::new()
                             .size(match size {
@@ -544,26 +548,40 @@ fn render_tree_item(
                     // Always set focus when clicking a row
                     focused_item.set(Some(item_id.clone()));
 
-                    // Handle interaction based on mode and item type
-                    if show_checkboxes {
-                        // In checkbox mode: row clicks ONLY toggle selection
-                        let mut selected = selected_items.lock_mut();
-                        if selected.contains(&item_id) {
-                            selected.remove(&item_id);
-                        } else {
-                            selected.insert(item_id.clone());
-                        }
-                        // Note: expand/collapse is handled separately by the expand button
-                    } else {
-                        // In normal mode (no checkboxes):
-                        // - Row clicks ONLY expand/collapse if it has children
-                        // - No selection state is maintained
-                        if has_children {
-                            let mut expanded = expanded_items.lock_mut();
-                            if expanded.contains(&item_id) {
-                                expanded.remove(&item_id);
+                    // Handle interaction based on item type
+                    match item.item_type {
+                        Some(TreeViewItemType::File) => {
+                            // Files: only expand/collapse, never select
+                            if has_children {
+                                let mut expanded = expanded_items.lock_mut();
+                                if expanded.contains(&item_id) {
+                                    expanded.remove(&item_id);
+                                } else {
+                                    expanded.insert(item_id.clone());
+                                }
+                            }
+                        },
+                        _ => {
+                            // Scopes: handle selection if checkboxes enabled
+                            if show_checkboxes {
+                                // In checkbox mode: toggle selection (single selection enforced)
+                                let mut selected = selected_items.lock_mut();
+                                if selected.contains(&item_id) {
+                                    selected.remove(&item_id);
+                                } else {
+                                    selected.clear(); // Clear all other selections first
+                                    selected.insert(item_id.clone());
+                                }
                             } else {
-                                expanded.insert(item_id.clone());
+                                // No checkboxes: expand/collapse if has children
+                                if has_children {
+                                    let mut expanded = expanded_items.lock_mut();
+                                    if expanded.contains(&item_id) {
+                                        expanded.remove(&item_id);
+                                    } else {
+                                        expanded.insert(item_id.clone());
+                                    }
+                                }
                             }
                         }
                     }

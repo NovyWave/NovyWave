@@ -3,11 +3,14 @@ use serde::{Serialize, Deserialize};
 use std::path::Path;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::fs;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum UpMsg {
     LoadWaveformFile(String),  // Absolute file path
     GetParsingProgress(String), // File ID
+    LoadConfig,
+    SaveConfig(AppConfig),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -16,6 +19,9 @@ pub enum DownMsg {
     ParsingProgress { file_id: String, progress: f32 },
     FileLoaded { file_id: String, hierarchy: FileHierarchy },
     ParsingError { file_id: String, error: String },
+    ConfigLoaded(AppConfig),
+    ConfigSaved,
+    ConfigError(String),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -28,7 +34,7 @@ pub struct WaveformFile {
     pub id: String,
     pub filename: String,
     pub format: FileFormat,
-    pub signals: Vec<Signal>,
+    pub scopes: Vec<ScopeData>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -38,11 +44,83 @@ pub enum FileFormat {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct ScopeData {
+    pub id: String,
+    pub name: String,
+    pub full_name: String,
+    pub children: Vec<ScopeData>,
+    pub variables: Vec<Signal>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Signal {
     pub id: String,
     pub name: String,
     pub signal_type: String,
     pub width: u32,
+}
+
+// Configuration structures
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct AppConfig {
+    pub app: AppSection,
+    pub ui: UiSection,
+    pub files: FilesSection,
+    pub workspace: WorkspaceSection,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AppSection {
+    pub version: String,
+    pub auto_load_previous_files: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct UiSection {
+    pub theme: String, // "dark" or "light"
+}
+
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct FilesSection {
+    pub opened_files: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct WorkspaceSection {
+    pub dock_to_bottom: bool,
+    pub docked_to_bottom: DockedToBottomLayout,
+    pub docked_to_right: DockedToRightLayout,
+    pub scope_selection: HashMap<String, String>,
+    pub expanded_scopes: HashMap<String, Vec<String>>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct DockedToBottomLayout {
+    pub main_area_height: u32,
+    pub files_panel_width: u32,
+}
+
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct DockedToRightLayout {
+    pub files_panel_height: u32,
+    pub files_panel_width: u32,
+}
+
+impl Default for AppSection {
+    fn default() -> Self {
+        Self {
+            version: "0.1.0".to_string(),
+            auto_load_previous_files: true,
+        }
+    }
+}
+
+impl Default for UiSection {
+    fn default() -> Self {
+        Self {
+            theme: "dark".to_string(),
+        }
+    }
 }
 
 async fn frontend() -> Frontend {
@@ -64,6 +142,12 @@ async fn up_msg_handler(req: UpMsgRequest<UpMsg>) {
         }
         UpMsg::GetParsingProgress(file_id) => {
             send_parsing_progress(file_id, session_id, cor_id).await;
+        }
+        UpMsg::LoadConfig => {
+            load_config(session_id, cor_id).await;
+        }
+        UpMsg::SaveConfig(config) => {
+            save_config(config, session_id, cor_id).await;
         }
     }
 }
@@ -116,7 +200,7 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
             }
             send_progress_update(file_id.clone(), 0.5, session_id, cor_id).await;
             
-            let signals = extract_signals_from_hierarchy(&header_result.hierarchy);
+            let scopes = extract_scopes_from_hierarchy(&header_result.hierarchy);
             let format = match header_result.file_format {
                 wellen::FileFormat::Vcd => FileFormat::VCD,
                 wellen::FileFormat::Fst => FileFormat::FST,
@@ -128,7 +212,7 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
                 id: file_id.clone(),
                 filename,
                 format,
-                signals,
+                scopes,
             };
             
             let file_hierarchy = FileHierarchy {
@@ -156,11 +240,18 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
 }
 
 
-fn extract_signals_from_hierarchy(hierarchy: &wellen::Hierarchy) -> Vec<Signal> {
-    let mut signals = Vec::new();
+fn extract_scopes_from_hierarchy(hierarchy: &wellen::Hierarchy) -> Vec<ScopeData> {
+    hierarchy.scopes().map(|scope_ref| {
+        extract_scope_data(hierarchy, scope_ref)
+    }).collect()
+}
+
+fn extract_scope_data(hierarchy: &wellen::Hierarchy, scope_ref: wellen::ScopeRef) -> ScopeData {
+    let scope = &hierarchy[scope_ref];
     
-    for var in hierarchy.iter_vars() {
-        signals.push(Signal {
+    let variables: Vec<Signal> = scope.vars(hierarchy).map(|var_ref| {
+        let var = &hierarchy[var_ref];
+        Signal {
             id: format!("{}", var.signal_ref().index()),
             name: var.name(hierarchy).to_string(),
             signal_type: format!("{:?}", var.var_type()),
@@ -169,10 +260,20 @@ fn extract_signals_from_hierarchy(hierarchy: &wellen::Hierarchy) -> Vec<Signal> 
                 wellen::SignalEncoding::Real => 1,
                 wellen::SignalEncoding::String => 1,
             },
-        });
-    }
+        }
+    }).collect();
     
-    signals
+    let children: Vec<ScopeData> = scope.scopes(hierarchy).map(|child_scope_ref| {
+        extract_scope_data(hierarchy, child_scope_ref)
+    }).collect();
+    
+    ScopeData {
+        id: format!("scope_{}", scope_ref.index()),
+        name: scope.name(hierarchy).to_string(),
+        full_name: scope.full_name(hierarchy),
+        children,
+        variables,
+    }
 }
 
 async fn send_parsing_progress(file_id: String, session_id: SessionId, cor_id: CorId) {
@@ -206,6 +307,72 @@ fn generate_file_id(file_path: &str) -> String {
     let mut hasher = DefaultHasher::new();
     file_path.hash(&mut hasher);
     format!("file_{:x}", hasher.finish())
+}
+
+const CONFIG_FILE_PATH: &str = ".novywave";
+
+async fn load_config(session_id: SessionId, cor_id: CorId) {
+    println!("Loading config from {}", CONFIG_FILE_PATH);
+    
+    let config = match fs::read_to_string(CONFIG_FILE_PATH) {
+        Ok(content) => {
+            match toml::from_str::<AppConfig>(&content) {
+                Ok(config) => config,
+                Err(e) => {
+                    println!("Failed to parse config file: {}", e);
+                    send_down_msg(DownMsg::ConfigError(format!("Failed to parse config: {}", e)), session_id, cor_id).await;
+                    return;
+                }
+            }
+        }
+        Err(e) => {
+            println!("Config file not found or unreadable: {}", e);
+            // Create default config
+            let default_config = AppConfig::default();
+            
+            // Try to save default config
+            if let Err(save_err) = save_config_to_file(&default_config) {
+                println!("Failed to create default config file: {}", save_err);
+                send_down_msg(DownMsg::ConfigError(format!("Failed to create default config: {}", save_err)), session_id, cor_id).await;
+                return;
+            }
+            
+            default_config
+        }
+    };
+    
+    send_down_msg(DownMsg::ConfigLoaded(config), session_id, cor_id).await;
+}
+
+async fn save_config(config: AppConfig, session_id: SessionId, cor_id: CorId) {
+    println!("Saving config to {}", CONFIG_FILE_PATH);
+    
+    match save_config_to_file(&config) {
+        Ok(()) => {
+            send_down_msg(DownMsg::ConfigSaved, session_id, cor_id).await;
+        }
+        Err(e) => {
+            println!("Failed to save config: {}", e);
+            send_down_msg(DownMsg::ConfigError(format!("Failed to save config: {}", e)), session_id, cor_id).await;
+        }
+    }
+}
+
+fn save_config_to_file(config: &AppConfig) -> Result<(), Box<dyn std::error::Error>> {
+    let toml_content = toml::to_string_pretty(config)?;
+    
+    // Add header comment
+    let content_with_header = format!(
+        "# NovyWave User Configuration\n\
+         # This file stores your application preferences and workspace state\n\
+         \n\
+         {}", 
+        toml_content
+    );
+    
+    fs::write(CONFIG_FILE_PATH, content_with_header)?;
+    println!("Config saved successfully");
+    Ok(())
 }
 
 fn cleanup_parsing_session(file_id: &str) {
