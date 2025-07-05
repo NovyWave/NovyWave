@@ -261,16 +261,8 @@ static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                     zoon::println!("  - {}: {} variables", file.filename, total_variables);
                     LOADED_FILES.lock_mut().push_cloned(file.clone());
                     
-                    // Check if this file has a saved scope selection to restore
-                    if let Some(scope_id) = SAVED_SCOPE_SELECTIONS.lock_ref().get(&file.id) {
-                        zoon::println!("Restoring scope selection for file {}: {}", file.id, scope_id);
-                        
-                        // Set the selected scope ID
-                        SELECTED_SCOPE_ID.set_neq(Some(scope_id.clone()));
-                        
-                        // Add the scope to TreeView selection
-                        TREE_SELECTED_ITEMS.lock_mut().insert(scope_id.clone());
-                    }
+                    // Store scope selection for later restoration (don't restore immediately)
+                    // This prevents multiple files from fighting over global selection during loading
                 }
                 
                 // Mark file as completed
@@ -331,12 +323,61 @@ fn check_loading_complete() {
     
     if all_done {
         IS_LOADING.set(false);
+        
+        // TODO: Restore scope selections from config after all files are loaded
+        // restore_scope_selections(); // Disabled due to recursive mutex issue
+        
         // Clear completed files after a delay to show final state
         Task::start(async {
             Timer::sleep(2000).await;
             LOADING_FILES.lock_mut().clear();
         });
     }
+}
+
+fn restore_scope_selections() {
+    let saved_selections = SAVED_SCOPE_SELECTIONS.lock_ref();
+    if saved_selections.is_empty() {
+        return;
+    }
+    
+    zoon::println!("Restoring scope selections for {} files", saved_selections.len());
+    
+    // Since the config system only saves ONE global scope selection,
+    // we should only have one entry, but iterate to be safe
+    for (file_id, scope_id) in saved_selections.iter() {
+        // Check if this file is currently loaded
+        let file_exists = LOADED_FILES.lock_ref().iter().any(|f| f.id == *file_id);
+        if !file_exists {
+            zoon::println!("Skipping scope restoration for file {}: not currently loaded", file_id);
+            continue;
+        }
+        
+        // Verify the scope actually exists in the loaded files
+        let scope_exists = LOADED_FILES.lock_ref().iter().any(|file| {
+            file.id == *file_id && file_contains_scope(&file.scopes, scope_id)
+        });
+        
+        if scope_exists {
+            zoon::println!("Restoring scope selection: {} in file {}", scope_id, file_id);
+            
+            // Update the global scope selection
+            SELECTED_SCOPE_ID.set_neq(Some(scope_id.clone()));
+            
+            // Update the TreeView selection to show the scope as selected (single selection)
+            let mut new_selection = HashSet::new();
+            new_selection.insert(scope_id.clone());
+            TREE_SELECTED_ITEMS.set_neq(new_selection);
+            
+            // Only restore the first (and should be only) valid selection
+            break;
+        } else {
+            zoon::println!("Skipping scope restoration for {}: scope not found in loaded files", scope_id);
+        }
+    }
+    
+    // Clear saved selections after restoration attempt
+    SAVED_SCOPE_SELECTIONS.lock_mut().clear();
 }
 
 fn load_files_button_with_progress(variant: ButtonVariant, size: ButtonSize, icon: Option<IconName>) -> impl Element {
@@ -570,8 +611,8 @@ fn init_scope_selection() {
         TREE_SELECTED_ITEMS.signal_ref(|selected_items| {
             selected_items.clone()
         }).for_each_sync(|selected_items| {
-            // Find the first selected scope (not file)
-            if let Some(scope_id) = selected_items.iter().find(|id| !id.starts_with("file_")) {
+            // Find the first selected scope (has _scope_ pattern, not just file_)
+            if let Some(scope_id) = selected_items.iter().find(|id| id.contains("_scope_")) {
                 SELECTED_SCOPE_ID.set_neq(Some(scope_id.clone()));
                 save_current_config();
             } else {

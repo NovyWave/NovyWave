@@ -26,11 +26,12 @@ files_panel_height = 397
 files_panel_width = 434
 
 [workspace.scope_selection]
-file_7fda6450ec6eaf33 = "scope_1"
+file_71a2908980aee1d = "file_71a2908980aee1d_scope_0"
 
 [workspace.expanded_scopes]
 current_session = [
-    "scope_0",
     "file_71a2908980aee1d",
+    "file_7fda6450ec6eaf33_scope_0",
     "file_7fda6450ec6eaf33",
+    "file_71a2908980aee1d_scope_0",
 ]

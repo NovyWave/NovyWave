@@ -205,7 +205,7 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
             }
             send_progress_update(file_id.clone(), 0.5, session_id, cor_id).await;
             
-            let scopes = extract_scopes_from_hierarchy(&header_result.hierarchy);
+            let scopes = extract_scopes_from_hierarchy(&header_result.hierarchy, &file_id);
             let format = match header_result.file_format {
                 wellen::FileFormat::Vcd => FileFormat::VCD,
                 wellen::FileFormat::Fst => FileFormat::FST,
@@ -245,13 +245,13 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
 }
 
 
-fn extract_scopes_from_hierarchy(hierarchy: &wellen::Hierarchy) -> Vec<ScopeData> {
+fn extract_scopes_from_hierarchy(hierarchy: &wellen::Hierarchy, file_id: &str) -> Vec<ScopeData> {
     hierarchy.scopes().map(|scope_ref| {
-        extract_scope_data(hierarchy, scope_ref)
+        extract_scope_data_with_file_id(hierarchy, scope_ref, file_id)
     }).collect()
 }
 
-fn extract_scope_data(hierarchy: &wellen::Hierarchy, scope_ref: wellen::ScopeRef) -> ScopeData {
+fn extract_scope_data_with_file_id(hierarchy: &wellen::Hierarchy, scope_ref: wellen::ScopeRef, file_id: &str) -> ScopeData {
     let scope = &hierarchy[scope_ref];
     
     let variables: Vec<Signal> = scope.vars(hierarchy).map(|var_ref| {
@@ -269,11 +269,11 @@ fn extract_scope_data(hierarchy: &wellen::Hierarchy, scope_ref: wellen::ScopeRef
     }).collect();
     
     let children: Vec<ScopeData> = scope.scopes(hierarchy).map(|child_scope_ref| {
-        extract_scope_data(hierarchy, child_scope_ref)
+        extract_scope_data_with_file_id(hierarchy, child_scope_ref, file_id)
     }).collect();
     
     ScopeData {
-        id: format!("scope_{}", scope_ref.index()),
+        id: format!("{}_scope_{}", file_id, scope_ref.index()),
         name: scope.name(hierarchy).to_string(),
         full_name: scope.full_name(hierarchy),
         children,
