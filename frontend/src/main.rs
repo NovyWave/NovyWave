@@ -1305,13 +1305,12 @@ fn selected_variables_with_waveform_panel() -> impl Element {
                         Column::new()
                             .s(Gap::new().y(0))
                             .s(Padding::all(8))
-                            .s(Height::fill())  // Make the column fill available height
                             .item(
                                 // Timeline header
                         Row::new()
                             .s(Gap::new().x(0))
                             .s(Align::new().center_y())
-                            .s(Padding::new().y(4))
+                            .s(Padding::new().y(2))
                             .item(
                                 // Variable Name column header
                                 El::new()
@@ -1387,7 +1386,7 @@ fn selected_variables_with_waveform_panel() -> impl Element {
                         Row::new()
                             .s(Gap::new().x(0))
                             .s(Align::new().center_y())
-                            .s(Padding::new().y(1))
+                            .s(Padding::new().y(0))
                             .item(
                                 // Variable Name column (250px width)
                                 Row::new()
@@ -1400,8 +1399,7 @@ fn selected_variables_with_waveform_panel() -> impl Element {
                                             .s(Font::new().color(hsluv!(220, 10, 85)).size(13))
                                             .child(var_names[i as usize])
                                     )
-                                    .item("❌")
-                            )
+                                    )
                             .item(
                                 // Value column (60px width)
                                 El::new()
