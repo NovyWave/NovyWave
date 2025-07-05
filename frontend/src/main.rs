@@ -1,5 +1,6 @@
 use zoon::{*, futures_util::future::try_join_all};
 use moonzoon_novyui::*;
+use moonzoon_novyui::tokens::theme::{Theme, init_theme, theme, toggle_theme};
 use serde::{Serialize, Deserialize};
 use std::collections::{HashSet, HashMap};
 
@@ -38,6 +39,9 @@ static SAVED_SCOPE_SELECTIONS: Lazy<Mutable<HashMap<String, String>>> = lazy::de
 // Store the loaded config to preserve inactive mode settings when saving
 static LOADED_CONFIG: Lazy<Mutable<Option<AppConfig>>> = lazy::default();
 
+// Flag to prevent auto-saving before initial config is loaded
+static CONFIG_LOADED: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
+
 fn generate_file_id(file_path: &str) -> String {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
@@ -70,6 +74,7 @@ pub enum UpMsg {
     GetParsingProgress(String),
     LoadConfig,
     SaveConfig(AppConfig),
+    SaveTheme(String),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -81,6 +86,7 @@ pub enum DownMsg {
     ConfigLoaded(AppConfig),
     ConfigSaved,
     ConfigError(String),
+    ThemeSaved,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -310,6 +316,9 @@ static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
             DownMsg::ConfigError(error) => {
                 zoon::println!("Config error: {}", error);
             }
+            DownMsg::ThemeSaved => {
+                zoon::println!("Theme saved successfully");
+            }
         }
     })
 });
@@ -391,9 +400,22 @@ fn apply_config(config: AppConfig) {
     // Store the loaded config to preserve inactive mode settings when saving
     LOADED_CONFIG.set_neq(Some(config.clone()));
     
-    // Apply UI settings
+    // Apply UI settings - initialize NovyUI theme with custom persistence
     zoon::println!("Theme: {}", config.ui.theme);
-    // TODO: Apply theme when theme system is implemented
+    let initial_theme = match config.ui.theme.as_str() {
+        "light" => Some(Theme::Light),
+        "dark" => Some(Theme::Dark),
+        _ => Some(Theme::Dark), // Default fallback
+    };
+    
+    // Initialize theme system with custom persistence that saves to config
+    init_theme(initial_theme, Some(Box::new(|theme| {
+        let theme_str = match theme {
+            Theme::Light => "light",
+            Theme::Dark => "dark",
+        };
+        send_up_msg(UpMsg::SaveTheme(theme_str.to_string()));
+    })));
     
     // Apply workspace settings
     IS_DOCKED_TO_BOTTOM.set_neq(config.workspace.dock_to_bottom);
@@ -401,12 +423,12 @@ fn apply_config(config: AppConfig) {
     // Apply layout-specific settings based on current mode
     if config.workspace.dock_to_bottom {
         // Docked to bottom mode
-        LEFT_PANEL_WIDTH.set_neq(config.workspace.docked_to_bottom.files_panel_width);
-        MAIN_AREA_HEIGHT.set_neq(config.workspace.docked_to_bottom.main_area_height);
+        LEFT_PANEL_WIDTH.set_neq(u32::max(50, config.workspace.docked_to_bottom.files_panel_width));
+        MAIN_AREA_HEIGHT.set_neq(u32::max(50, config.workspace.docked_to_bottom.main_area_height));
     } else {
         // Docked to right mode  
-        LEFT_PANEL_WIDTH.set_neq(config.workspace.docked_to_right.files_panel_width);
-        FILES_PANEL_HEIGHT.set_neq(config.workspace.docked_to_right.files_panel_height);
+        LEFT_PANEL_WIDTH.set_neq(u32::max(50, config.workspace.docked_to_right.files_panel_width));
+        FILES_PANEL_HEIGHT.set_neq(u32::max(50, config.workspace.docked_to_right.files_panel_height));
     }
     
     // Restore expanded scopes
@@ -431,9 +453,17 @@ fn apply_config(config: AppConfig) {
             send_up_msg(UpMsg::LoadWaveformFile(file_path));
         }
     }
+    
+    // Mark config as loaded to enable auto-saving
+    CONFIG_LOADED.set_neq(true);
 }
 
 fn save_current_config() {
+    // Don't save until initial config has been loaded
+    if !CONFIG_LOADED.get() {
+        return;
+    }
+    
     // Collect current state - use full paths from FILE_PATHS mapping
     let file_paths = FILE_PATHS.lock_ref();
     let opened_files: Vec<String> = LOADED_FILES.lock_ref()
@@ -461,7 +491,9 @@ fn save_current_config() {
             auto_load_previous_files: true,
         },
         ui: UiSection {
-            theme: "dark".to_string(),
+            theme: LOADED_CONFIG.lock_ref().as_ref()
+                .map(|c| c.ui.theme.clone())
+                .unwrap_or_else(|| "dark".to_string()),
         },
         files: FilesSection {
             opened_files,
@@ -479,8 +511,12 @@ fn save_current_config() {
                         files_panel_width: *LEFT_PANEL_WIDTH.lock_ref(),
                     }
                 } else {
-                    // Inactive mode: preserve existing values
-                    existing_config.workspace.docked_to_bottom
+                    // Inactive mode: preserve existing values, but use defaults if zero
+                    let existing = existing_config.workspace.docked_to_bottom;
+                    DockedToBottomLayout {
+                        main_area_height: if existing.main_area_height == 0 { 350 } else { existing.main_area_height },
+                        files_panel_width: if existing.files_panel_width == 0 { 470 } else { existing.files_panel_width },
+                    }
                 },
                 docked_to_right: if !is_docked {
                     // Active mode: update with current values
@@ -489,8 +525,12 @@ fn save_current_config() {
                         files_panel_width: *LEFT_PANEL_WIDTH.lock_ref(),
                     }
                 } else {
-                    // Inactive mode: preserve existing values
-                    existing_config.workspace.docked_to_right
+                    // Inactive mode: preserve existing values, but use defaults if zero
+                    let existing = existing_config.workspace.docked_to_right;
+                    DockedToRightLayout {
+                        files_panel_height: if existing.files_panel_height == 0 { 300 } else { existing.files_panel_height },
+                        files_panel_width: if existing.files_panel_width == 0 { 470 } else { existing.files_panel_width },
+                    }
                 },
                 scope_selection,
                 expanded_scopes: {
@@ -891,6 +931,22 @@ fn remove_all_button() -> impl Element {
         .build()
 }
 
+fn theme_toggle_button() -> impl Element {
+    El::new()
+        .child_signal(theme().map(|current_theme| {
+            button()
+                .left_icon(match current_theme {
+                    Theme::Light => IconName::Moon,
+                    Theme::Dark => IconName::Sun,
+                })
+                .variant(ButtonVariant::Secondary)
+                .size(ButtonSize::Small)
+                .on_press(|| toggle_theme())
+                .build()
+                .into_element()
+        }))
+}
+
 fn dock_toggle_button() -> impl Element {
     El::new()
         .child_signal(IS_DOCKED_TO_BOTTOM.signal().map(|is_docked| {
@@ -1228,6 +1284,9 @@ fn selected_variables_with_waveform_panel() -> impl Element {
                     .item(
                         El::new()
                             .s(Width::fill())
+                    )
+                    .item(
+                        theme_toggle_button()
                     )
                     .item(
                         dock_toggle_button()

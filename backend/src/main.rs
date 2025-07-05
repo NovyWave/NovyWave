@@ -11,6 +11,7 @@ pub enum UpMsg {
     GetParsingProgress(String), // File ID
     LoadConfig,
     SaveConfig(AppConfig),
+    SaveTheme(String), // "light" or "dark"
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -22,6 +23,7 @@ pub enum DownMsg {
     ConfigLoaded(AppConfig),
     ConfigSaved,
     ConfigError(String),
+    ThemeSaved,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -148,6 +150,9 @@ async fn up_msg_handler(req: UpMsgRequest<UpMsg>) {
         }
         UpMsg::SaveConfig(config) => {
             save_config(config, session_id, cor_id).await;
+        }
+        UpMsg::SaveTheme(theme) => {
+            save_theme(theme, session_id, cor_id).await;
         }
     }
 }
@@ -354,6 +359,42 @@ async fn save_config(config: AppConfig, session_id: SessionId, cor_id: CorId) {
         Err(e) => {
             println!("Failed to save config: {}", e);
             send_down_msg(DownMsg::ConfigError(format!("Failed to save config: {}", e)), session_id, cor_id).await;
+        }
+    }
+}
+
+async fn save_theme(theme: String, session_id: SessionId, cor_id: CorId) {
+    println!("Saving theme: {}", theme);
+    
+    // Load current config
+    let mut config = match fs::read_to_string(CONFIG_FILE_PATH) {
+        Ok(content) => {
+            match toml::from_str::<AppConfig>(&content) {
+                Ok(config) => config,
+                Err(e) => {
+                    println!("Failed to parse config file: {}", e);
+                    send_down_msg(DownMsg::ConfigError(format!("Failed to parse config: {}", e)), session_id, cor_id).await;
+                    return;
+                }
+            }
+        }
+        Err(_) => {
+            // Create default config if file doesn't exist
+            AppConfig::default()
+        }
+    };
+    
+    // Update theme
+    config.ui.theme = theme;
+    
+    // Save updated config
+    match save_config_to_file(&config) {
+        Ok(()) => {
+            send_down_msg(DownMsg::ThemeSaved, session_id, cor_id).await;
+        }
+        Err(e) => {
+            println!("Failed to save theme: {}", e);
+            send_down_msg(DownMsg::ConfigError(format!("Failed to save theme: {}", e)), session_id, cor_id).await;
         }
     }
 }
