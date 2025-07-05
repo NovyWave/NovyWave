@@ -6,6 +6,7 @@ publish.workspace = true
 
 [dependencies]
 zoon.workspace = true
+serde = { version = "1.0", features = ["derive"] }
 fast2d = { git = "https://github.com/NovyWave/Fast2D", rev = "c84195b8a0053e9afdbb8c73f7ea41ef63f695c3", default-features = false, features = [
     # Choose one of the following rendering APIs:
     # "webgl",

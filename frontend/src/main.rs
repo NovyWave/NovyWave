@@ -2,6 +2,7 @@ use zoon::{*, futures_util::future::try_join_all};
 use std::f32::consts::PI;
 use std::mem;
 use moonzoon_novyui::*;
+use serde::{Serialize, Deserialize};
 
 // Panel resizing state
 static LEFT_PANEL_WIDTH: Lazy<Mutable<u32>> = Lazy::new(|| 470.into());
@@ -13,9 +14,250 @@ static HORIZONTAL_DIVIDER_DRAGGING: Lazy<Mutable<bool>> = lazy::default();
 static IS_DOCKED_TO_BOTTOM: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(true));
 static MAIN_AREA_HEIGHT: Lazy<Mutable<u32>> = Lazy::new(|| 350.into());
 
+// File dialog state
+static SHOW_FILE_DIALOG: Lazy<Mutable<bool>> = lazy::default();
+static FILE_PATHS_INPUT: Lazy<Mutable<String>> = lazy::default();
+
+// File loading progress state
+static LOADING_FILES: Lazy<MutableVec<LoadingFile>> = lazy::default();
+static IS_LOADING: Lazy<Mutable<bool>> = lazy::default();
+
+// Loaded files hierarchy for TreeView
+static LOADED_FILES: Lazy<MutableVec<WaveformFile>> = lazy::default();
+
+#[derive(Clone, Debug)]
+pub struct LoadingFile {
+    pub file_id: String,
+    pub filename: String,
+    pub progress: f32,
+    pub status: LoadingStatus,
+}
+
+#[derive(Clone, Debug)]
+pub enum LoadingStatus {
+    Starting,
+    Parsing,
+    Completed,
+    Error(String),
+}
+
+// Backend message types
+#[derive(Serialize, Deserialize, Debug)]
+pub enum UpMsg {
+    LoadWaveformFile(String),
+    GetParsingProgress(String),
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub enum DownMsg {
+    ParsingStarted { file_id: String, filename: String },
+    ParsingProgress { file_id: String, progress: f32 },
+    FileLoaded { file_id: String, hierarchy: FileHierarchy },
+    ParsingError { file_id: String, error: String },
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct FileHierarchy {
+    pub files: Vec<WaveformFile>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct WaveformFile {
+    pub id: String,
+    pub filename: String,
+    pub format: FileFormat,
+    pub signals: Vec<Signal>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum FileFormat {
+    VCD,
+    FST,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Signal {
+    pub id: String,
+    pub name: String,
+    pub signal_type: String,
+    pub width: u32,
+}
+
 // Type alias for clarity
 // Represents a collection of 2D objects for fast2d canvas
 type ExampleObjects = Vec<fast2d::Object2d>;
+
+fn show_file_paths_dialog() {
+    SHOW_FILE_DIALOG.set(true);
+    FILE_PATHS_INPUT.set_neq(String::new());
+}
+
+fn process_file_paths() {
+    let input = FILE_PATHS_INPUT.get_cloned();
+    let paths: Vec<String> = input
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    
+    zoon::println!("Selected file paths: {:?}", paths);
+    
+    if !paths.is_empty() {
+        IS_LOADING.set(true);
+    }
+    
+    for path in paths {
+        zoon::println!("Loading file: {}", path);
+        send_up_msg(UpMsg::LoadWaveformFile(path));
+    }
+    
+    SHOW_FILE_DIALOG.set(false);
+}
+
+static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
+    Connection::new(|down_msg, _| {
+        zoon::println!("Received DownMsg: {:?}", down_msg);
+        match down_msg {
+            DownMsg::ParsingStarted { file_id, filename } => {
+                zoon::println!("Started parsing file: {} ({})", filename, file_id);
+                
+                // Add or update loading file
+                let loading_file = LoadingFile {
+                    file_id: file_id.clone(),
+                    filename: filename.clone(),
+                    progress: 0.0,
+                    status: LoadingStatus::Starting,
+                };
+                
+                LOADING_FILES.lock_mut().push_cloned(loading_file);
+            }
+            DownMsg::ParsingProgress { file_id, progress } => {
+                zoon::println!("File {} progress: {}%", file_id, progress * 100.0);
+                
+                // Update progress for the file
+                let current_files: Vec<LoadingFile> = LOADING_FILES.lock_ref().iter().cloned().collect();
+                let updated_files: Vec<LoadingFile> = current_files.into_iter().map(|mut file| {
+                    if file.file_id == file_id {
+                        file.progress = progress;
+                        file.status = LoadingStatus::Parsing;
+                    }
+                    file
+                }).collect();
+                LOADING_FILES.lock_mut().replace_cloned(updated_files);
+            }
+            DownMsg::FileLoaded { file_id, hierarchy } => {
+                zoon::println!("File loaded: {} with {} files", file_id, hierarchy.files.len());
+                
+                // Add loaded files to the TreeView state
+                for file in hierarchy.files {
+                    zoon::println!("  - {}: {} signals", file.filename, file.signals.len());
+                    LOADED_FILES.lock_mut().push_cloned(file);
+                }
+                
+                // Mark file as completed
+                let current_files: Vec<LoadingFile> = LOADING_FILES.lock_ref().iter().cloned().collect();
+                let updated_files: Vec<LoadingFile> = current_files.into_iter().map(|mut file| {
+                    if file.file_id == file_id {
+                        file.progress = 1.0;
+                        file.status = LoadingStatus::Completed;
+                    }
+                    file
+                }).collect();
+                LOADING_FILES.lock_mut().replace_cloned(updated_files);
+                
+                // Check if all files are completed
+                check_loading_complete();
+            }
+            DownMsg::ParsingError { file_id, error } => {
+                zoon::println!("Error parsing file {}: {}", file_id, error);
+                
+                // Mark file as error
+                let current_files: Vec<LoadingFile> = LOADING_FILES.lock_ref().iter().cloned().collect();
+                let updated_files: Vec<LoadingFile> = current_files.into_iter().map(|mut file| {
+                    if file.file_id == file_id {
+                        file.status = LoadingStatus::Error(error.clone());
+                    }
+                    file
+                }).collect();
+                LOADING_FILES.lock_mut().replace_cloned(updated_files);
+                
+                // Check if all files are completed
+                check_loading_complete();
+            }
+        }
+    })
+});
+
+fn check_loading_complete() {
+    let loading_files = LOADING_FILES.lock_ref();
+    let all_done = loading_files.iter().all(|f| {
+        matches!(f.status, LoadingStatus::Completed | LoadingStatus::Error(_))
+    });
+    
+    if all_done {
+        IS_LOADING.set(false);
+        // Clear completed files after a delay to show final state
+        Task::start(async {
+            Timer::sleep(2000).await;
+            LOADING_FILES.lock_mut().clear();
+        });
+    }
+}
+
+fn load_files_button_with_progress(variant: ButtonVariant, size: ButtonSize, icon: Option<IconName>) -> impl Element {
+    El::new()
+        .child_signal(IS_LOADING.signal().map(move |is_loading| {
+            let mut btn = button();
+            
+            if is_loading {
+                btn = btn.label("Loading...")
+                    .disabled(true);
+                if let Some(icon) = icon {
+                    btn = btn.left_icon(icon);
+                }
+            } else {
+                btn = btn.label("Load Files")
+                    .on_press(|| show_file_paths_dialog());
+                if let Some(icon) = icon {
+                    btn = btn.left_icon(icon);
+                }
+            }
+            
+            btn.variant(variant.clone())
+                .size(size.clone())
+                .build()
+                .into_element()
+        }))
+}
+
+fn load_files_dialog_button() -> impl Element {
+    El::new()
+        .child_signal(IS_LOADING.signal().map(|is_loading| {
+            let mut btn = button();
+            
+            if is_loading {
+                btn = btn.label("Loading...")
+                    .disabled(true);
+            } else {
+                btn = btn.label("Load Files")
+                    .on_press(|| process_file_paths());
+            }
+            
+            btn.variant(ButtonVariant::Primary)
+                .size(ButtonSize::Medium)
+                .build()
+                .into_element()
+        }))
+}
+
+fn send_up_msg(up_msg: UpMsg) {
+    Task::start(async move {
+        let result = CONNECTION.send_up_msg(up_msg).await;
+        if let Err(error) = result {
+            zoon::println!("Failed to send message: {:?}", error);
+        }
+    });
+}
 
 /// Entry point: loads fonts and starts the app.
 pub fn main() {
@@ -25,6 +267,7 @@ pub fn main() {
         IS_DOCKED_TO_BOTTOM.set(false);
         
         start_app("app", root);
+        CONNECTION.init_lazy();
     });
 }
 
@@ -321,12 +564,68 @@ fn novyui_buttons_demo() -> impl Element {
         )
 }
 
-fn root() -> impl Element {
+fn file_paths_dialog() -> impl Element {
     El::new()
+        .s(Background::new().color("rgba(0, 0, 0, 0.8)"))
+        .s(Width::fill())
+        .s(Height::fill())
+        .s(Align::center())
+        .child(
+            El::new()
+                .s(Background::new().color(hsluv!(220, 15, 15)))
+                .s(RoundedCorners::all(8))
+                .s(Borders::all(Border::new().width(2).color(hsluv!(220, 10, 30))))
+                .s(Padding::all(24))
+                .s(Width::exact(500))
+                .child(
+                    Column::new()
+                        .s(Gap::new().y(16))
+                        .item(
+                            El::new()
+                                .s(Font::new().size(18).weight(FontWeight::Bold).color(hsluv!(220, 10, 85)))
+                                .child("Load Waveform Files")
+                        )
+                        .item(
+                            El::new()
+                                .s(Font::new().size(14).color(hsluv!(220, 10, 70)))
+                                .child("Enter absolute file paths, separated by commas:")
+                        )
+                        .item(
+                            input()
+                                .placeholder("/path/to/file1.vcd, /path/to/file2.fst")
+                                .on_change(|text| FILE_PATHS_INPUT.set_neq(text))
+                                .size(InputSize::Medium)
+                                .build()
+                        )
+                        .item(
+                            Row::new()
+                                .s(Gap::new().x(12))
+                                .s(Align::new().right())
+                                .item(
+                                    button()
+                                        .label("Cancel")
+                                        .variant(ButtonVariant::Ghost)
+                                        .size(ButtonSize::Medium)
+                                        .on_press(|| SHOW_FILE_DIALOG.set(false))
+                                        .build()
+                                )
+                                .item(
+                                    load_files_dialog_button()
+                                )
+                        )
+                )
+        )
+}
+
+fn root() -> impl Element {
+    Stack::new()
         .s(Height::screen())
         .s(Width::fill())
         .s(Background::new().color(hsluv!(220, 15, 8)))
-        .child(main_layout())
+        .layer(main_layout())
+        .layer_signal(SHOW_FILE_DIALOG.signal().map_true(
+            || file_paths_dialog()
+        ))
 }
 
 // --- Waveform Viewer Layout ---
@@ -369,7 +668,7 @@ fn app_header() -> impl Element {
                         .label("📁 Load files")
                         .variant(ButtonVariant::Secondary)
                         .size(ButtonSize::Small)
-                        .on_press(|| {})
+                        .on_press(|| show_file_paths_dialog())
                         .build()
                 )
         )
@@ -579,7 +878,10 @@ fn remove_all_button() -> impl Element {
         .left_icon(IconName::X)
         .variant(ButtonVariant::DestructiveGhost)
         .size(ButtonSize::Small)
-        .on_press(|| {})
+        .on_press(|| {
+            LOADED_FILES.lock_mut().clear();
+            zoon::println!("Cleared all loaded files");
+        })
         .build()
 }
 
@@ -614,6 +916,73 @@ fn dock_toggle_button() -> impl Element {
         }))
 }
 
+fn convert_files_to_tree_data(files: &[WaveformFile]) -> Vec<TreeViewItemData> {
+    files.iter().map(|file| {
+        let format_label = match file.format {
+            FileFormat::VCD => "VCD",
+            FileFormat::FST => "FST",
+        };
+        
+        // Group signals by their path components (if they have hierarchy)
+        let mut signal_groups: std::collections::HashMap<String, Vec<&Signal>> = std::collections::HashMap::new();
+        
+        for signal in &file.signals {
+            // For now, just put all signals at the root level
+            // Later we can parse signal names for hierarchy (e.g., "cpu.core.alu" -> nested structure)
+            signal_groups.entry("signals".to_string()).or_default().push(signal);
+        }
+        
+        let mut children = vec![];
+        
+        // Add a summary item
+        children.push(
+            TreeViewItemData::new(
+                format!("{}_info", file.id),
+                format!("{} - {} signals", format_label, file.signals.len())
+            )
+            .item_type(TreeViewItemType::File)
+        );
+        
+        // Add signal groups
+        for (group_name, signals) in signal_groups {
+            if signals.len() > 10 {
+                // If too many signals, create a folder
+                children.push(
+                    TreeViewItemData::new(
+                        format!("{}_{}", file.id, group_name),
+                        format!("Signals ({} items)", signals.len())
+                    )
+                    .item_type(TreeViewItemType::Folder)
+                    .with_children(
+                        signals.iter().take(20).map(|signal| {
+                            TreeViewItemData::new(
+                                format!("signal_{}", signal.id),
+                                format!("{} [{}:0]", signal.name, signal.width - 1)
+                            )
+                            .item_type(TreeViewItemType::File)
+                        }).collect()
+                    )
+                );
+            } else {
+                // Add signals directly
+                for signal in signals {
+                    children.push(
+                        TreeViewItemData::new(
+                            format!("signal_{}", signal.id),
+                            format!("{} [{}:0]", signal.name, signal.width - 1)
+                        )
+                        .item_type(TreeViewItemType::File)
+                    );
+                }
+            }
+        }
+        
+        TreeViewItemData::new(file.id.clone(), file.filename.clone())
+            .item_type(TreeViewItemType::File)
+            .with_children(children)
+    }).collect()
+}
+
 fn files_panel() -> impl Element {
     El::new()
         .s(Height::fill())
@@ -632,14 +1001,11 @@ fn files_panel() -> impl Element {
                             .s(Width::fill())
                     )
                     .item(
-                        button()
-                            .label("Load Files")
-                            .left_icon(IconName::Folder)
-                            .variant(ButtonVariant::Secondary)
-                            .size(ButtonSize::Small)
-                            .on_press(|| {})
-                            .align(Align::center())
-                            .build()
+                        load_files_button_with_progress(
+                            ButtonVariant::Secondary,
+                            ButtonSize::Small,
+                            Some(IconName::Folder)
+                        )
                     )
                     .item(
                         El::new()
@@ -653,31 +1019,38 @@ fn files_panel() -> impl Element {
                     .s(Padding::all(12))
                     .s(Height::fill())  // Make the column fill available height
                     .item(
-                        tree_view()
-                            .data(vec![
-                                tree_view_item("wave_21", "wave_21.fst")
-                                    .item_type(TreeViewItemType::File)
-                                    .with_children(vec![
-                                        tree_view_item("vexriscv", "VexRiscv")
-                                            .item_type(TreeViewItemType::Folder)
-                                            .with_children(vec![
-                                                tree_view_item("entitled_logic", "EntitledRiscvHazardDebugCd_dmDirect_logic")
-                                                    .item_type(TreeViewItemType::File),
-                                                tree_view_item("input_area", "inputArea_target_buffercc")
-                                                    .item_type(TreeViewItemType::File),
-                                                tree_view_item("buffer_cc", "bufferCC_4")
-                                                    .item_type(TreeViewItemType::File),
-                                            ])
-                                    ]),
-                                tree_view_item("simple_vcd", "simple.vcd")
-                                    .item_type(TreeViewItemType::File)
-                            ])
-                            .size(TreeViewSize::Medium)
-                            .variant(TreeViewVariant::Basic)
-                            .show_icons(true)
-                            .show_checkboxes(false)
-                            .default_expanded(vec!["wave_21".to_string(), "vexriscv".to_string()])
-                            .build()
+                        El::new()
+                            .s(Height::fill())
+                            .child_signal(
+                                LOADED_FILES.signal_vec_cloned()
+                                    .to_signal_map(|files| {
+                                        let tree_data = convert_files_to_tree_data(&files);
+                                        
+                                        if tree_data.is_empty() {
+                                            // Show placeholder when no files loaded
+                                            El::new()
+                                                .s(Padding::all(20))
+                                                .s(Font::new().color(hsluv!(0, 0, 50)).italic())
+                                                .child("No files loaded. Click 'Load Files' to add waveform files.")
+                                                .unify()
+                                        } else {
+                                            // Show TreeView with loaded files
+                                            let expanded_ids: Vec<String> = files.iter()
+                                                .map(|f| f.id.clone())
+                                                .collect();
+                                            
+                                            tree_view()
+                                                .data(tree_data)
+                                                .size(TreeViewSize::Medium)
+                                                .variant(TreeViewVariant::Basic)
+                                                .show_icons(true)
+                                                .show_checkboxes(false)
+                                                .default_expanded(expanded_ids)
+                                                .build()
+                                                .unify()
+                                        }
+                                    })
+                            )
                     )
             )
         )

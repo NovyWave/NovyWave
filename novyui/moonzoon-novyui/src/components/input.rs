@@ -4,6 +4,7 @@
 use crate::tokens::*;
 use crate::components::icon::{icon_str, IconName, IconSize, IconColor};
 use zoon::*;
+use std::rc::Rc;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum InputSize {
@@ -42,9 +43,9 @@ pub struct InputBuilder {
     required: bool,
     left_icon: Option<IconName>,
     right_icon: Option<IconName>,
-    on_change: Option<Box<dyn Fn(String)>>,
-    on_focus: Option<Box<dyn Fn()>>,
-    on_blur: Option<Box<dyn Fn()>>,
+    on_change: Option<Rc<dyn Fn(String)>>,
+    on_focus: Option<Rc<dyn Fn()>>,
+    on_blur: Option<Rc<dyn Fn()>>,
 }
 
 impl InputBuilder {
@@ -131,7 +132,7 @@ impl InputBuilder {
     where
         F: Fn(String) + 'static,
     {
-        self.on_change = Some(Box::new(handler));
+        self.on_change = Some(Rc::new(handler));
         self
     }
 
@@ -139,7 +140,7 @@ impl InputBuilder {
     where
         F: Fn() + 'static,
     {
-        self.on_focus = Some(Box::new(handler));
+        self.on_focus = Some(Rc::new(handler));
         self
     }
 
@@ -147,7 +148,7 @@ impl InputBuilder {
     where
         F: Fn() + 'static,
     {
-        self.on_blur = Some(Box::new(handler));
+        self.on_blur = Some(Rc::new(handler));
         self
     }
 
@@ -161,11 +162,17 @@ impl InputBuilder {
             InputSize::Large => (48, SPACING_16, SPACING_8, FONT_SIZE_18),
         };
 
+        // Extract values before consuming self
+        let size = self.size;
+        let label = self.label.clone();
+        let required = self.required;
+        let error_message = self.error_message.clone();
+
         // Use signal-based approach to handle optional components
         Column::new()
             .s(Width::fill())
             .s(Gap::new().y(SPACING_2))
-            .item_signal(always(self.label.clone()).map(move |label_opt| {
+            .item_signal(always(label).map(move |label_opt| {
                 label_opt.map(|label| {
                     let mut label_row = Row::new()
                         .s(Gap::new().x(SPACING_2))
@@ -173,7 +180,7 @@ impl InputBuilder {
                             El::new()
                                 .child(Text::new(&label))
                                 .s(Font::new()
-                                    .size(match self.size {
+                                    .size(match size {
                                         InputSize::Small => FONT_SIZE_12,
                                         InputSize::Medium => FONT_SIZE_14,
                                         InputSize::Large => FONT_SIZE_16,
@@ -187,7 +194,7 @@ impl InputBuilder {
                         );
 
                     // Add required indicator if needed
-                    if self.required {
+                    if required {
                         label_row = label_row.item(
                             El::new()
                                 .child(Text::new("*"))
@@ -204,12 +211,12 @@ impl InputBuilder {
                 })
             }))
             .item(self.build_input_container(focused, focused_signal, container_height, padding_x, padding_y, font_size))
-            .item_signal(always(self.error_message.clone()).map(move |error_opt| {
+            .item_signal(always(error_message).map(move |error_opt| {
                 error_opt.map(|error_msg| {
                     El::new()
                         .child(Text::new(&error_msg))
                         .s(Font::new()
-                            .size(match self.size {
+                            .size(match size {
                                 InputSize::Small => FONT_SIZE_12,
                                 InputSize::Medium => FONT_SIZE_12,
                                 InputSize::Large => FONT_SIZE_14,
@@ -225,7 +232,7 @@ impl InputBuilder {
     }
 
     fn build_input_container(
-        &self,
+        self,
         focused: Mutable<bool>,
         focused_signal: impl Signal<Item = bool> + Unpin + 'static,
         container_height: u32,
@@ -376,20 +383,31 @@ impl InputBuilder {
                     .label_hidden("Input")
                     .on_change({
                         let focused = focused.clone();
+                        let on_change = self.on_change;
                         move |new_value| {
-                            // Handle change
+                            if let Some(ref handler) = on_change {
+                                handler(new_value);
+                            }
                         }
                     })
                     .on_focus({
                         let focused = focused.clone();
+                        let on_focus = self.on_focus;
                         move || {
                             focused.set(true);
+                            if let Some(ref handler) = on_focus {
+                                handler();
+                            }
                         }
                     })
                     .on_blur({
                         let focused = focused.clone();
+                        let on_blur = self.on_blur;
                         move || {
                             focused.set(false);
+                            if let Some(ref handler) = on_blur {
+                                handler();
+                            }
                         }
                     })
             )
