@@ -7,4 +7,4 @@ publish.workspace = true
 [dependencies]
 moon.workspace = true
 serde = { version = "1.0", features = ["derive"] }
-wellen = { git = "https://github.com/MartinKavik/wellen", branch = "new_pub_types" }
+wellen = { path = "/home/martinkavik/repos/wellen/wellen" }

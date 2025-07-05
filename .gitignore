@@ -53,5 +53,4 @@ Thumbs.db
 .env.local
 
 # Large test waveform files
-test_files/big_240_MB.fst
 test_files/big_3_GB.vcd

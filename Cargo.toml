@@ -13,7 +13,7 @@ edition = "2024"
 publish = false
 
 [workspace.dependencies]
-# zoon = { path = "../../MoonZoon/crates/zoon" }
-# moon = { path = "../../MoonZoon/crates/moon" }
+# zoon = { path = "../MoonZoon/crates/zoon" }
+# moon = { path = "../MoonZoon/crates/moon" }
 zoon = { git = "https://github.com/MoonZoon/MoonZoon", rev = "7c5178d891cf4afbc2bbbe864ca63588b6c10f2a" }
 moon = { git = "https://github.com/MoonZoon/MoonZoon", rev = "7c5178d891cf4afbc2bbbe864ca63588b6c10f2a" }

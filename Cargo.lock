@@ -641,12 +641,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bytesize"
-version = "1.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e93abca9e28e0a1b9877922aacb20576e05d4679ffa78c3d6dc22a26a216659"
-
-[[package]]
 name = "bytestring"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1500,16 +1494,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "fst-native"
-version = "0.8.3"
+name = "fst-reader"
+version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aa5186c9e6e585c41b11086684d46b19f10869377312daa7ea0acd3100545581"
+checksum = "db49202e746e752746ed40ba8ba5398e3f434f5729a2e84df847c3fd235b9aa7"
 dependencies = [
- "flate2",
  "lz4_flex",
+ "miniz_oxide",
  "num_enum",
- "tempfile",
- "thiserror 1.0.69",
+ "thiserror 2.0.12",
 ]
 
 [[package]]
@@ -4016,6 +4009,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "719b953e2095829ee67db738b3bfa9fa368c94900df327b3f07fe6e794d2fe1f"
 
 [[package]]
+name = "rustc-hash"
+version = "2.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "357703d41365b4b27c590e3ed91eabb1b663f07c4c084095e60cbed4362dff0d"
+
+[[package]]
 name = "rustc_version"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5707,17 +5706,17 @@ dependencies = [
 
 [[package]]
 name = "wellen"
-version = "0.9.10"
-source = "git+https://github.com/MartinKavik/wellen?branch=new_pub_types#5b971883c9b40ca8739c990d354ea4a325bf9fcb"
+version = "0.16.1"
 dependencies = [
- "bytesize",
- "fst-native",
+ "fst-reader",
  "leb128",
  "lz4_flex",
  "memmap2",
+ "miniz_oxide",
  "num_enum",
  "rayon",
- "thiserror 1.0.69",
+ "rustc-hash",
+ "thiserror 2.0.12",
 ]
 
 [[package]]

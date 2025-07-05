@@ -469,6 +469,7 @@ fn render_tree_item(
                         .s(Font::new()
                             .size(font_size)
                             .weight(FontWeight::Number(FONT_WEIGHT_4))
+                            .no_wrap()
                             .color_signal(
                                 map_ref! {
                                     let theme = theme(),

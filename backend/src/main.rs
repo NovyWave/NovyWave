@@ -99,30 +99,16 @@ async fn load_waveform_file(file_path: String, session_id: SessionId, cor_id: Co
         filename: filename.clone() 
     }, session_id, cor_id).await;
     
-    let extension = path.extension()
-        .and_then(|ext| ext.to_str())
-        .unwrap_or("")
-        .to_lowercase();
-    
-    match extension.as_str() {
-        "vcd" => parse_vcd_file(file_path, file_id, filename, progress, session_id, cor_id).await,
-        "fst" => parse_fst_file(file_path, file_id, filename, progress, session_id, cor_id).await,
-        _ => {
-            let error_msg = format!("Unsupported file format: {}", extension);
-            send_down_msg(DownMsg::ParsingError { 
-                file_id, 
-                error: error_msg 
-            }, session_id, cor_id).await;
-        }
-    }
+    // Use wellen's automatic file format detection instead of extension-based detection
+    parse_waveform_file(file_path, file_id, filename, progress, session_id, cor_id).await;
 }
 
-async fn parse_vcd_file(file_path: String, file_id: String, filename: String, 
+async fn parse_waveform_file(file_path: String, file_id: String, filename: String, 
                        progress: Arc<Mutex<f32>>, session_id: SessionId, cor_id: CorId) {
     
     let options = wellen::LoadOptions::default();
     
-    match wellen::viewers::read_header(&file_path, &options) {
+    match wellen::viewers::read_header_from_file(&file_path, &options) {
         Ok(header_result) => {
             {
                 let mut p = progress.lock().unwrap();
@@ -131,7 +117,12 @@ async fn parse_vcd_file(file_path: String, file_id: String, filename: String,
             send_progress_update(file_id.clone(), 0.5, session_id, cor_id).await;
             
             let signals = extract_signals_from_hierarchy(&header_result.hierarchy);
-            let format = FileFormat::VCD;
+            let format = match header_result.file_format {
+                wellen::FileFormat::Vcd => FileFormat::VCD,
+                wellen::FileFormat::Fst => FileFormat::FST,
+                wellen::FileFormat::Ghw => FileFormat::VCD, // Treat as VCD for now
+                wellen::FileFormat::Unknown => FileFormat::VCD, // Fallback
+            };
             
             let waveform_file = WaveformFile {
                 id: file_id.clone(),
@@ -158,58 +149,12 @@ async fn parse_vcd_file(file_path: String, file_id: String, filename: String,
             cleanup_parsing_session(&file_id);
         }
         Err(e) => {
-            let error_msg = format!("Failed to parse VCD file: {}", e);
+            let error_msg = format!("Failed to parse waveform file: {}", e);
             send_down_msg(DownMsg::ParsingError { file_id, error: error_msg }, session_id, cor_id).await;
         }
     }
 }
 
-async fn parse_fst_file(file_path: String, file_id: String, filename: String, 
-                       progress: Arc<Mutex<f32>>, session_id: SessionId, cor_id: CorId) {
-    
-    let options = wellen::LoadOptions::default();
-    
-    match wellen::viewers::read_header(&file_path, &options) {
-        Ok(header_result) => {
-            {
-                let mut p = progress.lock().unwrap();
-                *p = 0.5; // Header parsed
-            }
-            send_progress_update(file_id.clone(), 0.5, session_id, cor_id).await;
-            
-            let signals = extract_signals_from_hierarchy(&header_result.hierarchy);
-            let format = FileFormat::FST;
-            
-            let waveform_file = WaveformFile {
-                id: file_id.clone(),
-                filename,
-                format,
-                signals,
-            };
-            
-            let file_hierarchy = FileHierarchy {
-                files: vec![waveform_file],
-            };
-            
-            {
-                let mut p = progress.lock().unwrap();
-                *p = 1.0; // Complete
-            }
-            send_progress_update(file_id.clone(), 1.0, session_id, cor_id).await;
-            
-            send_down_msg(DownMsg::FileLoaded { 
-                file_id: file_id.clone(), 
-                hierarchy: file_hierarchy 
-            }, session_id, cor_id).await;
-            
-            cleanup_parsing_session(&file_id);
-        }
-        Err(e) => {
-            let error_msg = format!("Failed to parse FST file: {}", e);
-            send_down_msg(DownMsg::ParsingError { file_id, error: error_msg }, session_id, cor_id).await;
-        }
-    }
-}
 
 fn extract_signals_from_hierarchy(hierarchy: &wellen::Hierarchy) -> Vec<Signal> {
     let mut signals = Vec::new();
@@ -219,10 +164,10 @@ fn extract_signals_from_hierarchy(hierarchy: &wellen::Hierarchy) -> Vec<Signal> 
             id: format!("{}", var.signal_ref().index()),
             name: var.name(hierarchy).to_string(),
             signal_type: format!("{:?}", var.var_type()),
-            width: match var.signal_tpe() {
-                wellen::SignalType::BitVector(width, _) => width.get(),
-                wellen::SignalType::Real => 1,
-                wellen::SignalType::String => 1,
+            width: match var.signal_encoding() {
+                wellen::SignalEncoding::BitVector(width) => width.get(),
+                wellen::SignalEncoding::Real => 1,
+                wellen::SignalEncoding::String => 1,
             },
         });
     }
