@@ -1491,6 +1491,7 @@ dependencies = [
  "fast2d",
  "moonzoon-novyui",
  "serde",
+ "web-sys",
  "zoon",
 ]
 

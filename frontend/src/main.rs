@@ -3,6 +3,49 @@ use moonzoon_novyui::*;
 use moonzoon_novyui::tokens::theme::{Theme, init_theme, theme, toggle_theme};
 use serde::{Serialize, Deserialize};
 use std::collections::{HashSet, HashMap};
+use web_sys::Performance;
+
+// Performance measurement utilities
+fn get_performance() -> Option<Performance> {
+    web_sys::window()?.performance()
+}
+
+fn now() -> f64 {
+    get_performance()
+        .map(|perf| perf.now())
+        .unwrap_or(0.0)
+}
+
+struct PerformanceTimer {
+    start_time: f64,
+    label: String,
+}
+
+impl PerformanceTimer {
+    fn new(label: &str) -> Self {
+        let start_time = now();
+        zoon::println!("⏱️ [PERF] {} - Started", label);
+        Self {
+            start_time,
+            label: label.to_string(),
+        }
+    }
+    
+    fn elapsed(&self) -> f64 {
+        now() - self.start_time
+    }
+    
+    fn log_elapsed(&self) {
+        let elapsed = self.elapsed();
+        zoon::println!("⏱️ [PERF] {} - Elapsed: {:.2}ms", self.label, elapsed);
+    }
+}
+
+impl Drop for PerformanceTimer {
+    fn drop(&mut self) {
+        self.log_elapsed();
+    }
+}
 
 // Panel resizing state
 static LEFT_PANEL_WIDTH: Lazy<Mutable<u32>> = Lazy::new(|| 470.into());
@@ -1212,8 +1255,10 @@ fn get_all_variables_from_files() -> Vec<Signal> {
 }
 
 fn get_variables_from_selected_scope(selected_scope_id: &str) -> Vec<Signal> {
+    let _timer = PerformanceTimer::new("get_variables_from_selected_scope");
     for file in LOADED_FILES.lock_ref().iter() {
         if let Some(variables) = find_variables_in_scope(&file.scopes, selected_scope_id) {
+            zoon::println!("⏱️ [PERF] Found {} variables in scope {}", variables.len(), selected_scope_id);
             return variables;
         }
     }
@@ -1292,6 +1337,11 @@ fn variables_panel() -> impl Element {
                     .s(Padding::all(12))
                     .s(Height::fill())
                     .s(Width::fill())
+                    .s(Scrollbars::both())
+                    // Performance optimizations for scrollable container
+                    .update_raw_el(|raw_el| {
+                        raw_el.style("scrollbar-gutter", "stable")
+                    })
                     .item(
                         El::new()
                             .s(Height::fill())
@@ -1310,10 +1360,20 @@ fn variables_panel() -> impl Element {
                                                 )
                                                 .into_element()
                                         } else {
+                                            let render_timer = PerformanceTimer::new(&format!("render_variables_list ({})", variables.len()));
+                                            
                                             let variable_items: Vec<_> = variables.iter().map(|signal| {
                                                 Row::new()
                                                     .s(Gap::new().x(8))
                                                     .s(Width::fill())
+                                                    .s(Height::exact(24)) // Fixed height for consistency
+                                                    // CSS Performance Optimizations
+                                                    .update_raw_el(|raw_el| {
+                                                        raw_el
+                                                            .style("content-visibility", "auto")
+                                                            .style("contain-intrinsic-size", "0 24px")
+                                                            .style("contain", "layout style")
+                                                    })
                                                     .item(
                                                         El::new()
                                                             .s(Font::new().color(hsluv!(220, 10, 85)).size(14))
@@ -1329,9 +1389,18 @@ fn variables_panel() -> impl Element {
                                                     .into_element()
                                             }).collect();
                                             
+                                            render_timer.log_elapsed();
+                                            zoon::println!("⏱️ [PERF] Creating Column with {} variable items", variable_items.len());
+                                            
                                             Column::new()
                                                 .s(Gap::new().y(4))
                                                 .s(Width::fill())
+                                                // CSS Performance Optimizations for container
+                                                .update_raw_el(|raw_el| {
+                                                    raw_el
+                                                        .style("contain", "layout style paint")
+                                                        .style("transform", "translateZ(0)") // Hardware acceleration
+                                                })
                                                 .items(variable_items)
                                                 .into_element()
                                         }
