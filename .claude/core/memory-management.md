@@ -68,23 +68,52 @@ When entities reach 5 observations:
 **daily_patterns** → Archived to `comprehensive_development_patterns`
 - Preserves all valuable patterns discovered
 - Never loses hard-learned lessons
+- Auto-triggered when daily_patterns reaches 5 observations
+- Manual: `/core-archive-patterns` command
 
 **recent_solutions** → Smart archiving based on importance
 - Keywords: "compilation", "IconName", "zoon", "WASM", "error", "frontend", "backend"
-- Important → `comprehensive_solutions`
-- Trivial → deleted
+- Important → `comprehensive_solutions` entity
+- Trivial → deleted (simple typos, minor tweaks)
+- Auto-triggered when recent_solutions reaches 5 observations
+- Manual: `/core-archive-solutions` command
 
 **active_blockers** → Resolution flow
 - Resolved → move to `recent_solutions`
 - Unresolved → remove oldest when adding new
+- Auto-cleanup when adding 6th blocker
 
 **next_steps** → Task management
-- Completed → `completed_tasks`
+- Completed → `completed_tasks` entity
 - Outdated → deleted
+- Auto-cleanup when adding 6th step
 
 **session_planning** → Planning archival
-- Archived → `archived_planning`
+- Archived → `archived_planning` entity
 - Outdated planning → deleted during cleanup
+- Auto-triggered when session_planning reaches 5 observations
+
+## Archive Entity Access
+
+**Comprehensive Archives:**
+- `comprehensive_solutions` - Critical bug fixes and architectural solutions
+- `comprehensive_development_patterns` - Essential coding patterns and rules
+- `completed_tasks` - Historical task completion records
+- `archived_planning` - Historical planning and design decisions
+
+**Search Archives:**
+```bash
+/core-memory-search "IconName"           # Search all entities including archives
+/core-memory-search "scrollbar"          # Find layout solutions
+/core-memory-search "compilation error"  # Find debugging patterns
+```
+
+**Manual Archival Commands:**
+```bash
+/core-archive-patterns    # Archive current daily_patterns to comprehensive_development_patterns
+/core-archive-solutions   # Archive current recent_solutions to comprehensive_solutions  
+/core-archive-planning    # Archive current session_planning to archived_planning
+```
 
 ## Memory MCP Best Practices
 
