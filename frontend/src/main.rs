@@ -4,6 +4,10 @@ use moonzoon_novyui::tokens::theme::{Theme, init_theme, theme, toggle_theme};
 use serde::{Serialize, Deserialize};
 use std::collections::{HashSet, HashMap};
 use web_sys::Performance;
+use wasm_bindgen::{prelude::*, JsCast};
+
+// Virtual variables JavaScript integration - loaded via backend public API
+
 
 // Performance measurement utilities
 fn get_performance() -> Option<Performance> {
@@ -50,6 +54,12 @@ static LEFT_PANEL_WIDTH: Lazy<Mutable<u32>> = Lazy::new(|| 470.into());
 static FILES_PANEL_HEIGHT: Lazy<Mutable<u32>> = Lazy::new(|| 300.into());
 static VERTICAL_DIVIDER_DRAGGING: Lazy<Mutable<bool>> = lazy::default();
 static HORIZONTAL_DIVIDER_DRAGGING: Lazy<Mutable<bool>> = lazy::default();
+
+// Search filter for Variables panel
+static VARIABLES_SEARCH_FILTER: Lazy<Mutable<String>> = lazy::default();
+
+
+
 
 // Dock state management - DEFAULT TO DOCKED MODE  
 static IS_DOCKED_TO_BOTTOM: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(true));
@@ -165,6 +175,82 @@ pub struct Signal {
     pub name: String,
     pub signal_type: String,
     pub width: u32,
+}
+
+// Virtual list WASM bridge
+static CURRENT_FILTERED_VARIABLES: Lazy<Mutable<Vec<Signal>>> = lazy::default();
+
+// Virtual Variables JavaScript Bridge - Synchronous approach
+#[wasm_bindgen(module = "/js/virtual-variables.js")]
+extern "C" {
+    #[wasm_bindgen(js_name = "initializeVirtualList")]
+    fn initialize_virtual_list(
+        get_count_callback: &Closure<dyn Fn() -> usize>,
+        get_variable_callback: &Closure<dyn Fn(usize) -> JsValue>
+    ) -> bool;
+    
+    #[wasm_bindgen(js_name = "refreshVirtualList")]
+    fn refresh_virtual_list() -> bool;
+}
+
+// Initialize virtual list with callbacks
+pub fn init_virtual_variables_list() {
+    zoon::println!("Initializing virtual variables list...");
+    
+    // Create callback closures
+    let get_count_callback = Closure::new(|| {
+        let count = CURRENT_FILTERED_VARIABLES.lock_ref().len();
+        zoon::println!("get_variables_count called: returning {}", count);
+        count
+    });
+    
+    let get_variable_callback = Closure::new(|index: usize| {
+        let variables = CURRENT_FILTERED_VARIABLES.lock_ref();
+        if let Some(signal) = variables.get(index) {
+            serde_wasm_bindgen::to_value(signal).unwrap_or(JsValue::NULL)
+        } else {
+            JsValue::NULL
+        }
+    });
+    
+    // Initialize the virtual list
+    let result = initialize_virtual_list(&get_count_callback, &get_variable_callback);
+    if result {
+        zoon::println!("Virtual list initialized successfully");
+    } else {
+        zoon::println!("Failed to initialize virtual list");
+    }
+    
+    // Keep closures alive by forgetting them (they're now owned by JavaScript)
+    get_count_callback.forget();
+    get_variable_callback.forget();
+}
+
+// Update virtual variables and refresh the list
+pub fn update_virtual_variables(search_filter: String, variables_json: JsValue) {
+    if let Ok(variables) = serde_wasm_bindgen::from_value::<Vec<Signal>>(variables_json) {
+        let filtered = filter_variables(&variables, &search_filter);
+        CURRENT_FILTERED_VARIABLES.set(filtered.clone());
+        
+        // Debug output
+        zoon::println!("UPDATED virtual variables: {} total, {} filtered", variables.len(), filtered.len());
+        
+        // Refresh the virtual list
+        let result = refresh_virtual_list();
+        if result {
+            zoon::println!("Virtual list refreshed successfully");
+        } else {
+            zoon::println!("Failed to refresh virtual list");
+        }
+    } else {
+        zoon::println!("Failed to parse variables JSON for virtual list");
+    }
+}
+
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = window)]
+    fn notify_virtual_list_update();
 }
 
 // Configuration structures (matching backend)
@@ -335,7 +421,7 @@ static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
             DownMsg::ConfigSaved => {
                 // Config saved successfully
             }
-            DownMsg::ConfigError(error) => {
+            DownMsg::ConfigError(_error) => {
                 // Config error: {}
             }
             DownMsg::ThemeSaved => {
@@ -1217,12 +1303,16 @@ fn get_all_variables_from_files() -> Vec<Signal> {
     for file in LOADED_FILES.lock_ref().iter() {
         collect_variables_from_scopes(&file.scopes, &mut all_variables);
     }
+    // CRITICAL: Sort variables alphabetically to ensure consistent virtual scrolling order
+    all_variables.sort_by(|a, b| a.name.cmp(&b.name));
     all_variables
 }
 
 fn get_variables_from_selected_scope(selected_scope_id: &str) -> Vec<Signal> {
     for file in LOADED_FILES.lock_ref().iter() {
-        if let Some(variables) = find_variables_in_scope(&file.scopes, selected_scope_id) {
+        if let Some(mut variables) = find_variables_in_scope(&file.scopes, selected_scope_id) {
+            // CRITICAL: Sort variables alphabetically to ensure consistent virtual scrolling order
+            variables.sort_by(|a, b| a.name.cmp(&b.name));
             return variables;
         }
     }
@@ -1271,6 +1361,21 @@ fn count_variables_in_scopes(scopes: &[ScopeData]) -> usize {
     count
 }
 
+fn filter_variables(variables: &[Signal], search_filter: &str) -> Vec<Signal> {
+    if search_filter.is_empty() {
+        variables.to_vec()
+    } else {
+        let filter_lower = search_filter.to_lowercase();
+        let mut filtered: Vec<Signal> = variables.iter()
+            .filter(|var| var.name.to_lowercase().contains(&filter_lower))
+            .cloned()
+            .collect();
+        // CRITICAL: Ensure filtered variables remain alphabetically sorted
+        filtered.sort_by(|a, b| a.name.cmp(&b.name));
+        filtered
+    }
+}
+
 fn variables_panel() -> impl Element {
     El::new()
         .s(Height::fill())
@@ -1287,6 +1392,25 @@ fn variables_panel() -> impl Element {
                     )
                     .item(
                         El::new()
+                            .s(Font::new().no_wrap().color(hsluv!(220, 10, 60)).size(13))
+                            .child_signal(
+                                map_ref! {
+                                    let selected_scope_id = SELECTED_SCOPE_ID.signal_ref(|id| id.clone()),
+                                    let search_filter = VARIABLES_SEARCH_FILTER.signal_cloned() =>
+                                    {
+                                        if let Some(scope_id) = selected_scope_id {
+                                            let variables = get_variables_from_selected_scope(&scope_id);
+                                            let filtered_variables = filter_variables(&variables, &search_filter);
+                                            filtered_variables.len().to_string()
+                                        } else {
+                                            "0".to_string()
+                                        }
+                                    }
+                                }
+                            )
+                    )
+                    .item(
+                        El::new()
                             .s(Width::fill())
                     )
                     .item(
@@ -1294,92 +1418,174 @@ fn variables_panel() -> impl Element {
                             .placeholder("variable_name")
                             .left_icon(IconName::Search)
                             .size(InputSize::Small)
+                            .on_change(|text| VARIABLES_SEARCH_FILTER.set_neq(text))
                             .build()
                     ),
-                Column::new()
-                    .s(Gap::new().y(4))
-                    .s(Padding::all(12))
-                    .s(Height::fill())
-                    .s(Width::fill())
-                    .s(Scrollbars::both())
-                    // Performance optimizations for scrollable container
-                    .update_raw_el(|raw_el| {
-                        raw_el.style("scrollbar-gutter", "stable")
-                    })
-                    .item(
-                        El::new()
-                            .s(Height::fill())
-                            .s(Width::fill())
-                            .child_signal(
-                                SELECTED_SCOPE_ID.signal_ref(|selected_scope_id| {
-                                    if let Some(scope_id) = selected_scope_id {
-                                        let variables = get_variables_from_selected_scope(scope_id);
-                                        if variables.is_empty() {
-                                            Column::new()
-                                                .s(Gap::new().y(4))
-                                                .item(
-                                                    El::new()
-                                                        .s(Font::new().color(hsluv!(220, 10, 70)).size(13))
-                                                        .child("No variables in selected scope")
-                                                )
-                                                .into_element()
-                                        } else {
-                                            let variable_items: Vec<_> = variables.iter().map(|signal| {
-                                                Row::new()
-                                                    .s(Gap::new().x(8))
-                                                    .s(Width::fill())
-                                                    .s(Height::exact(24)) // Fixed height for consistency
-                                                    // CSS Performance Optimizations
-                                                    .update_raw_el(|raw_el| {
-                                                        raw_el
-                                                            .style("content-visibility", "auto")
-                                                            .style("contain-intrinsic-size", "0 24px")
-                                                            .style("contain", "layout style")
-                                                    })
-                                                    .item(
-                                                        El::new()
-                                                            .s(Font::new().color(hsluv!(220, 10, 85)).size(14))
-                                                            .s(Font::new().no_wrap())
-                                                            .child(signal.name.clone())
-                                                    )
-                                                    .item(
-                                                        El::new()
-                                                            .s(Font::new().color(hsluv!(210, 80, 70)).size(12))
-                                                            .s(Font::new().no_wrap())
-                                                            .child(format!("{} {}-bit", signal.signal_type, signal.width))
-                                                    )
-                                                    .into_element()
-                                            }).collect();
-                                            
-                                            Column::new()
-                                                .s(Gap::new().y(4))
-                                                .s(Width::fill())
-                                                // CSS Performance Optimizations for container
-                                                .update_raw_el(|raw_el| {
-                                                    raw_el
-                                                        .style("contain", "layout style paint")
-                                                        .style("transform", "translateZ(0)") // Hardware acceleration
-                                                })
-                                                .items(variable_items)
-                                                .into_element()
-                                        }
-                                    } else {
-                                        Column::new()
-                                            .s(Gap::new().y(4))
-                                            .s(Width::fill())
-                                            .item(
-                                                El::new()
-                                                    .s(Font::new().color(hsluv!(220, 10, 70)).size(13))
-                                                    .child("Select a scope to view variables")
-                                            )
-                                            .into_element()
-                                    }
-                                })
-                            )
-                    )
+                simple_variables_content()
             )
         )
 }
+
+
+fn simple_variables_content() -> impl Element {
+    Column::new()
+        .s(Gap::new().y(0))
+        .s(Padding::all(12))
+        .s(Height::fill())
+        .s(Width::fill())
+        .item(
+            El::new()
+                .s(Height::fill())
+                .s(Width::fill())
+                .child_signal(
+                    map_ref! {
+                        let selected_scope_id = SELECTED_SCOPE_ID.signal_ref(|id| id.clone()),
+                        let search_filter = VARIABLES_SEARCH_FILTER.signal_cloned() =>
+                        {
+                            if let Some(scope_id) = selected_scope_id {
+                                let variables = get_variables_from_selected_scope(&scope_id);
+                                virtual_variables_list(variables, search_filter.clone()).into_element()
+                            } else {
+                                virtual_variables_list(Vec::new(), "Select a scope to view variables".to_string()).into_element()
+                            }
+                        }
+                    }
+                )
+        )
+}
+
+
+fn virtual_variables_list(variables: Vec<Signal>, search_filter: String) -> Column<column::EmptyFlagNotSet, RawHtmlEl> {
+    // Handle special cases first (empty states)
+    if variables.is_empty() && search_filter.starts_with("Select a scope") {
+        return Column::new()
+            .s(Gap::new().y(4))
+            .item(
+                El::new()
+                    .s(Font::new().color(hsluv!(220, 10, 70)).size(13))
+                    .child(search_filter)
+            );
+    }
+    
+    if variables.is_empty() {
+        return Column::new()
+            .s(Gap::new().y(4))
+            .item(
+                El::new()
+                    .s(Font::new().color(hsluv!(220, 10, 70)).size(13))
+                    .child("No variables in selected scope")
+            );
+    }
+    
+    // Apply search filter
+    let filtered_variables = filter_variables(&variables, &search_filter);
+    
+    if filtered_variables.is_empty() {
+        return Column::new()
+            .s(Gap::new().y(4))
+            .item(
+                El::new()
+                    .s(Font::new().color(hsluv!(220, 10, 70)).size(13))
+                    .child("No variables match search filter")
+            );
+    }
+    
+    // Update WASM bridge with current data
+    if let Ok(variables_json) = serde_wasm_bindgen::to_value(&variables) {
+        update_virtual_variables(search_filter.clone(), variables_json);
+    }
+    
+    // Virtual list container
+    Column::new()
+        .item(
+            El::new()
+                .s(Width::fill())
+                .s(Height::fill())
+                .s(Background::new().color(hsluv!(220, 15, 11)))
+                .s(RoundedCorners::all(8))
+                .s(Padding::all(4))
+                .update_raw_el(|el| {
+                    // Set HTML ID for JavaScript access using DOM API
+                    if let Some(html_el) = el.dom_element().dyn_ref::<web_sys::HtmlElement>() {
+                        html_el.set_id("virtual-variables-container");
+                    }
+                    
+                    // Initialize virtual list properly 
+                    Task::start(async {
+                        // Small delay to ensure DOM is ready using setTimeout
+                        let _ = js_sys::eval("setTimeout(() => {}, 100)");
+                        init_virtual_variables_list();
+                    });
+                    el
+                })
+        )
+}
+
+fn simple_variables_list(variables: Vec<Signal>, search_filter: String) -> Column<column::EmptyFlagNotSet, RawHtmlEl> {
+    // Special case for displaying a message when called with empty variables and a message
+    if variables.is_empty() && search_filter.starts_with("Select a scope") {
+        return Column::new()
+            .s(Gap::new().y(4))
+            .item(
+                El::new()
+                    .s(Font::new().color(hsluv!(220, 10, 70)).size(13))
+                    .child(search_filter)
+            );
+    }
+    
+    // Apply search filter
+    let filtered_variables = filter_variables(&variables, &search_filter);
+    
+    if variables.is_empty() {
+        Column::new()
+            .s(Gap::new().y(4))
+            .item(
+                El::new()
+                    .s(Font::new().color(hsluv!(220, 10, 70)).size(13))
+                    .child("No variables in selected scope")
+            )
+    } else if filtered_variables.is_empty() {
+        Column::new()
+            .s(Gap::new().y(4))
+            .item(
+                El::new()
+                    .s(Font::new().color(hsluv!(220, 10, 70)).size(13))
+                    .child("No variables match search filter")
+            )
+    } else {
+        // Simple list showing all variables - clean and working
+        Column::new()
+            .s(Gap::new().y(0))
+            .items(filtered_variables.into_iter().map(|signal| {
+                simple_variable_row(signal)
+            }))
+    }
+}
+
+fn simple_variable_row(signal: Signal) -> Row<row::EmptyFlagNotSet, row::MultilineFlagNotSet, RawHtmlEl> {
+    Row::new()
+        .s(Gap::new().x(8))
+        .s(Width::fill())
+        .s(Height::exact(28))
+        .s(Padding::new().x(12).y(2))
+        .item(
+            El::new()
+                .s(Font::new().color(hsluv!(220, 10, 85)).size(14))
+                .s(Font::new().no_wrap())
+                .child(signal.name.clone())
+        )
+        .item(El::new().s(Width::fill()))
+        .item(
+            El::new()
+                .s(Font::new().color(hsluv!(210, 80, 70)).size(12))
+                .s(Font::new().no_wrap())
+                .child(format!("{} {}-bit", signal.signal_type, signal.width))
+        )
+}
+
+
+
+
 
 fn vertical_divider(is_dragging: Mutable<bool>) -> impl Element {
     El::new()

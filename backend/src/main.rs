@@ -126,9 +126,19 @@ impl Default for UiSection {
 }
 
 async fn frontend() -> Frontend {
+    let js_content = include_str!("../../frontend/js/virtual-variables.js");
+    
+    // Add cache busting timestamp
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    
     Frontend::new()
-        .title("NovyWave")
+        .title("NovyWave ")
         .index_by_robots(false)
+        .append_to_head(&format!(r#"<script>// Cache buster: {}
+{}</script>"#, timestamp, js_content))
 }
 
 static PARSING_SESSIONS: Lazy<Arc<Mutex<HashMap<String, Arc<Mutex<f32>>>>>> = 

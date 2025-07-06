@@ -1489,8 +1489,11 @@ name = "frontend"
 version = "0.1.0"
 dependencies = [
  "fast2d",
+ "js-sys",
  "moonzoon-novyui",
  "serde",
+ "serde-wasm-bindgen",
+ "wasm-bindgen",
  "web-sys",
  "zoon",
 ]
