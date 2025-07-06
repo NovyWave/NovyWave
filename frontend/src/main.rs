@@ -42,6 +42,7 @@ static LOADED_CONFIG: Lazy<Mutable<Option<AppConfig>>> = lazy::default();
 // Flag to prevent auto-saving before initial config is loaded
 static CONFIG_LOADED: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
 
+
 fn generate_file_id(file_path: &str) -> String {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
@@ -324,14 +325,60 @@ fn check_loading_complete() {
     if all_done {
         IS_LOADING.set(false);
         
-        // TODO: Restore scope selections from config after all files are loaded
-        // restore_scope_selections(); // Disabled due to recursive mutex issue
+        // Restore scope selections - defer signal updates to prevent deadlock
+        restore_scope_selections_deferred();
         
         // Clear completed files after a delay to show final state
         Task::start(async {
             Timer::sleep(2000).await;
             LOADING_FILES.lock_mut().clear();
         });
+    }
+}
+
+fn restore_scope_selections_deferred() {
+    // Extract data from locks first, then update signals without holding locks
+    let scope_to_restore = {
+        let saved_selections = SAVED_SCOPE_SELECTIONS.lock_ref();
+        if saved_selections.is_empty() {
+            None
+        } else {
+            // Find the first valid scope to restore
+            let mut found_scope = None;
+            for (file_id, scope_id) in saved_selections.iter() {
+                let file_exists = LOADED_FILES.lock_ref().iter().any(|f| f.id == *file_id);
+                if !file_exists {
+                    continue;
+                }
+                
+                let scope_exists = LOADED_FILES.lock_ref().iter().any(|file| {
+                    file.id == *file_id && file_contains_scope(&file.scopes, scope_id)
+                });
+                
+                if scope_exists {
+                    found_scope = Some(scope_id.clone());
+                    break;
+                }
+            }
+            found_scope
+        }
+    };
+    
+    // Only proceed if we found a scope to restore
+    if let Some(scope_id) = scope_to_restore {
+        zoon::println!("Restoring scope selection: {}", scope_id);
+        
+        // Clear saved selections after successful extraction
+        SAVED_SCOPE_SELECTIONS.lock_mut().clear();
+        
+        // Update signals without holding any locks
+        SELECTED_SCOPE_ID.set_neq(Some(scope_id.clone()));
+        
+        let mut new_selection = HashSet::new();
+        new_selection.insert(scope_id);
+        TREE_SELECTED_ITEMS.set_neq(new_selection);
+    } else {
+        zoon::println!("No valid scope found to restore yet (waiting for more files to load)");
     }
 }
 
@@ -364,10 +411,13 @@ fn restore_scope_selections() {
             // Update the global scope selection
             SELECTED_SCOPE_ID.set_neq(Some(scope_id.clone()));
             
-            // Update the TreeView selection to show the scope as selected (single selection)
-            let mut new_selection = HashSet::new();
-            new_selection.insert(scope_id.clone());
-            TREE_SELECTED_ITEMS.set_neq(new_selection);
+            // Queue TreeView update to avoid triggering auto-save during restoration
+            let scope_id_clone = scope_id.clone();
+            Task::start(async move {
+                let mut new_selection = HashSet::new();
+                new_selection.insert(scope_id_clone);
+                TREE_SELECTED_ITEMS.set_neq(new_selection);
+            });
             
             // Only restore the first (and should be only) valid selection
             break;
@@ -714,6 +764,7 @@ fn root() -> impl Element {
 fn create_panel(header_content: impl Element, content: impl Element) -> impl Element {
     El::new()
         .s(Height::fill())
+        .s(Width::fill())
         .s(Background::new().color(hsluv!(220, 15, 11)))
         .s(RoundedCorners::all(6))
         .s(Borders::all(Border::new().width(1).color(hsluv!(220, 10, 25))))
@@ -729,7 +780,12 @@ fn create_panel(header_content: impl Element, content: impl Element) -> impl Ele
                         .s(Font::new().weight(FontWeight::SemiBold).size(14).color(hsluv!(220, 5, 80)))
                         .child(header_content)
                 )
-                .item(content)
+                .item(
+                    El::new()
+                        .s(Height::fill())
+                        .s(Scrollbars::both())
+                        .child(content)
+                )
         )
 }
 
@@ -769,6 +825,7 @@ fn main_layout() -> impl Element {
     El::new()
         .s(Height::screen())
         .s(Width::fill())
+        .s(Scrollbars::both())
         .text_content_selecting_signal(
             is_any_divider_dragging.map(|is_dragging| {
                 if is_dragging {
@@ -830,13 +887,15 @@ fn main_layout() -> impl Element {
 // Wrapper function that switches between docked and undocked layouts
 fn docked_layout_wrapper() -> impl Element {
     El::new()
-        .s(Height::fill())
+        .s(Height::screen())
         .s(Width::fill())
+        .s(Scrollbars::both())
         .child_signal(IS_DOCKED_TO_BOTTOM.signal().map(|is_docked| {
             if is_docked {
                 // Docked to Bottom layout
                 El::new()
                     .s(Height::fill())
+                    .s(Scrollbars::both())
                     .child(
                         Column::new()
                             .s(Height::fill())
@@ -856,6 +915,7 @@ fn docked_layout_wrapper() -> impl Element {
                 // Docked to Right layout
                 El::new()
                     .s(Height::fill())
+                    .s(Scrollbars::both())
                     .child(
                         Row::new()
                             .s(Height::fill())
@@ -931,6 +991,7 @@ fn files_panel_with_height() -> impl Element {
     El::new()
         .s(Height::exact_signal(FILES_PANEL_HEIGHT.signal()))
         .s(Width::fill())
+        .s(Scrollbars::both())
         .child(files_panel())
 }
 
@@ -938,6 +999,7 @@ fn variables_panel_with_fill() -> impl Element {
     El::new()
         .s(Width::fill())
         .s(Height::fill())
+        .s(Scrollbars::both())
         .child(variables_panel())
 }
 
@@ -946,6 +1008,7 @@ fn files_panel_docked() -> impl Element {
     El::new()
         .s(Width::exact_signal(LEFT_PANEL_WIDTH.signal()))  // Use draggable width in docked mode too
         .s(Height::fill())
+        .s(Scrollbars::both())
         .child(files_panel())
 }
 
@@ -953,6 +1016,7 @@ fn variables_panel_docked() -> impl Element {
     El::new()
         .s(Width::fill())  // Variables takes remaining space
         .s(Height::fill())
+        .s(Scrollbars::both())
         .child(variables_panel())
 }
 
@@ -1107,7 +1171,6 @@ fn files_panel() -> impl Element {
                     .item(
                         El::new()
                             .s(Height::fill())
-                            .s(Scrollbars::both())
                             .child_signal(
                                 LOADED_FILES.signal_vec_cloned()
                                     .to_signal_map(|files| {
@@ -1202,6 +1265,7 @@ fn count_variables_in_scopes(scopes: &[ScopeData]) -> usize {
 fn variables_panel() -> impl Element {
     El::new()
         .s(Height::fill())
+        .s(Width::fill())
         .child(
             create_panel(
                 Row::new()
@@ -1224,55 +1288,66 @@ fn variables_panel() -> impl Element {
                             .build()
                     ),
                 Column::new()
-                    .s(Gap::new().y(6))
+                    .s(Gap::new().y(4))
                     .s(Padding::all(12))
                     .s(Height::fill())
-                    .item_signal(
-                        SELECTED_SCOPE_ID.signal_ref(|selected_scope_id| {
-                            if let Some(scope_id) = selected_scope_id {
-                                let variables = get_variables_from_selected_scope(scope_id);
-                                if variables.is_empty() {
-                                    Column::new()
-                                        .s(Gap::new().y(4))
-                                        .item(
-                                            El::new()
-                                                .s(Font::new().color(hsluv!(220, 10, 70)).size(13))
-                                                .child("No variables in selected scope")
-                                        )
-                                        .into_element()
-                                } else {
-                                    let variable_items: Vec<_> = variables.iter().map(|signal| {
-                                        Row::new()
-                                            .s(Gap::new().x(8))
+                    .s(Width::fill())
+                    .item(
+                        El::new()
+                            .s(Height::fill())
+                            .s(Width::fill())
+                            .child_signal(
+                                SELECTED_SCOPE_ID.signal_ref(|selected_scope_id| {
+                                    if let Some(scope_id) = selected_scope_id {
+                                        let variables = get_variables_from_selected_scope(scope_id);
+                                        if variables.is_empty() {
+                                            Column::new()
+                                                .s(Gap::new().y(4))
+                                                .item(
+                                                    El::new()
+                                                        .s(Font::new().color(hsluv!(220, 10, 70)).size(13))
+                                                        .child("No variables in selected scope")
+                                                )
+                                                .into_element()
+                                        } else {
+                                            let variable_items: Vec<_> = variables.iter().map(|signal| {
+                                                Row::new()
+                                                    .s(Gap::new().x(8))
+                                                    .s(Width::fill())
+                                                    .item(
+                                                        El::new()
+                                                            .s(Font::new().color(hsluv!(220, 10, 85)).size(14))
+                                                            .s(Font::new().no_wrap())
+                                                            .child(signal.name.clone())
+                                                    )
+                                                    .item(
+                                                        El::new()
+                                                            .s(Font::new().color(hsluv!(210, 80, 70)).size(12))
+                                                            .s(Font::new().no_wrap())
+                                                            .child(format!("{} {}-bit", signal.signal_type, signal.width))
+                                                    )
+                                                    .into_element()
+                                            }).collect();
+                                            
+                                            Column::new()
+                                                .s(Gap::new().y(4))
+                                                .s(Width::fill())
+                                                .items(variable_items)
+                                                .into_element()
+                                        }
+                                    } else {
+                                        Column::new()
+                                            .s(Gap::new().y(4))
+                                            .s(Width::fill())
                                             .item(
                                                 El::new()
-                                                    .s(Font::new().color(hsluv!(220, 10, 85)).size(13))
-                                                    .child(signal.name.clone())
-                                            )
-                                            .item(
-                                                badge(format!("{} {}-bit", signal.signal_type, signal.width))
-                                                    .variant(BadgeVariant::Primary)
-                                                    .build()
+                                                    .s(Font::new().color(hsluv!(220, 10, 70)).size(13))
+                                                    .child("Select a scope to view variables")
                                             )
                                             .into_element()
-                                    }).collect();
-                                    
-                                    Column::new()
-                                        .s(Gap::new().y(4))
-                                        .items(variable_items)
-                                        .into_element()
-                                }
-                            } else {
-                                Column::new()
-                                    .s(Gap::new().y(4))
-                                    .item(
-                                        El::new()
-                                            .s(Font::new().color(hsluv!(220, 10, 70)).size(13))
-                                            .child("Select a scope to view variables")
-                                    )
-                                    .into_element()
-                            }
-                        })
+                                    }
+                                })
+                            )
                     )
             )
         )
