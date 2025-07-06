@@ -35,6 +35,28 @@ Instead of overwhelming Claude with comprehensive project data, the focus contex
 - **Daily Patterns:** "IconName tokens, zoon::println!(), etc."
 - **Next Steps:** "Test focused system, continue UI work"
 
+## 🤖 Strategic Subagent Usage
+
+**CRITICAL for extending session length 2-3x:**
+
+Claude uses Task tool subagents extensively for context conservation. Instead of reading files and doing implementation work directly (which burns context fast), Claude delegates to subagents who use their own context space.
+
+**What gets delegated to subagents:**
+- File analysis & research (instead of Claude reading multiple files)
+- Implementation tasks (code changes, testing, debugging) 
+- Investigation work (finding patterns, analyzing codebases)
+- Complex searches across many files
+
+**Benefits:**
+- Subagents use separate context space, preserving main session
+- Claude gets condensed summaries instead of raw file contents
+- Can parallelize multiple research/implementation tasks
+- Sessions last 2-3x longer with higher quality work
+
+**Example:** Instead of Claude reading 5 files to understand TreeView patterns, a subagent researches and returns key insights summary.
+
+**See:** `/core-subagent-guide` for detailed patterns and workflows.
+
 ## 📋 Available Slash Commands
 
 ### Development Commands

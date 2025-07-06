@@ -39,6 +39,35 @@
 - Use for complex planning that needs persistence across sessions
 - Archived to `archived_planning` when limit reached
 
+## Strategic Subagent Usage for Context Conservation
+
+**MANDATORY: Use Task tool subagents extensively to preserve main session context:**
+
+**Delegate to Subagents:**
+- File analysis & research (instead of main session reading multiple files)
+- Implementation tasks (code changes, testing, debugging)
+- Investigation work (finding patterns, analyzing codebases)
+- Complex searches across many files
+
+**CRITICAL SELF-REMINDER:**
+BEFORE using Read/Glob/Grep tools, ask: "Could a subagent research this instead?"
+- If reading 2+ files → delegate to Task tool
+- If searching for patterns → delegate to Task tool  
+- If analyzing codebase structure → delegate to Task tool
+- Exception: Single specific files (configs, CLAUDE.md)
+
+**Main Session Focus:**
+- High-level coordination & planning
+- User interaction & decision making
+- Architecture decisions & task delegation
+- Synthesis of subagent results
+
+**Context Benefits:**
+- Subagents use their own context space, not main session's
+- Main session gets condensed summaries instead of raw file contents
+- Can parallelize multiple research/implementation tasks
+- Dramatically extends effective session length (2-3x longer)
+
 ## Automatic Memory Updates - MANDATORY BEHAVIOR
 
 **CRITICAL: Always update Memory MCP immediately and proactively as you work. Never wait for user commands.**

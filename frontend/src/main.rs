@@ -24,7 +24,6 @@ struct PerformanceTimer {
 impl PerformanceTimer {
     fn new(label: &str) -> Self {
         let start_time = now();
-        zoon::println!("⏱️ [PERF] {} - Started", label);
         Self {
             start_time,
             label: label.to_string(),
@@ -36,8 +35,7 @@ impl PerformanceTimer {
     }
     
     fn log_elapsed(&self) {
-        let elapsed = self.elapsed();
-        zoon::println!("⏱️ [PERF] {} - Elapsed: {:.2}ms", self.label, elapsed);
+        let _elapsed = self.elapsed();
     }
 }
 
@@ -246,15 +244,12 @@ fn process_file_paths() {
         .filter(|s| !s.is_empty())
         .collect();
     
-    zoon::println!("Selected file paths: {:?}", paths);
     
     if !paths.is_empty() {
         IS_LOADING.set(true);
     }
     
     for path in paths {
-        zoon::println!("Loading file: {}", path);
-        
         // Generate file ID and store path mapping for config persistence
         let file_id = generate_file_id(&path);
         FILE_PATHS.lock_mut().insert(file_id, path.clone());
@@ -267,11 +262,9 @@ fn process_file_paths() {
 
 static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
     Connection::new(|down_msg, _| {
-        zoon::println!("Received DownMsg: {:?}", down_msg);
+        // DownMsg logging disabled - causes CLI overflow with large files
         match down_msg {
             DownMsg::ParsingStarted { file_id, filename } => {
-                zoon::println!("Started parsing file: {} ({})", filename, file_id);
-                
                 // Add or update loading file
                 let loading_file = LoadingFile {
                     file_id: file_id.clone(),
@@ -283,8 +276,6 @@ static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 LOADING_FILES.lock_mut().push_cloned(loading_file);
             }
             DownMsg::ParsingProgress { file_id, progress } => {
-                zoon::println!("File {} progress: {}%", file_id, progress * 100.0);
-                
                 // Update progress for the file
                 let current_files: Vec<LoadingFile> = LOADING_FILES.lock_ref().iter().cloned().collect();
                 let updated_files: Vec<LoadingFile> = current_files.into_iter().map(|mut file| {
@@ -297,12 +288,8 @@ static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 LOADING_FILES.lock_mut().replace_cloned(updated_files);
             }
             DownMsg::FileLoaded { file_id, hierarchy } => {
-                zoon::println!("File loaded: {} with {} files", file_id, hierarchy.files.len());
-                
                 // Add loaded files to the TreeView state
                 for file in hierarchy.files {
-                    let total_variables = count_variables_in_scopes(&file.scopes);
-                    zoon::println!("  - {}: {} variables", file.filename, total_variables);
                     LOADED_FILES.lock_mut().push_cloned(file.clone());
                     
                     // Store scope selection for later restoration (don't restore immediately)
@@ -343,17 +330,16 @@ static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 check_loading_complete();
             }
             DownMsg::ConfigLoaded(config) => {
-                zoon::println!("Config loaded: {:?}", config);
                 apply_config(config);
             }
             DownMsg::ConfigSaved => {
-                zoon::println!("Config saved successfully");
+                // Config saved successfully
             }
             DownMsg::ConfigError(error) => {
-                zoon::println!("Config error: {}", error);
+                // Config error: {}
             }
             DownMsg::ThemeSaved => {
-                zoon::println!("Theme saved successfully");
+                // Theme saved successfully
             }
         }
     })
@@ -409,8 +395,6 @@ fn restore_scope_selections_deferred() {
     
     // Only proceed if we found a scope to restore
     if let Some(scope_id) = scope_to_restore {
-        zoon::println!("Restoring scope selection: {}", scope_id);
-        
         // Clear saved selections after successful extraction
         SAVED_SCOPE_SELECTIONS.lock_mut().clear();
         
@@ -420,8 +404,6 @@ fn restore_scope_selections_deferred() {
         let mut new_selection = HashSet::new();
         new_selection.insert(scope_id);
         TREE_SELECTED_ITEMS.set_neq(new_selection);
-    } else {
-        zoon::println!("No valid scope found to restore yet (waiting for more files to load)");
     }
 }
 
@@ -431,15 +413,12 @@ fn restore_scope_selections() {
         return;
     }
     
-    zoon::println!("Restoring scope selections for {} files", saved_selections.len());
-    
     // Since the config system only saves ONE global scope selection,
     // we should only have one entry, but iterate to be safe
     for (file_id, scope_id) in saved_selections.iter() {
         // Check if this file is currently loaded
         let file_exists = LOADED_FILES.lock_ref().iter().any(|f| f.id == *file_id);
         if !file_exists {
-            zoon::println!("Skipping scope restoration for file {}: not currently loaded", file_id);
             continue;
         }
         
@@ -449,8 +428,6 @@ fn restore_scope_selections() {
         });
         
         if scope_exists {
-            zoon::println!("Restoring scope selection: {} in file {}", scope_id, file_id);
-            
             // Update the global scope selection
             SELECTED_SCOPE_ID.set_neq(Some(scope_id.clone()));
             
@@ -464,8 +441,6 @@ fn restore_scope_selections() {
             
             // Only restore the first (and should be only) valid selection
             break;
-        } else {
-            zoon::println!("Skipping scope restoration for {}: scope not found in loaded files", scope_id);
         }
     }
     
@@ -529,13 +504,10 @@ fn send_up_msg(up_msg: UpMsg) {
 }
 
 fn apply_config(config: AppConfig) {
-    zoon::println!("Applying configuration...");
-    
     // Store the loaded config to preserve inactive mode settings when saving
     LOADED_CONFIG.set_neq(Some(config.clone()));
     
     // Apply UI settings - initialize NovyUI theme with custom persistence
-    zoon::println!("Theme: {}", config.ui.theme);
     let initial_theme = match config.ui.theme.as_str() {
         "light" => Some(Theme::Light),
         "dark" => Some(Theme::Dark),
@@ -576,10 +548,7 @@ fn apply_config(config: AppConfig) {
     
     // Auto-load files if enabled
     if config.app.auto_load_previous_files && !config.files.opened_files.is_empty() {
-        zoon::println!("Auto-loading {} files from config", config.files.opened_files.len());
         for file_path in config.files.opened_files {
-            zoon::println!("Loading file from config: {}", file_path);
-            
             // Generate file ID and store path mapping for config persistence
             let file_id = generate_file_id(&file_path);
             FILE_PATHS.lock_mut().insert(file_id, file_path.clone());
@@ -679,7 +648,6 @@ fn save_current_config() {
         },
     };
     
-    zoon::println!("Auto-saving config with {} opened files", config.files.opened_files.len());
     send_up_msg(UpMsg::SaveConfig(config));
 }
 
@@ -720,7 +688,6 @@ fn init_scope_selection() {
         EXPANDED_SCOPES.signal_ref(|expanded_scopes| {
             expanded_scopes.clone()
         }).for_each_sync(|_expanded_scopes| {
-            zoon::println!("Expanded scopes changed, auto-saving config");
             save_current_config();
         }).await
     });
@@ -1073,7 +1040,6 @@ fn remove_all_button() -> impl Element {
             LOADED_FILES.lock_mut().clear();
             FILE_PATHS.lock_mut().clear();
             EXPANDED_SCOPES.lock_mut().clear();
-            zoon::println!("Cleared all loaded files");
             save_current_config();
         })
         .build()
@@ -1255,10 +1221,8 @@ fn get_all_variables_from_files() -> Vec<Signal> {
 }
 
 fn get_variables_from_selected_scope(selected_scope_id: &str) -> Vec<Signal> {
-    let _timer = PerformanceTimer::new("get_variables_from_selected_scope");
     for file in LOADED_FILES.lock_ref().iter() {
         if let Some(variables) = find_variables_in_scope(&file.scopes, selected_scope_id) {
-            zoon::println!("⏱️ [PERF] Found {} variables in scope {}", variables.len(), selected_scope_id);
             return variables;
         }
     }
@@ -1360,8 +1324,6 @@ fn variables_panel() -> impl Element {
                                                 )
                                                 .into_element()
                                         } else {
-                                            let render_timer = PerformanceTimer::new(&format!("render_variables_list ({})", variables.len()));
-                                            
                                             let variable_items: Vec<_> = variables.iter().map(|signal| {
                                                 Row::new()
                                                     .s(Gap::new().x(8))
@@ -1388,9 +1350,6 @@ fn variables_panel() -> impl Element {
                                                     )
                                                     .into_element()
                                             }).collect();
-                                            
-                                            render_timer.log_elapsed();
-                                            zoon::println!("⏱️ [PERF] Creating Column with {} variable items", variable_items.len());
                                             
                                             Column::new()
                                                 .s(Gap::new().y(4))
