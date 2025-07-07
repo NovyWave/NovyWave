@@ -3,16 +3,18 @@
 ## WASM/Frontend Development Process
 
 **CRITICAL WORKFLOW:**
-- Run `makers start > dev_server.log 2>&1 &` as BACKGROUND PROCESS with output logging
+- **NEVER restart MoonZoon dev server without user permission** - only restart when MoonZoon.toml changes
+- **ALWAYS ask user to use /project-stop or /project-start commands** instead of killing/starting processes directly
 - Monitor compilation with `tail -f dev_server.log` or read file content periodically
 - This allows Claude to see compilation errors immediately without managing terminal processes
+- **Clear dev_server.log when it gets too long** - use `> dev_server.log` to truncate for better readability and token efficiency
+- Log file is only for reading recent compilation state, not historical data
 - Auto-reload ONLY triggers after successful compilation
 - Always test changes with browser MCP after making changes to verify compilation succeeded
 - Read compilation errors from the running command output, don't restart it repeatedly
 - NEVER use `cargo build` or `cargo check` - they cannot check WASM compilation properly (IDE has same issue)
 - Only read compilation errors from mzoon output for accurate WASM build status
 - **NEVER check browser until compilation succeeds** - auto-reload only happens after successful compilation
-- **Kill dev server properly:** `pkill -f "makers start" && pkill -f mzoon` or find PIDs with `ps aux | grep -E "(mzoon|makers)" | grep -v grep` then `kill <PIDs>`
 
 ## Debug Patterns
 
