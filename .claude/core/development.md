@@ -58,6 +58,9 @@ Important notes:
 - NEVER run additional commands to read or explore code
 - DO NOT push to the remote repository unless explicitly asked
 - Never use git commands with the -i flag
+- **CRITICAL: NEVER perform destructive git operations (reset, rebase, force push, branch deletion, stash drop) without explicit user confirmation**
+- **User lost hours of work from uncommitted changes - always confirm before any operation that could lose data**
+- **Only exceptions: /core-checkpoint and /core-commit commands where destruction is part of expected flow, but still be careful**
 
 ### Pull Requests
 
