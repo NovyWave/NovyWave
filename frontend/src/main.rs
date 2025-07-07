@@ -4,7 +4,7 @@ use moonzoon_novyui::tokens::theme::{Theme, init_theme, theme, toggle_theme};
 use serde::{Serialize, Deserialize};
 use std::collections::{HashSet, HashMap};
 use web_sys::Performance;
-use wasm_bindgen::{prelude::*, JsCast};
+use wasm_bindgen::JsCast;
 
 // Virtual variables JavaScript integration - loaded via backend public API
 
@@ -177,81 +177,6 @@ pub struct Signal {
     pub width: u32,
 }
 
-// Virtual list WASM bridge
-static CURRENT_FILTERED_VARIABLES: Lazy<Mutable<Vec<Signal>>> = lazy::default();
-
-// Virtual Variables JavaScript Bridge - Synchronous approach
-#[wasm_bindgen(module = "/js/virtual-variables.js")]
-extern "C" {
-    #[wasm_bindgen(js_name = "initializeVirtualList")]
-    fn initialize_virtual_list(
-        get_count_callback: &Closure<dyn Fn() -> usize>,
-        get_variable_callback: &Closure<dyn Fn(usize) -> JsValue>
-    ) -> bool;
-    
-    #[wasm_bindgen(js_name = "refreshVirtualList")]
-    fn refresh_virtual_list() -> bool;
-}
-
-// Initialize virtual list with callbacks
-pub fn init_virtual_variables_list() {
-    zoon::println!("Initializing virtual variables list...");
-    
-    // Create callback closures
-    let get_count_callback = Closure::new(|| {
-        let count = CURRENT_FILTERED_VARIABLES.lock_ref().len();
-        zoon::println!("get_variables_count called: returning {}", count);
-        count
-    });
-    
-    let get_variable_callback = Closure::new(|index: usize| {
-        let variables = CURRENT_FILTERED_VARIABLES.lock_ref();
-        if let Some(signal) = variables.get(index) {
-            serde_wasm_bindgen::to_value(signal).unwrap_or(JsValue::NULL)
-        } else {
-            JsValue::NULL
-        }
-    });
-    
-    // Initialize the virtual list
-    let result = initialize_virtual_list(&get_count_callback, &get_variable_callback);
-    if result {
-        zoon::println!("Virtual list initialized successfully");
-    } else {
-        zoon::println!("Failed to initialize virtual list");
-    }
-    
-    // Keep closures alive by forgetting them (they're now owned by JavaScript)
-    get_count_callback.forget();
-    get_variable_callback.forget();
-}
-
-// Update virtual variables and refresh the list
-pub fn update_virtual_variables(search_filter: String, variables_json: JsValue) {
-    if let Ok(variables) = serde_wasm_bindgen::from_value::<Vec<Signal>>(variables_json) {
-        let filtered = filter_variables(&variables, &search_filter);
-        CURRENT_FILTERED_VARIABLES.set(filtered.clone());
-        
-        // Debug output
-        zoon::println!("UPDATED virtual variables: {} total, {} filtered", variables.len(), filtered.len());
-        
-        // Refresh the virtual list
-        let result = refresh_virtual_list();
-        if result {
-            zoon::println!("Virtual list refreshed successfully");
-        } else {
-            zoon::println!("Failed to refresh virtual list");
-        }
-    } else {
-        zoon::println!("Failed to parse variables JSON for virtual list");
-    }
-}
-
-#[wasm_bindgen]
-extern "C" {
-    #[wasm_bindgen(js_namespace = window)]
-    fn notify_virtual_list_update();
-}
 
 // Configuration structures (matching backend)
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
@@ -1490,35 +1415,8 @@ fn virtual_variables_list(variables: Vec<Signal>, search_filter: String) -> Colu
             );
     }
     
-    // Update WASM bridge with current data
-    if let Ok(variables_json) = serde_wasm_bindgen::to_value(&variables) {
-        update_virtual_variables(search_filter.clone(), variables_json);
-    }
-    
-    // Virtual list container
-    Column::new()
-        .item(
-            El::new()
-                .s(Width::fill())
-                .s(Height::fill())
-                .s(Background::new().color(hsluv!(220, 15, 11)))
-                .s(RoundedCorners::all(8))
-                .s(Padding::all(4))
-                .update_raw_el(|el| {
-                    // Set HTML ID for JavaScript access using DOM API
-                    if let Some(html_el) = el.dom_element().dyn_ref::<web_sys::HtmlElement>() {
-                        html_el.set_id("virtual-variables-container");
-                    }
-                    
-                    // Initialize virtual list properly 
-                    Task::start(async {
-                        // Small delay to ensure DOM is ready using setTimeout
-                        let _ = js_sys::eval("setTimeout(() => {}, 100)");
-                        init_virtual_variables_list();
-                    });
-                    el
-                })
-        )
+    // FIXED-HEIGHT VIRTUAL LIST - only render ~15 visible items
+    rust_virtual_variables_list(filtered_variables)
 }
 
 fn simple_variables_list(variables: Vec<Signal>, search_filter: String) -> Column<column::EmptyFlagNotSet, RawHtmlEl> {
@@ -1566,8 +1464,151 @@ fn simple_variable_row(signal: Signal) -> Row<row::EmptyFlagNotSet, row::Multili
     Row::new()
         .s(Gap::new().x(8))
         .s(Width::fill())
+        .s(Height::exact(24))
+        .s(Padding::new().x(12).y(2))
+        .item(
+            El::new()
+                .s(Font::new().color(hsluv!(220, 10, 85)).size(14))
+                .s(Font::new().no_wrap())
+                .child(signal.name.clone())
+        )
+        .item(El::new().s(Width::fill()))
+        .item(
+            El::new()
+                .s(Font::new().color(hsluv!(210, 80, 70)).size(12))
+                .s(Font::new().no_wrap())
+                .child(format!("{} {}-bit", signal.signal_type, signal.width))
+        )
+}
+
+fn rust_virtual_variables_list(variables: Vec<Signal>) -> Column<column::EmptyFlagNotSet, RawHtmlEl> {
+    let total_items = variables.len();
+    let item_height = 24.0;
+    let container_height = Mutable::new(400.0); // Reactive height tracking
+    let visible_count_value = ((400.0_f64 / item_height).ceil() as usize + 5).min(total_items);
+    let visible_count = Mutable::new(visible_count_value);
+    
+    // Virtual scrolling state
+    let scroll_top = Mutable::new(0.0);
+    let visible_start = Mutable::new(0usize);
+    let visible_end = Mutable::new(visible_count_value.min(total_items));
+    
+    zoon::println!("Virtual List: {} total, {} visible", total_items, visible_count_value);
+    
+    Column::new()
+        .item(
+            El::new()
+                .s(Width::fill())
+                .s(Height::exact(400))
+                .s(Background::new().color(hsluv!(220, 15, 11)))
+                .s(RoundedCorners::all(8))
+                .s(Padding::all(4))
+                .update_raw_el({
+                    let scroll_top = scroll_top.clone();
+                    let visible_start = visible_start.clone();
+                    let visible_end = visible_end.clone();
+                    let variables = variables.clone();
+                    
+                    move |el| {
+                        // Setup scroll container
+                        if let Some(html_el) = el.dom_element().dyn_ref::<web_sys::HtmlElement>() {
+                            html_el.set_id("virtual-container");
+                            html_el.style().set_property("overflow-y", "auto").unwrap();
+                            
+                            // Create scroll event handler
+                            let scroll_closure = wasm_bindgen::closure::Closure::wrap(Box::new({
+                                let scroll_top = scroll_top.clone();
+                                let visible_start = visible_start.clone();
+                                let visible_end = visible_end.clone();
+                                
+                                move |_event: web_sys::Event| {
+                                    if let Some(scroll_el) = web_sys::window()
+                                        .and_then(|w| w.document())
+                                        .and_then(|d| d.get_element_by_id("virtual-container"))
+                                        .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok()) 
+                                    {
+                                        let new_scroll_top = scroll_el.scroll_top() as f64;
+                                        scroll_top.set_neq(new_scroll_top);
+                                        
+                                        let start_index = (new_scroll_top / item_height).floor() as usize;
+                                        let end_index = (start_index + visible_count_value).min(total_items);
+                                        
+                                        visible_start.set_neq(start_index);
+                                        visible_end.set_neq(end_index);
+                                        
+                                        zoon::println!("Scroll: top={}, start={}, end={}", new_scroll_top, start_index, end_index);
+                                    }
+                                }
+                            }) as Box<dyn FnMut(_)>);
+                            
+                            // Add scroll event listener
+                            html_el.add_event_listener_with_callback(
+                                "scroll",
+                                scroll_closure.as_ref().unchecked_ref()
+                            ).unwrap();
+                            
+                            scroll_closure.forget();
+                        }
+                        
+                        el
+                    }
+                })
+                .child(
+                    // Virtual scrollable content
+                    El::new()
+                        .s(Width::fill())
+                        .s(Height::exact((total_items as f64 * item_height) as u32))
+                        .child_signal(
+                            map_ref! {
+                                let start = visible_start.signal(),
+                                let end = visible_end.signal() =>
+                                // Create container with Stack and Transform positioning
+                                Stack::new()
+                                    .s(Width::fill())
+                                    .s(Height::exact((total_items as f64 * item_height) as u32))
+                                    .layers(
+                                        variables[*start..*end].iter().enumerate().map(|(i, signal)| {
+                                            let absolute_index = *start + i;
+                                            virtual_variable_row_positioned(signal.clone(), absolute_index as f64 * item_height)
+                                        })
+                                    )
+                                    .into_element()
+                            }
+                        )
+                )
+        )
+}
+
+fn virtual_variable_row_positioned(signal: Signal, top_offset: f64) -> impl Element {
+    Row::new()
+        .s(Gap::new().x(8))
+        .s(Width::fill())
+        .s(Height::exact(24))
+        .s(Transform::new().move_down(top_offset as i32))
+        .s(Padding::new().x(12).y(2))
+        .s(Background::new().color(hsluv!(220, 15, 12)))
+        .item(
+            El::new()
+                .s(Font::new().color(hsluv!(220, 10, 85)).size(14))
+                .s(Font::new().no_wrap())
+                .child(signal.name.clone())
+        )
+        .item(El::new().s(Width::fill()))
+        .item(
+            El::new()
+                .s(Font::new().color(hsluv!(210, 80, 70)).size(12))
+                .s(Font::new().no_wrap())
+                .child(format!("{} {}-bit", signal.signal_type, signal.width))
+        )
+}
+
+fn virtual_variable_row(signal: Signal) -> impl Element {
+    Row::new()
+        .s(Gap::new().x(8))
+        .s(Width::fill())
         .s(Height::exact(28))
         .s(Padding::new().x(12).y(2))
+        .s(Background::new().color(hsluv!(220, 15, 12)))
         .item(
             El::new()
                 .s(Font::new().color(hsluv!(220, 10, 85)).size(14))
