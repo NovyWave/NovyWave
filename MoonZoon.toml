@@ -16,7 +16,6 @@ frontend = [
     "public",
     "frontend/Cargo.toml",
     "frontend/src",
-    "frontend/js",
     "shared/Cargo.toml",
     "shared/src",
 ]

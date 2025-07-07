@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ./.claude/hooks/claude-finished-notification.sh"
+            "command": "cd /home/martinkavik/repos/NovyWave && bash ./.claude/hooks/claude-finished-notification.sh"
           }
         ]
       }
