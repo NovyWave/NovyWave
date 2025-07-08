@@ -15,6 +15,20 @@ Intelligent git commit workflow with checkpoint conversion, change analysis, and
 
 ## Your Task
 
+### ⚠️ CRITICAL IMPLEMENTATION RULES
+
+**RULE 1 - CHECKPOINT ANALYSIS**: Must ALWAYS run BOTH commands in parallel:
+- `git show HEAD` or `git diff HEAD~1` - to see CHECKPOINT accumulated changes  
+- `git diff` - to see unstaged changes
+- **ANALYZE BOTH** together for complete commit message scope
+- **DO NOT** analyze only unstaged changes when CHECKPOINT exists - this ignores the main work!
+
+**RULE 2 - INTERACTIVE WORKFLOW**: NEVER execute git commands without user confirmation:
+- **ALWAYS** present analysis and suggested commit message FIRST
+- **ALWAYS** wait for user approval: y/n/custom response
+- **NEVER** auto-execute git commands even after conversation compaction
+- **ONLY** execute after explicit user confirmation (y, custom message, etc.)
+
 ### Smart Commit Workflow:
 
 1. **Analyze Current State:**
@@ -25,7 +39,8 @@ Intelligent git commit workflow with checkpoint conversion, change analysis, and
 
 2. **Checkpoint Detection (Priority #1):**
    - Check if last commit message = "CHECKPOINT"
-   - If CHECKPOINT found: Skip normal workflow, go to checkpoint conversion
+   - If CHECKPOINT found: **MANDATORY** run `git show HEAD` or `git diff HEAD~1` to analyze accumulated changes
+   - **CRITICAL**: Must include CHECKPOINT changes in analysis, not just unstaged changes
    - If no CHECKPOINT: Continue to normal amend detection
 
 3. **Split Analysis (for CHECKPOINT commits):**
@@ -80,7 +95,9 @@ Intelligent git commit workflow with checkpoint conversion, change analysis, and
    **Option B: Simple CHECKPOINT Conversion**
    ```
    🔄 Found CHECKPOINT commit with accumulated changes
-   📋 Analyzing all changes since last real commit...
+   📋 Analyzing CHECKPOINT contents with `git show HEAD`...
+   📋 Analyzing unstaged changes with `git diff`...
+   📋 Combining both to understand complete scope...
    
    💭 Suggested commit message:
    "feat(ui): add button component with styling improvements"
@@ -123,7 +140,13 @@ Intelligent git commit workflow with checkpoint conversion, change analysis, and
    custom message) Type your own
    ```
 
-6. **Execute:**
+6. **Present Options & Wait for User Response:**
+   - Show analysis results
+   - Present recommended action with clear options
+   - **STOP and wait for user input**
+   - Do NOT proceed until user responds with y/n/custom/etc.
+
+7. **Execute (ONLY after user confirmation):**
 
    **For CHECKPOINT Split:**
    - Stage any unstaged changes: `git add .`
