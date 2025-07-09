@@ -1,129 +1,9 @@
 use moon::*;
-use serde::{Serialize, Deserialize};
+use shared::{self, UpMsg, DownMsg, AppConfig, FileHierarchy, WaveformFile, FileFormat, ScopeData, generate_file_id};
 use std::path::Path;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::fs;
-
-#[derive(Serialize, Deserialize, Debug)]
-pub enum UpMsg {
-    LoadWaveformFile(String),  // Absolute file path
-    GetParsingProgress(String), // File ID
-    LoadConfig,
-    SaveConfig(AppConfig),
-    SaveTheme(String), // "light" or "dark"
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub enum DownMsg {
-    ParsingStarted { file_id: String, filename: String },
-    ParsingProgress { file_id: String, progress: f32 },
-    FileLoaded { file_id: String, hierarchy: FileHierarchy },
-    ParsingError { file_id: String, error: String },
-    ConfigLoaded(AppConfig),
-    ConfigSaved,
-    ConfigError(String),
-    ThemeSaved,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct FileHierarchy {
-    pub files: Vec<WaveformFile>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct WaveformFile {
-    pub id: String,
-    pub filename: String,
-    pub format: FileFormat,
-    pub scopes: Vec<ScopeData>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub enum FileFormat {
-    VCD,
-    FST,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ScopeData {
-    pub id: String,
-    pub name: String,
-    pub full_name: String,
-    pub children: Vec<ScopeData>,
-    pub variables: Vec<Signal>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Signal {
-    pub id: String,
-    pub name: String,
-    pub signal_type: String,
-    pub width: u32,
-}
-
-// Configuration structures
-#[derive(Serialize, Deserialize, Debug, Default)]
-pub struct AppConfig {
-    pub app: AppSection,
-    pub ui: UiSection,
-    pub files: FilesSection,
-    pub workspace: WorkspaceSection,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct AppSection {
-    pub version: String,
-    pub auto_load_previous_files: bool,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct UiSection {
-    pub theme: String, // "dark" or "light"
-}
-
-#[derive(Serialize, Deserialize, Debug, Default)]
-pub struct FilesSection {
-    pub opened_files: Vec<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Default)]
-pub struct WorkspaceSection {
-    pub dock_to_bottom: bool,
-    pub docked_to_bottom: DockedToBottomLayout,
-    pub docked_to_right: DockedToRightLayout,
-    pub scope_selection: HashMap<String, String>,
-    pub expanded_scopes: HashMap<String, Vec<String>>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Default)]
-pub struct DockedToBottomLayout {
-    pub main_area_height: u32,
-    pub files_panel_width: u32,
-}
-
-#[derive(Serialize, Deserialize, Debug, Default)]
-pub struct DockedToRightLayout {
-    pub files_panel_height: u32,
-    pub files_panel_width: u32,
-}
-
-impl Default for AppSection {
-    fn default() -> Self {
-        Self {
-            version: "0.1.0".to_string(),
-            auto_load_previous_files: true,
-        }
-    }
-}
-
-impl Default for UiSection {
-    fn default() -> Self {
-        Self {
-            theme: "dark".to_string(),
-        }
-    }
-}
 
 async fn frontend() -> Frontend {
     Frontend::new()
@@ -254,9 +134,9 @@ fn extract_scopes_from_hierarchy(hierarchy: &wellen::Hierarchy, file_id: &str) -
 fn extract_scope_data_with_file_id(hierarchy: &wellen::Hierarchy, scope_ref: wellen::ScopeRef, file_id: &str) -> ScopeData {
     let scope = &hierarchy[scope_ref];
     
-    let variables: Vec<Signal> = scope.vars(hierarchy).map(|var_ref| {
+    let variables: Vec<shared::Signal> = scope.vars(hierarchy).map(|var_ref| {
         let var = &hierarchy[var_ref];
-        Signal {
+        shared::Signal {
             id: format!("{}", var.signal_ref().index()),
             name: var.name(hierarchy).to_string(),
             signal_type: format!("{:?}", var.var_type()),
@@ -305,14 +185,6 @@ async fn send_down_msg(msg: DownMsg, session_id: SessionId, cor_id: CorId) {
     }
 }
 
-fn generate_file_id(file_path: &str) -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    
-    let mut hasher = DefaultHasher::new();
-    file_path.hash(&mut hasher);
-    format!("file_{:x}", hasher.finish())
-}
 
 const CONFIG_FILE_PATH: &str = ".novywave";
 

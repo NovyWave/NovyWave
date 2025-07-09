@@ -13,6 +13,16 @@ When making changes to files, first understand the file's code conventions. Mimi
 
 - IMPORTANT: DO NOT ADD ***ANY*** COMMENTS unless asked
 
+## Refactoring Rules
+
+**ATOMIC CODE MOVEMENT - NEVER BREAK COMPILATION:**
+1. Copy complete code blocks to destination files first
+2. Verify compilation succeeds after each copy
+3. Only then remove code from source files
+4. NEVER create placeholder functions or empty stubs
+5. NEVER rename types with aliases (e.g., `Signal as DataSignal`) - move code directly
+6. Always preserve exact functionality during moves
+
 ## Task Management
 
 You have access to the TodoWrite and TodoRead tools to help you manage and plan tasks. Use these tools VERY frequently to ensure that you are tracking your tasks and giving the user visibility into your progress.
