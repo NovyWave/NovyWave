@@ -501,6 +501,7 @@ version = "0.1.0"
 dependencies = [
  "moon",
  "serde",
+ "shared",
  "toml",
  "wellen",
 ]
@@ -1493,6 +1494,7 @@ dependencies = [
  "moonzoon-novyui",
  "serde",
  "serde-wasm-bindgen",
+ "shared",
  "wasm-bindgen",
  "web-sys",
  "zoon",
@@ -4396,6 +4398,9 @@ dependencies = [
 [[package]]
 name = "shared"
 version = "0.1.0"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "shlex"
