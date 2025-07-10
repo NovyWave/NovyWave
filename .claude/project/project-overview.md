@@ -19,6 +19,7 @@ NovyWave - Professional waveform viewer for digital design verification and anal
 frontend/     - Rust/WASM frontend (shared)
 backend/      - MoonZoon backend (browser only)
 src-tauri/    - Tauri desktop wrapper
+shared/       - Shared types and utilities between frontend/backend
 novyui/       - Custom UI component library
 public/       - Static assets
 ```
@@ -55,3 +56,26 @@ public/       - Static assets
 - Digital design verification workflows
 - High-performance graphics rendering
 - Desktop and web dual deployment
+
+## Shared Crate Usage
+
+The `shared/` crate contains types and utilities that need to be used by both frontend and backend:
+
+**Core Types:**
+- `LoadingFile`, `LoadingStatus` - File loading state management
+- `WaveformFile`, `ScopeData`, `Signal` - Waveform data structures
+- `UpMsg`, `DownMsg` - Communication messages between frontend/backend
+- `AppConfig` and related config types - Application configuration
+
+**When to Use:**
+- Any type that needs to be serialized/deserialized between frontend and backend
+- Data structures representing waveform files and their contents
+- Configuration types that are saved/loaded from disk
+- Message types for frontend-backend communication
+
+**Import Pattern:**
+```rust
+use shared::{LoadingFile, LoadingStatus, WaveformFile, Signal};
+```
+
+**Do NOT duplicate types:** Always import from `shared` rather than defining duplicate types in frontend or backend.

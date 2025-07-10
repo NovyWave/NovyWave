@@ -1,7 +1,7 @@
 use zoon::*;
 use std::collections::{HashMap, HashSet};
 use shared::WaveformFile;
-use crate::types::LoadingFile;
+use shared::LoadingFile;
 
 // Panel resizing state
 pub static FILES_PANEL_WIDTH: Lazy<Mutable<u32>> = Lazy::new(|| 470.into());

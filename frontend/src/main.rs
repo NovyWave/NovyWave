@@ -32,6 +32,9 @@ pub fn main() {
         // Initialize scope selection handling
         init_scope_selection_handlers();
         
+        // Initialize signal-based loading completion handling
+        init_signal_chains();
+        
         start_app("app", root);
         init_connection();
         

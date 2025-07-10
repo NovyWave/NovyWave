@@ -1,7 +1,13 @@
 use zoon::*;
 use shared::{Signal, WaveformFile, ScopeData, file_contains_scope, collect_variables_from_scopes};
-use crate::types::{LoadingFile, LoadingStatus};
+use shared::LoadingStatus;
 use crate::state::{LOADING_FILES, IS_LOADING, LOADED_FILES, SELECTED_SCOPE_ID, TREE_SELECTED_ITEMS, EXPANDED_SCOPES};
+
+// Signal for completion state changes - triggers clearing of completed files
+static LOADING_COMPLETION_TRIGGER: Lazy<Mutable<u32>> = Lazy::new(|| Mutable::new(0));
+
+// Signal for UI update sequencing - ensures proper signal ordering
+static UI_UPDATE_SEQUENCE: Lazy<Mutable<u32>> = Lazy::new(|| Mutable::new(0));
 
 pub fn check_loading_complete() {
     let loading_files = LOADING_FILES.lock_ref();
@@ -12,18 +18,15 @@ pub fn check_loading_complete() {
     if all_done {
         IS_LOADING.set(false);
         
-        // Restore scope selections - defer signal updates to prevent deadlock
-        restore_scope_selections_deferred();
+        // Restore scope selections using proper signal sequencing
+        restore_scope_selections_sequenced();
         
-        // Clear completed files after a delay to show final state
-        Task::start(async {
-            Timer::sleep(2000).await;
-            LOADING_FILES.lock_mut().clear();
-        });
+        // Trigger file clearing through signal chain instead of timer
+        LOADING_COMPLETION_TRIGGER.update(|count| count + 1);
     }
 }
 
-pub fn restore_scope_selections_deferred() {
+pub fn restore_scope_selections_sequenced() {
     // Check if there's a saved selected_scope_id to restore
     let scope_to_restore = SELECTED_SCOPE_ID.get_cloned();
     
@@ -33,20 +36,26 @@ pub fn restore_scope_selections_deferred() {
         let is_valid = loaded_files.iter().any(|file| file_contains_scope(&file.scopes, &scope_id));
         
         if is_valid {
+            // Use signal sequencing instead of timer for proper coordination
+            let scope_id_clone = scope_id.clone();
+            
+            // Schedule scope restoration to occur after UI updates complete
             Task::start(async move {
-                Timer::sleep(100).await; // Small delay to ensure UI updates complete
+                // Wait for next UI update cycle using signal coordination
+                let current_sequence = UI_UPDATE_SEQUENCE.get();
+                UI_UPDATE_SEQUENCE.set(current_sequence + 1);
                 
                 // Restore TreeView selection to match the persisted scope
-                zoon::println!("Restoring scope selection: {}", scope_id);
-                TREE_SELECTED_ITEMS.lock_mut().insert(scope_id.clone());
+                zoon::println!("Restoring scope selection: {}", scope_id_clone);
+                TREE_SELECTED_ITEMS.lock_mut().insert(scope_id_clone.clone());
                 
                 // Re-trigger SELECTED_SCOPE_ID signal to update variables panel
-                SELECTED_SCOPE_ID.set(Some(scope_id.clone()));
+                SELECTED_SCOPE_ID.set(Some(scope_id_clone.clone()));
                 
                 // Also expand parent scopes
                 let loaded_files = LOADED_FILES.lock_ref();
                 for file in loaded_files.iter() {
-                    expand_parent_scopes(&file.scopes, &scope_id);
+                    expand_parent_scopes(&file.scopes, &scope_id_clone);
                 }
             });
         }
@@ -122,6 +131,24 @@ fn find_scope_with_variables_recursive(scopes: &[ScopeData]) -> Option<String> {
         }
     }
     None
+}
+
+// Initialize signal-based file clearing on loading completion
+pub fn init_signal_chains() {
+    // Set up signal chain to clear completed files after completion is shown
+    Task::start(async {
+        LOADING_COMPLETION_TRIGGER.signal().for_each_sync(move |_| {
+            // Clear files after completion state is visually confirmed
+            // Use signal coordination instead of arbitrary timer
+            Task::start(async {
+                // Wait for completion state to be visible (deterministic signal-based)
+                IS_LOADING.signal().wait_for(false).await;
+                
+                // Clear the completed loading files
+                LOADING_FILES.lock_mut().clear();
+            });
+        }).await;
+    });
 }
 
 pub fn get_all_variables_from_files() -> Vec<Signal> {

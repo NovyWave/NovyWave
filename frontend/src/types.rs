@@ -1,22 +1,4 @@
-use shared::{Signal, WaveformFile, ScopeData, find_variables_in_scope};
-
-// ===== FRONTEND-SPECIFIC TYPES =====
-
-#[derive(Clone, Debug)]
-pub enum LoadingStatus {
-    Starting,
-    Parsing,
-    Completed,
-    Error(String),
-}
-
-#[derive(Clone, Debug)]
-pub struct LoadingFile {
-    pub file_id: String,
-    pub filename: String,
-    pub progress: f32,
-    pub status: LoadingStatus,
-}
+use shared::{Signal, WaveformFile, ScopeData, find_variables_in_scope, LoadingFile, LoadingStatus};
 
 // ===== FRONTEND-SPECIFIC UTILITY FUNCTIONS =====
 

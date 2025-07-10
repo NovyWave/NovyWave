@@ -3,7 +3,6 @@
 
 [app]
 version = "1.0.0"
-auto_load_last_session = true
 
 [ui]
 theme = "dark"
@@ -18,15 +17,14 @@ opened_files = [
 dock_mode = "right"
 selected_scope_id = "file_71a2908980aee1d_scope_1"
 expanded_scopes = [
-    "file_7fda6450ec6eaf33",
     "file_71a2908980aee1d_scope_0",
     "file_71a2908980aee1d",
 ]
 
 [workspace.docked_to_bottom]
-files_panel_width = 890.0
-files_panel_height = 625.0
+files_panel_width = 470.0
+files_panel_height = 300.0
 
 [workspace.docked_to_right]
-files_panel_width = 492.0
-files_panel_height = 327.0
+files_panel_width = 470.0
+files_panel_height = 300.0

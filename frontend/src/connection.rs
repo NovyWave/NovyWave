@@ -1,7 +1,7 @@
 use zoon::*;
-use crate::{LOADING_FILES, LOADED_FILES, check_loading_complete, save_current_config};
+use crate::{LOADING_FILES, LOADED_FILES, check_loading_complete, save_current_config, init_signal_chains};
 use shared::{UpMsg, DownMsg};
-use crate::types::{LoadingFile, LoadingStatus};
+use shared::{LoadingFile, LoadingStatus};
 
 static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
     Connection::new(|down_msg, _| {

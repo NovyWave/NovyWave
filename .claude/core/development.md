@@ -72,6 +72,37 @@ Important notes:
 - **User lost hours of work from uncommitted changes - always confirm before any operation that could lose data**
 - **Only exceptions: /core-checkpoint and /core-commit commands where destruction is part of expected flow, but still be careful**
 
+### Two-Stage Checkpoint Workflow
+
+**Single Commit with Multi-Line Messages:**
+
+The `/core-commit` command creates one comprehensive commit with multi-line messages that organize logical changes clearly:
+
+**Single-Line Format (when one logical change):**
+```
+fix(ui): resolve panel resize issues
+```
+
+**Multi-Line Format (when multiple logical changes):**
+```
+fix(ui): resolve panel resize issues in docked-to-bottom mode
+fix(config): preserve dock mode settings during workspace saves
+refactor(frontend): modularize main.rs into focused modules
+```
+
+**Benefits:**
+- **Clear git blame**: Shows all relevant changes when investigating specific files
+- **Semantic organization**: Each line follows conventional commits with proper scoping
+- **Simpler workflow**: No empty commits or complex splitting logic
+- **Better debugging**: Complete context visible in file history
+- **Clean history**: One commit per development session with clear scope breakdown
+
+**Pattern:**
+- Analyze accumulated CHECKPOINT changes
+- Identify distinct logical changes by scope (ui, config, feat, fix, refactor, etc.)
+- Create single commit with one line per logical change
+- Use conventional commit format for each line
+
 ### Pull Requests
 
 Use the gh command via the Bash tool for ALL GitHub-related tasks.
