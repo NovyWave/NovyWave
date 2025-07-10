@@ -3,7 +3,7 @@ description: "Strategic subagent usage patterns for context conservation and par
 allowed-tools: ["Task"]
 ---
 
-# Strategic Subagent Usage Guide
+# Strategic Subagent Usage Guide - Reference documentation (Claude will recommend when needed)
 
 Extend session effectiveness 2-3x by delegating context-heavy work to subagents.
 

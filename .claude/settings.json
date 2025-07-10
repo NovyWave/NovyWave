@@ -9,6 +9,15 @@
             "command": "bash ./.claude/hooks/update-context-from-memory.sh"
           }
         ]
+      },
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ./.claude/hooks/restore-session-after-compaction.sh"
+          }
+        ]
       }
     ],
     "Stop": [
@@ -16,7 +25,17 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cd /home/martinkavik/repos/NovyWave && bash ./.claude/hooks/claude-finished-notification.sh"
+            "command": "bash ./.claude/hooks/claude-finished-notification.sh"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ./.claude/hooks/preserve-session-before-compaction.sh"
           }
         ]
       }

@@ -1,7 +1,8 @@
 #!/bin/bash
-
 # Claude Code Stop Notification
-# Sends desktop notification with sound when Claude finishes responding
+
+source "$(dirname "$0")/shared-functions.sh"
+init_hook_env
 
 # Desktop notification
 notify-send "🤖 Claude finished!" --urgency=critical --icon=face-robot --expire-time=8000 --category=im.received
@@ -24,3 +25,9 @@ fi
 
 # Method 4: System bell as last resort
 printf "\a"
+
+# Clean up session markers for next session
+rm -f "$PROJECT_ROOT/.claude/session-recovery-completed" 2>/dev/null || true
+
+# Log session end for debugging
+echo "🏁 Session ended, markers cleaned: $(date)" >> "$PROJECT_ROOT/.claude/hooks.log"
