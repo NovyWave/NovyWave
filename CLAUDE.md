@@ -14,7 +14,7 @@ Core guidance for Claude Code when working with NovyWave.
 @.claude/frameworks/moonzoon/debugging.md
 
 <!-- Project Layer - NovyWave-Specific Configuration -->
-@PROJECT.md
+@.claude/project/project-overview.md
 @.claude/project/novyui-patterns.md
 
 <!-- Auto-Generated Productivity Context -->

@@ -1,5 +1,5 @@
 use zoon::*;
-use shared::{UpMsg, AppConfig, AppSection, UiSection, FilesSection, WorkspaceSection, DockedToBottomLayout, DockedToRightLayout, generate_file_id};
+use shared::{UpMsg, AppConfig, AppSection, UiSection, FilesSection, WorkspaceSection, DockedToBottomLayout, DockedToRightLayout, MigrationStrategy, generate_file_id};
 use crate::{
     send_up_msg, FILES_PANEL_WIDTH, FILES_PANEL_HEIGHT, IS_DOCKED_TO_BOTTOM, 
     SELECTED_SCOPE_ID, TREE_SELECTED_ITEMS, FILE_PATHS, EXPANDED_SCOPES
@@ -15,6 +15,26 @@ pub static CONFIG_LOADED: Lazy<Mutable<bool>> = Lazy::new(|| {
 });
 
 pub fn apply_config(config: AppConfig) {
+    // Validate config version and handle migration if needed
+    if !config.app.is_supported_version() {
+        zoon::println!("Warning: Config version {} not supported", config.app.version);
+        match config.app.get_migration_strategy() {
+            MigrationStrategy::None => {},
+            MigrationStrategy::Upgrade(description) => {
+                zoon::println!("Migrating config: {}", description);
+                // Future migration logic would go here, for example:
+                // - Update dock_mode values ("bottom" -> "docked_bottom") 
+                // - Rename config sections or fields
+                // - Convert old layout values to new format
+                // - Preserve user data while updating structure
+            },
+            MigrationStrategy::Recreate => {
+                zoon::println!("Unknown config version, using defaults");
+                // Could fall back to default config here if needed
+            },
+        }
+    }
+    
     let is_docked_to_bottom = config.workspace.dock_mode == "bottom";
     IS_DOCKED_TO_BOTTOM.set(is_docked_to_bottom);
     
@@ -42,13 +62,12 @@ pub fn apply_config(config: AppConfig) {
     }
     
     
-    if config.app.auto_load_last_session {
-        let file_paths = config.files.opened_files.clone();
-        for file_path in file_paths {
-            let file_id = generate_file_id(&file_path);
-            FILE_PATHS.lock_mut().insert(file_id, file_path.clone());
-            send_up_msg(UpMsg::LoadWaveformFile(file_path));
-        }
+    // Always attempt to load last session files
+    let file_paths = config.files.opened_files.clone();
+    for file_path in file_paths {
+        let file_id = generate_file_id(&file_path);
+        FILE_PATHS.lock_mut().insert(file_id, file_path.clone());
+        send_up_msg(UpMsg::LoadWaveformFile(file_path));
     }
     
     LOADED_CONFIG.set(Some(config));
@@ -91,10 +110,7 @@ pub fn save_current_config() {
     };
     
     let current_config = AppConfig {
-        app: AppSection {
-            version: "1.0.0".to_string(),
-            auto_load_last_session: true,
-        },
+        app: AppSection::default(), // Uses CURRENT_VERSION
         ui: UiSection {
             theme: "dark".to_string(),
         },

@@ -43,28 +43,32 @@ Intelligent git commit workflow with checkpoint conversion, change analysis, and
    - **CRITICAL**: Must include CHECKPOINT changes in analysis, not just unstaged changes
    - If no CHECKPOINT: Continue to normal amend detection
 
-3. **Split Analysis (for CHECKPOINT commits):**
-   - Analyze accumulated changes for logical boundaries
-   - Consider splitting when CHECKPOINT contains multiple distinct concerns
-   - Look for natural commit boundaries: different file types, scopes, or purposes
+3. **Multi-line Message Analysis (for CHECKPOINT commits):**
+   - Analyze accumulated changes for logical groupings
+   - Create single commit with structured multi-line message
+   - Each line represents a distinct logical change
+   - Use conventional commit format for each line
    
-   **Split Criteria:**
-   - Different conventional commit scopes (ui vs docs vs feat)
-   - Unrelated file changes (frontend vs backend vs config vs memory)
-   - Different logical purposes (bug fixes vs new features vs documentation)
-   - Multiple complete features or solutions
+   **Multi-line Structure:**
+   - First line: Primary change (most significant)
+   - Additional lines: Secondary related changes
+   - Each line follows conventional commit format
+   - Group related changes logically
    
-   **Split Examples:**
+   **Multi-line Examples:**
    ```
-   ❌ Single commit: "feat: add authentication and fix layout bugs"
-   ✅ Split commits: 
-      - "feat(auth): implement user authentication system"
-      - "fix(ui): resolve layout overflow in sidebar panel"
+   ❌ Old splitting approach: Multiple commits with --allow-empty
+   ✅ New multi-line approach: Single commit, multiple lines
    
-   ❌ Single commit: "docs: update memory patterns and add scrollbar rules"  
-   ✅ Split commits:
-      - "docs(memory): store session restoration debugging patterns"
-      - "docs(layout): add scrollbar hierarchy mastery patterns"
+   feat(auth): implement user authentication system
+   fix(ui): resolve layout overflow in sidebar panel
+   docs(api): update authentication endpoint documentation
+   
+   ❌ Old: "docs: update memory patterns and add scrollbar rules"
+   ✅ New multi-line:
+   docs(memory): store session restoration debugging patterns
+   docs(layout): add scrollbar hierarchy mastery patterns
+   docs(workflow): update checkpoint conversion process
    ```
 
 4. **Smart Amend Detection (if not CHECKPOINT):**
@@ -74,22 +78,22 @@ Intelligent git commit workflow with checkpoint conversion, change analysis, and
 
 5. **Present Options:**
 
-   **Option A: Split CHECKPOINT (multiple logical changes)**
+   **Option A: Multi-line CHECKPOINT (multiple logical changes)**
    ```
    🔄 Found CHECKPOINT commit with multiple distinct changes
    📋 Analyzing accumulated changes...
    
-   💡 Recommended: SPLIT into multiple commits
+   💡 Recommended: Single commit with multi-line message
    
-   📋 Proposed Split:
-   1. fix(ui): document session restoration race condition solution
-   2. docs(layout): add scrollbar hierarchy mastery patterns  
-   3. docs(memory): create comprehensive layout solutions archive
+   📋 Proposed Multi-line Message:
+   fix(ui): document session restoration race condition solution
+   docs(layout): add scrollbar hierarchy mastery patterns  
+   docs(memory): create comprehensive layout solutions archive
    
-   ✅ Split CHECKPOINT into 3 logical commits?
-   1) Implement proposed split automatically
-   2) Cancel and let me handle manually
-   3) Suggest different split pattern
+   ✅ Create single commit with multi-line message?
+   y) Use proposed multi-line message
+   n) Cancel and let me handle manually
+   custom) Provide different message structure
    ```
 
    **Option B: Simple CHECKPOINT Conversion**
@@ -148,12 +152,18 @@ Intelligent git commit workflow with checkpoint conversion, change analysis, and
 
 7. **Execute (ONLY after user confirmation):**
 
-   **For CHECKPOINT Split:**
+   **For Multi-line CHECKPOINT:**
    - Stage any unstaged changes: `git add .`
-   - Amend CHECKPOINT with first commit: `git commit --amend -m "first message"`
-   - Create additional commits: `git commit --allow-empty -m "second message"`
-   - Repeat for each logical split
-   - Show: "✅ Split CHECKPOINT into [N] commits"
+   - Create commit message with multi-line format using HEREDOC:
+     ```bash
+     git commit --amend -m "$(cat <<'EOF'
+     fix(ui): document session restoration race condition solution
+     docs(layout): add scrollbar hierarchy mastery patterns
+     docs(memory): create comprehensive layout solutions archive
+     EOF
+     )"
+     ```
+   - Show: "✅ Created single commit with multi-line message"
 
    **For Simple CHECKPOINT Conversion:**
    - Stage any unstaged changes: `git add .`
@@ -168,13 +178,13 @@ Intelligent git commit workflow with checkpoint conversion, change analysis, and
 
 ## Examples
 
-**Checkpoint splitting workflow:**
+**Checkpoint multi-line workflow:**
 ```bash
 # After accumulating multiple logical changes...
 /core-commit
 # 🔄 Found CHECKPOINT with multiple distinct changes
-# 💡 Recommended: SPLIT into 3 logical commits
-# 1) Implement proposed split automatically
+# 💡 Recommended: Single commit with multi-line message
+# y) Use proposed multi-line message
 ```
 
 **Simple checkpoint conversion:**
@@ -193,12 +203,12 @@ Intelligent git commit workflow with checkpoint conversion, change analysis, and
 
 ## Features
 
-- **Intelligent splitting**: Analyzes CHECKPOINT commits for multiple logical changes and suggests splits
+- **Multi-line messaging**: Analyzes CHECKPOINT commits for multiple logical changes and creates single commit with structured multi-line message
 - **Checkpoint conversion**: Automatically converts CHECKPOINT commits to proper conventional commits
 - **Smart amend detection**: Analyzes if current changes should amend previous commit
-- **Split criteria analysis**: Identifies natural commit boundaries by scope, file type, and purpose
+- **Logical grouping**: Identifies related changes and groups them with conventional commit format
 - **Safety checks**: Warns about rewriting published history
 - **Scope analysis**: Compares change types between current and last commit
-- **Conventional commits**: Suggests proper commit message format with correct scopes
+- **Conventional commits**: Suggests proper commit message format with correct scopes for each line
 - **Seamless workflow**: Perfect partner with `/core-checkpoint` for rapid iteration
-- **Automated execution**: Can implement proposed splits automatically with user approval
+- **Simplified approach**: Single commit with clear multi-line structure instead of complex empty commit splitting

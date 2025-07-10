@@ -89,19 +89,56 @@ pub struct AppConfig {
     pub workspace: WorkspaceSection,
 }
 
+// AppSection contains configuration metadata, primarily for versioning and migration
+// The version field enables proper config migration when the AppConfig format changes
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct AppSection {
     pub version: String,
-    pub auto_load_last_session: bool,
+}
+
+impl AppSection {
+    /// Current configuration format version
+    pub const CURRENT_VERSION: &'static str = "1.0.0";
+    
+    /// Check if this config version is supported
+    pub fn is_supported_version(&self) -> bool {
+        match self.version.as_str() {
+            "1.0.0" => true,
+            _ => false,
+        }
+    }
+    
+    /// Check if this config needs migration to current version
+    pub fn needs_migration(&self) -> bool {
+        self.version != Self::CURRENT_VERSION
+    }
+    
+    /// Get migration path for unsupported versions
+    pub fn get_migration_strategy(&self) -> MigrationStrategy {
+        match self.version.as_str() {
+            "1.0.0" => MigrationStrategy::None,
+            // Future versions would be handled here:
+            // "0.9.0" => MigrationStrategy::Upgrade("0.9.0 -> 1.0.0"),
+            // When updating CURRENT_VERSION to "1.1.0", add:
+            // "1.0.0" => MigrationStrategy::Upgrade("1.0.0 -> 1.1.0"),
+            _ => MigrationStrategy::Recreate,
+        }
+    }
 }
 
 impl Default for AppSection {
     fn default() -> Self {
         Self {
-            version: "1.0.0".to_string(),
-            auto_load_last_session: true,
+            version: Self::CURRENT_VERSION.to_string(),
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum MigrationStrategy {
+    None,                    // No migration needed
+    Upgrade(String),         // Automatic upgrade with description
+    Recreate,               // Unknown version, create new config
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
