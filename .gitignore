@@ -54,3 +54,9 @@ Thumbs.db
 
 # Large test waveform files
 test_files/big_3_GB.vcd
+
+# Claude Code temporary/runtime files
+.claude/hooks.log
+.claude/compaction-survival-snapshot.json*
+.claude/compaction-backup/
+.claude/session-recovery-completed

@@ -112,9 +112,30 @@ When creating a pull request:
 2. Analyze all changes that will be included
 3. Create PR using gh pr create with proper formatting
 
-## Hooks
+## Claude Code Hooks
 
-Users may configure 'hooks', shell commands that execute in response to events like tool calls, in settings. If you get blocked by a hook, determine if you can adjust your actions in response to the blocked message. If not, ask the user to check their hooks configuration.
+### Hook Development Guidelines
+
+**ALL new Claude Code hooks MUST use shared infrastructure:**
+- Source `shared-functions.sh` for common utilities
+- Use `init_hook_env` for project detection and setup
+- Use `update_memory_mcp` for Memory MCP integration
+
+**Template for new hooks:**
+```bash
+#!/bin/bash
+# Hook Description
+
+source "$(dirname "$0")/shared-functions.sh"
+init_hook_env
+
+# Hook-specific logic here
+echo "Hook action: $(date)" >> "$HOOK_LOG"
+```
+
+### Troubleshooting
+
+If you get blocked by a hook, determine if you can adjust your actions in response to the blocked message. If not, ask the user to check their hooks configuration.
 
 ## Do's and Don'ts
 

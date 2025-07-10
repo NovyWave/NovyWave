@@ -104,10 +104,8 @@ Observations: [15+ verbose debugging steps and historical decisions]
 - `/core-memory-search [term]` - Search comprehensive Memory MCP
 - `/core-memory-cleanup` - Monthly maintenance
 
-**Archival Commands:**
-- `/core-archive-patterns` - Archive daily_patterns → comprehensive_development_patterns
-- `/core-archive-solutions` - Archive important recent_solutions → comprehensive_solutions  
-- `/core-archive-planning` - Archive session_planning → archived_planning
+**Session Management:**
+- `/core-remember-important` - Intelligently store important session discoveries
 
 **Usage Examples:**
 ```bash
@@ -116,7 +114,7 @@ Observations: [15+ verbose debugging steps and historical decisions]
 /core-note "Working on UI" | "Fixed bug" | "TODO: test"      # Store multiple notes
 /core-memory-search "IconName"                                # Search historical patterns
 /core-memory-cleanup                                          # Monthly optimization
-/core-archive-solutions                                       # Archive important solutions manually
+/core-remember-important                                       # Store important session discoveries
 ```
 
 ## Productivity Philosophy

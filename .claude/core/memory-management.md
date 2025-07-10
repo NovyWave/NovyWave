@@ -98,14 +98,12 @@ When entities reach 5 observations:
 - Preserves all valuable patterns discovered
 - Never loses hard-learned lessons
 - Auto-triggered when daily_patterns reaches 5 observations
-- Manual: `/core-archive-patterns` command
 
 **recent_solutions** → Smart archiving based on importance
 - Keywords: "compilation", "IconName", "zoon", "WASM", "error", "frontend", "backend"
 - Important → `comprehensive_solutions` entity
 - Trivial → deleted (simple typos, minor tweaks)
 - Auto-triggered when recent_solutions reaches 5 observations
-- Manual: `/core-archive-solutions` command
 
 **active_blockers** → Resolution flow
 - Resolved → move to `recent_solutions`
@@ -137,11 +135,9 @@ When entities reach 5 observations:
 /core-memory-search "compilation error"  # Find debugging patterns
 ```
 
-**Manual Archival Commands:**
+**Manual Memory Storage:**
 ```bash
-/core-archive-patterns    # Archive current daily_patterns to comprehensive_development_patterns
-/core-archive-solutions   # Archive current recent_solutions to comprehensive_solutions  
-/core-archive-planning    # Archive current session_planning to archived_planning
+/core-remember-important  # Intelligently store all important session discoveries
 ```
 
 ## Memory MCP Best Practices
