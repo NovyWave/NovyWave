@@ -60,7 +60,9 @@ fn init_scope_selection_handlers() {
     // Auto-save when selected scope changes
     Task::start(async {
         SELECTED_SCOPE_ID.signal_cloned().for_each_sync(|_| {
-            config::save_current_config();
+            if CONFIG_LOADED.get() {
+                config::save_current_config();
+            }
         }).await
     });
     
@@ -69,7 +71,9 @@ fn init_scope_selection_handlers() {
         EXPANDED_SCOPES.signal_ref(|expanded_scopes| {
             expanded_scopes.clone()
         }).for_each_sync(|_expanded_scopes| {
-            config::save_current_config();
+            if CONFIG_LOADED.get() {
+                config::save_current_config();
+            }
         }).await
     });
 }
@@ -144,7 +148,9 @@ fn main_layout() -> impl Element {
                     let new_width = width as i32 + event.movement_x();
                     u32::max(50, u32::try_from(new_width).unwrap_or(50))
                 });
-                config::save_current_config();
+                if CONFIG_LOADED.get() {
+                    config::save_current_config();
+                }
             } else if HORIZONTAL_DIVIDER_DRAGGING.get() {
                 if IS_DOCKED_TO_BOTTOM.get() {
                     // In "Docked to Bottom" mode, horizontal divider controls files panel height
@@ -152,14 +158,18 @@ fn main_layout() -> impl Element {
                         let new_height = height as i32 + event.movement_y();
                         u32::max(50, u32::try_from(new_height).unwrap_or(50))
                     });
-                    config::save_current_config();
+                    if CONFIG_LOADED.get() {
+                        config::save_current_config();
+                    }
                 } else {
                     // In "Docked to Right" mode, horizontal divider controls files panel height
                     FILES_PANEL_HEIGHT.update(|height| {
                         let new_height = height as i32 + event.movement_y();
                         u32::max(50, u32::try_from(new_height).unwrap_or(50))
                     });
-                    config::save_current_config();
+                    if CONFIG_LOADED.get() {
+                        config::save_current_config();
+                    }
                 }
             }
         })

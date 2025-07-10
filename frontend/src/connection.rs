@@ -1,5 +1,5 @@
 use zoon::*;
-use crate::{LOADING_FILES, LOADED_FILES, check_loading_complete, save_current_config, init_signal_chains};
+use crate::{LOADING_FILES, LOADED_FILES, check_loading_complete, save_current_config, init_signal_chains, CONFIG_LOADED};
 use shared::{UpMsg, DownMsg};
 use shared::{LoadingFile, LoadingStatus};
 
@@ -54,7 +54,9 @@ static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 check_loading_complete();
                 
                 // Auto-save config with updated file list
-                save_current_config();
+                if CONFIG_LOADED.get() {
+                    save_current_config();
+                }
             }
             DownMsg::ParsingError { file_id, error } => {
                 zoon::println!("Error parsing file {}: {}", file_id, error);
