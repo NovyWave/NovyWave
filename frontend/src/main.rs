@@ -1,4 +1,7 @@
 use zoon::{*, futures_util::future::try_join_all};
+use moonzoon_novyui::tokens::theme::{Theme, init_theme, theme};
+use moonzoon_novyui::tokens::color::{neutral_1};
+
 mod virtual_list;
 use virtual_list::*;
 
@@ -34,6 +37,19 @@ pub fn main() {
         
         // Initialize signal-based loading completion handling
         init_signal_chains();
+        
+        // Initialize theme system with custom persistence
+        init_theme(
+            Some(Theme::Dark), // Default theme before config loads
+            Some(Box::new(|theme| {
+                // Save theme changes via UpMsg to backend
+                let theme_str = match theme {
+                    Theme::Light => "light",
+                    Theme::Dark => "dark",
+                };
+                send_up_msg(UpMsg::SaveTheme(theme_str.to_string()));
+            }))
+        );
         
         start_app("app", root);
         init_connection();
@@ -94,7 +110,7 @@ fn root() -> impl Element {
     Stack::new()
         .s(Height::screen())
         .s(Width::fill())
-        .s(Background::new().color(hsluv!(220, 15, 8)))
+        .s(Background::new().color_signal(neutral_1()))
         .layer(main_layout())
         .layer_signal(SHOW_FILE_DIALOG.signal().map_true(
             || file_paths_dialog()

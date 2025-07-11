@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command", 
-            "command": "bash ./.claude/hooks/update-context-from-memory.sh"
+            "command": "bash \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/.claude/hooks/update-context-from-memory.sh\""
           }
         ]
       },
@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ./.claude/hooks/restore-session-after-compaction.sh"
+            "command": "bash \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/.claude/hooks/restore-session-after-compaction.sh\""
           }
         ]
       }
@@ -25,7 +25,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ./.claude/hooks/claude-finished-notification.sh"
+            "command": "bash \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/.claude/hooks/claude-finished-notification.sh\""
           }
         ]
       }
@@ -35,7 +35,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ./.claude/hooks/preserve-session-before-compaction.sh"
+            "command": "bash \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/.claude/hooks/preserve-session-before-compaction.sh\""
           }
         ]
       }
