@@ -59,4 +59,8 @@ test_files/big_3_GB.vcd
 .claude/hooks.log
 .claude/compaction-survival-snapshot.json*
 .claude/compaction-backup/
+.claude/compaction-backups/
 .claude/session-recovery-completed
+
+# Prevent ai-memory.json from being created in root (should only be in .claude/)
+ai-memory.json

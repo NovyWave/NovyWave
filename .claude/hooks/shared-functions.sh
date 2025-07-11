@@ -30,13 +30,10 @@ update_memory_mcp() {
     local entity_name="$1"
     local content="$2"
     
-    echo "  📝 $entity_name: $content" >> "$HOOK_LOG"
+    echo "  📝 Storing in $entity_name: $content" >> "$HOOK_LOG"
     
+    # CRITICAL: Do NOT write directly to ai-memory.json as it corrupts NDJSON format
+    # Instead, store to separate survival log for manual recovery if needed
     local timestamp=$(date -Iseconds)
-    local observation_json=$(cat << EOF
-{"type":"observation","entityName":"$entity_name","contents":["PRECOMPACT_$timestamp: $content"]}
-EOF
-)
-    
-    echo "$observation_json" >> ".claude/ai-memory.json"
+    echo "$timestamp: [$entity_name] $content" >> ".claude/precompact-survival.log"
 }

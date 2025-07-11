@@ -1,5 +1,6 @@
 use zoon::*;
 use moonzoon_novyui::*;
+use moonzoon_novyui::tokens::color::{neutral_2, neutral_8, neutral_9, neutral_11, primary_6};
 use wasm_bindgen::JsCast;
 
 use shared::{Signal, filter_variables};
@@ -13,7 +14,7 @@ pub fn virtual_variables_list(variables: Vec<Signal>, search_filter: String) -> 
             .s(Gap::new().y(4))
             .item(
                 El::new()
-                    .s(Font::new().color(hsluv!(220, 10, 70)).size(13))
+                    .s(Font::new().color_signal(neutral_8()).size(13))
                     .child(search_filter)
             );
     }
@@ -23,7 +24,7 @@ pub fn virtual_variables_list(variables: Vec<Signal>, search_filter: String) -> 
             .s(Gap::new().y(4))
             .item(
                 El::new()
-                    .s(Font::new().color(hsluv!(220, 10, 70)).size(13))
+                    .s(Font::new().color_signal(neutral_8()).size(13))
                     .child("No variables in selected scope")
             );
     }
@@ -36,7 +37,7 @@ pub fn virtual_variables_list(variables: Vec<Signal>, search_filter: String) -> 
             .s(Gap::new().y(4))
             .item(
                 El::new()
-                    .s(Font::new().color(hsluv!(220, 10, 70)).size(13))
+                    .s(Font::new().color_signal(neutral_8()).size(13))
                     .child("No variables match search filter")
             );
     }
@@ -125,7 +126,7 @@ pub fn rust_virtual_variables_list(variables: Vec<Signal>) -> Column<column::Emp
                 .s(Width::fill())
                 .s(Height::exact(400))  // FIXED HEIGHT - WORKING
                 // .s(Height::fill())   // DYNAMIC HEIGHT - BREAKS SCROLLING
-                .s(Background::new().color(hsluv!(220, 15, 11)))
+                .s(Background::new().color_signal(neutral_2()))
                 .s(RoundedCorners::all(8))
                 .s(Padding::all(4))
                 // ===== VIEWPORT SIZE MONITORING (DISABLED) =====
@@ -323,7 +324,7 @@ pub fn rust_virtual_variables_list_with_signal(
             El::new()
                 .s(Width::fill())
                 .s(Height::exact_signal(height_signal.signal()))  // 🔥 KEY CHANGE: Signal-based height
-                .s(Background::new().color(hsluv!(220, 15, 11)))
+                .s(Background::new().color_signal(neutral_2()))
                 .s(RoundedCorners::all(8))
                 .s(Padding::all(4))
                 .update_raw_el({
@@ -446,18 +447,18 @@ pub fn virtual_variable_row_positioned(signal: Signal, top_offset: f64) -> impl 
         .s(Height::exact(24))                                    // Fixed height per item (matches item_height)
         .s(Transform::new().move_down(top_offset as i32))        // CRITICAL: Absolute positioning within Stack
         .s(Padding::new().x(12).y(2))                           // Internal padding
-        .s(Background::new().color(hsluv!(220, 15, 12)))         // Row background color
+        .s(Background::new().color_signal(neutral_2()))         // Row background color
         .item(
             // ===== VARIABLE NAME =====
             El::new()
-                .s(Font::new().color(hsluv!(220, 10, 85)).size(14))  // Text styling
+                .s(Font::new().color_signal(neutral_11()).size(14))  // Text styling
                 .s(Font::new().no_wrap())                             // Prevent text wrapping
                 .child(signal.name.clone())                           // Display variable name
         )
         .item(El::new().s(Width::fill()))
         .item(
             El::new()
-                .s(Font::new().color(hsluv!(210, 80, 70)).size(12))
+                .s(Font::new().color_signal(primary_6()).size(12))
                 .s(Font::new().no_wrap())
                 .child(format!("{} {}-bit", signal.signal_type, signal.width))
         )
@@ -469,17 +470,17 @@ pub fn virtual_variable_row(signal: Signal) -> impl Element {
         .s(Width::fill())
         .s(Height::exact(24))
         .s(Padding::new().x(12).y(2))
-        .s(Background::new().color(hsluv!(220, 15, 12)))
+        .s(Background::new().color_signal(neutral_2()))
         .item(
             El::new()
-                .s(Font::new().color(hsluv!(220, 10, 85)).size(14))
+                .s(Font::new().color_signal(neutral_11()).size(14))
                 .s(Font::new().no_wrap())
                 .child(signal.name.clone())
         )
         .item(El::new().s(Width::fill()))
         .item(
             El::new()
-                .s(Font::new().color(hsluv!(210, 80, 70)).size(12))
+                .s(Font::new().color_signal(primary_6()).size(12))
                 .s(Font::new().no_wrap())
                 .child(format!("{} {}-bit", signal.signal_type, signal.width))
         )
@@ -493,14 +494,14 @@ pub fn simple_variable_row(signal: Signal) -> Row<row::EmptyFlagNotSet, row::Mul
         .s(Padding::new().x(12).y(2))
         .item(
             El::new()
-                .s(Font::new().color(hsluv!(220, 10, 85)).size(14))
+                .s(Font::new().color_signal(neutral_11()).size(14))
                 .s(Font::new().no_wrap())
                 .child(signal.name.clone())
         )
         .item(El::new().s(Width::fill()))
         .item(
             El::new()
-                .s(Font::new().color(hsluv!(210, 80, 70)).size(12))
+                .s(Font::new().color_signal(primary_6()).size(12))
                 .s(Font::new().no_wrap())
                 .child(format!("{} {}-bit", signal.signal_type, signal.width))
         )
@@ -515,7 +516,7 @@ pub fn simple_variables_list(variables: Vec<Signal>, search_filter: String) -> C
             .s(Gap::new().y(4))
             .item(
                 El::new()
-                    .s(Font::new().color(hsluv!(220, 10, 70)).size(13))
+                    .s(Font::new().color_signal(neutral_8()).size(13))
                     .child(search_filter)
             );
     }
@@ -528,7 +529,7 @@ pub fn simple_variables_list(variables: Vec<Signal>, search_filter: String) -> C
             .s(Gap::new().y(4))
             .item(
                 El::new()
-                    .s(Font::new().color(hsluv!(220, 10, 70)).size(13))
+                    .s(Font::new().color_signal(neutral_8()).size(13))
                     .child("No variables in selected scope")
             )
     } else if filtered_variables.is_empty() {
@@ -536,7 +537,7 @@ pub fn simple_variables_list(variables: Vec<Signal>, search_filter: String) -> C
             .s(Gap::new().y(4))
             .item(
                 El::new()
-                    .s(Font::new().color(hsluv!(220, 10, 70)).size(13))
+                    .s(Font::new().color_signal(neutral_8()).size(13))
                     .child("No variables match search filter")
             )
     } else {

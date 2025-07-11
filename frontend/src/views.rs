@@ -1,6 +1,7 @@
 use zoon::*;
 use moonzoon_novyui::*;
 use moonzoon_novyui::tokens::theme::{Theme, toggle_theme, theme};
+use moonzoon_novyui::tokens::color::{neutral_1, neutral_2, neutral_3, neutral_4, neutral_6, neutral_8, neutral_9, neutral_10, neutral_11, neutral_12, primary_6, primary_7};
 use shared::{WaveformFile, ScopeData, filter_variables};
 use crate::types::{get_variables_from_selected_scope};
 use crate::virtual_list::virtual_variables_list;
@@ -15,15 +16,20 @@ use crate::{
 
 pub fn file_paths_dialog() -> impl Element {
     El::new()
-        .s(Background::new().color("rgba(0, 0, 0, 0.8)"))
+        .s(Background::new().color_signal(theme().map(|t| match t {
+            Theme::Light => "rgba(255, 255, 255, 0.8)",  // Light overlay
+            Theme::Dark => "rgba(0, 0, 0, 0.8)",          // Dark overlay
+        })))
         .s(Width::fill())
         .s(Height::fill())
         .s(Align::center())
         .child(
             El::new()
-                .s(Background::new().color(hsluv!(220, 15, 15)))
+                .s(Background::new().color_signal(neutral_2()))
                 .s(RoundedCorners::all(8))
-                .s(Borders::all(Border::new().width(2).color(hsluv!(220, 10, 30))))
+                .s(Borders::all_signal(neutral_4().map(|color| {
+                    Border::new().width(2).color(color)
+                })))
                 .s(Padding::all(24))
                 .s(Width::exact(500))
                 .child(
@@ -31,12 +37,12 @@ pub fn file_paths_dialog() -> impl Element {
                         .s(Gap::new().y(16))
                         .item(
                             El::new()
-                                .s(Font::new().size(18).weight(FontWeight::Bold).color(hsluv!(220, 10, 85)))
+                                .s(Font::new().size(18).weight(FontWeight::Bold).color_signal(neutral_12()))
                                 .child("Load Waveform Files")
                         )
                         .item(
                             El::new()
-                                .s(Font::new().size(14).color(hsluv!(220, 10, 70)))
+                                .s(Font::new().size(14).color_signal(neutral_10()))
                                 .child("Enter absolute file paths, separated by commas:")
                         )
                         .item(
@@ -70,8 +76,10 @@ pub fn app_header() -> impl Element {
     Row::new()
         .s(Height::exact(40))
         .s(Width::fill())
-        .s(Background::new().color(hsluv!(220, 15, 12)))
-        .s(Borders::new().bottom(Border::new().width(1).color(hsluv!(220, 15, 20))))
+        .s(Background::new().color_signal(neutral_2()))
+        .s(Borders::new().bottom_signal(neutral_4().map(|color| {
+            Border::new().width(1).color(color)
+        })))
         .s(Padding::new().x(16).y(8))
         .item(
             Row::new()
@@ -170,7 +178,7 @@ pub fn files_panel() -> impl Element {
                                         if tree_data.is_empty() {
                                             El::new()
                                                 .s(Padding::all(20))
-                                                .s(Font::new().color(hsluv!(0, 0, 50)).italic())
+                                                .s(Font::new().color_signal(neutral_8()).italic())
                                                 .child("No files loaded. Click 'Load Files' to add waveform files.")
                                                 .unify()
                                         } else {
@@ -208,7 +216,7 @@ pub fn variables_panel() -> impl Element {
                     )
                     .item(
                         El::new()
-                            .s(Font::new().no_wrap().color(hsluv!(220, 10, 60)).size(13))
+                            .s(Font::new().no_wrap().color_signal(neutral_8()).size(13))
                             .child_signal(
                                 map_ref! {
                                     let selected_scope_id = SELECTED_SCOPE_ID.signal_ref(|id| id.clone()),
@@ -291,14 +299,14 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                 // Variable Name column header
                                 El::new()
                                     .s(Width::exact(250))
-                                    .s(Font::new().color(hsluv!(220, 10, 60)).size(12))
+                                    .s(Font::new().color_signal(neutral_8()).size(12))
                                     .child("Variable")
                             )
                             .item(
                                 // Value column header  
                                 El::new()
                                     .s(Width::exact(60))
-                                    .s(Font::new().color(hsluv!(220, 10, 60)).size(12))
+                                    .s(Font::new().color_signal(neutral_8()).size(12))
                                     .child("Value")
                             )
                             .item(
@@ -309,37 +317,37 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                     .s(Padding::new().x(10))
                                     .item(
                                         El::new()
-                                            .s(Font::new().color(hsluv!(220, 10, 60)).size(12))
+                                            .s(Font::new().color_signal(neutral_8()).size(12))
                                             .child("0s")
                                     )
                                     .item(
                                         El::new()
-                                            .s(Font::new().color(hsluv!(220, 10, 60)).size(12))
+                                            .s(Font::new().color_signal(neutral_8()).size(12))
                                             .child("10s")
                                     )
                                     .item(
                                         El::new()
-                                            .s(Font::new().color(hsluv!(220, 10, 60)).size(12))
+                                            .s(Font::new().color_signal(neutral_8()).size(12))
                                             .child("20s")
                                     )
                                     .item(
                                         El::new()
-                                            .s(Font::new().color(hsluv!(220, 10, 60)).size(12))
+                                            .s(Font::new().color_signal(neutral_8()).size(12))
                                             .child("30s")
                                     )
                                     .item(
                                         El::new()
-                                            .s(Font::new().color(hsluv!(220, 10, 60)).size(12))
+                                            .s(Font::new().color_signal(neutral_8()).size(12))
                                             .child("40s")
                                     )
                                     .item(
                                         El::new()
-                                            .s(Font::new().color(hsluv!(220, 10, 60)).size(12))
+                                            .s(Font::new().color_signal(neutral_8()).size(12))
                                             .child("50s")
                                     )
                                     .item(
                                         El::new()
-                                            .s(Font::new().color(hsluv!(220, 10, 60)).size(12))
+                                            .s(Font::new().color_signal(neutral_8()).size(12))
                                             .child("60s")
                                     )
                             )
@@ -372,7 +380,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                     .item("⋮⋮")
                                     .item(
                                         El::new()
-                                            .s(Font::new().color(hsluv!(220, 10, 85)).size(13))
+                                            .s(Font::new().color_signal(neutral_11()).size(13))
                                             .child(var_names[i as usize])
                                     )
                                     )
@@ -380,7 +388,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                 // Value column (60px width)
                                 El::new()
                                     .s(Width::exact(60))
-                                    .s(Font::new().color(hsluv!(220, 10, 75)).size(13))
+                                    .s(Font::new().color_signal(neutral_9()).size(13))
                                     .child(values[i as usize])
                             )
                             .item(
@@ -394,15 +402,22 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                         El::new()
                                             .s(Width::fill())
                                             .s(Height::exact(18))
-                                            .s(Background::new().color(
-                                                if (i + j) % 3 == 0 {
-                                                    hsluv!(220, 80, 55) // Bright blue
-                                                } else if (i + j) % 2 == 0 {
-                                                    hsluv!(220, 60, 45) // Medium blue  
-                                                } else {
-                                                    hsluv!(220, 15, 8) // Dark background
+                                            .s(Background::new().color_signal(theme().map(move |t| {
+                                                match (i + j) % 3 {
+                                                    0 => match t {
+                                                        Theme::Light => "oklch(55% 0.13 250)", // Primary blue
+                                                        Theme::Dark => "oklch(55% 0.13 250)",
+                                                    },
+                                                    1 => match t {
+                                                        Theme::Light => "oklch(65% 0.16 250)", // Lighter blue
+                                                        Theme::Dark => "oklch(65% 0.16 250)",
+                                                    },
+                                                    _ => match t {
+                                                        Theme::Light => "oklch(97% 0.025 255)", // Light background
+                                                        Theme::Dark => "oklch(18% 0.035 255)",  // Dark background
+                                                    }
                                                 }
-                                            ))
+                                            })))
                                             .s(RoundedCorners::all(2))
                                     }))
                             )
@@ -435,7 +450,7 @@ pub fn selected_panel() -> impl Element {
                             .item("⋮⋮")
                             .item(
                                 El::new()
-                                    .s(Font::new().color(hsluv!(0, 0, 80)).size(14))
+                                    .s(Font::new().color_signal(neutral_10()).size(14))
                                     .child("clock")
                             )
                             .item(
@@ -454,7 +469,7 @@ pub fn selected_panel() -> impl Element {
                             .item("⋮⋮")
                             .item(
                                 El::new()
-                                    .s(Font::new().color(hsluv!(0, 0, 80)).size(14))
+                                    .s(Font::new().color_signal(neutral_10()).size(14))
                                     .child("reset")
                             )
                             .item(
@@ -514,14 +529,14 @@ pub fn waveform_panel() -> impl Element {
                     )
                     .item(
                         El::new()
-                            .s(Background::new().color(hsluv!(0, 0, 15)))
+                            .s(Background::new().color_signal(neutral_1()))
                             .s(Height::exact(200))
                             .s(Width::fill())
                             .s(Align::center())
                             .s(RoundedCorners::all(4))
                             .child(
                                 El::new()
-                                    .s(Font::new().color(hsluv!(0, 0, 50)).size(16))
+                                    .s(Font::new().color_signal(neutral_8()).size(16))
                                     .child("Waveform display area")
                             )
                     )
@@ -574,19 +589,23 @@ fn create_panel(header_content: impl Element, content: impl Element) -> impl Ele
     El::new()
         .s(Height::fill())
         .s(Width::fill())
-        .s(Background::new().color(hsluv!(220, 15, 11)))
+        .s(Background::new().color_signal(neutral_2()))
         .s(RoundedCorners::all(6))
-        .s(Borders::all(Border::new().width(1).color(hsluv!(220, 10, 25))))
+        .s(Borders::all_signal(neutral_4().map(|color| {
+            Border::new().width(1).color(color)
+        })))
         .child(
             Column::new()
                 .s(Height::fill())
                 .item(
                     El::new()
                         .s(Padding::new().x(12).y(8))
-                        .s(Background::new().color(hsluv!(220, 15, 13)))
-                        .s(Borders::new().bottom(Border::new().width(1).color(hsluv!(220, 10, 25))))
+                        .s(Background::new().color_signal(neutral_3()))
+                        .s(Borders::new().bottom_signal(neutral_4().map(|color| {
+                            Border::new().width(1).color(color)
+                        })))
                         .s(RoundedCorners::new().top(6))
-                        .s(Font::new().weight(FontWeight::SemiBold).size(14).color(hsluv!(220, 5, 80)))
+                        .s(Font::new().weight(FontWeight::SemiBold).size(14).color_signal(neutral_11()))
                         .child(header_content)
                 )
                 .item(
@@ -788,9 +807,9 @@ pub fn vertical_divider(is_dragging: Mutable<bool>) -> impl Element {
         .s(Width::exact(4))
         .s(Height::fill())
         .s(Background::new().color_signal(
-            is_dragging.signal().map_bool(
-                || hsluv!(220, 100, 75), // Brighter blue when dragging
-                || hsluv!(220, 85, 60)   // Default blue matching Figma exactly
+            is_dragging.signal().map_bool_signal(
+                || primary_7(),
+                || primary_6()
             )
         ))
         .s(Cursor::new(CursorIcon::ColumnResize))
@@ -803,9 +822,9 @@ pub fn horizontal_divider(is_dragging: Mutable<bool>) -> impl Element {
         .s(Width::fill())
         .s(Height::exact(4))
         .s(Background::new().color_signal(
-            is_dragging.signal().map_bool(
-                || hsluv!(220, 100, 75), // Brighter blue when dragging
-                || hsluv!(220, 85, 60)   // Default blue matching Figma exactly
+            is_dragging.signal().map_bool_signal(
+                || primary_7(),
+                || primary_6()
             )
         ))
         .s(Cursor::new(CursorIcon::RowResize))

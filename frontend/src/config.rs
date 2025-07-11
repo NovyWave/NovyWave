@@ -1,5 +1,6 @@
 use zoon::*;
 use shared::{UpMsg, AppConfig, AppSection, UiSection, FilesSection, WorkspaceSection, DockedToBottomLayout, DockedToRightLayout, MigrationStrategy, generate_file_id};
+use moonzoon_novyui::tokens::theme::{Theme, set_theme, current_theme};
 use crate::{
     send_up_msg, FILES_PANEL_WIDTH, FILES_PANEL_HEIGHT, IS_DOCKED_TO_BOTTOM, 
     SELECTED_SCOPE_ID, TREE_SELECTED_ITEMS, FILE_PATHS, EXPANDED_SCOPES
@@ -70,6 +71,13 @@ pub fn apply_config(config: AppConfig) {
         send_up_msg(UpMsg::LoadWaveformFile(file_path));
     }
     
+    // Restore theme from config
+    let theme_to_restore = match config.ui.theme.as_str() {
+        "light" => Theme::Light,
+        _ => Theme::Dark,
+    };
+    set_theme(theme_to_restore);
+    
     LOADED_CONFIG.set(Some(config));
     CONFIG_LOADED.set(true);
 }
@@ -112,7 +120,10 @@ pub fn save_current_config() {
     let current_config = AppConfig {
         app: AppSection::default(), // Uses CURRENT_VERSION
         ui: UiSection {
-            theme: "dark".to_string(),
+            theme: match current_theme() {
+                Theme::Light => "light".to_string(),
+                Theme::Dark => "dark".to_string(),
+            },
         },
         files: FilesSection {
             opened_files: FILE_PATHS.lock_ref().values().cloned().collect(),
