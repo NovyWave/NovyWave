@@ -5,34 +5,33 @@
 ## Recent Work & Focus
 
 **Current State:**
-- Working on command system optimization and memory hooks
-- All slash commands properly configured and tested
-- Hook system redesigned for focused productivity context
-- Next focus: Test new Memory MCP entity structure
-- Completed focused productivity system implementation
-- Updated all documentation to reflect new system
-- CLAUDE.md, working-with-claude.md, memory-best-practices.md all updated
-- System is now simple, automatic, and reliable as requested
+- Completed comprehensive PreCompact hook system implementation
+- Shared hook infrastructure created with init_hook_env() and update_memory_mcp()
+- Simplified Memory MCP commands to single /core-remember-important
+- Added proper .gitignore for temporary files while preserving knowledge
+- Auto-compaction tested successfully - survival data restored correctly
+- System now production ready with clean architecture
 
 **Recent Solutions (Don't Repeat):**
-- Fixed global /tmp pollution by using local .claude/hooks.log instead
-- Corrected Memory MCP NDJSON parsing with proper jq syntax for line-by-line processing
-- Renamed /store-pattern command to /note for simplicity and clarity
+- Fixed code duplication in hooks by creating shared-functions.sh with common utilities
+- Simplified Memory MCP from complex /core-archive-* to single /core-remember-important
+- Added proper .gitignore for Claude Code temp files while preserving knowledge files
+- PreCompact system tested successfully - auto-compaction restored 5 survival patterns
 
 **Current Blockers:**
 - None - all systems working properly
 
 **Essential Daily Patterns:**
-- Use IconName enum tokens, never strings for icons
+- Use IconName enum tokens, never strings for icons  
 - Use zoon::println!() for WASM logging, never std::println!()
 - Use Height::screen() + Height::fill() pattern for full-screen layouts
 - Always use Width::fill() for responsive design, avoid fixed widths
-- Store patterns immediately in Memory MCP after solving bugs
+- All Claude Code hooks must use shared-functions.sh for project detection and utilities
 
 **Next Steps:**
-- Test the new focused context generation system
-- Verify hook system works with new entity types
-- Continue with waveform viewer UI implementation when ready
+- Continue with main NovyWave waveform viewer development
+- PreCompact system is production ready and tested
+- All infrastructure systems optimized and complete
 
 *Focused productivity context generated at Thu Jul  3 03:50:36 AM CEST 2025*
 ## Post-Compaction Recovery Context
