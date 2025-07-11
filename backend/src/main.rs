@@ -1,5 +1,5 @@
 use moon::*;
-use shared::{self, UpMsg, DownMsg, AppConfig, FileHierarchy, WaveformFile, FileFormat, ScopeData, generate_file_id};
+use shared::{self, UpMsg, DownMsg, AppConfig, FileHierarchy, WaveformFile, FileFormat, ScopeData, generate_file_id, FileSystemItem, is_waveform_file, get_file_extension};
 use std::path::Path;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -15,7 +15,7 @@ static PARSING_SESSIONS: Lazy<Arc<Mutex<HashMap<String, Arc<Mutex<f32>>>>>> =
     Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
 
 async fn up_msg_handler(req: UpMsgRequest<UpMsg>) {
-    println!("Received UpMsg: {:?}", req.up_msg);
+    // println!("Received UpMsg: {:?}", req.up_msg); // Disabled - too verbose
     let (session_id, cor_id) = (req.session_id, req.cor_id);
     
     match req.up_msg {
@@ -33,6 +33,9 @@ async fn up_msg_handler(req: UpMsgRequest<UpMsg>) {
         }
         UpMsg::SaveTheme(theme) => {
             save_theme(theme, session_id, cor_id).await;
+        }
+        UpMsg::BrowseDirectory(dir_path) => {
+            browse_directory(dir_path, session_id, cor_id).await;
         }
     }
 }
@@ -177,7 +180,7 @@ async fn send_progress_update(file_id: String, progress: f32, session_id: Sessio
 }
 
 async fn send_down_msg(msg: DownMsg, session_id: SessionId, cor_id: CorId) {
-    println!("Sending DownMsg: {:?}", msg);
+    // println!("Sending DownMsg: {:?}", msg); // Disabled - too verbose for large file data
     if let Some(session) = sessions::by_session_id().wait_for(session_id).await {
         session.send_down_msg(&msg, cor_id).await;
     } else {
@@ -222,7 +225,7 @@ async fn load_config(session_id: SessionId, cor_id: CorId) {
 }
 
 async fn save_config(config: AppConfig, session_id: SessionId, cor_id: CorId) {
-    println!("Saving config to {}", CONFIG_FILE_PATH);
+    // Config saving (debug logs removed to reduce console noise)
     
     match save_config_to_file(&config) {
         Ok(()) => {
@@ -284,13 +287,251 @@ fn save_config_to_file(config: &AppConfig) -> Result<(), Box<dyn std::error::Err
     );
     
     fs::write(CONFIG_FILE_PATH, content_with_header)?;
-    println!("Config saved successfully");
+    // Config saved successfully (log removed to reduce console noise)
     Ok(())
 }
 
 fn cleanup_parsing_session(file_id: &str) {
     let mut sessions = PARSING_SESSIONS.lock().unwrap();
     sessions.remove(file_id);
+}
+
+fn check_directory_has_expandable_content(dir_path: &str) -> bool {
+    let path = Path::new(dir_path);
+    
+    // If directory doesn't exist or isn't readable, consider it non-expandable
+    if !path.exists() || !path.is_dir() {
+        return false;
+    }
+    
+    // Try to read directory contents to check for subdirectories or waveform files
+    match fs::read_dir(path) {
+        Ok(entries) => {
+            for entry in entries {
+                if let Ok(entry) = entry {
+                    let entry_path = entry.path();
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    
+                    // Skip hidden files
+                    if name.starts_with('.') {
+                        continue;
+                    }
+                    
+                    // If we find a subdirectory, this directory is expandable
+                    if entry_path.is_dir() {
+                        return true;
+                    }
+                    
+                    // If we find a waveform file, this directory is expandable
+                    if let Some(extension) = entry_path.extension().and_then(|ext| ext.to_str()) {
+                        let ext_lower = extension.to_lowercase();
+                        if matches!(ext_lower.as_str(), "vcd" | "fst") {
+                            return true;
+                        }
+                    }
+                }
+            }
+            false // No subdirectories or waveform files found
+        }
+        Err(_) => false, // Can't read directory, consider non-expandable
+    }
+}
+
+async fn browse_directory(dir_path: String, session_id: SessionId, cor_id: CorId) {
+    println!("Browsing directory: {}", dir_path);
+    
+    // Handle Windows multi-root scenario - enumerate drives when browsing "/"
+    #[cfg(windows)]
+    if dir_path == "/" {
+        let mut drive_items = Vec::new();
+        
+        // Enumerate available drives (A: through Z:)
+        for drive_letter in b'A'..=b'Z' {
+            let drive_path = format!("{}:\\", drive_letter as char);
+            let drive_root = Path::new(&drive_path);
+            
+            // Check if drive exists and is accessible
+            if drive_root.exists() {
+                drive_items.push(FileSystemItem {
+                    name: format!("{}:", drive_letter as char),
+                    path: drive_path.clone(),
+                    is_directory: true,
+                    file_size: None,
+                    is_waveform_file: false,
+                    file_extension: None,
+                    has_expandable_content: check_directory_has_expandable_content(&drive_path),
+                });
+            }
+        }
+        
+        // Sort drives alphabetically
+        drive_items.sort_by(|a, b| a.name.cmp(&b.name));
+        
+        send_down_msg(DownMsg::DirectoryContents { 
+            path: "/".to_string(), 
+            items: drive_items 
+        }, session_id, cor_id).await;
+        return;
+    }
+    
+    // Expand ~ to home directory
+    let expanded_path = if dir_path == "~" {
+        match dirs::home_dir() {
+            Some(home) => home.to_string_lossy().to_string(),
+            None => {
+                let error_msg = "Unable to determine home directory".to_string();
+                send_down_msg(DownMsg::DirectoryError { 
+                    path: dir_path, 
+                    error: error_msg 
+                }, session_id, cor_id).await;
+                return;
+            }
+        }
+    } else if dir_path.starts_with("~/") {
+        match dirs::home_dir() {
+            Some(home) => {
+                let relative_path = &dir_path[2..]; // Remove "~/"
+                home.join(relative_path).to_string_lossy().to_string()
+            }
+            None => {
+                let error_msg = "Unable to determine home directory".to_string();
+                send_down_msg(DownMsg::DirectoryError { 
+                    path: dir_path, 
+                    error: error_msg 
+                }, session_id, cor_id).await;
+                return;
+            }
+        }
+    } else {
+        dir_path.clone()
+    };
+    
+    let path = Path::new(&expanded_path);
+    
+    // Check if directory exists and is readable
+    if !path.exists() {
+        let error_msg = format!("Directory not found: {}", expanded_path);
+        send_down_msg(DownMsg::DirectoryError { 
+            path: expanded_path, 
+            error: error_msg 
+        }, session_id, cor_id).await;
+        return;
+    }
+    
+    if !path.is_dir() {
+        let error_msg = format!("Path is not a directory: {}", expanded_path);
+        send_down_msg(DownMsg::DirectoryError { 
+            path: expanded_path, 
+            error: error_msg 
+        }, session_id, cor_id).await;
+        return;
+    }
+    
+    // Read directory contents
+    match fs::read_dir(path) {
+        Ok(entries) => {
+            let mut items = Vec::new();
+            
+            for entry in entries {
+                match entry {
+                    Ok(entry) => {
+                        let entry_path = entry.path();
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        
+                        // Skip hidden files and directories (starting with .)
+                        if name.starts_with('.') {
+                            continue;
+                        }
+                        
+                        let is_directory = entry_path.is_dir();
+                        let path_str = entry_path.to_string_lossy().to_string();
+                        
+                        // Get file size for regular files
+                        let file_size = if !is_directory {
+                            entry.metadata().ok().map(|m| m.len())
+                        } else {
+                            None
+                        };
+                        
+                        // Get file extension once and reuse for waveform check
+                        let file_extension = if !is_directory {
+                            std::path::Path::new(&path_str)
+                                .extension()
+                                .and_then(|ext| ext.to_str())
+                                .map(|ext| ext.to_lowercase())
+                        } else {
+                            None
+                        };
+                        
+                        // Check if it's a waveform file using the already extracted extension
+                        let is_waveform = if let Some(ref ext) = file_extension {
+                            matches!(ext.as_str(), 
+                                // ✅ TESTED: Confirmed working with test files
+                                "vcd" | "fst"
+                                
+                                // TODO: Test these formats with actual files before enabling
+                                // | "ghw"  // GHDL waveform format
+                                // | "vzt"  // GTKWave compressed format  
+                                // | "lxt"  // GTKWave format
+                                // | "lx2"  // GTKWave format
+                                // | "shm"  // Cadence format
+                            )
+                        } else {
+                            false
+                        };
+                        
+                        // Only include directories and waveform files
+                        // This filters out non-waveform files for cleaner UX
+                        if !is_directory && !is_waveform {
+                            continue;
+                        }
+                        
+                        // For directories, check if they contain expandable content
+                        let has_expandable_content = if is_directory {
+                            check_directory_has_expandable_content(&path_str)
+                        } else {
+                            false
+                        };
+                        
+                        items.push(FileSystemItem {
+                            name,
+                            path: path_str,
+                            is_directory,
+                            file_size,
+                            is_waveform_file: is_waveform,
+                            file_extension,
+                            has_expandable_content,
+                        });
+                    }
+                    Err(e) => {
+                        println!("Error reading directory entry: {}", e);
+                        // Continue with other entries
+                    }
+                }
+            }
+            
+            // Sort items: directories first, then files, both alphabetically
+            items.sort_by(|a, b| {
+                match (a.is_directory, b.is_directory) {
+                    (true, false) => std::cmp::Ordering::Less,
+                    (false, true) => std::cmp::Ordering::Greater,
+                    _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+                }
+            });
+            
+            send_down_msg(DownMsg::DirectoryContents { 
+                path: expanded_path, 
+                items 
+            }, session_id, cor_id).await;
+        }
+        Err(e) => {
+            let error_msg = format!("Failed to read directory: {}", e);
+            send_down_msg(DownMsg::DirectoryError { 
+                path: expanded_path, 
+                error: error_msg 
+            }, session_id, cor_id).await;
+        }
+    }
 }
 
 #[moon::main]

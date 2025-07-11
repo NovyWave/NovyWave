@@ -19,9 +19,24 @@ detect_project_root() {
 
 # Initialize common variables
 init_hook_env() {
-    PROJECT_ROOT=$(detect_project_root)
+    # Prefer git rev-parse for consistency with Claude Code, fallback to detect_project_root
+    if command -v git >/dev/null 2>&1 && git rev-parse --show-toplevel >/dev/null 2>&1; then
+        PROJECT_ROOT=$(git rev-parse --show-toplevel)
+    else
+        PROJECT_ROOT=$(detect_project_root)
+    fi
+    
     cd "$PROJECT_ROOT" || exit 1
-    HOOK_LOG=".claude/hooks.log"
+    
+    # Ensure .claude directory exists
+    mkdir -p "$PROJECT_ROOT/.claude"
+    
+    # Use absolute path for hook log to avoid path resolution issues
+    HOOK_LOG="$PROJECT_ROOT/.claude/hooks.log"
+    
+    # Ensure log file exists
+    touch "$HOOK_LOG"
+    
     export PROJECT_ROOT HOOK_LOG
 }
 

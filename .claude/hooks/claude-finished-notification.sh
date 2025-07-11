@@ -30,4 +30,4 @@ printf "\a"
 rm -f "$PROJECT_ROOT/.claude/session-recovery-completed" 2>/dev/null || true
 
 # Log session end for debugging
-echo "🏁 Session ended, markers cleaned: $(date)" >> "$PROJECT_ROOT/.claude/hooks.log"
+echo "🏁 Session ended, markers cleaned: $(date)" >> "$HOOK_LOG"

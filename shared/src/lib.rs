@@ -11,6 +11,7 @@ pub enum UpMsg {
     LoadConfig,
     SaveConfig(AppConfig),
     SaveTheme(String),
+    BrowseDirectory(String),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -23,6 +24,21 @@ pub enum DownMsg {
     ConfigSaved,
     ConfigError(String),
     ThemeSaved,
+    DirectoryContents { path: String, items: Vec<FileSystemItem> },
+    DirectoryError { path: String, error: String },
+}
+
+// ===== FILESYSTEM TYPES =====
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct FileSystemItem {
+    pub name: String,
+    pub path: String,
+    pub is_directory: bool,
+    pub file_size: Option<u64>,
+    pub is_waveform_file: bool,
+    pub file_extension: Option<String>,
+    pub has_expandable_content: bool,
 }
 
 // ===== CORE DATA TYPES =====
@@ -263,4 +279,36 @@ pub fn get_all_variables_from_files(files: &[WaveformFile]) -> Vec<Signal> {
         collect_variables_from_scopes(&file.scopes, &mut variables);
     }
     variables
+}
+
+// ===== FILESYSTEM UTILITIES =====
+
+pub fn is_waveform_file(path: &str) -> bool {
+    if let Some(extension) = std::path::Path::new(path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+    {
+        match extension.to_lowercase().as_str() {
+            // ✅ TESTED: Confirmed working with test files
+            "vcd" | "fst" => true,
+            
+            // TODO: Test these formats with actual files before enabling
+            // "ghw" => true,  // GHDL waveform format
+            // "vzt" => true,  // GTKWave compressed format
+            // "lxt" => true,  // GTKWave format
+            // "lx2" => true,  // GTKWave format
+            // "shm" => true,  // Cadence format
+            
+            _ => false,
+        }
+    } else {
+        false
+    }
+}
+
+pub fn get_file_extension(path: &str) -> Option<String> {
+    std::path::Path::new(path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_lowercase())
 }

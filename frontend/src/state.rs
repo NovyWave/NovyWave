@@ -1,7 +1,6 @@
 use zoon::*;
 use std::collections::{HashMap, HashSet};
-use shared::WaveformFile;
-use shared::LoadingFile;
+use shared::{WaveformFile, LoadingFile, FileSystemItem};
 
 // Panel resizing state
 pub static FILES_PANEL_WIDTH: Lazy<Mutable<u32>> = Lazy::new(|| 470.into());
@@ -19,6 +18,16 @@ pub static IS_DOCKED_TO_BOTTOM: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(
 pub static SHOW_FILE_DIALOG: Lazy<Mutable<bool>> = lazy::default();
 pub static FILE_PATHS_INPUT: Lazy<Mutable<String>> = lazy::default();
 
+// File picker state for TreeView-based browser
+pub static FILE_PICKER_EXPANDED: Lazy<Mutable<HashSet<String>>> = lazy::default();
+pub static FILE_PICKER_SELECTED: Lazy<Mutable<HashSet<String>>> = lazy::default();
+pub static CURRENT_DIRECTORY: Lazy<Mutable<String>> = lazy::default();
+pub static FILE_PICKER_DATA: Lazy<MutableVec<FileSystemItem>> = lazy::default();
+pub static FILE_PICKER_ERROR: Lazy<Mutable<Option<String>>> = lazy::default();
+
+// Hierarchical file tree storage - maps directory path to its contents
+pub static FILE_TREE_CACHE: Lazy<Mutable<HashMap<String, Vec<FileSystemItem>>>> = lazy::default();
+
 // File loading progress state
 pub static LOADING_FILES: Lazy<MutableVec<LoadingFile>> = lazy::default();
 pub static IS_LOADING: Lazy<Mutable<bool>> = lazy::default();
@@ -27,6 +36,7 @@ pub static IS_LOADING: Lazy<Mutable<bool>> = lazy::default();
 pub static LOADED_FILES: Lazy<MutableVec<WaveformFile>> = lazy::default();
 pub static SELECTED_SCOPE_ID: Lazy<Mutable<Option<String>>> = lazy::default();
 pub static TREE_SELECTED_ITEMS: Lazy<Mutable<HashSet<String>>> = lazy::default(); // UI state only - not persisted
+pub static USER_CLEARED_SELECTION: Lazy<Mutable<bool>> = lazy::default(); // Flag to prevent unwanted restoration
 
 // Track file ID to full path mapping for config persistence
 pub static FILE_PATHS: Lazy<Mutable<HashMap<String, String>>> = lazy::default();

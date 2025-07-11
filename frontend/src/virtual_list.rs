@@ -6,6 +6,13 @@ use wasm_bindgen::JsCast;
 use shared::{Signal, filter_variables};
 
 // ===== CORE VIRTUAL LIST FUNCTIONS =====
+// 
+// WARNING: Avoid excessive zoon::println! logging in virtual lists and viewport handlers.
+// Virtual lists trigger frequent resize/scroll events that can generate thousands of log
+// entries per second, corrupting dev_server.log with multi-gigabyte binary data and
+// making compilation errors impossible to see. Use logging sparingly and only for
+// critical debugging that can be quickly disabled.
+//
 
 pub fn virtual_variables_list(variables: Vec<Signal>, search_filter: String) -> Column<column::EmptyFlagNotSet, RawHtmlEl> {
     // Handle special cases first (empty states)
@@ -65,7 +72,6 @@ pub fn rust_virtual_variables_list_simple_fill(variables: Vec<Signal>) -> Column
                     move |_width, height| {
                         // Remove height cap to allow unlimited panel height (Step 1)
                         let constrained_height = (height as f64).max(100.0) as u32;
-                        zoon::println!("DYNAMIC: Parent height={}, constrained={}", height, constrained_height);
                         height_mutable.set_neq(constrained_height);
                     }
                 })
@@ -107,14 +113,12 @@ pub fn rust_virtual_variables_list(variables: Vec<Signal>) -> Column<column::Emp
         async move {
             container_height.signal().for_each_sync(move |height| {
                 let new_count = ((height / item_height).ceil() as usize + 5).min(total_items);
-                zoon::println!("Height changed to {}, new visible_count: {}", height, new_count);
                 visible_count.set_neq(new_count);
             }).await
         }
     });
     */
     
-    zoon::println!("Virtual List: {} total, {} initial visible [TEST]", total_items, initial_visible_count);
     
     Column::new()
         .item(
@@ -138,7 +142,6 @@ pub fn rust_virtual_variables_list(variables: Vec<Signal>) -> Column<column::Emp
                     move |_width, height| {
                         // Use reasonable height constraints to prevent viewport size bugs
                         let actual_height = (height as f64).max(100.0).min(800.0); // Reasonable bounds
-                        zoon::println!("Virtual list height: raw={}, constrained={}", height, actual_height);
                         container_height.set_neq(actual_height);
                     }
                 })
@@ -162,8 +165,6 @@ pub fn rust_virtual_variables_list(variables: Vec<Signal>) -> Column<column::Emp
                             
                             // ===== CRITICAL DIAGNOSTIC =====
                             // These values show the core problem: clientHeight=0 when using Height::fill()
-                            zoon::println!("Virtual container setup: clientHeight={}, scrollHeight={}", 
-                                html_el.client_height(), html_el.scroll_height());
                             
                             // ===== SCROLL EVENT HANDLER =====
                             // This handles scroll events and updates the visible range
@@ -196,9 +197,6 @@ pub fn rust_virtual_variables_list(variables: Vec<Signal>) -> Column<column::Emp
                                         visible_start.set_neq(start_index);
                                         visible_end.set_neq(end_index);
                                         
-                                        // Diagnostic logging for scroll behavior
-                                        zoon::println!("Scroll: top={}, start={}, end={}, visible_count={}", 
-                                            new_scroll_top, start_index, end_index, initial_visible_count);
                                     }
                                 }
                             }) as Box<dyn FnMut(_)>);
@@ -217,8 +215,6 @@ pub fn rust_virtual_variables_list(variables: Vec<Signal>) -> Column<column::Emp
                             // Check if the container has proper scroll dimensions
                             // WORKING: clientHeight=400, scrollHeight=large_number
                             // BROKEN: clientHeight=0, scrollHeight=0 (when using Height::fill())
-                            zoon::println!("Virtual container after setup: clientHeight={}, scrollHeight={}", 
-                                html_el.client_height(), html_el.scroll_height());
                             
                         }
                         
@@ -239,7 +235,6 @@ pub fn rust_virtual_variables_list(variables: Vec<Signal>) -> Column<column::Emp
                                 let start = visible_start.signal(),
                                 let end = visible_end.signal() => {
                                     // Optional: Debug visible range changes
-                                    // zoon::println!("Rendering virtual items: start={}, end={}, count={}", start, end, end - start);
                                     
                                     // ===== STACK + TRANSFORM PATTERN =====
                                     // Uses Stack with Transform positioning (from working backup)
@@ -292,7 +287,6 @@ pub fn rust_virtual_variables_list_with_signal(
         async move {
             height_signal.signal().for_each(|height| {
                 let new_visible_count = ((height as f64 / item_height).ceil() as usize + 5).min(total_items);
-                zoon::println!("Height changed: {}px -> {} visible items", height, new_visible_count);
                 visible_count.set_neq(new_visible_count);
                 async {}
             }).await;
@@ -315,7 +309,6 @@ pub fn rust_virtual_variables_list_with_signal(
         }
     });
     
-    zoon::println!("Virtual List (Signal): {} total, {} initial visible [SIGNAL-TEST]", total_items, initial_visible_count);
     
     Column::new()
         .item(
@@ -339,8 +332,6 @@ pub fn rust_virtual_variables_list_with_signal(
                             html_el.style().set_property("overflow-y", "auto").unwrap();
                             html_el.style().set_property("display", "block").unwrap();
                             
-                            zoon::println!("Virtual container (SIGNAL) setup: clientHeight={}, scrollHeight={}", 
-                                html_el.client_height(), html_el.scroll_height());
                             
                             let scroll_closure = wasm_bindgen::closure::Closure::wrap(Box::new({
                                 let scroll_top = scroll_top.clone();
@@ -363,8 +354,6 @@ pub fn rust_virtual_variables_list_with_signal(
                                         visible_start.set_neq(start_index);
                                         visible_end.set_neq(end_index);
                                         
-                                        zoon::println!("Scroll (SIGNAL): top={}, start={}, end={} (visible_count={})", 
-                                            new_scroll_top, start_index, end_index, visible_count.get());
                                     }
                                 }
                             }) as Box<dyn FnMut(_)>);
@@ -376,8 +365,6 @@ pub fn rust_virtual_variables_list_with_signal(
                             
                             scroll_closure.forget();
                             
-                            zoon::println!("Virtual container (SIGNAL) after setup: clientHeight={}, scrollHeight={}", 
-                                html_el.client_height(), html_el.scroll_height());
                         }
                         
                         el
@@ -428,7 +415,6 @@ pub fn rust_virtual_variables_list_dynamic_wrapper(
                     let height_mutable = height_mutable.clone();
                     move |_width, height| {
                         let constrained_height = (height as f64).max(100.0).min(800.0) as u32;
-                        zoon::println!("FIXED Column+El: raw={}, constrained={}", height, constrained_height);
                         height_mutable.set_neq(constrained_height);
                     }
                 })

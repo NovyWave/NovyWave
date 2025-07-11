@@ -1,17 +1,21 @@
 use zoon::*;
 use moonzoon_novyui::*;
 use moonzoon_novyui::tokens::theme::{Theme, toggle_theme, theme};
-use moonzoon_novyui::tokens::color::{neutral_1, neutral_2, neutral_3, neutral_4, neutral_6, neutral_8, neutral_9, neutral_10, neutral_11, neutral_12, primary_6, primary_7};
-use shared::{WaveformFile, ScopeData, filter_variables};
+use moonzoon_novyui::tokens::color::{neutral_1, neutral_2, neutral_3, neutral_4, neutral_8, neutral_9, neutral_10, neutral_11, neutral_12, primary_6, primary_7};
+use shared::{WaveformFile, ScopeData, filter_variables, UpMsg, FileSystemItem};
 use crate::types::{get_variables_from_selected_scope};
 use crate::virtual_list::virtual_variables_list;
 use crate::config;
+use std::collections::{HashSet, HashMap};
+use wasm_bindgen_futures::spawn_local;
 use crate::{
     IS_DOCKED_TO_BOTTOM, FILES_PANEL_WIDTH, FILES_PANEL_HEIGHT,
     VERTICAL_DIVIDER_DRAGGING, HORIZONTAL_DIVIDER_DRAGGING,
-    VARIABLES_SEARCH_FILTER, SHOW_FILE_DIALOG, FILE_PATHS_INPUT, IS_LOADING,
+    VARIABLES_SEARCH_FILTER, SHOW_FILE_DIALOG, IS_LOADING,
     LOADED_FILES, SELECTED_SCOPE_ID, TREE_SELECTED_ITEMS, EXPANDED_SCOPES,
-    FILE_PATHS, show_file_paths_dialog, process_file_paths
+    FILE_PATHS, show_file_paths_dialog, process_file_paths,
+    FILE_PICKER_EXPANDED, FILE_PICKER_SELECTED,
+    FILE_PICKER_ERROR, FILE_TREE_CACHE, send_up_msg
 };
 
 pub fn file_paths_dialog() -> impl Element {
@@ -31,27 +35,29 @@ pub fn file_paths_dialog() -> impl Element {
                     Border::new().width(2).color(color)
                 })))
                 .s(Padding::all(24))
-                .s(Width::exact(500))
+                .s(Width::exact(700))
+                .s(Height::exact(500))
                 .child(
                     Column::new()
+                        .s(Height::fill())
                         .s(Gap::new().y(16))
                         .item(
                             El::new()
                                 .s(Font::new().size(18).weight(FontWeight::Bold).color_signal(neutral_12()))
-                                .child("Load Waveform Files")
+                                .child("Browse and Select Waveform Files")
                         )
                         .item(
                             El::new()
-                                .s(Font::new().size(14).color_signal(neutral_10()))
-                                .child("Enter absolute file paths, separated by commas:")
+                                .s(Height::fill())
+                                .s(Background::new().color_signal(neutral_1()))
+                                .s(Borders::all_signal(neutral_4().map(|color| {
+                                    Border::new().width(1).color(color)
+                                })))
+                                .s(RoundedCorners::all(4))
+                                .s(Padding::all(8))
+                                .child(file_picker_content())
                         )
-                        .item(
-                            input()
-                                .placeholder("/path/to/file1.vcd, /path/to/file2.fst")
-                                .on_change(|text| FILE_PATHS_INPUT.set_neq(text))
-                                .size(InputSize::Medium)
-                                .build()
-                        )
+                        .item(selected_files_display())
                         .item(
                             Row::new()
                                 .s(Gap::new().x(12))
@@ -61,11 +67,16 @@ pub fn file_paths_dialog() -> impl Element {
                                         .label("Cancel")
                                         .variant(ButtonVariant::Ghost)
                                         .size(ButtonSize::Medium)
-                                        .on_press(|| SHOW_FILE_DIALOG.set(false))
+                                        .on_press(|| {
+                                            SHOW_FILE_DIALOG.set(false);
+                                            // Clear file picker state on cancel
+                                            FILE_PICKER_SELECTED.lock_mut().clear();
+                                            FILE_PICKER_ERROR.set_neq(None);
+                                        })
                                         .build()
                                 )
                                 .item(
-                                    load_files_dialog_button()
+                                    load_files_picker_button()
                                 )
                         )
                 )
@@ -188,6 +199,7 @@ pub fn files_panel() -> impl Element {
                                                 .variant(TreeViewVariant::Basic)
                                                 .show_icons(true)
                                                 .show_checkboxes(true)
+                                                .single_scope_selection(true)
                                                 .external_expanded(EXPANDED_SCOPES.clone())
                                                 .external_selected(TREE_SELECTED_ITEMS.clone())
                                                 .build()
@@ -665,6 +677,8 @@ fn convert_scope_to_tree_data(scope: &ScopeData) -> TreeViewItemData {
         children.push(convert_scope_to_tree_data(child_scope));
     }
     
+    // Signals are NOT shown in Files & Scopes - they belong in the Variables panel
+    
     TreeViewItemData::new(scope.id.clone(), scope.name.clone())
         .item_type(TreeViewItemType::Folder)
         .with_children(children)
@@ -714,6 +728,367 @@ fn load_files_dialog_button() -> impl Element {
                 .build()
                 .into_element()
         }))
+}
+
+fn load_files_picker_button() -> impl Element {
+    El::new()
+        .child_signal(
+            map_ref! {
+                let is_loading = IS_LOADING.signal(),
+                let selected = FILE_PICKER_SELECTED.signal_ref(|s| s.len()) =>
+                move {
+                    let has_selection = *selected > 0;
+                    let is_loading = *is_loading;
+                    
+                    let mut btn = button();
+                    
+                    if is_loading {
+                        btn = btn.label("Loading...")
+                            .disabled(true);
+                    } else if has_selection {
+                        btn = btn.label(format!("Load {} Files", selected))
+                            .on_press(|| process_file_picker_selection());
+                    } else {
+                        btn = btn.label("Load Files")
+                            .disabled(true);
+                    }
+                    
+                    btn.variant(ButtonVariant::Primary)
+                        .size(ButtonSize::Medium)
+                        .build()
+                        .into_element()
+                }
+            }
+        )
+}
+
+
+fn file_picker_content() -> impl Element {
+    El::new()
+        .s(Height::fill())
+        .s(Scrollbars::both())
+        .child_signal(
+            FILE_PICKER_ERROR.signal_cloned().map(|error| {
+                if let Some(error_msg) = error {
+                    Column::new()
+                        .s(Gap::new().y(16))
+                        .s(Align::center())
+                        .s(Padding::all(32))
+                        .item(
+                            icon(IconName::TriangleAlert)
+                                .size(IconSize::Large)
+                                .color(IconColor::Error)
+                                .build()
+                        )
+                        .item(
+                            El::new()
+                                .s(Font::new().size(16).color_signal(neutral_11()))
+                                .child(error_msg)
+                        )
+                        .item(
+                            button()
+                                .label("Retry")
+                                .variant(ButtonVariant::Secondary)
+                                .size(ButtonSize::Medium)
+                                .on_press(|| {
+                                    FILE_PICKER_ERROR.set_neq(None);
+                                    send_up_msg(UpMsg::BrowseDirectory("/".to_string()));
+                                })
+                                .build()
+                        )
+                        .unify()
+                } else {
+                    simple_file_picker_tree().unify()
+                }
+            })
+        )
+}
+
+fn simple_file_picker_tree() -> impl Element {
+    // Note: Root directory "/" is already requested by show_file_paths_dialog()
+    // No need for duplicate request here
+    
+    El::new()
+        .s(Height::fill())
+        .child_signal(
+            map_ref! {
+                let tree_cache = FILE_TREE_CACHE.signal_cloned(),
+                let expanded = FILE_PICKER_EXPANDED.signal_cloned() =>
+                move {
+                    monitor_directory_expansions(expanded.clone());
+                    
+                    // Check if we have root directory data
+                    if let Some(root_items) = tree_cache.get("/") {
+                        // Create root "/" item and build hierarchical tree
+                        let tree_data = vec![
+                            TreeViewItemData::new("/".to_string(), "/".to_string())
+                                .with_children(build_hierarchical_tree("/", &tree_cache))
+                        ];
+                        
+                        tree_view()
+                            .data(tree_data)
+                            .size(TreeViewSize::Medium)
+                            .variant(TreeViewVariant::Basic)
+                            .show_icons(true)
+                            .show_checkboxes(true)
+                            .external_expanded(FILE_PICKER_EXPANDED.clone())
+                            .external_selected(FILE_PICKER_SELECTED.clone())
+                            .build()
+                            .unify()
+                    } else {
+                        El::new()
+                            .s(Padding::all(16))
+                            .s(Font::new().size(14).color_signal(neutral_9()))
+                            .child("Loading filesystem...")
+                            .unify()
+                    }
+                }
+            }
+        )
+}
+
+fn build_hierarchical_tree(
+    path: &str, 
+    tree_cache: &HashMap<String, Vec<shared::FileSystemItem>>
+) -> Vec<TreeViewItemData> {
+    if let Some(items) = tree_cache.get(path) {
+        items.iter().map(|item| {
+            if item.is_directory {
+                // Check if we have cached contents for this directory
+                if let Some(_children) = tree_cache.get(&item.path) {
+                    // Build actual hierarchical children
+                    let children = build_hierarchical_tree(&item.path, tree_cache);
+                    TreeViewItemData::new(item.path.clone(), item.name.clone())
+                        .icon("folder".to_string())
+                        .item_type(TreeViewItemType::Folder)
+                        .with_children(children)
+                } else {
+                    // No cached contents - only show expand arrow if directory has expandable content
+                    let mut data = TreeViewItemData::new(item.path.clone(), item.name.clone())
+                        .icon("folder".to_string())
+                        .item_type(TreeViewItemType::Folder);
+                    
+                    // Only add placeholder children if directory has expandable content
+                    if item.has_expandable_content {
+                        data = data.with_children(vec![
+                            TreeViewItemData::new("loading", "Loading...")
+                                .item_type(TreeViewItemType::Default)
+                                .disabled(true)
+                        ]);
+                    }
+                    
+                    data
+                }
+            } else {
+                // File item
+                let mut data = TreeViewItemData::new(item.path.clone(), item.name.clone())
+                    .icon("file".to_string())
+                    .item_type(TreeViewItemType::File);
+                
+                // Disable non-waveform files
+                if !item.is_waveform_file {
+                    data = data.disabled(true);
+                }
+                
+                data
+            }
+        }).collect()
+    } else {
+        vec![]
+    }
+}
+
+fn monitor_directory_expansions(expanded: HashSet<String>) {
+    static LAST_EXPANDED: Lazy<Mutable<HashSet<String>>> = lazy::default();
+    
+    let last_expanded = LAST_EXPANDED.lock_ref().clone();
+    let new_expansions: Vec<String> = expanded.difference(&last_expanded).cloned().collect();
+    
+    // Send browse requests for newly expanded directories
+    for path in new_expansions {
+        if path.starts_with("/") && !path.is_empty() {
+            zoon::println!("TreeView: Newly expanded directory: {}", path);
+            send_up_msg(UpMsg::BrowseDirectory(path));
+        }
+    }
+    
+    // Update last expanded set
+    LAST_EXPANDED.set_neq(expanded);
+}
+
+
+fn selected_files_display() -> impl Element {
+    El::new()
+        .s(Height::exact(120))
+        .s(Width::fill())
+        .s(Background::new().color_signal(neutral_2()))
+        .s(Borders::all_signal(neutral_4().map(|color| {
+            Border::new().width(1).color(color)
+        })))
+        .s(RoundedCorners::all(4))
+        .s(Padding::all(8))
+        .child(
+            Column::new()
+                .s(Height::fill())
+                .s(Gap::new().y(8))
+                .item(
+                    Row::new()
+                        .s(Gap::new().x(8))
+                        .s(Align::new().center_y())
+                        .item(
+                            El::new()
+                                .s(Font::new().size(14).weight(FontWeight::SemiBold).color_signal(neutral_11()))
+                                .child("Selected Files")
+                        )
+                        .item(
+                            El::new()
+                                .s(Font::new().size(13).color_signal(neutral_9()))
+                                .child_signal(
+                                    FILE_PICKER_SELECTED.signal_ref(|selected| {
+                                        if selected.is_empty() {
+                                            "No files selected".to_string()
+                                        } else {
+                                            format!("{} file{} selected", selected.len(), if selected.len() == 1 { "" } else { "s" })
+                                        }
+                                    })
+                                )
+                        )
+                        .item(
+                            El::new()
+                                .s(Width::fill())
+                        )
+                        .item_signal(
+                            FILE_PICKER_SELECTED.signal_ref(|selected| !selected.is_empty()).map(|has_selection| {
+                                if has_selection {
+                                    Some(
+                                        button()
+                                            .label("Clear All")
+                                            .left_icon(IconName::X)
+                                            .variant(ButtonVariant::Ghost)
+                                            .size(ButtonSize::Small)
+                                            .on_press(|| {
+                                                FILE_PICKER_SELECTED.lock_mut().clear();
+                                            })
+                                            .build()
+                                    )
+                                } else {
+                                    None
+                                }
+                            })
+                        )
+                )
+                .item(
+                    El::new()
+                        .s(Height::fill())
+                        .s(Scrollbars::both())
+                        .child_signal(
+                            FILE_PICKER_SELECTED.signal_ref(|selected| selected.clone()).map(|selected_paths| {
+                                if selected_paths.is_empty() {
+                                    El::new()
+                                        .s(Height::fill())
+                                        .s(Align::center())
+                                        .s(Font::new().italic().color_signal(neutral_8()))
+                                        .child("Select waveform files from the directory tree above")
+                                        .unify()
+                                } else {
+                                    Column::new()
+                                        .s(Gap::new().y(4))
+                                        .items(selected_paths.into_iter().map(|path| {
+                                            Row::new()
+                                                .s(Gap::new().x(8))
+                                                .s(Align::new().center_y())
+                                                .s(Padding::new().x(8).y(4))
+                                                .s(Background::new().color_signal(neutral_1()))
+                                                .s(RoundedCorners::all(3))
+                                                .item(
+                                                    icon(IconName::File)
+                                                        .size(IconSize::Small)
+                                                        .color(IconColor::Secondary)
+                                                        .build()
+                                                )
+                                                .item(
+                                                    El::new()
+                                                        .s(Font::new().size(13).color_signal(neutral_11()).no_wrap())
+                                                        .s(Width::fill())
+                                                        .child(path.clone())
+                                                )
+                                                .item(
+                                                    button()
+                                                        .left_icon(IconName::X)
+                                                        .variant(ButtonVariant::Ghost)
+                                                        .size(ButtonSize::Small)
+                                                        .on_press({
+                                                            let path = path.clone();
+                                                            move || {
+                                                                FILE_PICKER_SELECTED.lock_mut().remove(&path);
+                                                            }
+                                                        })
+                                                        .build()
+                                                )
+                                        }))
+                                        .unify()
+                                }
+                            })
+                        )
+                )
+        )
+}
+
+// File picker utility functions
+
+
+
+fn create_tree_item_from_filesystem_item(item: shared::FileSystemItem) -> TreeViewItemData {
+    let mut data = TreeViewItemData::new(item.path.clone(), item.name.clone())
+        .icon(if item.is_directory {
+            "folder".to_string()
+        } else {
+            "file".to_string()
+        })
+        .item_type(if item.is_directory {
+            TreeViewItemType::Folder
+        } else {
+            TreeViewItemType::File
+        });
+    
+    // Only disable non-waveform files, allow all directories
+    if !item.is_directory && !item.is_waveform_file {
+        data = data.disabled(true);
+    }
+    
+    // Only directories with expandable content get placeholder children to show expand arrow
+    if item.is_directory && item.has_expandable_content {
+        data = data.with_children(vec![
+            TreeViewItemData::new("loading", "Loading...")
+                .item_type(TreeViewItemType::Default)
+                .disabled(true)
+        ]);
+    }
+    
+    data
+}
+
+fn process_file_picker_selection() {
+    let selected_files = FILE_PICKER_SELECTED.lock_ref().clone();
+    
+    if !selected_files.is_empty() {
+        IS_LOADING.set(true);
+        
+        // Process each selected file path
+        for file_path in selected_files.iter() {
+            // Generate file ID and store path mapping for config persistence
+            let file_id = shared::generate_file_id(file_path);
+            FILE_PATHS.lock_mut().insert(file_id, file_path.clone());
+            
+            // Send load request
+            send_up_msg(UpMsg::LoadWaveformFile(file_path.clone()));
+        }
+        
+        // Close dialog and clear selection
+        SHOW_FILE_DIALOG.set(false);
+        FILE_PICKER_SELECTED.lock_mut().clear();
+        FILE_PICKER_ERROR.set_neq(None);
+    }
 }
 
 fn remove_all_button() -> impl Element {

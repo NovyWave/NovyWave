@@ -74,6 +74,42 @@ static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 // Check if all files are completed
                 check_loading_complete();
             }
+            DownMsg::DirectoryContents { path, items } => {
+                // Cache directory contents
+                crate::FILE_TREE_CACHE.lock_mut().insert(path.clone(), items.clone());
+                
+                // Auto-expand home directory path and its parent directories
+                if path.contains("/home/") || path.starts_with("/Users/") {
+                    let mut expanded = crate::FILE_PICKER_EXPANDED.lock_mut();
+                    
+                    // Expand the home directory itself
+                    expanded.insert(path.clone());
+                    
+                    // Only expand parent directories, don't browse them automatically
+                    // This prevents infinite loops
+                    let mut parent_path = std::path::Path::new(&path);
+                    while let Some(parent) = parent_path.parent() {
+                        let parent_str = parent.to_string_lossy().to_string();
+                        if parent_str == "" || parent_str == "/" {
+                            break;
+                        }
+                        expanded.insert(parent_str);
+                        parent_path = parent;
+                    }
+                }
+                
+                // Clear any previous error
+                crate::FILE_PICKER_ERROR.set_neq(None);
+            }
+            DownMsg::DirectoryError { path, error } => {
+                zoon::println!("Error browsing directory {}: {}", path, error);
+                
+                // Set error message
+                crate::FILE_PICKER_ERROR.set_neq(Some(format!("Error accessing '{}': {}", path, error)));
+                
+                // Clear file picker data on error
+                crate::FILE_PICKER_DATA.lock_mut().replace_cloned(Vec::new());
+            }
             DownMsg::ConfigLoaded(config) => {
                 crate::config::apply_config(config);
             }

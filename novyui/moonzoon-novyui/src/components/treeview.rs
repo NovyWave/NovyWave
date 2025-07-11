@@ -2,6 +2,7 @@ use zoon::*;
 use crate::tokens::*;
 use crate::components::*;
 use std::collections::HashSet;
+// Force recompilation to test changes
 
 // Tree node data structure matching Vue TreeViewItemData interface
 #[derive(Debug, Clone)]
@@ -12,6 +13,7 @@ pub struct TreeViewItemData {
     pub icon: Option<String>,
     pub disabled: Option<bool>,
     pub item_type: Option<TreeViewItemType>,
+    pub has_expandable_content: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -44,6 +46,7 @@ impl TreeViewItemData {
             icon: None,
             disabled: None,
             item_type: None,
+            has_expandable_content: None,
         }
     }
 
@@ -67,8 +70,18 @@ impl TreeViewItemData {
         self
     }
 
+    pub fn has_expandable_content(mut self, has_expandable_content: bool) -> Self {
+        self.has_expandable_content = Some(has_expandable_content);
+        self
+    }
+
     pub fn has_children(&self) -> bool {
-        self.children.as_ref().map_or(false, |children| !children.is_empty())
+        // Use has_expandable_content flag if available, otherwise fall back to checking children array
+        if let Some(has_expandable) = self.has_expandable_content {
+            has_expandable
+        } else {
+            self.children.as_ref().map_or(false, |children| !children.is_empty())
+        }
     }
 
     pub fn is_disabled(&self) -> bool {
@@ -83,6 +96,7 @@ pub struct TreeViewBuilder {
     variant: TreeViewVariant,
     show_icons: bool,
     show_checkboxes: bool,
+    single_scope_selection: bool,
     disabled: bool,
     aria_label: Option<String>,
     default_expanded: Vec<String>,
@@ -99,6 +113,7 @@ impl TreeViewBuilder {
             variant: TreeViewVariant::Basic,
             show_icons: true,
             show_checkboxes: false,
+            single_scope_selection: false,
             disabled: false,
             aria_label: None,
             default_expanded: Vec::new(),
@@ -130,6 +145,11 @@ impl TreeViewBuilder {
 
     pub fn show_checkboxes(mut self, show_checkboxes: bool) -> Self {
         self.show_checkboxes = show_checkboxes;
+        self
+    }
+
+    pub fn single_scope_selection(mut self, single_scope_selection: bool) -> Self {
+        self.single_scope_selection = single_scope_selection;
         self
     }
 
@@ -184,6 +204,7 @@ impl TreeViewBuilder {
         let variant = self.variant;
         let show_icons = self.show_icons;
         let show_checkboxes = self.show_checkboxes;
+        let single_scope_selection = self.single_scope_selection;
         let disabled = self.disabled;
         let aria_label = self.aria_label.unwrap_or_else(|| "Tree".to_string());
 
@@ -212,6 +233,7 @@ impl TreeViewBuilder {
                                     variant,
                                     show_icons,
                                     show_checkboxes,
+                                    single_scope_selection,
                                     disabled,
                                     expanded_items.clone(),
                                     selected_items.clone(),
@@ -273,6 +295,7 @@ fn render_tree_item(
     variant: TreeViewVariant,
     show_icons: bool,
     show_checkboxes: bool,
+    single_scope_selection: bool,
     tree_disabled: bool,
     expanded_items: Mutable<HashSet<String>>,
     selected_items: Mutable<HashSet<String>>,
@@ -283,7 +306,7 @@ fn render_tree_item(
     let is_disabled = tree_disabled || item.is_disabled();
 
     // Calculate indentation based on level
-    let indent_width = level * 20; // 20px per level like Vue version
+    let indent_width = level * 12; // 12px per level for compact hierarchy spacing
 
     // Size-dependent values
     let (min_height, font_size, padding_y, expand_icon_size) = match size {
@@ -292,32 +315,25 @@ fn render_tree_item(
         TreeViewSize::Large => (40, FONT_SIZE_16, SPACING_6, 20),
     };
 
-    // Create the tree item row with proper structure:
-    // - Outer container: Width::fill() for full-width highlighting
-    // - Inner row: Align::left() for proper content alignment
-    let item_row = El::new()
-        .s(Width::fill())
+    // Create the tree item row with compact structure
+    let item_row = Row::new()
         .s(Height::exact(min_height))
-        .s(Padding::new().y(padding_y))
-        .s(RoundedCorners::all(4))
+        .s(Gap::new().x(SPACING_4))
+        .s(Align::new().left().center_y())
         .s(Cursor::new(if is_disabled {
             CursorIcon::NotAllowed
         } else {
             CursorIcon::Pointer
         }))
-        .child(
-            Row::new()
-                .s(Align::new().left()) // Left-align content within the row
-                .s(Gap::new().x(SPACING_4))
-                // Indentation
-                .item(
-                    El::new()
-                        .s(Width::exact(indent_width))
-                        .s(Height::exact(1))
-                )
-                // Expand/collapse button or placeholder
-                .item(
-                    if has_children {
+        // Indentation spacer
+        .item(
+            El::new()
+                .s(Width::exact(indent_width))
+                .s(Height::exact(1))
+        )
+        // Expand/collapse button or placeholder
+        .item(
+            if has_children {
                 Button::new()
                     .s(Width::exact(expand_icon_size))
                     .s(Height::exact(expand_icon_size))
@@ -367,8 +383,10 @@ fn render_tree_item(
                                 let mut expanded = expanded_items.lock_mut();
                                 if expanded.contains(&item_id) {
                                     expanded.remove(&item_id);
+                                    zoon::println!("TreeView: Collapsed {}", item_id);
                                 } else {
                                     expanded.insert(item_id.clone());
+                                    zoon::println!("TreeView: Expanded {}", item_id);
                                 }
                             }
                         }
@@ -381,33 +399,116 @@ fn render_tree_item(
                     .unify()
             }
         )
-        // Checkbox (if enabled) - only for non-file items
+        // Checkbox (if enabled) - conditionally based on item type
         .item_signal(
             selected_items.signal_ref({
                 let item_id = item_id.clone();
                 move |selected| selected.contains(&item_id)
-            }).map(move |is_selected| {
-                // Show checkboxes only for scopes (folders), not files
-                let should_show_checkbox = show_checkboxes && 
-                    !matches!(item.item_type, Some(TreeViewItemType::File));
+            }).map({
+                let item_id = item_id.clone();
+                let selected_items = selected_items.clone();
+                move |is_selected| {
+                    // Show checkboxes based on user requirements:
+                // Files & Scopes: NO checkboxes for files, YES checkboxes for scopes and signals
+                // File picker: Only checkboxes for waveform files
+                let should_show_checkbox = show_checkboxes && !is_disabled && 
+                    if item_id.contains("_scope_") {
+                        // Scopes: YES checkboxes (e.g., "file_xxx_scope_1")
+                        true
+                    } else if matches!(item.item_type, Some(TreeViewItemType::Folder)) {
+                        // Folders: NO checkboxes for scopes (they're handled above), but could be file picker dirs
+                        false
+                    } else if matches!(item.item_type, Some(TreeViewItemType::File)) {
+                        // Files: different logic based on context
+                        if item_id.starts_with("file_") && !item_id.contains("_scope_") {
+                            // Top-level waveform files: NO checkboxes (e.g., "file_71a2908980aee1d")
+                            false
+                        } else if item_id.starts_with("/") {
+                            // File picker paths: only waveform files get checkboxes
+                            item_id.ends_with(".vcd") || item_id.ends_with(".fst") || item_id.ends_with(".ghw")
+                        } else {
+                            // Signals in Files & Scopes: YES checkboxes (e.g., "A", "B")
+                            true
+                        }
+                    } else {
+                        // Other types: NO checkboxes
+                        false
+                    };
                 
                 if should_show_checkbox {
                     Some(
-                        CheckboxBuilder::new()
-                            .size(match size {
-                                TreeViewSize::Small => CheckboxSize::Small,
-                                TreeViewSize::Medium => CheckboxSize::Medium,
-                                TreeViewSize::Large => CheckboxSize::Large,
+                        // Use proper button with event handling to prevent bubbling
+                        Button::new()
+                            .s(Width::exact(20))
+                            .s(Height::exact(20))
+                            .s(Padding::all(0))
+                            .s(Background::new().color("transparent"))
+                            .s(Borders::new())
+                            .s(Cursor::new(CursorIcon::Pointer))
+                            .label(
+                                CheckboxBuilder::new()
+                                    .size(match size {
+                                        TreeViewSize::Small => CheckboxSize::Small,
+                                        TreeViewSize::Medium => CheckboxSize::Medium,
+                                        TreeViewSize::Large => CheckboxSize::Large,
+                                    })
+                                    .checked(is_selected)
+                                    .build()
+                            )
+                            .on_press_event({
+                                let item_id = item_id.clone();
+                                let selected_items = selected_items.clone();
+                                move |event| {
+                                    // Prevent event from bubbling up to the row's click handler
+                                    event.pass_to_parent(false);
+
+                                    if !is_disabled {
+                                        let mut selected = selected_items.lock_mut();
+                                        
+                                        // Handle scope selection logic for checkbox clicks
+                                        if item_id.contains("_scope_") {
+                                            // Special handling for scopes when single_scope_selection is enabled
+                                            if single_scope_selection {
+                                                if selected.contains(&item_id) {
+                                                    // Deselect this scope
+                                                    selected.remove(&item_id);
+                                                    zoon::println!("TreeView: Checkbox deselected scope {} in single scope selection mode", item_id);
+                                                } else {
+                                                    // Clear all other scope selections and select this one (radio button behavior)
+                                                    selected.retain(|id| !id.contains("_scope_"));
+                                                    selected.insert(item_id.clone());
+                                                    zoon::println!("TreeView: Checkbox selected scope {} in single scope selection mode", item_id);
+                                                }
+                                            } else {
+                                                // Regular multi-select behavior for scopes
+                                                if selected.contains(&item_id) {
+                                                    selected.remove(&item_id);
+                                                    zoon::println!("TreeView: Checkbox deselected scope {}", item_id);
+                                                } else {
+                                                    selected.insert(item_id.clone());
+                                                    zoon::println!("TreeView: Checkbox selected scope {}", item_id);
+                                                }
+                                            }
+                                        } else {
+                                            // Regular checkbox behavior for non-scope items
+                                            if selected.contains(&item_id) {
+                                                selected.remove(&item_id);
+                                                zoon::println!("TreeView: Checkbox deselected {}", item_id);
+                                            } else {
+                                                selected.insert(item_id.clone());
+                                                zoon::println!("TreeView: Checkbox selected {}", item_id);
+                                            }
+                                        }
+                                    }
+                                }
                             })
-                            .checked(is_selected)
-                            .build()
                             .unify()
                     )
                 } else {
                     None
                 }
-            })
-        )
+            }
+        }))
         // Icon (if enabled)
         .item_signal(always(show_icons).map({
             let item = item.clone();
@@ -466,8 +567,19 @@ fn render_tree_item(
                 }
             }
         }))
-                // Label
-                .item(
+        // Label with proper click handling
+        .item(
+            Button::new()
+                .s(Background::new().color("transparent"))
+                .s(Borders::new())
+                .s(Padding::new().x(SPACING_2).y(0))
+                .s(Cursor::new(if is_disabled {
+                    CursorIcon::NotAllowed
+                } else {
+                    CursorIcon::Pointer
+                }))
+                .s(Align::new().left())
+                .label(
                     El::new()
                         .child(Text::new(&item.label))
                         .s(Font::new()
@@ -504,8 +616,73 @@ fn render_tree_item(
                                 }
                             )
                         )
-                        .s(Align::new().left()) // Consistent left alignment
                 )
+                .on_press_event({
+                    let item_id = item_id.clone();
+                    let focused_item = focused_item.clone();
+                    let expanded_items = expanded_items.clone();
+                    let selected_items = selected_items.clone();
+                    move |event| {
+                        // Prevent event from bubbling up to the row's click handler
+                        event.pass_to_parent(false);
+                        
+                        if !is_disabled {
+                            // Always set focus when clicking a label
+                            focused_item.set(Some(item_id.clone()));
+
+                            if has_children {
+                                // Expandable items: only handle expansion/collapse
+                                let mut expanded = expanded_items.lock_mut();
+                                if expanded.contains(&item_id) {
+                                    expanded.remove(&item_id);
+                                    zoon::println!("TreeView: Label click collapsed {}", item_id);
+                                } else {
+                                    expanded.insert(item_id.clone());
+                                    zoon::println!("TreeView: Label click expanded {}", item_id);
+                                }
+                            } else if show_checkboxes {
+                                // Leaf items with checkboxes: handle selection (same logic as checkbox)
+                                let mut selected = selected_items.lock_mut();
+                                
+                                // Handle scope selection logic for label clicks on leaf items
+                                if item_id.contains("_scope_") {
+                                    // Special handling for scopes when single_scope_selection is enabled
+                                    if single_scope_selection {
+                                        if selected.contains(&item_id) {
+                                            // Deselect this scope
+                                            selected.remove(&item_id);
+                                            zoon::println!("TreeView: Label click deselected scope {} in single scope selection mode", item_id);
+                                        } else {
+                                            // Clear all other scope selections and select this one (radio button behavior)
+                                            selected.retain(|id| !id.contains("_scope_"));
+                                            selected.insert(item_id.clone());
+                                            zoon::println!("TreeView: Label click selected scope {} in single scope selection mode", item_id);
+                                        }
+                                    } else {
+                                        // Regular multi-select behavior for scopes
+                                        if selected.contains(&item_id) {
+                                            selected.remove(&item_id);
+                                            zoon::println!("TreeView: Label click deselected scope {}", item_id);
+                                        } else {
+                                            selected.insert(item_id.clone());
+                                            zoon::println!("TreeView: Label click selected scope {}", item_id);
+                                        }
+                                    }
+                                } else {
+                                    // Regular checkbox behavior for non-scope leaf items
+                                    if selected.contains(&item_id) {
+                                        selected.remove(&item_id);
+                                        zoon::println!("TreeView: Label click deselected {}", item_id);
+                                    } else {
+                                        selected.insert(item_id.clone());
+                                        zoon::println!("TreeView: Label click selected {}", item_id);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                })
+                .unify()
         )
         // Background and interaction styling
         .s(Background::new().color_signal(
@@ -537,57 +714,6 @@ fn render_tree_item(
         ))
         // Focus ring (simplified for now)
         .s(Outline::inner().width(0).color("transparent"))
-        // Click handler - improved interaction logic
-        .on_click({
-            let item_id = item_id.clone();
-            let focused_item = focused_item.clone();
-            let selected_items = selected_items.clone();
-            let expanded_items = expanded_items.clone();
-            move || {
-                if !is_disabled {
-                    // Always set focus when clicking a row
-                    focused_item.set(Some(item_id.clone()));
-
-                    // Handle interaction based on item type
-                    match item.item_type {
-                        Some(TreeViewItemType::File) => {
-                            // Files: only expand/collapse, never select
-                            if has_children {
-                                let mut expanded = expanded_items.lock_mut();
-                                if expanded.contains(&item_id) {
-                                    expanded.remove(&item_id);
-                                } else {
-                                    expanded.insert(item_id.clone());
-                                }
-                            }
-                        },
-                        _ => {
-                            // Scopes: handle selection if checkboxes enabled
-                            if show_checkboxes {
-                                // In checkbox mode: toggle selection (single selection enforced)
-                                let mut selected = selected_items.lock_mut();
-                                if selected.contains(&item_id) {
-                                    selected.remove(&item_id);
-                                } else {
-                                    selected.clear(); // Clear all other selections first
-                                    selected.insert(item_id.clone());
-                                }
-                            } else {
-                                // No checkboxes: expand/collapse if has children
-                                if has_children {
-                                    let mut expanded = expanded_items.lock_mut();
-                                    if expanded.contains(&item_id) {
-                                        expanded.remove(&item_id);
-                                    } else {
-                                        expanded.insert(item_id.clone());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        })
         // ARIA attributes - reactive to actual state
         .update_raw_el({
             let item_id = item_id.clone();
@@ -653,6 +779,7 @@ fn render_tree_item(
                                         variant,
                                         show_icons,
                                         show_checkboxes,
+                                        single_scope_selection,
                                         tree_disabled,
                                         expanded_items.clone(),
                                         selected_items.clone(),
@@ -677,10 +804,12 @@ fn render_tree_item(
             .s(Width::fill())
             .item(item_row)
             .item(children)
+            .unify()
     } else {
         Column::new()
             .s(Width::fill())
             .item(item_row)
+            .unify()
     }
 }
 
