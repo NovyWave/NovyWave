@@ -1,7 +1,7 @@
 use zoon::*;
 use shared::{Signal, WaveformFile, ScopeData, file_contains_scope, collect_variables_from_scopes};
 use shared::LoadingStatus;
-use crate::state::{LOADING_FILES, IS_LOADING, LOADED_FILES, SELECTED_SCOPE_ID, TREE_SELECTED_ITEMS, EXPANDED_SCOPES};
+use crate::state::{LOADING_FILES, IS_LOADING, LOADED_FILES, SELECTED_SCOPE_ID, TREE_SELECTED_ITEMS, EXPANDED_SCOPES, USER_CLEARED_SELECTION};
 
 // Signal for completion state changes - triggers clearing of completed files
 static LOADING_COMPLETION_TRIGGER: Lazy<Mutable<u32>> = Lazy::new(|| Mutable::new(0));
@@ -27,6 +27,12 @@ pub fn check_loading_complete() {
 }
 
 pub fn restore_scope_selections_sequenced() {
+    // Check if user has explicitly cleared selection - if so, don't restore
+    if USER_CLEARED_SELECTION.get() {
+        zoon::println!("Skipping scope restoration - user explicitly cleared selection");
+        return;
+    }
+    
     // Check if there's a saved selected_scope_id to restore
     let scope_to_restore = SELECTED_SCOPE_ID.get_cloned();
     
@@ -51,6 +57,9 @@ pub fn restore_scope_selections_sequenced() {
                 
                 // Re-trigger SELECTED_SCOPE_ID signal to update variables panel
                 SELECTED_SCOPE_ID.set(Some(scope_id_clone.clone()));
+                
+                // Clear the user cleared flag since we successfully restored
+                USER_CLEARED_SELECTION.set(false);
                 
                 // Also expand parent scopes
                 let loaded_files = LOADED_FILES.lock_ref();

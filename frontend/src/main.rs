@@ -35,6 +35,9 @@ pub fn main() {
         // Initialize scope selection handling
         init_scope_selection_handlers();
         
+        // Initialize file picker directory browsing
+        init_file_picker_handlers();
+        
         // Initialize signal-based loading completion handling
         init_signal_chains();
         
@@ -67,8 +70,17 @@ fn init_scope_selection_handlers() {
             // Find the first selected scope (has _scope_ pattern, not just file_)
             if let Some(scope_id) = selected_items.iter().find(|id| id.contains("_scope_")) {
                 SELECTED_SCOPE_ID.set_neq(Some(scope_id.clone()));
+                // Clear the flag when a scope is selected
+                USER_CLEARED_SELECTION.set(false);
             } else {
+                // No scope selected - check if this is user action or startup
                 SELECTED_SCOPE_ID.set_neq(None);
+                
+                // Only set flag if config is loaded (prevents startup interference)
+                if CONFIG_LOADED.get() {
+                    USER_CLEARED_SELECTION.set(true);
+                    zoon::println!("TreeView: User cleared scope selection, setting flag to prevent restoration");
+                }
             }
         }).await
     });
@@ -94,6 +106,19 @@ fn init_scope_selection_handlers() {
     });
 }
 
+fn init_file_picker_handlers() {
+    // Watch for file selection events (double-click to browse directories)
+    Task::start(async {
+        FILE_PICKER_SELECTED.signal_ref(|selected_items| {
+            selected_items.clone()
+        }).for_each_sync(|_selected_items| {
+            // Simple approach: For now, we'll implement manual directory browsing
+            // via the breadcrumb navigation rather than automatic expansion
+            // This avoids the complexity of tracking which directories have been loaded
+        }).await
+    });
+}
+
 /// Loads and registers required fonts asynchronously.
 async fn load_and_register_fonts() {
     let fonts = try_join_all([
@@ -107,6 +132,10 @@ async fn load_and_register_fonts() {
 
 
 fn root() -> impl Element {
+    // Auto-open Load Files dialog disabled - users can open manually via File menu
+    // file_utils::show_file_paths_dialog();
+    // Trigger rebuild
+    
     Stack::new()
         .s(Height::screen())
         .s(Width::fill())

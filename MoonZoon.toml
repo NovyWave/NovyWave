@@ -18,6 +18,8 @@ frontend = [
     "frontend/src",
     "shared/Cargo.toml",
     "shared/src",
+    "novyui/moonzoon-novyui/Cargo.toml",
+    "novyui/moonzoon-novyui/src",
 ]
 backend = [
     "backend/Cargo.toml",

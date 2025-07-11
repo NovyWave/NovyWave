@@ -1,21 +1,26 @@
 #!/bin/bash
 
+# Source shared functions for proper path handling
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$HOOK_DIR/shared-functions.sh"
+init_hook_env
+
 # Quick update context after Memory MCP usage
-CONTEXT_FILE="./.claude/ai-docs/focus-context.md"
-MEMORY_FILE="./.claude/ai-memory.json"
+CONTEXT_FILE="$PROJECT_ROOT/.claude/ai-docs/focus-context.md"
+MEMORY_FILE="$PROJECT_ROOT/.claude/ai-memory.json"
 TIMESTAMP=$(date)
 
 # Only regenerate if file missing - avoid timestamp noise in git
 if [ -f "$CONTEXT_FILE" ]; then
     # File exists - skip update to avoid git noise from timestamp changes
-    echo "✅ Context file exists - skipping timestamp update to avoid git noise: $TIMESTAMP" >> ./.claude/hooks.log
+    echo "✅ Context file exists - skipping timestamp update to avoid git noise: $TIMESTAMP" >> "$HOOK_LOG"
 else
     # File doesn't exist - regenerate focused productivity context
-    echo "🔄 Context file missing - regenerating focused context: $TIMESTAMP" >> ./.claude/hooks.log
+    echo "🔄 Context file missing - regenerating focused context: $TIMESTAMP" >> "$HOOK_LOG"
     
     # Check if Memory MCP file exists
     if [ ! -f "$MEMORY_FILE" ]; then
-        echo "❌ Memory MCP file not found: $MEMORY_FILE" >> ./.claude/hooks.log
+        echo "❌ Memory MCP file not found: $MEMORY_FILE" >> "$HOOK_LOG"
         exit 1
     fi
     
@@ -65,5 +70,5 @@ EOF
     echo "" >> "$CONTEXT_FILE"
     echo "*Focused productivity context generated at $TIMESTAMP*" >> "$CONTEXT_FILE"
     
-    echo "✅ Session context regenerated with focused data: $TIMESTAMP" >> ./.claude/hooks.log
+    echo "✅ Session context regenerated with focused data: $TIMESTAMP" >> "$HOOK_LOG"
 fi

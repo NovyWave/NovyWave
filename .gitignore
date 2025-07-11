@@ -65,3 +65,8 @@ test_files/big_3_GB.vcd
 
 # Prevent ai-memory.json from being created in root (should only be in .claude/)
 ai-memory.json
+
+# Prevent .claude directories in subdirectories (should only be at project root)
+frontend/.claude/
+backend/.claude/
+*/.claude/
