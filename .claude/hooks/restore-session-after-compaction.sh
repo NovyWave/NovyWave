@@ -35,6 +35,21 @@ if [ ! -z "$LATEST_BACKUP" ]; then
     BACKUP_PATH=".claude/compaction-backups/$LATEST_BACKUP"
     echo "   📁 Found backup: $BACKUP_PATH" >> "$HOOK_LOG"
     
+    # Use lock file to prevent duplicate recovery contexts
+    RECOVERY_LOCK=".claude/last-recovery.lock"
+    CURRENT_TIME=$(date +%s)
+    
+    # Check if recovery was already done recently (within 5 minutes)
+    if [ -f "$RECOVERY_LOCK" ]; then
+        LAST_RECOVERY=$(cat "$RECOVERY_LOCK" 2>/dev/null || echo "0")
+        TIME_DIFF=$((CURRENT_TIME - LAST_RECOVERY))
+        
+        if [ $TIME_DIFF -lt 300 ]; then
+            echo "   ⏭️  Skipped recovery context (recent entry: ${TIME_DIFF}s ago)" >> "$HOOK_LOG"
+            exit 0
+        fi
+    fi
+    
     # Update focus context with recovery info
     cat >> .claude/ai-docs/focus-context.md << EOF
 
@@ -44,6 +59,10 @@ if [ ! -z "$LATEST_BACKUP" ]; then
 - Recovery timestamp: $(date)
 - Backup location: $BACKUP_PATH
 EOF
+    
+    # Update lock file with current timestamp
+    echo "$CURRENT_TIME" > "$RECOVERY_LOCK"
+    echo "   📝 Added recovery context (lock updated)" >> "$HOOK_LOG"
 
     # Show key recovery info
     if [ -f "$BACKUP_PATH/git-status.txt" ]; then
@@ -57,6 +76,21 @@ EOF
 else
     echo "   ⚠️  No recent backup found for detailed recovery" >> "$HOOK_LOG"
     
+    # Use lock file to prevent duplicate recovery contexts (no backup case)
+    RECOVERY_LOCK=".claude/last-recovery.lock"
+    CURRENT_TIME=$(date +%s)
+    
+    # Check if recovery was already done recently (within 5 minutes)
+    if [ -f "$RECOVERY_LOCK" ]; then
+        LAST_RECOVERY=$(cat "$RECOVERY_LOCK" 2>/dev/null || echo "0")
+        TIME_DIFF=$((CURRENT_TIME - LAST_RECOVERY))
+        
+        if [ $TIME_DIFF -lt 300 ]; then
+            echo "   ⏭️  Skipped minimal recovery context (recent entry: ${TIME_DIFF}s ago)" >> "$HOOK_LOG"
+            exit 0
+        fi
+    fi
+    
     # Minimal recovery context
     cat >> .claude/ai-docs/focus-context.md << EOF
 
@@ -65,6 +99,10 @@ else
 - Previous task: Unknown
 - Recovery timestamp: $(date)
 EOF
+    
+    # Update lock file with current timestamp
+    echo "$CURRENT_TIME" > "$RECOVERY_LOCK"
+    echo "   📝 Added minimal recovery context (lock updated)" >> "$HOOK_LOG"
 fi
 
 # =============================================================================
