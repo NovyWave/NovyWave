@@ -310,21 +310,29 @@ fn render_tree_item(
 
     // Size-dependent values
     let (min_height, font_size, padding_y, expand_icon_size) = match size {
-        TreeViewSize::Small => (28, FONT_SIZE_14, SPACING_4, 16),
-        TreeViewSize::Medium => (32, FONT_SIZE_16, SPACING_4, 18),
-        TreeViewSize::Large => (40, FONT_SIZE_16, SPACING_6, 20),
+        TreeViewSize::Small => (24, FONT_SIZE_14, SPACING_2, 16),
+        TreeViewSize::Medium => (26, FONT_SIZE_14, SPACING_2, 18),
+        TreeViewSize::Large => (28, FONT_SIZE_14, SPACING_2, 20),
     };
 
-    // Create the tree item row with compact structure
-    let item_row = Row::new()
+    // Create the tree item row with compact structure - wrapped in Button for click handling
+    let item_row = Button::new()
         .s(Height::exact(min_height))
-        .s(Gap::new().x(SPACING_4))
-        .s(Align::new().left().center_y())
+        .s(Width::fill())
+        .s(Padding::all(0))
+        .s(Background::new().color("transparent"))
+        .s(Borders::new())
+        .s(RoundedCorners::all(0))
         .s(Cursor::new(if is_disabled {
             CursorIcon::NotAllowed
         } else {
             CursorIcon::Pointer
         }))
+        .label(
+            Row::new()
+                .s(Height::exact(min_height))
+                .s(Gap::new().x(SPACING_4))
+                .s(Align::new().left().center_y())
         // Indentation spacer
         .item(
             El::new()
@@ -341,6 +349,7 @@ fn render_tree_item(
                     .s(Background::new().color("transparent"))
                     .s(Borders::new())
                     .s(RoundedCorners::all(2))
+                    .s(Align::center())
                     .s(Cursor::new(if is_disabled {
                         CursorIcon::NotAllowed
                     } else {
@@ -444,14 +453,11 @@ fn render_tree_item(
                             .s(Padding::all(0))
                             .s(Background::new().color("transparent"))
                             .s(Borders::new())
+                            .s(Align::new().center_y())
                             .s(Cursor::new(CursorIcon::Pointer))
                             .label(
                                 CheckboxBuilder::new()
-                                    .size(match size {
-                                        TreeViewSize::Small => CheckboxSize::Small,
-                                        TreeViewSize::Medium => CheckboxSize::Medium,
-                                        TreeViewSize::Large => CheckboxSize::Large,
-                                    })
+                                    .size(CheckboxSize::Small)
                                     .checked(is_selected)
                                     .build()
                             )
@@ -512,14 +518,23 @@ fn render_tree_item(
         // Icon (if enabled)
         .item_signal(always(show_icons).map({
             let item = item.clone();
+            let item_id = item_id.clone();
             move |show| {
                 if show {
+                    // Check if this is a Files & Scope item (no folder icons for these)
+                    let is_files_and_scope_item = item_id.starts_with("file_") || 
+                                                  item_id.contains("_scope_") ||
+                                                  (!item_id.starts_with("/") && matches!(item.item_type, Some(TreeViewItemType::File)));
+                    
                     let icon_name = if let Some(icon) = &item.icon {
                         icon_name_from_str(icon)
                     } else {
                         match item.item_type {
                             Some(TreeViewItemType::Folder) => {
-                                if has_children {
+                                if is_files_and_scope_item {
+                                    // No folder icons for Files & Scope items
+                                    return None;
+                                } else if has_children {
                                     IconName::Folder
                                 } else {
                                     IconName::Folder
@@ -527,7 +542,10 @@ fn render_tree_item(
                             }
                             Some(TreeViewItemType::File) => IconName::File,
                             _ => {
-                                if has_children {
+                                if is_files_and_scope_item {
+                                    // No folder icons for Files & Scope items
+                                    return None;
+                                } else if has_children {
                                     IconName::Folder
                                 } else {
                                     IconName::File
@@ -623,24 +641,15 @@ fn render_tree_item(
                     let expanded_items = expanded_items.clone();
                     let selected_items = selected_items.clone();
                     move |event| {
-                        // Prevent event from bubbling up to the row's click handler
-                        event.pass_to_parent(false);
-                        
                         if !is_disabled {
                             // Always set focus when clicking a label
                             focused_item.set(Some(item_id.clone()));
 
-                            if has_children {
-                                // Expandable items: only handle expansion/collapse
-                                let mut expanded = expanded_items.lock_mut();
-                                if expanded.contains(&item_id) {
-                                    expanded.remove(&item_id);
-                                    zoon::println!("TreeView: Label click collapsed {}", item_id);
-                                } else {
-                                    expanded.insert(item_id.clone());
-                                    zoon::println!("TreeView: Label click expanded {}", item_id);
-                                }
-                            } else if show_checkboxes {
+                            // Only handle selection logic for leaf items with checkboxes
+                            // and prevent bubbling only in that case
+                            if !has_children && show_checkboxes {
+                                // Prevent event from bubbling up for selection handling
+                                event.pass_to_parent(false);
                                 // Leaf items with checkboxes: handle selection (same logic as checkbox)
                                 let mut selected = selected_items.lock_mut();
                                 
@@ -684,6 +693,30 @@ fn render_tree_item(
                 })
                 .unify()
         )
+        )
+        // Click handler for entire row (excluding checkbox)
+        .on_press_event({
+            let item_id = item_id.clone();
+            let focused_item = focused_item.clone();
+            let expanded_items = expanded_items.clone();
+            let selected_items = selected_items.clone();
+            move |event| {
+                if !is_disabled && has_children {
+                    // Set focus when clicking row
+                    focused_item.set(Some(item_id.clone()));
+                    
+                    // Handle expansion/collapse for items with children
+                    let mut expanded = expanded_items.lock_mut();
+                    if expanded.contains(&item_id) {
+                        expanded.remove(&item_id);
+                        zoon::println!("TreeView: Row click collapsed {}", item_id);
+                    } else {
+                        expanded.insert(item_id.clone());
+                        zoon::println!("TreeView: Row click expanded {}", item_id);
+                    }
+                }
+            }
+        })
         // Background and interaction styling
         .s(Background::new().color_signal(
             map_ref! {
