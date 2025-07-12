@@ -1,6 +1,6 @@
 use zoon::*;
 use moonzoon_novyui::*;
-use moonzoon_novyui::tokens::color::{neutral_2, neutral_8, neutral_9, neutral_11, primary_6};
+use moonzoon_novyui::tokens::color::{neutral_2, neutral_8, neutral_9, neutral_11, primary_3, primary_6};
 use wasm_bindgen::JsCast;
 
 use shared::{Signal, filter_variables};
@@ -19,9 +19,11 @@ pub fn virtual_variables_list(variables: Vec<Signal>, search_filter: String) -> 
     if variables.is_empty() && search_filter.starts_with("Select a scope") {
         return Column::new()
             .s(Gap::new().y(4))
+            .s(Align::new().center_x())
+            .s(Padding::new().top(32))
             .item(
                 El::new()
-                    .s(Font::new().color_signal(neutral_8()).size(13))
+                    .s(Font::new().color_signal(neutral_8()).size(13).italic())
                     .child(search_filter)
             );
     }
@@ -131,8 +133,7 @@ pub fn rust_virtual_variables_list(variables: Vec<Signal>) -> Column<column::Emp
                 .s(Height::exact(400))  // FIXED HEIGHT - WORKING
                 // .s(Height::fill())   // DYNAMIC HEIGHT - BREAKS SCROLLING
                 .s(Background::new().color_signal(neutral_2()))
-                .s(RoundedCorners::all(8))
-                .s(Padding::all(4))
+                .s(Padding::new().top(4))
                 // ===== VIEWPORT SIZE MONITORING (DISABLED) =====
                 // This would track container size changes for dynamic height
                 // PROBLEM: Works for height detection but breaks scrolling when combined with Height::fill()
@@ -220,6 +221,10 @@ pub fn rust_virtual_variables_list(variables: Vec<Signal>) -> Column<column::Emp
                         
                         el
                     }
+                })
+                .update_raw_el(|raw_el| {
+                    raw_el.style("scrollbar-width", "thin")
+                        .style_signal("scrollbar-color", primary_6().map(|thumb| primary_3().map(move |track| format!("{} {}", thumb, track))).flatten())
                 })
                 .child(
                     // ===== VIRTUAL CONTENT AREA =====
@@ -318,8 +323,7 @@ pub fn rust_virtual_variables_list_with_signal(
                 .s(Width::fill())
                 .s(Height::exact_signal(height_signal.signal()))  // 🔥 KEY CHANGE: Signal-based height
                 .s(Background::new().color_signal(neutral_2()))
-                .s(RoundedCorners::all(8))
-                .s(Padding::all(4))
+                .s(Padding::new().top(4))
                 .update_raw_el({
                     let scroll_top = scroll_top.clone();
                     let visible_start = visible_start.clone();
@@ -369,6 +373,10 @@ pub fn rust_virtual_variables_list_with_signal(
                         
                         el
                     }
+                })
+                .update_raw_el(|raw_el| {
+                    raw_el.style("scrollbar-width", "thin")
+                        .style_signal("scrollbar-color", primary_6().map(|thumb| primary_3().map(move |track| format!("{} {}", thumb, track))).flatten())
                 })
                 .child(
                     El::new()
@@ -500,9 +508,11 @@ pub fn simple_variables_list(variables: Vec<Signal>, search_filter: String) -> C
     if variables.is_empty() && search_filter.starts_with("Select a scope") {
         return Column::new()
             .s(Gap::new().y(4))
+            .s(Align::new().center_x())
+            .s(Padding::new().top(32))
             .item(
                 El::new()
-                    .s(Font::new().color_signal(neutral_8()).size(13))
+                    .s(Font::new().color_signal(neutral_8()).size(13).italic())
                     .child(search_filter)
             );
     }
