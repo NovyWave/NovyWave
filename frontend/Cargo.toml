@@ -14,7 +14,7 @@ fast2d = { git = "https://github.com/NovyWave/Fast2D", rev = "c84195b8a0053e9afd
     "canvas",
 ] }
 moonzoon-novyui = { path = "../novyui/moonzoon-novyui" }
-web-sys = { version = "0.3", features = ["Performance", "Window", "console", "IntersectionObserver", "IntersectionObserverEntry", "IntersectionObserverInit", "Element", "HtmlElement", "DomRect"] }
+web-sys = { version = "0.3", features = ["Performance", "Window", "console", "IntersectionObserver", "IntersectionObserverEntry", "IntersectionObserverInit", "Element", "HtmlElement", "DomRect", "Document", "HtmlHeadElement", "HtmlLinkElement", "Node"] }
 wasm-bindgen = "0.2"
 js-sys = "0.3"
 serde-wasm-bindgen = "0.6"
