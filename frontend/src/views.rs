@@ -162,7 +162,7 @@ pub fn files_panel() -> impl Element {
                     )
                     .item(
                         load_files_button_with_progress(
-                            ButtonVariant::Secondary,
+                            ButtonVariant::Outline,
                             ButtonSize::Small,
                             Some(IconName::Folder)
                         )
@@ -612,7 +612,7 @@ fn create_panel(header_content: impl Element, content: impl Element) -> impl Ele
                 .item(
                     El::new()
                         .s(Padding::new().x(12).y(8))
-                        .s(Background::new().color_signal(neutral_3()))
+                        .s(Background::new().color_signal(neutral_4()))
                         .s(Borders::new().bottom_signal(neutral_4().map(|color| {
                             Border::new().width(1).color(color)
                         })))
@@ -1114,7 +1114,7 @@ fn theme_toggle_button() -> impl Element {
                     Theme::Light => IconName::Moon,
                     Theme::Dark => IconName::Sun,
                 })
-                .variant(ButtonVariant::Secondary)
+                .variant(ButtonVariant::Outline)
                 .size(ButtonSize::Small)
                 .on_press(|| toggle_theme())
                 .build()
@@ -1130,7 +1130,7 @@ fn dock_toggle_button() -> impl Element {
                 .left_icon_element(|| {
                     El::new()
                         .child_signal(IS_DOCKED_TO_BOTTOM.signal().map(|is_docked| {
-                            let icon_el = icon(IconName::ArrowDownToLine).size(IconSize::Small).build();
+                            let icon_el = icon(IconName::ArrowDownToLine).size(IconSize::Small).color(IconColor::Primary).build();
                             if is_docked {
                                 El::new()
                                     .s(Transform::new().rotate(-90))

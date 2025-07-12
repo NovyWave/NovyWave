@@ -57,10 +57,12 @@ pub fn main() {
         start_app("app", root);
         init_connection();
         
+        
         // Load configuration on startup
         send_up_msg(UpMsg::LoadConfig);
     });
 }
+
 
 fn init_scope_selection_handlers() {
     Task::start(async {

@@ -12,7 +12,6 @@ pub mod shadow;
 pub mod animation;
 pub mod opacity;
 pub mod focus;
-
 pub use theme::*;
 pub use color::*;
 pub use spacing::*;
