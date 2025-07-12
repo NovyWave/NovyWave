@@ -1,7 +1,7 @@
 use zoon::*;
 use moonzoon_novyui::*;
 use moonzoon_novyui::tokens::theme::{Theme, toggle_theme, theme};
-use moonzoon_novyui::tokens::color::{neutral_1, neutral_2, neutral_3, neutral_4, neutral_8, neutral_9, neutral_10, neutral_11, neutral_12, primary_6, primary_7};
+use moonzoon_novyui::tokens::color::{neutral_1, neutral_2, neutral_3, neutral_4, neutral_8, neutral_9, neutral_10, neutral_11, neutral_12, primary_3, primary_6, primary_7};
 use shared::{WaveformFile, ScopeData, filter_variables, UpMsg, FileSystemItem};
 use crate::types::{get_variables_from_selected_scope};
 use crate::virtual_list::virtual_variables_list;
@@ -176,8 +176,9 @@ pub fn files_panel() -> impl Element {
                     ),
                 Column::new()
                     .s(Gap::new().y(4))
-                    .s(Padding::all(12))
+                    .s(Padding::new().top(4).right(4))
                     .s(Height::fill())
+                    .s(Width::fill())
                     .item(
                         El::new()
                             .s(Height::fill())
@@ -569,6 +570,10 @@ pub fn files_panel_with_height() -> impl Element {
         .s(Height::exact_signal(FILES_PANEL_HEIGHT.signal()))
         .s(Width::fill())
         .s(Scrollbars::both())
+        .update_raw_el(|raw_el| {
+            raw_el.style("scrollbar-width", "thin")
+                .style_signal("scrollbar-color", primary_6().map(|thumb| primary_3().map(move |track| format!("{} {}", thumb, track))).flatten())
+        })
         .child(files_panel())
 }
 
@@ -577,6 +582,10 @@ pub fn variables_panel_with_fill() -> impl Element {
         .s(Width::fill())
         .s(Height::fill())
         .s(Scrollbars::both())
+        .update_raw_el(|raw_el| {
+            raw_el.style("scrollbar-width", "thin")
+                .style_signal("scrollbar-color", primary_6().map(|thumb| primary_3().map(move |track| format!("{} {}", thumb, track))).flatten())
+        })
         .child(variables_panel())
 }
 
@@ -585,6 +594,10 @@ pub fn files_panel_docked() -> impl Element {
         .s(Width::exact_signal(FILES_PANEL_WIDTH.signal()))
         .s(Height::fill())
         .s(Scrollbars::both())
+        .update_raw_el(|raw_el| {
+            raw_el.style("scrollbar-width", "thin")
+                .style_signal("scrollbar-color", primary_6().map(|thumb| primary_3().map(move |track| format!("{} {}", thumb, track))).flatten())
+        })
         .child(files_panel())
 }
 
@@ -593,6 +606,10 @@ pub fn variables_panel_docked() -> impl Element {
         .s(Width::fill())
         .s(Height::fill())
         .s(Scrollbars::both())
+        .update_raw_el(|raw_el| {
+            raw_el.style("scrollbar-width", "thin")
+                .style_signal("scrollbar-color", primary_6().map(|thumb| primary_3().map(move |track| format!("{} {}", thumb, track))).flatten())
+        })
         .child(variables_panel())
 }
 
@@ -602,7 +619,6 @@ fn create_panel(header_content: impl Element, content: impl Element) -> impl Ele
         .s(Height::fill())
         .s(Width::fill())
         .s(Background::new().color_signal(neutral_2()))
-        .s(RoundedCorners::all(6))
         .s(Borders::all_signal(neutral_4().map(|color| {
             Border::new().width(1).color(color)
         })))
@@ -616,7 +632,6 @@ fn create_panel(header_content: impl Element, content: impl Element) -> impl Ele
                         .s(Borders::new().bottom_signal(neutral_4().map(|color| {
                             Border::new().width(1).color(color)
                         })))
-                        .s(RoundedCorners::new().top(6))
                         .s(Font::new().weight(FontWeight::SemiBold).size(14).color_signal(neutral_11()))
                         .child(header_content)
                 )
@@ -624,6 +639,10 @@ fn create_panel(header_content: impl Element, content: impl Element) -> impl Ele
                     El::new()
                         .s(Height::fill())
                         .s(Scrollbars::both())
+                        .update_raw_el(|raw_el| {
+            raw_el.style("scrollbar-width", "thin")
+                .style_signal("scrollbar-color", primary_6().map(|thumb| primary_3().map(move |track| format!("{} {}", thumb, track))).flatten())
+        })
                         .child(content)
                 )
         )
@@ -632,7 +651,6 @@ fn create_panel(header_content: impl Element, content: impl Element) -> impl Ele
 fn simple_variables_content() -> impl Element {
     Column::new()
         .s(Gap::new().y(0))
-        .s(Padding::all(12))
         .s(Height::fill())
         .s(Width::fill())
         .item(
