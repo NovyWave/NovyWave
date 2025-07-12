@@ -88,3 +88,9 @@ pub fn toggle_theme() {
     };
     set_theme(new_theme);
 }
+
+/// Set theme without triggering the persistence callback
+/// Used internally to prevent circular updates when syncing from external sources
+pub fn set_theme_without_callback(new_theme: Theme) {
+    THEME.set(new_theme);
+}

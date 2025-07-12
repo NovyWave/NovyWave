@@ -31,9 +31,6 @@ async fn up_msg_handler(req: UpMsgRequest<UpMsg>) {
         UpMsg::SaveConfig(config) => {
             save_config(config, session_id, cor_id).await;
         }
-        UpMsg::SaveTheme(theme) => {
-            save_theme(theme, session_id, cor_id).await;
-        }
         UpMsg::BrowseDirectory(dir_path) => {
             browse_directory(dir_path, session_id, cor_id).await;
         }
@@ -238,41 +235,6 @@ async fn save_config(config: AppConfig, session_id: SessionId, cor_id: CorId) {
     }
 }
 
-async fn save_theme(theme: String, session_id: SessionId, cor_id: CorId) {
-    println!("Saving theme: {}", theme);
-    
-    // Load current config
-    let mut config = match fs::read_to_string(CONFIG_FILE_PATH) {
-        Ok(content) => {
-            match toml::from_str::<AppConfig>(&content) {
-                Ok(config) => config,
-                Err(e) => {
-                    println!("Failed to parse config file: {}", e);
-                    send_down_msg(DownMsg::ConfigError(format!("Failed to parse config: {}", e)), session_id, cor_id).await;
-                    return;
-                }
-            }
-        }
-        Err(_) => {
-            // Create default config if file doesn't exist
-            AppConfig::default()
-        }
-    };
-    
-    // Update theme
-    config.ui.theme = theme;
-    
-    // Save updated config
-    match save_config_to_file(&config) {
-        Ok(()) => {
-            send_down_msg(DownMsg::ThemeSaved, session_id, cor_id).await;
-        }
-        Err(e) => {
-            println!("Failed to save theme: {}", e);
-            send_down_msg(DownMsg::ConfigError(format!("Failed to save theme: {}", e)), session_id, cor_id).await;
-        }
-    }
-}
 
 fn save_config_to_file(config: &AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     let toml_content = toml::to_string_pretty(config)?;

@@ -2,10 +2,10 @@ use zoon::*;
 use crate::tokens::*;
 use crate::components::*;
 use std::collections::HashSet;
-// Force recompilation to test changes
+// Force recompilation to test hover remove buttons
 
 // Tree node data structure matching Vue TreeViewItemData interface
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct TreeViewItemData {
     pub id: String,
     pub label: String,
@@ -14,6 +14,7 @@ pub struct TreeViewItemData {
     pub disabled: Option<bool>,
     pub item_type: Option<TreeViewItemType>,
     pub has_expandable_content: Option<bool>,
+    pub on_remove: Option<std::rc::Rc<dyn Fn(&str) + 'static>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -47,6 +48,7 @@ impl TreeViewItemData {
             disabled: None,
             item_type: None,
             has_expandable_content: None,
+            on_remove: None,
         }
     }
 
@@ -72,6 +74,14 @@ impl TreeViewItemData {
 
     pub fn has_expandable_content(mut self, has_expandable_content: bool) -> Self {
         self.has_expandable_content = Some(has_expandable_content);
+        self
+    }
+
+    pub fn on_remove<F>(mut self, callback: F) -> Self 
+    where 
+        F: Fn(&str) + 'static 
+    {
+        self.on_remove = Some(std::rc::Rc::new(callback));
         self
     }
 
@@ -304,6 +314,14 @@ fn render_tree_item(
     let item_id = item.id.clone();
     let has_children = item.has_children();
     let is_disabled = tree_disabled || item.is_disabled();
+    
+    // Clone values needed for closures before moving
+    let item_id_for_remove = item_id.clone();
+    let item_on_remove = item.on_remove.clone();
+    let item_type = item.item_type;
+    
+    // Hover state for remove button
+    let (hovered, hovered_signal) = Mutable::new_and_signal(false);
 
     // Calculate indentation based on level
     let indent_width = level * 12; // 12px per level for compact hierarchy spacing
@@ -328,6 +346,12 @@ fn render_tree_item(
         } else {
             CursorIcon::Pointer
         }))
+        .on_hovered_change({
+            let hovered = hovered.clone();
+            move |is_hovered| {
+                hovered.set(is_hovered);
+            }
+        })
         .label(
             Row::new()
                 .s(Height::exact(min_height))
@@ -692,6 +716,50 @@ fn render_tree_item(
                     }
                 })
                 .unify()
+        )
+        // Add hover-only remove button after label
+        .item_signal(
+            map_ref! {
+                let hovered = hovered_signal,
+                let is_file = always(matches!(item_type, Some(TreeViewItemType::File))) =>
+                if *hovered && *is_file && item_on_remove.is_some() {
+                    Some(
+                        Button::new()
+                            .s(Width::exact(20))
+                            .s(Height::exact(20))
+                            .s(Padding::all(0))
+                            .s(Background::new().color("transparent"))
+                            .s(RoundedCorners::all(4))
+                            .s(Borders::new())
+                            .s(Cursor::new(CursorIcon::Pointer))
+                            .s(Background::new().color_signal(
+                                theme().map(|t| match t {
+                                    Theme::Light => "oklch(95% 0.14 0)", // error-2 light
+                                    Theme::Dark => "oklch(30% 0.14 0)",  // error-2 dark
+                                })
+                            ))
+                            .label(
+                                IconBuilder::new(IconName::X)
+                                    .size(IconSize::Small)
+                                    .color(IconColor::Error)
+                                    .build()
+                            )
+                            .on_press_event({
+                                let item_id = item_id_for_remove.clone();
+                                let on_remove = item_on_remove.clone();
+                                move |event| {
+                                    event.pass_to_parent(false);
+                                    if let Some(callback) = &on_remove {
+                                        callback(&item_id);
+                                    }
+                                }
+                            })
+                            .unify()
+                    )
+                } else {
+                    None
+                }
+            }
         )
         )
         // Click handler for entire row (excluding checkbox)

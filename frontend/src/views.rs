@@ -15,7 +15,7 @@ use crate::{
     LOADED_FILES, SELECTED_SCOPE_ID, TREE_SELECTED_ITEMS, EXPANDED_SCOPES,
     FILE_PATHS, show_file_paths_dialog, process_file_paths,
     FILE_PICKER_EXPANDED, FILE_PICKER_SELECTED,
-    FILE_PICKER_ERROR, FILE_TREE_CACHE, send_up_msg
+    FILE_PICKER_ERROR, FILE_TREE_CACHE, send_up_msg, DOCK_TOGGLE_IN_PROGRESS
 };
 
 pub fn file_paths_dialog() -> impl Element {
@@ -681,9 +681,33 @@ fn convert_files_to_tree_data(files: &[WaveformFile]) -> Vec<TreeViewItemData> {
             convert_scope_to_tree_data(scope)
         }).collect();
         
+        let file_id = file.id.clone();
         TreeViewItemData::new(file.id.clone(), file.filename.clone())
             .item_type(TreeViewItemType::File)
             .with_children(children)
+            .on_remove(move |id| {
+                // Remove file from LOADED_FILES
+                LOADED_FILES.lock_mut().retain(|f| f.id != id);
+                
+                // Remove from FILE_PATHS
+                FILE_PATHS.lock_mut().remove(id);
+                config::save_file_list();
+                
+                // Clear related scope selections if removed file contained selected scope
+                if let Some(selected_scope) = SELECTED_SCOPE_ID.get_cloned() {
+                    if selected_scope.starts_with(&format!("file_{}", id)) {
+                        SELECTED_SCOPE_ID.set(None);
+                    }
+                }
+                
+                // Clear expanded scopes for this file
+                EXPANDED_SCOPES.lock_mut().retain(|scope| !scope.starts_with(&format!("file_{}", id)));
+                
+                // Save file list after removal
+                config::save_file_list();
+                
+                zoon::println!("Removed file: {}", id);
+            })
     }).collect()
 }
 
@@ -1097,6 +1121,7 @@ fn process_file_picker_selection() {
             // Generate file ID and store path mapping for config persistence
             let file_id = shared::generate_file_id(file_path);
             FILE_PATHS.lock_mut().insert(file_id, file_path.clone());
+            config::save_file_list();
             
             // Send load request
             send_up_msg(UpMsg::LoadWaveformFile(file_path.clone()));
@@ -1119,7 +1144,8 @@ fn remove_all_button() -> impl Element {
             LOADED_FILES.lock_mut().clear();
             FILE_PATHS.lock_mut().clear();
             EXPANDED_SCOPES.lock_mut().clear();
-            config::save_current_config();
+            config::save_file_list();
+            config::save_scope_selection();
         })
         .build()
 }
@@ -1163,31 +1189,16 @@ fn dock_toggle_button() -> impl Element {
                 .variant(ButtonVariant::Outline)
                 .size(ButtonSize::Small)
                 .on_press(|| {
+                    DOCK_TOGGLE_IN_PROGRESS.set(true);
                     let new_is_docked = !IS_DOCKED_TO_BOTTOM.get();
+                    
+                    // Atomically switch dock mode while preserving dimensions
+                    config::switch_dock_mode_preserving_dimensions(new_is_docked);
+                    
+                    // Update UI state after config is saved
                     IS_DOCKED_TO_BOTTOM.set_neq(new_is_docked);
                     
-                    // Load appropriate panel sizes for the new mode
-                    if let Some(config) = config::LOADED_CONFIG.lock_ref().clone() {
-                        if new_is_docked {
-                            // Switching to "Docked to Bottom" mode
-                            FILES_PANEL_WIDTH.set_neq(u32::max(50, config.workspace.docked_to_bottom.files_panel_width as u32));
-                            FILES_PANEL_HEIGHT.set_neq(u32::max(50, config.workspace.docked_to_bottom.files_panel_height as u32));
-                        } else {
-                            // Switching to "Docked to Right" mode  
-                            FILES_PANEL_WIDTH.set_neq(u32::max(50, config.workspace.docked_to_right.files_panel_width as u32));
-                            FILES_PANEL_HEIGHT.set_neq(u32::max(50, config.workspace.docked_to_right.files_panel_height as u32));
-                        }
-                    } else {
-                        // Fallback to defaults if no config available
-                        if new_is_docked {
-                            FILES_PANEL_HEIGHT.set_neq(300);
-                        } else {
-                            FILES_PANEL_WIDTH.set_neq(470);
-                            FILES_PANEL_HEIGHT.set_neq(300);
-                        }
-                    }
-                    
-                    config::save_current_config();
+                    DOCK_TOGGLE_IN_PROGRESS.set(false);
                 })
                 .align(Align::center())
                 .build()
