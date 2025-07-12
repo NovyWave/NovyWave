@@ -18,6 +18,9 @@ pub static IS_DOCKED_TO_BOTTOM: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(
 pub static SHOW_FILE_DIALOG: Lazy<Mutable<bool>> = lazy::default();
 pub static FILE_PATHS_INPUT: Lazy<Mutable<String>> = lazy::default();
 
+// Dock toggle state to prevent cascading saves
+pub static DOCK_TOGGLE_IN_PROGRESS: Lazy<Mutable<bool>> = lazy::default();
+
 // File picker state for TreeView-based browser
 pub static FILE_PICKER_EXPANDED: Lazy<Mutable<HashSet<String>>> = lazy::default();
 pub static FILE_PICKER_SELECTED: Lazy<Mutable<HashSet<String>>> = lazy::default();

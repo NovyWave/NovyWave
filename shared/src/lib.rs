@@ -10,7 +10,6 @@ pub enum UpMsg {
     GetParsingProgress(String),
     LoadConfig,
     SaveConfig(AppConfig),
-    SaveTheme(String),
     BrowseDirectory(String),
 }
 
@@ -23,7 +22,6 @@ pub enum DownMsg {
     ConfigLoaded(AppConfig),
     ConfigSaved,
     ConfigError(String),
-    ThemeSaved,
     DirectoryContents { path: String, items: Vec<FileSystemItem> },
     DirectoryError { path: String, error: String },
 }
@@ -101,7 +99,6 @@ pub struct Signal {
 pub struct AppConfig {
     pub app: AppSection,
     pub ui: UiSection,
-    pub files: FilesSection,
     pub workspace: WorkspaceSection,
 }
 
@@ -170,28 +167,26 @@ impl Default for UiSection {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
-pub struct FilesSection {
-    pub opened_files: Vec<String>,
-}
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct WorkspaceSection {
+    pub opened_files: Vec<String>,
     pub dock_mode: String,
+    pub expanded_scopes: Vec<String>,
+    pub selected_scope_id: Option<String>,
     pub docked_to_bottom: DockedToBottomLayout,
     pub docked_to_right: DockedToRightLayout,
-    pub selected_scope_id: Option<String>,
-    pub expanded_scopes: Vec<String>,
 }
 
 impl Default for WorkspaceSection {
     fn default() -> Self {
         Self {
+            opened_files: Vec::new(),
             dock_mode: "right".to_string(),
+            expanded_scopes: Vec::new(),
+            selected_scope_id: None,
             docked_to_bottom: Default::default(),
             docked_to_right: Default::default(),
-            selected_scope_id: None,
-            expanded_scopes: Vec::new(),
         }
     }
 }

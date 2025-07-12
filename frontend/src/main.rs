@@ -12,7 +12,7 @@ mod connection;
 use connection::*;
 
 mod config;
-use config::*;
+use config::{CONFIG_LOADED, config_store, create_config_triggers, sync_config_to_globals, sync_globals_to_config, sync_theme_to_novyui};
 
 mod types;
 use shared::{UpMsg, DownMsg};
@@ -41,25 +41,53 @@ pub fn main() {
         // Initialize signal-based loading completion handling
         init_signal_chains();
         
-        // Initialize theme system with custom persistence
-        init_theme(
-            Some(Theme::Dark), // Default theme before config loads
-            Some(Box::new(|theme| {
-                // Save theme changes via UpMsg to backend
-                let theme_str = match theme {
-                    Theme::Light => "light",
-                    Theme::Dark => "dark",
-                };
-                send_up_msg(UpMsg::SaveTheme(theme_str.to_string()));
-            }))
-        );
-        
         start_app("app", root);
         init_connection();
         
-        
-        // Load configuration on startup
+        // Load configuration FIRST before setting up reactive triggers
         send_up_msg(UpMsg::LoadConfig);
+        
+        // Wait for CONFIG_LOADED flag, then set up reactive system
+        Task::start(async {
+            // Wait for config to actually load from backend
+            CONFIG_LOADED.signal().for_each_sync(|loaded| {
+                if loaded {
+                    zoon::println!("Config loaded from backend, setting up reactive system...");
+                    
+                    // Initialize new config system with reactive triggers
+                    create_config_triggers();
+                    
+                    // Initialize bidirectional sync between config store and global state
+                    sync_config_to_globals();
+                    sync_globals_to_config();
+                    
+                    // Initialize theme synchronization from config store to NovyUI
+                    sync_theme_to_novyui();
+                    
+                    // Initialize theme system with unified config persistence  
+                    let current_theme = config_store().ui.lock_ref().theme.get_cloned();
+                    let novyui_theme = match current_theme {
+                        crate::config::Theme::Light => Theme::Light,
+                        crate::config::Theme::Dark => Theme::Dark,
+                    };
+                    
+                    init_theme(
+                        Some(novyui_theme), // Use loaded theme, not default
+                        Some(Box::new(|novyui_theme| {
+                            zoon::println!("Theme callback triggered! NovyUI theme: {:?}", novyui_theme);
+                            // Convert NovyUI theme to config theme and update store
+                            let config_theme = match novyui_theme {
+                                Theme::Light => crate::config::Theme::Light,
+                                Theme::Dark => crate::config::Theme::Dark,
+                            };
+                            zoon::println!("Setting config theme to: {:?}", config_theme);
+                            config_store().ui.lock_mut().theme.set_neq(config_theme);
+                            zoon::println!("Config theme set!");
+                        }))
+                    );
+                }
+            }).await
+        });
     });
 }
 
@@ -90,8 +118,8 @@ fn init_scope_selection_handlers() {
     // Auto-save when selected scope changes
     Task::start(async {
         SELECTED_SCOPE_ID.signal_cloned().for_each_sync(|_| {
-            if CONFIG_LOADED.get() {
-                config::save_current_config();
+            if CONFIG_LOADED.get() && !DOCK_TOGGLE_IN_PROGRESS.get() {
+                config::save_scope_selection();
             }
         }).await
     });
@@ -101,8 +129,8 @@ fn init_scope_selection_handlers() {
         EXPANDED_SCOPES.signal_ref(|expanded_scopes| {
             expanded_scopes.clone()
         }).for_each_sync(|_expanded_scopes| {
-            if CONFIG_LOADED.get() {
-                config::save_current_config();
+            if CONFIG_LOADED.get() && !DOCK_TOGGLE_IN_PROGRESS.get() {
+                config::save_scope_selection();
             }
         }).await
     });
@@ -195,8 +223,8 @@ fn main_layout() -> impl Element {
                     let new_width = width as i32 + event.movement_x();
                     u32::max(50, u32::try_from(new_width).unwrap_or(50))
                 });
-                if CONFIG_LOADED.get() {
-                    config::save_current_config();
+                if CONFIG_LOADED.get() && !DOCK_TOGGLE_IN_PROGRESS.get() {
+                    config::save_panel_layout();
                 }
             } else if HORIZONTAL_DIVIDER_DRAGGING.get() {
                 if IS_DOCKED_TO_BOTTOM.get() {
@@ -205,18 +233,12 @@ fn main_layout() -> impl Element {
                         let new_height = height as i32 + event.movement_y();
                         u32::max(50, u32::try_from(new_height).unwrap_or(50))
                     });
-                    if CONFIG_LOADED.get() {
-                        config::save_current_config();
-                    }
                 } else {
                     // In "Docked to Right" mode, horizontal divider controls files panel height
                     FILES_PANEL_HEIGHT.update(|height| {
                         let new_height = height as i32 + event.movement_y();
                         u32::max(50, u32::try_from(new_height).unwrap_or(50))
                     });
-                    if CONFIG_LOADED.get() {
-                        config::save_current_config();
-                    }
                 }
             }
         })

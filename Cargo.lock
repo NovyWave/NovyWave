@@ -1264,6 +1264,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "educe"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d7bc049e1bd8cdeb31b68bbd586a9464ecf9f3944af3958a7a9d0f8b9799417"
+dependencies = [
+ "enum-ordinalize",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.99",
+]
+
+[[package]]
 name = "either"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1511,6 +1523,7 @@ dependencies = [
 name = "frontend"
 version = "0.1.0"
 dependencies = [
+ "educe 0.6.0",
  "fast2d",
  "js-sys",
  "moonzoon-novyui",
@@ -6510,7 +6523,7 @@ dependencies = [
  "cssparser 0.33.0",
  "cssparser-color",
  "dominator",
- "educe",
+ "educe 0.5.11",
  "enclose",
  "futures-channel",
  "futures_signals_ext",
