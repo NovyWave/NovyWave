@@ -1,5 +1,5 @@
 use zoon::*;
-use shared::{Signal, WaveformFile, ScopeData, file_contains_scope, collect_variables_from_scopes};
+use shared::{ScopeData, file_contains_scope};
 use shared::LoadingStatus;
 use crate::state::{LOADING_FILES, IS_LOADING, LOADED_FILES, SELECTED_SCOPE_ID, TREE_SELECTED_ITEMS, EXPANDED_SCOPES, USER_CLEARED_SELECTION};
 
@@ -100,47 +100,8 @@ fn scope_contains_target(scopes: &[ScopeData], target_scope_id: &str) -> bool {
     false
 }
 
-pub fn init_scope_selection() {
-    let files = LOADED_FILES.lock_ref();
-    if files.is_empty() {
-        return;
-    }
-    
-    // Find the first scope with variables (depth-first search)
-    if let Some(first_scope_with_vars) = find_first_scope_with_variables(&files) {
-        zoon::println!("Auto-selecting first scope with variables: {}", first_scope_with_vars);
-        SELECTED_SCOPE_ID.set_neq(Some(first_scope_with_vars.clone()));
-        TREE_SELECTED_ITEMS.lock_mut().insert(first_scope_with_vars.clone());
-        
-        
-        // Expand parent scopes
-        for file in files.iter() {
-            expand_parent_scopes(&file.scopes, &first_scope_with_vars);
-        }
-    }
-}
 
-fn find_first_scope_with_variables(files: &[WaveformFile]) -> Option<String> {
-    for file in files {
-        if let Some(scope_id) = find_scope_with_variables_recursive(&file.scopes) {
-            return Some(scope_id);
-        }
-    }
-    None
-}
 
-fn find_scope_with_variables_recursive(scopes: &[ScopeData]) -> Option<String> {
-    for scope in scopes {
-        if !scope.variables.is_empty() {
-            return Some(scope.id.clone());
-        }
-        
-        if let Some(child_scope_id) = find_scope_with_variables_recursive(&scope.children) {
-            return Some(child_scope_id);
-        }
-    }
-    None
-}
 
 // Initialize signal-based file clearing on loading completion
 pub fn init_signal_chains() {
@@ -160,20 +121,4 @@ pub fn init_signal_chains() {
     });
 }
 
-pub fn get_all_variables_from_files() -> Vec<Signal> {
-    let mut variables = Vec::new();
-    for file in LOADED_FILES.lock_ref().iter() {
-        collect_variables_from_scopes(&file.scopes, &mut variables);
-    }
-    variables
-}
 
-pub fn get_variables_from_selected_scope(selected_scope_id: &str) -> Vec<Signal> {
-    let mut variables = Vec::new();
-    for file in LOADED_FILES.lock_ref().iter() {
-        if let Some(scope_vars) = shared::find_variables_in_scope(&file.scopes, selected_scope_id) {
-            variables.extend(scope_vars);
-        }
-    }
-    variables
-}

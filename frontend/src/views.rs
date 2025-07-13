@@ -1,19 +1,18 @@
 use zoon::*;
 use moonzoon_novyui::*;
 use moonzoon_novyui::tokens::theme::{Theme, toggle_theme, theme};
-use moonzoon_novyui::tokens::color::{neutral_1, neutral_2, neutral_3, neutral_4, neutral_8, neutral_9, neutral_10, neutral_11, neutral_12, primary_3, primary_6, primary_7};
-use shared::{WaveformFile, ScopeData, filter_variables, UpMsg, FileSystemItem};
+use moonzoon_novyui::tokens::color::{neutral_1, neutral_2, neutral_4, neutral_8, neutral_9, neutral_10, neutral_11, neutral_12, primary_3, primary_6, primary_7};
+use shared::{WaveformFile, ScopeData, filter_variables, UpMsg};
 use crate::types::{get_variables_from_selected_scope};
 use crate::virtual_list::virtual_variables_list;
 use crate::config;
 use std::collections::{HashSet, HashMap};
-use wasm_bindgen_futures::spawn_local;
 use crate::{
     IS_DOCKED_TO_BOTTOM, FILES_PANEL_WIDTH, FILES_PANEL_HEIGHT,
     VERTICAL_DIVIDER_DRAGGING, HORIZONTAL_DIVIDER_DRAGGING,
     VARIABLES_SEARCH_FILTER, SHOW_FILE_DIALOG, IS_LOADING,
     LOADED_FILES, SELECTED_SCOPE_ID, TREE_SELECTED_ITEMS, EXPANDED_SCOPES,
-    FILE_PATHS, show_file_paths_dialog, process_file_paths,
+    FILE_PATHS, show_file_paths_dialog,
     FILE_PICKER_EXPANDED, FILE_PICKER_SELECTED,
     FILE_PICKER_ERROR, FILE_TREE_CACHE, send_up_msg, DOCK_TOGGLE_IN_PROGRESS
 };
@@ -83,6 +82,7 @@ pub fn file_paths_dialog() -> impl Element {
         )
 }
 
+#[allow(dead_code)]
 pub fn app_header() -> impl Element {
     Row::new()
         .s(Height::exact(40))
@@ -111,6 +111,7 @@ pub fn app_header() -> impl Element {
         )
 }
 
+#[allow(dead_code)]
 pub fn docked_layout() -> impl Element {
     Column::new()
         .s(Height::fill())
@@ -127,6 +128,7 @@ pub fn docked_layout() -> impl Element {
         .item(selected_variables_with_waveform_panel())
 }
 
+#[allow(dead_code)]
 pub fn undocked_layout() -> impl Element {
     Row::new()
         .s(Height::fill())
@@ -220,8 +222,9 @@ pub fn variables_panel() -> impl Element {
         .child(
             create_panel(
                 Row::new()
+                    .s(Width::fill())
                     .s(Gap::new().x(8))
-                    .s(Align::new().center_y())
+                    .s(Align::new().left().center_y())
                     .item(
                         El::new()
                             .s(Font::new().no_wrap())
@@ -236,7 +239,7 @@ pub fn variables_panel() -> impl Element {
                                     let search_filter = VARIABLES_SEARCH_FILTER.signal_cloned() =>
                                     {
                                         if let Some(scope_id) = selected_scope_id {
-                                            let loaded_files: Vec<WaveformFile> = LOADED_FILES.lock_ref().iter().cloned().collect();
+                                            let _loaded_files: Vec<WaveformFile> = LOADED_FILES.lock_ref().iter().cloned().collect();
                                             let variables = get_variables_from_selected_scope(&scope_id);
                                             let filtered_variables = filter_variables(&variables, &search_filter);
                                             filtered_variables.len().to_string()
@@ -249,15 +252,21 @@ pub fn variables_panel() -> impl Element {
                     )
                     .item(
                         El::new()
-                            .s(Width::fill())
-                    )
-                    .item(
-                        input()
-                            .placeholder("variable_name")
-                            .left_icon(IconName::Search)
-                            .size(InputSize::Small)
-                            .on_change(|text| VARIABLES_SEARCH_FILTER.set_neq(text))
-                            .build()
+                            .s(Width::fill().max(230))
+                            .s(Align::new().right())
+                            .child(
+                                input()
+                                    .placeholder("variable_name")
+                                    .value_signal(VARIABLES_SEARCH_FILTER.signal_cloned())
+                                    .left_icon(IconName::Search)
+                                    .right_icon_signal(VARIABLES_SEARCH_FILTER.signal_cloned().map(|text| {
+                                        if text.is_empty() { None } else { Some(IconName::X) }
+                                    }))
+                                    .on_right_icon_click(|| VARIABLES_SEARCH_FILTER.set_neq(String::new()))
+                                    .size(InputSize::Small)
+                                    .on_change(|text| VARIABLES_SEARCH_FILTER.set_neq(text))
+                                    .build()
+                            )
                     ),
                 simple_variables_content()
             )
@@ -440,6 +449,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
         )
 }
 
+#[allow(dead_code)]
 pub fn selected_panel() -> impl Element {
     El::new()
         .s(Height::fill())
@@ -498,6 +508,7 @@ pub fn selected_panel() -> impl Element {
         )
 }
 
+#[allow(dead_code)]
 pub fn waveform_panel() -> impl Element {
     El::new()
         .s(Width::fill().min(500))
@@ -558,12 +569,6 @@ pub fn waveform_panel() -> impl Element {
 }
 
 // Helper functions for different panel configurations
-pub fn files_panel_with_width() -> impl Element {
-    El::new()
-        .s(Width::exact_signal(FILES_PANEL_WIDTH.signal()))
-        .s(Height::fill())
-        .child(files_panel())
-}
 
 pub fn files_panel_with_height() -> impl Element {
     El::new()
@@ -627,7 +632,7 @@ fn create_panel(header_content: impl Element, content: impl Element) -> impl Ele
                 .s(Height::fill())
                 .item(
                     El::new()
-                        .s(Padding::new().x(12).y(8))
+                        .s(Padding::new().x(12).y(4))
                         .s(Background::new().color_signal(neutral_4()))
                         .s(Borders::new().bottom_signal(neutral_4().map(|color| {
                             Border::new().width(1).color(color)
@@ -663,7 +668,7 @@ fn simple_variables_content() -> impl Element {
                         let search_filter = VARIABLES_SEARCH_FILTER.signal_cloned() =>
                         {
                             if let Some(scope_id) = selected_scope_id {
-                                let loaded_files: Vec<WaveformFile> = LOADED_FILES.lock_ref().iter().cloned().collect();
+                                let _loaded_files: Vec<WaveformFile> = LOADED_FILES.lock_ref().iter().cloned().collect();
                                 let variables = get_variables_from_selected_scope(&scope_id);
                                 virtual_variables_list(variables, search_filter.clone()).into_element()
                             } else {
@@ -681,7 +686,6 @@ fn convert_files_to_tree_data(files: &[WaveformFile]) -> Vec<TreeViewItemData> {
             convert_scope_to_tree_data(scope)
         }).collect();
         
-        let file_id = file.id.clone();
         TreeViewItemData::new(file.id.clone(), file.filename.clone())
             .item_type(TreeViewItemType::File)
             .with_children(children)
@@ -752,25 +756,6 @@ fn load_files_button_with_progress(variant: ButtonVariant, size: ButtonSize, ico
         }))
 }
 
-fn load_files_dialog_button() -> impl Element {
-    El::new()
-        .child_signal(IS_LOADING.signal().map(|is_loading| {
-            let mut btn = button();
-            
-            if is_loading {
-                btn = btn.label("Loading...")
-                    .disabled(true);
-            } else {
-                btn = btn.label("Load Files")
-                    .on_press(|| process_file_paths());
-            }
-            
-            btn.variant(ButtonVariant::Primary)
-                .size(ButtonSize::Medium)
-                .build()
-                .into_element()
-        }))
-}
 
 fn load_files_picker_button() -> impl Element {
     El::new()
@@ -860,7 +845,7 @@ fn simple_file_picker_tree() -> impl Element {
                     monitor_directory_expansions(expanded.clone());
                     
                     // Check if we have root directory data
-                    if let Some(root_items) = tree_cache.get("/") {
+                    if let Some(_root_items) = tree_cache.get("/") {
                         // Create root "/" item and build hierarchical tree
                         let tree_data = vec![
                             TreeViewItemData::new("/".to_string(), "/".to_string())
@@ -1080,35 +1065,6 @@ fn selected_files_display() -> impl Element {
 
 
 
-fn create_tree_item_from_filesystem_item(item: shared::FileSystemItem) -> TreeViewItemData {
-    let mut data = TreeViewItemData::new(item.path.clone(), item.name.clone())
-        .icon(if item.is_directory {
-            "folder".to_string()
-        } else {
-            "file".to_string()
-        })
-        .item_type(if item.is_directory {
-            TreeViewItemType::Folder
-        } else {
-            TreeViewItemType::File
-        });
-    
-    // Only disable non-waveform files, allow all directories
-    if !item.is_directory && !item.is_waveform_file {
-        data = data.disabled(true);
-    }
-    
-    // Only directories with expandable content get placeholder children to show expand arrow
-    if item.is_directory && item.has_expandable_content {
-        data = data.with_children(vec![
-            TreeViewItemData::new("loading", "Loading...")
-                .item_type(TreeViewItemType::Default)
-                .disabled(true)
-        ]);
-    }
-    
-    data
-}
 
 fn process_file_picker_selection() {
     let selected_files = FILE_PICKER_SELECTED.lock_ref().clone();

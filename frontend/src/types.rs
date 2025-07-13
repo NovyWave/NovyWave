@@ -1,4 +1,4 @@
-use shared::{Signal, WaveformFile, ScopeData, find_variables_in_scope, LoadingFile, LoadingStatus};
+use shared::{Signal, find_variables_in_scope};
 
 // ===== FRONTEND-SPECIFIC UTILITY FUNCTIONS =====
 
@@ -14,6 +14,7 @@ pub fn get_variables_from_selected_scope(selected_scope_id: &str) -> Vec<Signal>
     Vec::new()
 }
 
+#[allow(dead_code)]
 pub fn get_all_variables_from_files() -> Vec<Signal> {
     use crate::state::LOADED_FILES;
     use shared::collect_variables_from_scopes;

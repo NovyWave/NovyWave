@@ -3,7 +3,6 @@
 
 use zoon::*;
 use serde::{Deserialize, Serialize};
-use educe::Educe;
 use shared::UpMsg;
 
 // =============================================================================
@@ -551,6 +550,7 @@ pub fn save_panel_layout() {
     // The new system auto-saves when config changes
 }
 
+#[allow(dead_code)]
 pub fn save_current_config() {
     // This is now handled automatically by the reactive triggers
     // The new system auto-saves when config changes
@@ -691,6 +691,7 @@ pub fn current_dock_mode() -> impl Signal<Item = DockMode> {
     config_store().workspace.signal_ref(|ws| ws.dock_mode.signal_cloned()).flatten()
 }
 
+#[allow(dead_code)]
 pub fn is_docked_to_bottom() -> impl Signal<Item = bool> {
     current_dock_mode().map(|mode| matches!(mode, DockMode::Bottom))
 }

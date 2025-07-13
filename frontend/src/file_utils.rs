@@ -21,6 +21,7 @@ pub fn show_file_paths_dialog() {
     crate::CURRENT_DIRECTORY.set_neq(String::new());
 }
 
+#[allow(dead_code)]
 pub fn process_file_paths() {
     let input = FILE_PATHS_INPUT.get_cloned();
     let paths: Vec<String> = input

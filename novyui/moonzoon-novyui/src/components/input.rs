@@ -35,6 +35,7 @@ pub enum InputState {
 pub struct InputBuilder {
     placeholder: String,
     value: String,
+    value_signal: Option<Box<dyn Signal<Item = String> + Unpin>>,
     size: InputSize,
     input_kind: InputKind,
     state: InputState,
@@ -43,6 +44,8 @@ pub struct InputBuilder {
     required: bool,
     left_icon: Option<IconName>,
     right_icon: Option<IconName>,
+    right_icon_signal: Option<Box<dyn Signal<Item = Option<IconName>> + Unpin>>,
+    on_right_icon_click: Option<Rc<dyn Fn()>>,
     on_change: Option<Rc<dyn Fn(String)>>,
     on_focus: Option<Rc<dyn Fn()>>,
     on_blur: Option<Rc<dyn Fn()>>,
@@ -53,6 +56,7 @@ impl InputBuilder {
         Self {
             placeholder: String::new(),
             value: String::new(),
+            value_signal: None,
             size: InputSize::Medium,
             input_kind: InputKind::Text,
             state: InputState::Default,
@@ -61,6 +65,8 @@ impl InputBuilder {
             required: false,
             left_icon: None,
             right_icon: None,
+            right_icon_signal: None,
+            on_right_icon_click: None,
             on_change: None,
             on_focus: None,
             on_blur: None,
@@ -74,6 +80,11 @@ impl InputBuilder {
 
     pub fn value(mut self, value: impl Into<String>) -> Self {
         self.value = value.into();
+        self
+    }
+
+    pub fn value_signal(mut self, signal: impl Signal<Item = String> + Unpin + 'static) -> Self {
+        self.value_signal = Some(Box::new(signal));
         self
     }
 
@@ -125,6 +136,19 @@ impl InputBuilder {
 
     pub fn right_icon(mut self, icon: IconName) -> Self {
         self.right_icon = Some(icon);
+        self
+    }
+
+    pub fn right_icon_signal(mut self, signal: impl Signal<Item = Option<IconName>> + Unpin + 'static) -> Self {
+        self.right_icon_signal = Some(Box::new(signal));
+        self
+    }
+
+    pub fn on_right_icon_click<F>(mut self, handler: F) -> Self
+    where
+        F: Fn() + 'static,
+    {
+        self.on_right_icon_click = Some(Rc::new(handler));
         self
     }
 
@@ -243,8 +267,11 @@ impl InputBuilder {
         let state = self.state;
         let placeholder = self.placeholder.clone();
         let value = self.value.clone();
+        let value_signal = self.value_signal;
         let left_icon = self.left_icon;
         let right_icon = self.right_icon;
+        let right_icon_signal = self.right_icon_signal;
+        let on_right_icon_click = self.on_right_icon_click;
         let size = self.size;
 
         // Container with proper styling matching Vue implementation
@@ -378,7 +405,11 @@ impl InputBuilder {
                                 Theme::Dark => "oklch(85% 0.14 250)", // primary_9 dark (Vue exact)
                             })))
                     )
-                    .text(&value)
+                    .text_signal(if let Some(signal) = value_signal {
+                        signal
+                    } else {
+                        Box::new(always(value))
+                    })
                     .read_only(matches!(state, InputState::Readonly))
                     .label_hidden("Input")
                     .on_change({
@@ -411,23 +442,49 @@ impl InputBuilder {
                         }
                     })
             )
-            .item_signal(always(right_icon).map(move |icon_opt| {
-                icon_opt.map(|icon_name| {
-                    icon_str(&icon_name.to_kebab_case())
-                        .size(match size {
-                            InputSize::Small => IconSize::Small,
-                            InputSize::Medium => IconSize::Medium,
-                            InputSize::Large => IconSize::Large,
+            .item_signal({
+                // Use signal if available, otherwise fall back to static right_icon
+                let icon_signal = if let Some(signal) = right_icon_signal {
+                    signal
+                } else {
+                    Box::new(always(right_icon))
+                };
+                
+                icon_signal.map({
+                    let on_right_icon_click = on_right_icon_click.clone();
+                    move |icon_opt| {
+                        icon_opt.map(|icon_name| {
+                            let icon_element = icon_str(&icon_name.to_kebab_case())
+                                .size(match size {
+                                    InputSize::Small => IconSize::Small,
+                                    InputSize::Medium => IconSize::Medium,
+                                    InputSize::Large => IconSize::Large,
+                                })
+                                .color(match state {
+                                    InputState::Disabled => IconColor::Muted,
+                                    InputState::Readonly => IconColor::Muted, // Slightly muted for readonly
+                                    InputState::Error => IconColor::Error,
+                                    _ => IconColor::Secondary,
+                                })
+                                .build();
+
+                            // If click handler exists, wrap icon in clickable element
+                            if let Some(ref handler) = on_right_icon_click {
+                                let handler = handler.clone();
+                                El::new()
+                                    .s(Cursor::new(CursorIcon::Pointer))
+                                    .child(icon_element)
+                                    .on_click(move || handler())
+                                    .into_element()
+                            } else {
+                                El::new()
+                                    .child(icon_element)
+                                    .into_element()
+                            }
                         })
-                        .color(match state {
-                            InputState::Disabled => IconColor::Muted,
-                            InputState::Readonly => IconColor::Muted, // Slightly muted for readonly
-                            InputState::Error => IconColor::Error,
-                            _ => IconColor::Secondary,
-                        })
-                        .build()
+                    }
                 })
-            }))
+            })
     }
 }
 

@@ -1,6 +1,6 @@
 use zoon::*;
 use moonzoon_novyui::*;
-use moonzoon_novyui::tokens::color::{neutral_2, neutral_8, neutral_9, neutral_11, primary_3, primary_6};
+use moonzoon_novyui::tokens::color::{neutral_2, neutral_8, neutral_11, primary_3, primary_6};
 use wasm_bindgen::JsCast;
 
 use shared::{Signal, filter_variables};
@@ -84,6 +84,7 @@ pub fn rust_virtual_variables_list_simple_fill(variables: Vec<Signal>) -> Column
         )
 }
 
+#[allow(dead_code)]
 pub fn rust_virtual_variables_list(variables: Vec<Signal>) -> Column<column::EmptyFlagNotSet, RawHtmlEl> {
     let total_items = variables.len();
     let item_height = 24.0; // Fixed height per item - DO NOT CHANGE
@@ -91,7 +92,7 @@ pub fn rust_virtual_variables_list(variables: Vec<Signal>) -> Column<column::Emp
     // ===== HEIGHT MANAGEMENT =====
     // CURRENT: Fixed 400px height (WORKING)
     // DYNAMIC: Should be updated by viewport monitoring
-    let container_height = Mutable::new(400.0); // FIXED HEIGHT - change for dynamic
+    let _container_height = Mutable::new(400.0); // FIXED HEIGHT - change for dynamic
     
     // ===== VISIBLE ITEM CALCULATIONS =====
     // Calculate how many items fit in the container + buffer
@@ -154,7 +155,7 @@ pub fn rust_virtual_variables_list(variables: Vec<Signal>) -> Column<column::Emp
                     let visible_start = visible_start.clone();
                     let visible_end = visible_end.clone();
                     let visible_count = visible_count.clone();
-                    let variables = variables.clone();
+                    let _variables = variables.clone();
                     
                     move |el| {
                         // ===== SCROLL CONTAINER SETUP =====
@@ -173,7 +174,7 @@ pub fn rust_virtual_variables_list(variables: Vec<Signal>) -> Column<column::Emp
                                 let scroll_top = scroll_top.clone();
                                 let visible_start = visible_start.clone();
                                 let visible_end = visible_end.clone();
-                                let visible_count = visible_count.clone();
+                                let _visible_count = visible_count.clone();
                                 
                                 move |_event: web_sys::Event| {
                                     // Find the scroll container element
@@ -328,7 +329,7 @@ pub fn rust_virtual_variables_list_with_signal(
                     let scroll_top = scroll_top.clone();
                     let visible_start = visible_start.clone();
                     let visible_end = visible_end.clone();
-                    let variables = variables.clone();
+                    let _variables = variables.clone();
                     
                     move |el| {
                         if let Some(html_el) = el.dom_element().dyn_ref::<web_sys::HtmlElement>() {
@@ -403,6 +404,7 @@ pub fn rust_virtual_variables_list_with_signal(
         )
 }
 
+#[allow(dead_code)]
 pub fn rust_virtual_variables_list_dynamic_wrapper(
     variables: Vec<Signal>
 ) -> Column<column::EmptyFlagNotSet, RawHtmlEl> {
@@ -458,6 +460,7 @@ pub fn virtual_variable_row_positioned(signal: Signal, top_offset: f64) -> impl 
         )
 }
 
+#[allow(dead_code)]
 pub fn virtual_variable_row(signal: Signal) -> impl Element {
     Row::new()
         .s(Gap::new().x(8))
@@ -480,6 +483,7 @@ pub fn virtual_variable_row(signal: Signal) -> impl Element {
         )
 }
 
+#[allow(dead_code)]
 pub fn simple_variable_row(signal: Signal) -> Row<row::EmptyFlagNotSet, row::MultilineFlagNotSet, RawHtmlEl> {
     Row::new()
         .s(Gap::new().x(8))
@@ -503,6 +507,7 @@ pub fn simple_variable_row(signal: Signal) -> Row<row::EmptyFlagNotSet, row::Mul
 
 // ===== SUPPORT FUNCTIONS =====
 
+#[allow(dead_code)]
 pub fn simple_variables_list(variables: Vec<Signal>, search_filter: String) -> Column<column::EmptyFlagNotSet, RawHtmlEl> {
     // Special case for displaying a message when called with empty variables and a message
     if variables.is_empty() && search_filter.starts_with("Select a scope") {
