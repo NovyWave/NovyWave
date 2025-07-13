@@ -1,3 +1,11 @@
+#![allow(unused)]
+#![allow(ambiguous_glob_reexports)]
+
+// TODO: Resolve ambiguous glob re-exports between components::* and tokens::*
+// The 'typography' module is exported from both, causing naming conflicts
+// TODO: Clean up unused code and variables in components (dead_code warnings)
+// TODO: Remove or fix unused variables in treeview.rs and list.rs components
+
 //! # MoonZoon NovyUI Component Library
 //!
 //! A comprehensive, type-safe UI component library for MoonZoon applications.

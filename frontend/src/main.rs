@@ -1,9 +1,8 @@
 use zoon::{*, futures_util::future::try_join_all};
-use moonzoon_novyui::tokens::theme::{Theme, init_theme, theme};
+use moonzoon_novyui::tokens::theme::{Theme, init_theme};
 use moonzoon_novyui::tokens::color::{neutral_1};
 
 mod virtual_list;
-use virtual_list::*;
 
 mod file_utils;
 use file_utils::*;
@@ -15,7 +14,7 @@ mod config;
 use config::{CONFIG_LOADED, config_store, create_config_triggers, sync_config_to_globals, sync_globals_to_config, sync_theme_to_novyui};
 
 mod types;
-use shared::{UpMsg, DownMsg};
+use shared::{UpMsg};
 
 mod views;
 use views::*;

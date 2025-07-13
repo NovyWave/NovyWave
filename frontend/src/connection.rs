@@ -1,5 +1,5 @@
 use zoon::*;
-use crate::{LOADING_FILES, LOADED_FILES, check_loading_complete, init_signal_chains, config};
+use crate::{LOADING_FILES, LOADED_FILES, check_loading_complete, config};
 use crate::config::CONFIG_LOADED;
 use shared::{UpMsg, DownMsg};
 use shared::{LoadingFile, LoadingStatus};
