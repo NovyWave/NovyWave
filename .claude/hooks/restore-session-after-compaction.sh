@@ -50,8 +50,23 @@ if [ ! -z "$LATEST_BACKUP" ]; then
         fi
     fi
     
+    # Check file size and clean up if needed (prevent bloat)
+    FOCUS_FILE=".claude/ai-docs/focus-context.md"
+    CURRENT_LINES=$(wc -l < "$FOCUS_FILE" 2>/dev/null || echo "0")
+    
+    if [ "$CURRENT_LINES" -gt 100 ]; then
+        echo "   🧹 Cleaning focus-context.md (${CURRENT_LINES} lines, keeping first 50)" >> "$HOOK_LOG"
+        # Keep the first 50 lines (useful content) and add cleanup note
+        head -50 "$FOCUS_FILE" > "${FOCUS_FILE}.tmp"
+        echo "" >> "${FOCUS_FILE}.tmp"
+        echo "## Recovery Context" >> "${FOCUS_FILE}.tmp"
+        echo "- Recovery contexts cleaned up to prevent bloat (was ${CURRENT_LINES} lines)" >> "${FOCUS_FILE}.tmp"
+        echo "- Only the most recent context is preserved below" >> "${FOCUS_FILE}.tmp"
+        mv "${FOCUS_FILE}.tmp" "$FOCUS_FILE"
+    fi
+    
     # Update focus context with recovery info
-    cat >> .claude/ai-docs/focus-context.md << EOF
+    cat >> "$FOCUS_FILE" << EOF
 
 ## 🔄 Post-Compaction Recovery Context
 - Recovered from session: $(cat "$BACKUP_PATH/backup-info.txt" 2>/dev/null | head -1)
@@ -91,8 +106,23 @@ else
         fi
     fi
     
+    # Check file size and clean up if needed (prevent bloat)
+    FOCUS_FILE=".claude/ai-docs/focus-context.md"
+    CURRENT_LINES=$(wc -l < "$FOCUS_FILE" 2>/dev/null || echo "0")
+    
+    if [ "$CURRENT_LINES" -gt 100 ]; then
+        echo "   🧹 Cleaning focus-context.md (${CURRENT_LINES} lines, keeping first 50)" >> "$HOOK_LOG"
+        # Keep the first 50 lines (useful content) and add cleanup note
+        head -50 "$FOCUS_FILE" > "${FOCUS_FILE}.tmp"
+        echo "" >> "${FOCUS_FILE}.tmp"
+        echo "## Recovery Context" >> "${FOCUS_FILE}.tmp"
+        echo "- Recovery contexts cleaned up to prevent bloat (was ${CURRENT_LINES} lines)" >> "${FOCUS_FILE}.tmp"
+        echo "- Only the most recent context is preserved below" >> "${FOCUS_FILE}.tmp"
+        mv "${FOCUS_FILE}.tmp" "$FOCUS_FILE"
+    fi
+    
     # Minimal recovery context
-    cat >> .claude/ai-docs/focus-context.md << EOF
+    cat >> "$FOCUS_FILE" << EOF
 
 ## 🔄 Post-Compaction Recovery Context
 - Recovered from session: Unknown

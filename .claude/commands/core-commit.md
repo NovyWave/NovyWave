@@ -43,32 +43,54 @@ Intelligent git commit workflow with checkpoint conversion, change analysis, and
    - **CRITICAL**: Must include CHECKPOINT changes in analysis, not just unstaged changes
    - If no CHECKPOINT: Continue to normal amend detection
 
-3. **Multi-line Message Analysis (for CHECKPOINT commits):**
-   - Analyze accumulated changes for logical groupings
-   - Create single commit with structured multi-line message
-   - Each line represents a distinct logical change
-   - Use conventional commit format for each line
+3. **Deep Technical Analysis (for CHECKPOINT commits):**
+   - **MANDATORY: Analyze code changes line-by-line for technical implementation details**
+   - Identify specific functions, methods, and architectural patterns modified
+   - Capture the "why" behind solutions: workarounds, compatibility issues, signal problems
+   - Note architectural context: dual-state systems, reactive patterns, manual triggers
+   - Distinguish between fixes (bugs), features (new functionality), refactoring, docs, tooling
    
-   **Multi-line Structure:**
-   - First line: Primary change (most significant)
-   - Additional lines: Secondary related changes
-   - Each line follows conventional commit format
-   - Group related changes logically
+   **Multi-line vs Single-line Decision:**
+   - **PREFER MULTI-LINE** for better scannability when changes span multiple areas/scopes
+   - **Each line = one logical change** with conventional commit format
+   - **Each line should be scannable** and independently meaningful
+   - Use single-line only when truly one cohesive change
    
-   **Multi-line Examples:**
+   **Multi-line Structure (PREFERRED):**
+   - Each line is a complete conventional commit: `type(scope): description`
+   - Lines ordered by importance/impact (most significant first)
+   - Group related changes but keep lines atomic and scannable
+   - Each line should make sense if read independently in git log
+   
+   **Technical Analysis Examples:**
    ```
-   ❌ Old splitting approach: Multiple commits with --allow-empty
-   ✅ New multi-line approach: Single commit, multiple lines
+   ❌ Single-line (less scannable):
+   "fix: resolve config persistence issues and update memory patterns and improve auth"
    
-   feat(auth): implement user authentication system
-   fix(ui): resolve layout overflow in sidebar panel
-   docs(api): update authentication endpoint documentation
+   ✅ Multi-line (highly scannable):
+   fix(config): implement manual save_config_to_backend() workaround for MutableVec signals
+   docs(memory): document dual-state sync architecture and reactive signal limitations  
+   refactor(config): identify areas for ConfigStore migration to eliminate sync complexity
    
-   ❌ Old: "docs: update memory patterns and add scrollbar rules"
-   ✅ New multi-line:
-   docs(memory): store session restoration debugging patterns
-   docs(layout): add scrollbar hierarchy mastery patterns
-   docs(workflow): update checkpoint conversion process
+   ❌ Shallow multi-line:
+   fix: config issues
+   docs: update patterns
+   feat: add auth
+   
+   ✅ Technical depth multi-line:
+   fix(config): resolve expanded_scopes persistence with manual save triggers for MutableVec compatibility
+   docs(claude): clean up bloated focus-context.md preventing Claude effectiveness issues
+   enhance(tools): add mandatory technical analysis requirements to /core-commit command
+   
+   ❌ Mixed format (avoid):
+   "docs(claude): clean up focus-context.md and implement size limits
+   
+   Removed 925+ repetitive recovery contexts..."
+   
+   ✅ Pure multi-line conventional (preferred):
+   docs(claude): clean up bloated focus-context.md preventing Claude effectiveness issues
+   fix(hooks): implement deterministic size limits in PostCompact hook for focus-context.md
+   enhance(tools): add mandatory technical analysis requirements to /core-commit command
    ```
 
 4. **Smart Amend Detection (if not CHECKPOINT):**
@@ -78,35 +100,35 @@ Intelligent git commit workflow with checkpoint conversion, change analysis, and
 
 5. **Present Options:**
 
-   **Option A: Multi-line CHECKPOINT (multiple logical changes)**
+   **Option A: Multi-line CHECKPOINT (PREFERRED - multiple logical changes)**
    ```
    🔄 Found CHECKPOINT commit with multiple distinct changes
-   📋 Analyzing accumulated changes...
+   📋 Analyzing accumulated changes for logical grouping...
    
-   💡 Recommended: Single commit with multi-line message
+   💡 Recommended: Multi-line conventional commits (better scannability)
    
    📋 Proposed Multi-line Message:
-   fix(ui): document session restoration race condition solution
-   docs(layout): add scrollbar hierarchy mastery patterns  
-   docs(memory): create comprehensive layout solutions archive
+   docs(claude): clean up bloated focus-context.md preventing Claude effectiveness issues
+   fix(hooks): implement deterministic size limits in PostCompact hook for focus-context.md
+   enhance(tools): add mandatory technical analysis requirements to /core-commit command
    
-   ✅ Create single commit with multi-line message?
+   ✅ Create single commit with multi-line conventional format?
    y) Use proposed multi-line message
    n) Cancel and let me handle manually
    custom) Provide different message structure
    ```
 
-   **Option B: Simple CHECKPOINT Conversion**
+   **Option B: Single-line CHECKPOINT (when truly one cohesive change)**
    ```
-   🔄 Found CHECKPOINT commit with accumulated changes
+   🔄 Found CHECKPOINT commit with single cohesive change
    📋 Analyzing CHECKPOINT contents with `git show HEAD`...
    📋 Analyzing unstaged changes with `git diff`...
-   📋 Combining both to understand complete scope...
+   📋 Single logical change detected...
    
-   💭 Suggested commit message:
-   "feat(ui): add button component with styling improvements"
+   💭 Suggested single-line commit message:
+   fix(config): implement manual save_config_to_backend() workaround for MutableVec reactive signal compatibility
    
-   ✅ Convert CHECKPOINT to single commit?
+   ✅ Convert CHECKPOINT to single-line commit?
    y) Use suggested message
    n) Cancel  
    custom message) Type your own
@@ -133,8 +155,14 @@ Intelligent git commit workflow with checkpoint conversion, change analysis, and
    M  src/auth/login.rs
    A  src/utils/validation.rs
    
-   💭 Suggested commit message:
-   "feat(auth): add input validation to login flow"
+   💭 Suggested commit message with technical analysis:
+   ```
+   feat(auth): implement input validation with custom validation middleware
+   
+   Added ValidationError enum, validate_login_input() function with email regex 
+   and password strength checks. Integrated with login_handler() using Result<T, E> 
+   pattern for error propagation to frontend.
+   ```
    
    ⚠️  New commit recommended (different scope from last commit)
    
@@ -152,23 +180,23 @@ Intelligent git commit workflow with checkpoint conversion, change analysis, and
 
 7. **Execute (ONLY after user confirmation):**
 
-   **For Multi-line CHECKPOINT:**
+   **For Multi-line CHECKPOINT (PREFERRED):**
    - Stage any unstaged changes: `git add .`
-   - Create commit message with multi-line format using HEREDOC:
+   - Create commit message with multi-line conventional format using HEREDOC:
      ```bash
      git commit --amend -m "$(cat <<'EOF'
-     fix(ui): document session restoration race condition solution
-     docs(layout): add scrollbar hierarchy mastery patterns
-     docs(memory): create comprehensive layout solutions archive
+     docs(claude): clean up bloated focus-context.md preventing Claude effectiveness issues
+     fix(hooks): implement deterministic size limits in PostCompact hook for focus-context.md
+     enhance(tools): add mandatory technical analysis requirements to /core-commit command
      EOF
      )"
      ```
-   - Show: "✅ Created single commit with multi-line message"
+   - Show: "✅ Created single commit with multi-line conventional format"
 
-   **For Simple CHECKPOINT Conversion:**
+   **For Single-line CHECKPOINT:**
    - Stage any unstaged changes: `git add .`
-   - Amend CHECKPOINT with staged changes: `git commit --amend -m "new message"`
-   - Show: "✅ Converted CHECKPOINT to: [message]"
+   - Amend CHECKPOINT with single conventional commit: `git commit --amend -m "new message"`
+   - Show: "✅ Converted CHECKPOINT to single conventional commit: [message]"
 
    **For Normal Workflow:**
    - Stage changes with `git add .`
@@ -203,12 +231,15 @@ Intelligent git commit workflow with checkpoint conversion, change analysis, and
 
 ## Features
 
-- **Multi-line messaging**: Analyzes CHECKPOINT commits for multiple logical changes and creates single commit with structured multi-line message
+- **Multi-line conventional commits**: PREFERRED approach for better git log scannability when changes span multiple areas/scopes
+- **Scannable format**: Each line is an atomic conventional commit that makes sense independently
+- **Logical grouping**: Identifies distinct changes and groups them by importance/impact  
 - **Checkpoint conversion**: Automatically converts CHECKPOINT commits to proper conventional commits
 - **Smart amend detection**: Analyzes if current changes should amend previous commit
-- **Logical grouping**: Identifies related changes and groups them with conventional commit format
+- **Deep technical analysis**: Line-by-line code analysis to capture implementation details, architectural context, and workarounds
+- **Technical depth**: Identifies specific functions, patterns, and "why" behind solutions instead of shallow summaries  
+- **Pure conventional format**: Avoids mixed formats (conventional + description blocks) that reduce scannability
 - **Safety checks**: Warns about rewriting published history
 - **Scope analysis**: Compares change types between current and last commit
-- **Conventional commits**: Suggests proper commit message format with correct scopes for each line
 - **Seamless workflow**: Perfect partner with `/core-checkpoint` for rapid iteration
-- **Simplified approach**: Single commit with clear multi-line structure instead of complex empty commit splitting
+- **Decision logic**: Clear preference for multi-line when multiple logical changes exist
