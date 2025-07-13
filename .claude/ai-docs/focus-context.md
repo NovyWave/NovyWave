@@ -50,17 +50,29 @@
 - Previous task: Unknown
 
 ## Recovery Context
-- Recovery contexts cleaned up to prevent bloat (was 106 lines)
+- Recovery contexts cleaned up to prevent bloat (was 102 lines)
 - Only the most recent context is preserved below
 
 ## 🔄 Post-Compaction Recovery Context
-- Recovered from session: Sun Jul 13 12:05:17 PM CEST 2025: PreCompact backup
+- Recovered from session: Mon Jul 14 12:29:12 AM CEST 2025: PreCompact backup
 - Previous task: Unknown
-- Recovery timestamp: Sun Jul 13 12:34:17 PM CEST 2025
-- Backup location: .claude/compaction-backups/20250713_120517
+- Recovery timestamp: Mon Jul 14 02:14:28 AM CEST 2025
+- Backup location: .claude/compaction-backups/20250714_002912
 
 ## 🔄 Post-Compaction Recovery Context
-- Recovered from session: Sun Jul 13 12:05:17 PM CEST 2025: PreCompact backup
+- Recovered from session: Mon Jul 14 12:29:12 AM CEST 2025: PreCompact backup
 - Previous task: Unknown
-- Recovery timestamp: Sun Jul 13 12:40:31 PM CEST 2025
-- Backup location: .claude/compaction-backups/20250713_120517
+- Recovery timestamp: Mon Jul 14 02:30:19 AM CEST 2025
+- Backup location: .claude/compaction-backups/20250714_002912
+
+## 🔄 Post-Compaction Recovery Context
+- Recovered from session: Mon Jul 14 12:29:12 AM CEST 2025: PreCompact backup
+- Previous task: Unknown
+- Recovery timestamp: Mon Jul 14 02:35:19 AM CEST 2025
+- Backup location: .claude/compaction-backups/20250714_002912
+
+## 🔄 Post-Compaction Recovery Context
+- Recovered from session: Mon Jul 14 12:29:12 AM CEST 2025: PreCompact backup
+- Previous task: Unknown
+- Recovery timestamp: Mon Jul 14 02:42:37 AM CEST 2025
+- Backup location: .claude/compaction-backups/20250714_002912

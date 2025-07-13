@@ -25,6 +25,24 @@
 - All frontend code compiles to WebAssembly and runs in browser environment
 - For development verification, use the three built-in examples: Simple Rectangle, Face with Hat, and Sine Wave
 
+## Advanced UI Debugging Techniques
+
+**Auto-Scroll Testing for Width Issues:**
+- Create `Task::start + Timer::sleep + viewport_x_signal + i32::MAX` to reveal horizontal layout problems
+- Essential for debugging TreeView, table, and scrollable content width constraints
+- Allows testing width behavior that's invisible in normal view
+
+**Multi-Subagent Problem Solving:**
+- Fire 3+ specialized subagents simultaneously for complex UI issues
+- Pattern: (1) Browser DOM/CSS inspection agent (2) Minimal test case creation agent (3) Comprehensive solution research agent
+- Each agent provides focused expertise while main session coordinates and implements
+- Use TodoWrite for systematic task breakdown and progress tracking
+
+**Width Constraint Debugging:**
+- Common issue: TreeView/component backgrounds don't extend to full content width in scrollable containers
+- Root cause: Multiple levels of width constraints (container → item → CSS)
+- Solution pattern: Container needs `Width::fill() + CSS min-width: max-content` + Items need `Width::fill()` + CSS needs `width: 100%`
+
 ## Testing and Quality
 
 - No automated test suite is currently configured

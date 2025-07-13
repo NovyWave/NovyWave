@@ -43,6 +43,7 @@ pub fn main() {
         start_app("app", root);
         init_connection();
         
+        
         // Load configuration FIRST before setting up reactive triggers
         send_up_msg(UpMsg::LoadConfig);
         

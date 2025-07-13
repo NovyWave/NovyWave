@@ -216,6 +216,7 @@ pub struct IconBuilder {
     size: IconSize,
     color: IconColor,
     aria_label: Option<String>,
+    center_align: bool,
 }
 
 impl IconBuilder {
@@ -225,6 +226,7 @@ impl IconBuilder {
             size: IconSize::Medium,
             color: IconColor::Secondary,  // Use Secondary instead of Current for better visibility
             aria_label: None,
+            center_align: true,  // Default to centered for backward compatibility
         }
     }
 
@@ -240,6 +242,11 @@ impl IconBuilder {
 
     pub fn aria_label(mut self, label: impl Into<String>) -> Self {
         self.aria_label = Some(label.into());
+        self
+    }
+
+    pub fn no_center_align(mut self) -> Self {
+        self.center_align = false;
         self
     }
 
@@ -267,11 +274,15 @@ impl IconBuilder {
         let svg_element = create_svg_icon(self.name, color_signal, size_px);
 
         // Wrap in container with proper accessibility and sizing
-        El::new()
+        let mut container = El::new()
             .s(Width::exact(size_px))
-            .s(Height::exact(size_px))
-            .s(Align::center())
-            .child(svg_element)
+            .s(Height::exact(size_px));
+
+        if self.center_align {
+            container = container.s(Align::center());
+        }
+
+        container.child(svg_element)
     }
 }
 
