@@ -221,6 +221,9 @@ impl TreeViewBuilder {
         // Create the tree container with proper styling
         let tree_container = Column::new()
             .s(Width::fill())
+            .update_raw_el(|raw_el| {
+                raw_el.style("min-width", "max-content")
+            })
             .s(Gap::new().y(SPACING_2))
             .items_signal_vec(
                 always(data.clone()).map({
@@ -346,6 +349,11 @@ fn render_tree_item(
         } else {
             CursorIcon::Pointer
         }))
+        .update_raw_el(|raw_el| {
+            raw_el.style("white-space", "nowrap")
+                  .style("width", "100%")
+                  .style("box-sizing", "border-box")
+        })
         .on_hovered_change({
             let hovered = hovered.clone();
             move |is_hovered| {
@@ -355,8 +363,9 @@ fn render_tree_item(
         .label(
             Row::new()
                 .s(Height::exact(min_height))
-                .s(Gap::new().x(SPACING_4))
-                .s(Align::new().left().center_y())
+                .s(Width::fill())
+                .s(Gap::new().x(SPACING_2))
+                .s(Align::new().center_y())
         // Indentation spacer
         .item(
             El::new()
@@ -373,7 +382,7 @@ fn render_tree_item(
                     .s(Background::new().color("transparent"))
                     .s(Borders::new())
                     .s(RoundedCorners::all(2))
-                    .s(Align::center())
+                    // .s(Align::center())
                     .s(Cursor::new(if is_disabled {
                         CursorIcon::NotAllowed
                     } else {
@@ -601,6 +610,7 @@ fn render_tree_item(
                                     }
                                 }
                             })
+                            .no_center_align()
                             .build()
                             .unify()
                     )
@@ -614,7 +624,7 @@ fn render_tree_item(
             Button::new()
                 .s(Background::new().color("transparent"))
                 .s(Borders::new())
-                .s(Padding::new().x(SPACING_2).y(0))
+                .s(Padding::new().x(0).y(0))
                 .s(Cursor::new(if is_disabled {
                     CursorIcon::NotAllowed
                 } else {
@@ -622,41 +632,84 @@ fn render_tree_item(
                 }))
                 .s(Align::new().left())
                 .label(
-                    El::new()
-                        .child(Text::new(&item.label))
-                        .s(Font::new()
-                            .size(font_size)
-                            .weight(FontWeight::Number(FONT_WEIGHT_4))
-                            .no_wrap()
-                            .color_signal(
-                                map_ref! {
-                                    let theme = theme(),
-                                    let is_selected = selected_items.signal_ref({
-                                        let item_id = item_id.clone();
-                                        move |selected| selected.contains(&item_id)
-                                    }),
-                                    let is_focused = focused_item.signal_ref({
-                                        let item_id = item_id.clone();
-                                        move |focused| focused.as_ref() == Some(&item_id)
-                                    }) =>
-                                    if is_disabled {
-                                        match *theme {
-                                            Theme::Light => "oklch(45% 0.14 250)", // neutral_5 light
-                                            Theme::Dark => "oklch(55% 0.14 250)", // neutral_5 dark
+                    Row::new()
+                        .s(Align::new().center_y())
+                        .s(Gap::new().x(SPACING_2))
+                        .item(
+                            El::new()
+                                .s(Padding::new().x(SPACING_4))
+                                .child(Text::new(&item.label))
+                                .s(Font::new()
+                                    .size(font_size)
+                                    .weight(FontWeight::Number(FONT_WEIGHT_4))
+                                    .no_wrap()
+                                    .color_signal(
+                                        map_ref! {
+                                            let theme = theme(),
+                                            let is_selected = selected_items.signal_ref({
+                                                let item_id = item_id.clone();
+                                                move |selected| selected.contains(&item_id)
+                                            }),
+                                            let is_focused = focused_item.signal_ref({
+                                                let item_id = item_id.clone();
+                                                move |focused| focused.as_ref() == Some(&item_id)
+                                            }) =>
+                                            if is_disabled {
+                                                match *theme {
+                                                    Theme::Light => "oklch(45% 0.14 250)", // neutral_5 light
+                                                    Theme::Dark => "oklch(55% 0.14 250)", // neutral_5 dark
+                                                }
+                                            } else if *is_selected {
+                                                match *theme {
+                                                    Theme::Light => "oklch(55% 0.22 250)", // primary_7 light
+                                                    Theme::Dark => "oklch(65% 0.22 250)", // primary_7 dark
+                                                }
+                                            } else {
+                                                match *theme {
+                                                    Theme::Light => "oklch(15% 0.14 250)", // neutral_9 light
+                                                    Theme::Dark => "oklch(95% 0.14 250)", // neutral_11 dark
+                                                }
+                                            }
                                         }
-                                    } else if *is_selected {
-                                        match *theme {
-                                            Theme::Light => "oklch(55% 0.22 250)", // primary_7 light
-                                            Theme::Dark => "oklch(65% 0.22 250)", // primary_7 dark
-                                        }
-                                    } else {
-                                        match *theme {
-                                            Theme::Light => "oklch(15% 0.14 250)", // neutral_9 light
-                                            Theme::Dark => "oklch(95% 0.14 250)", // neutral_11 dark
-                                        }
-                                    }
+                                    )
+                                )
+                        )
+                        .item_signal(
+                            map_ref! {
+                                let is_file = always(matches!(item_type, Some(TreeViewItemType::File))) =>
+                                if *is_file && item_on_remove.is_some() {
+                                    Some(
+                                        Button::new()
+                                            .s(Width::exact(16))
+                                            .s(Height::exact(16))
+                                            .s(Padding::all(0))
+                                            .s(Background::new().color("transparent"))
+                                            .s(RoundedCorners::all(2))
+                                            .s(Borders::new())
+                                            .s(Cursor::new(CursorIcon::Pointer))
+                                            .s(Align::center())
+                                            .label(
+                                                IconBuilder::new(IconName::X)
+                                                    .size(IconSize::Small)
+                                                    .color(IconColor::Error)
+                                                    .build()
+                                            )
+                                            .on_press_event({
+                                                let item_id = item_id_for_remove.clone();
+                                                let on_remove = item_on_remove.clone();
+                                                move |event| {
+                                                    event.pass_to_parent(false);
+                                                    if let Some(callback) = &on_remove {
+                                                        callback(&item_id);
+                                                    }
+                                                }
+                                            })
+                                            .unify()
+                                    )
+                                } else {
+                                    None
                                 }
-                            )
+                            }
                         )
                 )
                 .on_press_event({
@@ -716,50 +769,6 @@ fn render_tree_item(
                     }
                 })
                 .unify()
-        )
-        // Add hover-only remove button after label
-        .item_signal(
-            map_ref! {
-                let hovered = hovered_signal,
-                let is_file = always(matches!(item_type, Some(TreeViewItemType::File))) =>
-                if *hovered && *is_file && item_on_remove.is_some() {
-                    Some(
-                        Button::new()
-                            .s(Width::exact(20))
-                            .s(Height::exact(20))
-                            .s(Padding::all(0))
-                            .s(Background::new().color("transparent"))
-                            .s(RoundedCorners::all(4))
-                            .s(Borders::new())
-                            .s(Cursor::new(CursorIcon::Pointer))
-                            .s(Background::new().color_signal(
-                                theme().map(|t| match t {
-                                    Theme::Light => "oklch(95% 0.14 0)", // error-2 light
-                                    Theme::Dark => "oklch(30% 0.14 0)",  // error-2 dark
-                                })
-                            ))
-                            .label(
-                                IconBuilder::new(IconName::X)
-                                    .size(IconSize::Small)
-                                    .color(IconColor::Error)
-                                    .build()
-                            )
-                            .on_press_event({
-                                let item_id = item_id_for_remove.clone();
-                                let on_remove = item_on_remove.clone();
-                                move |event| {
-                                    event.pass_to_parent(false);
-                                    if let Some(callback) = &on_remove {
-                                        callback(&item_id);
-                                    }
-                                }
-                            })
-                            .unify()
-                    )
-                } else {
-                    None
-                }
-            }
         )
         )
         // Click handler for entire row (excluding checkbox)
@@ -844,7 +853,7 @@ fn render_tree_item(
     let children_container = if has_children {
         Some(
             Column::new()
-                .s(Width::fill())
+                .s(Width::growable())
                 .items_signal_vec(
                     expanded_items.signal_ref({
                         let item_id = item_id.clone();
@@ -902,13 +911,13 @@ fn render_tree_item(
     // Combine item row and children
     if let Some(children) = children_container {
         Column::new()
-            .s(Width::fill())
+            .s(Width::growable())
             .item(item_row)
             .item(children)
             .unify()
     } else {
         Column::new()
-            .s(Width::fill())
+            .s(Width::growable())
             .item(item_row)
             .unify()
     }

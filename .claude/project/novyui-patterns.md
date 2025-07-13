@@ -63,3 +63,47 @@ Row::new()
 - Apply `Font::new().no_wrap()` to prevent text wrapping
 - Use `Height::screen()` on root + `Height::fill()` on containers for full-screen layouts
 - Gap sizing: `.x(1)` for tight spacing, `.x(8)` for normal spacing
+
+## TreeView Component Patterns
+
+### TreeView Background Width Fix
+**Problem:** TreeView item backgrounds don't extend to full content width in scrollable containers  
+**Solution:** Multi-level width constraints required:
+
+```rust
+// 1. TreeView Container
+let tree_container = Column::new()
+    .s(Width::fill())
+    .update_raw_el(|raw_el| {
+        raw_el.style("min-width", "max-content")  // Allow horizontal expansion
+    })
+
+// 2. TreeView Item Button  
+let item_row = Button::new()
+    .s(Width::fill())  // Fill container width
+    .update_raw_el(|raw_el| {
+        raw_el.style("width", "100%")           // Force full width
+              .style("box-sizing", "border-box") // Include padding in width
+              .style("white-space", "nowrap")    // Prevent text wrapping
+    })
+
+// 3. TreeView Item Row
+Row::new()
+    .s(Width::fill())  // Fill button width
+```
+
+### Scrollable Container Requirements
+For panels containing TreeView with horizontal overflow:
+
+```rust
+// Panel scrollable container
+El::new()
+    .s(Scrollbars::both())
+    .s(Width::fill())
+    .update_raw_el(|raw_el| {
+        raw_el.style("min-height", "0")      // Allow flex shrinking
+              .style("overflow-x", "auto")   // Enable horizontal scroll
+    })
+```
+
+**Key Insight:** Zoon `Width::fill()` + CSS `min-width: max-content` allows content to extend beyond container boundaries while maintaining responsive behavior.

@@ -17,6 +17,7 @@ use crate::{
     FILE_PICKER_ERROR, FILE_TREE_CACHE, send_up_msg, DOCK_TOGGLE_IN_PROGRESS
 };
 
+
 pub fn file_paths_dialog() -> impl Element {
     El::new()
         .s(Background::new().color_signal(theme().map(|t| match t {
@@ -160,7 +161,7 @@ pub fn files_panel() -> impl Element {
                     )
                     .item(
                         El::new()
-                            .s(Width::fill())
+                            .s(Width::growable())
                     )
                     .item(
                         load_files_button_with_progress(
@@ -171,7 +172,7 @@ pub fn files_panel() -> impl Element {
                     )
                     .item(
                         El::new()
-                            .s(Width::fill())
+                            .s(Width::growable())
                     )
                     .item(
                         remove_all_button()
@@ -180,10 +181,11 @@ pub fn files_panel() -> impl Element {
                     .s(Gap::new().y(4))
                     .s(Padding::new().top(4).right(4))
                     .s(Height::fill())
-                    .s(Width::fill())
+                    .s(Width::growable())
                     .item(
                         El::new()
                             .s(Height::fill())
+                            .s(Width::growable())
                             .child_signal(
                                 LOADED_FILES.signal_vec_cloned()
                                     .to_signal_map(|files: &[WaveformFile]| {
@@ -275,7 +277,7 @@ pub fn variables_panel() -> impl Element {
 
 pub fn selected_variables_with_waveform_panel() -> impl Element {
     El::new()
-        .s(Width::fill())
+        .s(Width::growable())
         .s(Height::fill())
         .child(
             create_panel(
@@ -289,7 +291,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                     )
                     .item(
                         El::new()
-                            .s(Width::fill())
+                            .s(Width::growable())
                     )
                     .item(
                         theme_toggle_button()
@@ -299,7 +301,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                     )
                     .item(
                         El::new()
-                            .s(Width::fill())
+                            .s(Width::growable())
                     )
                     .item(
                         remove_all_button()
@@ -573,7 +575,7 @@ pub fn waveform_panel() -> impl Element {
 pub fn files_panel_with_height() -> impl Element {
     El::new()
         .s(Height::exact_signal(FILES_PANEL_HEIGHT.signal()))
-        .s(Width::fill())
+        .s(Width::growable())
         .s(Scrollbars::both())
         .update_raw_el(|raw_el| {
             raw_el.style("scrollbar-width", "thin")
@@ -584,7 +586,7 @@ pub fn files_panel_with_height() -> impl Element {
 
 pub fn variables_panel_with_fill() -> impl Element {
     El::new()
-        .s(Width::fill())
+        .s(Width::growable())
         .s(Height::fill())
         .s(Scrollbars::both())
         .update_raw_el(|raw_el| {
@@ -608,7 +610,7 @@ pub fn files_panel_docked() -> impl Element {
 
 pub fn variables_panel_docked() -> impl Element {
     El::new()
-        .s(Width::fill())
+        .s(Width::growable())
         .s(Height::fill())
         .s(Scrollbars::both())
         .update_raw_el(|raw_el| {
@@ -622,7 +624,7 @@ pub fn variables_panel_docked() -> impl Element {
 fn create_panel(header_content: impl Element, content: impl Element) -> impl Element {
     El::new()
         .s(Height::fill())
-        .s(Width::fill())
+        .s(Width::growable())
         .s(Background::new().color_signal(neutral_2()))
         .s(Borders::all_signal(neutral_4().map(|color| {
             Border::new().width(1).color(color)
@@ -643,9 +645,12 @@ fn create_panel(header_content: impl Element, content: impl Element) -> impl Ele
                 .item(
                     El::new()
                         .s(Height::fill())
+                        .s(Width::fill())
                         .s(Scrollbars::both())
                         .update_raw_el(|raw_el| {
             raw_el.style("scrollbar-width", "thin")
+                .style("overflow-x", "auto")
+                .style("min-height", "0")
                 .style_signal("scrollbar-color", primary_6().map(|thumb| primary_3().map(move |track| format!("{} {}", thumb, track))).flatten())
         })
                         .child(content)
@@ -695,20 +700,20 @@ fn convert_files_to_tree_data(files: &[WaveformFile]) -> Vec<TreeViewItemData> {
                 
                 // Remove from FILE_PATHS
                 FILE_PATHS.lock_mut().remove(id);
-                config::save_file_list();
                 
                 // Clear related scope selections if removed file contained selected scope
                 if let Some(selected_scope) = SELECTED_SCOPE_ID.get_cloned() {
-                    if selected_scope.starts_with(&format!("file_{}", id)) {
+                    if selected_scope.starts_with(&format!("{}_", id)) {
                         SELECTED_SCOPE_ID.set(None);
                     }
                 }
                 
                 // Clear expanded scopes for this file
-                EXPANDED_SCOPES.lock_mut().retain(|scope| !scope.starts_with(&format!("file_{}", id)));
+                EXPANDED_SCOPES.lock_mut().retain(|scope| !scope.starts_with(id));
                 
-                // Save file list after removal
+                // Save file list and scope selection after removal
                 config::save_file_list();
+                config::save_scope_selection();
                 
                 zoon::println!("Removed file: {}", id);
             })
@@ -1042,7 +1047,7 @@ fn selected_files_display() -> impl Element {
                                                 .item(
                                                     button()
                                                         .left_icon(IconName::X)
-                                                        .variant(ButtonVariant::Ghost)
+                                                        .variant(ButtonVariant::DestructiveGhost)
                                                         .size(ButtonSize::Small)
                                                         .on_press({
                                                             let path = path.clone();
@@ -1100,6 +1105,7 @@ fn remove_all_button() -> impl Element {
             LOADED_FILES.lock_mut().clear();
             FILE_PATHS.lock_mut().clear();
             EXPANDED_SCOPES.lock_mut().clear();
+            SELECTED_SCOPE_ID.set(None);
             config::save_file_list();
             config::save_scope_selection();
         })
