@@ -12,7 +12,7 @@ use crate::{
     VERTICAL_DIVIDER_DRAGGING, HORIZONTAL_DIVIDER_DRAGGING,
     VARIABLES_SEARCH_FILTER, SHOW_FILE_DIALOG, IS_LOADING,
     LOADED_FILES, SELECTED_SCOPE_ID, TREE_SELECTED_ITEMS, EXPANDED_SCOPES,
-    FILE_PATHS, show_file_paths_dialog,
+    FILE_PATHS, show_file_paths_dialog, LOAD_FILES_VIEWPORT_Y,
     FILE_PICKER_EXPANDED, FILE_PICKER_SELECTED,
     FILE_PICKER_ERROR, FILE_TREE_CACHE, send_up_msg, DOCK_TOGGLE_IN_PROGRESS
 };
@@ -846,6 +846,17 @@ fn simple_file_picker_tree() -> impl Element {
     
     El::new()
         .s(Height::fill())
+        .s(Scrollbars::both())
+        .viewport_y_signal(LOAD_FILES_VIEWPORT_Y.signal())
+        .on_viewport_location_change(|_scene, viewport| {
+            zoon::println!("📜 Load Files scroll detected: y={}", viewport.y);
+            // Only update viewport Y if initialization is complete to prevent overwriting loaded scroll position
+            if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
+                LOAD_FILES_VIEWPORT_Y.set_neq(viewport.y);
+            } else {
+                zoon::println!("⏸️ Viewport scroll update skipped - initialization not complete yet");
+            }
+        })
         .child_signal(
             map_ref! {
                 let tree_cache = FILE_TREE_CACHE.signal_cloned(),

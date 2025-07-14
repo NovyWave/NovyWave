@@ -133,6 +133,7 @@ elif [ "$1" = "watch" ]; then
         sleep 300  # Check every 5 minutes
     done
 else
-    # Hook mode - just check once
+    # Hook mode - just check once (suppress output, always return 0)
     check_thresholds >/dev/null
+    exit 0
 fi

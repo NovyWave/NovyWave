@@ -173,9 +173,11 @@ pub struct WorkspaceSection {
     pub opened_files: Vec<String>,
     pub dock_mode: String,
     pub expanded_scopes: Vec<String>,
+    pub load_files_expanded_directories: Vec<String>,
     pub selected_scope_id: Option<String>,
     pub docked_to_bottom: DockedToBottomLayout,
     pub docked_to_right: DockedToRightLayout,
+    pub load_files_scroll_position: i32,
 }
 
 impl Default for WorkspaceSection {
@@ -184,9 +186,11 @@ impl Default for WorkspaceSection {
             opened_files: Vec::new(),
             dock_mode: "right".to_string(),
             expanded_scopes: Vec::new(),
+            load_files_expanded_directories: Vec::new(),
             selected_scope_id: None,
             docked_to_bottom: Default::default(),
             docked_to_right: Default::default(),
+            load_files_scroll_position: 0,
         }
     }
 }

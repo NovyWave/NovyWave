@@ -28,6 +28,18 @@ pub static CURRENT_DIRECTORY: Lazy<Mutable<String>> = lazy::default();
 pub static FILE_PICKER_DATA: Lazy<MutableVec<FileSystemItem>> = lazy::default();
 pub static FILE_PICKER_ERROR: Lazy<Mutable<Option<String>>> = lazy::default();
 
+// Session state to track if Load Files dialog was already opened once
+pub static LOAD_FILES_DIALOG_OPENED_ONCE: Lazy<Mutable<bool>> = lazy::default();
+
+// Test viewport scrolling for Load Files dialog  
+pub static LOAD_FILES_VIEWPORT_Y: Lazy<Mutable<i32>> = lazy::default();
+
+// Load Files dialog scroll position (persistent)
+pub static LOAD_FILES_SCROLL_POSITION: Lazy<Mutable<i32>> = lazy::default();
+
+// Prevent config saves during initialization to avoid race conditions
+pub static CONFIG_INITIALIZATION_COMPLETE: Lazy<Mutable<bool>> = lazy::default();
+
 // Hierarchical file tree storage - maps directory path to its contents
 pub static FILE_TREE_CACHE: Lazy<Mutable<HashMap<String, Vec<FileSystemItem>>>> = lazy::default();
 
