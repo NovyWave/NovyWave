@@ -220,9 +220,10 @@ impl TreeViewBuilder {
 
         // Create the tree container with proper styling
         let tree_container = Column::new()
-            .s(Width::fill())
             .update_raw_el(|raw_el| {
-                raw_el.style("min-width", "max-content")
+                raw_el
+                    .style("width", "100%")
+                    .style("min-width", "fit-content")
             })
             .s(Gap::new().y(SPACING_2))
             .items_signal_vec(

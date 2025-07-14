@@ -11,9 +11,8 @@ theme = "dark"
 opened_files = ["/home/martinkavik/repos/NovyWave/test_files/wave_27.fst"]
 dock_mode = "right"
 expanded_scopes = [
-    "file_71a2908980aee1d_scope_1",
-    "file_71a2908980aee1d_scope_0",
     "file_71a2908980aee1d",
+    "file_71a2908980aee1d_scope_0",
 ]
 selected_scope_id = "file_71a2908980aee1d_scope_1"
 
@@ -22,5 +21,5 @@ files_panel_width = 635.0
 files_panel_height = 393.0
 
 [workspace.docked_to_right]
-files_panel_width = 450.0
+files_panel_width = 382.0
 files_panel_height = 369.0
