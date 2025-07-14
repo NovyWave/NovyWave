@@ -16,6 +16,10 @@
           {
             "type": "command",
             "command": "bash \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/.claude/hooks/restore-session-after-compaction.sh\""
+          },
+          {
+            "type": "command",
+            "command": "bash \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/.claude/hooks/memory-monitor.sh\""
           }
         ]
       }
