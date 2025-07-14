@@ -11,8 +11,9 @@ theme = "dark"
 opened_files = ["/home/martinkavik/repos/NovyWave/test_files/wave_27.fst"]
 dock_mode = "right"
 expanded_scopes = [
-    "file_71a2908980aee1d",
+    "file_71a2908980aee1d_scope_1",
     "file_71a2908980aee1d_scope_0",
+    "file_71a2908980aee1d",
 ]
 selected_scope_id = "file_71a2908980aee1d_scope_1"
 

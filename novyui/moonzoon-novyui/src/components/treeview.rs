@@ -341,20 +341,13 @@ fn render_tree_item(
     let item_row = Button::new()
         .s(Height::exact(min_height))
         .s(Width::fill())
-        .s(Padding::all(0))
         .s(Background::new().color("transparent"))
         .s(Borders::new())
-        .s(RoundedCorners::all(0))
         .s(Cursor::new(if is_disabled {
             CursorIcon::NotAllowed
         } else {
             CursorIcon::Pointer
         }))
-        .update_raw_el(|raw_el| {
-            raw_el.style("white-space", "nowrap")
-                  .style("width", "100%")
-                  .style("box-sizing", "border-box")
-        })
         .on_hovered_change({
             let hovered = hovered.clone();
             move |is_hovered| {

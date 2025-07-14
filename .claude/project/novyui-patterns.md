@@ -92,6 +92,8 @@ Row::new()
 - Exception behavior: Expand for wide content (enables horizontal scroll)
 - Semantic clarity: "always fill panel, expand only when content demands it"
 
+**Note:** The original complex CSS approach (`white-space: nowrap` + `width: 100%` + `box-sizing: border-box`) is **not needed** when using the container-first pattern. Zoon's `Width::fill()` combined with the container-first CSS pattern handles all width requirements properly.
+
 ### Scrollable Container Requirements
 For panels containing TreeView with horizontal overflow:
 
