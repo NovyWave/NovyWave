@@ -5,6 +5,13 @@ use wasm_bindgen::JsCast;
 
 use shared::{Signal, filter_variables};
 
+fn empty_state_hint(text: &str) -> impl Element {
+    El::new()
+        .s(Padding::all(20))
+        .s(Font::new().color_signal(neutral_8()).italic())
+        .child(text)
+}
+
 // ===== CORE VIRTUAL LIST FUNCTIONS =====
 // 
 // WARNING: Avoid excessive zoon::println! logging in virtual lists and viewport handlers.
@@ -17,38 +24,18 @@ use shared::{Signal, filter_variables};
 pub fn virtual_variables_list(variables: Vec<Signal>, search_filter: String) -> Column<column::EmptyFlagNotSet, RawHtmlEl> {
     // Handle special cases first (empty states)
     if variables.is_empty() && search_filter.starts_with("Select a scope") {
-        return Column::new()
-            .s(Gap::new().y(4))
-            .s(Align::new().center_x())
-            .s(Padding::new().top(32))
-            .item(
-                El::new()
-                    .s(Font::new().color_signal(neutral_8()).size(13).italic())
-                    .child(search_filter)
-            );
+        return Column::new().item(empty_state_hint(&search_filter));
     }
     
     if variables.is_empty() {
-        return Column::new()
-            .s(Gap::new().y(4))
-            .item(
-                El::new()
-                    .s(Font::new().color_signal(neutral_8()).size(13))
-                    .child("No variables in selected scope")
-            );
+        return Column::new().item(empty_state_hint("No variables in selected scope"));
     }
     
     // Apply search filter
     let filtered_variables = filter_variables(&variables, &search_filter);
     
     if filtered_variables.is_empty() {
-        return Column::new()
-            .s(Gap::new().y(4))
-            .item(
-                El::new()
-                    .s(Font::new().color_signal(neutral_8()).size(13))
-                    .child("No variables match search filter")
-            );
+        return Column::new().item(empty_state_hint("No variables match search filter"));
     }
     
     // FIXED-HEIGHT VIRTUAL LIST - only render ~15 visible items
@@ -526,21 +513,9 @@ pub fn simple_variables_list(variables: Vec<Signal>, search_filter: String) -> C
     let filtered_variables = filter_variables(&variables, &search_filter);
     
     if variables.is_empty() {
-        Column::new()
-            .s(Gap::new().y(4))
-            .item(
-                El::new()
-                    .s(Font::new().color_signal(neutral_8()).size(13))
-                    .child("No variables in selected scope")
-            )
+        Column::new().item(empty_state_hint("No variables in selected scope"))
     } else if filtered_variables.is_empty() {
-        Column::new()
-            .s(Gap::new().y(4))
-            .item(
-                El::new()
-                    .s(Font::new().color_signal(neutral_8()).size(13))
-                    .child("No variables match search filter")
-            )
+        Column::new().item(empty_state_hint("No variables match search filter"))
     } else {
         // Simple list showing all variables - clean and working
         Column::new()

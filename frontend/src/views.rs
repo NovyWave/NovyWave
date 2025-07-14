@@ -17,6 +17,13 @@ use crate::{
     FILE_PICKER_ERROR, FILE_TREE_CACHE, send_up_msg, DOCK_TOGGLE_IN_PROGRESS
 };
 
+fn empty_state_hint(text: &str) -> impl Element {
+    El::new()
+        .s(Padding::all(20))
+        .s(Font::new().color_signal(neutral_8()).italic())
+        .child(text)
+}
+
 
 pub fn file_paths_dialog() -> impl Element {
     El::new()
@@ -192,10 +199,7 @@ pub fn files_panel() -> impl Element {
                                         let tree_data = convert_files_to_tree_data(&files);
                                         
                                         if tree_data.is_empty() {
-                                            El::new()
-                                                .s(Padding::all(20))
-                                                .s(Font::new().color_signal(neutral_8()).italic())
-                                                .child("No files loaded. Click 'Load Files' to add waveform files.")
+                                            empty_state_hint("Click 'Load Files' to add waveform files.")
                                                 .unify()
                                         } else {
                                             tree_view()
