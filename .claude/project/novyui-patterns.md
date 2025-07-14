@@ -66,31 +66,31 @@ Row::new()
 
 ## TreeView Component Patterns
 
-### TreeView Background Width Fix
-**Problem:** TreeView item backgrounds don't extend to full content width in scrollable containers  
-**Solution:** Multi-level width constraints required:
+### TreeView Background Width Patterns
+**Problem:** TreeView item backgrounds don't extend to full content width in scrollable containers
 
+**Solution A - Content-First (fit-content + min-width):**
 ```rust
-// 1. TreeView Container
-let tree_container = Column::new()
-    .s(Width::fill())
-    .update_raw_el(|raw_el| {
-        raw_el.style("min-width", "max-content")  // Allow horizontal expansion
-    })
-
-// 2. TreeView Item Button  
-let item_row = Button::new()
-    .s(Width::fill())  // Fill container width
-    .update_raw_el(|raw_el| {
-        raw_el.style("width", "100%")           // Force full width
-              .style("box-sizing", "border-box") // Include padding in width
-              .style("white-space", "nowrap")    // Prevent text wrapping
-    })
-
-// 3. TreeView Item Row
-Row::new()
-    .s(Width::fill())  // Fill button width
+.update_raw_el(|raw_el| {
+    raw_el
+        .style("width", "fit-content")
+        .style("min-width", "100%")
+})
 ```
+
+**Solution B - Container-First (RECOMMENDED):**
+```rust
+.update_raw_el(|raw_el| {
+    raw_el
+        .style("min-width", "fit-content")
+        .style("width", "100%")
+})
+```
+
+**Recommendation:** Use Solution B (container-first) for TreeView items:
+- Primary behavior: Fill panel width (better UX)
+- Exception behavior: Expand for wide content (enables horizontal scroll)
+- Semantic clarity: "always fill panel, expand only when content demands it"
 
 ### Scrollable Container Requirements
 For panels containing TreeView with horizontal overflow:
