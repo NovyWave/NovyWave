@@ -68,6 +68,7 @@ pub struct FilePickerSection {
     pub current_directory: Mutable<Option<String>>,
     pub expanded_directories: MutableVec<String>,
     pub show_hidden_files: Mutable<bool>,
+    pub scroll_position: Mutable<i32>,
 }
 
 // =============================================================================
@@ -79,6 +80,7 @@ pub struct WorkspaceSection {
     pub dock_mode: Mutable<DockMode>,
     pub selected_scope_id: Mutable<Option<String>>,
     pub expanded_scopes: MutableVec<String>,
+    pub load_files_expanded_directories: MutableVec<String>,
     pub panel_layouts: Mutable<PanelLayouts>,
 }
 
@@ -180,6 +182,7 @@ impl Default for FilePickerSection {
             current_directory: Mutable::new(None),
             expanded_directories: MutableVec::new(),
             show_hidden_files: Mutable::new(false),
+            scroll_position: Mutable::new(0),
         }
     }
 }
@@ -190,6 +193,7 @@ impl Default for WorkspaceSection {
             dock_mode: Mutable::new(DockMode::Bottom),
             selected_scope_id: Mutable::new(None),
             expanded_scopes: MutableVec::new(),
+            load_files_expanded_directories: MutableVec::new(),
             panel_layouts: Mutable::new(PanelLayouts::default()),
         }
     }
@@ -263,6 +267,7 @@ pub struct SerializableFilePickerSection {
     pub current_directory: Option<String>,
     pub expanded_directories: Vec<String>,
     pub show_hidden_files: bool,
+    pub scroll_position: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -270,6 +275,7 @@ pub struct SerializableWorkspaceSection {
     pub dock_mode: DockMode,
     pub selected_scope_id: Option<String>,
     pub expanded_scopes: Vec<String>,
+    pub load_files_expanded_directories: Vec<String>,
     pub panel_layouts: SerializablePanelLayouts,
 }
 
@@ -314,12 +320,14 @@ impl ConfigStore {
                     current_directory: self.session.lock_ref().file_picker.lock_ref().current_directory.get_cloned(),
                     expanded_directories: self.session.lock_ref().file_picker.lock_ref().expanded_directories.lock_ref().to_vec(),
                     show_hidden_files: self.session.lock_ref().file_picker.lock_ref().show_hidden_files.get(),
+                    scroll_position: self.session.lock_ref().file_picker.lock_ref().scroll_position.get(),
                 },
             },
             workspace: SerializableWorkspaceSection {
                 dock_mode: self.workspace.lock_ref().dock_mode.get_cloned(),
                 selected_scope_id: self.workspace.lock_ref().selected_scope_id.get_cloned(),
                 expanded_scopes: self.workspace.lock_ref().expanded_scopes.lock_ref().to_vec(),
+                load_files_expanded_directories: self.workspace.lock_ref().load_files_expanded_directories.lock_ref().to_vec(),
                 panel_layouts: SerializablePanelLayouts {
                     docked_to_bottom: SerializablePanelDimensions {
                         files_panel_width: self.workspace.lock_ref().panel_layouts.lock_ref().docked_to_bottom.lock_ref().files_panel_width.get(),
@@ -364,12 +372,14 @@ impl ConfigStore {
             file_picker.current_directory.set(config.session.file_picker.current_directory);
             file_picker.expanded_directories.lock_mut().replace_cloned(config.session.file_picker.expanded_directories);
             file_picker.show_hidden_files.set(config.session.file_picker.show_hidden_files);
+            file_picker.scroll_position.set(config.session.file_picker.scroll_position);
         }
 
         // Load workspace section
         self.workspace.lock_mut().dock_mode.set(config.workspace.dock_mode);
         self.workspace.lock_mut().selected_scope_id.set(config.workspace.selected_scope_id);
         self.workspace.lock_mut().expanded_scopes.lock_mut().replace_cloned(config.workspace.expanded_scopes);
+        self.workspace.lock_mut().load_files_expanded_directories.lock_mut().replace_cloned(config.workspace.load_files_expanded_directories);
 
         {
             let workspace_ref = self.workspace.lock_ref();
@@ -416,8 +426,13 @@ fn store_config_on_any_change() {
     };
     Task::start(async move {
         theme_signal.for_each_sync(|_| {
-            zoon::println!("Theme changed, saving config");
-            save_config_to_backend();
+            // Only save if initialization is complete to prevent race conditions
+            if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
+                zoon::println!("Theme changed, saving config");
+                save_config_to_backend();
+            } else {
+                zoon::println!("⏸️ Theme change save skipped - initialization not complete yet");
+            }
         }).await
     });
     
@@ -428,8 +443,13 @@ fn store_config_on_any_change() {
     };
     Task::start(async move {
         dock_mode_signal.for_each_sync(|_| {
-            zoon::println!("Dock mode changed, saving config");
-            save_config_to_backend();
+            // Only save if initialization is complete to prevent race conditions
+            if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
+                zoon::println!("Dock mode changed, saving config");
+                save_config_to_backend();
+            } else {
+                zoon::println!("⏸️ Dock mode change save skipped - initialization not complete yet");
+            }
         }).await
     });
     
@@ -442,8 +462,13 @@ fn store_config_on_any_change() {
     };
     Task::start(async move {
         bottom_width_signal.for_each_sync(|_| {
-            zoon::println!("Bottom files panel width changed, saving config");
-            save_config_to_backend();
+            // Only save if initialization is complete to prevent race conditions
+            if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
+                zoon::println!("Bottom files panel width changed, saving config");
+                save_config_to_backend();
+            } else {
+                zoon::println!("⏸️ Bottom width change save skipped - initialization not complete yet");
+            }
         }).await
     });
     
@@ -455,8 +480,13 @@ fn store_config_on_any_change() {
     };
     Task::start(async move {
         bottom_height_signal.for_each_sync(|_| {
-            zoon::println!("Bottom files panel height changed, saving config");
-            save_config_to_backend();
+            // Only save if initialization is complete to prevent race conditions
+            if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
+                zoon::println!("Bottom files panel height changed, saving config");
+                save_config_to_backend();
+            } else {
+                zoon::println!("⏸️ Bottom height change save skipped - initialization not complete yet");
+            }
         }).await
     });
     
@@ -468,8 +498,13 @@ fn store_config_on_any_change() {
     };
     Task::start(async move {
         right_width_signal.for_each_sync(|_| {
-            zoon::println!("Right files panel width changed, saving config");
-            save_config_to_backend();
+            // Only save if initialization is complete to prevent race conditions
+            if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
+                zoon::println!("Right files panel width changed, saving config");
+                save_config_to_backend();
+            } else {
+                zoon::println!("⏸️ Right width change save skipped - initialization not complete yet");
+            }
         }).await
     });
     
@@ -481,8 +516,13 @@ fn store_config_on_any_change() {
     };
     Task::start(async move {
         right_height_signal.for_each_sync(|_| {
-            zoon::println!("Right files panel height changed, saving config");
-            save_config_to_backend();
+            // Only save if initialization is complete to prevent race conditions
+            if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
+                zoon::println!("Right files panel height changed, saving config");
+                save_config_to_backend();
+            } else {
+                zoon::println!("⏸️ Right height change save skipped - initialization not complete yet");
+            }
         }).await
     });
 }
@@ -490,9 +530,7 @@ fn store_config_on_any_change() {
 fn save_config_to_backend() {
     use crate::connection::send_up_msg;
     
-    zoon::println!("save_config_to_backend called!");
     let serializable_config = config_store().to_serializable();
-    zoon::println!("Theme in config: {:?}", serializable_config.ui.theme);
     
     // Convert to shared::AppConfig format for backend compatibility
     let app_config = shared::AppConfig {
@@ -512,6 +550,7 @@ fn save_config_to_backend() {
                 DockMode::Right => "right".to_string(),
             },
             expanded_scopes: serializable_config.workspace.expanded_scopes,
+            load_files_expanded_directories: serializable_config.workspace.load_files_expanded_directories,
             selected_scope_id: serializable_config.workspace.selected_scope_id,
             docked_to_bottom: shared::DockedToBottomLayout {
                 files_panel_width: serializable_config.workspace.panel_layouts.docked_to_bottom.files_panel_width as f64,
@@ -521,6 +560,7 @@ fn save_config_to_backend() {
                 files_panel_width: serializable_config.workspace.panel_layouts.docked_to_right.files_panel_width as f64,
                 files_panel_height: serializable_config.workspace.panel_layouts.docked_to_right.files_panel_height as f64,
             },
+            load_files_scroll_position: serializable_config.session.file_picker.scroll_position,
         },
     };
 
@@ -564,7 +604,9 @@ pub fn save_file_list() {
     config_store().session.lock_mut().opened_files.lock_mut().replace_cloned(file_paths);
     
     // Manually trigger config save since MutableVec reactive signals are complex
-    save_config_to_backend();
+    if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
+        save_config_to_backend();
+    }
 }
 
 pub fn switch_dock_mode_preserving_dimensions(new_is_docked_to_bottom: bool) {
@@ -580,6 +622,7 @@ pub fn switch_dock_mode_preserving_dimensions(new_is_docked_to_bottom: bool) {
 
 pub fn apply_config(config: shared::AppConfig) {
     // Load config from backend into the new ConfigStore
+    // NOTE: Set CONFIG_LOADED at the END to prevent race condition with lazy initialization
     let serializable_config = SerializableConfig {
         app: SerializableAppSection {
             version: config.app.version,
@@ -598,8 +641,9 @@ pub fn apply_config(config: shared::AppConfig) {
             variables_search_filter: String::new(),
             file_picker: SerializableFilePickerSection {
                 current_directory: None,
-                expanded_directories: Vec::new(),
+                expanded_directories: config.workspace.load_files_expanded_directories.clone(),
                 show_hidden_files: false,
+                scroll_position: config.workspace.load_files_scroll_position,
             },
         },
         workspace: SerializableWorkspaceSection {
@@ -609,6 +653,7 @@ pub fn apply_config(config: shared::AppConfig) {
             },
             selected_scope_id: config.workspace.selected_scope_id,
             expanded_scopes: config.workspace.expanded_scopes,
+            load_files_expanded_directories: config.workspace.load_files_expanded_directories,
             panel_layouts: SerializablePanelLayouts {
                 docked_to_bottom: SerializablePanelDimensions {
                     files_panel_width: config.workspace.docked_to_bottom.files_panel_width as f32,
@@ -625,7 +670,7 @@ pub fn apply_config(config: shared::AppConfig) {
             },
         },
         dialogs: SerializableDialogSection {
-            show_file_dialog: false,
+            show_file_dialog: false,  // Don't auto-open via config (use session state instead)
             show_settings_dialog: false,
             show_about_dialog: false,
             file_paths_input: String::new(),
@@ -637,11 +682,27 @@ pub fn apply_config(config: shared::AppConfig) {
     // Manual sync of expanded_scopes from config to signal (Vec<String> to HashSet<String>)
     sync_expanded_scopes_from_config();
     
+    // Manual sync of load_files_expanded_directories from config to signal (Vec<String> to HashSet<String>)
+    sync_load_files_expanded_directories_from_config();
+    
     // Manual sync of opened_files from config to legacy globals
     sync_opened_files_from_config();
     
+    // Manual sync of file picker current directory from config to legacy globals
+    sync_file_picker_current_directory_from_config();
+    
+    // Manual sync of scroll position from config to legacy globals
+    zoon::println!("🚨 About to call sync_load_files_scroll_position_from_config()");
+    sync_load_files_scroll_position_from_config();
+    
     // Set config loaded flag
     CONFIG_LOADED.set_neq(true);
+    
+    // Mark initialization complete to allow reactive config saves
+    crate::CONFIG_INITIALIZATION_COMPLETE.set_neq(true);
+    
+    // Note: sync_globals_to_config() is called later in main.rs after CONFIG_LOADED signal
+    // to ensure proper timing when UI components are fully initialized
 }
 
 // =============================================================================
@@ -666,6 +727,24 @@ fn sync_expanded_scopes_from_config() {
     }
 }
 
+// Manual sync function to convert load_files_expanded_directories from Vec<String> to HashSet<String>
+fn sync_load_files_expanded_directories_from_config() {
+    use crate::state::FILE_PICKER_EXPANDED;
+    use std::collections::HashSet;
+    
+    let expanded_vec = config_store().workspace.lock_ref().load_files_expanded_directories.lock_ref().to_vec();
+    zoon::println!("🔍 [INIT] Loading expanded directories from config: {:?}", expanded_vec);
+    zoon::println!("🔍 [INIT] CONFIG_INITIALIZATION_COMPLETE = {}", crate::CONFIG_INITIALIZATION_COMPLETE.get());
+    
+    // In WASM, trust the backend-validated directories (no filesystem access)
+    let new_expanded_set: HashSet<String> = expanded_vec.into_iter().collect();
+    
+    zoon::println!("💾 Setting FILE_PICKER_EXPANDED from config: {:?}", new_expanded_set.iter().collect::<Vec<_>>());
+    
+    // Apply the complete set atomically to prevent reactive race conditions
+    *FILE_PICKER_EXPANDED.lock_mut() = new_expanded_set;
+}
+
 // Manual sync function to restore opened_files from config to legacy globals and reload files
 fn sync_opened_files_from_config() {
     use crate::state::FILE_PATHS;
@@ -685,6 +764,42 @@ fn sync_opened_files_from_config() {
         // Reload the file
         send_up_msg(shared::UpMsg::LoadWaveformFile(file_path));
     }
+}
+
+// Manual sync function to restore file picker current directory from config 
+fn sync_file_picker_current_directory_from_config() {
+    use crate::state::CURRENT_DIRECTORY;
+    
+    let current_dir = config_store().session.lock_ref().file_picker.lock_ref().current_directory.get_cloned();
+    
+    // Restore current directory if it exists in config
+    if let Some(directory) = current_dir {
+        // Validate directory exists before restoring
+        if std::path::Path::new(&directory).is_dir() {
+            CURRENT_DIRECTORY.set_neq(directory);
+        } else {
+            zoon::println!("File picker: Removing non-existent current directory from config: {}", directory);
+            // Clear invalid directory from config
+            config_store().session.lock_ref().file_picker.lock_ref().current_directory.set_neq(None);
+            if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
+                save_config_to_backend();
+            }
+        }
+    }
+}
+
+// Manual sync function to restore scroll position from config to legacy globals
+fn sync_load_files_scroll_position_from_config() {
+    use crate::state::LOAD_FILES_SCROLL_POSITION;
+    
+    let saved_scroll_position = config_store().session.lock_ref().file_picker.lock_ref().scroll_position.get();
+    zoon::println!("🔄 [INIT] Loading scroll position from config: {} (current LOAD_FILES_SCROLL_POSITION: {})", 
+                   saved_scroll_position, LOAD_FILES_SCROLL_POSITION.get());
+    
+    // Restore the scroll position to both persistent globals to prevent viewport lazy initialization with 0
+    LOAD_FILES_SCROLL_POSITION.set_neq(saved_scroll_position);
+    crate::LOAD_FILES_VIEWPORT_Y.set_neq(saved_scroll_position);
+    zoon::println!("🔄 [INIT] Set LOAD_FILES_SCROLL_POSITION and LOAD_FILES_VIEWPORT_Y to: {}", saved_scroll_position);
 }
 
 pub fn current_dock_mode() -> impl Signal<Item = DockMode> {
@@ -746,6 +861,17 @@ pub fn sync_config_to_globals() {
         config_store().session.signal_ref(|s| s.variables_search_filter.signal_cloned()).flatten()
             .for_each_sync(|filter| {
                 VARIABLES_SEARCH_FILTER.set_neq(filter);
+            }).await
+    });
+
+    // Sync load files scroll position
+    Task::start(async {
+        config_store().session.signal_ref(|s| s.file_picker.signal_ref(|fp| fp.scroll_position.signal()).flatten()).flatten()
+            .for_each_sync(|scroll_pos| {
+                // Only sync during runtime, not during initialization
+                if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
+                    LOAD_FILES_SCROLL_POSITION.set_neq(scroll_pos);
+                }
             }).await
     });
 
@@ -818,7 +944,29 @@ pub fn sync_globals_to_config() {
             let expanded_vec: Vec<String> = expanded_set.into_iter().collect();
             config_store().workspace.lock_ref().expanded_scopes.lock_mut().replace_cloned(expanded_vec);
             // Manually trigger config save since MutableVec reactive signals are complex
-            save_config_to_backend();
+            if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
+                save_config_to_backend();
+            } else {
+                zoon::println!("⏸️ Expanded scopes save skipped - initialization not complete yet");
+            }
+        }).await
+    });
+
+    // Sync load files expanded directories back to config (convert HashSet to Vec)
+    Task::start(async {
+        FILE_PICKER_EXPANDED.signal_ref(|expanded_set| {
+            expanded_set.clone()
+        }).for_each_sync(|expanded_set| {
+            // Only save if initialization is complete to prevent race conditions
+            if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
+                let expanded_vec: Vec<String> = expanded_set.into_iter().collect();
+                zoon::println!("🔄 Reactive sync triggered! Saving expanded directories: {:?}", expanded_vec);
+                config_store().workspace.lock_ref().load_files_expanded_directories.lock_mut().replace_cloned(expanded_vec);
+                // Manually trigger config save since MutableVec reactive signals are complex
+                save_config_to_backend();
+            } else {
+                zoon::println!("⏸️ Reactive sync skipped - initialization not complete yet");
+            }
         }).await
     });
 
@@ -827,7 +975,26 @@ pub fn sync_globals_to_config() {
         SELECTED_SCOPE_ID.signal_cloned().for_each_sync(|scope_id| {
             config_store().workspace.lock_mut().selected_scope_id.set_neq(scope_id);
             // Manually trigger config save for scope selection changes
-            save_config_to_backend();
+            if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
+                save_config_to_backend();
+            } else {
+                zoon::println!("⏸️ Scope selection save skipped - initialization not complete yet");
+            }
+        }).await
+    });
+
+    // Sync file picker current directory back to config
+    Task::start(async {
+        CURRENT_DIRECTORY.signal_cloned().for_each_sync(|current_dir| {
+            // Only save non-empty directories
+            let dir_to_save = if current_dir.is_empty() { None } else { Some(current_dir) };
+            config_store().session.lock_ref().file_picker.lock_ref().current_directory.set_neq(dir_to_save);
+            // Manually trigger config save for current directory changes
+            if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
+                save_config_to_backend();
+            } else {
+                zoon::println!("⏸️ Current directory save skipped - initialization not complete yet");
+            }
         }).await
     });
 
@@ -835,6 +1002,38 @@ pub fn sync_globals_to_config() {
     Task::start(async {
         VARIABLES_SEARCH_FILTER.signal_cloned().for_each_sync(|filter| {
             config_store().session.lock_mut().variables_search_filter.set_neq(filter);
+        }).await
+    });
+
+    // Sync load files scroll position back to config
+    Task::start(async {
+        LOAD_FILES_SCROLL_POSITION.signal().for_each_sync(|scroll_pos| {
+            // Only save if initialization is complete to prevent race conditions
+            if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
+                zoon::println!("💾 LOAD_FILES_SCROLL_POSITION changed to: {} - saving to config", scroll_pos);
+                // Validate scroll position is within bounds [0, 10000]
+                let validated_pos = scroll_pos.max(0).min(10000);
+                config_store().session.lock_ref().file_picker.lock_ref().scroll_position.set_neq(validated_pos);
+                // Manually trigger config save for scroll position changes
+                save_config_to_backend();
+            } else {
+                zoon::println!("⏸️ Scroll position sync skipped - initialization not complete yet");
+            }
+        }).await
+    });
+
+    // Sync viewport scroll changes back to persistent scroll position
+    Task::start(async {
+        LOAD_FILES_VIEWPORT_Y.signal().for_each_sync(|viewport_y| {
+            zoon::println!("🔄 LOAD_FILES_VIEWPORT_Y changed to: {}", viewport_y);
+            // Only sync during runtime, not during initialization
+            if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
+                // Update the persistent scroll position when user scrolls the viewport
+                // This ensures manual scrolling is also saved
+                LOAD_FILES_SCROLL_POSITION.set_neq(viewport_y);
+            } else {
+                zoon::println!("⏸️ Viewport scroll sync skipped - initialization not complete yet");
+            }
         }).await
     });
 

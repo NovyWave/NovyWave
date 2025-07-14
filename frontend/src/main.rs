@@ -40,9 +40,7 @@ pub fn main() {
         // Initialize signal-based loading completion handling
         init_signal_chains();
         
-        start_app("app", root);
         init_connection();
-        
         
         // Load configuration FIRST before setting up reactive triggers
         send_up_msg(UpMsg::LoadConfig);
@@ -54,17 +52,18 @@ pub fn main() {
                 if loaded {
                     zoon::println!("Config loaded from backend, setting up reactive system...");
                     
-                    // Initialize new config system with reactive triggers
-                    create_config_triggers();
-                    
-                    // Initialize bidirectional sync between config store and global state
+                    // Initialize bidirectional sync between config store and global state FIRST
                     sync_config_to_globals();
                     sync_globals_to_config();
+                    
+                    // Initialize reactive triggers AFTER config is loaded and synced
+                    create_config_triggers();
                     
                     // Initialize theme synchronization from config store to NovyUI
                     sync_theme_to_novyui();
                     
                     // Initialize theme system with unified config persistence  
+                    // NOTE: Access config_store() AFTER apply_config() has loaded real values
                     let current_theme = config_store().ui.lock_ref().theme.get_cloned();
                     let novyui_theme = match current_theme {
                         crate::config::Theme::Light => Theme::Light,
@@ -85,6 +84,9 @@ pub fn main() {
                             zoon::println!("Config theme set!");
                         }))
                     );
+                    
+                    // NOW start the app after config is fully loaded and reactive system is set up
+                    start_app("app", root);
                 }
             }).await
         });
@@ -162,9 +164,7 @@ async fn load_and_register_fonts() {
 
 
 fn root() -> impl Element {
-    // Auto-open Load Files dialog disabled - users can open manually via File menu
-    // file_utils::show_file_paths_dialog();
-    // Trigger rebuild
+    // One-time Load Files dialog opening for development/debug
     
     Stack::new()
         .s(Height::screen())
