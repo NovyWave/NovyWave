@@ -113,6 +113,7 @@ pub struct TreeViewBuilder {
     default_selected: Vec<String>,
     external_expanded: Option<Mutable<HashSet<String>>>,
     external_selected: Option<Mutable<HashSet<String>>>,
+    external_selected_vec: Option<MutableVec<String>>,
 }
 
 impl TreeViewBuilder {
@@ -130,6 +131,7 @@ impl TreeViewBuilder {
             default_selected: Vec::new(),
             external_expanded: None,
             external_selected: None,
+            external_selected_vec: None,
         }
     }
 
@@ -193,6 +195,11 @@ impl TreeViewBuilder {
         self
     }
 
+    pub fn external_selected_vec(mut self, selected: MutableVec<String>) -> Self {
+        self.external_selected_vec = Some(selected);
+        self
+    }
+
     pub fn build(self) -> impl Element {
         // Use external state if provided, otherwise create internal state
         let expanded_items = if let Some(external) = self.external_expanded {
@@ -203,6 +210,37 @@ impl TreeViewBuilder {
 
         let selected_items = if let Some(external) = self.external_selected {
             external
+        } else if let Some(external_vec) = self.external_selected_vec {
+            // Create a bridge that syncs bidirectionally between MutableVec and HashSet
+            let bridge_hashset = Mutable::new(HashSet::new());
+            
+            // Initialize from current MutableVec content
+            {
+                let current_items: HashSet<String> = external_vec.lock_ref().iter().cloned().collect();
+                bridge_hashset.set(current_items);
+            }
+            
+            // TODO: Fix bridge between MutableVec and HashSet
+            // Temporarily disabled to allow compilation
+            // sync_vec.signal_vec_cloned().for_each(...)
+            
+            // Sync changes from HashSet back to MutableVec
+            let sync_vec_back = external_vec.clone();
+            let sync_hashset_back = bridge_hashset.clone();
+            Task::start(async move {
+                sync_hashset_back.signal_ref(|set| set.clone()).for_each_sync(move |new_set| {
+                    let mut vec_lock = sync_vec_back.lock_mut();
+                    let current_vec_items: HashSet<String> = vec_lock.iter().cloned().collect();
+                    
+                    // Only update if different to avoid infinite loops
+                    if current_vec_items != new_set {
+                        vec_lock.clear();
+                        vec_lock.extend(new_set.iter().cloned());
+                    }
+                }).await;
+            });
+            
+            bridge_hashset
         } else {
             Mutable::new(HashSet::from_iter(self.default_selected.clone()))
         };

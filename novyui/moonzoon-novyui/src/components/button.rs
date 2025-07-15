@@ -27,6 +27,7 @@ pub enum ButtonSize {
 
 pub struct ButtonBuilder {
     label: Option<String>,
+    label_signal: Option<Box<dyn Signal<Item = String> + Unpin>>,
     variant: ButtonVariant,
     size: ButtonSize,
     disabled: bool,
@@ -46,6 +47,7 @@ impl ButtonBuilder {
     pub fn new() -> Self {
         Self {
             label: None,
+            label_signal: None,
             variant: ButtonVariant::Primary,
             size: ButtonSize::Medium,
             disabled: false,
@@ -64,6 +66,16 @@ impl ButtonBuilder {
 
     pub fn label(mut self, label: impl Into<String>) -> Self {
         self.label = Some(label.into());
+        self.label_signal = None;
+        self
+    }
+
+    pub fn label_signal<S>(mut self, label_signal: S) -> Self 
+    where
+        S: Signal<Item = String> + Unpin + 'static,
+    {
+        self.label_signal = Some(Box::new(label_signal));
+        self.label = None;
         self
     }
 
@@ -228,11 +240,19 @@ impl ButtonBuilder {
             _ => always(transparent()).boxed_local(),
         };
 
+        // Extract values before building button to avoid partial move
+        let align = self.align.take();
+        let on_press = self.on_press.take();
+        let shadows_signal = if disabled || loading {
+            // No shadows for disabled buttons
+            always(vec![]).boxed_local()
+        } else {
+            // Add shadows based on variant and theme
+            self.get_button_shadows_signal(variant).boxed_local()
+        };
+        
         // Create button content with icons and text
         let button_content = self.create_button_content(icon_size);
-        
-        // Extract align before building button to avoid partial move
-        let align = self.align.take();
 
 
 
@@ -298,15 +318,7 @@ impl ButtonBuilder {
                 }.boxed_local()
             ))
             .s(Cursor::new(if is_disabled { CursorIcon::NotAllowed } else { CursorIcon::Pointer }))
-            .s(Shadows::with_signal(
-                if is_disabled {
-                    // No shadows for disabled buttons
-                    always(vec![]).boxed_local()
-                } else {
-                    // Add shadows based on variant and theme
-                    self.get_button_shadows_signal(variant).boxed_local()
-                }
-            ))
+            .s(Shadows::with_signal(shadows_signal))
             .update_raw_el(move |raw_el| {
                 // Add underline for Link variant
                 if variant == ButtonVariant::Link {
@@ -336,7 +348,7 @@ impl ButtonBuilder {
             .label(button_content)
             .on_press(move || {
                 if !is_disabled {
-                    if let Some(handler) = &self.on_press {
+                    if let Some(handler) = &on_press {
                         handler();
                     }
                 }
@@ -371,18 +383,110 @@ impl ButtonBuilder {
         }
     }
 
-    fn create_button_content(&self, icon_size: IconSize) -> RawElOrText {
-        let has_label = self.label.is_some();
+    fn create_button_content(mut self, icon_size: IconSize) -> RawElOrText {
+        let has_label = self.label.is_some() || self.label_signal.is_some();
         let has_left_icon = self.left_icon.is_some() || self.left_icon_element.is_some();
         let has_right_icon = self.right_icon.is_some() || self.right_icon_element.is_some();
         let loading = self.loading;
 
+        // Extract the signal to own it
+        let label_signal = self.label_signal.take();
+        
         // If loading, show spinner instead of normal content
         if loading {
-            return self.create_loading_content(icon_size, has_label, has_left_icon, has_right_icon);
+            return self.create_loading_content(icon_size, has_label, has_left_icon, has_right_icon, label_signal);
         }
+        let label = self.label.clone();
+        
+        // Helper to create label based on what's available
+        let create_label = || {
+            if let Some(ref label) = label {
+                El::new()
+                    .s(Font::new().no_wrap())
+                    .child(Text::new(label))
+                    .unify()
+            } else {
+                panic!("create_label called when no label is set")
+            }
+        };
 
-        match (has_left_icon, has_label, has_right_icon) {
+        // Handle signal case vs static case
+        if let Some(signal) = label_signal {
+            // Signal-based label (can only be used once)
+            let signal_label_element = El::new()
+                .s(Font::new().no_wrap())
+                .child_signal(signal.map(|text| Text::new(text)))
+                .unify();
+            
+            match (has_left_icon, has_label, has_right_icon) {
+                // Icon-only buttons
+                (true, false, false) => {
+                    self.create_left_icon_element(icon_size)
+                }
+                (false, false, true) => {
+                    self.create_right_icon_element(icon_size)
+                }
+                // Both icons, no label (rare case)
+                (true, false, true) => {
+                    Row::new()
+                        .s(Align::new().center_y())
+                        .s(Gap::new().x(SPACING_8))
+                        .item(
+                            self.create_left_icon_element(icon_size)
+                        )
+                        .item(
+                            self.create_right_icon_element(icon_size)
+                        )
+                        .unify()
+                }
+                // Label with left icon
+                (true, true, false) => {
+                    Row::new()
+                        .s(Align::new().center_y())
+                        .s(Gap::new().x(SPACING_8))
+                        .item(
+                            self.create_left_icon_element(icon_size)
+                        )
+                        .item(signal_label_element)
+                        .unify()
+                }
+                // Label with right icon
+                (false, true, true) => {
+                    Row::new()
+                        .s(Align::new().center_y())
+                        .s(Gap::new().x(SPACING_8))
+                        .item(signal_label_element)
+                        .item(
+                            self.create_right_icon_element(icon_size)
+                        )
+                        .unify()
+                }
+                // Label with both icons
+                (true, true, true) => {
+                    Row::new()
+                        .s(Align::new().center_y())
+                        .s(Gap::new().x(SPACING_8))
+                        .item(
+                            self.create_left_icon_element(icon_size)
+                        )
+                        .item(signal_label_element)
+                        .item(
+                            self.create_right_icon_element(icon_size)
+                        )
+                        .unify()
+                }
+                // Label only
+                (false, true, false) => {
+                    signal_label_element
+                }
+                // Empty button (fallback)
+                (false, false, false) => {
+                    Text::new("").unify()
+                }
+            }
+        } else {
+            // Static label case
+            match (has_left_icon, has_label, has_right_icon) {
             // Icon-only buttons
             (true, false, false) => {
                 self.create_left_icon_element(icon_size)
@@ -411,11 +515,7 @@ impl ButtonBuilder {
                     .item(
                         self.create_left_icon_element(icon_size)
                     )
-                    .item(
-                        El::new()
-                            .s(Font::new().no_wrap())
-                            .child(Text::new(self.label.as_ref().unwrap()))
-                    )
+                    .item(create_label())
                     .unify()
             }
             // Label with right icon
@@ -423,11 +523,7 @@ impl ButtonBuilder {
                 Row::new()
                     .s(Align::new().center_y())
                     .s(Gap::new().x(SPACING_8))
-                    .item(
-                        El::new()
-                            .s(Font::new().no_wrap())
-                            .child(Text::new(self.label.as_ref().unwrap()))
-                    )
+                    .item(create_label())
                     .item(
                         self.create_right_icon_element(icon_size)
                     )
@@ -441,11 +537,7 @@ impl ButtonBuilder {
                     .item(
                         self.create_left_icon_element(icon_size)
                     )
-                    .item(
-                        El::new()
-                            .s(Font::new().no_wrap())
-                            .child(Text::new(self.label.as_ref().unwrap()))
-                    )
+                    .item(create_label())
                     .item(
                         self.create_right_icon_element(icon_size)
                     )
@@ -453,14 +545,12 @@ impl ButtonBuilder {
             }
             // Label only
             (false, true, false) => {
-                El::new()
-                    .s(Font::new().no_wrap())
-                    .child(Text::new(self.label.as_ref().unwrap()))
-                    .unify()
+                create_label()
             }
             // Empty button (fallback)
             (false, false, false) => {
                 Text::new("").unify()
+            }
             }
         }
     }
@@ -515,11 +605,12 @@ impl ButtonBuilder {
     }
 
     fn create_loading_content(
-        &self,
+        self,
         icon_size: IconSize,
         has_label: bool,
         has_left_icon: bool,
         has_right_icon: bool,
+        label_signal: Option<Box<dyn Signal<Item = String> + Unpin>>,
     ) -> RawElOrText {
         // Create spinning animation using MoonZoon's Oscillator
         use crate::tokens::animation::create_spinner;
@@ -542,12 +633,25 @@ impl ButtonBuilder {
                     .build()
             );
 
+        // Helper function to create label text for loading state
+        let create_loading_label = || {
+            if let Some(signal) = label_signal {
+                El::new()
+                    .child_signal(signal.map(|text| Text::new(text)))
+                    .unify()
+            } else if let Some(label) = &self.label {
+                Text::new(label).unify()
+            } else {
+                Text::new("").unify()
+            }
+        };
+
         if has_right_icon && !has_left_icon && has_label {
             // Right icon position: label + spinner
             Row::new()
                 .s(Align::new().center_y())
                 .s(Gap::new().x(SPACING_8))
-                .item(Text::new(self.label.as_ref().unwrap()))
+                .item(create_loading_label())
                 .item(spinner)
                 .unify()
         } else if has_label {
@@ -556,7 +660,7 @@ impl ButtonBuilder {
                 .s(Align::new().center_y())
                 .s(Gap::new().x(SPACING_8))
                 .item(spinner)
-                .item(Text::new(self.label.as_ref().unwrap()))
+                .item(create_loading_label())
                 .unify()
         } else {
             // Spinner only

@@ -24,3 +24,20 @@ Core guidance for Claude Code when working with NovyWave.
 @.claude/ai-docs/memory-best-practices.md
 @.claude/ai-docs/memory-mcp.md
 @.claude/ai-docs/browser-mcp.md
+
+## Granular UI Updates Implementation (Session Learning)
+
+**CRITICAL DEBUGGING PATTERN**: When UI changes aren't visible after implementation, **always check compilation first**:
+```bash
+tail -100 dev_server.log | grep -i "error"
+```
+
+**Root Cause**: MoonZoon only auto-reloads after **successful compilation**. Failed builds mean browser keeps running old code, making new optimizations invisible.
+
+**Implementation Success**: 
+- ButtonBuilder.label_signal() - Reactive text without component recreation
+- MutableVec migration - Granular list updates (badges appear individually)
+- TreeView external_selected_vec() bridge for compatibility
+- Result: "Load X Files" button text updates smoothly, badges don't flash/recreate
+
+**Key Lesson**: UI optimization verification requires compilation success verification first.

@@ -23,9 +23,47 @@ When making changes to files, first understand the file's code conventions. Mimi
 5. NEVER rename types with aliases (e.g., `Signal as DataSignal`) - move code directly
 6. Always preserve exact functionality during moves
 
+## Mandatory Clarification Protocol
+
+**CRITICAL: Always ask clarifying questions before starting complex tasks.**
+
+### When to Ask Questions:
+- Multi-step UI/UX tasks requiring specific styling or behavior
+- Tasks with ambiguous requirements or multiple interpretation paths
+- Complex technical implementations where assumptions could lead to rework
+- Integration work where exact behavior needs specification
+
+### Question Types to Ask:
+- **Specificity**: "Should the entire file extension part '(*.vcd, *.fst)' be less contrasting, or just the asterisks?"
+- **Context**: "Do you want the dialog to take full screen height, or screen height with padding?"
+- **Scope**: "Should scrollbar styling match Files & Scope panels specifically?"
+- **Verification**: "Can you clarify what you mean by 'background doesn't cover content'?"
+
+### Example Good Clarification:
+```
+I have a couple of clarifying questions before I start implementing:
+
+1. **Window title styling**: For "Select Waveform Files (*.vcd, *.fst)" - should the entire file extension part "(*.vcd, *.fst)" be less contrasting, or just the asterisks and dots?
+
+2. **Full screen height**: When you say "fill parent height (effectively fill screen)" - do you want the dialog to take up the full viewport height with some margin, or literally edge-to-edge?
+
+3. **Background coverage**: Can you clarify what you mean by "Dialog background does not cover entire content"?
+
+Once I understand these details clearly, I'll implement all the improvements efficiently.
+```
+
+**Never assume - always clarify ambiguous requirements upfront.**
+
 ## Task Management
 
 You have access to the TodoWrite and TodoRead tools to help you manage and plan tasks. Use these tools VERY frequently to ensure that you are tracking your tasks and giving the user visibility into your progress.
+
+**MANDATORY TODO USAGE:**
+- Create detailed todos for ALL multi-step tasks (3+ steps)
+- Update todo status in real-time as you work
+- Use specific, actionable todo descriptions
+- Mark todos completed immediately after finishing each task
+- Never batch multiple completions
 
 These tools are also EXTREMELY helpful for planning tasks, and for breaking down larger complex tasks into smaller steps. If you do not use this tool when planning, you may forget to do important tasks - and that is unacceptable.
 
@@ -40,6 +78,52 @@ You are allowed to be proactive, but only when the user asks you to do something
 For example, if the user asks you how to approach something, you should do your best to answer their question first, and not immediately jump into taking actions.
 
 3. Do not add additional code explanation summary unless requested by the user. After working on a file, just stop, rather than providing an explanation of what you did.
+
+## Systematic Improvement Process
+
+**WHEN USER PROVIDES FEEDBACK ABOUT POOR RESULTS:**
+
+### 1. Acknowledge & Analyze
+- Never defend poor results - acknowledge when quality is insufficient
+- Use TodoWrite to break down each specific issue
+- Create focused todos for each problem area
+
+### 2. Systematic Subagent Research
+- Use Task tool subagents to analyze each issue separately
+- One subagent per distinct problem for focused analysis
+- Get detailed technical solutions from each subagent
+- Example: "Analyze dialog centering issues", "Fix scrollbar thickness problems"
+
+### 3. Methodical Implementation
+- Apply fixes systematically, one issue at a time
+- Update todo status as each fix is completed
+- Don't attempt to fix everything at once
+
+### 4. Comprehensive Testing
+- Use browser MCP to verify changes visually
+- Take screenshots to document improvements
+- Check compilation logs for errors
+- Verify ALL requirements are met before claiming completion
+
+### 5. Results Verification & Honesty
+- Test each fix individually
+- Verify the overall solution meets all requirements
+- **CRITICAL: If you cannot verify a fix works, tell the user immediately**
+- Report verification failures honestly: "I cannot verify this works because [reason]"
+- Never claim completion without actual successful testing
+- Update Memory MCP with solutions immediately
+
+**Example Response Pattern:**
+```
+You're absolutely right - 1/5 is not acceptable. Let me use subagents to systematically analyze and fix each issue:
+
+[Creates detailed todos for each problem]
+[Uses Task tool subagents to analyze each issue separately]  
+[Applies fixes methodically]
+[Verifies all fixes work properly]
+```
+
+**This process ensures accountability and drives high-quality results.**
 
 ## Git Operations
 
