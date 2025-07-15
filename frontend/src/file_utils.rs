@@ -1,10 +1,13 @@
-use crate::{FILE_PATHS_INPUT, SHOW_FILE_DIALOG, send_up_msg, IS_LOADING, LOAD_FILES_VIEWPORT_Y};
+use crate::{FILE_PATHS_INPUT, SHOW_FILE_DIALOG, send_up_msg, IS_LOADING, LOAD_FILES_VIEWPORT_Y, config::config_store};
 use shared::{UpMsg, generate_file_id};
 use zoon::{Task, Timer};
 
 
 pub fn show_file_paths_dialog() {
+    // Set both the global state AND the config store to work with sync system
+    config_store().dialogs.lock_mut().show_file_dialog.set(true);
     SHOW_FILE_DIALOG.set(true);
+    zoon::println!("show_file_paths_dialog() called - setting dialog to true");
     FILE_PATHS_INPUT.set_neq(String::new());
     
     // Initialize file picker by browsing to filesystem root and user home directory

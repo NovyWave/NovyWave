@@ -34,24 +34,40 @@ pub fn file_paths_dialog() -> impl Element {
         .s(Width::fill())
         .s(Height::fill())
         .s(Align::center())
+        .s(Padding::new().top(40).bottom(40))
+        .update_raw_el(|raw_el| {
+            raw_el
+                .style("display", "flex")
+                .style("justify-content", "center")
+                .style("align-items", "center")
+        })
         .child(
             El::new()
                 .s(Background::new().color_signal(neutral_2()))
                 .s(RoundedCorners::all(8))
                 .s(Borders::all_signal(neutral_4().map(|color| {
-                    Border::new().width(2).color(color)
+                    Border::new().width(1).color(color)
                 })))
-                .s(Padding::all(24))
+                .s(Padding::all(16))
                 .s(Width::exact(700))
-                .s(Height::exact(500))
+                .s(Height::fill().max(800))
                 .child(
                     Column::new()
                         .s(Height::fill())
                         .s(Gap::new().y(16))
                         .item(
-                            El::new()
-                                .s(Font::new().size(18).weight(FontWeight::Bold).color_signal(neutral_12()))
-                                .child("Browse and Select Waveform Files")
+                            Row::new()
+                                .s(Gap::new().x(4))
+                                .item(
+                                    El::new()
+                                        .s(Font::new().size(16).weight(FontWeight::Bold).color_signal(neutral_12()))
+                                        .child("Select Waveform Files ")
+                                )
+                                .item(
+                                    El::new()
+                                        .s(Font::new().size(16).weight(FontWeight::Bold).color_signal(neutral_8()))
+                                        .child("(*.vcd, *.fst)")
+                                )
                         )
                         .item(
                             El::new()
@@ -62,6 +78,12 @@ pub fn file_paths_dialog() -> impl Element {
                                 })))
                                 .s(RoundedCorners::all(4))
                                 .s(Padding::all(8))
+                                .update_raw_el(|raw_el| {
+                                    raw_el
+                                        .style("min-height", "0")      // Allow flex shrinking
+                                        .style("overflow-x", "auto")   // Enable horizontal scroll
+                                        .style("overflow-y", "hidden") // Prevent double scrollbars
+                                })
                                 .child(file_picker_content())
                         )
                         .item(selected_files_display())
@@ -73,7 +95,7 @@ pub fn file_paths_dialog() -> impl Element {
                                     button()
                                         .label("Cancel")
                                         .variant(ButtonVariant::Ghost)
-                                        .size(ButtonSize::Medium)
+                                        .size(ButtonSize::Small)
                                         .on_press(|| {
                                             SHOW_FILE_DIALOG.set(false);
                                             // Clear file picker state on cancel
@@ -764,35 +786,29 @@ fn load_files_button_with_progress(variant: ButtonVariant, size: ButtonSize, ico
 
 
 fn load_files_picker_button() -> impl Element {
-    El::new()
-        .child_signal(
+    button()
+        .label_signal(
             map_ref! {
                 let is_loading = IS_LOADING.signal(),
-                let selected = FILE_PICKER_SELECTED.signal_ref(|s| s.len()) =>
+                let selected_count = FILE_PICKER_SELECTED.signal_vec_cloned().len() =>
                 move {
-                    let has_selection = *selected > 0;
-                    let is_loading = *is_loading;
-                    
-                    let mut btn = button();
-                    
-                    if is_loading {
-                        btn = btn.label("Loading...")
-                            .disabled(true);
-                    } else if has_selection {
-                        btn = btn.label(format!("Load {} Files", selected))
-                            .on_press(|| process_file_picker_selection());
+                    if *is_loading {
+                        "Loading...".to_string()
+                    } else if *selected_count > 0 {
+                        format!("Load {} Files", selected_count)
                     } else {
-                        btn = btn.label("Load Files")
-                            .disabled(true);
+                        "Load Files".to_string()
                     }
-                    
-                    btn.variant(ButtonVariant::Primary)
-                        .size(ButtonSize::Medium)
-                        .build()
-                        .into_element()
                 }
             }
         )
+        // TODO: Add disabled_signal support to NovyUI button
+        // .disabled_signal(...)
+        .disabled(false)  // Temporarily disabled for compilation
+        .on_press(|| process_file_picker_selection())
+        .variant(ButtonVariant::Primary)
+        .size(ButtonSize::Small)
+        .build()
 }
 
 
@@ -800,6 +816,10 @@ fn file_picker_content() -> impl Element {
     El::new()
         .s(Height::fill())
         .s(Scrollbars::both())
+        .update_raw_el(|raw_el| {
+            raw_el.style("scrollbar-width", "thin")
+                .style_signal("scrollbar-color", primary_6().map(|thumb| primary_3().map(move |track| format!("{} {}", thumb, track))).flatten())
+        })
         .child_signal(
             FILE_PICKER_ERROR.signal_cloned().map(|error| {
                 if let Some(error_msg) = error {
@@ -843,6 +863,7 @@ fn simple_file_picker_tree() -> impl Element {
     
     El::new()
         .s(Height::fill())
+        .s(Width::fill())
         .s(Scrollbars::both())
         .viewport_y_signal(LOAD_FILES_VIEWPORT_Y.signal())
         .on_viewport_location_change(|_scene, viewport| {
@@ -851,6 +872,13 @@ fn simple_file_picker_tree() -> impl Element {
                 LOAD_FILES_VIEWPORT_Y.set_neq(viewport.y);
             } else {
             }
+        })
+        .update_raw_el(|raw_el| {
+            raw_el
+                .style("min-width", "fit-content")
+                .style("width", "100%")
+                .style("scrollbar-width", "thin")
+                .style_signal("scrollbar-color", primary_6().map(|thumb| primary_3().map(move |track| format!("{} {}", thumb, track))).flatten())
         })
         .child_signal(
             map_ref! {
@@ -874,7 +902,7 @@ fn simple_file_picker_tree() -> impl Element {
                             .show_icons(true)
                             .show_checkboxes(true)
                             .external_expanded(FILE_PICKER_EXPANDED.clone())
-                            .external_selected(FILE_PICKER_SELECTED.clone())
+                            .external_selected_vec(FILE_PICKER_SELECTED.clone())
                             .build()
                             .unify()
                     } else {
@@ -958,120 +986,41 @@ fn monitor_directory_expansions(expanded: HashSet<String>) {
 }
 
 
+fn extract_filename(path: &str) -> String {
+    path.split('/').last().unwrap_or(path).to_string()
+}
+
 fn selected_files_display() -> impl Element {
     El::new()
-        .s(Height::exact(120))
-        .s(Width::fill())
-        .s(Background::new().color_signal(neutral_2()))
-        .s(Borders::all_signal(neutral_4().map(|color| {
-            Border::new().width(1).color(color)
-        })))
-        .s(RoundedCorners::all(4))
-        .s(Padding::all(8))
-        .child(
-            Column::new()
-                .s(Height::fill())
-                .s(Gap::new().y(8))
-                .item(
+        .s(Padding::all(4))
+        .child_signal(
+            FILE_PICKER_SELECTED.signal_vec_cloned().to_signal_map(|selected_paths| {
+                if selected_paths.is_empty() {
+                    El::new()
+                        .s(Font::new().italic().color_signal(neutral_8()))
+                        .child("Select waveform files from the directory tree above")
+                        .unify()
+                } else {
                     Row::new()
                         .s(Gap::new().x(8))
-                        .s(Align::new().center_y())
-                        .item(
-                            El::new()
-                                .s(Font::new().size(14).weight(FontWeight::SemiBold).color_signal(neutral_11()))
-                                .child("Selected Files")
-                        )
-                        .item(
-                            El::new()
-                                .s(Font::new().size(13).color_signal(neutral_9()))
-                                .child_signal(
-                                    FILE_PICKER_SELECTED.signal_ref(|selected| {
-                                        if selected.is_empty() {
-                                            "No files selected".to_string()
-                                        } else {
-                                            format!("{} file{} selected", selected.len(), if selected.len() == 1 { "" } else { "s" })
-                                        }
-                                    })
-                                )
-                        )
-                        .item(
-                            El::new()
-                                .s(Width::fill())
-                        )
-                        .item_signal(
-                            FILE_PICKER_SELECTED.signal_ref(|selected| !selected.is_empty()).map(|has_selection| {
-                                if has_selection {
-                                    Some(
-                                        button()
-                                            .label("Clear All")
-                                            .left_icon(IconName::X)
-                                            .variant(ButtonVariant::Ghost)
-                                            .size(ButtonSize::Small)
-                                            .on_press(|| {
-                                                FILE_PICKER_SELECTED.lock_mut().clear();
-                                            })
-                                            .build()
-                                    )
-                                } else {
-                                    None
-                                }
-                            })
-                        )
-                )
-                .item(
-                    El::new()
-                        .s(Height::fill())
-                        .s(Scrollbars::both())
-                        .child_signal(
-                            FILE_PICKER_SELECTED.signal_ref(|selected| selected.clone()).map(|selected_paths| {
-                                if selected_paths.is_empty() {
-                                    El::new()
-                                        .s(Height::fill())
-                                        .s(Align::center())
-                                        .s(Font::new().italic().color_signal(neutral_8()))
-                                        .child("Select waveform files from the directory tree above")
-                                        .unify()
-                                } else {
-                                    Column::new()
-                                        .s(Gap::new().y(4))
-                                        .items(selected_paths.into_iter().map(|path| {
-                                            Row::new()
-                                                .s(Gap::new().x(8))
-                                                .s(Align::new().center_y())
-                                                .s(Padding::new().x(8).y(4))
-                                                .s(Background::new().color_signal(neutral_1()))
-                                                .s(RoundedCorners::all(3))
-                                                .item(
-                                                    icon(IconName::File)
-                                                        .size(IconSize::Small)
-                                                        .color(IconColor::Secondary)
-                                                        .build()
-                                                )
-                                                .item(
-                                                    El::new()
-                                                        .s(Font::new().size(13).color_signal(neutral_11()).no_wrap())
-                                                        .s(Width::fill())
-                                                        .child(path.clone())
-                                                )
-                                                .item(
-                                                    button()
-                                                        .left_icon(IconName::X)
-                                                        .variant(ButtonVariant::DestructiveGhost)
-                                                        .size(ButtonSize::Small)
-                                                        .on_press({
-                                                            let path = path.clone();
-                                                            move || {
-                                                                FILE_PICKER_SELECTED.lock_mut().remove(&path);
-                                                            }
-                                                        })
-                                                        .build()
-                                                )
-                                        }))
-                                        .unify()
-                                }
-                            })
-                        )
-                )
+                        .s(Align::new().left().top())
+                        .items(selected_paths.iter().map(|path| {
+                            let filename = extract_filename(path);
+                            badge(filename)
+                                .variant(BadgeVariant::Outline)
+                                .size(BadgeSize::Small)
+                                .removable()
+                                .on_remove({
+                                    let path = path.clone();
+                                    move || {
+                                        FILE_PICKER_SELECTED.lock_mut().retain(|p| p != &path);
+                                    }
+                                })
+                                .build()
+                        }))
+                        .unify()
+                }
+            })
         )
 }
 
@@ -1081,7 +1030,7 @@ fn selected_files_display() -> impl Element {
 
 
 fn process_file_picker_selection() {
-    let selected_files = FILE_PICKER_SELECTED.lock_ref().clone();
+    let selected_files = FILE_PICKER_SELECTED.lock_ref().to_vec();
     
     if !selected_files.is_empty() {
         IS_LOADING.set(true);

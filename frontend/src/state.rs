@@ -23,7 +23,7 @@ pub static DOCK_TOGGLE_IN_PROGRESS: Lazy<Mutable<bool>> = lazy::default();
 
 // File picker state for TreeView-based browser
 pub static FILE_PICKER_EXPANDED: Lazy<Mutable<HashSet<String>>> = lazy::default();
-pub static FILE_PICKER_SELECTED: Lazy<Mutable<HashSet<String>>> = lazy::default();
+pub static FILE_PICKER_SELECTED: Lazy<MutableVec<String>> = lazy::default();
 pub static CURRENT_DIRECTORY: Lazy<Mutable<String>> = lazy::default();
 pub static FILE_PICKER_DATA: Lazy<MutableVec<FileSystemItem>> = lazy::default();
 pub static FILE_PICKER_ERROR: Lazy<Mutable<Option<String>>> = lazy::default();

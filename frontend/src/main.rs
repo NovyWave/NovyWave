@@ -81,6 +81,10 @@ pub fn main() {
                         }))
                     );
                     
+                    // Force Load Files dialog to open for development iteration
+                    zoon::println!("Force opening Load Files dialog for development");
+                    show_file_paths_dialog();
+                    
                     // NOW start the app after config is fully loaded and reactive system is set up
                     start_app("app", root);
                 }
@@ -136,9 +140,7 @@ fn init_scope_selection_handlers() {
 fn init_file_picker_handlers() {
     // Watch for file selection events (double-click to browse directories)
     Task::start(async {
-        FILE_PICKER_SELECTED.signal_ref(|selected_items| {
-            selected_items.clone()
-        }).for_each_sync(|_selected_items| {
+        FILE_PICKER_SELECTED.signal_vec_cloned().for_each(|_| async move {
             // Simple approach: For now, we'll implement manual directory browsing
             // via the breadcrumb navigation rather than automatic expansion
             // This avoids the complexity of tracking which directories have been loaded
