@@ -838,9 +838,13 @@ fn load_files_picker_button() -> impl Element {
                 }
             }
         )
-        // TODO: Add disabled_signal support to NovyUI button
-        // .disabled_signal(...)
-        .disabled(false)  // Temporarily disabled for compilation
+        .disabled_signal(
+            map_ref! {
+                let is_loading = IS_LOADING.signal(),
+                let selected_count = FILE_PICKER_SELECTED.signal_vec_cloned().len() =>
+                *is_loading || *selected_count == 0
+            }
+        )
         .on_press(|| process_file_picker_selection())
         .variant(ButtonVariant::Primary)
         .size(ButtonSize::Small)

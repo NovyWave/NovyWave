@@ -5,7 +5,7 @@ use crate::tokens::*;
 use crate::tokens::shadow::*;
 use crate::components::icon::*;
 use zoon::*;
-use futures_signals::signal::always;
+use futures_signals::signal::{always, SignalExt};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ButtonVariant {
@@ -31,6 +31,7 @@ pub struct ButtonBuilder {
     variant: ButtonVariant,
     size: ButtonSize,
     disabled: bool,
+    disabled_signal: Option<Box<dyn Signal<Item = bool> + Unpin>>,
     loading: bool,
     left_icon: Option<&'static str>,
     left_icon_element: Option<Box<dyn Fn() -> RawElOrText>>,
@@ -51,6 +52,7 @@ impl ButtonBuilder {
             variant: ButtonVariant::Primary,
             size: ButtonSize::Medium,
             disabled: false,
+            disabled_signal: None,
             loading: false,
             left_icon: None,
             left_icon_element: None,
@@ -91,6 +93,16 @@ impl ButtonBuilder {
 
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        self.disabled_signal = None;
+        self
+    }
+
+    pub fn disabled_signal<S>(mut self, disabled_signal: S) -> Self 
+    where
+        S: Signal<Item = bool> + Unpin + 'static,
+    {
+        self.disabled_signal = Some(Box::new(disabled_signal));
+        self.disabled = false;
         self
     }
 
@@ -198,10 +210,22 @@ impl ButtonBuilder {
         // Variant-based colors - unified signal approach
         let variant = self.variant;
         let disabled = self.disabled;
+        let disabled_signal = self.disabled_signal.take();
         let loading = self.loading;
 
-        // Loading buttons should be disabled (like Vue implementation)
-        let is_disabled = disabled || loading;
+        // Create a shared mutable for disabled state
+        let (is_disabled_mutable, is_disabled_signal) = Mutable::new_and_signal(disabled || loading);
+        
+        // If we have a disabled_signal, update the mutable when it changes
+        if let Some(signal) = disabled_signal {
+            Task::start(signal.for_each(clone!((is_disabled_mutable) move |signal_disabled| {
+                is_disabled_mutable.set(disabled || loading || signal_disabled);
+                async {}
+            })));
+        }
+        
+        // Broadcast the signal for multiple use
+        let is_disabled_broadcast = is_disabled_signal.broadcast();
 
         let bg_color_signal = match variant {
             ButtonVariant::Primary => primary_7().boxed_local(),
@@ -243,13 +267,58 @@ impl ButtonBuilder {
         // Extract values before building button to avoid partial move
         let align = self.align.take();
         let on_press = self.on_press.take();
-        let shadows_signal = if disabled || loading {
-            // No shadows for disabled buttons
-            always(vec![]).boxed_local()
-        } else {
-            // Add shadows based on variant and theme
-            self.get_button_shadows_signal(variant).boxed_local()
-        };
+        
+        // Create shadow signal using the theme signal and disabled state
+        let shadows_signal = map_ref! {
+            let is_disabled = is_disabled_broadcast.signal(),
+            let theme = theme() =>
+            if *is_disabled {
+                // No shadows for disabled buttons
+                vec![]
+            } else {
+                // Add shadows based on variant and theme
+                match (variant, theme) {
+                    // Primary buttons get blue-tinted shadows
+                    (ButtonVariant::Primary, Theme::Light) => vec![
+                        Shadow::new().y(4).x(0).blur(6).spread(-1).color(SHADOW_COLOR_PRIMARY_LIGHT),
+                        Shadow::new().y(2).x(0).blur(4).spread(-1).color(SHADOW_COLOR_NEUTRAL_LIGHT),
+                    ],
+                    (ButtonVariant::Primary, Theme::Dark) => vec![
+                        Shadow::new().y(4).x(0).blur(6).spread(-1).color(SHADOW_COLOR_PRIMARY_DARK),
+                        Shadow::new().y(2).x(0).blur(4).spread(-1).color(SHADOW_COLOR_PRIMARY_LIGHT),
+                    ],
+                    // Secondary buttons get neutral shadows
+                    (ButtonVariant::Secondary, Theme::Light) => vec![
+                        Shadow::new().y(3).x(0).blur(6).spread(-1).color(SHADOW_COLOR_BLACK_MEDIUM),
+                        Shadow::new().y(1).x(0).blur(3).spread(-1).color(SHADOW_COLOR_BLACK_LIGHT),
+                    ],
+                    (ButtonVariant::Secondary, Theme::Dark) => vec![
+                        Shadow::new().y(3).x(0).blur(6).spread(-1).color(SHADOW_COLOR_BLACK_STRONG),
+                        Shadow::new().y(1).x(0).blur(3).spread(-1).color(SHADOW_COLOR_BLACK_DARK),
+                    ],
+                    // Outline buttons get subtle shadows
+                    (ButtonVariant::Outline, Theme::Light) => vec![
+                        Shadow::new().y(2).x(0).blur(4).spread(-1).color(SHADOW_COLOR_BLACK_LIGHT),
+                        Shadow::new().y(1).x(0).blur(2).spread(-1).color(SHADOW_COLOR_BLACK_SUBTLE),
+                    ],
+                    (ButtonVariant::Outline, Theme::Dark) => vec![
+                        Shadow::new().y(2).x(0).blur(4).spread(-1).color(SHADOW_COLOR_BLACK_STRONG),
+                        Shadow::new().y(1).x(0).blur(2).spread(-1).color(SHADOW_COLOR_BLACK_DARK),
+                    ],
+                    // Destructive buttons get red-tinted shadows
+                    (ButtonVariant::Destructive, Theme::Light) => vec![
+                        Shadow::new().y(4).x(0).blur(6).spread(-1).color(SHADOW_COLOR_ERROR_LIGHT),
+                        Shadow::new().y(2).x(0).blur(4).spread(-1).color(SHADOW_COLOR_NEUTRAL_LIGHT),
+                    ],
+                    (ButtonVariant::Destructive, Theme::Dark) => vec![
+                        Shadow::new().y(4).x(0).blur(6).spread(-1).color(SHADOW_COLOR_ERROR_DARK),
+                        Shadow::new().y(2).x(0).blur(4).spread(-1).color(SHADOW_COLOR_ERROR_LIGHT),
+                    ],
+                    // Ghost and Link buttons get no shadows for minimal appearance
+                    (ButtonVariant::Ghost, _) | (ButtonVariant::Link, _) | (ButtonVariant::DestructiveGhost, _) => vec![],
+                }
+            }
+        }.boxed_local();
         
         // Create button content with icons and text
         let button_content = self.create_button_content(icon_size);
@@ -269,55 +338,68 @@ impl ButtonBuilder {
 
         button
             .s(Background::new().color_signal(
-                if is_disabled {
-                    // Disabled state - use exact Vue colors: neutral-5
-                    neutral_5().boxed_local()
-                } else {
-                    map_ref! {
-                        let hovered = hovered_signal,
-                        let bg_color = bg_color_signal,
-                        let hover_bg_color = hover_bg_color_signal =>
-                        if *hovered {
-                            *hover_bg_color
-                        } else {
-                            *bg_color
-                        }
-                    }.boxed_local()
+                map_ref! {
+                    let is_disabled = is_disabled_broadcast.signal(),
+                    let hovered = hovered_signal,
+                    let bg_color = bg_color_signal,
+                    let hover_bg_color = hover_bg_color_signal,
+                    let neutral_disabled_color = neutral_5() =>
+                    if *is_disabled {
+                        // Disabled state - use exact Vue colors: neutral-5
+                        *neutral_disabled_color
+                    } else if *hovered {
+                        *hover_bg_color
+                    } else {
+                        *bg_color
+                    }
                 }.boxed_local()
             ))
             .s(Borders::all_signal(
-                if is_disabled {
-                    // Disabled state - use exact Vue colors: neutral-5 for border
-                    neutral_5().map(|color| Border::new().width(1).color(color)).boxed_local()
-                } else {
-                    // Always use 1px border to prevent size changes
-                    border_color_signal.map(|color| Border::new().width(1).color(color)).boxed_local()
+                map_ref! {
+                    let is_disabled = is_disabled_broadcast.signal(),
+                    let border_color = border_color_signal,
+                    let neutral_disabled_border = neutral_5() =>
+                    if *is_disabled {
+                        // Disabled state - use exact Vue colors: neutral-5 for border
+                        Border::new().width(1).color(*neutral_disabled_border)
+                    } else {
+                        // Always use 1px border to prevent size changes
+                        Border::new().width(1).color(*border_color)
+                    }
                 }.boxed_local()
             ))
             .s(Outline::with_signal_self(
-                if is_disabled {
-                    // No outline for disabled buttons
-                    always(None).boxed_local()
-                } else {
-                    map_ref! {
-                        let focused = focused_signal =>
-                        if *focused {
-                            Some(Outline::inner().width(FOCUS_RING_WIDTH).color(FOCUS_RING_COLOR_DEFAULT))
-                        } else {
-                            None
-                        }
-                    }.boxed_local()
+                map_ref! {
+                    let is_disabled = is_disabled_broadcast.signal(),
+                    let focused = focused_signal =>
+                    if *is_disabled {
+                        // No outline for disabled buttons
+                        None
+                    } else if *focused {
+                        Some(Outline::inner().width(FOCUS_RING_WIDTH).color(FOCUS_RING_COLOR_DEFAULT))
+                    } else {
+                        None
+                    }
                 }.boxed_local()
             ))
             .s(Font::new().color_signal(
-                if is_disabled {
-                    // Disabled state - use exact Vue colors: neutral-7
-                    neutral_7().boxed_local()
-                } else {
-                    text_color_signal.boxed_local()
+                map_ref! {
+                    let is_disabled = is_disabled_broadcast.signal(),
+                    let text_color = text_color_signal,
+                    let neutral_disabled_text = neutral_7() =>
+                    if *is_disabled {
+                        // Disabled state - use exact Vue colors: neutral-7
+                        *neutral_disabled_text
+                    } else {
+                        *text_color
+                    }
                 }.boxed_local()
             ))
-            .s(Cursor::new(if is_disabled { CursorIcon::NotAllowed } else { CursorIcon::Pointer }))
+            .s(Cursor::with_signal(
+                is_disabled_broadcast.signal().map(|is_disabled| {
+                    if is_disabled { CursorIcon::NotAllowed } else { CursorIcon::Pointer }
+                })
+            ))
             .s(Shadows::with_signal(shadows_signal))
             .update_raw_el(move |raw_el| {
                 // Add underline for Link variant
@@ -328,31 +410,32 @@ impl ButtonBuilder {
                 }
             })
             .update_raw_el(move |raw_el| {
-                if is_disabled {
-                    // Disabled state - use opacity token
-                    raw_el.style("opacity", OPACITY_DISABLED)
-                } else {
-                    raw_el.style("opacity", OPACITY_ENABLED)
-                }
+                raw_el.style_signal("opacity", is_disabled_broadcast.signal().map(|is_disabled| {
+                    if is_disabled {
+                        OPACITY_DISABLED
+                    } else {
+                        OPACITY_ENABLED
+                    }
+                }))
             })
-            .on_hovered_change(move |is_hovered| {
-                if !is_disabled {
+            .on_hovered_change(clone!((is_disabled_mutable, hovered) move |is_hovered| {
+                if !is_disabled_mutable.get() {
                     hovered.set(is_hovered);
                 }
-            })
-            .on_focused_change(move |is_focused| {
-                if !is_disabled {
+            }))
+            .on_focused_change(clone!((is_disabled_mutable, focused) move |is_focused| {
+                if !is_disabled_mutable.get() {
                     focused.set(is_focused);
                 }
-            })
+            }))
             .label(button_content)
-            .on_press(move || {
-                if !is_disabled {
+            .on_press(clone!((is_disabled_mutable) move || {
+                if !is_disabled_mutable.get() {
                     if let Some(handler) = &on_press {
                         handler();
                     }
                 }
-            })
+            }))
     }
 
     fn create_left_icon_element(&self, icon_size: IconSize) -> RawElOrText {
