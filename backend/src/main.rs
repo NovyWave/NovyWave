@@ -1,5 +1,5 @@
 use moon::*;
-use shared::{self, UpMsg, DownMsg, AppConfig, FileHierarchy, WaveformFile, FileFormat, ScopeData, generate_file_id, FileSystemItem, is_waveform_file, get_file_extension};
+use shared::{self, UpMsg, DownMsg, AppConfig, FileHierarchy, WaveformFile, FileFormat, ScopeData, generate_file_id, FileSystemItem};
 use std::path::Path;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

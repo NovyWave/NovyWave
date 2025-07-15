@@ -143,12 +143,18 @@ impl SwitchBuilder {
         let checked_clone_for_label = checked.clone();
         let focused = Mutable::new(false);
         let hovered = Mutable::new(false);
+        // TODO: Implement focus state styling for accessibility
+        #[allow(unused_variables)]
         let focused_signal = focused.signal();
+        // TODO: Implement hover state styling for better UX
+        #[allow(unused_variables)]
         let hovered_signal = hovered.signal();
 
         let track_width = self.size.track_width();
         let track_height = self.size.track_height();
         let thumb_size = self.size.thumb_size();
+        // TODO: Use font_size for label text when label feature is implemented
+        #[allow(unused_variables)]
         let font_size = self.size.font_size();
         let track_radius = track_height / 2;
         let thumb_radius = thumb_size / 2;
@@ -160,6 +166,8 @@ impl SwitchBuilder {
 
         // Calculate thumb position (2px padding from edges)
         let thumb_padding = 2;
+        // TODO: Use thumb_travel for smooth thumb animations
+        #[allow(unused_variables)]
         let thumb_travel = track_width - thumb_size - (thumb_padding * 2);
 
         // Create the switch track

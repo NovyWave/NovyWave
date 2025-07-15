@@ -52,7 +52,6 @@ pub fn restore_scope_selections_sequenced() {
                 UI_UPDATE_SEQUENCE.set(current_sequence + 1);
                 
                 // Restore TreeView selection to match the persisted scope
-                zoon::println!("Restoring scope selection: {}", scope_id_clone);
                 TREE_SELECTED_ITEMS.lock_mut().insert(scope_id_clone.clone());
                 
                 // Re-trigger SELECTED_SCOPE_ID signal to update variables panel

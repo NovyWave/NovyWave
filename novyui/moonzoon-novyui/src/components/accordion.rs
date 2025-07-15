@@ -67,7 +67,6 @@ impl AccordionBuilder {
             .map(|(index, _)| Mutable::new(self.default_expanded.contains(&index)))
             .collect();
 
-        let allow_multiple = self.allow_multiple;
         let items = self.items;
 
         Column::new()
@@ -79,7 +78,6 @@ impl AccordionBuilder {
                     .enumerate()
                     .map(|(index, item)| {
                         let expanded = expanded_states[index].clone();
-                        let expanded_states_clone = expanded_states.clone();
 
                         build_accordion_item_simple(item, expanded)
                     })

@@ -50,7 +50,6 @@ pub fn main() {
             // Wait for config to actually load from backend
             CONFIG_LOADED.signal().for_each_sync(|loaded| {
                 if loaded {
-                    zoon::println!("Config loaded from backend, setting up reactive system...");
                     
                     // Initialize bidirectional sync between config store and global state FIRST
                     sync_config_to_globals();
@@ -73,15 +72,12 @@ pub fn main() {
                     init_theme(
                         Some(novyui_theme), // Use loaded theme, not default
                         Some(Box::new(|novyui_theme| {
-                            zoon::println!("Theme callback triggered! NovyUI theme: {:?}", novyui_theme);
                             // Convert NovyUI theme to config theme and update store
                             let config_theme = match novyui_theme {
                                 Theme::Light => crate::config::Theme::Light,
                                 Theme::Dark => crate::config::Theme::Dark,
                             };
-                            zoon::println!("Setting config theme to: {:?}", config_theme);
                             config_store().ui.lock_mut().theme.set_neq(config_theme);
-                            zoon::println!("Config theme set!");
                         }))
                     );
                     
@@ -111,7 +107,6 @@ fn init_scope_selection_handlers() {
                 // Only set flag if config is loaded (prevents startup interference)
                 if CONFIG_LOADED.get() {
                     USER_CLEARED_SELECTION.set(true);
-                    zoon::println!("TreeView: User cleared scope selection, setting flag to prevent restoration");
                 }
             }
         }).await

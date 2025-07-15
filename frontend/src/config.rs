@@ -428,11 +428,9 @@ fn store_config_on_any_change() {
         theme_signal.for_each_sync(|_| {
             // Only save if initialization is complete to prevent race conditions
             if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
-                zoon::println!("Theme changed, saving config");
-                save_config_to_backend();
+                    save_config_to_backend();
             } else {
-                zoon::println!("⏸️ Theme change save skipped - initialization not complete yet");
-            }
+                }
         }).await
     });
     
@@ -445,11 +443,9 @@ fn store_config_on_any_change() {
         dock_mode_signal.for_each_sync(|_| {
             // Only save if initialization is complete to prevent race conditions
             if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
-                zoon::println!("Dock mode changed, saving config");
-                save_config_to_backend();
+                    save_config_to_backend();
             } else {
-                zoon::println!("⏸️ Dock mode change save skipped - initialization not complete yet");
-            }
+                }
         }).await
     });
     
@@ -464,11 +460,9 @@ fn store_config_on_any_change() {
         bottom_width_signal.for_each_sync(|_| {
             // Only save if initialization is complete to prevent race conditions
             if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
-                zoon::println!("Bottom files panel width changed, saving config");
-                save_config_to_backend();
+                    save_config_to_backend();
             } else {
-                zoon::println!("⏸️ Bottom width change save skipped - initialization not complete yet");
-            }
+                }
         }).await
     });
     
@@ -482,11 +476,9 @@ fn store_config_on_any_change() {
         bottom_height_signal.for_each_sync(|_| {
             // Only save if initialization is complete to prevent race conditions
             if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
-                zoon::println!("Bottom files panel height changed, saving config");
-                save_config_to_backend();
+                    save_config_to_backend();
             } else {
-                zoon::println!("⏸️ Bottom height change save skipped - initialization not complete yet");
-            }
+                }
         }).await
     });
     
@@ -500,11 +492,9 @@ fn store_config_on_any_change() {
         right_width_signal.for_each_sync(|_| {
             // Only save if initialization is complete to prevent race conditions
             if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
-                zoon::println!("Right files panel width changed, saving config");
-                save_config_to_backend();
+                    save_config_to_backend();
             } else {
-                zoon::println!("⏸️ Right width change save skipped - initialization not complete yet");
-            }
+                }
         }).await
     });
     
@@ -518,11 +508,9 @@ fn store_config_on_any_change() {
         right_height_signal.for_each_sync(|_| {
             // Only save if initialization is complete to prevent race conditions
             if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
-                zoon::println!("Right files panel height changed, saving config");
-                save_config_to_backend();
+                    save_config_to_backend();
             } else {
-                zoon::println!("⏸️ Right height change save skipped - initialization not complete yet");
-            }
+                }
         }).await
     });
 }
@@ -692,7 +680,6 @@ pub fn apply_config(config: shared::AppConfig) {
     sync_file_picker_current_directory_from_config();
     
     // Manual sync of scroll position from config to legacy globals
-    zoon::println!("🚨 About to call sync_load_files_scroll_position_from_config()");
     sync_load_files_scroll_position_from_config();
     
     // Set config loaded flag
@@ -733,13 +720,10 @@ fn sync_load_files_expanded_directories_from_config() {
     use std::collections::HashSet;
     
     let expanded_vec = config_store().workspace.lock_ref().load_files_expanded_directories.lock_ref().to_vec();
-    zoon::println!("🔍 [INIT] Loading expanded directories from config: {:?}", expanded_vec);
-    zoon::println!("🔍 [INIT] CONFIG_INITIALIZATION_COMPLETE = {}", crate::CONFIG_INITIALIZATION_COMPLETE.get());
     
     // In WASM, trust the backend-validated directories (no filesystem access)
     let new_expanded_set: HashSet<String> = expanded_vec.into_iter().collect();
     
-    zoon::println!("💾 Setting FILE_PICKER_EXPANDED from config: {:?}", new_expanded_set.iter().collect::<Vec<_>>());
     
     // Apply the complete set atomically to prevent reactive race conditions
     *FILE_PICKER_EXPANDED.lock_mut() = new_expanded_set;
@@ -778,8 +762,7 @@ fn sync_file_picker_current_directory_from_config() {
         if std::path::Path::new(&directory).is_dir() {
             CURRENT_DIRECTORY.set_neq(directory);
         } else {
-            zoon::println!("File picker: Removing non-existent current directory from config: {}", directory);
-            // Clear invalid directory from config
+                // Clear invalid directory from config
             config_store().session.lock_ref().file_picker.lock_ref().current_directory.set_neq(None);
             if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
                 save_config_to_backend();
@@ -793,13 +776,10 @@ fn sync_load_files_scroll_position_from_config() {
     use crate::state::LOAD_FILES_SCROLL_POSITION;
     
     let saved_scroll_position = config_store().session.lock_ref().file_picker.lock_ref().scroll_position.get();
-    zoon::println!("🔄 [INIT] Loading scroll position from config: {} (current LOAD_FILES_SCROLL_POSITION: {})", 
-                   saved_scroll_position, LOAD_FILES_SCROLL_POSITION.get());
     
     // Restore the scroll position to both persistent globals to prevent viewport lazy initialization with 0
     LOAD_FILES_SCROLL_POSITION.set_neq(saved_scroll_position);
     crate::LOAD_FILES_VIEWPORT_Y.set_neq(saved_scroll_position);
-    zoon::println!("🔄 [INIT] Set LOAD_FILES_SCROLL_POSITION and LOAD_FILES_VIEWPORT_Y to: {}", saved_scroll_position);
 }
 
 pub fn current_dock_mode() -> impl Signal<Item = DockMode> {
@@ -901,19 +881,16 @@ pub fn sync_globals_to_config() {
     // Sync panel dimensions back to config when UI updates them
     Task::start(async {
         FILES_PANEL_WIDTH.signal().for_each_sync(|width| {
-            zoon::println!("FILES_PANEL_WIDTH changed to: {}", width);
-            let dock_mode = config_store().workspace.lock_ref().dock_mode.get_cloned();
+                    let dock_mode = config_store().workspace.lock_ref().dock_mode.get_cloned();
             let workspace_ref = config_store().workspace.lock_ref();
             let layouts = workspace_ref.panel_layouts.lock_ref();
             
             match dock_mode {
                 DockMode::Bottom => {
-                    zoon::println!("Updating bottom layout files_panel_width to: {}", width);
-                    layouts.docked_to_bottom.lock_ref().files_panel_width.set_neq(width as f32);
+                                layouts.docked_to_bottom.lock_ref().files_panel_width.set_neq(width as f32);
                 }
                 DockMode::Right => {
-                    zoon::println!("Updating right layout files_panel_width to: {}", width);
-                    layouts.docked_to_right.lock_ref().files_panel_width.set_neq(width as f32);
+                                layouts.docked_to_right.lock_ref().files_panel_width.set_neq(width as f32);
                 }
             }
         }).await
@@ -947,8 +924,7 @@ pub fn sync_globals_to_config() {
             if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
                 save_config_to_backend();
             } else {
-                zoon::println!("⏸️ Expanded scopes save skipped - initialization not complete yet");
-            }
+                }
         }).await
     });
 
@@ -960,13 +936,11 @@ pub fn sync_globals_to_config() {
             // Only save if initialization is complete to prevent race conditions
             if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
                 let expanded_vec: Vec<String> = expanded_set.into_iter().collect();
-                zoon::println!("🔄 Reactive sync triggered! Saving expanded directories: {:?}", expanded_vec);
-                config_store().workspace.lock_ref().load_files_expanded_directories.lock_mut().replace_cloned(expanded_vec);
+                    config_store().workspace.lock_ref().load_files_expanded_directories.lock_mut().replace_cloned(expanded_vec);
                 // Manually trigger config save since MutableVec reactive signals are complex
                 save_config_to_backend();
             } else {
-                zoon::println!("⏸️ Reactive sync skipped - initialization not complete yet");
-            }
+                }
         }).await
     });
 
@@ -978,8 +952,7 @@ pub fn sync_globals_to_config() {
             if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
                 save_config_to_backend();
             } else {
-                zoon::println!("⏸️ Scope selection save skipped - initialization not complete yet");
-            }
+                }
         }).await
     });
 
@@ -993,8 +966,7 @@ pub fn sync_globals_to_config() {
             if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
                 save_config_to_backend();
             } else {
-                zoon::println!("⏸️ Current directory save skipped - initialization not complete yet");
-            }
+                }
         }).await
     });
 
@@ -1010,30 +982,26 @@ pub fn sync_globals_to_config() {
         LOAD_FILES_SCROLL_POSITION.signal().for_each_sync(|scroll_pos| {
             // Only save if initialization is complete to prevent race conditions
             if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
-                zoon::println!("💾 LOAD_FILES_SCROLL_POSITION changed to: {} - saving to config", scroll_pos);
-                // Validate scroll position is within bounds [0, 10000]
+                    // Validate scroll position is within bounds [0, 10000]
                 let validated_pos = scroll_pos.max(0).min(10000);
                 config_store().session.lock_ref().file_picker.lock_ref().scroll_position.set_neq(validated_pos);
                 // Manually trigger config save for scroll position changes
                 save_config_to_backend();
             } else {
-                zoon::println!("⏸️ Scroll position sync skipped - initialization not complete yet");
-            }
+                }
         }).await
     });
 
     // Sync viewport scroll changes back to persistent scroll position
     Task::start(async {
         LOAD_FILES_VIEWPORT_Y.signal().for_each_sync(|viewport_y| {
-            zoon::println!("🔄 LOAD_FILES_VIEWPORT_Y changed to: {}", viewport_y);
-            // Only sync during runtime, not during initialization
+                // Only sync during runtime, not during initialization
             if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
                 // Update the persistent scroll position when user scrolls the viewport
                 // This ensures manual scrolling is also saved
                 LOAD_FILES_SCROLL_POSITION.set_neq(viewport_y);
             } else {
-                zoon::println!("⏸️ Viewport scroll sync skipped - initialization not complete yet");
-            }
+                }
         }).await
     });
 

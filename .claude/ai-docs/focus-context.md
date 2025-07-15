@@ -54,19 +54,7 @@
 - Only the most recent context is preserved below
 
 ## 🔄 Post-Compaction Recovery Context
-- Recovered from session: Tue Jul 15 02:00:12 AM CEST 2025: PreCompact backup
+- Recovered from session: Tue Jul 15 02:04:38 PM CEST 2025: PreCompact backup
 - Previous task: Unknown
-- Recovery timestamp: Tue Jul 15 02:02:33 AM CEST 2025
-- Backup location: .claude/compaction-backups/20250715_020012
-
-## 🔄 Post-Compaction Recovery Context
-- Recovered from session: Tue Jul 15 02:00:12 AM CEST 2025: PreCompact backup
-- Previous task: Unknown
-- Recovery timestamp: Tue Jul 15 02:07:49 AM CEST 2025
-- Backup location: .claude/compaction-backups/20250715_020012
-
-## 🔄 Post-Compaction Recovery Context
-- Recovered from session: Tue Jul 15 02:00:12 AM CEST 2025: PreCompact backup
-- Previous task: Unknown
-- Recovery timestamp: Tue Jul 15 02:14:01 AM CEST 2025
-- Backup location: .claude/compaction-backups/20250715_020012
+- Recovery timestamp: Tue Jul 15 04:02:29 PM CEST 2025
+- Backup location: .claude/compaction-backups/20250715_140438

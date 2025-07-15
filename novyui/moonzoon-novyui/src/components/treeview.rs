@@ -297,7 +297,7 @@ impl TreeViewBuilder {
                 .attr("aria-label", &aria_label)
                 .attr("tabindex", "0") // Make tree focusable
         })
-        // TODO: Add keyboard navigation later
+        // FUTURE: Add keyboard navigation (arrows, space, enter)
     }
 }
 
@@ -325,12 +325,16 @@ fn render_tree_item(
     let item_type = item.item_type;
     
     // Hover state for remove button
+    // TODO: Implement hover state styling for tree items
+    #[allow(unused_variables)]
     let (hovered, hovered_signal) = Mutable::new_and_signal(false);
 
     // Calculate indentation based on level
     let indent_width = level * 12; // 12px per level for compact hierarchy spacing
 
     // Size-dependent values
+    // TODO: Use padding_y for consistent vertical spacing in tree items
+    #[allow(unused_variables)]
     let (min_height, font_size, padding_y, expand_icon_size) = match size {
         TreeViewSize::Small => (24, FONT_SIZE_14, SPACING_2, 16),
         TreeViewSize::Medium => (26, FONT_SIZE_14, SPACING_2, 18),
@@ -419,10 +423,8 @@ fn render_tree_item(
                                 let mut expanded = expanded_items.lock_mut();
                                 if expanded.contains(&item_id) {
                                     expanded.remove(&item_id);
-                                    zoon::println!("TreeView: Collapsed {}", item_id);
                                 } else {
                                     expanded.insert(item_id.clone());
-                                    zoon::println!("TreeView: Expanded {}", item_id);
                                 }
                             }
                         }
@@ -505,31 +507,25 @@ fn render_tree_item(
                                                 if selected.contains(&item_id) {
                                                     // Deselect this scope
                                                     selected.remove(&item_id);
-                                                    zoon::println!("TreeView: Checkbox deselected scope {} in single scope selection mode", item_id);
                                                 } else {
                                                     // Clear all other scope selections and select this one (radio button behavior)
                                                     selected.retain(|id| !id.contains("_scope_"));
                                                     selected.insert(item_id.clone());
-                                                    zoon::println!("TreeView: Checkbox selected scope {} in single scope selection mode", item_id);
                                                 }
                                             } else {
                                                 // Regular multi-select behavior for scopes
                                                 if selected.contains(&item_id) {
                                                     selected.remove(&item_id);
-                                                    zoon::println!("TreeView: Checkbox deselected scope {}", item_id);
                                                 } else {
                                                     selected.insert(item_id.clone());
-                                                    zoon::println!("TreeView: Checkbox selected scope {}", item_id);
                                                 }
                                             }
                                         } else {
                                             // Regular checkbox behavior for non-scope items
                                             if selected.contains(&item_id) {
                                                 selected.remove(&item_id);
-                                                zoon::println!("TreeView: Checkbox deselected {}", item_id);
                                             } else {
                                                 selected.insert(item_id.clone());
-                                                zoon::println!("TreeView: Checkbox selected {}", item_id);
                                             }
                                         }
                                     }
@@ -643,10 +639,6 @@ fn render_tree_item(
                                             let is_selected = selected_items.signal_ref({
                                                 let item_id = item_id.clone();
                                                 move |selected| selected.contains(&item_id)
-                                            }),
-                                            let is_focused = focused_item.signal_ref({
-                                                let item_id = item_id.clone();
-                                                move |focused| focused.as_ref() == Some(&item_id)
                                             }) =>
                                             if is_disabled {
                                                 match *theme {
@@ -709,7 +701,6 @@ fn render_tree_item(
                 .on_press_event({
                     let item_id = item_id.clone();
                     let focused_item = focused_item.clone();
-                    let expanded_items = expanded_items.clone();
                     let selected_items = selected_items.clone();
                     move |event| {
                         if !is_disabled {
@@ -731,31 +722,25 @@ fn render_tree_item(
                                         if selected.contains(&item_id) {
                                             // Deselect this scope
                                             selected.remove(&item_id);
-                                            zoon::println!("TreeView: Label click deselected scope {} in single scope selection mode", item_id);
                                         } else {
                                             // Clear all other scope selections and select this one (radio button behavior)
                                             selected.retain(|id| !id.contains("_scope_"));
                                             selected.insert(item_id.clone());
-                                            zoon::println!("TreeView: Label click selected scope {} in single scope selection mode", item_id);
                                         }
                                     } else {
                                         // Regular multi-select behavior for scopes
                                         if selected.contains(&item_id) {
                                             selected.remove(&item_id);
-                                            zoon::println!("TreeView: Label click deselected scope {}", item_id);
                                         } else {
                                             selected.insert(item_id.clone());
-                                            zoon::println!("TreeView: Label click selected scope {}", item_id);
                                         }
                                     }
                                 } else {
                                     // Regular checkbox behavior for non-scope leaf items
                                     if selected.contains(&item_id) {
                                         selected.remove(&item_id);
-                                        zoon::println!("TreeView: Label click deselected {}", item_id);
                                     } else {
                                         selected.insert(item_id.clone());
-                                        zoon::println!("TreeView: Label click selected {}", item_id);
                                     }
                                 }
                             }
@@ -770,8 +755,7 @@ fn render_tree_item(
             let item_id = item_id.clone();
             let focused_item = focused_item.clone();
             let expanded_items = expanded_items.clone();
-            let selected_items = selected_items.clone();
-            move |event| {
+            move |_event| {
                 if !is_disabled && has_children {
                     // Set focus when clicking row
                     focused_item.set(Some(item_id.clone()));
@@ -780,10 +764,8 @@ fn render_tree_item(
                     let mut expanded = expanded_items.lock_mut();
                     if expanded.contains(&item_id) {
                         expanded.remove(&item_id);
-                        zoon::println!("TreeView: Row click collapsed {}", item_id);
                     } else {
                         expanded.insert(item_id.clone());
-                        zoon::println!("TreeView: Row click expanded {}", item_id);
                     }
                 }
             }
@@ -820,17 +802,13 @@ fn render_tree_item(
         .s(Outline::inner().width(0).color("transparent"))
         // ARIA attributes - reactive to actual state
         .update_raw_el({
-            let item_id = item_id.clone();
-            let expanded_items = expanded_items.clone();
-            let selected_items = selected_items.clone();
-            let focused_item = focused_item.clone();
             move |raw_el| {
                 raw_el
                     .attr("role", "treeitem")
                     .attr("aria-level", &(level + 1).to_string())
             }
         })
-        // TODO: Add dynamic ARIA attributes later
+        // FUTURE: Add dynamic ARIA attributes (aria-expanded, aria-selected)
         .update_raw_el(|raw_el| {
             let mut el = raw_el
                 .attr("aria-selected", "false")
@@ -975,4 +953,4 @@ pub fn tree_view_item(id: impl Into<String>, label: impl Into<String>) -> TreeVi
     TreeViewItemData::new(id, label)
 }
 
-// TODO: Add keyboard navigation later
+// FUTURE: Add keyboard navigation support

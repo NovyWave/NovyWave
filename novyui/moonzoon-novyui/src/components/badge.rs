@@ -106,7 +106,6 @@ impl BadgeBuilder {
         let right_icon = self.right_icon;
         let removable = self.removable;
         let text = self.text.clone();
-        let variant = self.variant;
 
         // Get color signals and shadows before moving self
         let background_color = self.get_background_color();

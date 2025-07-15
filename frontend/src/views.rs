@@ -245,7 +245,6 @@ pub fn variables_panel() -> impl Element {
                                     let search_filter = VARIABLES_SEARCH_FILTER.signal_cloned() =>
                                     {
                                         if let Some(scope_id) = selected_scope_id {
-                                            let _loaded_files: Vec<WaveformFile> = LOADED_FILES.lock_ref().iter().cloned().collect();
                                             let variables = get_variables_from_selected_scope(&scope_id);
                                             let filtered_variables = filter_variables(&variables, &search_filter);
                                             filtered_variables.len().to_string()
@@ -677,7 +676,6 @@ fn simple_variables_content() -> impl Element {
                         let search_filter = VARIABLES_SEARCH_FILTER.signal_cloned() =>
                         {
                             if let Some(scope_id) = selected_scope_id {
-                                let _loaded_files: Vec<WaveformFile> = LOADED_FILES.lock_ref().iter().cloned().collect();
                                 let variables = get_variables_from_selected_scope(&scope_id);
                                 virtual_variables_list(variables, search_filter.clone()).into_element()
                             } else {
@@ -719,7 +717,6 @@ fn convert_files_to_tree_data(files: &[WaveformFile]) -> Vec<TreeViewItemData> {
                 config::save_file_list();
                 config::save_scope_selection();
                 
-                zoon::println!("Removed file: {}", id);
             })
     }).collect()
 }
@@ -849,12 +846,10 @@ fn simple_file_picker_tree() -> impl Element {
         .s(Scrollbars::both())
         .viewport_y_signal(LOAD_FILES_VIEWPORT_Y.signal())
         .on_viewport_location_change(|_scene, viewport| {
-            zoon::println!("📜 Load Files scroll detected: y={}", viewport.y);
             // Only update viewport Y if initialization is complete to prevent overwriting loaded scroll position
             if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
                 LOAD_FILES_VIEWPORT_Y.set_neq(viewport.y);
             } else {
-                zoon::println!("⏸️ Viewport scroll update skipped - initialization not complete yet");
             }
         })
         .child_signal(
@@ -954,7 +949,6 @@ fn monitor_directory_expansions(expanded: HashSet<String>) {
     // Send browse requests for newly expanded directories
     for path in new_expansions {
         if path.starts_with("/") && !path.is_empty() {
-            zoon::println!("TreeView: Newly expanded directory: {}", path);
             send_up_msg(UpMsg::BrowseDirectory(path));
         }
     }

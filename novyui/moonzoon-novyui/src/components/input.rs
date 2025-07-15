@@ -413,7 +413,6 @@ impl InputBuilder {
                     .read_only(matches!(state, InputState::Readonly))
                     .label_hidden("Input")
                     .on_change({
-                        let focused = focused.clone();
                         let on_change = self.on_change;
                         move |new_value| {
                             if let Some(ref handler) = on_change {
