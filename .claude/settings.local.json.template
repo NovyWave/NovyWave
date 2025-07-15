@@ -1,4 +1,8 @@
 {
+  "enabledMcpjsonServers": [
+    "browsermcp",
+    "memory"
+  ],
   "hooks": {
     "PostToolUse": [
       {
@@ -6,7 +10,7 @@
         "hooks": [
           {
             "type": "command", 
-            "command": "bash \"/home/martinkavik/repos/NovyWave/.claude/hooks/update-context-from-memory.sh\""
+            "command": "bash \"/YOUR/PATH/TO/NovyWave/.claude/hooks/update-context-from-memory.sh\""
           }
         ]
       },
@@ -15,11 +19,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"/home/martinkavik/repos/NovyWave/.claude/hooks/restore-session-after-compaction.sh\""
+            "command": "bash \"/YOUR/PATH/TO/NovyWave/.claude/hooks/restore-session-after-compaction.sh\""
           },
           {
             "type": "command",
-            "command": "bash \"/home/martinkavik/repos/NovyWave/.claude/hooks/memory-monitor.sh\""
+            "command": "bash \"/YOUR/PATH/TO/NovyWave/.claude/hooks/memory-monitor.sh\""
           }
         ]
       }
@@ -29,7 +33,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"/home/martinkavik/repos/NovyWave/.claude/hooks/claude-finished-notification.sh\""
+            "command": "bash \"/YOUR/PATH/TO/NovyWave/.claude/hooks/claude-finished-notification.sh\""
           }
         ]
       }
@@ -39,7 +43,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"/home/martinkavik/repos/NovyWave/.claude/hooks/preserve-session-before-compaction.sh\""
+            "command": "bash \"/YOUR/PATH/TO/NovyWave/.claude/hooks/preserve-session-before-compaction.sh\""
           }
         ]
       }

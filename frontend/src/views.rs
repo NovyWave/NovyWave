@@ -1,4 +1,5 @@
 use zoon::*;
+use zoon::events::{Click, KeyDown};
 use moonzoon_novyui::*;
 use moonzoon_novyui::tokens::theme::{Theme, toggle_theme, theme};
 use moonzoon_novyui::tokens::color::{neutral_1, neutral_2, neutral_4, neutral_8, neutral_9, neutral_10, neutral_11, neutral_12, primary_3, primary_6, primary_7};
@@ -26,6 +27,14 @@ fn empty_state_hint(text: &str) -> impl Element {
 
 
 pub fn file_paths_dialog() -> impl Element {
+    let close_dialog = move || {
+        SHOW_FILE_DIALOG.set(false);
+        // Clear file picker state on close
+        FILE_PICKER_SELECTED.lock_mut().clear();
+        FILE_PICKER_ERROR.set_neq(None);
+    };
+
+
     El::new()
         .s(Background::new().color_signal(theme().map(|t| match t {
             Theme::Light => "rgba(255, 255, 255, 0.8)",  // Light overlay
@@ -34,12 +43,37 @@ pub fn file_paths_dialog() -> impl Element {
         .s(Width::fill())
         .s(Height::fill())
         .s(Align::center())
-        .s(Padding::new().top(40).bottom(40))
+        .s(Padding::all(40))
         .update_raw_el(|raw_el| {
             raw_el
                 .style("display", "flex")
                 .style("justify-content", "center")
                 .style("align-items", "center")
+        })
+        // Overlay click handler and keyboard event handler
+        .update_raw_el({
+            let close_dialog = close_dialog.clone();
+            move |raw_el| {
+                raw_el
+                    .event_handler({
+                        let close_dialog = close_dialog.clone();
+                        move |_event: Click| {
+                            close_dialog();
+                        }
+                    })
+                    .global_event_handler({
+                        let close_dialog = close_dialog.clone();
+                        move |event: KeyDown| {
+                            if SHOW_FILE_DIALOG.get() {  // Only handle when dialog is open
+                                if event.key() == "Escape" {
+                                    close_dialog();
+                                } else if event.key() == "Enter" {
+                                    process_file_picker_selection();
+                                }
+                            }
+                        }
+                    })
+            }
         })
         .child(
             El::new()
@@ -49,8 +83,15 @@ pub fn file_paths_dialog() -> impl Element {
                     Border::new().width(1).color(color)
                 })))
                 .s(Padding::all(16))
-                .s(Width::exact(700))
+                .s(Width::fill().min(500).max(750))
                 .s(Height::fill().max(800))
+                // Prevent event bubbling for dialog content clicks
+                .update_raw_el(|raw_el| {
+                    raw_el
+                        .event_handler(|event: Click| {
+                            event.stop_propagation();
+                        })
+                })
                 .child(
                     Column::new()
                         .s(Height::fill())
@@ -96,12 +137,7 @@ pub fn file_paths_dialog() -> impl Element {
                                         .label("Cancel")
                                         .variant(ButtonVariant::Ghost)
                                         .size(ButtonSize::Small)
-                                        .on_press(|| {
-                                            SHOW_FILE_DIALOG.set(false);
-                                            // Clear file picker state on cancel
-                                            FILE_PICKER_SELECTED.lock_mut().clear();
-                                            FILE_PICKER_ERROR.set_neq(None);
-                                        })
+                                        .on_press(close_dialog)
                                         .build()
                                 )
                                 .item(
@@ -1035,14 +1071,34 @@ fn process_file_picker_selection() {
     if !selected_files.is_empty() {
         IS_LOADING.set(true);
         
+        // Get currently loaded file IDs for duplicate detection
+        let loaded_file_ids: HashSet<String> = LOADED_FILES.lock_ref()
+            .iter()
+            .map(|f| f.id.clone())
+            .collect();
+        
         // Process each selected file path
         for file_path in selected_files.iter() {
-            // Generate file ID and store path mapping for config persistence
             let file_id = shared::generate_file_id(file_path);
+            
+            // Check for duplicates and handle reload vs new load
+            if loaded_file_ids.contains(&file_id) {
+                // RELOAD: Remove existing file first, then load fresh
+                LOADED_FILES.lock_mut().retain(|f| f.id != file_id);
+                FILE_PATHS.lock_mut().remove(&file_id);
+                
+                // Clear related state for this file
+                if let Some(selected_scope) = SELECTED_SCOPE_ID.get_cloned() {
+                    if selected_scope.starts_with(&format!("{}_", file_id)) {
+                        SELECTED_SCOPE_ID.set(None);
+                    }
+                }
+                EXPANDED_SCOPES.lock_mut().retain(|scope| !scope.starts_with(&file_id));
+            }
+            
+            // Store path mapping and send load request (same for both new/reload)
             FILE_PATHS.lock_mut().insert(file_id, file_path.clone());
             config::save_file_list();
-            
-            // Send load request
             send_up_msg(UpMsg::LoadWaveformFile(file_path.clone()));
         }
         

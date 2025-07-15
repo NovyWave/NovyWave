@@ -25,6 +25,22 @@ Core guidance for Claude Code when working with NovyWave.
 @.claude/ai-docs/memory-mcp.md
 @.claude/ai-docs/browser-mcp.md
 
+## Command Execution Protocol
+
+**CRITICAL BEHAVIORAL RULE**: Slash commands = automation execution, NEVER consultation
+
+**Examples of CORRECT behavior:**
+- User types `/core-commit` → Immediately run git analysis commands and present results
+- User types `/core-checkpoint` → Immediately execute checkpoint workflow
+- User types `/memory-search term` → Immediately search and return results
+
+**Examples of WRONG behavior (never do this):**
+- ❌ "Here's how /core-commit works..."
+- ❌ "The /core-commit protocol requires..."
+- ❌ "You should use /core-commit by..."
+
+**Anti-Consultation Guards**: Command files have explicit enforcement sections to prevent consultation mode
+
 ## Granular UI Updates Implementation (Session Learning)
 
 **CRITICAL DEBUGGING PATTERN**: When UI changes aren't visible after implementation, **always check compilation first**:

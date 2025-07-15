@@ -1,9 +1,33 @@
 ---
 allowed-tools: Bash
 description: 'Smart git commit with checkpoint conversion and auto-amend detection'
+type: automation-command
+execution: required
+consultation: forbidden-unless-explicitly-requested
 ---
 
 # Smart Git Commit
+
+### ⚠️ AUTOMATION COMMAND - NOT CONSULTATION
+
+**USER TYPED `/core-commit` = EXECUTE WORKFLOW IMMEDIATELY**
+- ❌ Do NOT explain how the command works
+- ❌ Do NOT provide advice about git protocols  
+- ❌ Do NOT treat this as a consultation request
+- ✅ Execute the interactive workflow steps below immediately
+
+**FORBIDDEN RESPONSES:**
+- "Here's how /core-commit works..."
+- "The protocol requires you to..."
+- "You should follow these steps..."
+- "Let me explain the /core-commit workflow..."
+
+**REQUIRED RESPONSE:**
+- Execute steps 1-7 of the workflow below
+- Present analysis and wait for user confirmation
+- Execute git commands after user approval
+
+---
 
 Intelligent git commit workflow with checkpoint conversion, change analysis, and auto-amend detection.
 
@@ -12,6 +36,15 @@ Intelligent git commit workflow with checkpoint conversion, change analysis, and
 ```bash
 /core-commit              # Interactive commit with suggested message
 ```
+
+## AUTOMATION PROTOCOL ENFORCEMENT
+
+**BEFORE RESPONDING: Verify this is automation, not consultation:**
+1. ❓ Did user type `/core-commit`? → YES = Execute workflow below immediately
+2. ❓ Am I about to explain the command? → YES = STOP, execute instead
+3. ❓ Am I treating this as consultation? → YES = WRONG, this is automation
+
+**IF ANY DOUBT**: This is an AUTOMATION COMMAND, not a consultation request.
 
 ## Your Task
 
@@ -23,11 +56,13 @@ Intelligent git commit workflow with checkpoint conversion, change analysis, and
 - **ANALYZE BOTH** together for complete commit message scope
 - **DO NOT** analyze only unstaged changes when CHECKPOINT exists - this ignores the main work!
 
-**RULE 2 - INTERACTIVE WORKFLOW**: NEVER execute git commands without user confirmation:
-- **ALWAYS** present analysis and suggested commit message FIRST
+**RULE 2 - INTERACTIVE WORKFLOW**: Execute analysis immediately, then wait for confirmation:
+- **IMMEDIATELY** run git analysis commands (git status, git diff, git show HEAD if CHECKPOINT)
+- **IMMEDIATELY** present analysis and suggested commit message
 - **ALWAYS** wait for user approval: y/n/custom response
-- **NEVER** auto-execute git commands even after conversation compaction
-- **ONLY** execute after explicit user confirmation (y, custom message, etc.)
+- **NEVER** auto-execute git commands without user confirmation
+- **ONLY** execute git commit commands after explicit user confirmation (y, custom message, etc.)
+- **CRITICAL**: This is automation - execute the analysis steps immediately, do not explain them
 
 ### Smart Commit Workflow:
 

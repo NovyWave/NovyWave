@@ -220,9 +220,19 @@ impl TreeViewBuilder {
                 bridge_hashset.set(current_items);
             }
             
-            // TODO: Fix bridge between MutableVec and HashSet
-            // Temporarily disabled to allow compilation
-            // sync_vec.signal_vec_cloned().for_each(...)
+            // Sync changes from MutableVec to HashSet
+            let sync_vec_to_hashset = external_vec.clone();
+            let sync_hashset_to_update = bridge_hashset.clone();
+            Task::start(async move {
+                sync_vec_to_hashset.signal_vec_cloned().to_signal_map(|vec| vec.iter().cloned().collect::<HashSet<String>>()).for_each_sync(move |new_set| {
+                    let current_hashset = sync_hashset_to_update.get_cloned();
+                    
+                    // Only update if different to avoid infinite loops
+                    if current_hashset != new_set {
+                        sync_hashset_to_update.set_neq(new_set);
+                    }
+                }).await;
+            });
             
             // Sync changes from HashSet back to MutableVec
             let sync_vec_back = external_vec.clone();
