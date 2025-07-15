@@ -45,6 +45,18 @@ impl ListItemBuilder {
             text: text.into(),
         }
     }
+    
+    // TODO: Implement build() method for individual list items
+    pub fn build(self) -> impl Element {
+        El::new()
+            .s(Width::fill())
+            .s(Padding::new().x(SPACING_16).y(SPACING_12))
+            .s(Font::new()
+                .size(FONT_SIZE_16)
+                .color_signal(neutral_11())
+            )
+            .child(Text::new(&self.text))
+    }
 }
 
 // Convenience functions

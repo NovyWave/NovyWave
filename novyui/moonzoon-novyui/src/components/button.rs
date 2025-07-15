@@ -138,10 +138,9 @@ impl ButtonBuilder {
     }
 
 
-    pub fn build(mut self) -> impl Element {
+    pub fn build(self) -> impl Element {
         let (hovered, hovered_signal) = Mutable::new_and_signal(false);
         let (focused, focused_signal) = Mutable::new_and_signal(false);
-        let (pressed, pressed_signal) = Mutable::new_and_signal(false);
 
         // Size-based styling
         let (padding_x, padding_y, font_size, icon_size) = match self.size {
@@ -164,14 +163,12 @@ impl ButtonBuilder {
         self.create_button_element(
             hovered_signal,
             focused_signal,
-            pressed_signal,
             final_padding_x,
             final_padding_y,
             font_size,
             icon_size,
             hovered,
             focused,
-            pressed,
         )
     }
 
@@ -179,14 +176,12 @@ impl ButtonBuilder {
         mut self,
         hovered_signal: impl Signal<Item = bool> + Unpin + 'static,
         focused_signal: impl Signal<Item = bool> + Unpin + 'static,
-        pressed_signal: impl Signal<Item = bool> + Unpin + 'static,
         padding_x: u32,
         padding_y: u32,
         font_size: u32,
         icon_size: IconSize,
         hovered: Mutable<bool>,
         focused: Mutable<bool>,
-        pressed: Mutable<bool>,
     ) -> impl Element {
         // Variant-based colors - unified signal approach
         let variant = self.variant;

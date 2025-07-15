@@ -291,9 +291,10 @@ pub fn is_waveform_file(path: &str) -> bool {
             // ✅ TESTED: Confirmed working with test files
             "vcd" | "fst" => true,
             
-            // TODO: Test these formats with actual files before enabling
+            // DISABLED: Additional waveform formats pending testing
+            // Enable these once test files are available and parsing is verified:
             // "ghw" => true,  // GHDL waveform format
-            // "vzt" => true,  // GTKWave compressed format
+            // "vzt" => true,  // GTKWave compressed format  
             // "lxt" => true,  // GTKWave format
             // "lx2" => true,  // GTKWave format
             // "shm" => true,  // Cadence format

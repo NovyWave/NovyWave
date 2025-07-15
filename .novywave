@@ -14,6 +14,8 @@ opened_files = [
 ]
 dock_mode = "right"
 expanded_scopes = [
+    "file_7fda6450ec6eaf33",
+    "file_7fda6450ec6eaf33_scope_0",
     "file_71a2908980aee1d_scope_0",
     "file_71a2908980aee1d",
 ]
@@ -26,7 +28,7 @@ load_files_expanded_directories = [
     "/home/martinkavik/repos/NovyWave",
 ]
 selected_scope_id = "file_71a2908980aee1d_scope_1"
-load_files_scroll_position = 850
+load_files_scroll_position = 932
 
 [workspace.docked_to_bottom]
 files_panel_width = 635.0
@@ -34,4 +36,4 @@ files_panel_height = 393.0
 
 [workspace.docked_to_right]
 files_panel_width = 470.0
-files_panel_height = 300.0
+files_panel_height = 329.0

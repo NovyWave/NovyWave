@@ -149,7 +149,11 @@ where
             size,
             state: _,
             disabled,
+            // TODO: Implement label display for checkbox text
+            #[allow(unused_variables)]
             label,
+            // TODO: Implement description display for checkbox help text
+            #[allow(unused_variables)]
             description,
             error,
             required: _,
@@ -158,6 +162,8 @@ where
         let on_change = self.on_change;
 
         // Size-dependent values
+        // TODO: Use font_size for label text when label feature is implemented
+        #[allow(unused_variables)]
         let (size_px, font_size) = match size {
             CheckboxSize::Small => (16, FONT_SIZE_14),
             CheckboxSize::Medium => (20, FONT_SIZE_16),

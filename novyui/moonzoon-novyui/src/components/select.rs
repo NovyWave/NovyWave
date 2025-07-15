@@ -134,7 +134,6 @@ impl SelectBuilder {
         // State management
         let selected_value = Mutable::new(self.selected_value.clone());
         let is_open = Mutable::new(false);
-        let focused_index = Mutable::new(0usize);
 
         // Component configuration
         let (padding_x, padding_y, font_size) = match self.size {

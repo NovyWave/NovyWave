@@ -79,13 +79,12 @@ pub fn rust_virtual_variables_list(variables: Vec<Signal>) -> Column<column::Emp
     // ===== HEIGHT MANAGEMENT =====
     // CURRENT: Fixed 400px height (WORKING)
     // DYNAMIC: Should be updated by viewport monitoring
-    let _container_height = Mutable::new(400.0); // FIXED HEIGHT - change for dynamic
+    // TODO: Add dynamic container height calculation
     
     // ===== VISIBLE ITEM CALCULATIONS =====
     // Calculate how many items fit in the container + buffer
     // Buffer of +5 items ensures smooth scrolling
     let initial_visible_count = ((400.0_f64 / item_height).ceil() as usize + 5).min(total_items);
-    let visible_count = Mutable::new(initial_visible_count); // For future dynamic updates
     
     // ===== VIRTUAL SCROLLING STATE =====
     // These track the current scroll position and visible range
@@ -93,21 +92,10 @@ pub fn rust_virtual_variables_list(variables: Vec<Signal>) -> Column<column::Emp
     let visible_start = Mutable::new(0usize);  // First visible item index
     let visible_end = Mutable::new(initial_visible_count.min(total_items)); // Last visible item index
     
-    // ===== DYNAMIC HEIGHT INFRASTRUCTURE (PREPARED BUT DISABLED) =====
-    // TODO: Enable this when solving the clientHeight=0 issue
-    // This would make visible_count reactive to container height changes
-    /*
-    Task::start({
-        let container_height = container_height.clone();
-        let visible_count = visible_count.clone();
-        async move {
-            container_height.signal().for_each_sync(move |height| {
-                let new_count = ((height / item_height).ceil() as usize + 5).min(total_items);
-                visible_count.set_neq(new_count);
-            }).await
-        }
-    });
-    */
+    // ===== DYNAMIC HEIGHT INFRASTRUCTURE (DISABLED) =====
+    // ISSUE: DOM elements report clientHeight=0 during initialization
+    // SOLUTION: Use ResizeObserver or defer height queries until after render
+    // When fixed, implement reactive container height → visible_count updates
     
     
     Column::new()
@@ -141,8 +129,6 @@ pub fn rust_virtual_variables_list(variables: Vec<Signal>) -> Column<column::Emp
                     let scroll_top = scroll_top.clone();
                     let visible_start = visible_start.clone();
                     let visible_end = visible_end.clone();
-                    let visible_count = visible_count.clone();
-                    let _variables = variables.clone();
                     
                     move |el| {
                         // ===== SCROLL CONTAINER SETUP =====
@@ -161,7 +147,6 @@ pub fn rust_virtual_variables_list(variables: Vec<Signal>) -> Column<column::Emp
                                 let scroll_top = scroll_top.clone();
                                 let visible_start = visible_start.clone();
                                 let visible_end = visible_end.clone();
-                                let _visible_count = visible_count.clone();
                                 
                                 move |_event: web_sys::Event| {
                                     // Find the scroll container element
@@ -316,7 +301,6 @@ pub fn rust_virtual_variables_list_with_signal(
                     let scroll_top = scroll_top.clone();
                     let visible_start = visible_start.clone();
                     let visible_end = visible_end.clone();
-                    let _variables = variables.clone();
                     
                     move |el| {
                         if let Some(html_el) = el.dom_element().dyn_ref::<web_sys::HtmlElement>() {

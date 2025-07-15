@@ -529,7 +529,6 @@ pub fn validate_icon_registry() {
         "download"
     ];
     
-    zoon::println!("🔍 Validating NovyUI icon registry...");
     let mut missing_icons = Vec::new();
     
     for icon_name in commonly_used_icons.iter() {
@@ -540,10 +539,7 @@ pub fn validate_icon_registry() {
     }
     
     if missing_icons.is_empty() {
-        zoon::println!("✅ All commonly used icons are properly registered");
     } else {
-        zoon::println!("❌ Missing icons in registry: {:?}", missing_icons);
-        zoon::println!("   Add these to the IconName enum and mapping functions");
     }
 }
 
