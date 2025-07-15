@@ -82,3 +82,30 @@ Use bright background colors on containers to visualize height inheritance:
 ```rust
 .s(Background::new().color(Color::red()))  // Debug only
 ```
+
+## Event Handling Patterns
+
+### Global Keyboard Event Handler
+For dialog keyboard accessibility without focus management:
+```rust
+.global_event_handler({
+    let close_dialog = close_dialog.clone();
+    move |event: KeyDown| {
+        if DIALOG_IS_OPEN.get() {  // Guard with dialog state
+            if event.key() == "Escape" {
+                close_dialog();
+            } else if event.key() == "Enter" {
+                process_selection();
+            }
+        }
+    }
+})
+```
+
+**Why Global Event Handlers:**
+- Work immediately when dialog opens (no focus required)
+- Capture events at document level
+- Better than autofocus or local element handlers for modal dialogs
+- Essential for keyboard accessibility in Zoon applications
+
+**Pattern:** Always guard global handlers with state checks to prevent interference with other UI components.

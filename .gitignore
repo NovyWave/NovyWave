@@ -62,6 +62,7 @@ test_files/big_3_GB.vcd
 .claude/compaction-backups/
 .claude/session-recovery-completed
 .claude/last-recovery.lock
+.claude/settings.local.json
 
 # Prevent ai-memory.json from being created in root (should only be in .claude/)
 ai-memory.json
