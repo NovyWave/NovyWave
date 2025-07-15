@@ -13,16 +13,20 @@ opened_files = [
     "/home/martinkavik/repos/NovyWave/test_files/simple.vcd",
 ]
 dock_mode = "right"
-expanded_scopes = []
+expanded_scopes = [
+    "file_71a2908980aee1d_scope_0",
+    "file_71a2908980aee1d",
+]
 load_files_expanded_directories = [
     "/home/martinkavik/repos/NovyWave/test_files",
     "/home/martinkavik/repos",
     "/home/martinkavik/repos/NovyWave",
     "/home",
     "/home/martinkavik/repos/ringrev_private",
-    "/home/martinkavik",
     "/",
+    "/home/martinkavik",
 ]
+selected_scope_id = "file_71a2908980aee1d_scope_1"
 load_files_scroll_position = 806
 
 [workspace.docked_to_bottom]

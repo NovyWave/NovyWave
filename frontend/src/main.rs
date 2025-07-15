@@ -81,9 +81,6 @@ pub fn main() {
                         }))
                     );
                     
-                    // Force Load Files dialog to open for development iteration
-                    zoon::println!("Force opening Load Files dialog for development");
-                    show_file_paths_dialog();
                     
                     // NOW start the app after config is fully loaded and reactive system is set up
                     start_app("app", root);
