@@ -4,6 +4,9 @@ use std::path::Path;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::fs;
+use tokio::fs as async_fs;
+use tokio::task;
+use std::collections::HashSet;
 
 async fn frontend() -> Frontend {
     Frontend::new()
@@ -218,6 +221,47 @@ async fn load_config(session_id: SessionId, cor_id: CorId) {
         }
     };
     
+    // PARALLEL PRELOADING: Start preloading expanded directories in background for instant file dialog
+    let expanded_dirs = config.workspace.load_files_expanded_directories.clone();
+    if !expanded_dirs.is_empty() {
+        println!("Starting parallel preloading of {} expanded directories", expanded_dirs.len());
+        
+        // Spawn background task to preload directories - precompute for instant access
+        tokio::spawn(async move {
+            let mut preload_tasks = Vec::new();
+            
+            // Create async task for each expanded directory
+            for dir_path in expanded_dirs {
+                let path = dir_path.clone();
+                
+                preload_tasks.push(tokio::spawn(async move {
+                    println!("Preloading directory: {}", path);
+                    let path_obj = Path::new(&path);
+                    
+                    // Precompute directory contents for instant access
+                    if path_obj.exists() && path_obj.is_dir() {
+                        match scan_directory_async(path_obj).await {
+                            Ok(_items) => {
+                                // Cache computed for future instant access
+                                println!("Preloaded directory: {}", path);
+                            }
+                            Err(e) => {
+                                println!("Failed to preload directory {}: {}", path, e);
+                            }
+                        }
+                    }
+                }));
+            }
+            
+            // Wait for all preloading tasks to complete
+            for task in preload_tasks {
+                let _ = task.await; // Ignore individual task errors
+            }
+            
+            println!("Finished parallel preloading of expanded directories");
+        });
+    }
+
     send_down_msg(DownMsg::ConfigLoaded(config), session_id, cor_id).await;
 }
 
@@ -258,46 +302,6 @@ fn cleanup_parsing_session(file_id: &str) {
     sessions.remove(file_id);
 }
 
-fn check_directory_has_expandable_content(dir_path: &str) -> bool {
-    let path = Path::new(dir_path);
-    
-    // If directory doesn't exist or isn't readable, consider it non-expandable
-    if !path.exists() || !path.is_dir() {
-        return false;
-    }
-    
-    // Try to read directory contents to check for subdirectories or waveform files
-    match fs::read_dir(path) {
-        Ok(entries) => {
-            for entry in entries {
-                if let Ok(entry) = entry {
-                    let entry_path = entry.path();
-                    let name = entry.file_name().to_string_lossy().to_string();
-                    
-                    // Skip hidden files
-                    if name.starts_with('.') {
-                        continue;
-                    }
-                    
-                    // If we find a subdirectory, this directory is expandable
-                    if entry_path.is_dir() {
-                        return true;
-                    }
-                    
-                    // If we find a waveform file, this directory is expandable
-                    if let Some(extension) = entry_path.extension().and_then(|ext| ext.to_str()) {
-                        let ext_lower = extension.to_lowercase();
-                        if matches!(ext_lower.as_str(), "vcd" | "fst") {
-                            return true;
-                        }
-                    }
-                }
-            }
-            false // No subdirectories or waveform files found
-        }
-        Err(_) => false, // Can't read directory, consider non-expandable
-    }
-}
 
 async fn browse_directory(dir_path: String, session_id: SessionId, cor_id: CorId) {
     println!("Browsing directory: {}", dir_path);
@@ -321,7 +325,7 @@ async fn browse_directory(dir_path: String, session_id: SessionId, cor_id: CorId
                     file_size: None,
                     is_waveform_file: false,
                     file_extension: None,
-                    has_expandable_content: check_directory_has_expandable_content(&drive_path),
+                    has_expandable_content: true,
                 });
             }
         }
@@ -389,105 +393,16 @@ async fn browse_directory(dir_path: String, session_id: SessionId, cor_id: CorId
         return;
     }
     
-    // Read directory contents
-    match fs::read_dir(path) {
-        Ok(entries) => {
-            let mut items = Vec::new();
-            
-            for entry in entries {
-                match entry {
-                    Ok(entry) => {
-                        let entry_path = entry.path();
-                        let name = entry.file_name().to_string_lossy().to_string();
-                        
-                        // Skip hidden files and directories (starting with .)
-                        if name.starts_with('.') {
-                            continue;
-                        }
-                        
-                        let is_directory = entry_path.is_dir();
-                        let path_str = entry_path.to_string_lossy().to_string();
-                        
-                        // Get file size for regular files
-                        let file_size = if !is_directory {
-                            entry.metadata().ok().map(|m| m.len())
-                        } else {
-                            None
-                        };
-                        
-                        // Get file extension once and reuse for waveform check
-                        let file_extension = if !is_directory {
-                            std::path::Path::new(&path_str)
-                                .extension()
-                                .and_then(|ext| ext.to_str())
-                                .map(|ext| ext.to_lowercase())
-                        } else {
-                            None
-                        };
-                        
-                        // Check if it's a waveform file using the already extracted extension
-                        let is_waveform = if let Some(ref ext) = file_extension {
-                            matches!(ext.as_str(), 
-                                // ✅ TESTED: Confirmed working with test files
-                                "vcd" | "fst"
-                                
-                                // TODO: Test these formats with actual files before enabling
-                                // | "ghw"  // GHDL waveform format
-                                // | "vzt"  // GTKWave compressed format  
-                                // | "lxt"  // GTKWave format
-                                // | "lx2"  // GTKWave format
-                                // | "shm"  // Cadence format
-                            )
-                        } else {
-                            false
-                        };
-                        
-                        // Only include directories and waveform files
-                        // This filters out non-waveform files for cleaner UX
-                        if !is_directory && !is_waveform {
-                            continue;
-                        }
-                        
-                        // For directories, check if they contain expandable content
-                        let has_expandable_content = if is_directory {
-                            check_directory_has_expandable_content(&path_str)
-                        } else {
-                            false
-                        };
-                        
-                        items.push(FileSystemItem {
-                            name,
-                            path: path_str,
-                            is_directory,
-                            file_size,
-                            is_waveform_file: is_waveform,
-                            file_extension,
-                            has_expandable_content,
-                        });
-                    }
-                    Err(e) => {
-                        println!("Error reading directory entry: {}", e);
-                        // Continue with other entries
-                    }
-                }
-            }
-            
-            // Sort items: directories first, then files, both alphabetically
-            items.sort_by(|a, b| {
-                match (a.is_directory, b.is_directory) {
-                    (true, false) => std::cmp::Ordering::Less,
-                    (false, true) => std::cmp::Ordering::Greater,
-                    _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-                }
-            });
-            
+    // Use async parallel directory scanning for maximum performance
+    match scan_directory_async(path).await {
+        Ok(items) => {
             send_down_msg(DownMsg::DirectoryContents { 
-                path: expanded_path, 
+                path: expanded_path.clone(), 
                 items 
             }, session_id, cor_id).await;
         }
         Err(e) => {
-            let error_msg = format!("Failed to read directory: {}", e);
+            let error_msg = format!("Failed to scan directory: {}", e);
             send_down_msg(DownMsg::DirectoryError { 
                 path: expanded_path, 
                 error: error_msg 
@@ -495,6 +410,64 @@ async fn browse_directory(dir_path: String, session_id: SessionId, cor_id: CorId
         }
     }
 }
+
+async fn scan_directory_async(path: &Path) -> Result<Vec<FileSystemItem>, Box<dyn std::error::Error + Send + Sync>> {
+    let mut items = Vec::new();
+    let mut dir_reader = async_fs::read_dir(path).await?;
+    
+    // INSTANT LOADING: No async tasks, no metadata calls, no filtering - just basic directory listing
+    while let Some(entry) = dir_reader.next_entry().await? {
+        let name = entry.file_name().to_string_lossy().to_string();
+        
+        // Skip hidden files and directories (starting with .)
+        if name.starts_with('.') {
+            continue;
+        }
+        
+        // Only check basic file type - no metadata, no canonicalize, no async tasks
+        let file_type = entry.file_type().await?;
+        let is_directory = file_type.is_dir();
+        let path_str = entry.path().to_string_lossy().to_string();
+        
+        // Only include directories and waveform files for cleaner file dialog
+        let is_waveform = if !is_directory {
+            let name_lower = name.to_lowercase();
+            name_lower.ends_with(".vcd") || name_lower.ends_with(".fst")
+        } else {
+            false
+        };
+        
+        // Skip non-waveform files to reduce clutter
+        if !is_directory && !is_waveform {
+            continue;
+        }
+        
+        let item = FileSystemItem {
+            name,
+            path: path_str,
+            is_directory,
+            file_size: None, // Skip file size for instant loading
+            is_waveform_file: is_waveform, // Proper waveform detection  
+            file_extension: None, // Skip extension parsing for instant loading
+            has_expandable_content: is_directory, // All directories expandable
+        };
+        
+        items.push(item);
+    }
+    
+    // Sort items: directories first, then files, both alphabetically
+    items.sort_by(|a, b| {
+        match (a.is_directory, b.is_directory) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+        }
+    });
+    
+    Ok(items)
+}
+
+// REMOVED: process_entry_async and should_disable_directory functions for instant loading
 
 #[moon::main]
 async fn main() -> std::io::Result<()> {

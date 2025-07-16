@@ -15,7 +15,7 @@ use crate::{
     LOADED_FILES, SELECTED_SCOPE_ID, TREE_SELECTED_ITEMS, EXPANDED_SCOPES,
     FILE_PATHS, show_file_paths_dialog, LOAD_FILES_VIEWPORT_Y,
     FILE_PICKER_EXPANDED, FILE_PICKER_SELECTED,
-    FILE_PICKER_ERROR, FILE_TREE_CACHE, send_up_msg, DOCK_TOGGLE_IN_PROGRESS
+    FILE_PICKER_ERROR, FILE_PICKER_ERROR_CACHE, FILE_TREE_CACHE, send_up_msg, DOCK_TOGGLE_IN_PROGRESS
 };
 
 fn empty_state_hint(text: &str) -> impl Element {
@@ -32,6 +32,8 @@ pub fn file_paths_dialog() -> impl Element {
         // Clear file picker state on close
         FILE_PICKER_SELECTED.lock_mut().clear();
         FILE_PICKER_ERROR.set_neq(None);
+        // DON'T clear error cache - preserve error state for next dialog opening
+        // This ensures users see error indicators immediately on subsequent opens
     };
 
 
@@ -860,41 +862,7 @@ fn file_picker_content() -> impl Element {
             raw_el.style("scrollbar-width", "thin")
                 .style_signal("scrollbar-color", primary_6().map(|thumb| primary_3().map(move |track| format!("{} {}", thumb, track))).flatten())
         })
-        .child_signal(
-            FILE_PICKER_ERROR.signal_cloned().map(|error| {
-                if let Some(error_msg) = error {
-                    Column::new()
-                        .s(Gap::new().y(16))
-                        .s(Align::center())
-                        .s(Padding::all(32))
-                        .item(
-                            icon(IconName::TriangleAlert)
-                                .size(IconSize::Large)
-                                .color(IconColor::Error)
-                                .build()
-                        )
-                        .item(
-                            El::new()
-                                .s(Font::new().size(16).color_signal(neutral_11()))
-                                .child(error_msg)
-                        )
-                        .item(
-                            button()
-                                .label("Retry")
-                                .variant(ButtonVariant::Secondary)
-                                .size(ButtonSize::Medium)
-                                .on_press(|| {
-                                    FILE_PICKER_ERROR.set_neq(None);
-                                    send_up_msg(UpMsg::BrowseDirectory("/".to_string()));
-                                })
-                                .build()
-                        )
-                        .unify()
-                } else {
-                    simple_file_picker_tree().unify()
-                }
-            })
-        )
+        .child(simple_file_picker_tree())
 }
 
 fn simple_file_picker_tree() -> impl Element {
@@ -923,6 +891,7 @@ fn simple_file_picker_tree() -> impl Element {
         .child_signal(
             map_ref! {
                 let tree_cache = FILE_TREE_CACHE.signal_cloned(),
+                let error_cache = FILE_PICKER_ERROR_CACHE.signal_cloned(),
                 let expanded = FILE_PICKER_EXPANDED.signal_cloned() =>
                 move {
                     monitor_directory_expansions(expanded.clone());
@@ -932,7 +901,7 @@ fn simple_file_picker_tree() -> impl Element {
                         // Create root "/" item and build hierarchical tree
                         let tree_data = vec![
                             TreeViewItemData::new("/".to_string(), "/".to_string())
-                                .with_children(build_hierarchical_tree("/", &tree_cache))
+                                .with_children(build_hierarchical_tree("/", &tree_cache, &error_cache))
                         ];
                         
                         tree_view()
@@ -946,10 +915,7 @@ fn simple_file_picker_tree() -> impl Element {
                             .build()
                             .unify()
                     } else {
-                        El::new()
-                            .s(Padding::all(16))
-                            .s(Font::new().size(14).color_signal(neutral_9()))
-                            .child("Loading filesystem...")
+                        empty_state_hint("Loading directory contents...")
                             .unify()
                     }
                 }
@@ -957,31 +923,78 @@ fn simple_file_picker_tree() -> impl Element {
         )
 }
 
-fn build_hierarchical_tree(
+fn should_disable_folder(
     path: &str, 
     tree_cache: &HashMap<String, Vec<shared::FileSystemItem>>
+) -> bool {
+    // Simple logic: disable folder if it has NO subfolders AND NO waveform files
+    if let Some(items) = tree_cache.get(path) {
+        let has_subfolders = items.iter().any(|item| item.is_directory);
+        let has_waveform_files = items.iter().any(|item| !item.is_directory && item.is_waveform_file);
+        
+        // Only disable if BOTH conditions are false
+        return !has_subfolders && !has_waveform_files;
+    }
+    
+    // If no cached data, don't disable (allow expansion to load data)
+    false
+}
+
+fn build_hierarchical_tree(
+    path: &str, 
+    tree_cache: &HashMap<String, Vec<shared::FileSystemItem>>,
+    error_cache: &HashMap<String, String>
 ) -> Vec<TreeViewItemData> {
     if let Some(items) = tree_cache.get(path) {
         items.iter().map(|item| {
             if item.is_directory {
-                // Check if we have cached contents for this directory
-                if let Some(_children) = tree_cache.get(&item.path) {
-                    // Build actual hierarchical children
-                    let children = build_hierarchical_tree(&item.path, tree_cache);
-                    TreeViewItemData::new(item.path.clone(), item.name.clone())
+                // Check if we have an error for this directory
+                if let Some(_error_msg) = error_cache.get(&item.path) {
+                    // Show error as a child item
+                    let data = TreeViewItemData::new(item.path.clone(), item.name.clone())
                         .icon("folder".to_string())
                         .item_type(TreeViewItemType::Folder)
-                        .with_children(children)
+                        .with_children(vec![
+                            TreeViewItemData::new("access_denied", "Can't access this folder")
+                                .item_type(TreeViewItemType::Default)
+                                .disabled(true)
+                        ]);
+                    data
+                } else if let Some(_children) = tree_cache.get(&item.path) {
+                    // Build actual hierarchical children
+                    let children = build_hierarchical_tree(&item.path, tree_cache, error_cache);
+                    let mut data = TreeViewItemData::new(item.path.clone(), item.name.clone())
+                        .icon("folder".to_string())
+                        .item_type(TreeViewItemType::Folder)
+                        .with_children(children);
+                    
+                    // Show "No supported files" placeholder for empty folders instead of disabling
+                    if should_disable_folder(&item.path, tree_cache) {
+                        data = data.with_children(vec![
+                            TreeViewItemData::new("no_supported_files", "No supported files")
+                                .item_type(TreeViewItemType::Default)
+                                .disabled(true)
+                        ]);
+                    }
+                    
+                    data
                 } else {
                     // No cached contents - only show expand arrow if directory has expandable content
                     let mut data = TreeViewItemData::new(item.path.clone(), item.name.clone())
                         .icon("folder".to_string())
                         .item_type(TreeViewItemType::Folder);
                     
-                    // Only add placeholder children if directory has expandable content
+                    // Use backend's has_expandable_content field directly
                     if item.has_expandable_content {
                         data = data.with_children(vec![
                             TreeViewItemData::new("loading", "Loading...")
+                                .item_type(TreeViewItemType::Default)
+                                .disabled(true)
+                        ]);
+                    } else {
+                        // Directory has no subfolders AND no waveform files - show "No supported files" placeholder
+                        data = data.with_children(vec![
+                            TreeViewItemData::new("no_supported_files", "No supported files")
                                 .item_type(TreeViewItemType::Default)
                                 .disabled(true)
                         ]);
@@ -993,7 +1006,8 @@ fn build_hierarchical_tree(
                 // File item
                 let mut data = TreeViewItemData::new(item.path.clone(), item.name.clone())
                     .icon("file".to_string())
-                    .item_type(TreeViewItemType::File);
+                    .item_type(TreeViewItemType::File)
+                    .is_waveform_file(item.is_waveform_file);
                 
                 // Disable non-waveform files
                 if !item.is_waveform_file {
@@ -1014,11 +1028,16 @@ fn monitor_directory_expansions(expanded: HashSet<String>) {
     let last_expanded = LAST_EXPANDED.lock_ref().clone();
     let new_expansions: Vec<String> = expanded.difference(&last_expanded).cloned().collect();
     
-    // Send browse requests for newly expanded directories
-    for path in new_expansions {
-        if path.starts_with("/") && !path.is_empty() {
-            send_up_msg(UpMsg::BrowseDirectory(path));
-        }
+    // CACHE-AWARE REQUESTS - Only request directories if not already cached
+    let cache = FILE_TREE_CACHE.lock_ref();
+    let paths_to_request: Vec<String> = new_expansions.into_iter()
+        .filter(|path| path.starts_with("/") && !path.is_empty() && !cache.contains_key(path))
+        .collect();
+    drop(cache); // Release lock before sending requests
+    
+    // Send all requests in parallel for maximum performance
+    for path in paths_to_request {
+        send_up_msg(UpMsg::BrowseDirectory(path));
     }
     
     // Update last expanded set

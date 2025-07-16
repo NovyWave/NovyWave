@@ -7,20 +7,29 @@ pub fn show_file_paths_dialog() {
     // Set both the global state AND the config store to work with sync system
     config_store().dialogs.lock_mut().show_file_dialog.set(true);
     SHOW_FILE_DIALOG.set(true);
-    zoon::println!("show_file_paths_dialog() called - setting dialog to true");
     FILE_PATHS_INPUT.set_neq(String::new());
     
-    // Initialize file picker by browsing to filesystem root and user home directory
-    // Note: TreeView will also request "/" if not cached, but that's handled automatically
+    // SMART CACHE REFRESH - Request fresh data without clearing cache
+    // This ensures users see newly added files without "Loading..." flicker
+    // Fresh data will overwrite cached data when it arrives
     send_up_msg(UpMsg::BrowseDirectory("/".to_string()));
     send_up_msg(UpMsg::BrowseDirectory("~".to_string()));
     
     // Clear previous file picker selection but preserve expanded directories
-    // Only ensure root "/" is expanded, keeping user's saved expanded folders
+    // SMART DEFAULT EXPANSION - Only expand ~ when no previous expansion state exists
     crate::FILE_PICKER_SELECTED.lock_mut().clear();
     let mut expanded = crate::FILE_PICKER_EXPANDED.lock_mut();
+    
+    // Always ensure root "/" is expanded
     expanded.insert("/".to_string());
+    
+    // Smart default: only expand ~ if no previous expansion state exists
+    // This provides good UX for first-time users without overriding user preferences
+    if expanded.len() == 1 && expanded.contains("/") {
+        expanded.insert("~".to_string());
+    }
     crate::FILE_PICKER_ERROR.set_neq(None);
+    // Don't clear error cache on dialog open - preserve errors until fresh data overwrites them
     crate::CURRENT_DIRECTORY.set_neq(String::new());
     
     // Restore scroll position from config

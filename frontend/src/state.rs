@@ -27,6 +27,7 @@ pub static FILE_PICKER_SELECTED: Lazy<MutableVec<String>> = lazy::default();
 pub static CURRENT_DIRECTORY: Lazy<Mutable<String>> = lazy::default();
 pub static FILE_PICKER_DATA: Lazy<MutableVec<FileSystemItem>> = lazy::default();
 pub static FILE_PICKER_ERROR: Lazy<Mutable<Option<String>>> = lazy::default();
+pub static FILE_PICKER_ERROR_CACHE: Lazy<Mutable<HashMap<String, String>>> = lazy::default();
 
 
 // Test viewport scrolling for Load Files dialog  

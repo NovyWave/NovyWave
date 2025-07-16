@@ -9,8 +9,10 @@ theme = "dark"
 
 [workspace]
 opened_files = [
-    "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst",
     "/home/martinkavik/repos/NovyWave/test_files/simple.vcd",
+    "/boot/grub/fonts",
+    "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst",
+    "/boot/grub/fonts_non_existent",
 ]
 dock_mode = "right"
 expanded_scopes = [
@@ -22,12 +24,14 @@ load_files_expanded_directories = [
     "/home/martinkavik/repos",
     "/home/martinkavik/repos/NovyWave",
     "/home",
-    "/home/martinkavik/repos/ringrev_private",
+    "/home/martinkavik/repos/NovyWave/docs",
+    "/home/martinkavik/repos/NovyWave/public",
     "/home/martinkavik",
     "/",
+    "/root",
 ]
 selected_scope_id = "file_71a2908980aee1d_scope_1"
-load_files_scroll_position = 806
+load_files_scroll_position = 452
 
 [workspace.docked_to_bottom]
 files_panel_width = 635.0
