@@ -2,6 +2,7 @@ use zoon::*;
 use moonzoon_novyui::*;
 use moonzoon_novyui::tokens::color::{neutral_2, neutral_8, neutral_11, primary_3, primary_6};
 use wasm_bindgen::JsCast;
+use once_cell::sync::Lazy;
 
 use shared::{Signal, filter_variables};
 
@@ -354,22 +355,16 @@ pub fn rust_virtual_variables_list_with_signal(
                     El::new()
                         .s(Width::fill())
                         .s(Height::exact((total_items as f64 * item_height) as u32))
-                        .child_signal(
-                            map_ref! {
-                                let start = visible_start.signal(),
-                                let end = visible_end.signal() => {
-                                    Stack::new()
-                                        .s(Width::fill())
-                                        .s(Height::exact((total_items as f64 * item_height) as u32))
-                                        .layers(
-                                            variables[*start..*end].iter().enumerate().map(|(i, signal)| {
-                                                let absolute_index = *start + i;
-                                                virtual_variable_row_positioned(signal.clone(), absolute_index as f64 * item_height)
-                                            })
-                                        )
-                                        .into_element()
-                                }
-                            }
+                        .child(
+                            // 🔥🔥🔥 REVOLUTIONARY CHANGE: STABLE ELEMENT POOL! 🔥🔥🔥
+                            // ZERO DOM recreation during scroll - only content/position updates!
+                            create_stable_virtual_list(
+                                variables.clone(),
+                                visible_start.clone(),
+                                visible_end.clone(),
+                                item_height,
+                                total_items
+                            )
                         )
                 )
         )
@@ -407,6 +402,174 @@ pub fn rust_virtual_variables_list_dynamic_wrapper(
 
 // ===== ROW RENDERING FUNCTIONS =====
 
+// OPTIMIZED VIRTUAL ROW: Uses Text::with_signal for reactive content updates
+pub fn virtual_variable_row_optimized(signal: Signal, top_offset: f64) -> impl Element {
+    // Create reactive text signals
+    let name_signal = Mutable::new(signal.name.clone());
+    let type_signal = Mutable::new(format!("{} {}-bit", signal.signal_type, signal.width));
+    
+    Row::new()
+        .s(Gap::new().x(8))
+        .s(Width::fill())
+        .s(Height::exact(24))
+        .s(Transform::new().move_down(top_offset as i32))
+        .s(Padding::new().x(12).y(2))
+        .s(Background::new().color_signal(neutral_2()))
+        .item(
+            El::new()
+                .s(Font::new().color_signal(neutral_11()).size(14))
+                .s(Font::new().no_wrap())
+                .child(Text::with_signal(name_signal.signal_cloned()))
+        )
+        .item(El::new().s(Width::fill()))
+        .item(
+            El::new()
+                .s(Font::new().color_signal(primary_6()).size(12))
+                .s(Font::new().no_wrap())
+                .child(Text::with_signal(type_signal.signal_cloned()))
+        )
+}
+
+// ===== REVOLUTIONARY STABLE ELEMENT POOL VIRTUALIZATION =====
+// ZERO DOM RECREATION - Only content and position updates via signals!
+
+#[derive(Clone)]
+struct VirtualElementState {
+    name_signal: Mutable<String>,
+    type_signal: Mutable<String>,
+    position_signal: Mutable<i32>,
+    visible_signal: Mutable<bool>,
+}
+
+static VIRTUAL_ELEMENT_POOL: Lazy<MutableVec<VirtualElementState>> = lazy::default();
+
+pub fn create_stable_virtual_list(
+    variables: Vec<Signal>,
+    visible_start: Mutable<usize>,
+    visible_end: Mutable<usize>,
+    item_height: f64,
+    total_items: usize
+) -> impl Element {
+    
+    // Calculate pool size (visible items + buffer)
+    let pool_size = ((400.0 / item_height).ceil() as usize + 10).min(total_items);
+    
+    // Initialize element pool if empty
+    if VIRTUAL_ELEMENT_POOL.lock_ref().is_empty() {
+        let pool_elements: Vec<VirtualElementState> = (0..pool_size).map(|_| {
+            VirtualElementState {
+                name_signal: Mutable::new(String::new()),
+                type_signal: Mutable::new(String::new()),
+                position_signal: Mutable::new(-9999), // Start hidden
+                visible_signal: Mutable::new(false),
+            }
+        }).collect();
+        
+        VIRTUAL_ELEMENT_POOL.lock_mut().replace_cloned(pool_elements);
+    }
+    
+    // Start the pool update task
+    start_pool_update_task(variables, visible_start, visible_end, item_height);
+    
+    // Create the container with stable elements using Stack for absolute positioning
+    Stack::new()
+        .s(Width::fill())
+        .s(Height::exact((total_items as f64 * item_height) as u32))
+        .layers(
+            // Create stable DOM elements that NEVER get recreated
+            VIRTUAL_ELEMENT_POOL.lock_ref().iter().enumerate().map(|(pool_index, state)| {
+                create_stable_variable_element(state.clone(), pool_index)
+            })
+        )
+}
+
+fn start_pool_update_task(
+    variables: Vec<Signal>,
+    visible_start: Mutable<usize>,
+    visible_end: Mutable<usize>,
+    item_height: f64
+) {
+    Task::start(async move {
+        // Listen to visible range changes and update pool elements
+        map_ref! {
+            let start = visible_start.signal(),
+            let end = visible_end.signal() => (*start, *end)
+        }.for_each_sync(move |(start, end)| {
+            
+            let pool = VIRTUAL_ELEMENT_POOL.lock_ref();
+            let visible_count = end - start;
+            
+            // Update each pool element
+            for (pool_index, element_state) in pool.iter().enumerate() {
+                let absolute_index = start + pool_index;
+                
+                if pool_index < visible_count && absolute_index < variables.len() {
+                    // This element should be visible - update its content
+                    if let Some(signal) = variables.get(absolute_index) {
+                        // 🔥 CONTENT UPDATES - No element recreation!
+                        element_state.name_signal.set_neq(signal.name.clone());
+                        element_state.type_signal.set_neq(
+                            format!("{} {}-bit", signal.signal_type, signal.width)
+                        );
+                        
+                        // 🔥 POSITION UPDATES - Smooth repositioning!
+                        element_state.position_signal.set_neq(
+                            (absolute_index as f64 * item_height) as i32
+                        );
+                        
+                        element_state.visible_signal.set_neq(true);
+                    }
+                } else {
+                    // Hide this element by moving it off-screen
+                    element_state.visible_signal.set_neq(false);
+                    element_state.position_signal.set_neq(-9999);
+                }
+            }
+        }).await;
+    });
+}
+
+fn create_stable_variable_element(
+    state: VirtualElementState,
+    _pool_index: usize
+) -> impl Element {
+    
+    Row::new()
+        .s(Gap::new().x(8))
+        .s(Width::fill())
+        .s(Height::exact(24))
+        // 🔥 COMBINED POSITIONING + VISIBILITY - Single transform signal!
+        .s(Transform::with_signal_self(
+            map_ref! {
+                let position = state.position_signal.signal(),
+                let visible = state.visible_signal.signal() => {
+                    if *visible {
+                        Transform::new().move_down(*position)
+                    } else {
+                        Transform::new().move_down(-9999)  // Hide off-screen
+                    }
+                }
+            }
+        ))
+        .s(Padding::new().x(12).y(2))
+        .s(Background::new().color_signal(neutral_2()))
+        .item(
+            // 🔥 REACTIVE TEXT CONTENT - Only text nodes update!
+            El::new()
+                .s(Font::new().color_signal(neutral_11()).size(14))
+                .s(Font::new().no_wrap())
+                .child(Text::with_signal(state.name_signal.signal_cloned()))
+        )
+        .item(El::new().s(Width::fill()))
+        .item(
+            El::new()
+                .s(Font::new().color_signal(primary_6()).size(12))
+                .s(Font::new().no_wrap())
+                .child(Text::with_signal(state.type_signal.signal_cloned()))
+        )
+}
+
+// LEGACY VERSION: For comparison - causes blank spaces
 pub fn virtual_variable_row_positioned(signal: Signal, top_offset: f64) -> impl Element {
     Row::new()
         .s(Gap::new().x(8))                                      // Horizontal spacing between elements
