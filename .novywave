@@ -23,8 +23,8 @@ load_files_expanded_directories = [
     "/home/martinkavik/repos/NovyWave",
     "/home",
     "/home/martinkavik/repos/ringrev_private",
-    "/",
     "/home/martinkavik",
+    "/",
 ]
 selected_scope_id = "file_71a2908980aee1d_scope_1"
 load_files_scroll_position = 806
@@ -35,4 +35,4 @@ files_panel_height = 393.0
 
 [workspace.docked_to_right]
 files_panel_width = 470.0
-files_panel_height = 254.0
+files_panel_height = 225.0

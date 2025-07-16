@@ -254,26 +254,78 @@ pub fn rust_virtual_variables_list_with_signal(
     let visible_start = Mutable::new(0usize);
     let visible_end = Mutable::new(initial_visible_count.min(total_items));
     
-    // ===== STEP 2: REACTIVE VISIBLE COUNT =====
-    // This will be updated when height changes (Step 3 will connect it)
+    // ===== HYBRID STABLE POOL WITH DYNAMIC SIZING =====
+    // Start with basic buffer, will adjust based on scroll velocity
+    let base_buffer = 5; // Minimum buffer
+    let initial_pool_size = initial_visible_count + base_buffer;
+    let element_pool: MutableVec<VirtualElementState> = MutableVec::new_with_values(
+        (0..initial_pool_size).map(|_| {
+            VirtualElementState {
+                name_signal: Mutable::new(String::new()),
+                type_signal: Mutable::new(String::new()),
+                position_signal: Mutable::new(-9999), // Start hidden
+                visible_signal: Mutable::new(false),
+            }
+        }).collect()
+    );
+    
+    // ===== SCROLL VELOCITY TRACKING =====
+    let last_scroll_time = Mutable::new(0.0);
+    let last_scroll_position = Mutable::new(0.0);
+    let scroll_velocity = Mutable::new(0.0); // pixels per second
+    
+    // ===== REACTIVE VISIBLE COUNT =====
     let visible_count = Mutable::new(initial_visible_count);
     
-    // ===== STEP 3: HEIGHT SIGNAL LISTENER =====
-    // Listen to height changes and recalculate visible count
+    // ===== HEIGHT SIGNAL LISTENER WITH POOL RESIZING =====
     Task::start({
         let height_signal = height_signal.clone();
         let visible_count = visible_count.clone();
+        let element_pool = element_pool.clone();
+        let scroll_velocity = scroll_velocity.clone();
         async move {
             height_signal.signal().for_each(|height| {
                 let new_visible_count = ((height as f64 / item_height).ceil() as usize + 5).min(total_items);
                 visible_count.set_neq(new_visible_count);
+                
+                // ===== DYNAMIC POOL RESIZING BASED ON VELOCITY =====
+                // Calculate buffer based on current scroll velocity
+                let current_velocity = scroll_velocity.get();
+                let velocity_buffer = if current_velocity > 1000.0 {
+                    15 // Fast scrolling: larger buffer
+                } else if current_velocity > 500.0 {
+                    10 // Medium scrolling: medium buffer  
+                } else {
+                    base_buffer // Slow/no scrolling: minimal buffer (5)
+                };
+                
+                let needed_pool_size = new_visible_count + velocity_buffer;
+                let current_pool_size = element_pool.lock_ref().len();
+                
+                if needed_pool_size > current_pool_size {
+                    // Grow pool efficiently with MutableVec
+                    let additional_elements: Vec<VirtualElementState> = (current_pool_size..needed_pool_size).map(|_| {
+                        VirtualElementState {
+                            name_signal: Mutable::new(String::new()),
+                            type_signal: Mutable::new(String::new()),
+                            position_signal: Mutable::new(-9999),
+                            visible_signal: Mutable::new(false),
+                        }
+                    }).collect();
+                    
+                    element_pool.lock_mut().extend(additional_elements);
+                } else if needed_pool_size < current_pool_size {
+                    // Shrink pool efficiently (but keep minimum buffer)
+                    let min_pool_size = (new_visible_count + base_buffer).max(20);
+                    element_pool.lock_mut().truncate(min_pool_size);
+                }
+                
                 async {}
             }).await;
         }
     });
     
-    // ===== STEP 4: UPDATE visible_end WHEN visible_count CHANGES =====
-    // When visible_count changes, update visible_end to maintain current view
+    // ===== UPDATE visible_end WHEN visible_count CHANGES =====
     Task::start({
         let visible_count = visible_count.clone();
         let visible_start = visible_start.clone();
@@ -284,6 +336,47 @@ pub fn rust_virtual_variables_list_with_signal(
                 let new_end = (current_start + new_count).min(total_items);
                 visible_end.set_neq(new_end);
                 async {}
+            }).await;
+        }
+    });
+    
+    // ===== POOL UPDATE TASK =====
+    // Update pool elements when visible range changes
+    Task::start({
+        let variables = variables.clone();
+        let element_pool = element_pool.clone();
+        let visible_start = visible_start.clone();
+        let visible_end = visible_end.clone();
+        async move {
+            map_ref! {
+                let start = visible_start.signal(),
+                let end = visible_end.signal() => (*start, *end)
+            }.for_each_sync(move |(start, end)| {
+                let pool = element_pool.lock_ref();
+                let visible_count = end - start;
+                
+                // Update each pool element efficiently
+                for (pool_index, element_state) in pool.iter().enumerate() {
+                    let absolute_index = start + pool_index;
+                    
+                    if pool_index < visible_count && absolute_index < variables.len() {
+                        // This element should be visible - update content
+                        if let Some(signal) = variables.get(absolute_index) {
+                            element_state.name_signal.set_neq(signal.name.clone());
+                            element_state.type_signal.set_neq(
+                                format!("{} {}-bit", signal.signal_type, signal.width)
+                            );
+                            element_state.position_signal.set_neq(
+                                (absolute_index as f64 * item_height) as i32
+                            );
+                            element_state.visible_signal.set_neq(true);
+                        }
+                    } else {
+                        // Hide this element
+                        element_state.visible_signal.set_neq(false);
+                        element_state.position_signal.set_neq(-9999);
+                    }
+                }
             }).await;
         }
     });
@@ -302,6 +395,11 @@ pub fn rust_virtual_variables_list_with_signal(
                     let scroll_top = scroll_top.clone();
                     let visible_start = visible_start.clone();
                     let visible_end = visible_end.clone();
+                    let visible_count = visible_count.clone();
+                    let last_scroll_time = last_scroll_time.clone();
+                    let last_scroll_position = last_scroll_position.clone();
+                    let scroll_velocity = scroll_velocity.clone();
+                    let element_pool = element_pool.clone();
                     
                     move |el| {
                         if let Some(html_el) = el.dom_element().dyn_ref::<web_sys::HtmlElement>() {
@@ -314,6 +412,11 @@ pub fn rust_virtual_variables_list_with_signal(
                                 let scroll_top = scroll_top.clone();
                                 let visible_start = visible_start.clone();
                                 let visible_end = visible_end.clone();
+                                let visible_count = visible_count.clone();
+                                let last_scroll_time = last_scroll_time.clone();
+                                let last_scroll_position = last_scroll_position.clone();
+                                let scroll_velocity = scroll_velocity.clone();
+                                let element_pool = element_pool.clone();
                                 
                                 move |_event: web_sys::Event| {
                                     if let Some(scroll_el) = web_sys::window()
@@ -322,10 +425,49 @@ pub fn rust_virtual_variables_list_with_signal(
                                         .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok()) 
                                     {
                                         let new_scroll_top = scroll_el.scroll_top() as f64;
+                                        
+                                        // ===== VELOCITY CALCULATION =====
+                                        let current_time = web_sys::window()
+                                            .and_then(|w| Some(w.performance()?.now()))
+                                            .unwrap_or(0.0);
+                                        
+                                        let last_time = last_scroll_time.get();
+                                        let last_position = last_scroll_position.get();
+                                        
+                                        if last_time > 0.0 {
+                                            let time_delta = current_time - last_time;
+                                            let position_delta = (new_scroll_top - last_position).abs();
+                                            
+                                            if time_delta > 0.0 {
+                                                let new_velocity = (position_delta / time_delta) * 1000.0; // px/second
+                                                scroll_velocity.set_neq(new_velocity);
+                                                
+                                                // ===== DYNAMIC POOL ADJUSTMENT ON FAST SCROLL =====
+                                                if new_velocity > 800.0 {
+                                                    let current_pool_size = element_pool.lock_ref().len();
+                                                    let needed_size = visible_count.get() + 15; // Fast scroll: larger buffer
+                                                    
+                                                    if needed_size > current_pool_size {
+                                                        let additional_elements: Vec<VirtualElementState> = (current_pool_size..needed_size).map(|_| {
+                                                            VirtualElementState {
+                                                                name_signal: Mutable::new(String::new()),
+                                                                type_signal: Mutable::new(String::new()),
+                                                                position_signal: Mutable::new(-9999),
+                                                                visible_signal: Mutable::new(false),
+                                                            }
+                                                        }).collect();
+                                                        
+                                                        element_pool.lock_mut().extend(additional_elements);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        
+                                        last_scroll_time.set_neq(current_time);
+                                        last_scroll_position.set_neq(new_scroll_top);
                                         scroll_top.set_neq(new_scroll_top);
                                         
                                         let start_index = (new_scroll_top / item_height).floor() as usize;
-                                        // STEP 4: Use reactive visible_count instead of static initial_visible_count
                                         let end_index = (start_index + visible_count.get()).min(total_items);
                                         
                                         visible_start.set_neq(start_index);
@@ -352,19 +494,15 @@ pub fn rust_virtual_variables_list_with_signal(
                         .style_signal("scrollbar-color", primary_6().map(|thumb| primary_3().map(move |track| format!("{} {}", thumb, track))).flatten())
                 })
                 .child(
-                    El::new()
+                    // ===== HYBRID STABLE POOL CONTAINER =====
+                    // No more child_signal recreation - stable elements only!
+                    Stack::new()
                         .s(Width::fill())
                         .s(Height::exact((total_items as f64 * item_height) as u32))
-                        .child(
-                            // 🔥🔥🔥 REVOLUTIONARY CHANGE: STABLE ELEMENT POOL! 🔥🔥🔥
-                            // ZERO DOM recreation during scroll - only content/position updates!
-                            create_stable_virtual_list(
-                                variables.clone(),
-                                visible_start.clone(),
-                                visible_end.clone(),
-                                item_height,
-                                total_items
-                            )
+                        .layers_signal_vec(
+                            element_pool.signal_vec_cloned().map(move |element_state| {
+                                create_stable_variable_element_hybrid(element_state)
+                            })
                         )
                 )
         )
@@ -430,8 +568,7 @@ pub fn virtual_variable_row_optimized(signal: Signal, top_offset: f64) -> impl E
         )
 }
 
-// ===== REVOLUTIONARY STABLE ELEMENT POOL VIRTUALIZATION =====
-// ZERO DOM RECREATION - Only content and position updates via signals!
+// ===== STABLE ELEMENT POOL VIRTUALIZATION =====
 
 #[derive(Clone)]
 struct VirtualElementState {
@@ -442,6 +579,8 @@ struct VirtualElementState {
 }
 
 static VIRTUAL_ELEMENT_POOL: Lazy<MutableVec<VirtualElementState>> = lazy::default();
+
+
 
 pub fn create_stable_virtual_list(
     variables: Vec<Signal>,
@@ -555,6 +694,42 @@ fn create_stable_variable_element(
         .s(Background::new().color_signal(neutral_2()))
         .item(
             // 🔥 REACTIVE TEXT CONTENT - Only text nodes update!
+            El::new()
+                .s(Font::new().color_signal(neutral_11()).size(14))
+                .s(Font::new().no_wrap())
+                .child(Text::with_signal(state.name_signal.signal_cloned()))
+        )
+        .item(El::new().s(Width::fill()))
+        .item(
+            El::new()
+                .s(Font::new().color_signal(primary_6()).size(12))
+                .s(Font::new().no_wrap())
+                .child(Text::with_signal(state.type_signal.signal_cloned()))
+        )
+}
+
+// ===== HYBRID STABLE ELEMENT =====
+// Optimized version for the hybrid MutableVec approach
+fn create_stable_variable_element_hybrid(state: VirtualElementState) -> impl Element {
+    Row::new()
+        .s(Gap::new().x(8))
+        .s(Width::fill())
+        .s(Height::exact(24))
+        .s(Transform::with_signal_self(
+            map_ref! {
+                let position = state.position_signal.signal(),
+                let visible = state.visible_signal.signal() => {
+                    if *visible {
+                        Transform::new().move_down(*position)
+                    } else {
+                        Transform::new().move_down(-9999)  // Hide off-screen
+                    }
+                }
+            }
+        ))
+        .s(Padding::new().x(12).y(2))
+        .s(Background::new().color_signal(neutral_2()))
+        .item(
             El::new()
                 .s(Font::new().color_signal(neutral_11()).size(14))
                 .s(Font::new().no_wrap())
