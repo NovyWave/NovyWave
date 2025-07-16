@@ -503,6 +503,7 @@ dependencies = [
  "moon",
  "serde",
  "shared",
+ "tokio",
  "toml",
  "wellen",
 ]

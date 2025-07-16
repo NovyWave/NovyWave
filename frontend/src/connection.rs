@@ -99,17 +99,18 @@ static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                     }
                 }
                 
-                // Clear any previous error
+                // Clear any previous error for this directory (fresh data overwrites cached errors)
                 crate::FILE_PICKER_ERROR.set_neq(None);
+                crate::FILE_PICKER_ERROR_CACHE.lock_mut().remove(&path);
             }
             DownMsg::DirectoryError { path, error } => {
                 zoon::println!("Error browsing directory {}: {}", path, error);
                 
-                // Set error message
-                crate::FILE_PICKER_ERROR.set_neq(Some(format!("Error accessing '{}': {}", path, error)));
+                // Store error for this specific directory
+                crate::FILE_PICKER_ERROR_CACHE.lock_mut().insert(path.clone(), error);
                 
-                // Clear file picker data on error
-                crate::FILE_PICKER_DATA.lock_mut().replace_cloned(Vec::new());
+                // Clear global error (we now use per-directory errors)
+                crate::FILE_PICKER_ERROR.set_neq(None);
             }
             DownMsg::ConfigLoaded(config) => {
                 crate::config::apply_config(config);

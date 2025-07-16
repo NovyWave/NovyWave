@@ -15,6 +15,7 @@ pub struct TreeViewItemData {
     pub item_type: Option<TreeViewItemType>,
     pub has_expandable_content: Option<bool>,
     pub on_remove: Option<std::rc::Rc<dyn Fn(&str) + 'static>>,
+    pub is_waveform_file: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -49,6 +50,7 @@ impl TreeViewItemData {
             item_type: None,
             has_expandable_content: None,
             on_remove: None,
+            is_waveform_file: None,
         }
     }
 
@@ -82,6 +84,11 @@ impl TreeViewItemData {
         F: Fn(&str) + 'static 
     {
         self.on_remove = Some(std::rc::Rc::new(callback));
+        self
+    }
+
+    pub fn is_waveform_file(mut self, is_waveform_file: bool) -> Self {
+        self.is_waveform_file = Some(is_waveform_file);
         self
     }
 
@@ -510,8 +517,8 @@ fn render_tree_item(
                             // Top-level waveform files: NO checkboxes (e.g., "file_71a2908980aee1d")
                             false
                         } else if item_id.starts_with("/") {
-                            // File picker paths: only waveform files get checkboxes
-                            item_id.ends_with(".vcd") || item_id.ends_with(".fst") || item_id.ends_with(".ghw")
+                            // File picker paths: use proper is_waveform_file field instead of extension checking
+                            item.is_waveform_file.unwrap_or(false)
                         } else {
                             // Signals in Files & Scopes: YES checkboxes (e.g., "A", "B")
                             true
@@ -681,14 +688,20 @@ fn render_tree_item(
                                     .size(font_size)
                                     .weight(FontWeight::Number(FONT_WEIGHT_4))
                                     .no_wrap()
-                                    .color_signal(
+                                    .color_signal({
+                                        let item_id_for_error_check = item_id.clone();
                                         map_ref! {
                                             let theme = theme(),
                                             let is_selected = selected_items.signal_ref({
                                                 let item_id = item_id.clone();
                                                 move |selected| selected.contains(&item_id)
-                                            }) =>
-                                            if is_disabled {
+                                            }) => {
+                                            if item_id_for_error_check == "access_denied" {
+                                                match *theme {
+                                                    Theme::Light => "oklch(55% 0.16 15)", // Error color light
+                                                    Theme::Dark => "oklch(70% 0.16 15)", // Error color dark
+                                                }
+                                            } else if is_disabled {
                                                 match *theme {
                                                     Theme::Light => "oklch(45% 0.14 250)", // neutral_5 light
                                                     Theme::Dark => "oklch(55% 0.14 250)", // neutral_5 dark
@@ -703,9 +716,9 @@ fn render_tree_item(
                                                     Theme::Light => "oklch(15% 0.14 250)", // neutral_9 light
                                                     Theme::Dark => "oklch(95% 0.14 250)", // neutral_11 dark
                                                 }
-                                            }
+                                            }}
                                         }
-                                    )
+                                    })
                                 )
                         )
                         .item_signal(
