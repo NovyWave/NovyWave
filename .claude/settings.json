@@ -16,10 +16,6 @@
           {
             "type": "command",
             "command": "bash \"/home/martinkavik/repos/NovyWave/.claude/hooks/restore-session-after-compaction.sh\""
-          },
-          {
-            "type": "command",
-            "command": "bash \"/home/martinkavik/repos/NovyWave/.claude/hooks/memory-monitor.sh\""
           }
         ]
       }

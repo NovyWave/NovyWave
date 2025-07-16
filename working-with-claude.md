@@ -216,8 +216,7 @@ Claude uses Task tool subagents extensively for context conservation. Instead of
 ### If Claude Seems to Lack Focus Context:
 1. Run `/core-focus` to see current productivity context
 2. Check if `.claude/ai-docs/focus-context.md` exists and is recent
-3. Ensure PostToolUse hook is working (check `.claude/hooks.log`)
-4. Verify CLAUDE.md is importing the focus file correctly
+3. Check if CLAUDE.md is importing the focus file correctly
 
 ### If Memory Gets Unfocused:
 1. Run `/core-memory-cleanup` to optimize focused entities
@@ -235,7 +234,7 @@ Claude uses Task tool subagents extensively for context conservation. Instead of
 - CLAUDE.md: Modular import structure with core/framework/project separation
 - Memory entities: 6 focused entities (5 observations max each) + comprehensive archives
 - AI documentation: Organized in modular .claude/ structure
-- Automation: PostToolUse hook triggers after Memory MCP usage
+- Automation: Automatic focus context generation and memory storage
 - Context: Focused 30-line productivity overview, not comprehensive data dump
 - Commands: /project-start, /project-stop for development; /core-focus, /core-note, /core-memory-search, /core-memory-cleanup for memory
 

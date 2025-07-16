@@ -20,10 +20,6 @@
           {
             "type": "command",
             "command": "bash \"/YOUR/PATH/TO/NovyWave/.claude/hooks/restore-session-after-compaction.sh\""
-          },
-          {
-            "type": "command",
-            "command": "bash \"/YOUR/PATH/TO/NovyWave/.claude/hooks/memory-monitor.sh\""
           }
         ]
       }
