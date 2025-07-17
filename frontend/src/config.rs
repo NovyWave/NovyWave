@@ -44,6 +44,7 @@ pub struct UiSection {
     pub theme: Mutable<Theme>,
     pub font_size: Mutable<f32>,
     pub show_tooltips: Mutable<bool>,
+    pub toast_dismiss_ms: Mutable<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -162,6 +163,7 @@ impl Default for UiSection {
             theme: Mutable::new(Theme::Dark),
             font_size: Mutable::new(14.0),
             show_tooltips: Mutable::new(true),
+            toast_dismiss_ms: Mutable::new(10000), // Default 10 seconds
         }
     }
 }
@@ -253,6 +255,12 @@ pub struct SerializableUiSection {
     pub theme: Theme,
     pub font_size: f32,
     pub show_tooltips: bool,
+    #[serde(default = "default_toast_dismiss_ms")]
+    pub toast_dismiss_ms: u64,
+}
+
+fn default_toast_dismiss_ms() -> u64 {
+    10000 // Default 10 seconds
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -312,6 +320,7 @@ impl ConfigStore {
                 theme: self.ui.lock_ref().theme.get_cloned(),
                 font_size: self.ui.lock_ref().font_size.get(),
                 show_tooltips: self.ui.lock_ref().show_tooltips.get(),
+                toast_dismiss_ms: self.ui.lock_ref().toast_dismiss_ms.get(),
             },
             session: SerializableSessionSection {
                 opened_files: self.session.lock_ref().opened_files.lock_ref().to_vec(),
@@ -530,6 +539,7 @@ fn save_config_to_backend() {
                 Theme::Dark => "dark".to_string(),
                 Theme::Light => "light".to_string(),
             },
+            toast_dismiss_ms: serializable_config.ui.toast_dismiss_ms,
         },
         workspace: shared::WorkspaceSection {
             opened_files: serializable_config.session.opened_files,
@@ -623,6 +633,7 @@ pub fn apply_config(config: shared::AppConfig) {
             },
             font_size: 14.0,
             show_tooltips: true,
+            toast_dismiss_ms: config.ui.toast_dismiss_ms,
         },
         session: SerializableSessionSection {
             opened_files: config.workspace.opened_files,
@@ -698,6 +709,11 @@ pub fn apply_config(config: shared::AppConfig) {
 
 pub fn current_theme() -> impl Signal<Item = Theme> {
     config_store().ui.signal_ref(|ui| ui.theme.signal_cloned()).flatten()
+}
+
+/// Get current toast dismiss time
+pub fn current_toast_dismiss_ms() -> u64 {
+    config_store().ui.lock_ref().toast_dismiss_ms.get()
 }
 
 // Manual sync function to convert expanded_scopes from Vec<String> to HashSet<String>

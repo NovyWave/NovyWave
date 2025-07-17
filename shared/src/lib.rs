@@ -157,12 +157,19 @@ pub enum MigrationStrategy {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct UiSection {
     pub theme: String,
+    #[serde(default = "default_toast_dismiss_ms")]
+    pub toast_dismiss_ms: u64,
+}
+
+fn default_toast_dismiss_ms() -> u64 {
+    10000 // Default 10 seconds
 }
 
 impl Default for UiSection {
     fn default() -> Self {
         Self {
             theme: "dark".to_string(),
+            toast_dismiss_ms: 10000, // Default 10 seconds
         }
     }
 }
