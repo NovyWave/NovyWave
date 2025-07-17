@@ -17,6 +17,8 @@ use crate::{
     FILE_PICKER_EXPANDED, FILE_PICKER_SELECTED,
     FILE_PICKER_ERROR, FILE_PICKER_ERROR_CACHE, FILE_TREE_CACHE, send_up_msg, DOCK_TOGGLE_IN_PROGRESS
 };
+use crate::error_display::add_error_alert;
+use crate::state::ErrorAlert;
 
 fn empty_state_hint(text: &str) -> impl Element {
     El::new()
@@ -339,11 +341,15 @@ pub fn variables_panel() -> impl Element {
 }
 
 pub fn selected_variables_with_waveform_panel() -> impl Element {
-    El::new()
+    Column::new()
         .s(Width::growable())
         .s(Height::fill())
-        .child(
-            create_panel(
+        .item(
+            El::new()
+                .s(Width::growable())
+                .s(Height::fill())
+                .child(
+                    create_panel(
                 Row::new()
                     .s(Gap::new().x(8))
                     .s(Align::new().center_y())
@@ -368,6 +374,19 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                     )
                     .item(
                         remove_all_button()
+                    )
+                    .item(
+                        button()
+                            .label("Test Toast")
+                            .variant(ButtonVariant::Secondary)
+                            .size(ButtonSize::Small)
+                            .on_press(|| {
+                                let test_alert = ErrorAlert::new_connection_error(
+                                    "This is a test toast notification that will auto-dismiss based on your configured timeout.".to_string()
+                                );
+                                add_error_alert(test_alert);
+                            })
+                            .build()
                     ),
                 // 3-column table layout: Variable Name | Value | Waveform
                 El::new()
@@ -510,7 +529,8 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                             )
                     }))
                     )
-            )
+                    )
+                )
         )
 }
 
@@ -601,6 +621,19 @@ pub fn waveform_panel() -> impl Element {
                             .variant(ButtonVariant::Outline)
                             .size(ButtonSize::Small)
                             .on_press(|| {})
+                            .build()
+                    )
+                    .item(
+                        button()
+                            .label("Test Toast")
+                            .variant(ButtonVariant::Secondary)
+                            .size(ButtonSize::Small)
+                            .on_press(|| {
+                                let test_alert = ErrorAlert::new_connection_error(
+                                    "This is a test toast notification that should auto-dismiss after 5 seconds.".to_string()
+                                );
+                                add_error_alert(test_alert);
+                            })
                             .build()
                     ),
                 Column::new()
@@ -955,7 +988,9 @@ fn build_hierarchical_tree(
                         .icon("folder".to_string())
                         .item_type(TreeViewItemType::Folder)
                         .with_children(vec![
-                            TreeViewItemData::new("access_denied", "Can't access this folder")
+                            TreeViewItemData::new("access_denied", &error_cache.get(&item.path).map(|err| {
+                                crate::state::make_error_user_friendly(err)
+                            }).unwrap_or_else(|| "Cannot access this directory".to_string()))
                                 .item_type(TreeViewItemType::Default)
                                 .disabled(true)
                         ]);

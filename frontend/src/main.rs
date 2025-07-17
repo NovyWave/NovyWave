@@ -25,6 +25,12 @@ use state::*;
 mod utils;
 use utils::*;
 
+mod error_display;
+use error_display::*;
+
+mod error_ui;
+use error_ui::*;
+
 
 /// Entry point: loads fonts and starts the app.
 pub fn main() {
@@ -39,6 +45,9 @@ pub fn main() {
         
         // Initialize signal-based loading completion handling
         init_signal_chains();
+        
+        // Initialize error display system
+        init_error_display_system();
         
         init_connection();
         
@@ -168,6 +177,7 @@ fn root() -> impl Element {
         .layer_signal(SHOW_FILE_DIALOG.signal().map_true(
             || file_paths_dialog()
         ))
+        .layer(toast_notifications_container())
 }
 
 fn main_layout() -> impl Element {

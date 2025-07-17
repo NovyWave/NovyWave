@@ -12,6 +12,8 @@
 - ✅ COMPLETED: Signal type unification solved using map_bool_signal pattern from CryptoKick
 - ✅ COMPLETED: Claude Code hook system with portable git-based path resolution
 - ✅ COMPLETED: Memory MCP debugging and corruption prevention systems
+- ✅ COMPLETED: Unified error logging system with duplicate removal and proper architecture
+- ✅ COMPLETED: Toast notifications positioned in bottom-right corner following best practices
 
 **Recent Solutions (Don't Repeat):**
 - Fixed theme storage by replacing hardcoded "dark" in config.rs save_current_config() with current_theme()
@@ -21,6 +23,9 @@
 - Theme toggle works perfectly - app switches between light/dark with proper color schemes
 - Resolved Claude Code hook path resolution with git rev-parse for contributor portability
 - Implemented comprehensive PreCompact/PostCompact backup and recovery system
+- Eliminated duplicate error logging by creating single entry point in error_display.rs
+- Implemented bottom-right toast positioning with fixed CSS and proper z-index layering
+- Added technical_error field to ErrorAlert for dual console/toast output system
 
 **Current Blockers:**
 - None - all major systems working correctly
@@ -32,41 +37,24 @@
 - Use zoon::println!() for WASM logging, never std::println!()
 - Use Height::screen() + Height::fill() pattern for full-screen layouts
 - Use git rev-parse --show-toplevel for portable hook paths
+- Use error_display::add_error_alert() for ALL error handling - never duplicate logging
+- Position toast notifications in bottom-right corner with fixed positioning and proper z-index
 
 **Next Steps:**
-- All infrastructure complete - theme system, hooks, memory management working
-- Ready for continued waveform viewer feature development
+- All infrastructure complete - theme system, hooks, memory management, error handling working
+- Toast notification system fully functional with bottom-right positioning
+- Ready for continued waveform viewer feature development  
 - Project infrastructure now production-ready and contributor-friendly
 
 *Focused productivity context generated at Thu Jul  3 03:50:36 AM CEST 2025*
 
 
 ## Recovery Context
-- Auto-generated recovery contexts have been cleaned up to prevent bloat
-- Only the most recent session context is preserved for reference
-
-## 🔄 Post-Compaction Recovery Context
-- Recovered from session: Sun Jul 13 04:23:59 AM CEST 2025: PreCompact backup
-- Previous task: Unknown
-
-## Recovery Context
-- Recovery contexts cleaned up to prevent bloat (was 102 lines)
+- Recovery contexts cleaned up to prevent bloat (was 110 lines)
 - Only the most recent context is preserved below
 
 ## 🔄 Post-Compaction Recovery Context
-- Recovered from session: Wed Jul 16 11:30:37 PM CEST 2025: PreCompact backup
+- Recovered from session: Thu Jul 17 02:24:44 AM CEST 2025: PreCompact backup
 - Previous task: Unknown
-- Recovery timestamp: Thu Jul 17 12:54:49 AM CEST 2025
-- Backup location: .claude/compaction-backups/20250716_233037
-
-## 🔄 Post-Compaction Recovery Context
-- Recovered from session: Wed Jul 16 11:30:37 PM CEST 2025: PreCompact backup
-- Previous task: Unknown
-- Recovery timestamp: Thu Jul 17 01:03:16 AM CEST 2025
-- Backup location: .claude/compaction-backups/20250716_233037
-
-## 🔄 Post-Compaction Recovery Context
-- Recovered from session: Wed Jul 16 11:30:37 PM CEST 2025: PreCompact backup
-- Previous task: Unknown
-- Recovery timestamp: Thu Jul 17 01:08:42 AM CEST 2025
-- Backup location: .claude/compaction-backups/20250716_233037
+- Recovery timestamp: Thu Jul 17 02:46:59 AM CEST 2025
+- Backup location: .claude/compaction-backups/20250717_022444

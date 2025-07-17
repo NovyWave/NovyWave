@@ -1,6 +1,8 @@
 use zoon::*;
 use crate::{LOADING_FILES, LOADED_FILES, check_loading_complete, config};
 use crate::config::CONFIG_LOADED;
+use crate::error_display::add_error_alert;
+use crate::state::ErrorAlert;
 use shared::{UpMsg, DownMsg};
 use shared::{LoadingFile, LoadingStatus};
 
@@ -60,7 +62,22 @@ static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 }
             }
             DownMsg::ParsingError { file_id, error } => {
-                zoon::println!("Error parsing file {}: {}", file_id, error);
+                // Find the filename for the error alert
+                let filename = {
+                    let current_files: Vec<LoadingFile> = LOADING_FILES.lock_ref().iter().cloned().collect();
+                    current_files.iter()
+                        .find(|file| file.file_id == file_id)
+                        .map(|file| file.filename.clone())
+                        .unwrap_or_else(|| "Unknown file".to_string())
+                };
+                
+                // Create and display error alert
+                let error_alert = ErrorAlert::new_file_parsing_error(
+                    file_id.clone(),
+                    filename,
+                    error.clone()
+                );
+                add_error_alert(error_alert);
                 
                 // Mark file as error
                 let current_files: Vec<LoadingFile> = LOADING_FILES.lock_ref().iter().cloned().collect();
@@ -104,7 +121,9 @@ static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 crate::FILE_PICKER_ERROR_CACHE.lock_mut().remove(&path);
             }
             DownMsg::DirectoryError { path, error } => {
-                zoon::println!("Error browsing directory {}: {}", path, error);
+                // Create and display directory error alert (auto-dismisses)
+                let error_alert = ErrorAlert::new_directory_error(path.clone(), error.clone());
+                add_error_alert(error_alert);
                 
                 // Store error for this specific directory
                 crate::FILE_PICKER_ERROR_CACHE.lock_mut().insert(path.clone(), error);
@@ -129,7 +148,9 @@ pub fn send_up_msg(up_msg: UpMsg) {
     Task::start(async move {
         let result = CONNECTION.send_up_msg(up_msg).await;
         if let Err(error) = result {
-            zoon::println!("Failed to send message: {:?}", error);
+            // Create and display connection error alert
+            let error_alert = ErrorAlert::new_connection_error(format!("Failed to send message: {:?}", error));
+            add_error_alert(error_alert);
         }
     });
 }

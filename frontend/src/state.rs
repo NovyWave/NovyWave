@@ -57,3 +57,90 @@ pub static FILE_PATHS: Lazy<Mutable<HashMap<String, String>>> = lazy::default();
 
 // Track expanded scopes for TreeView persistence
 pub static EXPANDED_SCOPES: Lazy<Mutable<HashSet<String>>> = lazy::default();
+
+// ===== ERROR DISPLAY SYSTEM =====
+
+#[derive(Debug, Clone)]
+pub struct ErrorAlert {
+    pub id: String,
+    pub title: String,
+    pub message: String,
+    pub technical_error: String, // Raw technical error for console logging
+    pub error_type: ErrorType,
+    pub timestamp: u64,
+    pub auto_dismiss_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone)]
+pub enum ErrorType {
+    FileParsingError { file_id: String, filename: String },
+    DirectoryAccessError { path: String },
+    ConnectionError,
+    ConfigError,
+}
+
+impl ErrorAlert {
+    pub fn new_file_parsing_error(file_id: String, filename: String, error: String) -> Self {
+        let user_friendly_message = make_error_user_friendly(&error);
+        Self {
+            id: format!("file_error_{}", file_id),
+            title: "File Loading Error".to_string(),
+            message: format!("{}: {}", filename, user_friendly_message),
+            technical_error: format!("Error parsing file {}: {}", file_id, error),
+            error_type: ErrorType::FileParsingError { file_id, filename },
+            timestamp: js_sys::Date::now() as u64,
+            auto_dismiss_ms: Some(crate::config::current_toast_dismiss_ms()), // Use configured dismiss time
+        }
+    }
+    
+    pub fn new_directory_error(path: String, error: String) -> Self {
+        let user_friendly_message = make_error_user_friendly(&error);
+        Self {
+            id: format!("dir_error_{}", path.replace("/", "_")),
+            title: "Directory Access Error".to_string(),
+            message: format!("Cannot access {}: {}", path, user_friendly_message),
+            technical_error: format!("Error browsing directory {}: {}", path, error),
+            error_type: ErrorType::DirectoryAccessError { path },
+            timestamp: js_sys::Date::now() as u64,
+            auto_dismiss_ms: Some(crate::config::current_toast_dismiss_ms()), // Use configured dismiss time
+        }
+    }
+    
+    pub fn new_connection_error(error: String) -> Self {
+        let user_friendly_message = make_error_user_friendly(&error);
+        Self {
+            id: format!("conn_error_{}", js_sys::Date::now() as u64),
+            title: "Connection Error".to_string(),
+            message: user_friendly_message,
+            technical_error: format!("Connection error: {}", error),
+            error_type: ErrorType::ConnectionError,
+            timestamp: js_sys::Date::now() as u64,
+            auto_dismiss_ms: Some(crate::config::current_toast_dismiss_ms()), // Use configured dismiss time
+        }
+    }
+}
+
+pub fn make_error_user_friendly(error: &str) -> String {
+    let error_lower = error.to_lowercase();
+    
+    if error_lower.contains("unknown file format") || error_lower.contains("only ghw, fst and vcd are supported") {
+        "Unsupported file format. Only VCD and FST files are supported.".to_string()
+    } else if error_lower.contains("file not found") || error_lower.contains("no such file") {
+        "File not found. Please check if the file exists and try again.".to_string()
+    } else if error_lower.contains("permission denied") || error_lower.contains("access denied") {
+        "Permission denied. Please check file permissions and try again.".to_string()
+    } else if error_lower.contains("connection") || error_lower.contains("network") {
+        "Connection error. Please check your network connection.".to_string()
+    } else if error_lower.contains("timeout") {
+        "Operation timed out. Please try again.".to_string()
+    } else {
+        // Keep original error but make it more presentable
+        error.trim().to_string()
+    }
+}
+
+// Global error alert management
+pub static ERROR_ALERTS: Lazy<MutableVec<ErrorAlert>> = lazy::default();
+
+// Toast notification system state
+pub static TOAST_NOTIFICATIONS: Lazy<MutableVec<ErrorAlert>> = lazy::default();
