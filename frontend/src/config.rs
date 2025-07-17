@@ -559,6 +559,7 @@ fn save_config_to_backend() {
                 files_panel_height: serializable_config.workspace.panel_layouts.docked_to_right.files_panel_height as f64,
             },
             load_files_scroll_position: serializable_config.session.file_picker.scroll_position,
+            variables_search_filter: serializable_config.session.variables_search_filter,
         },
     };
 
@@ -637,7 +638,7 @@ pub fn apply_config(config: shared::AppConfig) {
         },
         session: SerializableSessionSection {
             opened_files: config.workspace.opened_files,
-            variables_search_filter: String::new(),
+            variables_search_filter: config.workspace.variables_search_filter,
             file_picker: SerializableFilePickerSection {
                 current_directory: None,
                 expanded_directories: config.workspace.load_files_expanded_directories.clone(),
@@ -989,7 +990,13 @@ pub fn sync_globals_to_config() {
     // Sync variables search filter back to config
     Task::start(async {
         VARIABLES_SEARCH_FILTER.signal_cloned().for_each_sync(|filter| {
-            config_store().session.lock_mut().variables_search_filter.set_neq(filter);
+            // Only save if initialization is complete to prevent race conditions
+            if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
+                config_store().session.lock_mut().variables_search_filter.set_neq(filter);
+                // Manually trigger config save for search filter changes
+                save_config_to_backend();
+            } else {
+            }
         }).await
     });
 

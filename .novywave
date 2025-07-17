@@ -18,6 +18,7 @@ opened_files = [
 dock_mode = "right"
 expanded_scopes = [
     "file_71a2908980aee1d_scope_0",
+    "file_71a2908980aee1d_scope_1",
     "file_71a2908980aee1d",
 ]
 load_files_expanded_directories = [
@@ -32,7 +33,8 @@ load_files_expanded_directories = [
     "/root",
 ]
 selected_scope_id = "file_71a2908980aee1d_scope_1"
-load_files_scroll_position = 774
+load_files_scroll_position = 831
+variables_search_filter = "aligner"
 
 [workspace.docked_to_bottom]
 files_panel_width = 635.0
@@ -40,4 +42,4 @@ files_panel_height = 393.0
 
 [workspace.docked_to_right]
 files_panel_width = 470.0
-files_panel_height = 324.0
+files_panel_height = 316.0

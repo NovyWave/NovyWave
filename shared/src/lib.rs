@@ -185,6 +185,7 @@ pub struct WorkspaceSection {
     pub docked_to_bottom: DockedToBottomLayout,
     pub docked_to_right: DockedToRightLayout,
     pub load_files_scroll_position: i32,
+    pub variables_search_filter: String,
 }
 
 impl Default for WorkspaceSection {
@@ -198,6 +199,7 @@ impl Default for WorkspaceSection {
             docked_to_bottom: Default::default(),
             docked_to_right: Default::default(),
             load_files_scroll_position: 0,
+            variables_search_filter: String::new(),
         }
     }
 }
@@ -266,16 +268,14 @@ pub fn count_variables_in_scopes(scopes: &[ScopeData]) -> usize {
 
 pub fn filter_variables(variables: &[Signal], search_filter: &str) -> Vec<Signal> {
     if search_filter.is_empty() {
-        variables.to_vec()
+        variables.to_vec()  // Already sorted from backend
     } else {
+        // Filter only, order preserved from backend sorting
         let filter_lower = search_filter.to_lowercase();
-        let mut filtered: Vec<Signal> = variables.iter()
+        variables.iter()
             .filter(|var| var.name.to_lowercase().contains(&filter_lower))
             .cloned()
-            .collect();
-        // CRITICAL: Ensure filtered variables remain alphabetically sorted
-        filtered.sort_by(|a, b| a.name.cmp(&b.name));
-        filtered
+            .collect()
     }
 }
 

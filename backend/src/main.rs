@@ -121,7 +121,7 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
             cleanup_parsing_session(&file_id);
         }
         Err(e) => {
-            let error_msg = format!("Failed to parse waveform file: {}", e);
+            let error_msg = format!("Failed to parse waveform file '{}': {}", file_path, e);
             send_down_msg(DownMsg::ParsingError { file_id, error: error_msg }, session_id, cor_id).await;
         }
     }
@@ -137,7 +137,7 @@ fn extract_scopes_from_hierarchy(hierarchy: &wellen::Hierarchy, file_id: &str) -
 fn extract_scope_data_with_file_id(hierarchy: &wellen::Hierarchy, scope_ref: wellen::ScopeRef, file_id: &str) -> ScopeData {
     let scope = &hierarchy[scope_ref];
     
-    let variables: Vec<shared::Signal> = scope.vars(hierarchy).map(|var_ref| {
+    let mut variables: Vec<shared::Signal> = scope.vars(hierarchy).map(|var_ref| {
         let var = &hierarchy[var_ref];
         shared::Signal {
             id: format!("{}", var.signal_ref().index()),
@@ -150,10 +150,12 @@ fn extract_scope_data_with_file_id(hierarchy: &wellen::Hierarchy, scope_ref: wel
             },
         }
     }).collect();
+    variables.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     
-    let children: Vec<ScopeData> = scope.scopes(hierarchy).map(|child_scope_ref| {
+    let mut children: Vec<ScopeData> = scope.scopes(hierarchy).map(|child_scope_ref| {
         extract_scope_data_with_file_id(hierarchy, child_scope_ref, file_id)
     }).collect();
+    children.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     
     ScopeData {
         id: format!("{}_scope_{}", file_id, scope_ref.index()),
