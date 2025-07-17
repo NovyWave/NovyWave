@@ -227,8 +227,14 @@ pub fn rust_virtual_variables_list(variables: Vec<Signal>) -> Column<column::Emp
                                             variables[*start..*end].iter().enumerate().map(|(i, signal)| {
                                                 // Calculate absolute position in the full list
                                                 let absolute_index = *start + i;
+                                                // Get previous variable name for prefix highlighting
+                                                let previous_name = if absolute_index > 0 {
+                                                    variables.get(absolute_index - 1).map(|prev| prev.name.clone())
+                                                } else {
+                                                    None
+                                                };
                                                 // Position each item using Transform (absolute positioning)
-                                                virtual_variable_row_positioned(signal.clone(), absolute_index as f64 * item_height)
+                                                virtual_variable_row_positioned(signal.clone(), absolute_index as f64 * item_height, previous_name)
                                             })
                                         )
                                         .into_element() // Convert to unified Element type
@@ -265,6 +271,7 @@ pub fn rust_virtual_variables_list_with_signal(
                 type_signal: Mutable::new(String::new()),
                 position_signal: Mutable::new(-9999), // Start hidden
                 visible_signal: Mutable::new(false),
+                previous_name_signal: Mutable::new(None),
             }
         }).collect()
     );
@@ -310,6 +317,7 @@ pub fn rust_virtual_variables_list_with_signal(
                             type_signal: Mutable::new(String::new()),
                             position_signal: Mutable::new(-9999),
                             visible_signal: Mutable::new(false),
+                            previous_name_signal: Mutable::new(None),
                         }
                     }).collect();
                     
@@ -370,6 +378,14 @@ pub fn rust_virtual_variables_list_with_signal(
                                 (absolute_index as f64 * item_height) as i32
                             );
                             element_state.visible_signal.set_neq(true);
+                            
+                            // Set previous variable name for prefix highlighting
+                            let previous_name = if absolute_index > 0 {
+                                variables.get(absolute_index - 1).map(|prev_signal| prev_signal.name.clone())
+                            } else {
+                                None
+                            };
+                            element_state.previous_name_signal.set_neq(previous_name);
                         }
                     } else {
                         // Hide this element
@@ -454,6 +470,7 @@ pub fn rust_virtual_variables_list_with_signal(
                                                                 type_signal: Mutable::new(String::new()),
                                                                 position_signal: Mutable::new(-9999),
                                                                 visible_signal: Mutable::new(false),
+                                                                previous_name_signal: Mutable::new(None),
                                                             }
                                                         }).collect();
                                                         
@@ -576,6 +593,7 @@ struct VirtualElementState {
     type_signal: Mutable<String>,
     position_signal: Mutable<i32>,
     visible_signal: Mutable<bool>,
+    previous_name_signal: Mutable<Option<String>>,
 }
 
 static VIRTUAL_ELEMENT_POOL: Lazy<MutableVec<VirtualElementState>> = lazy::default();
@@ -601,6 +619,7 @@ pub fn create_stable_virtual_list(
                 type_signal: Mutable::new(String::new()),
                 position_signal: Mutable::new(-9999), // Start hidden
                 visible_signal: Mutable::new(false),
+                previous_name_signal: Mutable::new(None),
             }
         }).collect();
         
@@ -657,6 +676,14 @@ fn start_pool_update_task(
                         );
                         
                         element_state.visible_signal.set_neq(true);
+                        
+                        // Set previous variable name for prefix highlighting
+                        let previous_name = if absolute_index > 0 {
+                            variables.get(absolute_index - 1).map(|prev_signal| prev_signal.name.clone())
+                        } else {
+                            None
+                        };
+                        element_state.previous_name_signal.set_neq(previous_name);
                     }
                 } else {
                     // Hide this element by moving it off-screen
@@ -730,10 +757,11 @@ fn create_stable_variable_element_hybrid(state: VirtualElementState) -> impl Ele
         .s(Padding::new().x(12).y(2))
         .s(Background::new().color_signal(neutral_2()))
         .item(
-            El::new()
-                .s(Font::new().color_signal(neutral_11()).size(14))
-                .s(Font::new().no_wrap())
-                .child(Text::with_signal(state.name_signal.signal_cloned()))
+            // Variable name with prefix highlighting
+            create_variable_name_display(
+                state.name_signal.signal_cloned(),
+                state.previous_name_signal.signal_cloned(),
+            )
         )
         .item(El::new().s(Width::fill()))
         .item(
@@ -745,7 +773,7 @@ fn create_stable_variable_element_hybrid(state: VirtualElementState) -> impl Ele
 }
 
 // LEGACY VERSION: For comparison - causes blank spaces
-pub fn virtual_variable_row_positioned(signal: Signal, top_offset: f64) -> impl Element {
+pub fn virtual_variable_row_positioned(signal: Signal, top_offset: f64, previous_name: Option<String>) -> impl Element {
     Row::new()
         .s(Gap::new().x(8))                                      // Horizontal spacing between elements
         .s(Width::fill())                                        // Full width within container
@@ -754,11 +782,48 @@ pub fn virtual_variable_row_positioned(signal: Signal, top_offset: f64) -> impl 
         .s(Padding::new().x(12).y(2))                           // Internal padding
         .s(Background::new().color_signal(neutral_2()))         // Row background color
         .item(
-            // ===== VARIABLE NAME =====
+            // ===== VARIABLE NAME WITH PREFIX HIGHLIGHTING =====
             El::new()
-                .s(Font::new().color_signal(neutral_11()).size(14))  // Text styling
-                .s(Font::new().no_wrap())                             // Prevent text wrapping
-                .child(signal.name.clone())                           // Display variable name
+                .s(Font::new().size(14))  // Text styling
+                .child({
+                    match &previous_name {
+                        Some(prev) => {
+                            let (prefix_len, has_prefix) = detect_shared_prefix(&signal.name, prev);
+                            
+                            if has_prefix && prefix_len > 0 {
+                                let prefix = &signal.name[..prefix_len];
+                                let suffix = &signal.name[prefix_len..];
+                                
+                                // Create paragraph with inline colored text
+                                Paragraph::new()
+                                    .content(
+                                        El::new()
+                                            .s(Font::new().color_signal(neutral_8()).no_wrap()) // Dimmed prefix
+                                            .child(prefix)
+                                    )
+                                    .content(
+                                        El::new()
+                                            .s(Font::new().color_signal(neutral_11()).no_wrap()) // Normal colored suffix
+                                            .child(suffix)
+                                    )
+                                    .into_element()
+                            } else {
+                                // No shared prefix, display normally
+                                Paragraph::new()
+                                    .s(Font::new().color_signal(neutral_11()).no_wrap())
+                                    .content(signal.name.clone())
+                                    .into_element()
+                            }
+                        },
+                        None => {
+                            // First variable or no previous - display normally
+                            Paragraph::new()
+                                .s(Font::new().color_signal(neutral_11()).no_wrap())
+                                .content(signal.name.clone())
+                                .into_element()
+                        }
+                    }
+                })
         )
         .item(El::new().s(Width::fill()))
         .item(
@@ -811,6 +876,106 @@ pub fn simple_variable_row(signal: Signal) -> Row<row::EmptyFlagNotSet, row::Mul
                 .s(Font::new().color_signal(primary_6()).size(12))
                 .s(Font::new().no_wrap())
                 .child(format!("{} {}-bit", signal.signal_type, signal.width))
+        )
+}
+
+// ===== SHARED PREFIX HIGHLIGHTING FUNCTIONS =====
+
+/// Detect shared prefix between two variable names using word boundary logic
+/// Returns (prefix_length, has_meaningful_prefix)
+fn detect_shared_prefix(current: &str, previous: &str) -> (usize, bool) {
+    if current.is_empty() || previous.is_empty() {
+        return (0, false);
+    }
+    
+    // Find common prefix character by character
+    let mut prefix_len = 0;
+    let current_chars: Vec<char> = current.chars().collect();
+    let previous_chars: Vec<char> = previous.chars().collect();
+    
+    for (i, (c1, c2)) in current_chars.iter().zip(previous_chars.iter()).enumerate() {
+        if c1 == c2 {
+            prefix_len = i + 1;
+        } else {
+            break;
+        }
+    }
+    
+    // Apply minimum threshold and word boundary logic
+    if prefix_len < 3 {
+        return (0, false);
+    }
+    
+    // Look for word boundary within the common prefix
+    let prefix_str: String = current_chars.iter().take(prefix_len).collect();
+    if let Some(last_boundary) = prefix_str.rfind('_')
+        .or_else(|| prefix_str.rfind('.'))
+        .or_else(|| prefix_str.rfind('['))
+        .or_else(|| prefix_str.rfind('$')) {
+        let boundary_prefix_len = last_boundary + 1; // Include the boundary character
+        if boundary_prefix_len >= 3 {
+            return (boundary_prefix_len, true);
+        }
+    }
+    
+    // If no good word boundary, use character-level prefix if it's long enough
+    if prefix_len >= 5 {
+        return (prefix_len, true);
+    }
+    
+    (0, false)
+}
+
+/// Create variable name display with prefix highlighting
+fn create_variable_name_display(
+    name_signal: impl zoon::Signal<Item = String> + Unpin + 'static,
+    previous_name_signal: impl zoon::Signal<Item = Option<String>> + Unpin + 'static,
+) -> impl Element {
+    El::new()
+        .s(Font::new().size(14).no_wrap())
+        .child_signal(
+            map_ref! {
+                let name = name_signal,
+                let previous_name = previous_name_signal => {
+                    match previous_name {
+                        Some(prev) => {
+                            let (prefix_len, has_prefix) = detect_shared_prefix(name, prev);
+                            
+                            if has_prefix && prefix_len > 0 {
+                                let prefix = &name[..prefix_len];
+                                let suffix = &name[prefix_len..];
+                                
+                                // Use Paragraph for inline text coloring
+                                Paragraph::new()
+                                    .content(
+                                        El::new()
+                                            .s(Font::new().color_signal(neutral_8())) // Dimmed prefix
+                                            .child(prefix)
+                                    )
+                                    .content(
+                                        El::new()
+                                            .s(Font::new().color_signal(neutral_11())) // Normal suffix
+                                            .child(suffix)
+                                    )
+                                    .into_element()
+                            } else {
+                                // No shared prefix, display normally
+                                Paragraph::new()
+                                    .s(Font::new().color_signal(neutral_11()))
+                                    .content(name.clone())
+                                    .into_element()
+                            }
+                        },
+                        None => {
+                            // First item, no previous to compare with
+                            Paragraph::new()
+                                .s(Font::new().color_signal(neutral_11()))
+                                .content(name.clone())
+                                .into_element()
+                        }
+                    }
+                }
+            }
         )
 }
 

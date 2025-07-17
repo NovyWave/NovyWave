@@ -123,12 +123,35 @@ impl ErrorAlert {
 pub fn make_error_user_friendly(error: &str) -> String {
     let error_lower = error.to_lowercase();
     
+    // Extract file path from error messages like "Failed to parse waveform file '/path/to/file': error"
+    let file_path = if let Some(start) = error.find("'") {
+        if let Some(end) = error[start + 1..].find("'") {
+            Some(&error[start + 1..start + 1 + end])
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    
     if error_lower.contains("unknown file format") || error_lower.contains("only ghw, fst and vcd are supported") {
-        "Unsupported file format. Only VCD and FST files are supported.".to_string()
+        if let Some(path) = file_path {
+            format!("Unsupported file format '{}'. Only VCD and FST files are supported.", path)
+        } else {
+            "Unsupported file format. Only VCD and FST files are supported.".to_string()
+        }
     } else if error_lower.contains("file not found") || error_lower.contains("no such file") {
-        "File not found. Please check if the file exists and try again.".to_string()
+        if let Some(path) = file_path {
+            format!("File not found '{}'. Please check if the file exists and try again.", path)
+        } else {
+            "File not found. Please check if the file exists and try again.".to_string()
+        }
     } else if error_lower.contains("permission denied") || error_lower.contains("access denied") {
-        "Permission denied. Please check file permissions and try again.".to_string()
+        if let Some(path) = file_path {
+            format!("Permission denied for '{}'. Please check file permissions and try again.", path)
+        } else {
+            "Permission denied. Please check file permissions and try again.".to_string()
+        }
     } else if error_lower.contains("connection") || error_lower.contains("network") {
         "Connection error. Please check your network connection.".to_string()
     } else if error_lower.contains("timeout") {

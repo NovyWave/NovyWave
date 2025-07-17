@@ -35,14 +35,8 @@ fn add_toast_notification(alert: ErrorAlert) {
     // Add new toast
     TOAST_NOTIFICATIONS.lock_mut().push_cloned(alert.clone());
     
-    // Auto-dismiss after specified time
-    if let Some(dismiss_ms) = alert.auto_dismiss_ms {
-        let alert_id = alert.id.clone();
-        Task::start(async move {
-            Timer::sleep(dismiss_ms as u32).await;
-            dismiss_error_alert(&alert_id);
-        });
-    }
+    // Note: Auto-dismiss is now handled by the toast component itself
+    // in error_ui.rs with pause-on-click functionality
 }
 
 /// Clear all error alerts

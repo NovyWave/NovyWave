@@ -781,7 +781,11 @@ fn simple_variables_content() -> impl Element {
 }
 
 fn convert_files_to_tree_data(files: &[WaveformFile]) -> Vec<TreeViewItemData> {
-    files.iter().map(|file| {
+    // Sort files alphabetically by filename (case-insensitive)
+    let mut file_refs: Vec<&WaveformFile> = files.iter().collect();
+    file_refs.sort_by(|a, b| a.filename.to_lowercase().cmp(&b.filename.to_lowercase()));
+    
+    file_refs.iter().map(|file| {
         let children = file.scopes.iter().map(|scope| {
             convert_scope_to_tree_data(scope)
         }).collect();
@@ -817,8 +821,12 @@ fn convert_files_to_tree_data(files: &[WaveformFile]) -> Vec<TreeViewItemData> {
 fn convert_scope_to_tree_data(scope: &ScopeData) -> TreeViewItemData {
     let mut children = Vec::new();
     
-    // Add child scopes first
-    for child_scope in &scope.children {
+    // Sort child scopes alphabetically by name (case-insensitive)
+    let mut child_refs: Vec<&ScopeData> = scope.children.iter().collect();
+    child_refs.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    
+    // Add sorted child scopes
+    for child_scope in child_refs {
         children.push(convert_scope_to_tree_data(child_scope));
     }
     
