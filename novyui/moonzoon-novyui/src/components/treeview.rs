@@ -16,12 +16,16 @@ pub struct TreeViewItemData {
     pub has_expandable_content: Option<bool>,
     pub on_remove: Option<std::rc::Rc<dyn Fn(&str) + 'static>>,
     pub is_waveform_file: Option<bool>,
+    pub tooltip: Option<String>, // Hover tooltip text (usually full file path)
+    pub error_message: Option<String>, // Error message for problematic files
+    // Removed styled_label field due to Zoon trait compatibility issues
 }
 
 #[derive(Debug, Clone, Copy)]
 pub enum TreeViewItemType {
     Folder,
     File,
+    FileError, // Files with errors (missing, corrupted, unsupported)
     Default,
 }
 
@@ -51,6 +55,9 @@ impl TreeViewItemData {
             has_expandable_content: None,
             on_remove: None,
             is_waveform_file: None,
+            tooltip: None,
+            error_message: None,
+            // styled_label field removed
         }
     }
 
@@ -91,6 +98,18 @@ impl TreeViewItemData {
         self.is_waveform_file = Some(is_waveform_file);
         self
     }
+
+    pub fn tooltip(mut self, tooltip: impl Into<String>) -> Self {
+        self.tooltip = Some(tooltip.into());
+        self
+    }
+
+    pub fn error_message(mut self, error_message: impl Into<String>) -> Self {
+        self.error_message = Some(error_message.into());
+        self
+    }
+
+    // styled_label method removed due to Zoon trait compatibility issues
 
     pub fn has_children(&self) -> bool {
         // Use has_expandable_content flag if available, otherwise fall back to checking children array
@@ -407,6 +426,17 @@ fn render_tree_item(
         } else {
             CursorIcon::Pointer
         }))
+        // Add tooltip support via HTML title attribute
+        .update_raw_el({
+            let tooltip = item.tooltip.clone();
+            move |raw_el| {
+                if let Some(tooltip_text) = &tooltip {
+                    raw_el.attr("title", tooltip_text)
+                } else {
+                    raw_el
+                }
+            }
+        })
         .on_hovered_change({
             let hovered = hovered.clone();
             move |is_hovered| {
@@ -619,6 +649,14 @@ fn render_tree_item(
                                 }
                             }
                             Some(TreeViewItemType::File) => IconName::File,
+                            Some(TreeViewItemType::FileError) => {
+                                // Use error-specific icons based on the item's icon field if available
+                                if let Some(icon) = &item.icon {
+                                    icon_name_from_str(icon)
+                                } else {
+                                    IconName::CircleAlert // Default error icon
+                                }
+                            }
                             _ => {
                                 if is_files_and_scope_item {
                                     // No folder icons for Files & Scope items
@@ -646,6 +684,7 @@ fn render_tree_item(
                                 match item.item_type {
                                     Some(TreeViewItemType::Folder) => IconColor::Primary, // Primary color for folders
                                     Some(TreeViewItemType::File) => IconColor::Secondary,
+                                    Some(TreeViewItemType::FileError) => IconColor::Error, // Error color for problematic files
                                     _ => {
                                         if has_children {
                                             IconColor::Primary
@@ -683,20 +722,59 @@ fn render_tree_item(
                         .item(
                             El::new()
                                 .s(Padding::new().x(SPACING_4))
-                                .child(Text::new(&item.label))
-                                .s(Font::new()
-                                    .size(font_size)
-                                    .weight(FontWeight::Number(FONT_WEIGHT_4))
-                                    .no_wrap()
-                                    .color_signal({
+                                .child({
+                                    // Apply inline smart label styling if label contains '/'
+                                    if item.label.contains('/') {
+                                        // Parse smart label to separate prefix from filename
+                                        if let Some(last_slash) = item.label.rfind('/') {
+                                            let prefix = &item.label[..=last_slash]; // Include trailing slash
+                                            let filename = &item.label[last_slash + 1..];
+                                            
+                                            zoon::println!("DEBUG: Smart label styling - prefix: '{}', filename: '{}'", prefix, filename);
+                                            
+                                            // Create Paragraph with styled prefix and filename
+                                            zoon::Paragraph::new()
+                                                .content(
+                                                    El::new()
+                                                        .s(Font::new().color_signal(crate::tokens::color::neutral_8()).no_wrap())
+                                                        .child(prefix)
+                                                )
+                                                .content(
+                                                    El::new()
+                                                        .s(Font::new().color_signal(theme().map(|t| match t {
+                                                            crate::tokens::theme::Theme::Light => "oklch(15% 0.14 250)", // neutral_11 light
+                                                            crate::tokens::theme::Theme::Dark => "oklch(95% 0.14 250)", // neutral_11 dark
+                                                        })).no_wrap())
+                                                        .child(filename)
+                                                )
+                                                .unify()
+                                        } else {
+                                            // Fallback to regular text if parsing fails
+                                            Text::new(&item.label).unify()
+                                        }
+                                    } else {
+                                        // No prefix, use regular text
+                                        Text::new(&item.label).unify()
+                                    }
+                                })
+                                .s({
+                                    let mut font = Font::new()
+                                        .size(font_size)
+                                        .weight(FontWeight::Number(FONT_WEIGHT_4))
+                                        .no_wrap();
+                                    
+                                    // Only apply color signal for non-styled labels (styled labels handle their own colors)
+                                    if !item.label.contains('/') {
                                         let item_id_for_error_check = item_id.clone();
-                                        map_ref! {
+                                        let has_error_message = item.error_message.is_some();
+                                        let is_file_error = matches!(item.item_type, Some(TreeViewItemType::FileError));
+                                        font = font.color_signal(map_ref! {
                                             let theme = theme(),
                                             let is_selected = selected_items.signal_ref({
                                                 let item_id = item_id.clone();
                                                 move |selected| selected.contains(&item_id)
                                             }) => {
-                                            if item_id_for_error_check == "access_denied" {
+                                            if item_id_for_error_check == "access_denied" || has_error_message || is_file_error {
                                                 match *theme {
                                                     Theme::Light => "oklch(55% 0.16 15)", // Error color light
                                                     Theme::Dark => "oklch(70% 0.16 15)", // Error color dark
@@ -717,14 +795,15 @@ fn render_tree_item(
                                                     Theme::Dark => "oklch(95% 0.14 250)", // neutral_11 dark
                                                 }
                                             }}
-                                        }
-                                    })
-                                )
+                                        });
+                                    }
+                                    font
+                                })
                         )
                         .item_signal(
                             map_ref! {
-                                let is_file = always(matches!(item_type, Some(TreeViewItemType::File))) =>
-                                if *is_file && item_on_remove.is_some() {
+                                let is_removable_file = always(matches!(item_type, Some(TreeViewItemType::File | TreeViewItemType::FileError))) =>
+                                if *is_removable_file && item_on_remove.is_some() {
                                     Some(
                                         Button::new()
                                             .s(Width::exact(16))
@@ -758,7 +837,7 @@ fn render_tree_item(
                                 }
                             }
                         )
-                )
+                ) // Close Row::new()
                 .on_press_event({
                     let item_id = item_id.clone();
                     let focused_item = focused_item.clone();
@@ -809,8 +888,8 @@ fn render_tree_item(
                     }
                 })
                 .unify()
-        )
-        )
+        ) // Close Row::new()
+        ) // Close .label()
         // Click handler for entire row (excluding checkbox)
         .on_press_event({
             let item_id = item_id.clone();
@@ -1001,6 +1080,10 @@ fn icon_name_from_str(icon: &str) -> IconName {
         "arrow-down" => IconName::ArrowDown,
         "arrow-left" => IconName::ArrowLeft,
         "arrow-right" => IconName::ArrowRight,
+        // Error-specific icons for file states
+        "triangle-alert" => IconName::TriangleAlert,
+        "circle-alert" => IconName::CircleAlert,
+        "circle-help" => IconName::CircleHelp,
         _ => IconName::File, // Default fallback
     }
 }

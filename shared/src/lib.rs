@@ -1,5 +1,5 @@
 use serde::{Serialize, Deserialize};
-use std::collections::hash_map::DefaultHasher;
+use std::collections::{HashMap, hash_map::DefaultHasher};
 use std::hash::{Hash, Hasher};
 
 // ===== MESSAGE TYPES =====
@@ -91,6 +91,57 @@ pub struct Signal {
     pub name: String,
     pub signal_type: String,
     pub width: u32,
+}
+
+// ===== ENHANCED FILE STATE TYPES =====
+
+#[derive(Clone, Debug)]
+pub enum FileError {
+    ParseError(String),
+    FileNotFound,
+    PermissionDenied,
+    UnsupportedFormat(String),
+    CorruptedFile(String),
+}
+
+impl FileError {
+    pub fn user_friendly_message(&self) -> String {
+        match self {
+            FileError::ParseError(msg) => format!("Parse error: {}", msg),
+            FileError::FileNotFound => "File not found".to_string(),
+            FileError::PermissionDenied => "Permission denied".to_string(),
+            FileError::UnsupportedFormat(format) => format!("Unsupported format: {}", format),
+            FileError::CorruptedFile(msg) => format!("Corrupted file: {}", msg),
+        }
+    }
+    
+    pub fn icon_name(&self) -> &'static str {
+        match self {
+            FileError::ParseError(_) => "triangle-alert",
+            FileError::FileNotFound => "file",
+            FileError::PermissionDenied => "lock",
+            FileError::UnsupportedFormat(_) => "circle-help",
+            FileError::CorruptedFile(_) => "circle-alert",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum FileState {
+    Loading(LoadingStatus),
+    Loaded(WaveformFile),
+    Failed(FileError),
+    Missing(String), // file path
+    Unsupported(String), // file path + reason
+}
+
+#[derive(Clone, Debug)]
+pub struct TrackedFile {
+    pub id: String,
+    pub path: String,
+    pub filename: String,
+    pub state: FileState,
+    pub smart_label: String, // Generated from disambiguation algorithm
 }
 
 // ===== CONFIG TYPES =====
@@ -285,6 +336,102 @@ pub fn get_all_variables_from_files(files: &[WaveformFile]) -> Vec<Signal> {
         collect_variables_from_scopes(&file.scopes, &mut variables);
     }
     variables
+}
+
+// ===== SMART LABELING UTILITIES =====
+
+/// Generate smart labels for file paths that minimize visual clutter while ensuring uniqueness
+/// Files with unique names display as filename only, duplicates show disambiguating path segments
+pub fn generate_smart_labels(file_paths: &[String]) -> HashMap<String, String> {
+    let mut path_to_label = HashMap::new();
+    let mut filename_to_paths: HashMap<String, Vec<String>> = HashMap::new();
+    
+    // Group paths by filename
+    for path in file_paths {
+        let filename = std::path::Path::new(path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(path)
+            .to_string();
+        filename_to_paths.entry(filename).or_default().push(path.clone());
+    }
+    
+    for (filename, paths) in filename_to_paths {
+        if paths.len() == 1 {
+            // Unique filename - use as-is
+            path_to_label.insert(paths[0].clone(), filename);
+        } else {
+            // Duplicate filenames - find minimal disambiguating segments
+            let labels = find_minimal_disambiguation(&paths);
+            for (path, label) in paths.iter().zip(labels) {
+                path_to_label.insert(path.clone(), label);
+            }
+        }
+    }
+    
+    path_to_label
+}
+
+/// Find minimal disambiguating path segments for a group of files with the same name
+/// Uses shortest unique path suffix that distinguishes each file from others in the group
+fn find_minimal_disambiguation(paths: &[String]) -> Vec<String> {
+    let mut labels = Vec::new();
+    
+    for path in paths {
+        let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+        let filename = segments.last().map(|s| *s).unwrap_or(path.as_str());
+        
+        // Start with just filename, then add parent directories until unique
+        let mut label = filename.to_string();
+        for depth in 1..segments.len() {
+            let start_idx = segments.len().saturating_sub(depth + 1);
+            let suffix = segments[start_idx..].join("/");
+            
+            // Check if this suffix is unique among other paths
+            let is_unique = paths.iter()
+                .filter(|&other_path| other_path != path)
+                .all(|other_path| !other_path.ends_with(&suffix));
+                
+            if is_unique || depth == segments.len() - 1 {
+                label = suffix;
+                break;
+            }
+        }
+        
+        labels.push(label);
+    }
+    
+    labels
+}
+
+/// Create a TrackedFile from basic file information with initial state
+pub fn create_tracked_file(file_path: String, state: FileState) -> TrackedFile {
+    let file_id = generate_file_id(&file_path);
+    let filename = std::path::Path::new(&file_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(&file_path)
+        .to_string();
+    
+    TrackedFile {
+        id: file_id,
+        path: file_path,
+        filename: filename.clone(),
+        state,
+        smart_label: filename, // Will be updated by smart labeling system
+    }
+}
+
+/// Update smart labels for a collection of tracked files
+pub fn update_smart_labels(tracked_files: &mut [TrackedFile]) {
+    let paths: Vec<String> = tracked_files.iter().map(|f| f.path.clone()).collect();
+    let smart_labels = generate_smart_labels(&paths);
+    
+    for tracked_file in tracked_files.iter_mut() {
+        if let Some(smart_label) = smart_labels.get(&tracked_file.path) {
+            tracked_file.smart_label = smart_label.clone();
+        }
+    }
 }
 
 // ===== FILESYSTEM UTILITIES =====

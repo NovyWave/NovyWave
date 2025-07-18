@@ -3,7 +3,7 @@ use zoon::events::{Click, KeyDown};
 use moonzoon_novyui::*;
 use moonzoon_novyui::tokens::theme::{Theme, toggle_theme, theme};
 use moonzoon_novyui::tokens::color::{neutral_1, neutral_2, neutral_4, neutral_8, neutral_9, neutral_10, neutral_11, neutral_12, primary_3, primary_6, primary_7};
-use shared::{WaveformFile, ScopeData, filter_variables, UpMsg};
+use shared::{WaveformFile, ScopeData, filter_variables, UpMsg, TrackedFile};
 use crate::types::{get_variables_from_selected_scope};
 use crate::virtual_list::virtual_variables_list;
 use crate::config;
@@ -15,7 +15,8 @@ use crate::{
     LOADED_FILES, SELECTED_SCOPE_ID, TREE_SELECTED_ITEMS, EXPANDED_SCOPES,
     FILE_PATHS, show_file_paths_dialog, LOAD_FILES_VIEWPORT_Y,
     FILE_PICKER_EXPANDED, FILE_PICKER_SELECTED,
-    FILE_PICKER_ERROR, FILE_PICKER_ERROR_CACHE, FILE_TREE_CACHE, send_up_msg, DOCK_TOGGLE_IN_PROGRESS
+    FILE_PICKER_ERROR, FILE_PICKER_ERROR_CACHE, FILE_TREE_CACHE, send_up_msg, DOCK_TOGGLE_IN_PROGRESS,
+    TRACKED_FILES, state
 };
 use crate::error_display::add_error_alert;
 use crate::state::ErrorAlert;
@@ -256,9 +257,16 @@ pub fn files_panel() -> impl Element {
                             .s(Height::fill())
                             .s(Width::growable())
                             .child_signal(
-                                LOADED_FILES.signal_vec_cloned()
-                                    .to_signal_map(|files: &[WaveformFile]| {
-                                        let tree_data = convert_files_to_tree_data(&files);
+                                TRACKED_FILES.signal_vec_cloned()
+                                    .to_signal_map(|tracked_files: &[TrackedFile]| {
+                                        // DEBUG: Check TRACKED_FILES content
+                                        zoon::println!("TRACKED_FILES count: {}", tracked_files.len());
+                                        for (i, file) in tracked_files.iter().enumerate() {
+                                            zoon::println!("TRACKED_FILE[{}]: id={}, smart_label={}, path={}", 
+                                                           i, file.id, file.smart_label, file.path);
+                                        }
+                                        
+                                        let tree_data = convert_tracked_files_to_tree_data(&tracked_files);
                                         
                                         if tree_data.is_empty() {
                                             empty_state_hint("Click 'Load Files' to add waveform files.")
@@ -780,6 +788,104 @@ fn simple_variables_content() -> impl Element {
         )
 }
 
+// Parse smart label to separate prefix from filename for styling
+fn parse_smart_label_for_styling(smart_label: &str) -> (Option<String>, String) {
+    // Find last '/' to separate path prefix from filename
+    if let Some(last_slash) = smart_label.rfind('/') {
+        let prefix = &smart_label[..=last_slash]; // Include trailing slash
+        let filename = &smart_label[last_slash + 1..];
+        (Some(prefix.to_string()), filename.to_string())
+    } else {
+        (None, smart_label.to_string()) // No prefix, just filename
+    }
+}
+
+// Removed create_styled_smart_label function - styling now handled inline in TreeView component
+
+// Enhanced conversion function using TrackedFile with smart labels, tooltips, and error states
+fn convert_tracked_files_to_tree_data(tracked_files: &[TrackedFile]) -> Vec<TreeViewItemData> {
+    // Sort files alphabetically by smart label (case-insensitive) to maintain proper disambiguation order
+    let mut file_refs: Vec<&TrackedFile> = tracked_files.iter().collect();
+    file_refs.sort_by(|a, b| a.smart_label.to_lowercase().cmp(&b.smart_label.to_lowercase()));
+    
+    file_refs.iter().map(|tracked_file| {
+        match &tracked_file.state {
+            shared::FileState::Loaded(waveform_file) => {
+                // Successfully loaded file - show with scopes
+                let children = waveform_file.scopes.iter().map(|scope| {
+                    convert_scope_to_tree_data(scope)
+                }).collect();
+                
+                TreeViewItemData::new(tracked_file.id.clone(), tracked_file.smart_label.clone())
+                    .item_type(TreeViewItemType::File)
+                    .tooltip(tracked_file.path.clone()) // Full path on hover
+                    // Smart label styling now handled inline in TreeView component
+                    .with_children(children)
+                    .on_remove(create_enhanced_file_remove_handler(tracked_file.id.clone()))
+            }
+            shared::FileState::Loading(status) => {
+                // File currently loading - show with loading indicator
+                let status_text = match status {
+                    shared::LoadingStatus::Starting => "Starting...",
+                    shared::LoadingStatus::Parsing => "Parsing...",
+                    shared::LoadingStatus::Completed => "Completed",
+                    shared::LoadingStatus::Error(_) => "Error",
+                };
+                
+                TreeViewItemData::new(tracked_file.id.clone(), format!("{} ({})", tracked_file.smart_label, status_text))
+                    .item_type(TreeViewItemType::File)
+                    .tooltip(tracked_file.path.clone())
+                    .disabled(true) // Disable interaction while loading
+                    .on_remove(create_enhanced_file_remove_handler(tracked_file.id.clone()))
+            }
+            shared::FileState::Failed(error) => {
+                // File failed to load - show with error styling
+                let error_message = error.user_friendly_message();
+                
+                TreeViewItemData::new(tracked_file.id.clone(), tracked_file.smart_label.clone())
+                    .item_type(TreeViewItemType::FileError)
+                    .icon(error.icon_name())
+                    .tooltip(format!("{}\nError: {}", tracked_file.path, error_message))
+                    .error_message(error_message.clone())
+                    // Smart label styling now handled inline in TreeView component
+                    .with_children(vec![
+                        TreeViewItemData::new(format!("{}_error_detail", tracked_file.id), error_message)
+                            .item_type(TreeViewItemType::Default)
+                            .disabled(true)
+                    ])
+                    .on_remove(create_enhanced_file_remove_handler(tracked_file.id.clone()))
+            }
+            shared::FileState::Missing(path) => {
+                // File no longer exists - show with missing indicator
+                TreeViewItemData::new(tracked_file.id.clone(), tracked_file.smart_label.clone())
+                    .item_type(TreeViewItemType::FileError)
+                    .icon("file")
+                    .tooltip(format!("{}\nFile not found", path))
+                    .error_message("File not found".to_string())
+                    // Smart label styling now handled inline in TreeView component
+                    .with_children(vec![
+                        TreeViewItemData::new(format!("{}_missing_detail", tracked_file.id), "File no longer exists")
+                            .item_type(TreeViewItemType::Default)
+                            .disabled(true)
+                    ])
+                    .on_remove(create_enhanced_file_remove_handler(tracked_file.id.clone()))
+            }
+            shared::FileState::Unsupported(reason) => {
+                // Unsupported file format - show with unsupported indicator
+                TreeViewItemData::new(tracked_file.id.clone(), tracked_file.smart_label.clone())
+                    .item_type(TreeViewItemType::FileError)
+                    .icon("circle-help")
+                    .tooltip(format!("{}\nUnsupported: {}", tracked_file.path, reason))
+                    .error_message(format!("Unsupported: {}", reason))
+                    // Smart label styling now handled inline in TreeView component
+                    .disabled(true)
+                    .on_remove(create_enhanced_file_remove_handler(tracked_file.id.clone()))
+            }
+        }
+    }).collect()
+}
+
+// Legacy function for backward compatibility during transition
 fn convert_files_to_tree_data(files: &[WaveformFile]) -> Vec<TreeViewItemData> {
     // Sort files alphabetically by filename (case-insensitive)
     let mut file_refs: Vec<&WaveformFile> = files.iter().collect();
@@ -793,29 +899,34 @@ fn convert_files_to_tree_data(files: &[WaveformFile]) -> Vec<TreeViewItemData> {
         TreeViewItemData::new(file.id.clone(), file.filename.clone())
             .item_type(TreeViewItemType::File)
             .with_children(children)
-            .on_remove(move |id| {
-                // Remove file from LOADED_FILES
-                LOADED_FILES.lock_mut().retain(|f| f.id != id);
-                
-                // Remove from FILE_PATHS
-                FILE_PATHS.lock_mut().shift_remove(id);
-                
-                // Clear related scope selections if removed file contained selected scope
-                if let Some(selected_scope) = SELECTED_SCOPE_ID.get_cloned() {
-                    if selected_scope.starts_with(&format!("{}_", id)) {
-                        SELECTED_SCOPE_ID.set(None);
-                    }
-                }
-                
-                // Clear expanded scopes for this file
-                EXPANDED_SCOPES.lock_mut().retain(|scope| !scope.starts_with(id));
-                
-                // Save file list and scope selection after removal
-                config::save_file_list();
-                config::save_scope_selection();
-                
-            })
+            .on_remove(create_enhanced_file_remove_handler(file.id.clone()))
     }).collect()
+}
+
+// Enhanced file removal handler that works with both old and new systems
+fn create_enhanced_file_remove_handler(file_id: String) -> impl Fn(&str) + 'static {
+    move |id: &str| {
+        // Remove from new TRACKED_FILES system
+        state::remove_tracked_file(id);
+        
+        // Remove from legacy systems during transition
+        LOADED_FILES.lock_mut().retain(|f| f.id != id);
+        FILE_PATHS.lock_mut().shift_remove(id);
+        
+        // Clear related scope selections if removed file contained selected scope
+        if let Some(selected_scope) = SELECTED_SCOPE_ID.get_cloned() {
+            if selected_scope.starts_with(&format!("{}_", id)) {
+                SELECTED_SCOPE_ID.set(None);
+            }
+        }
+        
+        // Clear expanded scopes for this file
+        EXPANDED_SCOPES.lock_mut().retain(|scope| !scope.starts_with(id));
+        
+        // Save file list and scope selection after removal
+        config::save_file_list();
+        config::save_scope_selection();
+    }
 }
 
 fn convert_scope_to_tree_data(scope: &ScopeData) -> TreeViewItemData {
@@ -1137,8 +1248,8 @@ fn process_file_picker_selection() {
     if !selected_files.is_empty() {
         IS_LOADING.set(true);
         
-        // Get currently loaded file IDs for duplicate detection
-        let loaded_file_ids: HashSet<String> = LOADED_FILES.lock_ref()
+        // Get currently tracked file IDs for duplicate detection using new system
+        let tracked_file_ids: HashSet<String> = TRACKED_FILES.lock_ref()
             .iter()
             .map(|f| f.id.clone())
             .collect();
@@ -1148,8 +1259,11 @@ fn process_file_picker_selection() {
             let file_id = shared::generate_file_id(file_path);
             
             // Check for duplicates and handle reload vs new load
-            if loaded_file_ids.contains(&file_id) {
+            if tracked_file_ids.contains(&file_id) {
                 // RELOAD: Remove existing file first, then load fresh
+                state::remove_tracked_file(&file_id);
+                
+                // Also clear legacy systems for backward compatibility
                 LOADED_FILES.lock_mut().retain(|f| f.id != file_id);
                 FILE_PATHS.lock_mut().shift_remove(&file_id);
                 
@@ -1162,7 +1276,10 @@ fn process_file_picker_selection() {
                 EXPANDED_SCOPES.lock_mut().retain(|scope| !scope.starts_with(&file_id));
             }
             
-            // Store path mapping and send load request (same for both new/reload)
+            // Add to TRACKED_FILES system with loading state
+            state::add_tracked_file(file_path.clone(), shared::FileState::Loading(shared::LoadingStatus::Starting));
+            
+            // Also maintain legacy systems for backward compatibility during transition
             FILE_PATHS.lock_mut().insert(file_id, file_path.clone());
             config::save_file_list();
             send_up_msg(UpMsg::LoadWaveformFile(file_path.clone()));
@@ -1182,6 +1299,10 @@ fn remove_all_button() -> impl Element {
         .variant(ButtonVariant::DestructiveGhost)
         .size(ButtonSize::Small)
         .on_press(|| {
+            // Clear TRACKED_FILES system
+            TRACKED_FILES.lock_mut().clear();
+            
+            // Also clear legacy systems for backward compatibility
             LOADED_FILES.lock_mut().clear();
             FILE_PATHS.lock_mut().clear();
             EXPANDED_SCOPES.lock_mut().clear();
@@ -1276,3 +1397,4 @@ pub fn horizontal_divider(is_dragging: Mutable<bool>) -> impl Element {
         .s(Cursor::new(CursorIcon::RowResize))
         .on_pointer_down(move || is_dragging.set_neq(true))
 }
+

@@ -10,15 +10,14 @@ toast_dismiss_ms = 10000
 
 [workspace]
 opened_files = [
-    "/boot/grub/fonts",
-    "/boot/grub/fonts_non_existent",
-    "/home/martinkavik/repos/NovyWave/test_files/simple.vcd",
+    "/home/martinkavik/repos/NovyWave/test_files/nested_dir/wave_27.fst",
     "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst",
+    "/home/martinkavik/repos/NovyWave/test_files/simple.vcd",
+    "/home/martinkavik/repos/NovyWave/test_files/corrupted.vcd",
 ]
 dock_mode = "right"
 expanded_scopes = [
     "file_71a2908980aee1d_scope_0",
-    "file_71a2908980aee1d_scope_1",
     "file_71a2908980aee1d",
 ]
 load_files_expanded_directories = [
@@ -31,6 +30,7 @@ load_files_expanded_directories = [
     "/home/martinkavik",
     "/",
     "/root",
+    "/home/martinkavik/repos/NovyWave/test_files/nested_dir",
 ]
 selected_scope_id = "file_71a2908980aee1d_scope_1"
 load_files_scroll_position = 831

@@ -69,7 +69,10 @@ pub fn process_file_paths() {
     }
     
     for path in paths {
-        // Generate file ID and store path mapping for config persistence
+        // Add to TRACKED_FILES system with loading state
+        crate::state::add_tracked_file(path.clone(), shared::FileState::Loading(shared::LoadingStatus::Starting));
+        
+        // Also maintain legacy FILE_PATHS for backward compatibility during transition
         let file_id = generate_file_id(&path);
         crate::FILE_PATHS.lock_mut().insert(file_id, path.clone());
         

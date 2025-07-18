@@ -11,7 +11,10 @@ static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
         // DownMsg logging disabled - causes CLI overflow with large files
         match down_msg {
             DownMsg::ParsingStarted { file_id, filename } => {
-                // Add or update loading file
+                // Update TRACKED_FILES with parsing started status
+                crate::state::update_tracked_file_state(&file_id, shared::FileState::Loading(shared::LoadingStatus::Parsing));
+                
+                // Also maintain legacy LOADING_FILES for backward compatibility during transition
                 let loading_file = LoadingFile {
                     file_id: file_id.clone(),
                     filename: filename.clone(),
@@ -34,7 +37,12 @@ static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 LOADING_FILES.lock_mut().replace_cloned(updated_files);
             }
             DownMsg::FileLoaded { file_id, hierarchy } => {
-                // Add loaded files to the TreeView state
+                // Update TRACKED_FILES with loaded waveform file
+                if let Some(loaded_file) = hierarchy.files.first() {
+                    crate::state::update_tracked_file_state(&file_id, shared::FileState::Loaded(loaded_file.clone()));
+                }
+                
+                // Also maintain legacy LOADED_FILES for backward compatibility during transition
                 for file in hierarchy.files {
                     LOADED_FILES.lock_mut().push_cloned(file.clone());
                     
@@ -42,7 +50,7 @@ static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                     // This prevents multiple files from fighting over global selection during loading
                 }
                 
-                // Mark file as completed
+                // Mark file as completed in legacy loading system
                 let current_files: Vec<LoadingFile> = LOADING_FILES.lock_ref().iter().cloned().collect();
                 let updated_files: Vec<LoadingFile> = current_files.into_iter().map(|mut file| {
                     if file.file_id == file_id {
@@ -62,6 +70,10 @@ static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 }
             }
             DownMsg::ParsingError { file_id, error } => {
+                // Update TRACKED_FILES with error state
+                let file_error = shared::FileError::ParseError(error.clone());
+                crate::state::update_tracked_file_state(&file_id, shared::FileState::Failed(file_error));
+                
                 // Find the filename for the error alert
                 let filename = {
                     let current_files: Vec<LoadingFile> = LOADING_FILES.lock_ref().iter().cloned().collect();
@@ -79,7 +91,7 @@ static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 );
                 add_error_alert(error_alert);
                 
-                // Mark file as error
+                // Also mark file as error in legacy loading system
                 let current_files: Vec<LoadingFile> = LOADING_FILES.lock_ref().iter().cloned().collect();
                 let updated_files: Vec<LoadingFile> = current_files.into_iter().map(|mut file| {
                     if file.file_id == file_id {

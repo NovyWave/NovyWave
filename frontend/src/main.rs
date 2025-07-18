@@ -28,6 +28,9 @@ use utils::*;
 mod error_display;
 use error_display::*;
 
+mod file_validation;
+use file_validation::*;
+
 mod error_ui;
 use error_ui::*;
 
@@ -48,6 +51,9 @@ pub fn main() {
         
         // Initialize error display system
         init_error_display_system();
+        
+        // Initialize file validation system
+        init_file_validation_system();
         
         init_connection();
         

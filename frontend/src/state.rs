@@ -1,7 +1,7 @@
 use zoon::*;
 use std::collections::{HashMap, HashSet};
 use indexmap::IndexMap;
-use shared::{WaveformFile, LoadingFile, FileSystemItem};
+use shared::{WaveformFile, LoadingFile, FileSystemItem, TrackedFile, FileState, FileError, create_tracked_file, update_smart_labels};
 
 // Panel resizing state
 pub static FILES_PANEL_WIDTH: Lazy<Mutable<u32>> = Lazy::new(|| 470.into());
@@ -43,18 +43,18 @@ pub static CONFIG_INITIALIZATION_COMPLETE: Lazy<Mutable<bool>> = lazy::default()
 // Hierarchical file tree storage - maps directory path to its contents
 pub static FILE_TREE_CACHE: Lazy<Mutable<HashMap<String, Vec<FileSystemItem>>>> = lazy::default();
 
-// File loading progress state
-pub static LOADING_FILES: Lazy<MutableVec<LoadingFile>> = lazy::default();
+// Enhanced file tracking system - replaces LOADED_FILES, LOADING_FILES, and FILE_PATHS
+pub static TRACKED_FILES: Lazy<MutableVec<TrackedFile>> = lazy::default();
 pub static IS_LOADING: Lazy<Mutable<bool>> = lazy::default();
 
-// Loaded files hierarchy for TreeView
+// Legacy support during transition - will be removed later
+pub static LOADING_FILES: Lazy<MutableVec<LoadingFile>> = lazy::default();
 pub static LOADED_FILES: Lazy<MutableVec<WaveformFile>> = lazy::default();
+pub static FILE_PATHS: Lazy<Mutable<IndexMap<String, String>>> = lazy::default();
+
 pub static SELECTED_SCOPE_ID: Lazy<Mutable<Option<String>>> = lazy::default();
 pub static TREE_SELECTED_ITEMS: Lazy<Mutable<HashSet<String>>> = lazy::default(); // UI state only - not persisted
 pub static USER_CLEARED_SELECTION: Lazy<Mutable<bool>> = lazy::default(); // Flag to prevent unwanted restoration
-
-// Track file ID to full path mapping for config persistence
-pub static FILE_PATHS: Lazy<Mutable<IndexMap<String, String>>> = lazy::default();
 
 // Track expanded scopes for TreeView persistence
 pub static EXPANDED_SCOPES: Lazy<Mutable<HashSet<String>>> = lazy::default();
@@ -168,3 +168,109 @@ pub static ERROR_ALERTS: Lazy<MutableVec<ErrorAlert>> = lazy::default();
 
 // Toast notification system state
 pub static TOAST_NOTIFICATIONS: Lazy<MutableVec<ErrorAlert>> = lazy::default();
+
+// ===== TRACKED FILES MANAGEMENT UTILITIES =====
+
+/// Add a new file to tracking with initial state
+pub fn add_tracked_file(file_path: String, initial_state: FileState) {
+    zoon::println!("DEBUG: add_tracked_file() called with path: {}", file_path);
+    let tracked_file = create_tracked_file(file_path, initial_state);
+    
+    // Check if file already exists and replace if it does
+    let existing_index = TRACKED_FILES.lock_ref()
+        .iter()
+        .position(|f| f.id == tracked_file.id);
+    
+    if let Some(index) = existing_index {
+        TRACKED_FILES.lock_mut().set_cloned(index, tracked_file);
+    } else {
+        TRACKED_FILES.lock_mut().push_cloned(tracked_file);
+    }
+    
+    // Update smart labels for all files
+    refresh_smart_labels();
+}
+
+/// Update the state of an existing tracked file
+pub fn update_tracked_file_state(file_id: &str, new_state: FileState) {
+    let mut tracked_files = TRACKED_FILES.lock_mut();
+    
+    // Find the index and update the file state
+    if let Some(index) = tracked_files.iter().position(|f| f.id == file_id) {
+        let mut file = tracked_files.iter().nth(index).unwrap().clone();
+        file.state = new_state;
+        tracked_files.set_cloned(index, file);
+    }
+    drop(tracked_files); // Release lock before calling refresh_smart_labels
+    
+    // Refresh smart labels whenever file state changes
+    refresh_smart_labels();
+}
+
+/// Remove a tracked file by ID
+pub fn remove_tracked_file(file_id: &str) {
+    TRACKED_FILES.lock_mut().retain(|f| f.id != file_id);
+    refresh_smart_labels();
+}
+
+/// Get all tracked files in a specific state
+pub fn get_tracked_files_by_state<F>(state_filter: F) -> Vec<TrackedFile>
+where
+    F: Fn(&FileState) -> bool,
+{
+    TRACKED_FILES.lock_ref()
+        .iter()
+        .filter(|f| state_filter(&f.state))
+        .cloned()
+        .collect()
+}
+
+/// Get all successfully loaded waveform files (for backward compatibility)
+pub fn get_loaded_waveform_files() -> Vec<WaveformFile> {
+    TRACKED_FILES.lock_ref()
+        .iter()
+        .filter_map(|f| match &f.state {
+            FileState::Loaded(waveform_file) => Some(waveform_file.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Get all file paths currently being tracked
+pub fn get_all_tracked_file_paths() -> Vec<String> {
+    TRACKED_FILES.lock_ref()
+        .iter()
+        .map(|f| f.path.clone())
+        .collect()
+}
+
+/// Refresh smart labels for all tracked files
+pub fn refresh_smart_labels() {
+    zoon::println!("DEBUG: refresh_smart_labels() called");
+    let mut tracked_files = TRACKED_FILES.lock_mut();
+    let mut files_vec: Vec<TrackedFile> = tracked_files.iter().cloned().collect();
+    
+    zoon::println!("DEBUG: refresh_smart_labels() has {} files", files_vec.len());
+    for file in &files_vec {
+        zoon::println!("  - File: {}", file.path);
+    }
+    
+    // Generate smart labels using the shared algorithm
+    update_smart_labels(&mut files_vec);
+    
+    // Update the MutableVec with the new smart labels
+    for (index, updated_file) in files_vec.iter().enumerate() {
+        if index < tracked_files.len() {
+            tracked_files.set_cloned(index, updated_file.clone());
+        }
+    }
+}
+
+/// Initialize tracked files from config file paths (for session restoration)
+pub fn init_tracked_files_from_config(file_paths: Vec<String>) {
+    TRACKED_FILES.lock_mut().clear();
+    
+    for path in file_paths {
+        add_tracked_file(path, FileState::Loading(shared::LoadingStatus::Starting));
+    }
+}

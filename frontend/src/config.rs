@@ -596,12 +596,22 @@ pub fn save_current_config() {
 }
 
 pub fn save_file_list() {
-    // Simple approach: read directly from legacy FILE_PATHS global
-    use crate::state::FILE_PATHS;
+    // Enhanced approach: use TRACKED_FILES system instead of legacy FILE_PATHS
+    use crate::state::{TRACKED_FILES, get_all_tracked_file_paths};
     
-    // Use IndexMap's insertion order (chronological) instead of sorting
-    let file_paths: Vec<String> = FILE_PATHS.lock_ref().values().cloned().collect();
+    // Get all tracked file paths (preserves order and includes all file states)
+    let file_paths = get_all_tracked_file_paths();
     config_store().session.lock_mut().opened_files.lock_mut().replace_cloned(file_paths);
+    
+    // Also maintain legacy FILE_PATHS for backward compatibility during transition
+    use crate::state::FILE_PATHS;
+    let tracked_files = TRACKED_FILES.lock_ref();
+    let mut legacy_file_paths = FILE_PATHS.lock_mut();
+    legacy_file_paths.clear();
+    
+    for tracked_file in tracked_files.iter() {
+        legacy_file_paths.insert(tracked_file.id.clone(), tracked_file.path.clone());
+    }
     
     // Manually trigger config save since MutableVec reactive signals are complex
     if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
@@ -747,14 +757,17 @@ fn sync_load_files_expanded_directories_from_config() {
     *FILE_PICKER_EXPANDED.lock_mut() = new_expanded_set;
 }
 
-// Manual sync function to restore opened_files from config to legacy globals and reload files
+// Enhanced sync function to restore opened_files from config using TRACKED_FILES system
 fn sync_opened_files_from_config() {
-    use crate::state::FILE_PATHS;
+    use crate::state::{init_tracked_files_from_config, FILE_PATHS};
     use crate::send_up_msg;
     
     let opened_files = config_store().session.lock_ref().opened_files.lock_ref().to_vec();
     
-    // Clear existing FILE_PATHS
+    // Initialize TRACKED_FILES system with config file paths
+    init_tracked_files_from_config(opened_files.clone());
+    
+    // Also maintain legacy FILE_PATHS for backward compatibility during transition
     FILE_PATHS.lock_mut().clear();
     
     // Restore each file path and reload the file
