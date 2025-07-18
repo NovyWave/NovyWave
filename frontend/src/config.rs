@@ -599,6 +599,7 @@ pub fn save_file_list() {
     // Simple approach: read directly from legacy FILE_PATHS global
     use crate::state::FILE_PATHS;
     
+    // Use IndexMap's insertion order (chronological) instead of sorting
     let file_paths: Vec<String> = FILE_PATHS.lock_ref().values().cloned().collect();
     config_store().session.lock_mut().opened_files.lock_mut().replace_cloned(file_paths);
     

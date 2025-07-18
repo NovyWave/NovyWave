@@ -1513,6 +1513,7 @@ name = "frontend"
 version = "0.1.0"
 dependencies = [
  "fast2d",
+ "indexmap 2.7.1",
  "moonzoon-novyui",
  "serde",
  "shared",

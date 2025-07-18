@@ -6,7 +6,9 @@
       "args": [
         "@browsermcp/mcp@latest"
       ],
-      "env": {}
+      "env": {
+        "TERM": "dumb"
+      }
     },
     "memory": {
       "type": "stdio",

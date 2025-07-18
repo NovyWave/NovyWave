@@ -1,5 +1,6 @@
 use zoon::*;
 use std::collections::{HashMap, HashSet};
+use indexmap::IndexMap;
 use shared::{WaveformFile, LoadingFile, FileSystemItem};
 
 // Panel resizing state
@@ -53,7 +54,7 @@ pub static TREE_SELECTED_ITEMS: Lazy<Mutable<HashSet<String>>> = lazy::default()
 pub static USER_CLEARED_SELECTION: Lazy<Mutable<bool>> = lazy::default(); // Flag to prevent unwanted restoration
 
 // Track file ID to full path mapping for config persistence
-pub static FILE_PATHS: Lazy<Mutable<HashMap<String, String>>> = lazy::default();
+pub static FILE_PATHS: Lazy<Mutable<IndexMap<String, String>>> = lazy::default();
 
 // Track expanded scopes for TreeView persistence
 pub static EXPANDED_SCOPES: Lazy<Mutable<HashSet<String>>> = lazy::default();

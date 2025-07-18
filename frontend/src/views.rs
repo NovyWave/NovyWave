@@ -798,7 +798,7 @@ fn convert_files_to_tree_data(files: &[WaveformFile]) -> Vec<TreeViewItemData> {
                 LOADED_FILES.lock_mut().retain(|f| f.id != id);
                 
                 // Remove from FILE_PATHS
-                FILE_PATHS.lock_mut().remove(id);
+                FILE_PATHS.lock_mut().shift_remove(id);
                 
                 // Clear related scope selections if removed file contained selected scope
                 if let Some(selected_scope) = SELECTED_SCOPE_ID.get_cloned() {
@@ -1151,7 +1151,7 @@ fn process_file_picker_selection() {
             if loaded_file_ids.contains(&file_id) {
                 // RELOAD: Remove existing file first, then load fresh
                 LOADED_FILES.lock_mut().retain(|f| f.id != file_id);
-                FILE_PATHS.lock_mut().remove(&file_id);
+                FILE_PATHS.lock_mut().shift_remove(&file_id);
                 
                 // Clear related state for this file
                 if let Some(selected_scope) = SELECTED_SCOPE_ID.get_cloned() {
