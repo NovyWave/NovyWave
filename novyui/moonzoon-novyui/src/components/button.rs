@@ -638,6 +638,7 @@ impl ButtonBuilder {
         }
     }
 
+    #[allow(dead_code)]
     fn get_button_shadows_signal(&self, variant: ButtonVariant) -> impl Signal<Item = Vec<Shadow>> + use<> {
         theme().map(move |t| {
             match (variant, t) {

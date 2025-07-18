@@ -4,6 +4,9 @@ use moonzoon_novyui::tokens::color::{neutral_1};
 
 mod virtual_list;
 
+mod debug_utils;
+// use debug_utils::{debug_throttled, debug_critical}; // Unused - kept for future debugging
+
 mod file_utils;
 use file_utils::*;
 

@@ -1,7 +1,7 @@
 use zoon::*;
 use std::collections::{HashMap, HashSet};
 use indexmap::IndexMap;
-use shared::{WaveformFile, LoadingFile, FileSystemItem, TrackedFile, FileState, FileError, create_tracked_file, update_smart_labels};
+use shared::{WaveformFile, LoadingFile, FileSystemItem, TrackedFile, FileState, create_tracked_file, update_smart_labels};
 
 // Panel resizing state
 pub static FILES_PANEL_WIDTH: Lazy<Mutable<u32>> = Lazy::new(|| 470.into());
@@ -26,7 +26,6 @@ pub static DOCK_TOGGLE_IN_PROGRESS: Lazy<Mutable<bool>> = lazy::default();
 pub static FILE_PICKER_EXPANDED: Lazy<Mutable<HashSet<String>>> = lazy::default();
 pub static FILE_PICKER_SELECTED: Lazy<MutableVec<String>> = lazy::default();
 pub static CURRENT_DIRECTORY: Lazy<Mutable<String>> = lazy::default();
-pub static FILE_PICKER_DATA: Lazy<MutableVec<FileSystemItem>> = lazy::default();
 pub static FILE_PICKER_ERROR: Lazy<Mutable<Option<String>>> = lazy::default();
 pub static FILE_PICKER_ERROR_CACHE: Lazy<Mutable<HashMap<String, String>>> = lazy::default();
 
@@ -67,16 +66,27 @@ pub struct ErrorAlert {
     pub title: String,
     pub message: String,
     pub technical_error: String, // Raw technical error for console logging
+    #[allow(dead_code)]
     pub error_type: ErrorType,
+    #[allow(dead_code)]
     pub timestamp: u64,
     pub auto_dismiss_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
 pub enum ErrorType {
-    FileParsingError { file_id: String, filename: String },
-    DirectoryAccessError { path: String },
+    FileParsingError { 
+        #[allow(dead_code)]
+        file_id: String, 
+        #[allow(dead_code)]
+        filename: String 
+    },
+    DirectoryAccessError { 
+        #[allow(dead_code)]
+        path: String 
+    },
     ConnectionError,
+    #[allow(dead_code)]
     ConfigError,
 }
 
@@ -173,7 +183,6 @@ pub static TOAST_NOTIFICATIONS: Lazy<MutableVec<ErrorAlert>> = lazy::default();
 
 /// Add a new file to tracking with initial state
 pub fn add_tracked_file(file_path: String, initial_state: FileState) {
-    zoon::println!("DEBUG: add_tracked_file() called with path: {}", file_path);
     let tracked_file = create_tracked_file(file_path, initial_state);
     
     // Check if file already exists and replace if it does
@@ -213,28 +222,7 @@ pub fn remove_tracked_file(file_id: &str) {
     refresh_smart_labels();
 }
 
-/// Get all tracked files in a specific state
-pub fn get_tracked_files_by_state<F>(state_filter: F) -> Vec<TrackedFile>
-where
-    F: Fn(&FileState) -> bool,
-{
-    TRACKED_FILES.lock_ref()
-        .iter()
-        .filter(|f| state_filter(&f.state))
-        .cloned()
-        .collect()
-}
 
-/// Get all successfully loaded waveform files (for backward compatibility)
-pub fn get_loaded_waveform_files() -> Vec<WaveformFile> {
-    TRACKED_FILES.lock_ref()
-        .iter()
-        .filter_map(|f| match &f.state {
-            FileState::Loaded(waveform_file) => Some(waveform_file.clone()),
-            _ => None,
-        })
-        .collect()
-}
 
 /// Get all file paths currently being tracked
 pub fn get_all_tracked_file_paths() -> Vec<String> {
@@ -246,14 +234,8 @@ pub fn get_all_tracked_file_paths() -> Vec<String> {
 
 /// Refresh smart labels for all tracked files
 pub fn refresh_smart_labels() {
-    zoon::println!("DEBUG: refresh_smart_labels() called");
     let mut tracked_files = TRACKED_FILES.lock_mut();
     let mut files_vec: Vec<TrackedFile> = tracked_files.iter().cloned().collect();
-    
-    zoon::println!("DEBUG: refresh_smart_labels() has {} files", files_vec.len());
-    for file in &files_vec {
-        zoon::println!("  - File: {}", file.path);
-    }
     
     // Generate smart labels using the shared algorithm
     update_smart_labels(&mut files_vec);

@@ -13,11 +13,15 @@ opened_files = [
     "/home/martinkavik/repos/NovyWave/test_files/nested_dir/wave_27.fst",
     "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst",
     "/home/martinkavik/repos/NovyWave/test_files/simple.vcd",
+    "/home/martinkavik/repos/NovyWave/test_files/big_3_GB.vcd",
     "/home/martinkavik/repos/NovyWave/test_files/corrupted.vcd",
 ]
 dock_mode = "right"
 expanded_scopes = [
+    "file_a6c60492e35e1ecf_scope_0",
     "file_71a2908980aee1d_scope_0",
+    "file_7fda6450ec6eaf33_scope_0",
+    "file_71a2908980aee1d_scope_1",
     "file_71a2908980aee1d",
 ]
 load_files_expanded_directories = [

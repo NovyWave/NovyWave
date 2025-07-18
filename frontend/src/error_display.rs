@@ -1,4 +1,3 @@
-use zoon::*;
 use crate::state::{ErrorAlert, ERROR_ALERTS, TOAST_NOTIFICATIONS};
 
 /// Add an error alert to the global error display system
@@ -39,16 +38,7 @@ fn add_toast_notification(alert: ErrorAlert) {
     // in error_ui.rs with pause-on-click functionality
 }
 
-/// Clear all error alerts
-pub fn clear_all_error_alerts() {
-    ERROR_ALERTS.lock_mut().clear();
-    TOAST_NOTIFICATIONS.lock_mut().clear();
-}
 
-/// Get current error alerts count
-pub fn error_alerts_count() -> impl Signal<Item = usize> {
-    ERROR_ALERTS.signal_vec_cloned().len()
-}
 
 /// Initialize error display system handlers
 pub fn init_error_display_system() {

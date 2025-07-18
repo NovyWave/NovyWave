@@ -3,7 +3,7 @@ use zoon::events::{Click, KeyDown};
 use moonzoon_novyui::*;
 use moonzoon_novyui::tokens::theme::{Theme, toggle_theme, theme};
 use moonzoon_novyui::tokens::color::{neutral_1, neutral_2, neutral_4, neutral_8, neutral_9, neutral_10, neutral_11, neutral_12, primary_3, primary_6, primary_7};
-use shared::{WaveformFile, ScopeData, filter_variables, UpMsg, TrackedFile};
+use shared::{ScopeData, filter_variables, UpMsg, TrackedFile};
 use crate::types::{get_variables_from_selected_scope};
 use crate::virtual_list::virtual_variables_list;
 use crate::config;
@@ -18,8 +18,6 @@ use crate::{
     FILE_PICKER_ERROR, FILE_PICKER_ERROR_CACHE, FILE_TREE_CACHE, send_up_msg, DOCK_TOGGLE_IN_PROGRESS,
     TRACKED_FILES, state
 };
-use crate::error_display::add_error_alert;
-use crate::state::ErrorAlert;
 
 fn empty_state_hint(text: &str) -> impl Element {
     El::new()
@@ -259,13 +257,6 @@ pub fn files_panel() -> impl Element {
                             .child_signal(
                                 TRACKED_FILES.signal_vec_cloned()
                                     .to_signal_map(|tracked_files: &[TrackedFile]| {
-                                        // DEBUG: Check TRACKED_FILES content
-                                        zoon::println!("TRACKED_FILES count: {}", tracked_files.len());
-                                        for (i, file) in tracked_files.iter().enumerate() {
-                                            zoon::println!("TRACKED_FILE[{}]: id={}, smart_label={}, path={}", 
-                                                           i, file.id, file.smart_label, file.path);
-                                        }
-                                        
                                         let tree_data = convert_tracked_files_to_tree_data(&tracked_files);
                                         
                                         if tree_data.is_empty() {
@@ -358,64 +349,51 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                 .s(Height::fill())
                 .child(
                     create_panel(
-                Row::new()
-                    .s(Gap::new().x(8))
-                    .s(Align::new().center_y())
-                    .item(
-                        El::new()
-                            .s(Font::new().no_wrap())
-                            .child("Selected Variables")
-                    )
-                    .item(
-                        El::new()
-                            .s(Width::growable())
-                    )
-                    .item(
-                        theme_toggle_button()
-                    )
-                    .item(
-                        dock_toggle_button()
-                    )
-                    .item(
-                        El::new()
-                            .s(Width::growable())
-                    )
-                    .item(
-                        remove_all_button()
-                    )
-                    .item(
-                        button()
-                            .label("Test Toast")
-                            .variant(ButtonVariant::Secondary)
-                            .size(ButtonSize::Small)
-                            .on_press(|| {
-                                let test_alert = ErrorAlert::new_connection_error(
-                                    "This is a test toast notification that will auto-dismiss based on your configured timeout.".to_string()
-                                );
-                                add_error_alert(test_alert);
-                            })
-                            .build()
-                    ),
-                // 3-column table layout: Variable Name | Value | Waveform
-                El::new()
-                    .s(Height::fill())
-                    .child(
-                        Column::new()
-                            .s(Gap::new().y(0))
-                            .s(Padding::all(8))
-                            .item(
-                                // Timeline header
                         Row::new()
-                            .s(Gap::new().x(0))
+                            .s(Gap::new().x(8))
                             .s(Align::new().center_y())
-                            .s(Padding::new().y(2))
                             .item(
-                                // Variable Name column header
                                 El::new()
-                                    .s(Width::exact(250))
-                                    .s(Font::new().color_signal(neutral_8()).size(12))
-                                    .child("Variable")
+                                    .s(Font::new().no_wrap())
+                                    .child("Selected Variables")
                             )
+                            .item(
+                                El::new()
+                                    .s(Width::growable())
+                            )
+                            .item(
+                                theme_toggle_button()
+                            )
+                            .item(
+                                dock_toggle_button()
+                            )
+                            .item(
+                                El::new()
+                                    .s(Width::growable())
+                            )
+                            .item(
+                                remove_all_button()
+                            ),
+                        // 3-column table layout: Variable Name | Value | Waveform
+                        El::new()
+                            .s(Height::fill())
+                            .child(
+                                Column::new()
+                                    .s(Gap::new().y(0))
+                                    .s(Padding::all(8))
+                                    .item(
+                                        // Timeline header
+                                        Row::new()
+                                            .s(Gap::new().x(0))
+                                            .s(Align::new().center_y())
+                                            .s(Padding::new().y(2))
+                                            .item(
+                                                // Variable Name column header
+                                                El::new()
+                                                    .s(Width::exact(250))
+                                                    .s(Font::new().color_signal(neutral_8()).size(12))
+                                                    .child("Variable")
+                                            )
                             .item(
                                 // Value column header  
                                 El::new()
@@ -630,19 +608,6 @@ pub fn waveform_panel() -> impl Element {
                             .size(ButtonSize::Small)
                             .on_press(|| {})
                             .build()
-                    )
-                    .item(
-                        button()
-                            .label("Test Toast")
-                            .variant(ButtonVariant::Secondary)
-                            .size(ButtonSize::Small)
-                            .on_press(|| {
-                                let test_alert = ErrorAlert::new_connection_error(
-                                    "This is a test toast notification that should auto-dismiss after 5 seconds.".to_string()
-                                );
-                                add_error_alert(test_alert);
-                            })
-                            .build()
                     ),
                 Column::new()
                     .s(Gap::new().y(16))
@@ -788,25 +753,38 @@ fn simple_variables_content() -> impl Element {
         )
 }
 
-// Parse smart label to separate prefix from filename for styling
-fn parse_smart_label_for_styling(smart_label: &str) -> (Option<String>, String) {
-    // Find last '/' to separate path prefix from filename
-    if let Some(last_slash) = smart_label.rfind('/') {
-        let prefix = &smart_label[..=last_slash]; // Include trailing slash
-        let filename = &smart_label[last_slash + 1..];
-        (Some(prefix.to_string()), filename.to_string())
-    } else {
-        (None, smart_label.to_string()) // No prefix, just filename
-    }
-}
 
 // Removed create_styled_smart_label function - styling now handled inline in TreeView component
 
+// Parse smart label to separate prefix from filename for sorting purposes
+fn parse_smart_label_for_sorting(smart_label: &str) -> (String, String) {
+    if let Some(last_slash) = smart_label.rfind('/') {
+        let prefix = &smart_label[..last_slash]; // Exclude trailing slash for sorting
+        let filename = &smart_label[last_slash + 1..];
+        (prefix.to_string(), filename.to_string())
+    } else {
+        ("".to_string(), smart_label.to_string()) // No prefix, just filename
+    }
+}
+
 // Enhanced conversion function using TrackedFile with smart labels, tooltips, and error states
 fn convert_tracked_files_to_tree_data(tracked_files: &[TrackedFile]) -> Vec<TreeViewItemData> {
-    // Sort files alphabetically by smart label (case-insensitive) to maintain proper disambiguation order
+    // Sort files: primary by filename, secondary by prefix for better organization
     let mut file_refs: Vec<&TrackedFile> = tracked_files.iter().collect();
-    file_refs.sort_by(|a, b| a.smart_label.to_lowercase().cmp(&b.smart_label.to_lowercase()));
+    file_refs.sort_by(|a, b| {
+        // Extract filename (part after last slash) and prefix (part before last slash)
+        let (a_prefix, a_filename) = parse_smart_label_for_sorting(&a.smart_label);
+        let (b_prefix, b_filename) = parse_smart_label_for_sorting(&b.smart_label);
+        
+        // Primary sort: filename (case-insensitive)
+        let filename_cmp = a_filename.to_lowercase().cmp(&b_filename.to_lowercase());
+        if filename_cmp != std::cmp::Ordering::Equal {
+            return filename_cmp;
+        }
+        
+        // Secondary sort: prefix (case-insensitive)
+        a_prefix.to_lowercase().cmp(&b_prefix.to_lowercase())
+    });
     
     file_refs.iter().map(|tracked_file| {
         match &tracked_file.state {
@@ -885,26 +863,9 @@ fn convert_tracked_files_to_tree_data(tracked_files: &[TrackedFile]) -> Vec<Tree
     }).collect()
 }
 
-// Legacy function for backward compatibility during transition
-fn convert_files_to_tree_data(files: &[WaveformFile]) -> Vec<TreeViewItemData> {
-    // Sort files alphabetically by filename (case-insensitive)
-    let mut file_refs: Vec<&WaveformFile> = files.iter().collect();
-    file_refs.sort_by(|a, b| a.filename.to_lowercase().cmp(&b.filename.to_lowercase()));
-    
-    file_refs.iter().map(|file| {
-        let children = file.scopes.iter().map(|scope| {
-            convert_scope_to_tree_data(scope)
-        }).collect();
-        
-        TreeViewItemData::new(file.id.clone(), file.filename.clone())
-            .item_type(TreeViewItemType::File)
-            .with_children(children)
-            .on_remove(create_enhanced_file_remove_handler(file.id.clone()))
-    }).collect()
-}
 
 // Enhanced file removal handler that works with both old and new systems
-fn create_enhanced_file_remove_handler(file_id: String) -> impl Fn(&str) + 'static {
+fn create_enhanced_file_remove_handler(_file_id: String) -> impl Fn(&str) + 'static {
     move |id: &str| {
         // Remove from new TRACKED_FILES system
         state::remove_tracked_file(id);

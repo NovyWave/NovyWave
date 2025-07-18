@@ -13,19 +13,92 @@ namespace = "default"
 [tasks.default]
 alias = "start"
 
-# Browser-specific tasks
+# Browser-specific tasks with dev_server.log protection
+# Protection includes: file locking, automatic log cleanup, signal handling
 [tasks.start]
-description = "Start in browser mode with auto-reload"
+description = "Start in browser mode with auto-reload (with log protection)"
 dependencies = ["install"]
-command = "mzoon/bin/mzoon"
-args = ["start", "${@}"]
+script = '''
+LOG_FILE="dev_server.log"
+LOCK_FILE="dev_server.lock"
+
+# Function to clean up on exit
+cleanup() {
+    echo "Cleaning up..."
+    rm -f "$LOCK_FILE"
+    exit 0
+}
+
+# Set up signal handlers
+trap cleanup EXIT INT TERM
+
+# Check if already running
+if [ -f "$LOCK_FILE" ]; then
+    echo "Development server appears to already be running (lock file exists)"
+    echo "If you're sure it's not running, remove $LOCK_FILE and try again"
+    exit 1
+fi
+
+# Create lock file
+echo $$ > "$LOCK_FILE"
+
+# Clean previous log
+> "$LOG_FILE"
+
+echo "Starting NovyWave development server with file locking..."
+echo "Output will be logged to $LOG_FILE"
+echo "Press Ctrl+C to stop"
+
+# Start the server
+mzoon/bin/mzoon start ${@} >> "$LOG_FILE" 2>&1 &
+SERVER_PID=$!
+
+# Wait for the server process
+wait $SERVER_PID
+'''
 
 [tasks.open]
-description = "Start in browser mode and open browser"
+description = "Start in browser mode and open browser (with log protection)"
 dependencies = ["install"]
 env = { "MZOON_BROWSER_SYNC" = false }
-command = "mzoon/bin/mzoon"
-args = ["start", "--open", "${@}"]
+script = '''
+LOG_FILE="dev_server.log"
+LOCK_FILE="dev_server.lock"
+
+# Function to clean up on exit
+cleanup() {
+    echo "Cleaning up..."
+    rm -f "$LOCK_FILE"
+    exit 0
+}
+
+# Set up signal handlers
+trap cleanup EXIT INT TERM
+
+# Check if already running
+if [ -f "$LOCK_FILE" ]; then
+    echo "Development server appears to already be running (lock file exists)"
+    echo "If you're sure it's not running, remove $LOCK_FILE and try again"
+    exit 1
+fi
+
+# Create lock file
+echo $$ > "$LOCK_FILE"
+
+# Clean previous log
+> "$LOG_FILE"
+
+echo "Starting NovyWave development server with file locking..."
+echo "Output will be logged to $LOG_FILE"
+echo "Press Ctrl+C to stop"
+
+# Start the server
+mzoon/bin/mzoon start --open ${@} >> "$LOG_FILE" 2>&1 &
+SERVER_PID=$!
+
+# Wait for the server process
+wait $SERVER_PID
+'''
 
 # Tauri-specific tasks
 [tasks.tauri]

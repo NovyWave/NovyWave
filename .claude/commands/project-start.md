@@ -29,9 +29,9 @@ if ! flock -n 200; then
   exit 1
 fi
 
-# Start server with lock held
+# Start server with lock held (output already redirected by Makefile.toml)
 echo "Starting development server..."
-makers start > dev_server.log 2>&1 &
+makers start &
 MAKERS_PID=$!
 
 # Wait for compilation and backend startup

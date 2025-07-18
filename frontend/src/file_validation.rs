@@ -3,7 +3,7 @@
 // Automatically updates file states when issues are detected
 
 use zoon::*;
-use shared::{FileError, is_waveform_file, FileState, TrackedFile};
+use shared::{FileError, is_waveform_file, FileState};
 use crate::state::{TRACKED_FILES, update_tracked_file_state};
 
 /// Validate if a file path is accessible and supported
@@ -70,64 +70,16 @@ async fn validate_all_tracked_files() {
     }
 }
 
-/// Validate a specific file and return its current state
-/// This can be called when user attempts to reload a file
-pub async fn validate_single_file(file_path: &str) -> FileState {
-    match validate_file_state(file_path).await {
-        Ok(()) => {
-            // File appears valid - set to loading state for re-parsing
-            FileState::Loading(shared::LoadingStatus::Starting)
-        }
-        Err(error) => {
-            FileState::Failed(error)
-        }
-    }
-}
 
 /// Initialize validation system - call this once during app startup
 pub fn init_file_validation_system() {
-    zoon::println!("Initializing file validation system...");
+    // File validation system starting
     
     // Start periodic validation task
     create_periodic_validation_task();
     
-    zoon::println!("File validation system started - checking files every 30 seconds");
+    // File validation system started
 }
 
-/// Manual file validation trigger (for user-initiated validation)
-pub async fn trigger_manual_validation() {
-    zoon::println!("Manual file validation triggered");
-    validate_all_tracked_files().await;
-}
 
-/// Check if a file path appears to be valid format without deep validation
-pub fn quick_format_check(path: &str) -> Result<(), FileError> {
-    if !is_waveform_file(path) {
-        let extension = std::path::Path::new(path)
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .unwrap_or("unknown");
-        return Err(FileError::UnsupportedFormat(extension.to_string()));
-    }
-    Ok(())
-}
 
-/// Restore a file from error state by attempting to reload it
-pub async fn attempt_file_recovery(file_id: &str) {
-    let tracked_files = TRACKED_FILES.lock_ref();
-    
-    if let Some(tracked_file) = tracked_files.iter().find(|f| f.id == file_id) {
-        let path = tracked_file.path.clone();
-        drop(tracked_files); // Release the lock
-        
-        zoon::println!("Attempting recovery for file: {}", path);
-        
-        let new_state = validate_single_file(&path).await;
-        update_tracked_file_state(file_id, new_state.clone());
-        
-        // If validation passes, trigger actual file loading via backend
-        if matches!(new_state, FileState::Loading(_)) {
-            crate::send_up_msg(shared::UpMsg::LoadWaveformFile(path));
-        }
-    }
-}

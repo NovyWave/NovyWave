@@ -370,6 +370,7 @@ impl ConfigStore {
         self.ui.lock_mut().theme.set(config.ui.theme);
         self.ui.lock_mut().font_size.set(config.ui.font_size);
         self.ui.lock_mut().show_tooltips.set(config.ui.show_tooltips);
+        self.ui.lock_mut().toast_dismiss_ms.set(config.ui.toast_dismiss_ms);
 
         // Load session section
         self.session.lock_mut().opened_files.lock_mut().replace_cloned(config.session.opened_files);

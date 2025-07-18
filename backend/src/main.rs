@@ -5,8 +5,6 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::fs;
 use tokio::fs as async_fs;
-use tokio::task;
-use std::collections::HashSet;
 
 async fn frontend() -> Frontend {
     Frontend::new()
@@ -41,7 +39,6 @@ async fn up_msg_handler(req: UpMsgRequest<UpMsg>) {
 }
 
 async fn load_waveform_file(file_path: String, session_id: SessionId, cor_id: CorId) {
-    println!("Loading waveform file: {}", file_path);
     
     let path = Path::new(&file_path);
     if !path.exists() {
@@ -194,7 +191,7 @@ async fn send_down_msg(msg: DownMsg, session_id: SessionId, cor_id: CorId) {
 const CONFIG_FILE_PATH: &str = ".novywave";
 
 async fn load_config(session_id: SessionId, cor_id: CorId) {
-    println!("Loading config from {}", CONFIG_FILE_PATH);
+    // Loading config from filesystem
     
     let config = match fs::read_to_string(CONFIG_FILE_PATH) {
         Ok(content) => {
@@ -226,7 +223,7 @@ async fn load_config(session_id: SessionId, cor_id: CorId) {
     // PARALLEL PRELOADING: Start preloading expanded directories in background for instant file dialog
     let expanded_dirs = config.workspace.load_files_expanded_directories.clone();
     if !expanded_dirs.is_empty() {
-        println!("Starting parallel preloading of {} expanded directories", expanded_dirs.len());
+        // Starting parallel preloading of expanded directories
         
         // Spawn background task to preload directories - precompute for instant access
         tokio::spawn(async move {
@@ -237,7 +234,7 @@ async fn load_config(session_id: SessionId, cor_id: CorId) {
                 let path = dir_path.clone();
                 
                 preload_tasks.push(tokio::spawn(async move {
-                    println!("Preloading directory: {}", path);
+                    // Preloading directory: {path}
                     let path_obj = Path::new(&path);
                     
                     // Precompute directory contents for instant access
@@ -245,10 +242,10 @@ async fn load_config(session_id: SessionId, cor_id: CorId) {
                         match scan_directory_async(path_obj).await {
                             Ok(_items) => {
                                 // Cache computed for future instant access
-                                println!("Preloaded directory: {}", path);
+                                // Successfully preloaded directory
                             }
-                            Err(e) => {
-                                println!("Failed to preload directory {}: {}", path, e);
+                            Err(_e) => {
+                                // Failed to preload directory: {path}, error: {e}
                             }
                         }
                     }
@@ -260,7 +257,7 @@ async fn load_config(session_id: SessionId, cor_id: CorId) {
                 let _ = task.await; // Ignore individual task errors
             }
             
-            println!("Finished parallel preloading of expanded directories");
+            // Finished parallel preloading of expanded directories
         });
     }
 
@@ -306,7 +303,6 @@ fn cleanup_parsing_session(file_id: &str) {
 
 
 async fn browse_directory(dir_path: String, session_id: SessionId, cor_id: CorId) {
-    println!("Browsing directory: {}", dir_path);
     
     // Handle Windows multi-root scenario - enumerate drives when browsing "/"
     #[cfg(windows)]

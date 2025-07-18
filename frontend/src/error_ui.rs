@@ -1,21 +1,9 @@
 use zoon::*;
-use moonzoon_novyui::components::alert::{error_alert, AlertVariant};
 use moonzoon_novyui::components::icon::{icon, IconName, IconSize, IconColor};
 use moonzoon_novyui::tokens::*;
-use crate::state::{ErrorAlert, ERROR_ALERTS, TOAST_NOTIFICATIONS};
+use crate::state::{ErrorAlert, TOAST_NOTIFICATIONS};
 use crate::error_display::dismiss_error_alert;
 
-/// Global error alerts container that appears at the top of the main view
-pub fn error_alerts_container() -> impl Element {
-    Column::new()
-        .s(Width::fill())
-        .s(Gap::new().y(SPACING_8))
-        .items_signal_vec(
-            ERROR_ALERTS.signal_vec_cloned().map(|alert| {
-                create_error_alert_element(alert)
-            })
-        )
-}
 
 /// Toast notifications container for auto-dismissing errors
 pub fn toast_notifications_container() -> impl Element {
@@ -48,18 +36,6 @@ pub fn toast_notifications_container() -> impl Element {
         )
 }
 
-/// Create an error alert element using NovyUI Alert component
-fn create_error_alert_element(alert: ErrorAlert) -> impl Element {
-    let alert_id = alert.id.clone();
-    
-    error_alert(&alert.message)
-        .title(&alert.title)
-        .dismissible(true)
-        .on_dismiss(move || {
-            dismiss_error_alert(&alert_id);
-        })
-        .build()
-}
 
 /// Create a toast notification element with enhanced styling and progress bar countdown
 fn create_toast_element(alert: ErrorAlert) -> impl Element {
@@ -105,9 +81,10 @@ fn create_toast_element(alert: ErrorAlert) -> impl Element {
             let mut current_update = 0;
             
             while current_update < total_updates {
-                // Check if paused - if so, exit the countdown completely
+                // Check if paused - if so, wait until unpaused
                 if is_paused_dismiss.get() {
-                    return; // Exit task completely when paused
+                    Timer::sleep(update_interval_ms as u32).await;
+                    continue; // Wait and check again, don't increment counter
                 }
                 
                 current_update += 1;
@@ -134,13 +111,22 @@ fn create_toast_element(alert: ErrorAlert) -> impl Element {
                 .blur(8)
         ]))
         .s(Cursor::new(CursorIcon::Pointer))
-        .update_raw_el(|raw_el| {
-            raw_el.attr("title", "Click to stop auto-dismiss")
+        .update_raw_el({
+            let is_paused_tooltip = is_progress_paused.clone();
+            move |raw_el| {
+                raw_el.attr_signal("title", is_paused_tooltip.signal().map(|is_paused| {
+                    if is_paused {
+                        "Click to resume auto-dismiss"
+                    } else {
+                        "Click to pause auto-dismiss"
+                    }
+                }))
+            }
         })
         .on_click({
             let is_paused_click = is_progress_paused.clone();
             move || {
-                is_paused_click.set_neq(true);
+                is_paused_click.set_neq(!is_paused_click.get());
             }
         })
         .item(
@@ -176,6 +162,7 @@ fn create_toast_element(alert: ErrorAlert) -> impl Element {
                                 .s(Font::new()
                                     .size(FONT_SIZE_14)
                                     .color_signal(error_8())
+                                    .wrap_anywhere()
                                 )
                                 .child(Text::new(&alert.message))
                         )
@@ -226,57 +213,4 @@ fn create_toast_element(alert: ErrorAlert) -> impl Element {
         )
 }
 
-/// Enhanced directory error display for TreeView items
-pub fn directory_error_element(_path: &str, error: &str) -> impl Element {
-    let user_friendly_error = match error.to_lowercase() {
-        e if e.contains("permission denied") => "Access denied",
-        e if e.contains("not found") => "Directory not found",
-        e if e.contains("network") => "Network error",
-        _ => "Cannot access directory",
-    };
-    
-    Row::new()
-        .s(Width::fill())
-        .s(Padding::new().x(SPACING_8).y(SPACING_4))
-        .s(Gap::new().x(SPACING_6))
-        .s(Align::new().center_y())
-        .item(
-            El::new()
-                .s(Font::new()
-                    .size(FONT_SIZE_12)
-                    .color_signal(error_8())
-                )
-                .child(Text::new("⚠️"))
-        )
-        .item(
-            El::new()
-                .s(Width::fill())
-                .s(Font::new()
-                    .size(FONT_SIZE_12)
-                    .color_signal(error_9())
-                    .italic()
-                )
-                .child(Text::new(user_friendly_error))
-        )
-}
 
-/// Error badge for file loading status in file lists
-pub fn file_error_badge(error: &str) -> impl Element {
-    let user_friendly_error = match error.to_lowercase() {
-        e if e.contains("unknown file format") => "Unsupported format",
-        e if e.contains("file not found") => "File not found",
-        e if e.contains("permission denied") => "Access denied",
-        _ => "Error",
-    };
-    
-    El::new()
-        .s(Padding::new().x(SPACING_6).y(SPACING_2))
-        .s(Background::new().color_signal(error_2()))
-        .s(RoundedCorners::all(CORNER_RADIUS_4))
-        .s(Font::new()
-            .size(FONT_SIZE_12)
-            .weight(FontWeight::Medium)
-            .color_signal(error_9())
-        )
-        .child(Text::new(user_friendly_error))
-}

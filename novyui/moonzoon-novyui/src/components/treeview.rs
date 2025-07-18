@@ -730,7 +730,7 @@ fn render_tree_item(
                                             let prefix = &item.label[..=last_slash]; // Include trailing slash
                                             let filename = &item.label[last_slash + 1..];
                                             
-                                            zoon::println!("DEBUG: Smart label styling - prefix: '{}', filename: '{}'", prefix, filename);
+                                            // Debug log removed
                                             
                                             // Create Paragraph with styled prefix and filename
                                             zoon::Paragraph::new()
