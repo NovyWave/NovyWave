@@ -107,7 +107,7 @@ pub enum FileError {
 impl FileError {
     pub fn user_friendly_message(&self) -> String {
         match self {
-            FileError::ParseError(msg) => format!("Parse error: {}", msg),
+            FileError::ParseError(msg) => msg.clone(),
             FileError::FileNotFound => "File not found".to_string(),
             FileError::PermissionDenied => "Permission denied".to_string(),
             FileError::UnsupportedFormat(format) => format!("Unsupported format: {}", format),

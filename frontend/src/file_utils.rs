@@ -1,5 +1,6 @@
 use crate::{FILE_PATHS_INPUT, SHOW_FILE_DIALOG, send_up_msg, IS_LOADING, LOAD_FILES_VIEWPORT_Y, config::config_store};
-use shared::{UpMsg, generate_file_id};
+use crate::file_validation::validate_file_state;
+use shared::{UpMsg, generate_file_id, FileState};
 use zoon::{Task, Timer};
 
 
@@ -68,15 +69,40 @@ pub fn process_file_paths() {
         IS_LOADING.set(true);
     }
     
+    // CRITICAL: Validate files BEFORE sending to backend
+    // This prevents non-existent files from being misclassified as UnsupportedFormat
+    // and avoids wasting backend resources on invalid files
     for path in paths {
-        // Add to TRACKED_FILES system with loading state
-        crate::state::add_tracked_file(path.clone(), shared::FileState::Loading(shared::LoadingStatus::Starting));
-        
-        // Also maintain legacy FILE_PATHS for backward compatibility during transition
-        let file_id = generate_file_id(&path);
-        crate::FILE_PATHS.lock_mut().insert(file_id, path.clone());
-        
-        send_up_msg(UpMsg::LoadWaveformFile(path));
+        Task::start({
+            let path = path.clone();
+            async move {
+                // Validate file state before adding to tracked system
+                match validate_file_state(&path).await {
+                    Ok(()) => {
+                        // File is valid - proceed with normal loading flow
+                        crate::state::add_tracked_file(path.clone(), FileState::Loading(shared::LoadingStatus::Starting));
+                        
+                        // Also maintain legacy FILE_PATHS for backward compatibility during transition
+                        let file_id = generate_file_id(&path);
+                        crate::FILE_PATHS.lock_mut().insert(file_id, path.clone());
+                        
+                        send_up_msg(UpMsg::LoadWaveformFile(path));
+                    },
+                    Err(error) => {
+                        // File validation failed - add with error state immediately, don't send to backend
+                        zoon::println!("File validation failed for {}: {:?}", path, error);
+                        crate::state::add_tracked_file(path.clone(), FileState::Failed(error));
+                        
+                        // Still add to legacy system for consistency, but mark as failed
+                        let file_id = generate_file_id(&path);
+                        crate::FILE_PATHS.lock_mut().insert(file_id, path.clone());
+                        
+                        // NOTE: We deliberately do NOT send UpMsg::LoadWaveformFile for failed validation
+                        // This prevents the backend from wasting time on files we know are invalid
+                    }
+                }
+            }
+        });
     }
     
     SHOW_FILE_DIALOG.set(false);

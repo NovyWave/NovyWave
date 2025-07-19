@@ -43,8 +43,9 @@ async fn load_waveform_file(file_path: String, session_id: SessionId, cor_id: Co
     let path = Path::new(&file_path);
     if !path.exists() {
         let error_msg = format!("File not found: {}", file_path);
+        let file_id = generate_file_id(&file_path);
         send_down_msg(DownMsg::ParsingError { 
-            file_id: file_path.clone(), 
+            file_id, 
             error: error_msg 
         }, session_id, cor_id).await;
         return;

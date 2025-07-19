@@ -70,17 +70,25 @@ static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 }
             }
             DownMsg::ParsingError { file_id, error } => {
+                
                 // Update TRACKED_FILES with error state
                 let file_error = shared::FileError::ParseError(error.clone());
                 crate::state::update_tracked_file_state(&file_id, shared::FileState::Failed(file_error));
                 
-                // Find the filename for the error alert
+                // Find the filename for the error alert from TRACKED_FILES (more reliable for non-existent files)
                 let filename = {
-                    let current_files: Vec<LoadingFile> = LOADING_FILES.lock_ref().iter().cloned().collect();
-                    current_files.iter()
-                        .find(|file| file.file_id == file_id)
+                    let tracked_files = crate::state::TRACKED_FILES.lock_ref();
+                    tracked_files.iter()
+                        .find(|file| file.id == file_id)
                         .map(|file| file.filename.clone())
-                        .unwrap_or_else(|| "Unknown file".to_string())
+                        .unwrap_or_else(|| {
+                            // Fallback to legacy system if not found in TRACKED_FILES
+                            let current_files: Vec<LoadingFile> = LOADING_FILES.lock_ref().iter().cloned().collect();
+                            current_files.iter()
+                                .find(|file| file.file_id == file_id)
+                                .map(|file| file.filename.clone())
+                                .unwrap_or_else(|| "Unknown file".to_string())
+                        })
                 };
                 
                 // Create and display error alert

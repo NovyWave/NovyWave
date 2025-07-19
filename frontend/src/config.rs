@@ -777,6 +777,9 @@ fn sync_opened_files_from_config() {
         let file_id = shared::generate_file_id(&file_path);
         FILE_PATHS.lock_mut().insert(file_id, file_path.clone());
         
+        // Add to TRACKED_FILES system with loading state
+        crate::state::add_tracked_file(file_path.clone(), shared::FileState::Loading(shared::LoadingStatus::Starting));
+        
         // Reload the file
         send_up_msg(shared::UpMsg::LoadWaveformFile(file_path));
     }

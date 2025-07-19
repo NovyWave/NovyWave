@@ -134,10 +134,20 @@ impl ErrorAlert {
 pub fn make_error_user_friendly(error: &str) -> String {
     let error_lower = error.to_lowercase();
     
-    // Extract file path from error messages like "Failed to parse waveform file '/path/to/file': error"
+    // Extract file path from error messages in multiple formats:
+    // - "Failed to parse waveform file '/path/to/file': error" (quoted format)
+    // - "File not found: /path/to/file" (backend format)
     let file_path = if let Some(start) = error.find("'") {
         if let Some(end) = error[start + 1..].find("'") {
             Some(&error[start + 1..start + 1 + end])
+        } else {
+            None
+        }
+    } else if error_lower.contains("file not found:") {
+        // Extract path after "File not found: "
+        if let Some(colon_pos) = error.find("File not found:") {
+            let path_start = colon_pos + "File not found:".len();
+            Some(error[path_start..].trim())
         } else {
             None
         }
@@ -209,6 +219,8 @@ pub fn update_tracked_file_state(file_id: &str, new_state: FileState) {
         let mut file = tracked_files.iter().nth(index).unwrap().clone();
         file.state = new_state;
         tracked_files.set_cloned(index, file);
+    } else {
+        zoon::println!("WARNING: File ID {} not found in TRACKED_FILES for state update", file_id);
     }
     drop(tracked_files); // Release lock before calling refresh_smart_labels
     
