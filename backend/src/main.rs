@@ -4,7 +4,7 @@ use std::path::Path;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::fs;
-use tokio::fs as async_fs;
+use jwalk::WalkDir;
 
 async fn frontend() -> Frontend {
     Frontend::new()
@@ -34,6 +34,9 @@ async fn up_msg_handler(req: UpMsgRequest<UpMsg>) {
         }
         UpMsg::BrowseDirectory(dir_path) => {
             browse_directory(dir_path, session_id, cor_id).await;
+        }
+        UpMsg::BrowseDirectories(dir_paths) => {
+            browse_directories_batch(dir_paths, session_id, cor_id).await;
         }
     }
 }
@@ -410,58 +413,154 @@ async fn browse_directory(dir_path: String, session_id: SessionId, cor_id: CorId
     }
 }
 
-async fn scan_directory_async(path: &Path) -> Result<Vec<FileSystemItem>, Box<dyn std::error::Error + Send + Sync>> {
-    let mut items = Vec::new();
-    let mut dir_reader = async_fs::read_dir(path).await?;
+async fn browse_directories_batch(dir_paths: Vec<String>, session_id: SessionId, cor_id: CorId) {
+    // Use jwalk's parallel processing capabilities for batch directory scanning
+    let mut results = HashMap::new();
     
-    // INSTANT LOADING: No async tasks, no metadata calls, no filtering - just basic directory listing
-    while let Some(entry) = dir_reader.next_entry().await? {
-        let name = entry.file_name().to_string_lossy().to_string();
-        
-        // Skip hidden files and directories (starting with .)
-        if name.starts_with('.') {
-            continue;
+    // Process directories in parallel using jwalk's thread pool
+    let parallel_tasks: Vec<_> = dir_paths.into_iter()
+        .map(|dir_path| {
+            tokio::spawn(async move {
+                let expanded_path = if dir_path.starts_with("~/") {
+                    // Expand home directory path
+                    if let Some(home_dir) = dirs::home_dir() {
+                        home_dir.join(&dir_path[2..]).to_string_lossy().to_string()
+                    } else {
+                        dir_path
+                    }
+                } else if dir_path == "~" {
+                    // User home directory
+                    dirs::home_dir()
+                        .map_or(dir_path, |home| home.to_string_lossy().to_string())
+                } else {
+                    dir_path
+                };
+                
+                let path = Path::new(&expanded_path);
+                
+                // Scan directory with jwalk
+                let result = if !path.exists() {
+                    Err(format!("Path does not exist: {}", expanded_path))
+                } else if !path.is_dir() {
+                    Err(format!("Path is not a directory: {}", expanded_path))
+                } else {
+                    match scan_directory_async(path).await {
+                        Ok(items) => Ok(items),
+                        Err(e) => Err(format!("Failed to scan directory: {}", e))
+                    }
+                };
+                
+                (expanded_path, result)
+            })
+        })
+        .collect();
+    
+    // Collect all results
+    for task in parallel_tasks {
+        if let Ok((path, result)) = task.await {
+            results.insert(path, result);
         }
-        
-        // Only check basic file type - no metadata, no canonicalize, no async tasks
-        let file_type = entry.file_type().await?;
-        let is_directory = file_type.is_dir();
-        let path_str = entry.path().to_string_lossy().to_string();
-        
-        // Only include directories and waveform files for cleaner file dialog
-        let is_waveform = if !is_directory {
-            let name_lower = name.to_lowercase();
-            name_lower.ends_with(".vcd") || name_lower.ends_with(".fst")
-        } else {
-            false
-        };
-        
-        // Skip non-waveform files to reduce clutter
-        if !is_directory && !is_waveform {
-            continue;
-        }
-        
-        let item = FileSystemItem {
-            name,
-            path: path_str,
-            is_directory,
-            file_size: None, // Skip file size for instant loading
-            is_waveform_file: is_waveform, // Proper waveform detection  
-            file_extension: None, // Skip extension parsing for instant loading
-            has_expandable_content: is_directory, // All directories expandable
-        };
-        
-        items.push(item);
     }
     
-    // Sort items: directories first, then files, both alphabetically
-    items.sort_by(|a, b| {
-        match (a.is_directory, b.is_directory) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+    // Send batch results to frontend
+    send_down_msg(DownMsg::BatchDirectoryContents { results }, session_id, cor_id).await;
+}
+
+async fn scan_directory_async(path: &Path) -> Result<Vec<FileSystemItem>, Box<dyn std::error::Error + Send + Sync>> {
+    let path_buf = path.to_path_buf();
+    
+    // Use jwalk for parallel directory traversal, bridged with tokio
+    let items = tokio::task::spawn_blocking(move || -> Result<Vec<FileSystemItem>, Box<dyn std::error::Error + Send + Sync>> {
+        let mut items = Vec::new();
+        
+        // Test directory access before jwalk to catch permission errors early
+        match std::fs::read_dir(&path_buf) {
+            Ok(_) => {
+                // Directory is readable, proceed with jwalk
+            }
+            Err(e) => {
+                // Return permission/access error immediately
+                return Err(format!("Permission denied: {}", e).into());
+            }
         }
-    });
+        
+        // jwalk with parallel processing, single directory level
+        for entry in WalkDir::new(&path_buf)
+            .sort(true)  // Enable sorting for consistent results
+            .max_depth(1)  // Single level only (like TreeView expansion)
+            .skip_hidden(false)  // We'll filter manually to match existing logic
+            .process_read_dir(|_, _, _, dir_entry_results| {
+                // Filter entries in parallel processing callback for better performance
+                dir_entry_results.retain(|entry_result| {
+                    if let Ok(entry) = entry_result {
+                        let name = entry.file_name().to_string_lossy();
+                        !name.starts_with('.') // Skip hidden files
+                    } else {
+                        true // Keep errors for proper handling
+                    }
+                });
+            })
+        {
+            match entry {
+                Ok(dir_entry) => {
+                    let entry_path = dir_entry.path();
+                    
+                    // Skip the root directory itself (jwalk includes it)
+                    if entry_path == path_buf {
+                        continue;
+                    }
+                    
+                    let name = entry_path.file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "unknown".to_string());
+                    
+                    let is_directory = entry_path.is_dir();
+                    let path_str = entry_path.to_string_lossy().to_string();
+                    
+                    // Only include directories and waveform files for cleaner file dialog
+                    let is_waveform = if !is_directory {
+                        let name_lower = name.to_lowercase();
+                        name_lower.ends_with(".vcd") || name_lower.ends_with(".fst")
+                    } else {
+                        false
+                    };
+                    
+                    // Skip non-waveform files to reduce clutter
+                    if !is_directory && !is_waveform {
+                        continue;
+                    }
+                    
+                    let item = FileSystemItem {
+                        name,
+                        path: path_str,
+                        is_directory,
+                        file_size: None, // Skip file size for instant loading
+                        is_waveform_file: is_waveform, // Proper waveform detection  
+                        file_extension: None, // Skip extension parsing for instant loading
+                        has_expandable_content: is_directory, // All directories expandable
+                    };
+                    
+                    items.push(item);
+                }
+                Err(e) => {
+                    eprintln!("jwalk error processing entry: {}", e);
+                    // Continue processing other entries despite individual errors
+                }
+            }
+        }
+        
+        // Sort items: directories first, then files, both alphabetically
+        // jwalk's sort(true) provides basic ordering, but we need custom logic
+        items.sort_by(|a, b| {
+            match (a.is_directory, b.is_directory) {
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+            }
+        });
+        
+        Ok(items)
+    }).await??;
     
     Ok(items)
 }

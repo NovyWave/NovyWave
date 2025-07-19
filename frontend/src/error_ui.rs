@@ -10,7 +10,7 @@ pub fn toast_notifications_container() -> impl Element {
     El::new()
         .s(Width::fill())
         .s(Height::fill())
-        .s(Align::new().bottom().right())
+        .s(Align::new().top().right())
         .s(Padding::all(SPACING_16))
         .update_raw_el(|raw_el| {
             raw_el
@@ -24,7 +24,7 @@ pub fn toast_notifications_container() -> impl Element {
             Column::new()
                 .s(Gap::new().y(SPACING_8))
                 .s(Width::exact(400))
-                .s(Align::new().bottom().right())
+                .s(Align::new().top().right())
                 .update_raw_el(|raw_el| {
                     raw_el.style("pointer-events", "auto")  // Re-enable pointer events for toast content
                 })

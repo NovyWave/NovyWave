@@ -11,6 +11,7 @@ pub enum UpMsg {
     LoadConfig,
     SaveConfig(AppConfig),
     BrowseDirectory(String),
+    BrowseDirectories(Vec<String>), // Batch directory requests for parallel processing
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -24,6 +25,7 @@ pub enum DownMsg {
     ConfigError(String),
     DirectoryContents { path: String, items: Vec<FileSystemItem> },
     DirectoryError { path: String, error: String },
+    BatchDirectoryContents { results: HashMap<String, Result<Vec<FileSystemItem>, String>> }, // Parallel directory results
 }
 
 // ===== FILESYSTEM TYPES =====

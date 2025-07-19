@@ -4,7 +4,7 @@ members = [
     "frontend",
     "backend",
     "shared",
-    "src-tauri",
+    "src-tauri", "jwalk_test",
 ]
 
 [workspace.package]

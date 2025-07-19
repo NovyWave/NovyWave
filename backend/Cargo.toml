@@ -12,3 +12,4 @@ wellen = { path = "/home/martinkavik/repos/wellen/wellen" }
 shared = { path = "../shared" }
 dirs = "5.0"
 tokio = { version = "1.0", features = ["full"] }
+jwalk = "0.8"

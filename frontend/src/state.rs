@@ -168,11 +168,7 @@ pub fn make_error_user_friendly(error: &str) -> String {
             "File not found. Please check if the file exists and try again.".to_string()
         }
     } else if error_lower.contains("permission denied") || error_lower.contains("access denied") {
-        if let Some(path) = file_path {
-            format!("Permission denied for '{}'. Please check file permissions and try again.", path)
-        } else {
-            "Permission denied. Please check file permissions and try again.".to_string()
-        }
+        "Can't access this directory".to_string()
     } else if error_lower.contains("connection") || error_lower.contains("network") {
         "Connection error. Please check your network connection.".to_string()
     } else if error_lower.contains("timeout") {

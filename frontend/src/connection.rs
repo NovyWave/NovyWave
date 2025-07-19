@@ -160,6 +160,29 @@ static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
             DownMsg::ConfigError(_error) => {
                 // Config error: {}
             }
+            DownMsg::BatchDirectoryContents { results } => {
+                // Handle batch directory results by updating cache for each directory
+                for (path, result) in results {
+                    match result {
+                        Ok(items) => {
+                            // Update cache with successful directory scan
+                            crate::FILE_TREE_CACHE.lock_mut().insert(path.clone(), items);
+                            
+                            // Clear any previous error for this directory
+                            crate::FILE_PICKER_ERROR_CACHE.lock_mut().remove(&path);
+                        }
+                        Err(error) => {
+                            // Handle directory scan error
+                            let error_alert = crate::state::ErrorAlert::new_directory_error(path.clone(), error.clone());
+                            crate::error_display::add_error_alert(error_alert);
+                            crate::FILE_PICKER_ERROR_CACHE.lock_mut().insert(path.clone(), error);
+                        }
+                    }
+                }
+                
+                // Clear global error (batch operations successful)
+                crate::FILE_PICKER_ERROR.set_neq(None);
+            }
         }
     })
 });

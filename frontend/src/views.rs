@@ -86,7 +86,7 @@ pub fn file_paths_dialog() -> impl Element {
                     Border::new().width(1).color(color)
                 })))
                 .s(Padding::all(16))
-                .s(Width::fill().min(500).max(750))
+                .s(Width::fill().min(500).max(600))
                 .s(Height::fill().max(800))
                 // Prevent event bubbling for dialog content clicks
                 .update_raw_el(|raw_el| {
@@ -1150,9 +1150,9 @@ fn monitor_directory_expansions(expanded: HashSet<String>) {
         .collect();
     drop(cache); // Release lock before sending requests
     
-    // Send all requests in parallel for maximum performance
-    for path in paths_to_request {
-        send_up_msg(UpMsg::BrowseDirectory(path));
+    // Send batch request for maximum parallel processing with jwalk
+    if !paths_to_request.is_empty() {
+        send_up_msg(UpMsg::BrowseDirectories(paths_to_request));
     }
     
     // Update last expanded set
@@ -1176,7 +1176,8 @@ fn selected_files_display() -> impl Element {
                         .unify()
                 } else {
                     Row::new()
-                        .s(Gap::new().x(8))
+                        .multiline()
+                        .s(Gap::new().x(8).y(8))
                         .s(Align::new().left().top())
                         .items(selected_paths.iter().map(|path| {
                             let filename = extract_filename(path);
