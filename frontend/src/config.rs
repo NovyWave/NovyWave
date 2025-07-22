@@ -4,6 +4,7 @@
 use zoon::*;
 use serde::{Deserialize, Serialize};
 use shared::UpMsg;
+pub use shared::{Theme, DockMode}; // Re-export for frontend usage
 
 // =============================================================================
 // MAIN CONFIG STORE - Single Source of Truth with Reactive Fields
@@ -47,11 +48,9 @@ pub struct UiSection {
     pub toast_dismiss_ms: Mutable<u64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum Theme {
-    Dark,
-    Light,
-}
+// Theme and DockMode enums now imported from shared crate for type safety
+
+// DockMode enum now imported from shared crate for type safety
 
 // =============================================================================
 // SESSION SECTION - Files and Search State
@@ -85,11 +84,7 @@ pub struct WorkspaceSection {
     pub panel_layouts: Mutable<PanelLayouts>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum DockMode {
-    Bottom,
-    Right,
-}
+// DockMode enum now imported from shared crate for type safety
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct PanelLayouts {
@@ -525,40 +520,58 @@ fn store_config_on_any_change() {
     });
 }
 
+/// Backend-compatible panel dimensions with only the 2 fields that exist in shared schema
+/// This ensures serde only serializes the fields that exist in backend
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct BackendPanelDimensions {
+    files_panel_width: f64,
+    files_panel_height: f64,
+    // NOTE: variables_panel_width and timeline_panel_height are frontend-only
+    // They are NOT included here to prevent serialization corruption
+}
+
+impl From<SerializablePanelDimensions> for BackendPanelDimensions {
+    fn from(dimensions: SerializablePanelDimensions) -> Self {
+        Self {
+            files_panel_width: dimensions.files_panel_width as f64,
+            files_panel_height: dimensions.files_panel_height as f64,
+        }
+    }
+}
+
 fn save_config_to_backend() {
     use crate::connection::send_up_msg;
     
+    // Convert to serializable format using existing infrastructure
     let serializable_config = config_store().to_serializable();
     
-    // Convert to shared::AppConfig format for backend compatibility
+    // Convert panel dimensions using declarative type conversion
+    let backend_docked_to_bottom = BackendPanelDimensions::from(serializable_config.workspace.panel_layouts.docked_to_bottom);
+    let backend_docked_to_right = BackendPanelDimensions::from(serializable_config.workspace.panel_layouts.docked_to_right);
+    
+    // Build shared::AppConfig using backend-compatible data
     let app_config = shared::AppConfig {
         app: shared::AppSection {
             version: serializable_config.app.version,
         },
         ui: shared::UiSection {
-            theme: match serializable_config.ui.theme {
-                Theme::Dark => "dark".to_string(),
-                Theme::Light => "light".to_string(),
-            },
+            theme: serializable_config.ui.theme,
             toast_dismiss_ms: serializable_config.ui.toast_dismiss_ms,
         },
         workspace: shared::WorkspaceSection {
             opened_files: serializable_config.session.opened_files,
-            dock_mode: match serializable_config.workspace.dock_mode {
-                DockMode::Bottom => "bottom".to_string(),
-                DockMode::Right => "right".to_string(),
-            },
+            panel_dimensions_bottom: shared::PanelDimensions::new(
+                backend_docked_to_bottom.files_panel_width,
+                backend_docked_to_bottom.files_panel_height
+            ),
+            panel_dimensions_right: shared::PanelDimensions::new(
+                backend_docked_to_right.files_panel_width,
+                backend_docked_to_right.files_panel_height
+            ),
+            dock_mode: serializable_config.workspace.dock_mode,
             expanded_scopes: serializable_config.workspace.expanded_scopes,
             load_files_expanded_directories: serializable_config.workspace.load_files_expanded_directories,
             selected_scope_id: serializable_config.workspace.selected_scope_id,
-            docked_to_bottom: shared::DockedToBottomLayout {
-                files_panel_width: serializable_config.workspace.panel_layouts.docked_to_bottom.files_panel_width as f64,
-                files_panel_height: serializable_config.workspace.panel_layouts.docked_to_bottom.files_panel_height as f64,
-            },
-            docked_to_right: shared::DockedToRightLayout {
-                files_panel_width: serializable_config.workspace.panel_layouts.docked_to_right.files_panel_width as f64,
-                files_panel_height: serializable_config.workspace.panel_layouts.docked_to_right.files_panel_height as f64,
-            },
             load_files_scroll_position: serializable_config.session.file_picker.scroll_position,
             variables_search_filter: serializable_config.session.variables_search_filter,
         },
@@ -640,10 +653,7 @@ pub fn apply_config(config: shared::AppConfig) {
             migration_strategy: MigrationStrategy::None,  // Default since shared doesn't have this field
         },
         ui: SerializableUiSection {
-            theme: match config.ui.theme.as_str() {
-                "light" => Theme::Light,
-                _ => Theme::Dark,
-            },
+            theme: config.ui.theme,
             font_size: 14.0,
             show_tooltips: true,
             toast_dismiss_ms: config.ui.toast_dismiss_ms,
@@ -659,25 +669,24 @@ pub fn apply_config(config: shared::AppConfig) {
             },
         },
         workspace: SerializableWorkspaceSection {
-            dock_mode: match config.workspace.dock_mode.as_str() {
-                "right" => DockMode::Right,
-                _ => DockMode::Bottom,
-            },
+            dock_mode: config.workspace.dock_mode,
             selected_scope_id: config.workspace.selected_scope_id,
             expanded_scopes: config.workspace.expanded_scopes,
             load_files_expanded_directories: config.workspace.load_files_expanded_directories,
             panel_layouts: SerializablePanelLayouts {
                 docked_to_bottom: SerializablePanelDimensions {
-                    files_panel_width: config.workspace.docked_to_bottom.files_panel_width as f32,
-                    files_panel_height: config.workspace.docked_to_bottom.files_panel_height as f32,
-                    variables_panel_width: 300.0,
-                    timeline_panel_height: 200.0,
+                    files_panel_width: config.workspace.panel_dimensions_bottom.width as f32,
+                    files_panel_height: config.workspace.panel_dimensions_bottom.height as f32,
+                    // Backend schema doesn't include these fields - use frontend defaults to prevent corruption
+                    variables_panel_width: 300.0,  // Frontend-only default
+                    timeline_panel_height: 200.0,  // Frontend-only default
                 },
                 docked_to_right: SerializablePanelDimensions {
-                    files_panel_width: config.workspace.docked_to_right.files_panel_width as f32,
-                    files_panel_height: config.workspace.docked_to_right.files_panel_height as f32,
-                    variables_panel_width: 250.0,
-                    timeline_panel_height: 150.0,
+                    files_panel_width: config.workspace.panel_dimensions_right.width as f32,
+                    files_panel_height: config.workspace.panel_dimensions_right.height as f32,
+                    // Backend schema doesn't include these fields - use frontend defaults to prevent corruption
+                    variables_panel_width: 250.0,  // Frontend-only default
+                    timeline_panel_height: 150.0,  // Frontend-only default
                 },
             },
         },

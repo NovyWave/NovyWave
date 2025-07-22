@@ -70,6 +70,45 @@ pub fn restore_scope_selections_sequenced() {
     }
 }
 
+/// Restore scope selection immediately for a specific file (per-file loading)
+pub fn restore_scope_selection_for_file(loaded_file: &shared::WaveformFile) {
+    // Check if user has explicitly cleared selection - if so, don't restore
+    if USER_CLEARED_SELECTION.get() {
+        return;
+    }
+    
+    // Check if there's a saved selected_scope_id to restore
+    let scope_to_restore = SELECTED_SCOPE_ID.get_cloned();
+    
+    if let Some(scope_id) = scope_to_restore {
+        // Check if this specific file contains the scope we want to restore
+        if file_contains_scope(&loaded_file.scopes, &scope_id) {
+            // Use signal sequencing for proper coordination
+            let scope_id_clone = scope_id.clone();
+            let scopes_clone = loaded_file.scopes.clone();
+            
+            // Schedule scope restoration to occur after UI updates complete
+            Task::start(async move {
+                // Wait for next UI update cycle using signal coordination
+                let current_sequence = UI_UPDATE_SEQUENCE.get();
+                UI_UPDATE_SEQUENCE.set(current_sequence + 1);
+                
+                // Restore TreeView selection to match the persisted scope
+                TREE_SELECTED_ITEMS.lock_mut().insert(scope_id_clone.clone());
+                
+                // Re-trigger SELECTED_SCOPE_ID signal to update variables panel
+                SELECTED_SCOPE_ID.set(Some(scope_id_clone.clone()));
+                
+                // Clear the user cleared flag since we successfully restored
+                USER_CLEARED_SELECTION.set(false);
+                
+                // Also expand parent scopes for this specific file
+                expand_parent_scopes(&scopes_clone, &scope_id_clone);
+            });
+        }
+    }
+}
+
 
 fn expand_parent_scopes(scopes: &[ScopeData], target_scope_id: &str) {
     for scope in scopes {

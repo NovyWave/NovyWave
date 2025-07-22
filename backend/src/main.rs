@@ -200,7 +200,28 @@ async fn load_config(session_id: SessionId, cor_id: CorId) {
     let config = match fs::read_to_string(CONFIG_FILE_PATH) {
         Ok(content) => {
             match toml::from_str::<AppConfig>(&content) {
-                Ok(config) => config,
+                Ok(mut config) => {
+                    // Enable migration system - validate and fix config after loading
+                    let migration_warnings = config.validate_and_fix();
+                    
+                    // Log migration warnings if any
+                    if !migration_warnings.is_empty() {
+                        println!("Config migration applied:");
+                        for warning in &migration_warnings {
+                            println!("  - {}", warning);
+                        }
+                        
+                        // Save migrated config to persist changes
+                        if let Err(save_err) = save_config_to_file(&config) {
+                            println!("Warning: Failed to save migrated config: {}", save_err);
+                            // Don't fail loading, just warn - the migration is still applied in memory
+                        } else {
+                            println!("Migrated config saved successfully");
+                        }
+                    }
+                    
+                    config
+                },
                 Err(e) => {
                     println!("Failed to parse config file: {}", e);
                     send_down_msg(DownMsg::ConfigError(format!("Failed to parse config: {}", e)), session_id, cor_id).await;
@@ -210,8 +231,9 @@ async fn load_config(session_id: SessionId, cor_id: CorId) {
         }
         Err(e) => {
             println!("Config file not found or unreadable: {}", e);
-            // Create default config
-            let default_config = AppConfig::default();
+            // Create default config with validation already applied
+            let mut default_config = AppConfig::default();
+            let _warnings = default_config.validate_and_fix(); // Ensure defaults are validated too
             
             // Try to save default config
             if let Err(save_err) = save_config_to_file(&default_config) {

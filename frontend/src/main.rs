@@ -83,8 +83,8 @@ pub fn main() {
                     // NOTE: Access config_store() AFTER apply_config() has loaded real values
                     let current_theme = config_store().ui.lock_ref().theme.get_cloned();
                     let novyui_theme = match current_theme {
-                        crate::config::Theme::Light => Theme::Light,
-                        crate::config::Theme::Dark => Theme::Dark,
+                        config::Theme::Light => Theme::Light,
+                        config::Theme::Dark => Theme::Dark,
                     };
                     
                     init_theme(
@@ -92,8 +92,8 @@ pub fn main() {
                         Some(Box::new(|novyui_theme| {
                             // Convert NovyUI theme to config theme and update store
                             let config_theme = match novyui_theme {
-                                Theme::Light => crate::config::Theme::Light,
-                                Theme::Dark => crate::config::Theme::Dark,
+                                Theme::Light => config::Theme::Light,
+                                Theme::Dark => config::Theme::Dark,
                             };
                             config_store().ui.lock_mut().theme.set_neq(config_theme);
                         }))

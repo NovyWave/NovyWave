@@ -3,6 +3,7 @@ use crate::{LOADING_FILES, LOADED_FILES, check_loading_complete, config};
 use crate::config::CONFIG_LOADED;
 use crate::error_display::add_error_alert;
 use crate::state::ErrorAlert;
+use crate::utils::restore_scope_selection_for_file;
 use shared::{UpMsg, DownMsg};
 use shared::{LoadingFile, LoadingStatus};
 
@@ -40,6 +41,10 @@ static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 // Update TRACKED_FILES with loaded waveform file
                 if let Some(loaded_file) = hierarchy.files.first() {
                     crate::state::update_tracked_file_state(&file_id, shared::FileState::Loaded(loaded_file.clone()));
+                    
+                    // NEW: Immediately attempt per-file scope restoration
+                    // This enables variable display as soon as each individual file loads
+                    restore_scope_selection_for_file(loaded_file);
                 }
                 
                 // Also maintain legacy LOADED_FILES for backward compatibility during transition

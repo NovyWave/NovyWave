@@ -1,6 +1,7 @@
-use serde::{Serialize, Deserialize};
+use serde::{Serialize, Deserialize, Deserializer};
 use std::collections::{HashMap, hash_map::DefaultHasher};
 use std::hash::{Hash, Hasher};
+use std::str::FromStr;
 
 // ===== MESSAGE TYPES =====
 
@@ -148,6 +149,126 @@ pub struct TrackedFile {
 
 // ===== CONFIG TYPES =====
 
+// Type-safe theme handling with validation
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum Theme {
+    Dark,
+    Light,
+}
+
+impl Default for Theme {
+    fn default() -> Self {
+        Theme::Dark
+    }
+}
+
+impl FromStr for Theme {
+    type Err = String;
+    
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "dark" => Ok(Theme::Dark),
+            "light" => Ok(Theme::Light),
+            _ => Err(format!("Invalid theme: '{}'. Valid themes are: dark, light", s)),
+        }
+    }
+}
+
+impl std::fmt::Display for Theme {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Theme::Dark => write!(f, "dark"),
+            Theme::Light => write!(f, "light"),
+        }
+    }
+}
+
+// Type-safe dock mode handling with validation
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum DockMode {
+    Right,
+    Bottom,
+}
+
+impl Default for DockMode {
+    fn default() -> Self {
+        DockMode::Right
+    }
+}
+
+impl FromStr for DockMode {
+    type Err = String;
+    
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "right" => Ok(DockMode::Right),
+            "bottom" => Ok(DockMode::Bottom),
+            _ => Err(format!("Invalid dock mode: '{}'. Valid modes are: right, bottom", s)),
+        }
+    }
+}
+
+impl std::fmt::Display for DockMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DockMode::Right => write!(f, "right"),
+            DockMode::Bottom => write!(f, "bottom"),
+        }
+    }
+}
+
+// Unified panel dimensions struct that handles frontend/backend differences
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct PanelDimensions {
+    pub width: f64,
+    pub height: f64,
+    // These fields are only used by frontend for more detailed layout control
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_width: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_height: Option<f64>,
+}
+
+impl Default for PanelDimensions {
+    fn default() -> Self {
+        Self {
+            width: 300.0,
+            height: 200.0,
+            min_width: None,
+            min_height: None,
+        }
+    }
+}
+
+impl PanelDimensions {
+    /// Create basic dimensions (backend usage)
+    pub fn new(width: f64, height: f64) -> Self {
+        Self {
+            width,
+            height,
+            min_width: None,
+            min_height: None,
+        }
+    }
+    
+    /// Create dimensions with constraints (frontend usage)
+    pub fn with_constraints(width: f64, height: f64, min_width: f64, min_height: f64) -> Self {
+        Self {
+            width,
+            height,
+            min_width: Some(min_width),
+            min_height: Some(min_height),
+        }
+    }
+    
+    /// Convert to basic dimensions for backend compatibility
+    pub fn to_basic(&self) -> (f64, f64) {
+        (self.width, self.height)
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
 pub struct AppConfig {
     pub app: AppSection,
@@ -174,22 +295,6 @@ impl AppSection {
         }
     }
     
-    /// Check if this config needs migration to current version
-    pub fn needs_migration(&self) -> bool {
-        self.version != Self::CURRENT_VERSION
-    }
-    
-    /// Get migration path for unsupported versions
-    pub fn get_migration_strategy(&self) -> MigrationStrategy {
-        match self.version.as_str() {
-            "1.0.0" => MigrationStrategy::None,
-            // Future versions would be handled here:
-            // "0.9.0" => MigrationStrategy::Upgrade("0.9.0 -> 1.0.0"),
-            // When updating CURRENT_VERSION to "1.1.0", add:
-            // "1.0.0" => MigrationStrategy::Upgrade("1.0.0 -> 1.1.0"),
-            _ => MigrationStrategy::Recreate,
-        }
-    }
 }
 
 impl Default for AppSection {
@@ -200,16 +305,11 @@ impl Default for AppSection {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum MigrationStrategy {
-    None,                    // No migration needed
-    Upgrade(String),         // Automatic upgrade with description
-    Recreate,               // Unknown version, create new config
-}
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct UiSection {
-    pub theme: String,
+    #[serde(default, deserialize_with = "deserialize_theme")]
+    pub theme: Theme,
     #[serde(default = "default_toast_dismiss_ms")]
     pub toast_dismiss_ms: u64,
 }
@@ -221,23 +321,42 @@ fn default_toast_dismiss_ms() -> u64 {
 impl Default for UiSection {
     fn default() -> Self {
         Self {
-            theme: "dark".to_string(),
+            theme: Theme::Dark,
             toast_dismiss_ms: 10000, // Default 10 seconds
         }
     }
 }
 
+// Custom deserializer for theme with backward compatibility
+fn deserialize_theme<'de, D>(deserializer: D) -> Result<Theme, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::Error;
+    let s = String::deserialize(deserializer)?;
+    Theme::from_str(&s).map_err(D::Error::custom)
+}
+
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct WorkspaceSection {
+    #[serde(default)]
     pub opened_files: Vec<String>,
-    pub dock_mode: String,
+    #[serde(default, deserialize_with = "deserialize_dock_mode")]
+    pub dock_mode: DockMode,
+    #[serde(default)]
     pub expanded_scopes: Vec<String>,
+    #[serde(default)]
     pub load_files_expanded_directories: Vec<String>,
+    #[serde(default)]
     pub selected_scope_id: Option<String>,
-    pub docked_to_bottom: DockedToBottomLayout,
-    pub docked_to_right: DockedToRightLayout,
+    #[serde(default)]
+    pub panel_dimensions_bottom: PanelDimensions,
+    #[serde(default)]
+    pub panel_dimensions_right: PanelDimensions,
+    #[serde(default)]
     pub load_files_scroll_position: i32,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub variables_search_filter: String,
 }
 
@@ -245,28 +364,112 @@ impl Default for WorkspaceSection {
     fn default() -> Self {
         Self {
             opened_files: Vec::new(),
-            dock_mode: "right".to_string(),
+            dock_mode: DockMode::Right,
             expanded_scopes: Vec::new(),
             load_files_expanded_directories: Vec::new(),
             selected_scope_id: None,
-            docked_to_bottom: Default::default(),
-            docked_to_right: Default::default(),
+            panel_dimensions_bottom: PanelDimensions::new(1400.0, 600.0), // Wide layout for bottom dock
+            panel_dimensions_right: PanelDimensions::new(400.0, 300.0),   // Tall layout for right dock
             load_files_scroll_position: 0,
             variables_search_filter: String::new(),
         }
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
-pub struct DockedToBottomLayout {
-    pub files_panel_width: f64,
-    pub files_panel_height: f64,
+// Custom deserializer for dock mode with backward compatibility
+fn deserialize_dock_mode<'de, D>(deserializer: D) -> Result<DockMode, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::Error;
+    let s = String::deserialize(deserializer)?;
+    DockMode::from_str(&s).map_err(D::Error::custom)
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
-pub struct DockedToRightLayout {
-    pub files_panel_width: f64,
-    pub files_panel_height: f64,
+
+impl WorkspaceSection {
+    /// Get current panel dimensions for the active dock mode
+    pub fn get_panel_dimensions(&self) -> &PanelDimensions {
+        match self.dock_mode {
+            DockMode::Bottom => &self.panel_dimensions_bottom,
+            DockMode::Right => &self.panel_dimensions_right,
+        }
+    }
+    
+    /// Update panel dimensions for the current dock mode
+    pub fn set_panel_dimensions(&mut self, dimensions: PanelDimensions) {
+        match self.dock_mode {
+            DockMode::Bottom => self.panel_dimensions_bottom = dimensions,
+            DockMode::Right => self.panel_dimensions_right = dimensions,
+        }
+    }
+
+    /// Get panel dimensions for a specific dock mode
+    pub fn get_panel_dimensions_for_mode(&self, dock_mode: DockMode) -> &PanelDimensions {
+        match dock_mode {
+            DockMode::Bottom => &self.panel_dimensions_bottom,
+            DockMode::Right => &self.panel_dimensions_right,
+        }
+    }
+
+    /// Update panel dimensions for a specific dock mode
+    pub fn set_panel_dimensions_for_mode(&mut self, dock_mode: DockMode, dimensions: PanelDimensions) {
+        match dock_mode {
+            DockMode::Bottom => self.panel_dimensions_bottom = dimensions,
+            DockMode::Right => self.panel_dimensions_right = dimensions,
+        }
+    }
+}
+
+// Validation methods for config integrity
+impl AppConfig {
+    /// Validate the entire configuration and fix any inconsistencies
+    pub fn validate_and_fix(&mut self) -> Vec<String> {
+        let mut warnings = Vec::new();
+        
+        // Validate theme
+        // Theme validation is handled by the custom deserializer
+        
+        // Validate dock mode
+        // Dock mode validation is handled by the custom deserializer
+        
+        // Validate panel dimensions for both dock modes
+        if self.workspace.panel_dimensions_bottom.width < 50.0 {
+            warnings.push("Bottom dock panel width too small, setting to minimum 50px".to_string());
+            self.workspace.panel_dimensions_bottom.width = 50.0;
+        }
+        if self.workspace.panel_dimensions_bottom.height < 50.0 {
+            warnings.push("Bottom dock panel height too small, setting to minimum 50px".to_string());
+            self.workspace.panel_dimensions_bottom.height = 50.0;
+        }
+        if self.workspace.panel_dimensions_right.width < 50.0 {
+            warnings.push("Right dock panel width too small, setting to minimum 50px".to_string());
+            self.workspace.panel_dimensions_right.width = 50.0;
+        }
+        if self.workspace.panel_dimensions_right.height < 50.0 {
+            warnings.push("Right dock panel height too small, setting to minimum 50px".to_string());
+            self.workspace.panel_dimensions_right.height = 50.0;
+        }
+        
+        // Validate toast dismiss time
+        if self.ui.toast_dismiss_ms < 1000 {
+            warnings.push("Toast dismiss time too short, setting to minimum 1 second".to_string());
+            self.ui.toast_dismiss_ms = 1000;
+        }
+        if self.ui.toast_dismiss_ms > 300000 {
+            warnings.push("Toast dismiss time too long, setting to maximum 5 minutes".to_string());
+            self.ui.toast_dismiss_ms = 300000;
+        }
+        
+        warnings
+    }
+    
+    /// Create a config with validation applied
+    pub fn new_validated() -> Self {
+        let mut config = Self::default();
+        let _warnings = config.validate_and_fix();
+        config
+    }
 }
 
 // ===== UTILITY FUNCTIONS =====
@@ -467,4 +670,79 @@ pub fn get_file_extension(path: &str) -> Option<String> {
         .extension()
         .and_then(|ext| ext.to_str())
         .map(|ext| ext.to_lowercase())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    #[test]
+    fn test_theme_serialization() {
+        // Test enum serialization
+        assert_eq!(serde_json::to_string(&Theme::Dark).unwrap(), "\"dark\"");
+        assert_eq!(serde_json::to_string(&Theme::Light).unwrap(), "\"light\"");
+        
+        // Test enum deserialization
+        assert_eq!(serde_json::from_str::<Theme>("\"dark\"").unwrap(), Theme::Dark);
+        assert_eq!(serde_json::from_str::<Theme>("\"light\"").unwrap(), Theme::Light);
+        
+        // Test case insensitive deserialization via custom deserializer
+        let ui_section: UiSection = serde_json::from_str(r#"{"theme": "DARK"}"#).unwrap();
+        assert_eq!(ui_section.theme, Theme::Dark);
+    }
+    
+    #[test]
+    fn test_dock_mode_serialization() {
+        // Test enum serialization
+        assert_eq!(serde_json::to_string(&DockMode::Right).unwrap(), "\"right\"");
+        assert_eq!(serde_json::to_string(&DockMode::Bottom).unwrap(), "\"bottom\"");
+        
+        // Test enum deserialization
+        assert_eq!(serde_json::from_str::<DockMode>("\"right\"").unwrap(), DockMode::Right);
+        assert_eq!(serde_json::from_str::<DockMode>("\"bottom\"").unwrap(), DockMode::Bottom);
+    }
+    
+    #[test]
+    fn test_panel_dimensions_serialization() {
+        let dims = PanelDimensions::new(300.0, 200.0);
+        let json = serde_json::to_string(&dims).unwrap();
+        let deserialized: PanelDimensions = serde_json::from_str(&json).unwrap();
+        assert_eq!(dims, deserialized);
+        
+        // Test that optional fields are omitted when None (skip_serializing_if works)
+        let basic_json = serde_json::to_value(&dims).unwrap();
+        // When skip_serializing_if = "Option::is_none", the fields are omitted entirely
+        assert!(!basic_json.as_object().unwrap().contains_key("min_width"));
+        assert!(!basic_json.as_object().unwrap().contains_key("min_height"));
+        
+        // Test with constraints - fields should be present
+        let dims_with_constraints = PanelDimensions::with_constraints(400.0, 300.0, 100.0, 80.0);
+        let json_with_constraints = serde_json::to_value(&dims_with_constraints).unwrap();
+        assert!(json_with_constraints.as_object().unwrap().contains_key("min_width"));
+        assert!(json_with_constraints.as_object().unwrap().contains_key("min_height"));
+        assert_eq!(json_with_constraints["min_width"], 100.0);
+        assert_eq!(json_with_constraints["min_height"], 80.0);
+    }
+    
+    
+    #[test]
+    fn test_config_validation() {
+        let mut config = AppConfig::default();
+        
+        // Set invalid values
+        config.workspace.panel_dimensions.width = 10.0; // Too small
+        config.workspace.panel_dimensions.height = 10.0; // Too small
+        config.ui.toast_dismiss_ms = 500; // Too short
+        
+        let warnings = config.validate_and_fix();
+        
+        // Check that values were fixed
+        assert_eq!(config.workspace.panel_dimensions.width, 50.0);
+        assert_eq!(config.workspace.panel_dimensions.height, 50.0);
+        assert_eq!(config.ui.toast_dismiss_ms, 1000);
+        
+        // Check that warnings were generated
+        assert_eq!(warnings.len(), 3);
+    }
+    
 }

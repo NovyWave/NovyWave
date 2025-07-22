@@ -4,7 +4,7 @@ use moonzoon_novyui::*;
 use moonzoon_novyui::tokens::theme::{Theme, toggle_theme, theme};
 use moonzoon_novyui::tokens::color::{neutral_1, neutral_2, neutral_4, neutral_8, neutral_9, neutral_10, neutral_11, neutral_12, primary_3, primary_6, primary_7};
 use shared::{ScopeData, filter_variables, UpMsg, TrackedFile};
-use crate::types::{get_variables_from_selected_scope};
+use crate::types::get_variables_from_tracked_files;
 use crate::virtual_list::virtual_variables_list;
 use crate::config;
 use std::collections::{HashSet, HashMap};
@@ -306,7 +306,7 @@ pub fn variables_panel() -> impl Element {
                                     let search_filter = VARIABLES_SEARCH_FILTER.signal_cloned() =>
                                     {
                                         if let Some(scope_id) = selected_scope_id {
-                                            let variables = get_variables_from_selected_scope(&scope_id);
+                                            let variables = get_variables_from_tracked_files(&scope_id);
                                             let filtered_variables = filter_variables(&variables, &search_filter);
                                             filtered_variables.len().to_string()
                                         } else {
@@ -742,7 +742,7 @@ fn simple_variables_content() -> impl Element {
                         let search_filter = VARIABLES_SEARCH_FILTER.signal_cloned() =>
                         {
                             if let Some(scope_id) = selected_scope_id {
-                                let variables = get_variables_from_selected_scope(&scope_id);
+                                let variables = get_variables_from_tracked_files(&scope_id);
                                 virtual_variables_list(variables, search_filter.clone()).into_element()
                             } else {
                                 virtual_variables_list(Vec::new(), "Select a scope to view variables".to_string()).into_element()
