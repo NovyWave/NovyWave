@@ -743,15 +743,15 @@ fn sync_expanded_scopes_from_config() {
     }
 }
 
-// Manual sync function to convert load_files_expanded_directories from Vec<String> to HashSet<String>
+// Manual sync function to convert load_files_expanded_directories from Vec<String> to IndexSet<String>
 fn sync_load_files_expanded_directories_from_config() {
     use crate::state::FILE_PICKER_EXPANDED;
-    use std::collections::HashSet;
+    use indexmap::IndexSet;
     
     let expanded_vec = config_store().workspace.lock_ref().load_files_expanded_directories.lock_ref().to_vec();
     
     // In WASM, trust the backend-validated directories (no filesystem access)
-    let new_expanded_set: HashSet<String> = expanded_vec.into_iter().collect();
+    let new_expanded_set: IndexSet<String> = expanded_vec.into_iter().collect();
     
     
     // Apply the complete set atomically to prevent reactive race conditions
@@ -963,7 +963,7 @@ pub fn sync_globals_to_config() {
         }).await
     });
 
-    // Sync load files expanded directories back to config (convert HashSet to Vec)
+    // Sync load files expanded directories back to config (convert IndexSet to Vec)
     Task::start(async {
         FILE_PICKER_EXPANDED.signal_ref(|expanded_set| {
             expanded_set.clone()

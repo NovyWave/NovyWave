@@ -1007,7 +1007,7 @@ fn simple_file_picker_tree() -> impl Element {
                 let error_cache = FILE_PICKER_ERROR_CACHE.signal_cloned(),
                 let expanded = FILE_PICKER_EXPANDED.signal_cloned() =>
                 move {
-                    monitor_directory_expansions(expanded.clone());
+                    monitor_directory_expansions(expanded.iter().cloned().collect::<HashSet<_>>());
                     
                     // Check if we have root directory data
                     if let Some(_root_items) = tree_cache.get("/") {

@@ -1,6 +1,6 @@
 use zoon::*;
-use std::collections::{HashMap, HashSet};
-use indexmap::IndexMap;
+use std::collections::HashMap;
+use indexmap::{IndexMap, IndexSet};
 use shared::{WaveformFile, LoadingFile, FileSystemItem, TrackedFile, FileState, create_tracked_file, update_smart_labels};
 
 // Panel resizing state
@@ -23,7 +23,7 @@ pub static FILE_PATHS_INPUT: Lazy<Mutable<String>> = lazy::default();
 pub static DOCK_TOGGLE_IN_PROGRESS: Lazy<Mutable<bool>> = lazy::default();
 
 // File picker state for TreeView-based browser
-pub static FILE_PICKER_EXPANDED: Lazy<Mutable<HashSet<String>>> = lazy::default();
+pub static FILE_PICKER_EXPANDED: Lazy<Mutable<IndexSet<String>>> = lazy::default();
 pub static FILE_PICKER_SELECTED: Lazy<MutableVec<String>> = lazy::default();
 pub static CURRENT_DIRECTORY: Lazy<Mutable<String>> = lazy::default();
 pub static FILE_PICKER_ERROR: Lazy<Mutable<Option<String>>> = lazy::default();
@@ -52,11 +52,11 @@ pub static LOADED_FILES: Lazy<MutableVec<WaveformFile>> = lazy::default();
 pub static FILE_PATHS: Lazy<Mutable<IndexMap<String, String>>> = lazy::default();
 
 pub static SELECTED_SCOPE_ID: Lazy<Mutable<Option<String>>> = lazy::default();
-pub static TREE_SELECTED_ITEMS: Lazy<Mutable<HashSet<String>>> = lazy::default(); // UI state only - not persisted
+pub static TREE_SELECTED_ITEMS: Lazy<Mutable<IndexSet<String>>> = lazy::default(); // UI state only - not persisted
 pub static USER_CLEARED_SELECTION: Lazy<Mutable<bool>> = lazy::default(); // Flag to prevent unwanted restoration
 
 // Track expanded scopes for TreeView persistence
-pub static EXPANDED_SCOPES: Lazy<Mutable<HashSet<String>>> = lazy::default();
+pub static EXPANDED_SCOPES: Lazy<Mutable<IndexSet<String>>> = lazy::default();
 
 // ===== ERROR DISPLAY SYSTEM =====
 

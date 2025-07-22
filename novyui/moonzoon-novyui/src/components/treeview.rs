@@ -1,7 +1,7 @@
 use zoon::*;
 use crate::tokens::*;
 use crate::components::*;
-use std::collections::HashSet;
+use indexmap::IndexSet;
 // Force recompilation to test hover remove buttons
 
 // Tree node data structure matching Vue TreeViewItemData interface
@@ -137,8 +137,8 @@ pub struct TreeViewBuilder {
     aria_label: Option<String>,
     default_expanded: Vec<String>,
     default_selected: Vec<String>,
-    external_expanded: Option<Mutable<HashSet<String>>>,
-    external_selected: Option<Mutable<HashSet<String>>>,
+    external_expanded: Option<Mutable<IndexSet<String>>>,
+    external_selected: Option<Mutable<IndexSet<String>>>,
     external_selected_vec: Option<MutableVec<String>>,
 }
 
@@ -211,12 +211,12 @@ impl TreeViewBuilder {
         self
     }
 
-    pub fn external_expanded(mut self, expanded: Mutable<HashSet<String>>) -> Self {
+    pub fn external_expanded(mut self, expanded: Mutable<IndexSet<String>>) -> Self {
         self.external_expanded = Some(expanded);
         self
     }
 
-    pub fn external_selected(mut self, selected: Mutable<HashSet<String>>) -> Self {
+    pub fn external_selected(mut self, selected: Mutable<IndexSet<String>>) -> Self {
         self.external_selected = Some(selected);
         self
     }
@@ -231,42 +231,42 @@ impl TreeViewBuilder {
         let expanded_items = if let Some(external) = self.external_expanded {
             external
         } else {
-            Mutable::new(HashSet::from_iter(self.default_expanded.clone()))
+            Mutable::new(IndexSet::from_iter(self.default_expanded.clone()))
         };
 
         let selected_items = if let Some(external) = self.external_selected {
             external
         } else if let Some(external_vec) = self.external_selected_vec {
             // Create a bridge that syncs bidirectionally between MutableVec and HashSet
-            let bridge_hashset = Mutable::new(HashSet::new());
+            let bridge_indexset = Mutable::new(IndexSet::new());
             
             // Initialize from current MutableVec content
             {
-                let current_items: HashSet<String> = external_vec.lock_ref().iter().cloned().collect();
-                bridge_hashset.set(current_items);
+                let current_items: IndexSet<String> = external_vec.lock_ref().iter().cloned().collect();
+                bridge_indexset.set(current_items);
             }
             
             // Sync changes from MutableVec to HashSet
-            let sync_vec_to_hashset = external_vec.clone();
-            let sync_hashset_to_update = bridge_hashset.clone();
+            let sync_vec_to_indexset = external_vec.clone();
+            let sync_indexset_to_update = bridge_indexset.clone();
             Task::start(async move {
-                sync_vec_to_hashset.signal_vec_cloned().to_signal_map(|vec| vec.iter().cloned().collect::<HashSet<String>>()).for_each_sync(move |new_set| {
-                    let current_hashset = sync_hashset_to_update.get_cloned();
+                sync_vec_to_indexset.signal_vec_cloned().to_signal_map(|vec| vec.iter().cloned().collect::<IndexSet<String>>()).for_each_sync(move |new_set| {
+                    let current_indexset = sync_indexset_to_update.get_cloned();
                     
                     // Only update if different to avoid infinite loops
-                    if current_hashset != new_set {
-                        sync_hashset_to_update.set_neq(new_set);
+                    if current_indexset != new_set {
+                        sync_indexset_to_update.set_neq(new_set);
                     }
                 }).await;
             });
             
             // Sync changes from HashSet back to MutableVec
             let sync_vec_back = external_vec.clone();
-            let sync_hashset_back = bridge_hashset.clone();
+            let sync_indexset_back = bridge_indexset.clone();
             Task::start(async move {
-                sync_hashset_back.signal_ref(|set| set.clone()).for_each_sync(move |new_set| {
+                sync_indexset_back.signal_ref(|set| set.clone()).for_each_sync(move |new_set| {
                     let mut vec_lock = sync_vec_back.lock_mut();
-                    let current_vec_items: HashSet<String> = vec_lock.iter().cloned().collect();
+                    let current_vec_items: IndexSet<String> = vec_lock.iter().cloned().collect();
                     
                     // Only update if different to avoid infinite loops
                     if current_vec_items != new_set {
@@ -276,9 +276,9 @@ impl TreeViewBuilder {
                 }).await;
             });
             
-            bridge_hashset
+            bridge_indexset
         } else {
-            Mutable::new(HashSet::from_iter(self.default_selected.clone()))
+            Mutable::new(IndexSet::from_iter(self.default_selected.clone()))
         };
 
         let focused_item = Mutable::new(None::<String>);
@@ -385,8 +385,8 @@ fn render_tree_item(
     show_checkboxes: bool,
     single_scope_selection: bool,
     tree_disabled: bool,
-    expanded_items: Mutable<HashSet<String>>,
-    selected_items: Mutable<HashSet<String>>,
+    expanded_items: Mutable<IndexSet<String>>,
+    selected_items: Mutable<IndexSet<String>>,
     focused_item: Mutable<Option<String>>,
 ) -> impl Element {
     let item_id = item.id.clone();
@@ -507,7 +507,7 @@ fn render_tree_item(
                             if !is_disabled {
                                 let mut expanded = expanded_items.lock_mut();
                                 if expanded.contains(&item_id) {
-                                    expanded.remove(&item_id);
+                                    expanded.shift_remove(&item_id);
                                 } else {
                                     expanded.insert(item_id.clone());
                                 }
@@ -591,7 +591,7 @@ fn render_tree_item(
                                             if single_scope_selection {
                                                 if selected.contains(&item_id) {
                                                     // Deselect this scope
-                                                    selected.remove(&item_id);
+                                                    selected.shift_remove(&item_id);
                                                 } else {
                                                     // Clear all other scope selections and select this one (radio button behavior)
                                                     selected.retain(|id| !id.contains("_scope_"));
@@ -600,7 +600,7 @@ fn render_tree_item(
                                             } else {
                                                 // Regular multi-select behavior for scopes
                                                 if selected.contains(&item_id) {
-                                                    selected.remove(&item_id);
+                                                    selected.shift_remove(&item_id);
                                                 } else {
                                                     selected.insert(item_id.clone());
                                                 }
@@ -608,7 +608,7 @@ fn render_tree_item(
                                         } else {
                                             // Regular checkbox behavior for non-scope items
                                             if selected.contains(&item_id) {
-                                                selected.remove(&item_id);
+                                                selected.shift_remove(&item_id);
                                             } else {
                                                 selected.insert(item_id.clone());
                                             }
@@ -861,7 +861,7 @@ fn render_tree_item(
                                     if single_scope_selection {
                                         if selected.contains(&item_id) {
                                             // Deselect this scope
-                                            selected.remove(&item_id);
+                                            selected.shift_remove(&item_id);
                                         } else {
                                             // Clear all other scope selections and select this one (radio button behavior)
                                             selected.retain(|id| !id.contains("_scope_"));
@@ -870,7 +870,7 @@ fn render_tree_item(
                                     } else {
                                         // Regular multi-select behavior for scopes
                                         if selected.contains(&item_id) {
-                                            selected.remove(&item_id);
+                                            selected.shift_remove(&item_id);
                                         } else {
                                             selected.insert(item_id.clone());
                                         }
@@ -878,7 +878,7 @@ fn render_tree_item(
                                 } else {
                                     // Regular checkbox behavior for non-scope leaf items
                                     if selected.contains(&item_id) {
-                                        selected.remove(&item_id);
+                                        selected.shift_remove(&item_id);
                                     } else {
                                         selected.insert(item_id.clone());
                                     }
@@ -903,7 +903,7 @@ fn render_tree_item(
                     // Handle expansion/collapse for items with children
                     let mut expanded = expanded_items.lock_mut();
                     if expanded.contains(&item_id) {
-                        expanded.remove(&item_id);
+                        expanded.shift_remove(&item_id);
                     } else {
                         expanded.insert(item_id.clone());
                     }

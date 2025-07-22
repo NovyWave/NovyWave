@@ -2575,14 +2575,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "jwalk_benchmark"
-version = "0.1.0"
-dependencies = [
- "jwalk",
- "tokio",
-]
-
-[[package]]
 name = "keyboard-types"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2933,6 +2925,7 @@ dependencies = [
 name = "moonzoon-novyui"
 version = "0.1.0"
 dependencies = [
+ "indexmap 2.7.1",
  "zoon",
 ]
 
