@@ -1,81 +1,18 @@
 # NovyWave
 
-A cross-platform application for web browsers and desktop.
+NovyWave is an open-source waveform viewer designed as a modern alternative to GTKWave. 
 
-## Prerequisites
-
-1. Install Rust: https://www.rust-lang.org/tools/install
-2. Install cargo-make: `cargo install cargo-make`
-3. For Tauri mode: Install Tauri prerequisites from https://v2.tauri.app/start/prerequisites/
+This cross-platform desktop application is suitable for both professionals and beginners, offering simple installation and a strong focus on user experience. Its goal is to boost productivity and satisfaction among current hardware developers while also attracting new developers and students to the hardware design ecosystem. NovyWave is built on fast and reliable Rust libraries and leverages well-proven web technologies to ensure a consistent look, accessibility, design flexibility, and safe user extensibility via WebAssembly plugins.
 
 ## Installation
 
-```bash
-makers install
-```
+For detailed installation and setup instructions, see [INSTALLATION.md](INSTALLATION.md).
 
-This will install all necessary dependencies for both browser and Tauri modes.
+Questions ▷ martin@kavik.cz
 
-## Running the Application
+## Funding
 
-### Browser Mode
+This project is funded through [NGI Zero Core](https://nlnet.nl/core), a fund established by [NLnet](https://nlnet.nl) with financial support from the European Commission's [Next Generation Internet](https://ngi.eu) program. Learn more at the [NLnet project page](https://nlnet.nl/project/NovyWave).
 
-For development with auto-reload:
-```bash
-makers start
-```
-
-To start and automatically open in browser:
-```bash
-makers open
-```
-
-The app will be available at http://localhost:8080
-
-### Desktop Mode (Tauri)
-
-For development:
-```bash
-makers tauri
-```
-
-To build a production desktop app:
-```bash
-makers tauri-build
-```
-
-## Building
-
-### Browser Build
-```bash
-makers build
-```
-
-### Desktop Build
-```bash
-makers tauri-build
-```
-
-## Features
-
-Three visual examples:
-
-1. **Simple Rectangle** - Basic shape rendering with text overlay
-2. **Face with Hat** - Complex composition using circles, rectangles, and lines
-3. **Sine Wave** - Mathematical visualization with dynamic point generation
-
-## Project Structure
-
-- `frontend/` - Rust/WASM frontend code (shared between browser and Tauri)
-- `backend/` - MoonZoon backend for browser mode
-- `src-tauri/` - Tauri-specific configuration and entry point
-- `public/` - Static assets (fonts)
-- `shared/` - Code shared between frontend and backend
-
-## Clean Build Artifacts
-
-```bash
-makers clean
-```
-
-This will clean all build artifacts from both MoonZoon and Tauri.
+[<img src="https://nlnet.nl/logo/banner.png" alt="NLnet foundation logo" width="20%" />](https://nlnet.nl)
+[<img src="https://nlnet.nl/image/logos/NGI0_tag.svg" alt="NGI Zero Logo" width="20%" />](https://nlnet.nl/core)

@@ -24,6 +24,7 @@ mzoon
 
 # Development server PID file
 .novywave.pid
+dev_server.lock
 
 # Tauri files
 tauri

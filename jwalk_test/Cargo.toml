@@ -1,9 +1,0 @@
-[package]
-name = "jwalk_benchmark"
-version.workspace = true
-edition.workspace = true
-publish.workspace = true
-
-[dependencies]
-jwalk = "0.8"
-tokio = { version = "1.0", features = ["full"] }
