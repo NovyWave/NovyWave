@@ -132,6 +132,7 @@ pub struct TreeViewBuilder {
     variant: TreeViewVariant,
     show_icons: bool,
     show_checkboxes: bool,
+    show_checkboxes_on_scopes_only: bool,
     single_scope_selection: bool,
     disabled: bool,
     aria_label: Option<String>,
@@ -150,6 +151,7 @@ impl TreeViewBuilder {
             variant: TreeViewVariant::Basic,
             show_icons: true,
             show_checkboxes: false,
+            show_checkboxes_on_scopes_only: false,
             single_scope_selection: false,
             disabled: false,
             aria_label: None,
@@ -183,6 +185,11 @@ impl TreeViewBuilder {
 
     pub fn show_checkboxes(mut self, show_checkboxes: bool) -> Self {
         self.show_checkboxes = show_checkboxes;
+        self
+    }
+
+    pub fn show_checkboxes_on_scopes_only(mut self, show_checkboxes_on_scopes_only: bool) -> Self {
+        self.show_checkboxes_on_scopes_only = show_checkboxes_on_scopes_only;
         self
     }
 
@@ -288,6 +295,7 @@ impl TreeViewBuilder {
         let variant = self.variant;
         let show_icons = self.show_icons;
         let show_checkboxes = self.show_checkboxes;
+        let show_checkboxes_on_scopes_only = self.show_checkboxes_on_scopes_only;
         let single_scope_selection = self.single_scope_selection;
         let disabled = self.disabled;
         let aria_label = self.aria_label.unwrap_or_else(|| "Tree".to_string());
@@ -321,6 +329,7 @@ impl TreeViewBuilder {
                                     variant,
                                     show_icons,
                                     show_checkboxes,
+                                    show_checkboxes_on_scopes_only,
                                     single_scope_selection,
                                     disabled,
                                     expanded_items.clone(),
@@ -383,6 +392,7 @@ fn render_tree_item(
     variant: TreeViewVariant,
     show_icons: bool,
     show_checkboxes: bool,
+    show_checkboxes_on_scopes_only: bool,
     single_scope_selection: bool,
     tree_disabled: bool,
     expanded_items: Mutable<IndexSet<String>>,
@@ -447,7 +457,7 @@ fn render_tree_item(
             Row::new()
                 .s(Height::exact(min_height))
                 .s(Width::fill())
-                .s(Gap::new().x(SPACING_2))
+                .s(Gap::new().x(SPACING_4))
                 .s(Align::new().center_y())
         // Indentation spacer
         .item(
@@ -532,30 +542,36 @@ fn render_tree_item(
                 let selected_items = selected_items.clone();
                 move |is_selected| {
                     // Show checkboxes based on user requirements:
-                // Files & Scopes: NO checkboxes for files, YES checkboxes for scopes and signals
-                // File picker: Only checkboxes for waveform files
                 let should_show_checkbox = show_checkboxes && !is_disabled && 
-                    if item_id.contains("_scope_") {
-                        // Scopes: YES checkboxes (e.g., "file_xxx_scope_1")
-                        true
-                    } else if matches!(item.item_type, Some(TreeViewItemType::Folder)) {
-                        // Folders: NO checkboxes for scopes (they're handled above), but could be file picker dirs
-                        false
-                    } else if matches!(item.item_type, Some(TreeViewItemType::File)) {
-                        // Files: different logic based on context
-                        if item_id.starts_with("file_") && !item_id.contains("_scope_") {
-                            // Top-level waveform files: NO checkboxes (e.g., "file_71a2908980aee1d")
-                            false
-                        } else if item_id.starts_with("/") {
-                            // File picker paths: use proper is_waveform_file field instead of extension checking
-                            item.is_waveform_file.unwrap_or(false)
-                        } else {
-                            // Signals in Files & Scopes: YES checkboxes (e.g., "A", "B")
-                            true
-                        }
+                    if show_checkboxes_on_scopes_only {
+                        // Show checkboxes on scopes and variables, but NOT on waveform files
+                        // Waveform files have is_waveform_file = true OR item_type = File
+                        !item.is_waveform_file.unwrap_or(false) && 
+                        !matches!(item.item_type, Some(TreeViewItemType::File))
                     } else {
-                        // Other types: NO checkboxes
-                        false
+                        // Original logic for backwards compatibility
+                        if item_id.starts_with("scope_") {
+                            // Scopes: YES checkboxes (e.g., "scope_simple_tb")
+                            true
+                        } else if matches!(item.item_type, Some(TreeViewItemType::Folder)) {
+                            // Folders: NO checkboxes for scopes (they're handled above), but could be file picker dirs
+                            false
+                        } else if matches!(item.item_type, Some(TreeViewItemType::File)) {
+                            // Files: different logic based on context
+                            if item_id.starts_with("file_") && !item_id.starts_with("scope_") {
+                                // Top-level waveform files: NO checkboxes (e.g., "file_71a2908980aee1d")
+                                false
+                            } else if item_id.starts_with("/") {
+                                // File picker paths: use proper is_waveform_file field instead of extension checking
+                                item.is_waveform_file.unwrap_or(false)
+                            } else {
+                                // Signals in Files & Scopes: YES checkboxes (e.g., "A", "B")
+                                true
+                            }
+                        } else {
+                            // Other types: NO checkboxes
+                            false
+                        }
                     };
                 
                 if should_show_checkbox {
@@ -586,7 +602,8 @@ fn render_tree_item(
                                         let mut selected = selected_items.lock_mut();
                                         
                                         // Handle scope selection logic for checkbox clicks
-                                        if item_id.contains("_scope_") {
+                                        if item_id.starts_with("scope_") {
+                                            zoon::println!("Checkbox clicked for scope: {}, single_scope_selection: {}", item_id, single_scope_selection);
                                             // Special handling for scopes when single_scope_selection is enabled
                                             if single_scope_selection {
                                                 if selected.contains(&item_id) {
@@ -594,8 +611,10 @@ fn render_tree_item(
                                                     selected.shift_remove(&item_id);
                                                 } else {
                                                     // Clear all other scope selections and select this one (radio button behavior)
-                                                    selected.retain(|id| !id.contains("_scope_"));
+                                                    zoon::println!("Clearing other scope selections and selecting: {}", item_id);
+                                                    selected.retain(|id| !id.starts_with("scope_"));
                                                     selected.insert(item_id.clone());
+                                                    zoon::println!("Selected items after single scope selection: {:?}", selected.iter().collect::<Vec<_>>());
                                                 }
                                             } else {
                                                 // Regular multi-select behavior for scopes
@@ -631,7 +650,7 @@ fn render_tree_item(
                 if show {
                     // Check if this is a Files & Scope item (no folder icons for these)
                     let is_files_and_scope_item = item_id.starts_with("file_") || 
-                                                  item_id.contains("_scope_") ||
+                                                  item_id.starts_with("scope_") ||
                                                   (!item_id.starts_with("/") && matches!(item.item_type, Some(TreeViewItemType::File)));
                     
                     let icon_name = if let Some(icon) = &item.icon {
@@ -847,16 +866,16 @@ fn render_tree_item(
                             // Always set focus when clicking a label
                             focused_item.set(Some(item_id.clone()));
 
-                            // Only handle selection logic for leaf items with checkboxes
+                            // Handle selection logic for scope items (regardless of children) or leaf items with checkboxes
                             // and prevent bubbling only in that case
-                            if !has_children && show_checkboxes {
+                            if show_checkboxes && (item_id.starts_with("scope_") || !has_children) {
                                 // Prevent event from bubbling up for selection handling
                                 event.pass_to_parent(false);
                                 // Leaf items with checkboxes: handle selection (same logic as checkbox)
                                 let mut selected = selected_items.lock_mut();
                                 
                                 // Handle scope selection logic for label clicks on leaf items
-                                if item_id.contains("_scope_") {
+                                if item_id.starts_with("scope_") {
                                     // Special handling for scopes when single_scope_selection is enabled
                                     if single_scope_selection {
                                         if selected.contains(&item_id) {
@@ -864,7 +883,7 @@ fn render_tree_item(
                                             selected.shift_remove(&item_id);
                                         } else {
                                             // Clear all other scope selections and select this one (radio button behavior)
-                                            selected.retain(|id| !id.contains("_scope_"));
+                                            selected.retain(|id| !id.starts_with("scope_"));
                                             selected.insert(item_id.clone());
                                         }
                                     } else {
@@ -1001,6 +1020,7 @@ fn render_tree_item(
                                         variant,
                                         show_icons,
                                         show_checkboxes,
+                                        show_checkboxes_on_scopes_only,
                                         single_scope_selection,
                                         tree_disabled,
                                         expanded_items.clone(),

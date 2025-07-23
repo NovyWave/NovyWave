@@ -10,18 +10,18 @@ toast_dismiss_ms = 10000
 
 [workspace]
 opened_files = [
-    "/home/martinkavik/repos/NovyWave/test_files/big_3_GB.vcd",
     "/home/martinkavik/repos/NovyWave/test_files/nested_dir/wave_27.fst",
     "/home/martinkavik/repos/NovyWave/test_files/simple.vcd",
 ]
 dock_mode = "right"
 expanded_scopes = [
-    "file_b629bd1342bd28a8",
-    "file_b629bd1342bd28a8_scope_0",
-    "file_b629bd1342bd28a8_scope_1",
-    "file_7fda6450ec6eaf33_scope_0",
-    "file_a6c60492e35e1ecf_scope_0",
-    "file_a6c60492e35e1ecf_scope_1",
+    "simple_tb.s",
+    "simple.vcd",
+    "simple_tb",
+    "TOP",
+    "scope_simple_tb",
+    "wave_27.fst",
+    "scope_TOP",
 ]
 load_files_expanded_directories = [
     "/home/martinkavik/repos/NovyWave",
@@ -33,7 +33,7 @@ load_files_expanded_directories = [
     "/",
     "/home/martinkavik/repos/NovyWave/test_files/nested_dir",
 ]
-selected_scope_id = "file_b629bd1342bd28a8_scope_1"
+selected_scope_id = "TOP.VexiiRiscv"
 load_files_scroll_position = 861
 
 [workspace.panel_dimensions_bottom]
@@ -43,3 +43,93 @@ height = 455.0
 [workspace.panel_dimensions_right]
 width = 504.0
 height = 387.0
+
+[[workspace.selected_variables]]
+unique_id = "simple.vcd:simple_tb.s:A"
+file_name = "simple.vcd"
+scope_path = "simple_tb.s"
+variable_name = "A"
+variable_type = "Wire"
+variable_width = 4
+selected_at = 0
+
+[[workspace.selected_variables]]
+unique_id = "simple.vcd:simple_tb.s:B"
+file_name = "simple.vcd"
+scope_path = "simple_tb.s"
+variable_name = "B"
+variable_type = "Wire"
+variable_width = 4
+selected_at = 0
+
+[[workspace.selected_variables]]
+unique_id = "wave_27.fst:TOP.VexiiRiscv:AlignerPlugin_api_haltIt"
+file_name = "wave_27.fst"
+scope_path = "TOP.VexiiRiscv"
+variable_name = "AlignerPlugin_api_haltIt"
+variable_type = "Logic"
+variable_width = 1
+selected_at = 0
+
+[[workspace.selected_variables]]
+unique_id = "wave_27.fst:TOP.VexiiRiscv:AlignerPlugin_api_singleFetch"
+file_name = "wave_27.fst"
+scope_path = "TOP.VexiiRiscv"
+variable_name = "AlignerPlugin_api_singleFetch"
+variable_type = "Logic"
+variable_width = 1
+selected_at = 0
+
+[[workspace.selected_variables]]
+unique_id = "wave_27.fst:TOP.VexiiRiscv:AlignerPlugin_logic_buffer_data"
+file_name = "wave_27.fst"
+scope_path = "TOP.VexiiRiscv"
+variable_name = "AlignerPlugin_logic_buffer_data"
+variable_type = "Logic"
+variable_width = 64
+selected_at = 0
+
+[[workspace.selected_variables]]
+unique_id = "wave_27.fst:TOP.VexiiRiscv:AlignerPlugin_logic_buffer_trap"
+file_name = "wave_27.fst"
+scope_path = "TOP.VexiiRiscv"
+variable_name = "AlignerPlugin_logic_buffer_trap"
+variable_type = "Logic"
+variable_width = 1
+selected_at = 0
+
+[[workspace.selected_variables]]
+unique_id = "wave_27.fst:TOP.VexiiRiscv:AlignerPlugin_logic_buffer_pc"
+file_name = "wave_27.fst"
+scope_path = "TOP.VexiiRiscv"
+variable_name = "AlignerPlugin_logic_buffer_pc"
+variable_type = "Logic"
+variable_width = 32
+selected_at = 0
+
+[[workspace.selected_variables]]
+unique_id = "wave_27.fst:TOP:clk"
+file_name = "wave_27.fst"
+scope_path = "TOP"
+variable_name = "clk"
+variable_type = "Wire"
+variable_width = 1
+selected_at = 0
+
+[[workspace.selected_variables]]
+unique_id = "wave_27.fst:TOP:debugReset"
+file_name = "wave_27.fst"
+scope_path = "TOP"
+variable_name = "debugReset"
+variable_type = "Wire"
+variable_width = 1
+selected_at = 0
+
+[[workspace.selected_variables]]
+unique_id = "wave_27.fst:TOP:EmbeddedRiscvJtag_logic_jtag_tck"
+file_name = "wave_27.fst"
+scope_path = "TOP"
+variable_name = "EmbeddedRiscvJtag_logic_jtag_tck"
+variable_type = "Wire"
+variable_width = 1
+selected_at = 0

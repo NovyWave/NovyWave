@@ -52,7 +52,9 @@ pub fn restore_scope_selections_sequenced() {
                 UI_UPDATE_SEQUENCE.set(current_sequence + 1);
                 
                 // Restore TreeView selection to match the persisted scope
-                TREE_SELECTED_ITEMS.lock_mut().insert(scope_id_clone.clone());
+                // Convert scope ID to TreeView format (with "scope_" prefix)
+                let tree_id = format!("scope_{}", scope_id_clone);
+                TREE_SELECTED_ITEMS.lock_mut().insert(tree_id);
                 
                 // Re-trigger SELECTED_SCOPE_ID signal to update variables panel
                 SELECTED_SCOPE_ID.set(Some(scope_id_clone.clone()));
@@ -94,7 +96,9 @@ pub fn restore_scope_selection_for_file(loaded_file: &shared::WaveformFile) {
                 UI_UPDATE_SEQUENCE.set(current_sequence + 1);
                 
                 // Restore TreeView selection to match the persisted scope
-                TREE_SELECTED_ITEMS.lock_mut().insert(scope_id_clone.clone());
+                // Convert scope ID to TreeView format (with "scope_" prefix)
+                let tree_id = format!("scope_{}", scope_id_clone);
+                TREE_SELECTED_ITEMS.lock_mut().insert(tree_id);
                 
                 // Re-trigger SELECTED_SCOPE_ID signal to update variables panel
                 SELECTED_SCOPE_ID.set(Some(scope_id_clone.clone()));

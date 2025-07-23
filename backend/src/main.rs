@@ -135,13 +135,13 @@ fn extract_scopes_from_hierarchy(hierarchy: &wellen::Hierarchy, file_id: &str) -
     }).collect()
 }
 
-fn extract_scope_data_with_file_id(hierarchy: &wellen::Hierarchy, scope_ref: wellen::ScopeRef, file_id: &str) -> ScopeData {
+fn extract_scope_data_with_file_id(hierarchy: &wellen::Hierarchy, scope_ref: wellen::ScopeRef, _file_id: &str) -> ScopeData {
     let scope = &hierarchy[scope_ref];
     
     let mut variables: Vec<shared::Signal> = scope.vars(hierarchy).map(|var_ref| {
         let var = &hierarchy[var_ref];
         shared::Signal {
-            id: format!("{}", var.signal_ref().index()),
+            id: var.name(hierarchy).to_string(), // Use variable name as ID
             name: var.name(hierarchy).to_string(),
             signal_type: format!("{:?}", var.var_type()),
             width: match var.signal_encoding() {
@@ -154,12 +154,12 @@ fn extract_scope_data_with_file_id(hierarchy: &wellen::Hierarchy, scope_ref: wel
     variables.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     
     let mut children: Vec<ScopeData> = scope.scopes(hierarchy).map(|child_scope_ref| {
-        extract_scope_data_with_file_id(hierarchy, child_scope_ref, file_id)
+        extract_scope_data_with_file_id(hierarchy, child_scope_ref, _file_id)
     }).collect();
     children.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     
     ScopeData {
-        id: format!("{}_scope_{}", file_id, scope_ref.index()),
+        id: scope.full_name(hierarchy), // Use full scope path as ID
         name: scope.name(hierarchy).to_string(),
         full_name: scope.full_name(hierarchy),
         children,

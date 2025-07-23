@@ -114,9 +114,19 @@ fn init_scope_selection_handlers() {
         TREE_SELECTED_ITEMS.signal_ref(|selected_items| {
             selected_items.clone()
         }).for_each_sync(|selected_items| {
-            // Find the first selected scope (has _scope_ pattern, not just file_)
-            if let Some(scope_id) = selected_items.iter().find(|id| id.contains("_scope_")) {
-                SELECTED_SCOPE_ID.set_neq(Some(scope_id.clone()));
+            // Find the first selected scope (not a file)
+            // Files are tracked in TRACKED_FILES, scopes are not
+            if let Some(tree_id) = selected_items.iter().find(|id| {
+                // Check if this ID is NOT a tracked file ID
+                !TRACKED_FILES.lock_ref().iter().any(|file| &file.id == *id)
+            }) {
+                // Convert TreeView scope ID back to original scope ID
+                let scope_id = if tree_id.starts_with("scope_") {
+                    tree_id.strip_prefix("scope_").unwrap_or(tree_id).to_string()
+                } else {
+                    tree_id.clone()
+                };
+                SELECTED_SCOPE_ID.set_neq(Some(scope_id));
                 // Clear the flag when a scope is selected
                 USER_CLEARED_SELECTION.set(false);
             } else {

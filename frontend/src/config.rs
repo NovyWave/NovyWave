@@ -82,6 +82,7 @@ pub struct WorkspaceSection {
     pub expanded_scopes: MutableVec<String>,
     pub load_files_expanded_directories: MutableVec<String>,
     pub panel_layouts: Mutable<PanelLayouts>,
+    pub selected_variables: MutableVec<shared::SelectedVariable>,
 }
 
 // DockMode enum now imported from shared crate for type safety
@@ -192,6 +193,7 @@ impl Default for WorkspaceSection {
             expanded_scopes: MutableVec::new(),
             load_files_expanded_directories: MutableVec::new(),
             panel_layouts: Mutable::new(PanelLayouts::default()),
+            selected_variables: MutableVec::new(),
         }
     }
 }
@@ -280,6 +282,7 @@ pub struct SerializableWorkspaceSection {
     pub expanded_scopes: Vec<String>,
     pub load_files_expanded_directories: Vec<String>,
     pub panel_layouts: SerializablePanelLayouts,
+    pub selected_variables: Vec<shared::SelectedVariable>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -332,6 +335,7 @@ impl ConfigStore {
                 selected_scope_id: self.workspace.lock_ref().selected_scope_id.get_cloned(),
                 expanded_scopes: self.workspace.lock_ref().expanded_scopes.lock_ref().to_vec(),
                 load_files_expanded_directories: self.workspace.lock_ref().load_files_expanded_directories.lock_ref().to_vec(),
+                selected_variables: self.workspace.lock_ref().selected_variables.lock_ref().to_vec(),
                 panel_layouts: SerializablePanelLayouts {
                     docked_to_bottom: SerializablePanelDimensions {
                         files_panel_width: self.workspace.lock_ref().panel_layouts.lock_ref().docked_to_bottom.lock_ref().files_panel_width.get(),
@@ -385,6 +389,7 @@ impl ConfigStore {
         self.workspace.lock_mut().selected_scope_id.set(config.workspace.selected_scope_id);
         self.workspace.lock_mut().expanded_scopes.lock_mut().replace_cloned(config.workspace.expanded_scopes);
         self.workspace.lock_mut().load_files_expanded_directories.lock_mut().replace_cloned(config.workspace.load_files_expanded_directories);
+        self.workspace.lock_mut().selected_variables.lock_mut().replace_cloned(config.workspace.selected_variables);
 
         {
             let workspace_ref = self.workspace.lock_ref();
@@ -539,7 +544,7 @@ impl From<SerializablePanelDimensions> for BackendPanelDimensions {
     }
 }
 
-fn save_config_to_backend() {
+pub fn save_config_to_backend() {
     use crate::connection::send_up_msg;
     
     // Convert to serializable format using existing infrastructure
@@ -574,6 +579,7 @@ fn save_config_to_backend() {
             selected_scope_id: serializable_config.workspace.selected_scope_id,
             load_files_scroll_position: serializable_config.session.file_picker.scroll_position,
             variables_search_filter: serializable_config.session.variables_search_filter,
+            selected_variables: serializable_config.workspace.selected_variables,
         },
     };
 
@@ -673,6 +679,7 @@ pub fn apply_config(config: shared::AppConfig) {
             selected_scope_id: config.workspace.selected_scope_id,
             expanded_scopes: config.workspace.expanded_scopes,
             load_files_expanded_directories: config.workspace.load_files_expanded_directories,
+            selected_variables: config.workspace.selected_variables,
             panel_layouts: SerializablePanelLayouts {
                 docked_to_bottom: SerializablePanelDimensions {
                     files_panel_width: config.workspace.panel_dimensions_bottom.width as f32,
@@ -708,6 +715,9 @@ pub fn apply_config(config: shared::AppConfig) {
     
     // Manual sync of opened_files from config to legacy globals
     sync_opened_files_from_config();
+    
+    // Manual sync of selected variables from config to global state
+    sync_selected_variables_from_config();
     
     // Manual sync of file picker current directory from config to legacy globals
     sync_file_picker_current_directory_from_config();
@@ -824,6 +834,16 @@ fn sync_load_files_scroll_position_from_config() {
     // Restore the scroll position to both persistent globals to prevent viewport lazy initialization with 0
     LOAD_FILES_SCROLL_POSITION.set_neq(saved_scroll_position);
     crate::LOAD_FILES_VIEWPORT_Y.set_neq(saved_scroll_position);
+}
+
+// Manual sync function to restore selected variables from config to global state
+fn sync_selected_variables_from_config() {
+    use crate::state::init_selected_variables_from_config;
+    
+    let selected_vars = config_store().workspace.lock_ref().selected_variables.lock_ref().to_vec();
+    
+    // Initialize selected variables with validation
+    init_selected_variables_from_config(selected_vars);
 }
 
 pub fn current_dock_mode() -> impl Signal<Item = DockMode> {

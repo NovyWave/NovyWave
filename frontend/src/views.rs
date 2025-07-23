@@ -3,8 +3,8 @@ use zoon::events::{Click, KeyDown};
 use moonzoon_novyui::*;
 use moonzoon_novyui::tokens::theme::{Theme, toggle_theme, theme};
 use moonzoon_novyui::tokens::color::{neutral_1, neutral_2, neutral_4, neutral_8, neutral_9, neutral_10, neutral_11, neutral_12, primary_3, primary_6, primary_7};
-use shared::{ScopeData, filter_variables, UpMsg, TrackedFile};
-use crate::types::get_variables_from_tracked_files;
+use shared::{ScopeData, UpMsg, TrackedFile};
+use crate::types::{get_variables_from_tracked_files, filter_variables_with_context};
 use crate::virtual_list::virtual_variables_list;
 use crate::config;
 use std::collections::{HashSet, HashMap};
@@ -18,6 +18,7 @@ use crate::{
     FILE_PICKER_ERROR, FILE_PICKER_ERROR_CACHE, FILE_TREE_CACHE, send_up_msg, DOCK_TOGGLE_IN_PROGRESS,
     TRACKED_FILES, state, file_validation::validate_file_state
 };
+use crate::state::{SELECTED_VARIABLES, clear_selected_variables, remove_selected_variable};
 
 fn empty_state_hint(text: &str) -> impl Element {
     El::new()
@@ -269,6 +270,7 @@ pub fn files_panel() -> impl Element {
                                                 .variant(TreeViewVariant::Basic)
                                                 .show_icons(true)
                                                 .show_checkboxes(true)
+                                                .show_checkboxes_on_scopes_only(true)
                                                 .single_scope_selection(true)
                                                 .external_expanded(EXPANDED_SCOPES.clone())
                                                 .external_selected(TREE_SELECTED_ITEMS.clone())
@@ -307,7 +309,7 @@ pub fn variables_panel() -> impl Element {
                                     {
                                         if let Some(scope_id) = selected_scope_id {
                                             let variables = get_variables_from_tracked_files(&scope_id);
-                                            let filtered_variables = filter_variables(&variables, &search_filter);
+                                            let filtered_variables = filter_variables_with_context(&variables, &search_filter);
                                             filtered_variables.len().to_string()
                                         } else {
                                             "0".to_string()
@@ -374,147 +376,99 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                             .item(
                                 remove_all_button()
                             ),
-                        // 3-column table layout: Variable Name | Value | Waveform
-                        El::new()
-                            .s(Height::fill())
-                            .child(
-                                Column::new()
-                                    .s(Gap::new().y(0))
-                                    .s(Padding::all(8))
-                                    .item(
-                                        // Timeline header
-                                        Row::new()
-                                            .s(Gap::new().x(0))
-                                            .s(Align::new().center_y())
-                                            .s(Padding::new().y(2))
-                                            .item(
-                                                // Variable Name column header
-                                                El::new()
-                                                    .s(Width::exact(250))
-                                                    .s(Font::new().color_signal(neutral_8()).size(12))
-                                                    .child("Variable")
-                                            )
+                        // Dynamic selected variables list with empty state
+                        Column::new()
+                            .s(Gap::new().y(8))
+                            .s(Padding::all(16))
+                            .items_signal_vec(
+                                SELECTED_VARIABLES.signal_vec_cloned().map(|selected_var| {
+                                    // Variable Name | Display Name | Canvas placeholder | Remove button
+                                    Row::new()
+                                        .s(Gap::new().x(16))
+                                        .s(Align::new().center_y())
+                                        .item(
+                                            El::new()
+                                                .s(Width::exact(150))
+                                                .s(Font::new().color_signal(neutral_11()).size(13).no_wrap())
+                                                .child(selected_var.display_name())
+                                        )
+                                        .item(
+                                            El::new()
+                                                .s(Width::exact(80))
+                                                .s(Font::new().color_signal(neutral_9()).size(13).no_wrap())
+                                                .child(format!("{} {}-bit", selected_var.variable_type, selected_var.variable_width))
+                                        )
+                                        .item(
+                                            El::new()
+                                                .s(Width::fill())
+                                                .s(Height::exact(30))
+                                                .s(Background::new().color_signal(neutral_3()))
+                                                .s(RoundedCorners::all(4))
+                                                .s(Align::center())
+                                                .s(Font::new().color_signal(neutral_8()).size(12))
+                                                .child("Fast2D Canvas Placeholder")
+                                        )
+                                        .item({
+                                            let unique_id = selected_var.unique_id.clone();
+                                            button()
+                                                .left_icon(IconName::X)
+                                                .variant(ButtonVariant::DestructiveGhost)
+                                                .size(ButtonSize::Small)
+                                                .on_press(move || {
+                                                    remove_selected_variable(&unique_id);
+                                                })
+                                                .build()
+                                        })
+                                })
+                            )
                             .item(
-                                // Value column header  
+                                // Separator line
                                 El::new()
-                                    .s(Width::exact(60))
-                                    .s(Font::new().color_signal(neutral_8()).size(12))
-                                    .child("Value")
-                            )
-                            .item(
-                                // Timeline markers for waveform column
-                                Row::new()
                                     .s(Width::fill())
-                                    .s(Gap::new().x(40))
-                                    .s(Padding::new().x(10))
-                                    .item(
-                                        El::new()
-                                            .s(Font::new().color_signal(neutral_8()).size(12))
-                                            .child("0s")
-                                    )
-                                    .item(
-                                        El::new()
-                                            .s(Font::new().color_signal(neutral_8()).size(12))
-                                            .child("10s")
-                                    )
-                                    .item(
-                                        El::new()
-                                            .s(Font::new().color_signal(neutral_8()).size(12))
-                                            .child("20s")
-                                    )
-                                    .item(
-                                        El::new()
-                                            .s(Font::new().color_signal(neutral_8()).size(12))
-                                            .child("30s")
-                                    )
-                                    .item(
-                                        El::new()
-                                            .s(Font::new().color_signal(neutral_8()).size(12))
-                                            .child("40s")
-                                    )
-                                    .item(
-                                        El::new()
-                                            .s(Font::new().color_signal(neutral_8()).size(12))
-                                            .child("50s")
-                                    )
-                                    .item(
-                                        El::new()
-                                            .s(Font::new().color_signal(neutral_8()).size(12))
-                                            .child("60s")
-                                    )
+                                    .s(Height::exact(1))
+                                    .s(Background::new().color_signal(neutral_6()))
                             )
-                    )
-                    .items((0..8).map(|i| {
-                        let var_names = [
-                            "LsuPlugin_logic_bus_rsp_payload_error",
-                            "LsuPlugin_logic_bus_rsp_payload_data",
-                            "io_writes_0_payload_data", 
-                            "logic_logic_onDebugCd_dmiStat_value_string",
-                            "LsuPlugin_logic_bus_rsp_payload_error",
-                            "LsuPlugin_logic_bus_rsp_payload_data",
-                            "io_writes_0_payload_data",
-                            "clk"
-                        ];
-                        
-                        let values = ["0", "14x2106624", "0", "success", "0", "14x2106624", "0", "1"];
-                        
-                        // Each row: Variable Name | Value | Waveform
-                        Row::new()
-                            .s(Gap::new().x(0))
-                            .s(Align::new().center_y())
-                            .s(Padding::new().y(0))
                             .item(
-                                // Variable Name column (250px width)
+                                // Zoom and position controls
                                 Row::new()
-                                    .s(Width::exact(250))
-                                    .s(Gap::new().x(8))
+                                    .s(Gap::new().x(16))
                                     .s(Align::new().center_y())
-                                    .item("⋮⋮")
                                     .item(
                                         El::new()
-                                            .s(Font::new().color_signal(neutral_11()).size(13))
-                                            .child(var_names[i as usize])
+                                            .s(Font::new().color_signal(neutral_9()).size(12))
+                                            .child("Zoom: 100%")
                                     )
+                                    .item(
+                                        El::new()
+                                            .s(Font::new().color_signal(neutral_9()).size(12))
+                                            .child("Position: 52s")
                                     )
-                            .item(
-                                // Value column (60px width)
-                                El::new()
-                                    .s(Width::exact(60))
-                                    .s(Font::new().color_signal(neutral_9()).size(13))
-                                    .child(values[i as usize])
-                            )
-                            .item(
-                                // Waveform column (fills remaining width)
-                                Row::new()
-                                    .s(Width::fill())
-                                    .s(Height::exact(20))
-                                    .s(Gap::new().x(1))
-                                    .s(Padding::new().x(10))
-                                    .items((0..12).map(|j| {
+                                    .item(
                                         El::new()
                                             .s(Width::fill())
-                                            .s(Height::exact(18))
-                                            .s(Background::new().color_signal(theme().map(move |t| {
-                                                match (i + j) % 3 {
-                                                    0 => match t {
-                                                        Theme::Light => "oklch(55% 0.13 250)", // Primary blue
-                                                        Theme::Dark => "oklch(55% 0.13 250)",
-                                                    },
-                                                    1 => match t {
-                                                        Theme::Light => "oklch(65% 0.16 250)", // Lighter blue
-                                                        Theme::Dark => "oklch(65% 0.16 250)",
-                                                    },
-                                                    _ => match t {
-                                                        Theme::Light => "oklch(97% 0.025 255)", // Light background
-                                                        Theme::Dark => "oklch(18% 0.035 255)",  // Dark background
-                                                    }
-                                                }
-                                            })))
-                                            .s(RoundedCorners::all(2))
-                                    }))
+                                            .child(
+                                                Row::new()
+                                                    .s(Gap::new().x(10))
+                                                    .s(Align::new().center_y())
+                                                    .item(
+                                                        El::new()
+                                                            .s(Font::new().color_signal(neutral_8()).size(12))
+                                                            .child("0s")
+                                                    )
+                                                    .item(
+                                                        El::new()
+                                                            .s(Width::fill())
+                                                            .s(Font::new().color_signal(neutral_6()).size(12))
+                                                            .child("- - - - - - -")
+                                                    )
+                                                    .item(
+                                                        El::new()
+                                                            .s(Font::new().color_signal(neutral_8()).size(12))
+                                                            .child("80s")
+                                                    )
+                                            )
+                                    )
                             )
-                    }))
-                    )
                     )
                 )
         )
@@ -904,7 +858,10 @@ fn convert_scope_to_tree_data(scope: &ScopeData) -> TreeViewItemData {
     
     // Signals are NOT shown in Files & Scopes - they belong in the Variables panel
     
-    TreeViewItemData::new(scope.id.clone(), scope.name.clone())
+    // Add "scope_" prefix to make IDs distinguishable for TreeView logic
+    let scope_tree_id = format!("scope_{}", scope.id);
+    
+    TreeViewItemData::new(scope_tree_id, scope.name.clone())
         .item_type(TreeViewItemType::Folder)
         .with_children(children)
 }
@@ -1281,21 +1238,12 @@ fn process_file_picker_selection() {
 
 fn remove_all_button() -> impl Element {
     button()
-        .label("Remove All")
+        .label("Clear All")
         .left_icon(IconName::X)
         .variant(ButtonVariant::DestructiveGhost)
         .size(ButtonSize::Small)
         .on_press(|| {
-            // Clear TRACKED_FILES system
-            TRACKED_FILES.lock_mut().clear();
-            
-            // Also clear legacy systems for backward compatibility
-            LOADED_FILES.lock_mut().clear();
-            FILE_PATHS.lock_mut().clear();
-            EXPANDED_SCOPES.lock_mut().clear();
-            SELECTED_SCOPE_ID.set(None);
-            config::save_file_list();
-            config::save_scope_selection();
+            clear_selected_variables();
         })
         .build()
 }
