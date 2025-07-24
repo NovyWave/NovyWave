@@ -202,8 +202,10 @@ fn root() -> impl Element {
 fn main_layout() -> impl Element {
     let is_any_divider_dragging = map_ref! {
         let vertical = VERTICAL_DIVIDER_DRAGGING.signal(),
-        let horizontal = HORIZONTAL_DIVIDER_DRAGGING.signal() =>
-        *vertical || *horizontal
+        let horizontal = HORIZONTAL_DIVIDER_DRAGGING.signal(),
+        let vars_name = VARIABLES_NAME_DIVIDER_DRAGGING.signal(),
+        let vars_value = VARIABLES_VALUE_DIVIDER_DRAGGING.signal() =>
+        *vertical || *horizontal || *vars_name || *vars_value
     };
 
     El::new()
@@ -222,8 +224,10 @@ fn main_layout() -> impl Element {
         .s(Cursor::with_signal(
             map_ref! {
                 let vertical = VERTICAL_DIVIDER_DRAGGING.signal(),
-                let horizontal = HORIZONTAL_DIVIDER_DRAGGING.signal() =>
-                if *vertical {
+                let horizontal = HORIZONTAL_DIVIDER_DRAGGING.signal(),
+                let vars_name = VARIABLES_NAME_DIVIDER_DRAGGING.signal(),
+                let vars_value = VARIABLES_VALUE_DIVIDER_DRAGGING.signal() =>
+                if *vertical || *vars_name || *vars_value {
                     Some(CursorIcon::ColumnResize)
                 } else if *horizontal {
                     Some(CursorIcon::RowResize)
@@ -235,10 +239,14 @@ fn main_layout() -> impl Element {
         .on_pointer_up(|| {
             VERTICAL_DIVIDER_DRAGGING.set_neq(false);
             HORIZONTAL_DIVIDER_DRAGGING.set_neq(false);
+            VARIABLES_NAME_DIVIDER_DRAGGING.set_neq(false);
+            VARIABLES_VALUE_DIVIDER_DRAGGING.set_neq(false);
         })
         .on_pointer_leave(|| {
             VERTICAL_DIVIDER_DRAGGING.set_neq(false);
             HORIZONTAL_DIVIDER_DRAGGING.set_neq(false);
+            VARIABLES_NAME_DIVIDER_DRAGGING.set_neq(false);
+            VARIABLES_VALUE_DIVIDER_DRAGGING.set_neq(false);
         })
         .on_pointer_move_event(|event| {
             if VERTICAL_DIVIDER_DRAGGING.get() {
@@ -263,6 +271,16 @@ fn main_layout() -> impl Element {
                         u32::max(50, u32::try_from(new_height).unwrap_or(50))
                     });
                 }
+            } else if VARIABLES_NAME_DIVIDER_DRAGGING.get() {
+                VARIABLES_NAME_COLUMN_WIDTH.update(|width| {
+                    let new_width = width as i32 + event.movement_x();
+                    u32::max(50, u32::try_from(new_width).unwrap_or(50))
+                });
+            } else if VARIABLES_VALUE_DIVIDER_DRAGGING.get() {
+                VARIABLES_VALUE_COLUMN_WIDTH.update(|width| {
+                    let new_width = width as i32 + event.movement_x();
+                    u32::max(50, u32::try_from(new_width).unwrap_or(50))
+                });
             }
         })
         .child(docked_layout_wrapper())

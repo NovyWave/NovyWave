@@ -16,12 +16,16 @@ opened_files = [
 dock_mode = "right"
 expanded_scopes = [
     "simple_tb.s",
-    "simple.vcd",
     "simple_tb",
     "TOP",
     "scope_simple_tb",
     "wave_27.fst",
     "scope_TOP",
+    "scope_big_3_GB.vcd_TOP",
+    "scope_wave_27.fst_TOP",
+    "scope_simple.vcd_simple_tb",
+    "simple.vcd_simple_tb",
+    "wave_27.fst_TOP",
 ]
 load_files_expanded_directories = [
     "/home/martinkavik/repos/NovyWave",
@@ -33,7 +37,7 @@ load_files_expanded_directories = [
     "/",
     "/home/martinkavik/repos/NovyWave/test_files/nested_dir",
 ]
-selected_scope_id = "TOP.VexiiRiscv"
+selected_scope_id = "wave_27.fst_TOP.VexiiRiscv"
 load_files_scroll_position = 861
 
 [workspace.panel_dimensions_bottom]
@@ -51,60 +55,6 @@ scope_path = "simple_tb.s"
 variable_name = "A"
 variable_type = "Wire"
 variable_width = 4
-selected_at = 0
-
-[[workspace.selected_variables]]
-unique_id = "simple.vcd:simple_tb.s:B"
-file_name = "simple.vcd"
-scope_path = "simple_tb.s"
-variable_name = "B"
-variable_type = "Wire"
-variable_width = 4
-selected_at = 0
-
-[[workspace.selected_variables]]
-unique_id = "wave_27.fst:TOP.VexiiRiscv:AlignerPlugin_api_haltIt"
-file_name = "wave_27.fst"
-scope_path = "TOP.VexiiRiscv"
-variable_name = "AlignerPlugin_api_haltIt"
-variable_type = "Logic"
-variable_width = 1
-selected_at = 0
-
-[[workspace.selected_variables]]
-unique_id = "wave_27.fst:TOP.VexiiRiscv:AlignerPlugin_api_singleFetch"
-file_name = "wave_27.fst"
-scope_path = "TOP.VexiiRiscv"
-variable_name = "AlignerPlugin_api_singleFetch"
-variable_type = "Logic"
-variable_width = 1
-selected_at = 0
-
-[[workspace.selected_variables]]
-unique_id = "wave_27.fst:TOP.VexiiRiscv:AlignerPlugin_logic_buffer_data"
-file_name = "wave_27.fst"
-scope_path = "TOP.VexiiRiscv"
-variable_name = "AlignerPlugin_logic_buffer_data"
-variable_type = "Logic"
-variable_width = 64
-selected_at = 0
-
-[[workspace.selected_variables]]
-unique_id = "wave_27.fst:TOP.VexiiRiscv:AlignerPlugin_logic_buffer_trap"
-file_name = "wave_27.fst"
-scope_path = "TOP.VexiiRiscv"
-variable_name = "AlignerPlugin_logic_buffer_trap"
-variable_type = "Logic"
-variable_width = 1
-selected_at = 0
-
-[[workspace.selected_variables]]
-unique_id = "wave_27.fst:TOP.VexiiRiscv:AlignerPlugin_logic_buffer_pc"
-file_name = "wave_27.fst"
-scope_path = "TOP.VexiiRiscv"
-variable_name = "AlignerPlugin_logic_buffer_pc"
-variable_type = "Logic"
-variable_width = 32
 selected_at = 0
 
 [[workspace.selected_variables]]
@@ -132,4 +82,184 @@ scope_path = "TOP"
 variable_name = "EmbeddedRiscvJtag_logic_jtag_tck"
 variable_type = "Wire"
 variable_width = 1
+selected_at = 0
+
+[[workspace.selected_variables]]
+unique_id = "wave_27.fst:TOP.VexiiRiscv:AlignerPlugin_api_singleFetch"
+file_name = "wave_27.fst"
+scope_path = "TOP.VexiiRiscv"
+variable_name = "AlignerPlugin_api_singleFetch"
+variable_type = "Logic"
+variable_width = 1
+selected_at = 0
+
+[[workspace.selected_variables]]
+unique_id = "wave_27.fst:TOP.VexiiRiscv:AlignerPlugin_logic_buffer_data"
+file_name = "wave_27.fst"
+scope_path = "TOP.VexiiRiscv"
+variable_name = "AlignerPlugin_logic_buffer_data"
+variable_type = "Logic"
+variable_width = 64
+selected_at = 0
+
+[[workspace.selected_variables]]
+unique_id = "wave_27.fst:TOP.VexiiRiscv:AlignerPlugin_logic_buffer_haltUp"
+file_name = "wave_27.fst"
+scope_path = "TOP.VexiiRiscv"
+variable_name = "AlignerPlugin_logic_buffer_haltUp"
+variable_type = "Wire"
+variable_width = 1
+selected_at = 0
+
+[[workspace.selected_variables]]
+unique_id = "wave_27.fst:TOP.VexiiRiscv:AlignerPlugin_logic_buffer_downFire"
+file_name = "wave_27.fst"
+scope_path = "TOP.VexiiRiscv"
+variable_name = "AlignerPlugin_logic_buffer_downFire"
+variable_type = "Wire"
+variable_width = 1
+selected_at = 0
+
+[[workspace.selected_variables]]
+unique_id = "wave_27.fst:TOP.VexiiRiscv:AlignerPlugin_logic_buffer_flushIt"
+file_name = "wave_27.fst"
+scope_path = "TOP.VexiiRiscv"
+variable_name = "AlignerPlugin_logic_buffer_flushIt"
+variable_type = "Wire"
+variable_width = 1
+selected_at = 0
+
+[[workspace.selected_variables]]
+unique_id = "wave_27.fst:TOP:EmbeddedRiscvJtag_logic_ndmreset"
+file_name = "wave_27.fst"
+scope_path = "TOP"
+variable_name = "EmbeddedRiscvJtag_logic_ndmreset"
+variable_type = "Wire"
+variable_width = 1
+selected_at = 0
+
+[[workspace.selected_variables]]
+unique_id = "wave_27.fst:TOP:FetchL1Plugin_logic_bus_cmd_ready"
+file_name = "wave_27.fst"
+scope_path = "TOP"
+variable_name = "FetchL1Plugin_logic_bus_cmd_ready"
+variable_type = "Wire"
+variable_width = 1
+selected_at = 0
+
+[[workspace.selected_variables]]
+unique_id = "wave_27.fst:TOP:FetchL1Plugin_logic_bus_rsp_payload_data"
+file_name = "wave_27.fst"
+scope_path = "TOP"
+variable_name = "FetchL1Plugin_logic_bus_rsp_payload_data"
+variable_type = "Wire"
+variable_width = 256
+selected_at = 0
+
+[[workspace.selected_variables]]
+unique_id = "wave_27.fst:TOP:EmbeddedRiscvJtag_logic_jtag_tdi"
+file_name = "wave_27.fst"
+scope_path = "TOP"
+variable_name = "EmbeddedRiscvJtag_logic_jtag_tdi"
+variable_type = "Wire"
+variable_width = 1
+selected_at = 0
+
+[[workspace.selected_variables]]
+unique_id = "wave_27.fst:TOP.VexiiRiscv:AlignerPlugin_logic_scanners_2_checker_1_present"
+file_name = "wave_27.fst"
+scope_path = "TOP.VexiiRiscv"
+variable_name = "AlignerPlugin_logic_scanners_2_checker_1_present"
+variable_type = "Wire"
+variable_width = 1
+selected_at = 0
+
+[[workspace.selected_variables]]
+unique_id = "wave_27.fst:TOP.VexiiRiscv:AlignerPlugin_logic_slices_data_1"
+file_name = "wave_27.fst"
+scope_path = "TOP.VexiiRiscv"
+variable_name = "AlignerPlugin_logic_slices_data_1"
+variable_type = "Wire"
+variable_width = 16
+selected_at = 0
+
+[[workspace.selected_variables]]
+unique_id = "wave_27.fst:TOP.VexiiRiscv:AlignerPlugin_logic_slices_data_2"
+file_name = "wave_27.fst"
+scope_path = "TOP.VexiiRiscv"
+variable_name = "AlignerPlugin_logic_slices_data_2"
+variable_type = "Wire"
+variable_width = 16
+selected_at = 0
+
+[[workspace.selected_variables]]
+unique_id = "wave_27.fst:TOP.VexiiRiscv:AlignerPlugin_logic_scanners_6_checker_1_redo"
+file_name = "wave_27.fst"
+scope_path = "TOP.VexiiRiscv"
+variable_name = "AlignerPlugin_logic_scanners_6_checker_1_redo"
+variable_type = "Wire"
+variable_width = 1
+selected_at = 0
+
+[[workspace.selected_variables]]
+unique_id = "wave_27.fst:TOP.VexiiRiscv:AlignerPlugin_logic_scanners_6_checker_1_valid"
+file_name = "wave_27.fst"
+scope_path = "TOP.VexiiRiscv"
+variable_name = "AlignerPlugin_logic_scanners_6_checker_1_valid"
+variable_type = "Wire"
+variable_width = 1
+selected_at = 0
+
+[[workspace.selected_variables]]
+unique_id = "wave_27.fst:TOP.VexiiRiscv:AlignerPlugin_logic_scanners_6_usageMask"
+file_name = "wave_27.fst"
+scope_path = "TOP.VexiiRiscv"
+variable_name = "AlignerPlugin_logic_scanners_6_usageMask"
+variable_type = "Logic"
+variable_width = 8
+selected_at = 0
+
+[[workspace.selected_variables]]
+unique_id = "wave_27.fst:TOP.VexiiRiscv:AlignerPlugin_logic_scanners_7_checker_0_last"
+file_name = "wave_27.fst"
+scope_path = "TOP.VexiiRiscv"
+variable_name = "AlignerPlugin_logic_scanners_7_checker_0_last"
+variable_type = "Wire"
+variable_width = 1
+selected_at = 0
+
+[[workspace.selected_variables]]
+unique_id = "wave_27.fst:TOP.VexiiRiscv:AlignerPlugin_logic_scanners_7_checker_0_present"
+file_name = "wave_27.fst"
+scope_path = "TOP.VexiiRiscv"
+variable_name = "AlignerPlugin_logic_scanners_7_checker_0_present"
+variable_type = "Wire"
+variable_width = 1
+selected_at = 0
+
+[[workspace.selected_variables]]
+unique_id = "wave_27.fst:TOP.VexiiRiscv:AlignerPlugin_logic_buffer_hm_Fetch_ID"
+file_name = "wave_27.fst"
+scope_path = "TOP.VexiiRiscv"
+variable_name = "AlignerPlugin_logic_buffer_hm_Fetch_ID"
+variable_type = "Logic"
+variable_width = 10
+selected_at = 0
+
+[[workspace.selected_variables]]
+unique_id = "wave_27.fst:TOP.VexiiRiscv:AlignerPlugin_logic_buffer_hm_GSharePlugin_GSHARE_COUNTER_0"
+file_name = "wave_27.fst"
+scope_path = "TOP.VexiiRiscv"
+variable_name = "AlignerPlugin_logic_buffer_hm_GSharePlugin_GSHARE_COUNTER_0"
+variable_type = "Logic"
+variable_width = 2
+selected_at = 0
+
+[[workspace.selected_variables]]
+unique_id = "wave_27.fst:TOP.VexiiRiscv:AlignerPlugin_logic_buffer_hm_GSharePlugin_GSHARE_COUNTER_1"
+file_name = "wave_27.fst"
+scope_path = "TOP.VexiiRiscv"
+variable_name = "AlignerPlugin_logic_buffer_hm_GSharePlugin_GSHARE_COUNTER_1"
+variable_type = "Logic"
+variable_width = 2
 selected_at = 0

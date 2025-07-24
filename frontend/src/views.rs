@@ -11,6 +11,8 @@ use std::collections::{HashSet, HashMap};
 use crate::{
     IS_DOCKED_TO_BOTTOM, FILES_PANEL_WIDTH, FILES_PANEL_HEIGHT,
     VERTICAL_DIVIDER_DRAGGING, HORIZONTAL_DIVIDER_DRAGGING,
+    VARIABLES_NAME_COLUMN_WIDTH, VARIABLES_VALUE_COLUMN_WIDTH,
+    VARIABLES_NAME_DIVIDER_DRAGGING, VARIABLES_VALUE_DIVIDER_DRAGGING,
     VARIABLES_SEARCH_FILTER, SHOW_FILE_DIALOG, IS_LOADING,
     LOADED_FILES, SELECTED_SCOPE_ID, TREE_SELECTED_ITEMS, EXPANDED_SCOPES,
     FILE_PATHS, show_file_paths_dialog, LOAD_FILES_VIEWPORT_Y,
@@ -19,6 +21,21 @@ use crate::{
     TRACKED_FILES, state, file_validation::validate_file_state
 };
 use crate::state::{SELECTED_VARIABLES, clear_selected_variables, remove_selected_variable};
+
+fn variables_vertical_divider(is_dragging: Mutable<bool>) -> impl Element {
+    El::new()
+        .s(Width::exact(4))
+        .s(Height::fill())
+        .s(Background::new().color_signal(
+            is_dragging.signal().map_bool_signal(
+                || primary_7(),
+                || primary_6()
+            )
+        ))
+        .s(Cursor::new(CursorIcon::ColumnResize))
+        .s(Padding::all(0))
+        .on_pointer_down(move || is_dragging.set_neq(true))
+}
 
 fn empty_state_hint(text: &str) -> impl Element {
     El::new()
@@ -376,96 +393,103 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                             .item(
                                 remove_all_button()
                             ),
-                        // Dynamic selected variables list with empty state
-                        Column::new()
-                            .s(Gap::new().y(8))
-                            .s(Padding::all(16))
-                            .items_signal_vec(
-                                SELECTED_VARIABLES.signal_vec_cloned().map(|selected_var| {
-                                    // Variable Name | Display Name | Canvas placeholder | Remove button
-                                    Row::new()
-                                        .s(Gap::new().x(16))
-                                        .s(Align::new().center_y())
-                                        .item(
-                                            El::new()
-                                                .s(Width::exact(150))
-                                                .s(Font::new().color_signal(neutral_11()).size(13).no_wrap())
-                                                .child(selected_var.display_name())
-                                        )
-                                        .item(
-                                            El::new()
-                                                .s(Width::exact(80))
-                                                .s(Font::new().color_signal(neutral_9()).size(13).no_wrap())
-                                                .child(format!("{} {}-bit", selected_var.variable_type, selected_var.variable_width))
-                                        )
-                                        .item(
-                                            El::new()
-                                                .s(Width::fill())
-                                                .s(Height::exact(30))
-                                                .s(Background::new().color_signal(neutral_3()))
-                                                .s(RoundedCorners::all(4))
-                                                .s(Align::center())
-                                                .s(Font::new().color_signal(neutral_8()).size(12))
-                                                .child("Fast2D Canvas Placeholder")
-                                        )
-                                        .item({
-                                            let unique_id = selected_var.unique_id.clone();
-                                            button()
-                                                .left_icon(IconName::X)
-                                                .variant(ButtonVariant::DestructiveGhost)
-                                                .size(ButtonSize::Small)
-                                                .on_press(move || {
-                                                    remove_selected_variable(&unique_id);
-                                                })
-                                                .build()
-                                        })
+                        // Resizable columns layout with draggable separators
+                        El::new()
+                            .s(Height::exact_signal(
+                                SELECTED_VARIABLES.signal_vec_cloned().to_signal_map(|vars| {
+                                    let row_height = 40u32;
+                                    let min_height = 100u32;
+                                    let computed_height = (vars.len() as u32 * row_height).max(min_height);
+                                    computed_height
                                 })
-                            )
-                            .item(
-                                // Separator line
-                                El::new()
-                                    .s(Width::fill())
-                                    .s(Height::exact(1))
-                                    .s(Background::new().color_signal(neutral_6()))
-                            )
-                            .item(
-                                // Zoom and position controls
+                            ))
+                            .s(Width::fill())
+                            .s(Scrollbars::both())
+                            .child(
                                 Row::new()
-                                    .s(Gap::new().x(16))
-                                    .s(Align::new().center_y())
+                                    .s(Height::fill())
+                                    .s(Width::fill())
+                                    .s(Align::new().top())
                                     .item(
-                                        El::new()
-                                            .s(Font::new().color_signal(neutral_9()).size(12))
-                                            .child("Zoom: 100%")
+                                        // Column 1: Variable name (resizable)
+                                        Column::new()
+                                            .s(Width::exact_signal(VARIABLES_NAME_COLUMN_WIDTH.signal()))
+                                            .s(Height::fill())
+                                            .s(Align::new().top())
+                                            .items_signal_vec(
+                                                SELECTED_VARIABLES.signal_vec_cloned().map(|selected_var| {
+                                                    Row::new()
+                                                        .s(Height::exact(40))
+                                                        .s(Width::fill())
+                                                        .s(Padding::all(8))
+                                                        .s(Borders::new().bottom_signal(neutral_4().map(|color| 
+                                                            Border::new().width(1).color(color)
+                                                        )))
+                                                        .s(Gap::new().x(8))
+                                                        .item({
+                                                            let unique_id = selected_var.unique_id.clone();
+                                                            button()
+                                                                .left_icon(IconName::X)
+                                                                .variant(ButtonVariant::DestructiveGhost)
+                                                                .size(ButtonSize::Small)
+                                                                .on_press(move || {
+                                                                    remove_selected_variable(&unique_id);
+                                                                })
+                                                                .build()
+                                                        })
+                                                        .item(
+                                                            El::new()
+                                                                .s(Font::new().color_signal(neutral_11()).size(13).no_wrap())
+                                                                .child(&selected_var.variable_name)
+                                                                .update_raw_el({
+                                                                    let full_info = format!("{}: {}.{} {} {}-bit", 
+                                                                        selected_var.file_name, 
+                                                                        selected_var.scope_path, 
+                                                                        selected_var.variable_name,
+                                                                        selected_var.variable_type,
+                                                                        selected_var.variable_width
+                                                                    );
+                                                                    move |raw_el| {
+                                                                        raw_el.attr("title", &full_info)
+                                                                    }
+                                                                })
+                                                        )
+                                                })
+                                            )
                                     )
+                                    .item(variables_vertical_divider(VARIABLES_NAME_DIVIDER_DRAGGING.clone()))
                                     .item(
-                                        El::new()
-                                            .s(Font::new().color_signal(neutral_9()).size(12))
-                                            .child("Position: 52s")
+                                        // Column 2: Variable value (resizable) - HEIGHT FOLLOWER
+                                        Column::new()
+                                            .s(Width::exact_signal(VARIABLES_VALUE_COLUMN_WIDTH.signal()))
+                                            .s(Height::fill())
+                                            .s(Align::new().top())
+                                            .items_signal_vec(
+                                                SELECTED_VARIABLES.signal_vec_cloned().map(|_selected_var| {
+                                                    El::new()
+                                                        .s(Height::exact(40))
+                                                        .s(Width::fill())
+                                                        .s(Padding::all(8))
+                                                        .s(Borders::new().bottom_signal(neutral_4().map(|color| 
+                                                            Border::new().width(1).color(color)
+                                                        )))
+                                                        .s(Font::new().color_signal(neutral_9()).size(13).no_wrap())
+                                                        .child("Value")
+                                                })
+                                            )
                                     )
+                                    .item(variables_vertical_divider(VARIABLES_VALUE_DIVIDER_DRAGGING.clone()))
                                     .item(
+                                        // Column 3: Unified waveform canvas (fills remaining space) - HEIGHT FOLLOWER
                                         El::new()
                                             .s(Width::fill())
+                                            .s(Height::fill())
+                                            .s(Background::new().color_signal(neutral_2()))
                                             .child(
-                                                Row::new()
-                                                    .s(Gap::new().x(10))
-                                                    .s(Align::new().center_y())
-                                                    .item(
-                                                        El::new()
-                                                            .s(Font::new().color_signal(neutral_8()).size(12))
-                                                            .child("0s")
-                                                    )
-                                                    .item(
-                                                        El::new()
-                                                            .s(Width::fill())
-                                                            .s(Font::new().color_signal(neutral_6()).size(12))
-                                                            .child("- - - - - - -")
-                                                    )
-                                                    .item(
-                                                        El::new()
-                                                            .s(Font::new().color_signal(neutral_8()).size(12))
-                                                            .child("80s")
-                                                    )
+                                                El::new()
+                                                    .s(Padding::all(20))
+                                                    .s(Font::new().color_signal(neutral_8()))
+                                                    .child("Unified Waveform Canvas")
                                             )
                                     )
                             )
@@ -1332,4 +1356,7 @@ pub fn horizontal_divider(is_dragging: Mutable<bool>) -> impl Element {
         .s(Cursor::new(CursorIcon::RowResize))
         .on_pointer_down(move || is_dragging.set_neq(true))
 }
+
+// ===== UNIFIED WAVEFORM CANVAS =====
+
 

@@ -135,7 +135,7 @@ fn extract_scopes_from_hierarchy(hierarchy: &wellen::Hierarchy, file_id: &str) -
     }).collect()
 }
 
-fn extract_scope_data_with_file_id(hierarchy: &wellen::Hierarchy, scope_ref: wellen::ScopeRef, _file_id: &str) -> ScopeData {
+fn extract_scope_data_with_file_id(hierarchy: &wellen::Hierarchy, scope_ref: wellen::ScopeRef, file_id: &str) -> ScopeData {
     let scope = &hierarchy[scope_ref];
     
     let mut variables: Vec<shared::Signal> = scope.vars(hierarchy).map(|var_ref| {
@@ -154,12 +154,12 @@ fn extract_scope_data_with_file_id(hierarchy: &wellen::Hierarchy, scope_ref: wel
     variables.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     
     let mut children: Vec<ScopeData> = scope.scopes(hierarchy).map(|child_scope_ref| {
-        extract_scope_data_with_file_id(hierarchy, child_scope_ref, _file_id)
+        extract_scope_data_with_file_id(hierarchy, child_scope_ref, file_id)
     }).collect();
     children.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     
     ScopeData {
-        id: scope.full_name(hierarchy), // Use full scope path as ID
+        id: format!("{}_{}", file_id, scope.full_name(hierarchy)), // Use file_id + scope path for unique ID
         name: scope.name(hierarchy).to_string(),
         full_name: scope.full_name(hierarchy),
         children,
