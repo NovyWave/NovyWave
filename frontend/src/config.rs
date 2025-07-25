@@ -99,6 +99,8 @@ pub struct PanelDimensions {
     pub files_panel_height: Mutable<f32>,
     pub variables_panel_width: Mutable<f32>,
     pub timeline_panel_height: Mutable<f32>,
+    pub variables_name_column_width: Mutable<f32>,
+    pub variables_value_column_width: Mutable<f32>,
 }
 
 // =============================================================================
@@ -206,12 +208,16 @@ impl Default for PanelLayouts {
                 files_panel_height: Mutable::new(600.0),
                 variables_panel_width: Mutable::new(300.0),
                 timeline_panel_height: Mutable::new(200.0),
+                variables_name_column_width: Mutable::new(180.0),
+                variables_value_column_width: Mutable::new(100.0),
             }),
             docked_to_right: Mutable::new(PanelDimensions {
                 files_panel_width: Mutable::new(400.0),
                 files_panel_height: Mutable::new(300.0),
                 variables_panel_width: Mutable::new(250.0),
                 timeline_panel_height: Mutable::new(150.0),
+                variables_name_column_width: Mutable::new(180.0),
+                variables_value_column_width: Mutable::new(100.0),
             }),
         }
     }
@@ -297,6 +303,8 @@ pub struct SerializablePanelDimensions {
     pub files_panel_height: f32,
     pub variables_panel_width: f32,
     pub timeline_panel_height: f32,
+    pub variables_name_column_width: f32,
+    pub variables_value_column_width: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -342,12 +350,16 @@ impl ConfigStore {
                         files_panel_height: self.workspace.lock_ref().panel_layouts.lock_ref().docked_to_bottom.lock_ref().files_panel_height.get(),
                         variables_panel_width: self.workspace.lock_ref().panel_layouts.lock_ref().docked_to_bottom.lock_ref().variables_panel_width.get(),
                         timeline_panel_height: self.workspace.lock_ref().panel_layouts.lock_ref().docked_to_bottom.lock_ref().timeline_panel_height.get(),
+                        variables_name_column_width: self.workspace.lock_ref().panel_layouts.lock_ref().docked_to_bottom.lock_ref().variables_name_column_width.get(),
+                        variables_value_column_width: self.workspace.lock_ref().panel_layouts.lock_ref().docked_to_bottom.lock_ref().variables_value_column_width.get(),
                     },
                     docked_to_right: SerializablePanelDimensions {
                         files_panel_width: self.workspace.lock_ref().panel_layouts.lock_ref().docked_to_right.lock_ref().files_panel_width.get(),
                         files_panel_height: self.workspace.lock_ref().panel_layouts.lock_ref().docked_to_right.lock_ref().files_panel_height.get(),
                         variables_panel_width: self.workspace.lock_ref().panel_layouts.lock_ref().docked_to_right.lock_ref().variables_panel_width.get(),
                         timeline_panel_height: self.workspace.lock_ref().panel_layouts.lock_ref().docked_to_right.lock_ref().timeline_panel_height.get(),
+                        variables_name_column_width: self.workspace.lock_ref().panel_layouts.lock_ref().docked_to_right.lock_ref().variables_name_column_width.get(),
+                        variables_value_column_width: self.workspace.lock_ref().panel_layouts.lock_ref().docked_to_right.lock_ref().variables_value_column_width.get(),
                     },
                 },
             },
@@ -401,6 +413,8 @@ impl ConfigStore {
                 bottom_dims.files_panel_height.set(config.workspace.panel_layouts.docked_to_bottom.files_panel_height);
                 bottom_dims.variables_panel_width.set(config.workspace.panel_layouts.docked_to_bottom.variables_panel_width);
                 bottom_dims.timeline_panel_height.set(config.workspace.panel_layouts.docked_to_bottom.timeline_panel_height);
+                bottom_dims.variables_name_column_width.set(config.workspace.panel_layouts.docked_to_bottom.variables_name_column_width);
+                bottom_dims.variables_value_column_width.set(config.workspace.panel_layouts.docked_to_bottom.variables_value_column_width);
             }
 
             {
@@ -409,6 +423,8 @@ impl ConfigStore {
                 right_dims.files_panel_height.set(config.workspace.panel_layouts.docked_to_right.files_panel_height);
                 right_dims.variables_panel_width.set(config.workspace.panel_layouts.docked_to_right.variables_panel_width);
                 right_dims.timeline_panel_height.set(config.workspace.panel_layouts.docked_to_right.timeline_panel_height);
+                right_dims.variables_name_column_width.set(config.workspace.panel_layouts.docked_to_right.variables_name_column_width);
+                right_dims.variables_value_column_width.set(config.workspace.panel_layouts.docked_to_right.variables_value_column_width);
             }
         }
 
@@ -523,6 +539,68 @@ fn store_config_on_any_change() {
                 }
         }).await
     });
+    
+    // Variables column width changes - bottom dock mode
+    let bottom_name_column_width_signal = {
+        let workspace = config_store().workspace.lock_ref();
+        let layouts = workspace.panel_layouts.lock_ref();
+        let bottom = layouts.docked_to_bottom.lock_ref();
+        bottom.variables_name_column_width.signal()
+    };
+    Task::start(async move {
+        bottom_name_column_width_signal.for_each_sync(|_| {
+            // Only save if initialization is complete to prevent race conditions
+            if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
+                save_config_to_backend();
+            }
+        }).await
+    });
+    
+    let bottom_value_column_width_signal = {
+        let workspace = config_store().workspace.lock_ref();
+        let layouts = workspace.panel_layouts.lock_ref();
+        let bottom = layouts.docked_to_bottom.lock_ref();
+        bottom.variables_value_column_width.signal()
+    };
+    Task::start(async move {
+        bottom_value_column_width_signal.for_each_sync(|_| {
+            // Only save if initialization is complete to prevent race conditions
+            if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
+                save_config_to_backend();
+            }
+        }).await
+    });
+    
+    // Variables column width changes - right dock mode
+    let right_name_column_width_signal = {
+        let workspace = config_store().workspace.lock_ref();
+        let layouts = workspace.panel_layouts.lock_ref();
+        let right = layouts.docked_to_right.lock_ref();
+        right.variables_name_column_width.signal()
+    };
+    Task::start(async move {
+        right_name_column_width_signal.for_each_sync(|_| {
+            // Only save if initialization is complete to prevent race conditions
+            if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
+                save_config_to_backend();
+            }
+        }).await
+    });
+    
+    let right_value_column_width_signal = {
+        let workspace = config_store().workspace.lock_ref();
+        let layouts = workspace.panel_layouts.lock_ref();
+        let right = layouts.docked_to_right.lock_ref();
+        right.variables_value_column_width.signal()
+    };
+    Task::start(async move {
+        right_value_column_width_signal.for_each_sync(|_| {
+            // Only save if initialization is complete to prevent race conditions
+            if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
+                save_config_to_backend();
+            }
+        }).await
+    });
 }
 
 /// Backend-compatible panel dimensions with only the 2 fields that exist in shared schema
@@ -550,9 +628,13 @@ pub fn save_config_to_backend() {
     // Convert to serializable format using existing infrastructure
     let serializable_config = config_store().to_serializable();
     
+    // Extract panel layouts first to avoid borrow checker issues
+    let bottom_layout = serializable_config.workspace.panel_layouts.docked_to_bottom;
+    let right_layout = serializable_config.workspace.panel_layouts.docked_to_right;
+    
     // Convert panel dimensions using declarative type conversion
-    let backend_docked_to_bottom = BackendPanelDimensions::from(serializable_config.workspace.panel_layouts.docked_to_bottom);
-    let backend_docked_to_right = BackendPanelDimensions::from(serializable_config.workspace.panel_layouts.docked_to_right);
+    let backend_docked_to_bottom = BackendPanelDimensions::from(bottom_layout.clone());
+    let backend_docked_to_right = BackendPanelDimensions::from(right_layout.clone());
     
     // Build shared::AppConfig using backend-compatible data
     let app_config = shared::AppConfig {
@@ -565,14 +647,24 @@ pub fn save_config_to_backend() {
         },
         workspace: shared::WorkspaceSection {
             opened_files: serializable_config.session.opened_files,
-            panel_dimensions_bottom: shared::PanelDimensions::new(
-                backend_docked_to_bottom.files_panel_width,
-                backend_docked_to_bottom.files_panel_height
-            ),
-            panel_dimensions_right: shared::PanelDimensions::new(
-                backend_docked_to_right.files_panel_width,
-                backend_docked_to_right.files_panel_height
-            ),
+            panel_dimensions_bottom: {
+                let mut dims = shared::PanelDimensions::new(
+                    backend_docked_to_bottom.files_panel_width,
+                    backend_docked_to_bottom.files_panel_height
+                );
+                dims.variables_name_column_width = Some(bottom_layout.variables_name_column_width as f64);
+                dims.variables_value_column_width = Some(bottom_layout.variables_value_column_width as f64);
+                dims
+            },
+            panel_dimensions_right: {
+                let mut dims = shared::PanelDimensions::new(
+                    backend_docked_to_right.files_panel_width,
+                    backend_docked_to_right.files_panel_height
+                );
+                dims.variables_name_column_width = Some(right_layout.variables_name_column_width as f64);
+                dims.variables_value_column_width = Some(right_layout.variables_value_column_width as f64);
+                dims
+            },
             dock_mode: serializable_config.workspace.dock_mode,
             expanded_scopes: serializable_config.workspace.expanded_scopes,
             load_files_expanded_directories: serializable_config.workspace.load_files_expanded_directories,
@@ -687,6 +779,8 @@ pub fn apply_config(config: shared::AppConfig) {
                     // Backend schema doesn't include these fields - use frontend defaults to prevent corruption
                     variables_panel_width: 300.0,  // Frontend-only default
                     timeline_panel_height: 200.0,  // Frontend-only default
+                    variables_name_column_width: config.workspace.panel_dimensions_bottom.variables_name_column_width.unwrap_or(180.0) as f32,
+                    variables_value_column_width: config.workspace.panel_dimensions_bottom.variables_value_column_width.unwrap_or(100.0) as f32,
                 },
                 docked_to_right: SerializablePanelDimensions {
                     files_panel_width: config.workspace.panel_dimensions_right.width as f32,
@@ -694,6 +788,8 @@ pub fn apply_config(config: shared::AppConfig) {
                     // Backend schema doesn't include these fields - use frontend defaults to prevent corruption
                     variables_panel_width: 250.0,  // Frontend-only default
                     timeline_panel_height: 150.0,  // Frontend-only default
+                    variables_name_column_width: config.workspace.panel_dimensions_right.variables_name_column_width.unwrap_or(180.0) as f32,
+                    variables_value_column_width: config.workspace.panel_dimensions_right.variables_value_column_width.unwrap_or(100.0) as f32,
                 },
             },
         },
@@ -718,6 +814,9 @@ pub fn apply_config(config: shared::AppConfig) {
     
     // Manual sync of selected variables from config to global state
     sync_selected_variables_from_config();
+    
+    // Manual sync of column widths from config to global state
+    sync_column_widths_from_config();
     
     // Manual sync of file picker current directory from config to legacy globals
     sync_file_picker_current_directory_from_config();
@@ -846,6 +945,31 @@ fn sync_selected_variables_from_config() {
     init_selected_variables_from_config(selected_vars);
 }
 
+// Manual sync function to restore column widths from config to global state
+fn sync_column_widths_from_config() {
+    use crate::state::{VARIABLES_NAME_COLUMN_WIDTH, VARIABLES_VALUE_COLUMN_WIDTH};
+    
+    // Get current dock mode and corresponding panel dimensions
+    let dock_mode = config_store().workspace.lock_ref().dock_mode.get_cloned();
+    let workspace_ref = config_store().workspace.lock_ref();
+    let layouts = workspace_ref.panel_layouts.lock_ref();
+    
+    let (name_width, value_width) = match dock_mode {
+        DockMode::Bottom => {
+            let dims = layouts.docked_to_bottom.lock_ref();
+            (dims.variables_name_column_width.get(), dims.variables_value_column_width.get())
+        }
+        DockMode::Right => {
+            let dims = layouts.docked_to_right.lock_ref();
+            (dims.variables_name_column_width.get(), dims.variables_value_column_width.get())
+        }
+    };
+    
+    // Restore column widths
+    VARIABLES_NAME_COLUMN_WIDTH.set_neq(name_width as u32);
+    VARIABLES_VALUE_COLUMN_WIDTH.set_neq(value_width as u32);
+}
+
 pub fn current_dock_mode() -> impl Signal<Item = DockMode> {
     config_store().workspace.signal_ref(|ws| ws.dock_mode.signal_cloned()).flatten()
 }
@@ -886,6 +1010,8 @@ pub fn sync_config_to_globals() {
         panel_dimensions_signal().for_each_sync(|dimensions| {
             FILES_PANEL_WIDTH.set_neq(dimensions.files_panel_width.get() as u32);
             FILES_PANEL_HEIGHT.set_neq(dimensions.files_panel_height.get() as u32);
+            VARIABLES_NAME_COLUMN_WIDTH.set_neq(dimensions.variables_name_column_width.get() as u32);
+            VARIABLES_VALUE_COLUMN_WIDTH.set_neq(dimensions.variables_value_column_width.get() as u32);
         }).await
     });
 
@@ -972,6 +1098,41 @@ pub fn sync_globals_to_config() {
                 }
                 DockMode::Right => {
                     layouts.docked_to_right.lock_ref().files_panel_height.set_neq(height as f32);
+                }
+            }
+        }).await
+    });
+
+    // Sync column widths back to config when user drags dividers
+    Task::start(async {
+        VARIABLES_NAME_COLUMN_WIDTH.signal().for_each_sync(|width| {
+            let dock_mode = config_store().workspace.lock_ref().dock_mode.get_cloned();
+            let workspace_ref = config_store().workspace.lock_ref();
+            let layouts = workspace_ref.panel_layouts.lock_ref();
+            
+            match dock_mode {
+                DockMode::Bottom => {
+                    layouts.docked_to_bottom.lock_ref().variables_name_column_width.set_neq(width as f32);
+                }
+                DockMode::Right => {
+                    layouts.docked_to_right.lock_ref().variables_name_column_width.set_neq(width as f32);
+                }
+            }
+        }).await
+    });
+
+    Task::start(async {
+        VARIABLES_VALUE_COLUMN_WIDTH.signal().for_each_sync(|width| {
+            let dock_mode = config_store().workspace.lock_ref().dock_mode.get_cloned();
+            let workspace_ref = config_store().workspace.lock_ref();
+            let layouts = workspace_ref.panel_layouts.lock_ref();
+            
+            match dock_mode {
+                DockMode::Bottom => {
+                    layouts.docked_to_bottom.lock_ref().variables_value_column_width.set_neq(width as f32);
+                }
+                DockMode::Right => {
+                    layouts.docked_to_right.lock_ref().variables_value_column_width.set_neq(width as f32);
                 }
             }
         }).await

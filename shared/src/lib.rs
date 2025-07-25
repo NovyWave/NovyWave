@@ -286,6 +286,11 @@ pub struct PanelDimensions {
     pub min_width: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_height: Option<f64>,
+    // Selected Variables panel column widths
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variables_name_column_width: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variables_value_column_width: Option<f64>,
 }
 
 impl Default for PanelDimensions {
@@ -295,6 +300,8 @@ impl Default for PanelDimensions {
             height: 200.0,
             min_width: None,
             min_height: None,
+            variables_name_column_width: None,
+            variables_value_column_width: None,
         }
     }
 }
@@ -307,6 +314,8 @@ impl PanelDimensions {
             height,
             min_width: None,
             min_height: None,
+            variables_name_column_width: None,
+            variables_value_column_width: None,
         }
     }
     
@@ -317,6 +326,8 @@ impl PanelDimensions {
             height,
             min_width: Some(min_width),
             min_height: Some(min_height),
+            variables_name_column_width: None,
+            variables_value_column_width: None,
         }
     }
     

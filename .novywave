@@ -43,10 +43,14 @@ load_files_scroll_position = 861
 [workspace.panel_dimensions_bottom]
 width = 757.0
 height = 455.0
+variables_name_column_width = 538.0
+variables_value_column_width = 350.0
 
 [workspace.panel_dimensions_right]
 width = 504.0
 height = 387.0
+variables_name_column_width = 421.0
+variables_value_column_width = 173.0
 
 [[workspace.selected_variables]]
 unique_id = "simple.vcd:simple_tb.s:A"

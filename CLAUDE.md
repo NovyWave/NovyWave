@@ -41,6 +41,26 @@ Core guidance for Claude Code when working with NovyWave.
 
 **Anti-Consultation Guards**: Command files have explicit enforcement sections to prevent consultation mode
 
+## Column Width Persistence Debugging (Session Learning)
+
+**ISSUE**: Column widths save correctly to .novywave file but reset to defaults (180.0, 100.0) on restore.
+
+**INVESTIGATION STATUS**:
+- ✅ Backend save: Values correctly stored to .novywave file with new fields
+- ✅ Backend load: Values correctly loaded from shared::PanelDimensions Optional fields  
+- ✅ Frontend conversion: Backend-to-frontend conversion includes column widths with .unwrap_or() defaults
+- ✅ Config store restore: load_from_serializable() includes lines 416-417, 426-427 for column width restoration
+- ✅ Sync function: sync_column_widths_from_config() exists and is called on line 819
+
+**ROOT CAUSE IDENTIFIED**: 
+- .novywave file shows dock_mode = "right" but values are still defaults (180.0, 100.0)
+- This means column widths are NEVER being saved with different values in the first place
+- The UI shows "Dock to Bottom" button but config thinks it's in "right" mode - mismatch!
+
+**HYPOTHESIS**: Dragging works visually but doesn't trigger config saves, OR the wrong dock mode dimensions are being updated
+
+**ACTION NEEDED**: Test if dragging the bars actually triggers the reactive save signals I added
+
 ## Virtual List Optimization (Session Learning)
 
 **OPTIMAL CONFIGURATION ACHIEVED**: MutableVec hybrid stable pool with velocity-based dynamic buffering
