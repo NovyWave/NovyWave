@@ -1,5 +1,5 @@
 use moon::*;
-use shared::{self, UpMsg, DownMsg, AppConfig, FileHierarchy, WaveformFile, FileFormat, ScopeData, generate_file_id, FileSystemItem};
+use shared::{self, UpMsg, DownMsg, AppConfig, FileHierarchy, WaveformFile, FileFormat, ScopeData, generate_file_id, FileSystemItem, SignalValueQuery, SignalValueResult};
 use std::path::Path;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -15,12 +15,25 @@ async fn frontend() -> Frontend {
 static PARSING_SESSIONS: Lazy<Arc<Mutex<HashMap<String, Arc<Mutex<f32>>>>>> = 
     Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
 
+// Storage for parsed waveform data to enable signal value queries
+struct WaveformData {
+    hierarchy: wellen::Hierarchy,
+    signal_source: Arc<Mutex<wellen::SignalSource>>,
+    time_table: Vec<wellen::Time>,
+    signals: HashMap<String, wellen::SignalRef>, // scope_path|variable_name -> SignalRef
+    file_format: wellen::FileFormat, // Store file format for proper time conversion
+}
+
+static WAVEFORM_DATA_STORE: Lazy<Arc<Mutex<HashMap<String, WaveformData>>>> = 
+    Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
+
 async fn up_msg_handler(req: UpMsgRequest<UpMsg>) {
     // println!("Received UpMsg: {:?}", req.up_msg); // Disabled - too verbose
     let (session_id, cor_id) = (req.session_id, req.cor_id);
     
     match req.up_msg {
         UpMsg::LoadWaveformFile(file_path) => {
+            eprintln!("🔥 BACKEND: Loading waveform file: {}", file_path);
             load_waveform_file(file_path, session_id, cor_id).await;
         }
         UpMsg::GetParsingProgress(file_id) => {
@@ -37,6 +50,13 @@ async fn up_msg_handler(req: UpMsgRequest<UpMsg>) {
         }
         UpMsg::BrowseDirectories(dir_paths) => {
             browse_directories_batch(dir_paths, session_id, cor_id).await;
+        }
+        UpMsg::QuerySignalValues { file_path, queries } => {
+            eprintln!("🔥 BACKEND: Received QuerySignalValues for file: {}, {} queries", file_path, queries.len());
+            for query in &queries {
+                eprintln!("🔥 Query: scope={}, var={}, time={}", query.scope_path, query.variable_name, query.time_seconds);
+            }
+            query_signal_values(file_path, queries, session_id, cor_id).await;
         }
     }
 }
@@ -81,43 +101,99 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
     
     match wellen::viewers::read_header_from_file(&file_path, &options) {
         Ok(header_result) => {
+            eprintln!("🔥 BACKEND: Successfully read header from {}", file_path);
+            // TIMESCALE INVESTIGATION - checking what's available in header_result
+            eprintln!("🔥 TIMESCALE DEBUG: Investigating header structure...");
+            // Let's try to access potential timescale fields
+            // header_result should have: body, hierarchy, file_format
+            eprintln!("🔥 TIMESCALE DEBUG: File format: {:?}", header_result.file_format);
             {
                 let mut p = progress.lock().unwrap();
-                *p = 0.5; // Header parsed
+                *p = 0.3; // Header parsed
             }
-            send_progress_update(file_id.clone(), 0.5, session_id, cor_id).await;
+            send_progress_update(file_id.clone(), 0.3, session_id, cor_id).await;
             
-            let scopes = extract_scopes_from_hierarchy(&header_result.hierarchy, &file_path);
-            let format = match header_result.file_format {
-                wellen::FileFormat::Vcd => FileFormat::VCD,
-                wellen::FileFormat::Fst => FileFormat::FST,
-                wellen::FileFormat::Ghw => FileFormat::VCD, // Treat as VCD for now
-                wellen::FileFormat::Unknown => FileFormat::VCD, // Fallback
-            };
-            
-            let waveform_file = WaveformFile {
-                id: file_id.clone(),
-                filename,
-                format,
-                scopes,
-            };
-            
-            let file_hierarchy = FileHierarchy {
-                files: vec![waveform_file],
-            };
-            
-            {
-                let mut p = progress.lock().unwrap();
-                *p = 1.0; // Complete
+            // Read the body to get signal data and time table
+            match wellen::viewers::read_body(header_result.body, &header_result.hierarchy, None) {
+                Ok(body_result) => {
+                    eprintln!("🔥 BACKEND: Successfully read body from {}", file_path);
+                    // TIMESCALE INVESTIGATION - check body_result structure
+                    eprintln!("🔥 TIMESCALE DEBUG: Body time table length: {}", body_result.time_table.len());
+                    eprintln!("🔥 TIMESCALE DEBUG: First few time values in native units:");
+                    for (i, &time) in body_result.time_table.iter().take(5).enumerate() {
+                        eprintln!("🔥 TIMESCALE DEBUG:   [{}] = {} (native units)", i, time);
+                    }
+                    
+                    // Try to access timescale information - these might exist
+                    // eprintln!("🔥 TIMESCALE DEBUG: Trying body_result.timescale...");
+                    // eprintln!("🔥 TIMESCALE DEBUG: Trying header_result.hierarchy.timescale...");
+                    
+                    // Check if hierarchy has timescale info
+                    eprintln!("🔥 TIMESCALE DEBUG: Checking hierarchy for timescale info...");
+                    {
+                        let mut p = progress.lock().unwrap();
+                        *p = 0.7; // Body parsed
+                    }
+                    send_progress_update(file_id.clone(), 0.7, session_id, cor_id).await;
+                    
+                    // Extract scopes first 
+                    let scopes = extract_scopes_from_hierarchy(&header_result.hierarchy, &file_path);
+                    
+                    // Build signal reference map for quick lookup
+                    let mut signals: HashMap<String, wellen::SignalRef> = HashMap::new();
+                    eprintln!("🔥 BACKEND: Building signal reference map for {}", file_path);
+                    build_signal_reference_map(&header_result.hierarchy, &mut signals);
+                    eprintln!("🔥 BACKEND: Built signal map with {} signals", signals.len());
+                    
+                    // Store waveform data for signal value queries
+                    let waveform_data = WaveformData {
+                        hierarchy: header_result.hierarchy,
+                        signal_source: Arc::new(Mutex::new(body_result.source)),
+                        time_table: body_result.time_table.clone(),
+                        signals,
+                        file_format: header_result.file_format,
+                    };
+                    
+                    {
+                        let mut store = WAVEFORM_DATA_STORE.lock().unwrap();
+                        store.insert(file_path.clone(), waveform_data);
+                    }
+                    let format = match header_result.file_format {
+                        wellen::FileFormat::Vcd => FileFormat::VCD,
+                        wellen::FileFormat::Fst => FileFormat::FST,
+                        wellen::FileFormat::Ghw => FileFormat::VCD, // Treat as VCD for now
+                        wellen::FileFormat::Unknown => FileFormat::VCD, // Fallback
+                    };
+                    
+                    let waveform_file = WaveformFile {
+                        id: file_id.clone(),
+                        filename,
+                        format,
+                        scopes,
+                    };
+                    
+                    let file_hierarchy = FileHierarchy {
+                        files: vec![waveform_file],
+                    };
+                    
+                    {
+                        let mut p = progress.lock().unwrap();
+                        *p = 1.0; // Complete
+                    }
+                    send_progress_update(file_id.clone(), 1.0, session_id, cor_id).await;
+                    
+                    send_down_msg(DownMsg::FileLoaded { 
+                        file_id: file_id.clone(), 
+                        hierarchy: file_hierarchy 
+                    }, session_id, cor_id).await;
+                    
+                    cleanup_parsing_session(&file_id);
+                }
+                Err(e) => {
+                    let error_msg = format!("Failed to read waveform body from '{}': {}", file_path, e);
+                    send_down_msg(DownMsg::ParsingError { file_id, error: error_msg }, session_id, cor_id).await;
+                }
             }
-            send_progress_update(file_id.clone(), 1.0, session_id, cor_id).await;
-            
-            send_down_msg(DownMsg::FileLoaded { 
-                file_id: file_id.clone(), 
-                hierarchy: file_hierarchy 
-            }, session_id, cor_id).await;
-            
-            cleanup_parsing_session(&file_id);
         }
         Err(e) => {
             let error_msg = format!("Failed to parse waveform file '{}': {}", file_path, e);
@@ -586,6 +662,238 @@ async fn scan_directory_async(path: &Path) -> Result<Vec<FileSystemItem>, Box<dy
 }
 
 // REMOVED: process_entry_async and should_disable_directory functions for instant loading
+
+// Build signal reference map for efficient lookup during value queries
+fn build_signal_reference_map(hierarchy: &wellen::Hierarchy, signals: &mut HashMap<String, wellen::SignalRef>) {
+    eprintln!("🔥 BACKEND: Starting signal map building with {} total scopes", hierarchy.scopes().count());
+    
+    // Recursively process all scopes in the hierarchy
+    for scope_ref in hierarchy.scopes() {
+        build_signals_for_scope_recursive(hierarchy, scope_ref, signals);
+    }
+}
+
+// Recursively process a scope and all its child scopes
+fn build_signals_for_scope_recursive(hierarchy: &wellen::Hierarchy, scope_ref: wellen::ScopeRef, signals: &mut HashMap<String, wellen::SignalRef>) {
+    let scope = &hierarchy[scope_ref];
+    let scope_path = scope.full_name(hierarchy);
+    let var_count = scope.vars(hierarchy).count();
+    eprintln!("🔥 BACKEND: Scope '{}' has {} variables", scope_path, var_count);
+    
+    // Process variables in this scope
+    for var_ref in scope.vars(hierarchy) {
+        let var = &hierarchy[var_ref];
+        let variable_name = var.name(hierarchy);
+        let signal_ref = var.signal_ref();
+        
+        // Key format: "scope_path|variable_name" to match SelectedVariable format
+        let key = format!("{}|{}", scope_path, variable_name);
+        eprintln!("🔥 BACKEND: Storing signal key: {}", key);
+        signals.insert(key, signal_ref);
+    }
+    
+    // Recursively process child scopes
+    for child_scope_ref in scope.scopes(hierarchy) {
+        build_signals_for_scope_recursive(hierarchy, child_scope_ref, signals);
+    }
+}
+
+// Handle signal value queries
+async fn query_signal_values(file_path: String, queries: Vec<SignalValueQuery>, session_id: SessionId, cor_id: CorId) {
+    eprintln!("🔥 BACKEND: Starting signal value query processing");
+    let store = WAVEFORM_DATA_STORE.lock().unwrap();
+    let waveform_data = match store.get(&file_path) {
+        Some(data) => {
+            eprintln!("🔥 BACKEND: Found waveform data for file: {}", file_path);
+            data
+        },
+        None => {
+            eprintln!("🔥 BACKEND: ERROR - Waveform file not found in store: {}", file_path);
+            send_down_msg(DownMsg::SignalValuesError {
+                file_path,
+                error: "Waveform file not loaded or signal data not available".to_string(),
+            }, session_id, cor_id).await;
+            return;
+        }
+    };
+    
+    let mut results = Vec::new();
+    eprintln!("🔥 BACKEND: Processing {} queries", queries.len());
+    
+    for query in queries {
+        let key = format!("{}|{}", query.scope_path, query.variable_name);
+        eprintln!("🔥 BACKEND: Looking for signal key: {}", key);
+        
+        match waveform_data.signals.get(&key) {
+            Some(&signal_ref) => {
+                eprintln!("🔥 BACKEND: Found signal_ref for key: {}", key);
+                // Convert time to time table index based on file format
+                let target_time = match waveform_data.file_format {
+                    wellen::FileFormat::Vcd => {
+                        // For VCD: time table is in VCD's native units (depends on $timescale)
+                        // For $timescale 1s: values are already in seconds
+                        eprintln!("🔥 BACKEND: VCD file - using native time units (seconds)");
+                        query.time_seconds as u64
+                    },
+                    _ => {
+                        // For other formats, use femtosecond conversion  
+                        eprintln!("🔥 BACKEND: Non-VCD file - converting to femtoseconds");
+                        (query.time_seconds * 1_000_000_000_000.0) as u64
+                    }
+                };
+                eprintln!("🔥 BACKEND: Target time: {} seconds = {} (native units)", query.time_seconds, target_time);
+                
+                // Debug: Show time table around our target
+                eprintln!("🔥 BACKEND: Time table has {} entries", waveform_data.time_table.len());
+                for (i, &time) in waveform_data.time_table.iter().enumerate().take(10) {
+                    let time_display = match waveform_data.file_format {
+                        wellen::FileFormat::Vcd => format!("{} seconds", time),
+                        _ => {
+                            let seconds = time as f64 / 1_000_000_000_000.0;
+                            format!("{} fs = {} seconds", time, seconds)
+                        }
+                    };
+                    eprintln!("🔥 BACKEND: Time[{}] = {}", i, time_display);
+                }
+                
+                let time_idx = match waveform_data.time_table.binary_search(&target_time) {
+                    Ok(exact_idx) => {
+                        eprintln!("🔥 BACKEND: Found exact time match at index: {}", exact_idx);
+                        exact_idx as u32
+                    },
+                    Err(insert_pos) => {
+                        let idx = insert_pos.saturating_sub(1) as u32;
+                        eprintln!("🔥 BACKEND: Using closest earlier time at index: {}", idx);
+                        if idx < waveform_data.time_table.len() as u32 {
+                            let actual_time = waveform_data.time_table[idx as usize];
+                            let actual_time_display = match waveform_data.file_format {
+                                wellen::FileFormat::Vcd => format!("{} seconds", actual_time),
+                                _ => {
+                                    let actual_seconds = actual_time as f64 / 1_000_000_000_000.0;
+                                    format!("{} fs = {} seconds", actual_time, actual_seconds)
+                                }
+                            };
+                            eprintln!("🔥 BACKEND: Actual time at index {}: {}", idx, actual_time_display);
+                            
+                            // Check if requested time is way beyond data range
+                            let last_time = waveform_data.time_table.last().unwrap_or(&0);
+                            let last_seconds = match waveform_data.file_format {
+                                wellen::FileFormat::Vcd => *last_time as f64, // Already in seconds
+                                _ => *last_time as f64 / 1_000_000_000_000.0, // Convert from femtoseconds
+                            };
+                            if query.time_seconds > last_seconds * 2.0 { // If requested time is more than 2x the last time
+                                eprintln!("🔥 BACKEND: WARNING - Requested time ({} s) is beyond data range (max: {} s)", 
+                                    query.time_seconds, last_seconds);
+                            }
+                        }
+                        idx
+                    }
+                };
+                
+                // Load signal and get value
+                eprintln!("🔥 BACKEND: Loading signal...");
+                let mut signal_source = waveform_data.signal_source.lock().unwrap();
+                let loaded_signals = signal_source.load_signals(&[signal_ref], &waveform_data.hierarchy, true);
+                eprintln!("🔥 BACKEND: Loaded {} signals", loaded_signals.len());
+                
+                match loaded_signals.into_iter().next() {
+                    Some((_, signal)) => {
+                        eprintln!("🔥 BACKEND: Signal loaded successfully");
+                        if let Some(offset) = signal.get_offset(time_idx) {
+                            eprintln!("🔥 BACKEND: Found offset for time_idx: {}", time_idx);
+                            let value = signal.get_value_at(&offset, 0);
+                            let value_str = format!("{}", value);
+                            let formatted_value = format_signal_value(&value);
+                            eprintln!("🔥 BACKEND: Signal value: {}, formatted: {}", value_str, formatted_value);
+                            
+                            results.push(SignalValueResult {
+                                scope_path: query.scope_path,
+                                variable_name: query.variable_name,
+                                time_seconds: query.time_seconds,
+                                value: Some(value_str),
+                                formatted_value: Some(formatted_value),
+                            });
+                        } else {
+                            eprintln!("🔥 BACKEND: No offset found for time_idx: {}", time_idx);
+                            results.push(SignalValueResult {
+                                scope_path: query.scope_path,
+                                variable_name: query.variable_name,
+                                time_seconds: query.time_seconds,
+                                value: None,
+                                formatted_value: None,
+                            });
+                        }
+                    }
+                    None => {
+                        eprintln!("🔥 BACKEND: ERROR - No signal returned from load_signals");
+                        results.push(SignalValueResult {
+                            scope_path: query.scope_path,
+                            variable_name: query.variable_name,
+                            time_seconds: query.time_seconds,
+                            value: None,
+                            formatted_value: Some("Signal load failed".to_string()),
+                        });
+                    }
+                }
+            }
+            None => {
+                eprintln!("🔥 BACKEND: ERROR - Signal key not found: {}", key);
+                results.push(SignalValueResult {
+                    scope_path: query.scope_path,
+                    variable_name: query.variable_name,
+                    time_seconds: query.time_seconds,
+                    value: None,
+                    formatted_value: Some("Signal not found".to_string()),
+                });
+            }
+        }
+    }
+    
+    eprintln!("🔥 BACKEND: Sending response with {} results", results.len());
+    send_down_msg(DownMsg::SignalValues {
+        file_path,
+        results,
+    }, session_id, cor_id).await;
+    eprintln!("🔥 BACKEND: Response sent");
+}
+
+// Format signal value for display
+fn format_signal_value(value: &wellen::SignalValue) -> String {
+    match value {
+        wellen::SignalValue::Binary(bits, width) => {
+            if *width == 1 {
+                // Single bit
+                if bits.is_empty() { "X".to_string() } else { format!("{}", bits[0] & 1) }
+            } else {
+                // Multi-bit - show as binary
+                value.to_bit_string().unwrap_or_else(|| "?".to_string())
+            }
+        }
+        wellen::SignalValue::FourValue(bits, width) => {
+            if *width == 1 {
+                // Single bit 4-state
+                if bits.is_empty() { "X".to_string() } 
+                else {
+                    match bits[0] & 3 {
+                        0 => "0".to_string(),
+                        1 => "1".to_string(),
+                        2 => "X".to_string(),
+                        3 => "Z".to_string(),
+                        _ => "?".to_string(),
+                    }
+                }
+            } else {
+                // Multi-bit 4-state
+                value.to_bit_string().unwrap_or_else(|| "?".to_string())
+            }
+        }
+        wellen::SignalValue::NineValue(bits, _width) => {
+            value.to_bit_string().unwrap_or_else(|| "?".to_string())
+        }
+        wellen::SignalValue::String(s) => s.to_string(),
+        wellen::SignalValue::Real(f) => format!("{:.6}", f),
+    }
+}
 
 #[moon::main]
 async fn main() -> std::io::Result<()> {
