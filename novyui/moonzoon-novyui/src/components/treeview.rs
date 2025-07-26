@@ -603,7 +603,6 @@ fn render_tree_item(
                                         
                                         // Handle scope selection logic for checkbox clicks
                                         if item_id.starts_with("scope_") {
-                                            zoon::println!("Checkbox clicked for scope: {}, single_scope_selection: {}", item_id, single_scope_selection);
                                             // Special handling for scopes when single_scope_selection is enabled
                                             if single_scope_selection {
                                                 if selected.contains(&item_id) {
@@ -611,10 +610,8 @@ fn render_tree_item(
                                                     selected.shift_remove(&item_id);
                                                 } else {
                                                     // Clear all other scope selections and select this one (radio button behavior)
-                                                    zoon::println!("Clearing other scope selections and selecting: {}", item_id);
                                                     selected.retain(|id| !id.starts_with("scope_"));
                                                     selected.insert(item_id.clone());
-                                                    zoon::println!("Selected items after single scope selection: {:?}", selected.iter().collect::<Vec<_>>());
                                                 }
                                             } else {
                                                 // Regular multi-select behavior for scopes

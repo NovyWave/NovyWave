@@ -279,14 +279,13 @@ pub fn init_tracked_files_from_config(file_paths: Vec<String>) {
 
 /// Add a variable to the selected list
 pub fn add_selected_variable(variable: shared::Signal, file_id: &str, scope_id: &str) -> bool {
-    zoon::println!("add_selected_variable called: variable={}, file_id={}, scope_id={}", variable.name, file_id, scope_id);
     
     // Find context information
     let tracked_files = TRACKED_FILES.lock_ref();
     let file = tracked_files.iter().find(|f| f.id == file_id);
     
     if let Some(file) = file {
-        let file_name = file.filename.clone();
+        let _file_name = file.filename.clone();
         
         // Find scope full name from the file state
         let scope_full_name = if let FileState::Loaded(waveform_file) = &file.state {
@@ -298,14 +297,13 @@ pub fn add_selected_variable(variable: shared::Signal, file_id: &str, scope_id: 
         
         let selected_var = shared::SelectedVariable::new(
             variable,
-            file_name,
+            file.path.clone(),
             scope_full_name,
         );
         
         // Check for duplicates using index
         let mut index = SELECTED_VARIABLES_INDEX.lock_mut();
         if index.contains(&selected_var.unique_id) {
-            zoon::println!("Variable already selected: {}", selected_var.unique_id);
             return false; // Already selected
         }
         
@@ -313,14 +311,11 @@ pub fn add_selected_variable(variable: shared::Signal, file_id: &str, scope_id: 
         index.insert(selected_var.unique_id.clone());
         SELECTED_VARIABLES.lock_mut().push_cloned(selected_var.clone());
         
-        zoon::println!("Variable added successfully: unique_id={}, display_name={}", selected_var.unique_id, selected_var.display_name());
-        zoon::println!("SELECTED_VARIABLES count: {}", SELECTED_VARIABLES.lock_ref().len());
         
         // Trigger config save
         save_selected_variables();
         true
     } else {
-        zoon::println!("File not found: {}", file_id);
         false // File not found
     }
 }
@@ -343,8 +338,8 @@ pub fn clear_selected_variables() {
 }
 
 /// Check if a variable is already selected
-pub fn is_variable_selected(file_name: &str, scope_path: &str, variable_name: &str) -> bool {
-    let unique_id = format!("{}:{}:{}", file_name, scope_path, variable_name);
+pub fn is_variable_selected(file_path: &str, scope_path: &str, variable_name: &str) -> bool {
+    let unique_id = format!("{}|{}|{}", file_path, scope_path, variable_name);
     SELECTED_VARIABLES_INDEX.lock_ref().contains(&unique_id)
 }
 
@@ -365,7 +360,6 @@ pub fn find_scope_full_name(scopes: &[shared::ScopeData], target_scope_id: &str)
 /// Save selected variables to config
 pub fn save_selected_variables() {
     if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
-        zoon::println!("Saving selected variables to config");
         
         // First sync current selected variables to config store
         let current_vars = SELECTED_VARIABLES.lock_ref().to_vec();
@@ -378,20 +372,17 @@ pub fn save_selected_variables() {
 
 /// Initialize selected variables from config
 pub fn init_selected_variables_from_config(selected_vars: Vec<shared::SelectedVariable>) {
-    zoon::println!("Loading {} selected variables from config", selected_vars.len());
     
     // Validate that referenced files/scopes still exist
     let valid_vars: Vec<shared::SelectedVariable> = selected_vars.into_iter()
         .filter(|var| {
             let is_valid = validate_selected_variable_context(var);
             if !is_valid {
-                zoon::println!("Filtered out variable: {} (file not loaded yet)", var.unique_id);
             }
             is_valid
         })
         .collect();
     
-    zoon::println!("After validation, {} selected variables remain", valid_vars.len());
     
     // Update global state
     SELECTED_VARIABLES.lock_mut().replace_cloned(valid_vars.clone());
@@ -408,36 +399,23 @@ fn validate_selected_variable_context(var: &shared::SelectedVariable) -> bool {
     let tracked_files = TRACKED_FILES.lock_ref();
     
     // Check if file still exists
-    if let Some(file) = tracked_files.iter().find(|f| f.filename == var.file_name) {
-        zoon::println!("Found file {} in state: {:?}", var.file_name, 
-            match &file.state {
-                FileState::Loading(_) => "Loading",
-                FileState::Loaded(_) => "Loaded",
-                FileState::Failed(_) => "Failed",
-                FileState::Missing(_) => "Missing",
-                FileState::Unsupported(_) => "Unsupported",
-            }
-        );
+    if let Some(file) = tracked_files.iter().find(|f| f.filename == var.file_name().unwrap_or_default()) {
         
         match &file.state {
             // Accept variables from files that are currently loading or successfully loaded
             FileState::Loading(_) => {
-                zoon::println!("File {} is loading, accepting variable {} for now", var.file_name, var.unique_id);
                 true
             },
             FileState::Loaded(waveform_file) => {
-                let scope_exists = scope_exists_in_file(&waveform_file.scopes, &var.scope_path);
-                zoon::println!("Scope {} exists: {}", var.scope_path, scope_exists);
+                let scope_exists = scope_exists_in_file(&waveform_file.scopes, &var.scope_path().unwrap_or_default());
                 scope_exists
             },
             // Reject variables from failed, missing, or unsupported files
             FileState::Failed(_) | FileState::Missing(_) | FileState::Unsupported(_) => {
-                zoon::println!("File {} failed/missing/unsupported, filtering out variable {}", var.file_name, var.unique_id);
                 false
             }
         }
     } else {
-        zoon::println!("File {} not found in tracked files", var.file_name);
         false
     }
 }

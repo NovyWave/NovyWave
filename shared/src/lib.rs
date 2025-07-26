@@ -97,59 +97,90 @@ pub struct Signal {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct SelectedVariable {
-    /// Human-readable identifier: "filename:scope_path:variable_name"
-    /// Example: "simple.vcd:simple_tb.s:A"
+    /// Pipe-separated identifier: "/full/path/file.vcd|scope_path|variable_name"
+    /// Example: "/home/user/test_files/simple.vcd|simple_tb.s|A"
     pub unique_id: String,
-    pub file_name: String,
-    pub scope_path: String,
-    pub variable_name: String,
-    pub variable_type: String,
-    pub variable_width: u32,
-    pub selected_at: u64,
+    /// Formatter type for display - defaults to "DEFAULT"
+    pub formatter: String,
 }
 
 impl SelectedVariable {
-    pub fn new(variable: Signal, file_name: String, scope_full_name: String) -> Self {
-        let unique_id = format!("{}:{}:{}", file_name, scope_full_name, variable.name);
+    pub fn new(variable: Signal, file_path: String, scope_full_name: String) -> Self {
+        let unique_id = format!("{}|{}|{}", file_path, scope_full_name, variable.name);
         
         Self {
             unique_id,
-            file_name,
-            scope_path: scope_full_name,
-            variable_name: variable.name,
-            variable_type: variable.signal_type,
-            variable_width: variable.width,
-            selected_at: 0,
+            formatter: "DEFAULT".to_string(),
         }
     }
     
-    pub fn new_with_timestamp(variable: Signal, file_name: String, scope_full_name: String, timestamp: u64) -> Self {
-        let unique_id = format!("{}:{}:{}", file_name, scope_full_name, variable.name);
+    pub fn new_with_formatter(variable: Signal, file_path: String, scope_full_name: String, formatter: String) -> Self {
+        let unique_id = format!("{}|{}|{}", file_path, scope_full_name, variable.name);
         
         Self {
             unique_id,
-            file_name,
-            scope_path: scope_full_name,
-            variable_name: variable.name,
-            variable_type: variable.signal_type,
-            variable_width: variable.width,
-            selected_at: timestamp,
+            formatter,
         }
+    }
+    
+    /// Parse the unique_id into its components
+    pub fn parse_unique_id(&self) -> Option<(String, String, String)> {
+        let parts: Vec<&str> = self.unique_id.splitn(3, '|').collect();
+        if parts.len() == 3 {
+            Some((parts[0].to_string(), parts[1].to_string(), parts[2].to_string()))
+        } else {
+            None
+        }
+    }
+    
+    /// Get the file path component
+    pub fn file_path(&self) -> Option<String> {
+        self.parse_unique_id().map(|(path, _, _)| path)
+    }
+    
+    /// Get the file name component
+    pub fn file_name(&self) -> Option<String> {
+        self.file_path()
+            .and_then(|path| {
+                std::path::Path::new(&path)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .map(|s| s.to_string())
+            })
+    }
+    
+    /// Get the scope path component
+    pub fn scope_path(&self) -> Option<String> {
+        self.parse_unique_id().map(|(_, scope, _)| scope)
+    }
+    
+    /// Get the variable name component
+    pub fn variable_name(&self) -> Option<String> {
+        self.parse_unique_id().map(|(_, _, var)| var)
     }
     
     /// Create a Signal struct from this SelectedVariable (for backward compatibility)
-    pub fn to_signal(&self) -> Signal {
-        Signal {
-            id: self.variable_name.clone(), // Use variable name as ID
-            name: self.variable_name.clone(),
-            signal_type: self.variable_type.clone(),
-            width: self.variable_width,
-        }
+    pub fn to_signal(&self) -> Option<Signal> {
+        let (_, _, variable_name) = self.parse_unique_id()?;
+        Some(Signal {
+            id: variable_name.clone(),
+            name: variable_name,
+            signal_type: "Unknown".to_string(), // Type info not stored in new format
+            width: 0, // Width info not stored in new format
+        })
     }
     
     /// Get display name for UI purposes
     pub fn display_name(&self) -> String {
-        format!("{}: {}.{}", self.file_name, self.scope_path, self.variable_name)
+        if let Some((file_path, scope_path, variable_name)) = self.parse_unique_id() {
+            let file_name = std::path::Path::new(&file_path)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or(&file_path);
+            format!("{}: {}.{}", file_name, scope_path, variable_name)
+        } else {
+            format!("Invalid: {}", self.unique_id)
+        }
     }
 }
 

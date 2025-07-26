@@ -15,7 +15,7 @@ fn empty_state_hint(text: &str) -> impl Element {
 
 // ===== CORE VIRTUAL LIST FUNCTIONS =====
 // 
-// WARNING: Avoid excessive zoon::println! logging in virtual lists and viewport handlers.
+// WARNING: Avoid excessive // zoon::println! logging in virtual lists and viewport handlers.
 // Virtual lists trigger frequent resize/scroll events that can generate thousands of log
 // entries per second, corrupting dev_server.log with multi-gigabyte binary data and
 // making compilation errors impossible to see.
@@ -25,7 +25,7 @@ fn empty_state_hint(text: &str) -> impl Element {
 //
 
 pub fn virtual_variables_list(variables: Vec<VariableWithContext>, search_filter: String) -> Column<column::EmptyFlagNotSet, RawHtmlEl> {
-    zoon::println!("VIRTUAL_VARIABLES_LIST called with {} variables, filter: '{}'", variables.len(), search_filter);
+    // zoon::println!("VIRTUAL_VARIABLES_LIST called with {} variables, filter: '{}'", variables.len(), search_filter);
     // Handle special cases first (empty states)
     if variables.is_empty() && search_filter.starts_with("Select a scope") {
         return Column::new().item(empty_state_hint(&search_filter));
@@ -49,7 +49,7 @@ pub fn virtual_variables_list(variables: Vec<VariableWithContext>, search_filter
 }
 
 pub fn rust_virtual_variables_list_simple_fill(variables: Vec<VariableWithContext>) -> Column<column::EmptyFlagNotSet, RawHtmlEl> {
-    zoon::println!("RUST_VIRTUAL_VARIABLES_LIST_SIMPLE_FILL called with {} variables", variables.len());
+    // zoon::println!("RUST_VIRTUAL_VARIABLES_LIST_SIMPLE_FILL called with {} variables", variables.len());
     // DYNAMIC HEIGHT SOLUTION: Parent-child pattern with real viewport monitoring
     let height_mutable = Mutable::new(400u32); // Start with reasonable default
     let virtual_list_height = Broadcaster::new(height_mutable.signal());
@@ -82,7 +82,7 @@ pub fn rust_virtual_variables_list_with_signal(
     variables: Vec<VariableWithContext>,
     height_signal: Broadcaster<MutableSignal<u32>>
 ) -> Column<column::EmptyFlagNotSet, RawHtmlEl> {
-    zoon::println!("RUST_VIRTUAL_VARIABLES_LIST_WITH_SIGNAL called with {} variables", variables.len());
+    // zoon::println!("RUST_VIRTUAL_VARIABLES_LIST_WITH_SIGNAL called with {} variables", variables.len());
     let total_items = variables.len();
     let item_height = 24.0;
     
@@ -231,8 +231,7 @@ pub fn rust_virtual_variables_list_with_signal(
                             element_state.scope_id_signal.set_neq(variable_context.scope_id.clone());
                             element_state.variable_signal.set_neq(Some(variable_context.signal.clone()));
                             
-                            zoon::println!("Setting context data for variable: {}, file_id: {}, scope_id: {}", 
-                                variable_context.signal.name, variable_context.file_id, variable_context.scope_id);
+                            // Debug log removed
                             
                             // Set previous variable name for prefix highlighting
                             let previous_name = if absolute_index > 0 {
@@ -250,7 +249,7 @@ pub fn rust_virtual_variables_list_with_signal(
                                 if let Some(tracked_file) = tracked_files.iter().find(|f| f.id == variable_context.file_id) {
                                     if let shared::FileState::Loaded(waveform_file) = &tracked_file.state {
                                         if let Some(scope_path) = find_scope_full_name(&waveform_file.scopes, &variable_context.scope_id) {
-                                            is_variable_selected(&tracked_file.filename, &scope_path, &variable_context.signal.name)
+                                            is_variable_selected(&tracked_file.path, &scope_path, &variable_context.signal.name)
                                         } else {
                                             false
                                         }
@@ -290,7 +289,7 @@ pub fn rust_virtual_variables_list_with_signal(
             use crate::state::{SELECTED_VARIABLES, TRACKED_FILES, is_variable_selected, find_scope_full_name};
             
             SELECTED_VARIABLES.signal_vec_cloned().for_each(move |_| {
-                zoon::println!("REACTIVE SELECTION STATE: SELECTED_VARIABLES changed, updating highlighting");
+                // zoon::println!("REACTIVE SELECTION STATE: SELECTED_VARIABLES changed, updating highlighting");
                 let pool = element_pool.lock_ref();
                 let start = visible_start.get();
                 let end = visible_end.get();
@@ -308,7 +307,7 @@ pub fn rust_virtual_variables_list_with_signal(
                                 if let Some(tracked_file) = tracked_files.iter().find(|f| f.id == variable_context.file_id) {
                                     if let shared::FileState::Loaded(waveform_file) = &tracked_file.state {
                                         if let Some(scope_path) = find_scope_full_name(&waveform_file.scopes, &variable_context.scope_id) {
-                                            is_variable_selected(&tracked_file.filename, &scope_path, &variable_context.signal.name)
+                                            is_variable_selected(&tracked_file.path, &scope_path, &variable_context.signal.name)
                                         } else {
                                             false
                                         }
@@ -322,7 +321,7 @@ pub fn rust_virtual_variables_list_with_signal(
                             
                             // Update the selection signal to trigger UI update
                             element_state.is_selected_signal.set_neq(is_selected);
-                            zoon::println!("Updated selection state for variable '{}': {}", variable_context.signal.name, is_selected);
+                            // zoon::println!("Updated selection state for variable '{}': {}", variable_context.signal.name, is_selected);
                         }
                     }
                 }
@@ -553,7 +552,7 @@ struct VirtualElementState {
 // ===== HYBRID STABLE ELEMENT =====
 // Optimized version for the hybrid MutableVec approach
 fn create_stable_variable_element_hybrid(state: VirtualElementState, hovered_index: Mutable<Option<usize>>) -> impl Element {
-    zoon::println!("CREATE_STABLE_VARIABLE_ELEMENT_HYBRID called");
+    // zoon::println!("CREATE_STABLE_VARIABLE_ELEMENT_HYBRID called");
     Row::new()
         .s(Gap::new().x(8))
         .s(Width::fill())
@@ -597,16 +596,16 @@ fn create_stable_variable_element_hybrid(state: VirtualElementState, hovered_ind
             let scope_id_signal = state.scope_id_signal.clone();
             let variable_signal = state.variable_signal.clone();
             move || {
-                zoon::println!("CLICK HANDLER TRIGGERED!");
+                // zoon::println!("CLICK HANDLER TRIGGERED!");
                 let file_id = file_id_signal.get_cloned();
                 let scope_id = scope_id_signal.get_cloned();
-                zoon::println!("Click context: file_id={}, scope_id={}", file_id, scope_id);
+                // zoon::println!("Click context: file_id={}, scope_id={}", file_id, scope_id);
                 if let Some(variable) = variable_signal.get_cloned() {
-                    zoon::println!("Variable found: {}", variable.name);
+                    // zoon::println!("Variable found: {}", variable.name);
                     use crate::state::add_selected_variable;
                     add_selected_variable(variable, &file_id, &scope_id);
                 } else {
-                    zoon::println!("No variable found in variable_signal");
+                    // zoon::println!("No variable found in variable_signal");
                 }
             }
         })
@@ -720,16 +719,16 @@ fn create_variable_name_display(
                                         let scope_id_signal = scope_id_signal.clone();
                                         let variable_signal = variable_signal.clone();
                                         move || {
-                                            zoon::println!("PARAGRAPH CLICK HANDLER TRIGGERED!");
+                                            // zoon::println!("PARAGRAPH CLICK HANDLER TRIGGERED!");
                                             let file_id = file_id_signal.get_cloned();
                                             let scope_id = scope_id_signal.get_cloned();
-                                            zoon::println!("Paragraph click context: file_id={}, scope_id={}", file_id, scope_id);
+                                            // zoon::println!("Paragraph click context: file_id={}, scope_id={}", file_id, scope_id);
                                             if let Some(variable) = variable_signal.get_cloned() {
-                                                zoon::println!("Paragraph variable found: {}", variable.name);
+                                                // zoon::println!("Paragraph variable found: {}", variable.name);
                                                 use crate::state::add_selected_variable;
                                                 add_selected_variable(variable, &file_id, &scope_id);
                                             } else {
-                                                zoon::println!("No variable found in paragraph variable_signal");
+                                                // zoon::println!("No variable found in paragraph variable_signal");
                                             }
                                         }
                                     })
@@ -744,16 +743,16 @@ fn create_variable_name_display(
                                         let scope_id_signal = scope_id_signal.clone();
                                         let variable_signal = variable_signal.clone();
                                         move || {
-                                            zoon::println!("PARAGRAPH CLICK HANDLER TRIGGERED (no prefix)!");
+                                            // zoon::println!("PARAGRAPH CLICK HANDLER TRIGGERED (no prefix)!");
                                             let file_id = file_id_signal.get_cloned();
                                             let scope_id = scope_id_signal.get_cloned();
-                                            zoon::println!("Paragraph click context: file_id={}, scope_id={}", file_id, scope_id);
+                                            // zoon::println!("Paragraph click context: file_id={}, scope_id={}", file_id, scope_id);
                                             if let Some(variable) = variable_signal.get_cloned() {
-                                                zoon::println!("Paragraph variable found: {}", variable.name);
+                                                // zoon::println!("Paragraph variable found: {}", variable.name);
                                                 use crate::state::add_selected_variable;
                                                 add_selected_variable(variable, &file_id, &scope_id);
                                             } else {
-                                                zoon::println!("No variable found in paragraph variable_signal");
+                                                // zoon::println!("No variable found in paragraph variable_signal");
                                             }
                                         }
                                     })
@@ -770,16 +769,16 @@ fn create_variable_name_display(
                                     let scope_id_signal = scope_id_signal.clone();
                                     let variable_signal = variable_signal.clone();
                                     move || {
-                                        zoon::println!("PARAGRAPH CLICK HANDLER TRIGGERED (first item)!");
+                                        // zoon::println!("PARAGRAPH CLICK HANDLER TRIGGERED (first item)!");
                                         let file_id = file_id_signal.get_cloned();
                                         let scope_id = scope_id_signal.get_cloned();
-                                        zoon::println!("Paragraph click context: file_id={}, scope_id={}", file_id, scope_id);
+                                        // zoon::println!("Paragraph click context: file_id={}, scope_id={}", file_id, scope_id);
                                         if let Some(variable) = variable_signal.get_cloned() {
-                                            zoon::println!("Paragraph variable found: {}", variable.name);
+                                            // zoon::println!("Paragraph variable found: {}", variable.name);
                                             use crate::state::add_selected_variable;
                                             add_selected_variable(variable, &file_id, &scope_id);
                                         } else {
-                                            zoon::println!("No variable found in paragraph variable_signal");
+                                            // zoon::println!("No variable found in paragraph variable_signal");
                                         }
                                     }
                                 })

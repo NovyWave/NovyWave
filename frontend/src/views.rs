@@ -398,8 +398,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                             .s(Height::exact_signal(
                                 SELECTED_VARIABLES.signal_vec_cloned().to_signal_map(|vars| {
                                     let row_height = 40u32;
-                                    let min_height = 100u32;
-                                    let computed_height = (vars.len() as u32 * row_height).max(min_height);
+                                    let computed_height = vars.len() as u32 * row_height;
                                     computed_height
                                 })
                             ))
@@ -440,14 +439,12 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                         .item(
                                                             El::new()
                                                                 .s(Font::new().color_signal(neutral_11()).size(13).no_wrap())
-                                                                .child(&selected_var.variable_name)
+                                                                .child(&selected_var.variable_name().unwrap_or_default())
                                                                 .update_raw_el({
-                                                                    let full_info = format!("{}: {}.{} {} {}-bit", 
-                                                                        selected_var.file_name, 
-                                                                        selected_var.scope_path, 
-                                                                        selected_var.variable_name,
-                                                                        selected_var.variable_type,
-                                                                        selected_var.variable_width
+                                                                    let full_info = format!("{}: {}.{} (type unknown)", 
+                                                                        selected_var.file_name().unwrap_or_default(), 
+                                                                        selected_var.scope_path().unwrap_or_default(), 
+                                                                        selected_var.variable_name().unwrap_or_default()
                                                                     );
                                                                     move |raw_el| {
                                                                         raw_el.attr("title", &full_info)
@@ -845,7 +842,7 @@ fn convert_tracked_files_to_tree_data(tracked_files: &[TrackedFile]) -> Vec<Tree
 // Helper function to clean up all file-related state when a file is removed
 fn cleanup_file_related_state(file_id: &str) {
     // Get filename and file path before any cleanup (needed for cleanup logic)
-    let (filename, file_path) = state::TRACKED_FILES.lock_ref()
+    let (_filename, file_path) = state::TRACKED_FILES.lock_ref()
         .iter()
         .find(|f| f.id == file_id)
         .map(|f| (f.filename.clone(), f.path.clone()))
@@ -867,11 +864,11 @@ fn cleanup_file_related_state(file_id: &str) {
     });
     
     // Clear selected variables from this file
-    // SelectedVariable uses file_name (not file_id), so we use the filename we got earlier
-    if !filename.is_empty() {
-        state::SELECTED_VARIABLES.lock_mut().retain(|var| var.file_name != filename);
+    // SelectedVariable uses full file path in new format
+    if !file_path.is_empty() {
+        state::SELECTED_VARIABLES.lock_mut().retain(|var| var.file_path().unwrap_or_default() != file_path);
         state::SELECTED_VARIABLES_INDEX.lock_mut().retain(|unique_id| {
-            !unique_id.starts_with(&format!("{}:", filename))
+            !unique_id.starts_with(&format!("{}|", file_path))
         });
     }
 }
