@@ -18,6 +18,9 @@ pub static VARIABLES_VALUE_DIVIDER_DRAGGING: Lazy<Mutable<bool>> = lazy::default
 // Search filter for Variables panel
 pub static VARIABLES_SEARCH_FILTER: Lazy<Mutable<String>> = lazy::default();
 
+// File loading trigger signal for reactive type updates
+pub static FILE_LOADING_TRIGGER: Lazy<Mutable<u32>> = lazy::default();
+
 // Dock state management - DEFAULT TO DOCKED MODE  
 pub static IS_DOCKED_TO_BOTTOM: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(true));
 
@@ -232,6 +235,9 @@ pub fn update_tracked_file_state(file_id: &str, new_state: FileState) {
     
     // Refresh smart labels whenever file state changes
     refresh_smart_labels();
+    
+    // Trigger reactive type updates when files are loaded
+    FILE_LOADING_TRIGGER.update(|count| count + 1);
 }
 
 /// Remove a tracked file by ID

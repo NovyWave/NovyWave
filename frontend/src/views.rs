@@ -3,7 +3,7 @@ use zoon::events::{Click, KeyDown};
 use moonzoon_novyui::*;
 use moonzoon_novyui::tokens::theme::{Theme, toggle_theme, theme};
 use moonzoon_novyui::tokens::color::{neutral_1, neutral_2, neutral_4, neutral_8, neutral_9, neutral_10, neutral_11, neutral_12, primary_3, primary_6, primary_7};
-use shared::{ScopeData, UpMsg, TrackedFile};
+use shared::{ScopeData, UpMsg, TrackedFile, Signal, SelectedVariable, FileState};
 use crate::types::{get_variables_from_tracked_files, filter_variables_with_context};
 use crate::virtual_list::virtual_variables_list;
 use crate::config;
@@ -21,6 +21,56 @@ use crate::{
     TRACKED_FILES, state, file_validation::validate_file_state
 };
 use crate::state::{SELECTED_VARIABLES, clear_selected_variables, remove_selected_variable};
+
+/// Get signal type information for a selected variable
+fn get_signal_type_for_selected_variable(selected_var: &SelectedVariable) -> String {
+    // Parse the unique_id to get file_path, scope_path, and variable_name
+    if let Some((file_path, scope_path, variable_name)) = selected_var.parse_unique_id() {
+        // Use the same approach as Variables panel - only check loaded files
+        let tracked_files = TRACKED_FILES.lock_ref();
+        
+        // Find the corresponding file by path and check if it's loaded
+        for tracked_file in tracked_files.iter() {
+            // Match by file path (tracked_file.path is the file path)
+            if tracked_file.path == file_path {
+                if let FileState::Loaded(waveform_file) = &tracked_file.state {
+                    // The scope IDs in waveform_file include the full file path prefix
+                    // We need to construct the full scope ID to match what's stored
+                    let full_scope_id = format!("{}|{}", file_path, scope_path);
+                    
+                    // Find variables in the specific scope using the full scope ID
+                    if let Some(variables) = shared::find_variables_in_scope(&waveform_file.scopes, &full_scope_id) {
+                        // Find the specific variable by name
+                        if let Some(signal) = variables.iter().find(|v| v.name == variable_name) {
+                            return format!("{} {}-bit", signal.signal_type, signal.width);
+                        }
+                    }
+                }
+                break; // Found the file, no need to continue searching
+            }
+        }
+    }
+    
+    // Fallback if variable not found or file not loaded
+    "type unknown".to_string()
+}
+
+/// Helper function to recursively find a signal by scope path and variable name
+fn find_signal_by_scope_path(scopes: &[ScopeData], target_scope_path: &str, variable_name: &str) -> Option<Signal> {
+    for scope in scopes {
+        if scope.full_name == target_scope_path {
+            if let Some(signal) = scope.variables.iter().find(|var| var.name == variable_name) {
+                return Some(signal.clone());
+            }
+        }
+        
+        // Search in child scopes
+        if let Some(signal) = find_signal_by_scope_path(&scope.children, target_scope_path, variable_name) {
+            return Some(signal);
+        }
+    }
+    None
+}
 
 fn variables_vertical_divider(is_dragging: Mutable<bool>) -> impl Element {
     El::new()
@@ -437,17 +487,43 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                                 .build()
                                                         })
                                                         .item(
-                                                            El::new()
-                                                                .s(Font::new().color_signal(neutral_11()).size(13).no_wrap())
-                                                                .child(&selected_var.variable_name().unwrap_or_default())
+                                                            Row::new()
+                                                                .s(Gap::new().x(8))
+                                                                .s(Width::fill())
+                                                                .item(
+                                                                    El::new()
+                                                                        .s(Font::new().color_signal(neutral_11()).size(13).no_wrap())
+                                                                        .child(&selected_var.variable_name().unwrap_or_default())
+                                                                )
+                                                                .item(El::new().s(Width::fill())) // spacer
+                                                                .item(
+                                                                    El::new()
+                                                                        .s(Font::new().color_signal(neutral_9()).size(11).no_wrap())
+                                                                        .s(Align::new().right())
+                                                                        .child_signal({
+                                                                            let selected_var = selected_var.clone();
+                                                                            use crate::state::FILE_LOADING_TRIGGER;
+                                                                            FILE_LOADING_TRIGGER.signal().map(move |_trigger| {
+                                                                                get_signal_type_for_selected_variable(&selected_var)
+                                                                            })
+                                                                        })
+                                                                )
                                                                 .update_raw_el({
-                                                                    let full_info = format!("{}: {}.{} (type unknown)", 
-                                                                        selected_var.file_name().unwrap_or_default(), 
-                                                                        selected_var.scope_path().unwrap_or_default(), 
-                                                                        selected_var.variable_name().unwrap_or_default()
-                                                                    );
+                                                                    let selected_var = selected_var.clone();
                                                                     move |raw_el| {
-                                                                        raw_el.attr("title", &full_info)
+                                                                        use crate::state::FILE_LOADING_TRIGGER;
+                                                                        let title_signal = FILE_LOADING_TRIGGER.signal().map({
+                                                                            let selected_var = selected_var.clone();
+                                                                            move |_trigger| {
+                                                                                let signal_type = get_signal_type_for_selected_variable(&selected_var);
+                                                                                format!("{} - {} - {}", 
+                                                                                    selected_var.file_path().unwrap_or_default(), 
+                                                                                    selected_var.scope_path().unwrap_or_default(), 
+                                                                                    signal_type
+                                                                                )
+                                                                            }
+                                                                        });
+                                                                        raw_el.attr_signal("title", title_signal)
                                                                     }
                                                                 })
                                                         )

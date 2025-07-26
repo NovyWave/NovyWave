@@ -140,13 +140,12 @@ impl SelectedVariable {
     
     /// Get the file name component
     pub fn file_name(&self) -> Option<String> {
-        self.file_path()
-            .and_then(|path| {
-                std::path::Path::new(&path)
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .map(|s| s.to_string())
-            })
+        let path = self.file_path()?;
+        let path_obj = std::path::Path::new(&path);
+        path_obj
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(|s| s.to_string())
     }
     
     /// Get the scope path component
