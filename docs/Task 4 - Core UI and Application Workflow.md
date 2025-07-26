@@ -2,7 +2,7 @@
 
 ## Demo
 
-MP4 videos will be uploaded directly to GitHub
+https://github.com/user-attachments/assets/c8d7481e-9b5d-4371-b6bc-f0eb77339dde
 
 ## Main Screenshot
 
