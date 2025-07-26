@@ -647,23 +647,17 @@ pub fn save_config_to_backend() {
         },
         workspace: shared::WorkspaceSection {
             opened_files: serializable_config.session.opened_files,
-            panel_dimensions_bottom: {
-                let mut dims = shared::PanelDimensions::new(
-                    backend_docked_to_bottom.files_panel_width,
-                    backend_docked_to_bottom.files_panel_height
-                );
-                dims.variables_name_column_width = Some(bottom_layout.variables_name_column_width as f64);
-                dims.variables_value_column_width = Some(bottom_layout.variables_value_column_width as f64);
-                dims
+            docked_bottom_dimensions: shared::DockedBottomDimensions {
+                files_and_scopes_panel_width: backend_docked_to_bottom.files_panel_width,
+                files_and_scopes_panel_height: backend_docked_to_bottom.files_panel_height,
+                selected_variables_panel_name_column_width: Some(bottom_layout.variables_name_column_width as f64),
+                selected_variables_panel_value_column_width: Some(bottom_layout.variables_value_column_width as f64),
             },
-            panel_dimensions_right: {
-                let mut dims = shared::PanelDimensions::new(
-                    backend_docked_to_right.files_panel_width,
-                    backend_docked_to_right.files_panel_height
-                );
-                dims.variables_name_column_width = Some(right_layout.variables_name_column_width as f64);
-                dims.variables_value_column_width = Some(right_layout.variables_value_column_width as f64);
-                dims
+            docked_right_dimensions: shared::DockedRightDimensions {
+                files_and_scopes_panel_width: backend_docked_to_right.files_panel_width,
+                files_and_scopes_panel_height: backend_docked_to_right.files_panel_height,
+                selected_variables_panel_name_column_width: Some(right_layout.variables_name_column_width as f64),
+                selected_variables_panel_value_column_width: Some(right_layout.variables_value_column_width as f64),
             },
             dock_mode: serializable_config.workspace.dock_mode,
             expanded_scopes: serializable_config.workspace.expanded_scopes,
@@ -774,22 +768,22 @@ pub fn apply_config(config: shared::AppConfig) {
             selected_variables: config.workspace.selected_variables,
             panel_layouts: SerializablePanelLayouts {
                 docked_to_bottom: SerializablePanelDimensions {
-                    files_panel_width: config.workspace.panel_dimensions_bottom.width as f32,
-                    files_panel_height: config.workspace.panel_dimensions_bottom.height as f32,
+                    files_panel_width: config.workspace.docked_bottom_dimensions.files_and_scopes_panel_width as f32,
+                    files_panel_height: config.workspace.docked_bottom_dimensions.files_and_scopes_panel_height as f32,
                     // Backend schema doesn't include these fields - use frontend defaults to prevent corruption
                     variables_panel_width: 300.0,  // Frontend-only default
                     timeline_panel_height: 200.0,  // Frontend-only default
-                    variables_name_column_width: config.workspace.panel_dimensions_bottom.variables_name_column_width.unwrap_or(180.0) as f32,
-                    variables_value_column_width: config.workspace.panel_dimensions_bottom.variables_value_column_width.unwrap_or(100.0) as f32,
+                    variables_name_column_width: config.workspace.docked_bottom_dimensions.selected_variables_panel_name_column_width.unwrap_or(180.0) as f32,
+                    variables_value_column_width: config.workspace.docked_bottom_dimensions.selected_variables_panel_value_column_width.unwrap_or(100.0) as f32,
                 },
                 docked_to_right: SerializablePanelDimensions {
-                    files_panel_width: config.workspace.panel_dimensions_right.width as f32,
-                    files_panel_height: config.workspace.panel_dimensions_right.height as f32,
+                    files_panel_width: config.workspace.docked_right_dimensions.files_and_scopes_panel_width as f32,
+                    files_panel_height: config.workspace.docked_right_dimensions.files_and_scopes_panel_height as f32,
                     // Backend schema doesn't include these fields - use frontend defaults to prevent corruption
                     variables_panel_width: 250.0,  // Frontend-only default
                     timeline_panel_height: 150.0,  // Frontend-only default
-                    variables_name_column_width: config.workspace.panel_dimensions_right.variables_name_column_width.unwrap_or(180.0) as f32,
-                    variables_value_column_width: config.workspace.panel_dimensions_right.variables_value_column_width.unwrap_or(100.0) as f32,
+                    variables_name_column_width: config.workspace.docked_right_dimensions.selected_variables_panel_name_column_width.unwrap_or(180.0) as f32,
+                    variables_value_column_width: config.workspace.docked_right_dimensions.selected_variables_panel_value_column_width.unwrap_or(100.0) as f32,
                 },
             },
         },
@@ -857,7 +851,15 @@ fn sync_expanded_scopes_from_config() {
     let mut expanded_scopes = EXPANDED_SCOPES.lock_mut();
     expanded_scopes.clear();
     for scope_id in expanded_vec {
-        expanded_scopes.insert(scope_id);
+        // Only add "scope_" prefix for scope entries (containing |), not file entries
+        // TreeView adds this prefix in convert_scope_to_tree_data() for scope disambiguation
+        if scope_id.contains('|') {
+            let tree_scope_id = format!("scope_{}", scope_id);
+            expanded_scopes.insert(tree_scope_id);
+        } else {
+            // File entries don't get the prefix
+            expanded_scopes.insert(scope_id);
+        }
     }
 }
 
@@ -1143,7 +1145,16 @@ pub fn sync_globals_to_config() {
         EXPANDED_SCOPES.signal_ref(|expanded_set| {
             expanded_set.clone()
         }).for_each_sync(|expanded_set| {
-            let expanded_vec: Vec<String> = expanded_set.into_iter().collect();
+            // Strip TreeView "scope_" prefixes before storing to config
+            let expanded_vec: Vec<String> = expanded_set.into_iter()
+                .map(|scope_id| {
+                    if scope_id.starts_with("scope_") {
+                        scope_id.strip_prefix("scope_").unwrap_or(&scope_id).to_string()
+                    } else {
+                        scope_id
+                    }
+                })
+                .collect();
             config_store().workspace.lock_ref().expanded_scopes.lock_mut().replace_cloned(expanded_vec);
             // Manually trigger config save since MutableVec reactive signals are complex
             if crate::CONFIG_INITIALIZATION_COMPLETE.get() {

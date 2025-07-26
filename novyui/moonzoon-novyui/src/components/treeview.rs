@@ -547,7 +547,7 @@ fn render_tree_item(
                         // Show checkboxes on scopes and variables, but NOT on waveform files
                         // Waveform files have is_waveform_file = true OR item_type = File
                         !item.is_waveform_file.unwrap_or(false) && 
-                        !matches!(item.item_type, Some(TreeViewItemType::File))
+                        !matches!(item.item_type, Some(TreeViewItemType::File | TreeViewItemType::FileError))
                     } else {
                         // Original logic for backwards compatibility
                         if item_id.starts_with("scope_") {

@@ -261,7 +261,7 @@ pub fn files_panel() -> impl Element {
                             .s(Width::growable())
                     )
                     .item(
-                        remove_all_button()
+                        clear_all_files_button()
                     ),
                 Column::new()
                     .s(Gap::new().y(4))
@@ -391,7 +391,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                     .s(Width::growable())
                             )
                             .item(
-                                remove_all_button()
+                                clear_all_variables_button()
                             ),
                         // Resizable columns layout with draggable separators
                         El::new()
@@ -842,25 +842,52 @@ fn convert_tracked_files_to_tree_data(tracked_files: &[TrackedFile]) -> Vec<Tree
 }
 
 
+// Helper function to clean up all file-related state when a file is removed
+fn cleanup_file_related_state(file_id: &str) {
+    // Get filename and file path before any cleanup (needed for cleanup logic)
+    let (filename, file_path) = state::TRACKED_FILES.lock_ref()
+        .iter()
+        .find(|f| f.id == file_id)
+        .map(|f| (f.filename.clone(), f.path.clone()))
+        .unwrap_or_else(|| (String::new(), String::new()));
+    
+    // Clear related scope selections if removed file contained selected scope
+    if let Some(selected_scope) = SELECTED_SCOPE_ID.get_cloned() {
+        // New format: {full_path}|{scope} - check if scope belongs to this file
+        if selected_scope == file_path || selected_scope.starts_with(&format!("{}|", file_path)) {
+            SELECTED_SCOPE_ID.set(None);
+        }
+    }
+    
+    // Clear expanded scopes for this file
+    // New scope ID format: {full_path}|{scope_full_name} or just {full_path}
+    EXPANDED_SCOPES.lock_mut().retain(|scope| {
+        // Keep scopes that don't belong to this file
+        scope != &file_path && !scope.starts_with(&format!("{}|", file_path))
+    });
+    
+    // Clear selected variables from this file
+    // SelectedVariable uses file_name (not file_id), so we use the filename we got earlier
+    if !filename.is_empty() {
+        state::SELECTED_VARIABLES.lock_mut().retain(|var| var.file_name != filename);
+        state::SELECTED_VARIABLES_INDEX.lock_mut().retain(|unique_id| {
+            !unique_id.starts_with(&format!("{}:", filename))
+        });
+    }
+}
+
 // Enhanced file removal handler that works with both old and new systems
 fn create_enhanced_file_remove_handler(_file_id: String) -> impl Fn(&str) + 'static {
     move |id: &str| {
+        // Clean up all file-related state
+        cleanup_file_related_state(id);
+        
         // Remove from new TRACKED_FILES system
         state::remove_tracked_file(id);
         
         // Remove from legacy systems during transition
         LOADED_FILES.lock_mut().retain(|f| f.id != id);
         FILE_PATHS.lock_mut().shift_remove(id);
-        
-        // Clear related scope selections if removed file contained selected scope
-        if let Some(selected_scope) = SELECTED_SCOPE_ID.get_cloned() {
-            if selected_scope.starts_with(&format!("{}_", id)) {
-                SELECTED_SCOPE_ID.set(None);
-            }
-        }
-        
-        // Clear expanded scopes for this file
-        EXPANDED_SCOPES.lock_mut().retain(|scope| !scope.starts_with(id));
         
         // Save file list and scope selection after removal
         config::save_file_list();
@@ -1204,19 +1231,14 @@ fn process_file_picker_selection() {
             // Check for duplicates and handle reload vs new load
             if tracked_file_ids.contains(&file_id) {
                 // RELOAD: Remove existing file first, then load fresh
-                state::remove_tracked_file(&file_id);
                 
-                // Also clear legacy systems for backward compatibility
+                // Clean up all file-related state (scopes, variables, selections)
+                cleanup_file_related_state(&file_id);
+                
+                // Remove from tracked files and legacy systems
+                state::remove_tracked_file(&file_id);
                 LOADED_FILES.lock_mut().retain(|f| f.id != file_id);
                 FILE_PATHS.lock_mut().shift_remove(&file_id);
-                
-                // Clear related state for this file
-                if let Some(selected_scope) = SELECTED_SCOPE_ID.get_cloned() {
-                    if selected_scope.starts_with(&format!("{}_", file_id)) {
-                        SELECTED_SCOPE_ID.set(None);
-                    }
-                }
-                EXPANDED_SCOPES.lock_mut().retain(|scope| !scope.starts_with(&file_id));
             }
             
             // CRITICAL: Validate files BEFORE sending to backend (from file picker)
@@ -1260,7 +1282,52 @@ fn process_file_picker_selection() {
     }
 }
 
-fn remove_all_button() -> impl Element {
+fn clear_all_files() {
+    zoon::println!("clear_all_files() called - clearing all loaded files");
+    
+    // Get all tracked file IDs before clearing
+    let file_ids: Vec<String> = state::TRACKED_FILES.lock_ref()
+        .iter()
+        .map(|f| f.id.clone())
+        .collect();
+    
+    zoon::println!("Found {} files to clear: {:?}", file_ids.len(), file_ids);
+    
+    // Clean up all file-related state for each file
+    for file_id in &file_ids {
+        cleanup_file_related_state(file_id);
+    }
+    
+    // Clear all tracked files
+    state::TRACKED_FILES.lock_mut().clear();
+    
+    // Clear legacy systems during transition
+    LOADED_FILES.lock_mut().clear();
+    FILE_PATHS.lock_mut().clear();
+    
+    // Clear any remaining scope/tree selections
+    SELECTED_SCOPE_ID.set(None);
+    EXPANDED_SCOPES.lock_mut().clear();
+    TREE_SELECTED_ITEMS.lock_mut().clear();
+    
+    // Save the empty file list
+    config::save_file_list();
+    config::save_scope_selection();
+}
+
+fn clear_all_files_button() -> impl Element {
+    button()
+        .label("Clear All")
+        .left_icon(IconName::X)
+        .variant(ButtonVariant::DestructiveGhost)
+        .size(ButtonSize::Small)
+        .on_press(|| {
+            clear_all_files();
+        })
+        .build()
+}
+
+fn clear_all_variables_button() -> impl Element {
     button()
         .label("Clear All")
         .left_icon(IconName::X)

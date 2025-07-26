@@ -46,9 +46,8 @@ async fn load_waveform_file(file_path: String, session_id: SessionId, cor_id: Co
     let path = Path::new(&file_path);
     if !path.exists() {
         let error_msg = format!("File not found: {}", file_path);
-        let file_id = generate_file_id(&file_path);
         send_down_msg(DownMsg::ParsingError { 
-            file_id, 
+            file_id: file_path.clone(), // Use full path to match frontend TrackedFile IDs
             error: error_msg 
         }, session_id, cor_id).await;
         return;
@@ -59,21 +58,20 @@ async fn load_waveform_file(file_path: String, session_id: SessionId, cor_id: Co
         .unwrap_or("unknown")
         .to_string();
     
-    let file_id = generate_file_id(&file_path);
     let progress = Arc::new(Mutex::new(0.0));
     
     {
         let mut sessions = PARSING_SESSIONS.lock().unwrap();
-        sessions.insert(file_id.clone(), progress.clone());
+        sessions.insert(file_path.clone(), progress.clone());
     }
     
     send_down_msg(DownMsg::ParsingStarted { 
-        file_id: file_id.clone(), 
+        file_id: file_path.clone(), // Use full path to match frontend TrackedFile IDs
         filename: filename.clone() 
     }, session_id, cor_id).await;
     
     // Use wellen's automatic file format detection instead of extension-based detection
-    parse_waveform_file(file_path, file_id, filename, progress, session_id, cor_id).await;
+    parse_waveform_file(file_path.clone(), file_path, filename, progress, session_id, cor_id).await;
 }
 
 async fn parse_waveform_file(file_path: String, file_id: String, filename: String, 
@@ -89,7 +87,7 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
             }
             send_progress_update(file_id.clone(), 0.5, session_id, cor_id).await;
             
-            let scopes = extract_scopes_from_hierarchy(&header_result.hierarchy, &file_id);
+            let scopes = extract_scopes_from_hierarchy(&header_result.hierarchy, &file_path);
             let format = match header_result.file_format {
                 wellen::FileFormat::Vcd => FileFormat::VCD,
                 wellen::FileFormat::Fst => FileFormat::FST,
@@ -129,13 +127,13 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
 }
 
 
-fn extract_scopes_from_hierarchy(hierarchy: &wellen::Hierarchy, file_id: &str) -> Vec<ScopeData> {
+fn extract_scopes_from_hierarchy(hierarchy: &wellen::Hierarchy, file_path: &str) -> Vec<ScopeData> {
     hierarchy.scopes().map(|scope_ref| {
-        extract_scope_data_with_file_id(hierarchy, scope_ref, file_id)
+        extract_scope_data_with_file_path(hierarchy, scope_ref, file_path)
     }).collect()
 }
 
-fn extract_scope_data_with_file_id(hierarchy: &wellen::Hierarchy, scope_ref: wellen::ScopeRef, file_id: &str) -> ScopeData {
+fn extract_scope_data_with_file_path(hierarchy: &wellen::Hierarchy, scope_ref: wellen::ScopeRef, file_path: &str) -> ScopeData {
     let scope = &hierarchy[scope_ref];
     
     let mut variables: Vec<shared::Signal> = scope.vars(hierarchy).map(|var_ref| {
@@ -154,12 +152,12 @@ fn extract_scope_data_with_file_id(hierarchy: &wellen::Hierarchy, scope_ref: wel
     variables.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     
     let mut children: Vec<ScopeData> = scope.scopes(hierarchy).map(|child_scope_ref| {
-        extract_scope_data_with_file_id(hierarchy, child_scope_ref, file_id)
+        extract_scope_data_with_file_path(hierarchy, child_scope_ref, file_path)
     }).collect();
     children.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     
     ScopeData {
-        id: format!("{}_{}", file_id, scope.full_name(hierarchy)), // Use file_id + scope path for unique ID
+        id: format!("{}|{}", file_path, scope.full_name(hierarchy)), // Use full file path + | separator + scope path for unique ID
         name: scope.name(hierarchy).to_string(),
         full_name: scope.full_name(hierarchy),
         children,
