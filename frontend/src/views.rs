@@ -3,7 +3,7 @@ use zoon::events::{Click, KeyDown};
 use moonzoon_novyui::*;
 use moonzoon_novyui::tokens::theme::{Theme, toggle_theme, theme};
 use moonzoon_novyui::tokens::color::{neutral_1, neutral_2, neutral_4, neutral_8, neutral_9, neutral_10, neutral_11, neutral_12, primary_3, primary_6, primary_7};
-use shared::{ScopeData, UpMsg, TrackedFile, Signal, SelectedVariable, FileState};
+use shared::{ScopeData, UpMsg, TrackedFile, SelectedVariable, FileState, SignalValueQuery};
 use crate::types::{get_variables_from_tracked_files, filter_variables_with_context};
 use crate::virtual_list::virtual_variables_list;
 use crate::config;
@@ -20,6 +20,7 @@ use crate::{
     FILE_PICKER_ERROR, FILE_PICKER_ERROR_CACHE, FILE_TREE_CACHE, send_up_msg, DOCK_TOGGLE_IN_PROGRESS,
     TRACKED_FILES, state, file_validation::validate_file_state
 };
+use crate::state::SELECTED_VARIABLES_ROW_HEIGHT;
 use crate::state::{SELECTED_VARIABLES, clear_selected_variables, remove_selected_variable};
 
 /// Get signal type information for a selected variable
@@ -52,25 +53,59 @@ fn get_signal_type_for_selected_variable(selected_var: &SelectedVariable) -> Str
     }
     
     // Fallback if variable not found or file not loaded
-    "type unknown".to_string()
+    "Loading...".to_string()
 }
 
-/// Helper function to recursively find a signal by scope path and variable name
-fn find_signal_by_scope_path(scopes: &[ScopeData], target_scope_path: &str, variable_name: &str) -> Option<Signal> {
-    for scope in scopes {
-        if scope.full_name == target_scope_path {
-            if let Some(signal) = scope.variables.iter().find(|var| var.name == variable_name) {
-                return Some(signal.clone());
-            }
-        }
-        
-        // Search in child scopes
-        if let Some(signal) = find_signal_by_scope_path(&scope.children, target_scope_path, variable_name) {
-            return Some(signal);
+
+/// Query signal values for selected variables at a specific time
+fn query_signal_values_at_time(time_seconds: f64) {
+    let selected_vars = SELECTED_VARIABLES.lock_ref();
+    // Process signal value queries for selected variables
+    
+    if selected_vars.is_empty() {
+        return;
+    }
+    
+    // Group queries by file path for efficient batch processing
+    let mut queries_by_file: HashMap<String, Vec<SignalValueQuery>> = HashMap::new();
+    
+    for selected_var in selected_vars.iter() {
+        // Parse unique_id for signal query
+        if let Some((file_path, scope_path, variable_name)) = selected_var.parse_unique_id() {
+            // Create signal value query for variable
+            let query = SignalValueQuery {
+                scope_path,
+                variable_name,
+                time_seconds,
+            };
+            
+            queries_by_file.entry(file_path).or_insert_with(Vec::new).push(query);
+        } else {
+            // Skip variable with invalid unique_id format
         }
     }
-    None
+    
+    // Send batch queries for each file
+    for (file_path, queries) in queries_by_file {
+        // Send batch signal value queries to backend
+        send_up_msg(UpMsg::QuerySignalValues { file_path, queries });
+    }
 }
+
+/// Trigger signal value queries when variables are present
+pub fn trigger_signal_value_queries() {
+    // Trigger signal value queries for selected variables
+    // Debug: Show current selected variables
+    let selected_vars = SELECTED_VARIABLES.lock_ref();
+    for _var in selected_vars.iter() {
+        // Process selected variable for signal query
+    }
+    drop(selected_vars);
+    
+    // Query at 10 seconds as requested by the user
+    query_signal_values_at_time(10.0);
+}
+
 
 fn variables_vertical_divider(is_dragging: Mutable<bool>) -> impl Element {
     El::new()
@@ -446,10 +481,9 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                         // Resizable columns layout with draggable separators
                         El::new()
                             .s(Height::exact_signal(
-                                SELECTED_VARIABLES.signal_vec_cloned().to_signal_map(|vars| {
-                                    let row_height = 40u32;
-                                    let computed_height = vars.len() as u32 * row_height;
-                                    computed_height
+                                SELECTED_VARIABLES.signal_vec_cloned().len().map(|vars_count| {
+                                    // Add one extra row height for scrollbar (names/values) or footer/timeline (canvas)
+                                    (vars_count + 1) as u32 * SELECTED_VARIABLES_ROW_HEIGHT
                                 })
                             ))
                             .s(Width::fill())
@@ -460,21 +494,25 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                     .s(Width::fill())
                                     .s(Align::new().top())
                                     .item(
-                                        // Column 1: Variable name (resizable)
+                                        // Column 1: Variable name (resizable) with footer
                                         Column::new()
                                             .s(Width::exact_signal(VARIABLES_NAME_COLUMN_WIDTH.signal()))
                                             .s(Height::fill())
                                             .s(Align::new().top())
+                                            .s(Scrollbars::x_and_clip_y())
+                                            .update_raw_el(|raw_el| {
+                                                raw_el.style("scrollbar-width", "thin")
+                                            })
                                             .items_signal_vec(
                                                 SELECTED_VARIABLES.signal_vec_cloned().map(|selected_var| {
                                                     Row::new()
-                                                        .s(Height::exact(40))
+                                                        .s(Height::exact(SELECTED_VARIABLES_ROW_HEIGHT))
                                                         .s(Width::fill())
-                                                        .s(Padding::all(8))
+                                                        .s(Padding::new().right(8))
                                                         .s(Borders::new().bottom_signal(neutral_4().map(|color| 
                                                             Border::new().width(1).color(color)
                                                         )))
-                                                        .s(Gap::new().x(8))
+                                                        .s(Gap::new().x(4))
                                                         .item({
                                                             let unique_id = selected_var.unique_id.clone();
                                                             button()
@@ -493,12 +531,15 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                                 .item(
                                                                     El::new()
                                                                         .s(Font::new().color_signal(neutral_11()).size(13).no_wrap())
+                                                                        .s(Width::growable())
+                                                                        .update_raw_el(|raw_el| {
+                                                                            raw_el.style("white-space", "nowrap")
+                                                                        })
                                                                         .child(&selected_var.variable_name().unwrap_or_default())
                                                                 )
-                                                                .item(El::new().s(Width::fill())) // spacer
                                                                 .item(
                                                                     El::new()
-                                                                        .s(Font::new().color_signal(neutral_9()).size(11).no_wrap())
+                                                                        .s(Font::new().color_signal(primary_6()).size(11).no_wrap())
                                                                         .s(Align::new().right())
                                                                         .child_signal({
                                                                             let selected_var = selected_var.clone();
@@ -529,6 +570,25 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                         )
                                                 })
                                             )
+                                            .item(
+                                                // Footer row with variable count
+                                                El::new()
+                                                    .s(Height::exact(SELECTED_VARIABLES_ROW_HEIGHT))
+                                                    .s(Width::fill())
+                                                    .s(Padding::all(8))
+                                                    .s(Font::new().color_signal(neutral_8()).size(12).center())
+                                                    .s(Transform::new().move_up(4))
+                                                    .child_signal(
+                                                        SELECTED_VARIABLES.signal_vec_cloned().len().map(|count| {
+                                                            let text = if count == 1 {
+                                                                "1 variable".to_string()
+                                                            } else {
+                                                                format!("{} variables", count)
+                                                            };
+                                                            Text::new(&text)
+                                                        })
+                                                    )
+                                            )
                                     )
                                     .item(variables_vertical_divider(VARIABLES_NAME_DIVIDER_DRAGGING.clone()))
                                     .item(
@@ -537,17 +597,31 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                             .s(Width::exact_signal(VARIABLES_VALUE_COLUMN_WIDTH.signal()))
                                             .s(Height::fill())
                                             .s(Align::new().top())
+                                            .s(Scrollbars::x_and_clip_y())
+                                            .update_raw_el(|raw_el| {
+                                                raw_el.style("scrollbar-width", "thin")
+                                            })
                                             .items_signal_vec(
-                                                SELECTED_VARIABLES.signal_vec_cloned().map(|_selected_var| {
+                                                SELECTED_VARIABLES.signal_vec_cloned().map(|selected_var| {
+                                                    let unique_id = selected_var.unique_id.clone();
                                                     El::new()
-                                                        .s(Height::exact(40))
+                                                        .s(Height::exact(SELECTED_VARIABLES_ROW_HEIGHT))
                                                         .s(Width::fill())
                                                         .s(Padding::all(8))
                                                         .s(Borders::new().bottom_signal(neutral_4().map(|color| 
                                                             Border::new().width(1).color(color)
                                                         )))
                                                         .s(Font::new().color_signal(neutral_9()).size(13).no_wrap())
-                                                        .child("Value")
+                                                        .update_raw_el(|raw_el| {
+                                                            raw_el.style("white-space", "nowrap")
+                                                        })
+                                                        .child_signal(
+                                                            crate::state::SIGNAL_VALUES.signal_ref(move |values| {
+                                                                values.get(&unique_id)
+                                                                    .cloned()
+                                                                    .unwrap_or_else(|| "Loading...".to_string())
+                                                            })
+                                                        )
                                                 })
                                             )
                                     )
@@ -1333,7 +1407,7 @@ fn process_file_picker_selection() {
                         },
                         Err(error) => {
                             // File validation failed - add with error state immediately, don't send to backend
-                            zoon::println!("File validation failed for {}: {:?}", file_path, error);
+                            // File validation failed - handle error
                             state::add_tracked_file(file_path.clone(), shared::FileState::Failed(error));
                             
                             // Still add to legacy system for consistency, but mark as failed
@@ -1356,7 +1430,7 @@ fn process_file_picker_selection() {
 }
 
 fn clear_all_files() {
-    zoon::println!("clear_all_files() called - clearing all loaded files");
+    // Clear all loaded files and related state
     
     // Get all tracked file IDs before clearing
     let file_ids: Vec<String> = state::TRACKED_FILES.lock_ref()
@@ -1364,7 +1438,7 @@ fn clear_all_files() {
         .map(|f| f.id.clone())
         .collect();
     
-    zoon::println!("Found {} files to clear: {:?}", file_ids.len(), file_ids);
+    // Cleanup tracked files
     
     // Clean up all file-related state for each file
     for file_id in &file_ids {

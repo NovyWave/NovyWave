@@ -12,6 +12,10 @@ pub enum UpMsg {
     SaveConfig(AppConfig),
     BrowseDirectory(String),
     BrowseDirectories(Vec<String>), // Batch directory requests for parallel processing
+    QuerySignalValues {
+        file_path: String,
+        queries: Vec<SignalValueQuery>,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -26,6 +30,32 @@ pub enum DownMsg {
     DirectoryContents { path: String, items: Vec<FileSystemItem> },
     DirectoryError { path: String, error: String },
     BatchDirectoryContents { results: HashMap<String, Result<Vec<FileSystemItem>, String>> }, // Parallel directory results
+    SignalValues {
+        file_path: String,
+        results: Vec<SignalValueResult>,
+    },
+    SignalValuesError {
+        file_path: String,
+        error: String,
+    },
+}
+
+// ===== SIGNAL VALUE QUERY TYPES =====
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SignalValueQuery {
+    pub scope_path: String,
+    pub variable_name: String,
+    pub time_seconds: f64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SignalValueResult {
+    pub scope_path: String,
+    pub variable_name: String,
+    pub time_seconds: f64,
+    pub value: Option<String>, // None if signal not found or no value at that time
+    pub formatted_value: Option<String>, // Formatted for display (hex, binary, etc.)
 }
 
 // ===== FILESYSTEM TYPES =====

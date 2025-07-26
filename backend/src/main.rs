@@ -1,5 +1,5 @@
 use moon::*;
-use shared::{self, UpMsg, DownMsg, AppConfig, FileHierarchy, WaveformFile, FileFormat, ScopeData, generate_file_id, FileSystemItem, SignalValueQuery, SignalValueResult};
+use shared::{self, UpMsg, DownMsg, AppConfig, FileHierarchy, WaveformFile, FileFormat, ScopeData, FileSystemItem, SignalValueQuery, SignalValueResult};
 use std::path::Path;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -28,12 +28,10 @@ static WAVEFORM_DATA_STORE: Lazy<Arc<Mutex<HashMap<String, WaveformData>>>> =
     Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
 
 async fn up_msg_handler(req: UpMsgRequest<UpMsg>) {
-    // println!("Received UpMsg: {:?}", req.up_msg); // Disabled - too verbose
-    let (session_id, cor_id) = (req.session_id, req.cor_id);
+    let (session_id, cor_id) = (req.session_id, req.cor_id); 
     
     match req.up_msg {
         UpMsg::LoadWaveformFile(file_path) => {
-            eprintln!("🔥 BACKEND: Loading waveform file: {}", file_path);
             load_waveform_file(file_path, session_id, cor_id).await;
         }
         UpMsg::GetParsingProgress(file_id) => {
@@ -52,10 +50,6 @@ async fn up_msg_handler(req: UpMsgRequest<UpMsg>) {
             browse_directories_batch(dir_paths, session_id, cor_id).await;
         }
         UpMsg::QuerySignalValues { file_path, queries } => {
-            eprintln!("🔥 BACKEND: Received QuerySignalValues for file: {}, {} queries", file_path, queries.len());
-            for query in &queries {
-                eprintln!("🔥 Query: scope={}, var={}, time={}", query.scope_path, query.variable_name, query.time_seconds);
-            }
             query_signal_values(file_path, queries, session_id, cor_id).await;
         }
     }
@@ -101,12 +95,6 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
     
     match wellen::viewers::read_header_from_file(&file_path, &options) {
         Ok(header_result) => {
-            eprintln!("🔥 BACKEND: Successfully read header from {}", file_path);
-            // TIMESCALE INVESTIGATION - checking what's available in header_result
-            eprintln!("🔥 TIMESCALE DEBUG: Investigating header structure...");
-            // Let's try to access potential timescale fields
-            // header_result should have: body, hierarchy, file_format
-            eprintln!("🔥 TIMESCALE DEBUG: File format: {:?}", header_result.file_format);
             {
                 let mut p = progress.lock().unwrap();
                 *p = 0.3; // Header parsed
@@ -116,20 +104,6 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
             // Read the body to get signal data and time table
             match wellen::viewers::read_body(header_result.body, &header_result.hierarchy, None) {
                 Ok(body_result) => {
-                    eprintln!("🔥 BACKEND: Successfully read body from {}", file_path);
-                    // TIMESCALE INVESTIGATION - check body_result structure
-                    eprintln!("🔥 TIMESCALE DEBUG: Body time table length: {}", body_result.time_table.len());
-                    eprintln!("🔥 TIMESCALE DEBUG: First few time values in native units:");
-                    for (i, &time) in body_result.time_table.iter().take(5).enumerate() {
-                        eprintln!("🔥 TIMESCALE DEBUG:   [{}] = {} (native units)", i, time);
-                    }
-                    
-                    // Try to access timescale information - these might exist
-                    // eprintln!("🔥 TIMESCALE DEBUG: Trying body_result.timescale...");
-                    // eprintln!("🔥 TIMESCALE DEBUG: Trying header_result.hierarchy.timescale...");
-                    
-                    // Check if hierarchy has timescale info
-                    eprintln!("🔥 TIMESCALE DEBUG: Checking hierarchy for timescale info...");
                     {
                         let mut p = progress.lock().unwrap();
                         *p = 0.7; // Body parsed
@@ -141,9 +115,7 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
                     
                     // Build signal reference map for quick lookup
                     let mut signals: HashMap<String, wellen::SignalRef> = HashMap::new();
-                    eprintln!("🔥 BACKEND: Building signal reference map for {}", file_path);
                     build_signal_reference_map(&header_result.hierarchy, &mut signals);
-                    eprintln!("🔥 BACKEND: Built signal map with {} signals", signals.len());
                     
                     // Store waveform data for signal value queries
                     let waveform_data = WaveformData {
@@ -257,11 +229,10 @@ async fn send_progress_update(file_id: String, progress: f32, session_id: Sessio
 }
 
 async fn send_down_msg(msg: DownMsg, session_id: SessionId, cor_id: CorId) {
-    // println!("Sending DownMsg: {:?}", msg); // Disabled - too verbose for large file data
     if let Some(session) = sessions::by_session_id().wait_for(session_id).await {
         session.send_down_msg(&msg, cor_id).await;
     } else {
-        eprintln!("Cannot find session with id: {}", session_id);
+        // Session not found - likely disconnected
     }
 }
 
@@ -280,38 +251,28 @@ async fn load_config(session_id: SessionId, cor_id: CorId) {
                     
                     // Log migration warnings if any
                     if !migration_warnings.is_empty() {
-                        println!("Config migration applied:");
-                        for warning in &migration_warnings {
-                            println!("  - {}", warning);
-                        }
-                        
                         // Save migrated config to persist changes
-                        if let Err(save_err) = save_config_to_file(&config) {
-                            println!("Warning: Failed to save migrated config: {}", save_err);
-                            // Don't fail loading, just warn - the migration is still applied in memory
-                        } else {
-                            println!("Migrated config saved successfully");
+                        if let Err(_save_err) = save_config_to_file(&config) {
+                            // Migration applied but failed to save - continue with in-memory config
                         }
                     }
                     
                     config
                 },
                 Err(e) => {
-                    println!("Failed to parse config file: {}", e);
                     send_down_msg(DownMsg::ConfigError(format!("Failed to parse config: {}", e)), session_id, cor_id).await;
                     return;
                 }
             }
         }
-        Err(e) => {
-            println!("Config file not found or unreadable: {}", e);
+        Err(_e) => {
+            // Config file not found - create default
             // Create default config with validation already applied
             let mut default_config = AppConfig::default();
             let _warnings = default_config.validate_and_fix(); // Ensure defaults are validated too
             
             // Try to save default config
             if let Err(save_err) = save_config_to_file(&default_config) {
-                println!("Failed to create default config file: {}", save_err);
                 send_down_msg(DownMsg::ConfigError(format!("Failed to create default config: {}", save_err)), session_id, cor_id).await;
                 return;
             }
@@ -323,8 +284,6 @@ async fn load_config(session_id: SessionId, cor_id: CorId) {
     // PARALLEL PRELOADING: Start preloading expanded directories in background for instant file dialog
     let expanded_dirs = config.workspace.load_files_expanded_directories.clone();
     if !expanded_dirs.is_empty() {
-        // Starting parallel preloading of expanded directories
-        
         // Spawn background task to preload directories - precompute for instant access
         tokio::spawn(async move {
             let mut preload_tasks = Vec::new();
@@ -334,18 +293,14 @@ async fn load_config(session_id: SessionId, cor_id: CorId) {
                 let path = dir_path.clone();
                 
                 preload_tasks.push(tokio::spawn(async move {
-                    // Preloading directory: {path}
                     let path_obj = Path::new(&path);
                     
                     // Precompute directory contents for instant access
                     if path_obj.exists() && path_obj.is_dir() {
                         match scan_directory_async(path_obj).await {
                             Ok(_items) => {
-                                // Cache computed for future instant access
-                                // Successfully preloaded directory
                             }
                             Err(_e) => {
-                                // Failed to preload directory: {path}, error: {e}
                             }
                         }
                     }
@@ -357,7 +312,6 @@ async fn load_config(session_id: SessionId, cor_id: CorId) {
                 let _ = task.await; // Ignore individual task errors
             }
             
-            // Finished parallel preloading of expanded directories
         });
     }
 
@@ -365,14 +319,11 @@ async fn load_config(session_id: SessionId, cor_id: CorId) {
 }
 
 async fn save_config(config: AppConfig, session_id: SessionId, cor_id: CorId) {
-    // Config saving (debug logs removed to reduce console noise)
-    
     match save_config_to_file(&config) {
         Ok(()) => {
             send_down_msg(DownMsg::ConfigSaved, session_id, cor_id).await;
         }
         Err(e) => {
-            println!("Failed to save config: {}", e);
             send_down_msg(DownMsg::ConfigError(format!("Failed to save config: {}", e)), session_id, cor_id).await;
         }
     }
@@ -392,7 +343,6 @@ fn save_config_to_file(config: &AppConfig) -> Result<(), Box<dyn std::error::Err
     );
     
     fs::write(CONFIG_FILE_PATH, content_with_header)?;
-    // Config saved successfully (log removed to reduce console noise)
     Ok(())
 }
 
@@ -638,8 +588,7 @@ async fn scan_directory_async(path: &Path) -> Result<Vec<FileSystemItem>, Box<dy
                     
                     items.push(item);
                 }
-                Err(e) => {
-                    eprintln!("jwalk error processing entry: {}", e);
+                Err(_e) => {
                     // Continue processing other entries despite individual errors
                 }
             }
@@ -665,8 +614,6 @@ async fn scan_directory_async(path: &Path) -> Result<Vec<FileSystemItem>, Box<dy
 
 // Build signal reference map for efficient lookup during value queries
 fn build_signal_reference_map(hierarchy: &wellen::Hierarchy, signals: &mut HashMap<String, wellen::SignalRef>) {
-    eprintln!("🔥 BACKEND: Starting signal map building with {} total scopes", hierarchy.scopes().count());
-    
     // Recursively process all scopes in the hierarchy
     for scope_ref in hierarchy.scopes() {
         build_signals_for_scope_recursive(hierarchy, scope_ref, signals);
@@ -677,8 +624,6 @@ fn build_signal_reference_map(hierarchy: &wellen::Hierarchy, signals: &mut HashM
 fn build_signals_for_scope_recursive(hierarchy: &wellen::Hierarchy, scope_ref: wellen::ScopeRef, signals: &mut HashMap<String, wellen::SignalRef>) {
     let scope = &hierarchy[scope_ref];
     let scope_path = scope.full_name(hierarchy);
-    let var_count = scope.vars(hierarchy).count();
-    eprintln!("🔥 BACKEND: Scope '{}' has {} variables", scope_path, var_count);
     
     // Process variables in this scope
     for var_ref in scope.vars(hierarchy) {
@@ -688,7 +633,6 @@ fn build_signals_for_scope_recursive(hierarchy: &wellen::Hierarchy, scope_ref: w
         
         // Key format: "scope_path|variable_name" to match SelectedVariable format
         let key = format!("{}|{}", scope_path, variable_name);
-        eprintln!("🔥 BACKEND: Storing signal key: {}", key);
         signals.insert(key, signal_ref);
     }
     
@@ -700,15 +644,10 @@ fn build_signals_for_scope_recursive(hierarchy: &wellen::Hierarchy, scope_ref: w
 
 // Handle signal value queries
 async fn query_signal_values(file_path: String, queries: Vec<SignalValueQuery>, session_id: SessionId, cor_id: CorId) {
-    eprintln!("🔥 BACKEND: Starting signal value query processing");
     let store = WAVEFORM_DATA_STORE.lock().unwrap();
     let waveform_data = match store.get(&file_path) {
-        Some(data) => {
-            eprintln!("🔥 BACKEND: Found waveform data for file: {}", file_path);
-            data
-        },
+        Some(data) => data,
         None => {
-            eprintln!("🔥 BACKEND: ERROR - Waveform file not found in store: {}", file_path);
             send_down_msg(DownMsg::SignalValuesError {
                 file_path,
                 error: "Waveform file not loaded or signal data not available".to_string(),
@@ -718,93 +657,40 @@ async fn query_signal_values(file_path: String, queries: Vec<SignalValueQuery>, 
     };
     
     let mut results = Vec::new();
-    eprintln!("🔥 BACKEND: Processing {} queries", queries.len());
     
     for query in queries {
         let key = format!("{}|{}", query.scope_path, query.variable_name);
-        eprintln!("🔥 BACKEND: Looking for signal key: {}", key);
         
         match waveform_data.signals.get(&key) {
             Some(&signal_ref) => {
-                eprintln!("🔥 BACKEND: Found signal_ref for key: {}", key);
                 // Convert time to time table index based on file format
                 let target_time = match waveform_data.file_format {
                     wellen::FileFormat::Vcd => {
                         // For VCD: time table is in VCD's native units (depends on $timescale)
                         // For $timescale 1s: values are already in seconds
-                        eprintln!("🔥 BACKEND: VCD file - using native time units (seconds)");
                         query.time_seconds as u64
                     },
                     _ => {
                         // For other formats, use femtosecond conversion  
-                        eprintln!("🔥 BACKEND: Non-VCD file - converting to femtoseconds");
                         (query.time_seconds * 1_000_000_000_000.0) as u64
                     }
                 };
-                eprintln!("🔥 BACKEND: Target time: {} seconds = {} (native units)", query.time_seconds, target_time);
-                
-                // Debug: Show time table around our target
-                eprintln!("🔥 BACKEND: Time table has {} entries", waveform_data.time_table.len());
-                for (i, &time) in waveform_data.time_table.iter().enumerate().take(10) {
-                    let time_display = match waveform_data.file_format {
-                        wellen::FileFormat::Vcd => format!("{} seconds", time),
-                        _ => {
-                            let seconds = time as f64 / 1_000_000_000_000.0;
-                            format!("{} fs = {} seconds", time, seconds)
-                        }
-                    };
-                    eprintln!("🔥 BACKEND: Time[{}] = {}", i, time_display);
-                }
                 
                 let time_idx = match waveform_data.time_table.binary_search(&target_time) {
-                    Ok(exact_idx) => {
-                        eprintln!("🔥 BACKEND: Found exact time match at index: {}", exact_idx);
-                        exact_idx as u32
-                    },
-                    Err(insert_pos) => {
-                        let idx = insert_pos.saturating_sub(1) as u32;
-                        eprintln!("🔥 BACKEND: Using closest earlier time at index: {}", idx);
-                        if idx < waveform_data.time_table.len() as u32 {
-                            let actual_time = waveform_data.time_table[idx as usize];
-                            let actual_time_display = match waveform_data.file_format {
-                                wellen::FileFormat::Vcd => format!("{} seconds", actual_time),
-                                _ => {
-                                    let actual_seconds = actual_time as f64 / 1_000_000_000_000.0;
-                                    format!("{} fs = {} seconds", actual_time, actual_seconds)
-                                }
-                            };
-                            eprintln!("🔥 BACKEND: Actual time at index {}: {}", idx, actual_time_display);
-                            
-                            // Check if requested time is way beyond data range
-                            let last_time = waveform_data.time_table.last().unwrap_or(&0);
-                            let last_seconds = match waveform_data.file_format {
-                                wellen::FileFormat::Vcd => *last_time as f64, // Already in seconds
-                                _ => *last_time as f64 / 1_000_000_000_000.0, // Convert from femtoseconds
-                            };
-                            if query.time_seconds > last_seconds * 2.0 { // If requested time is more than 2x the last time
-                                eprintln!("🔥 BACKEND: WARNING - Requested time ({} s) is beyond data range (max: {} s)", 
-                                    query.time_seconds, last_seconds);
-                            }
-                        }
-                        idx
-                    }
+                    Ok(exact_idx) => exact_idx as u32,
+                    Err(insert_pos) => insert_pos.saturating_sub(1) as u32,
                 };
                 
                 // Load signal and get value
-                eprintln!("🔥 BACKEND: Loading signal...");
                 let mut signal_source = waveform_data.signal_source.lock().unwrap();
                 let loaded_signals = signal_source.load_signals(&[signal_ref], &waveform_data.hierarchy, true);
-                eprintln!("🔥 BACKEND: Loaded {} signals", loaded_signals.len());
                 
                 match loaded_signals.into_iter().next() {
                     Some((_, signal)) => {
-                        eprintln!("🔥 BACKEND: Signal loaded successfully");
                         if let Some(offset) = signal.get_offset(time_idx) {
-                            eprintln!("🔥 BACKEND: Found offset for time_idx: {}", time_idx);
                             let value = signal.get_value_at(&offset, 0);
                             let value_str = format!("{}", value);
                             let formatted_value = format_signal_value(&value);
-                            eprintln!("🔥 BACKEND: Signal value: {}, formatted: {}", value_str, formatted_value);
                             
                             results.push(SignalValueResult {
                                 scope_path: query.scope_path,
@@ -814,7 +700,6 @@ async fn query_signal_values(file_path: String, queries: Vec<SignalValueQuery>, 
                                 formatted_value: Some(formatted_value),
                             });
                         } else {
-                            eprintln!("🔥 BACKEND: No offset found for time_idx: {}", time_idx);
                             results.push(SignalValueResult {
                                 scope_path: query.scope_path,
                                 variable_name: query.variable_name,
@@ -825,7 +710,6 @@ async fn query_signal_values(file_path: String, queries: Vec<SignalValueQuery>, 
                         }
                     }
                     None => {
-                        eprintln!("🔥 BACKEND: ERROR - No signal returned from load_signals");
                         results.push(SignalValueResult {
                             scope_path: query.scope_path,
                             variable_name: query.variable_name,
@@ -837,7 +721,6 @@ async fn query_signal_values(file_path: String, queries: Vec<SignalValueQuery>, 
                 }
             }
             None => {
-                eprintln!("🔥 BACKEND: ERROR - Signal key not found: {}", key);
                 results.push(SignalValueResult {
                     scope_path: query.scope_path,
                     variable_name: query.variable_name,
@@ -849,12 +732,10 @@ async fn query_signal_values(file_path: String, queries: Vec<SignalValueQuery>, 
         }
     }
     
-    eprintln!("🔥 BACKEND: Sending response with {} results", results.len());
     send_down_msg(DownMsg::SignalValues {
         file_path,
         results,
     }, session_id, cor_id).await;
-    eprintln!("🔥 BACKEND: Response sent");
 }
 
 // Format signal value for display
@@ -887,7 +768,7 @@ fn format_signal_value(value: &wellen::SignalValue) -> String {
                 value.to_bit_string().unwrap_or_else(|| "?".to_string())
             }
         }
-        wellen::SignalValue::NineValue(bits, _width) => {
+        wellen::SignalValue::NineValue(_bits, _width) => {
             value.to_bit_string().unwrap_or_else(|| "?".to_string())
         }
         wellen::SignalValue::String(s) => s.to_string(),

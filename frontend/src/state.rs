@@ -15,6 +15,9 @@ pub static VARIABLES_VALUE_COLUMN_WIDTH: Lazy<Mutable<u32>> = Lazy::new(|| 100.i
 pub static VARIABLES_NAME_DIVIDER_DRAGGING: Lazy<Mutable<bool>> = lazy::default();
 pub static VARIABLES_VALUE_DIVIDER_DRAGGING: Lazy<Mutable<bool>> = lazy::default();
 
+// Selected Variables panel row height
+pub const SELECTED_VARIABLES_ROW_HEIGHT: u32 = 30;
+
 // Search filter for Variables panel
 pub static VARIABLES_SEARCH_FILTER: Lazy<Mutable<String>> = lazy::default();
 
@@ -70,6 +73,9 @@ pub static EXPANDED_SCOPES: Lazy<Mutable<IndexSet<String>>> = lazy::default();
 // Selected variables management
 pub static SELECTED_VARIABLES: Lazy<MutableVec<shared::SelectedVariable>> = lazy::default();
 pub static SELECTED_VARIABLES_INDEX: Lazy<Mutable<IndexSet<String>>> = lazy::default();
+
+// Signal values for selected variables
+pub static SIGNAL_VALUES: Lazy<Mutable<HashMap<String, String>>> = lazy::default();
 
 // ===== ERROR DISPLAY SYSTEM =====
 
@@ -225,11 +231,13 @@ pub fn update_tracked_file_state(file_id: &str, new_state: FileState) {
     
     // Find the index and update the file state
     if let Some(index) = tracked_files.iter().position(|f| f.id == file_id) {
-        let mut file = tracked_files.iter().nth(index).unwrap().clone();
-        file.state = new_state;
-        tracked_files.set_cloned(index, file);
+        if let Some(file_ref) = tracked_files.iter().nth(index) {
+            let mut file = file_ref.clone();
+            file.state = new_state;
+            tracked_files.set_cloned(index, file);
+        }
     } else {
-        zoon::println!("WARNING: File ID {} not found in TRACKED_FILES for state update", file_id);
+        // File ID not found in tracked files - may have been removed
     }
     drop(tracked_files); // Release lock before calling refresh_smart_labels
     
@@ -317,6 +325,8 @@ pub fn add_selected_variable(variable: shared::Signal, file_id: &str, scope_id: 
         index.insert(selected_var.unique_id.clone());
         SELECTED_VARIABLES.lock_mut().push_cloned(selected_var.clone());
         
+        // Trigger signal value queries for the newly added variable
+        crate::views::trigger_signal_value_queries();
         
         // Trigger config save
         save_selected_variables();
@@ -398,6 +408,11 @@ pub fn init_selected_variables_from_config(selected_vars: Vec<shared::SelectedVa
         .map(|var| var.unique_id.clone())
         .collect();
     *SELECTED_VARIABLES_INDEX.lock_mut() = index;
+    
+    // Trigger signal value queries if variables were restored
+    if !valid_vars.is_empty() {
+        crate::views::trigger_signal_value_queries();
+    }
 }
 
 /// Validate that a selected variable's context still exists

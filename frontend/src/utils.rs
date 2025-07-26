@@ -29,7 +29,7 @@ pub fn check_loading_complete() {
 pub fn restore_scope_selections_sequenced() {
     // Check if user has explicitly cleared selection - if so, don't restore
     if USER_CLEARED_SELECTION.get() {
-        zoon::println!("Skipping scope restoration - user explicitly cleared selection");
+        // Skip scope restoration - user cleared selection
         return;
     }
     

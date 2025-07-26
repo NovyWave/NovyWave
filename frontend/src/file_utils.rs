@@ -90,7 +90,7 @@ pub fn process_file_paths() {
                     },
                     Err(error) => {
                         // File validation failed - add with error state immediately, don't send to backend
-                        zoon::println!("File validation failed for {}: {:?}", path, error);
+                        // File validation failed - handle error state
                         crate::state::add_tracked_file(path.clone(), FileState::Failed(error));
                         
                         // Still add to legacy system for consistency, but mark as failed

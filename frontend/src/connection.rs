@@ -188,6 +188,33 @@ static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 // Clear global error (batch operations successful)
                 crate::FILE_PICKER_ERROR.set_neq(None);
             }
+            DownMsg::SignalValues { file_path, results } => {
+                // Process signal values from backend
+                // Update signal values in the global state
+                let mut signal_values = crate::state::SIGNAL_VALUES.lock_mut();
+                
+                for result in results {
+                    // Create unique_id for signal value storage
+                    // Create unique_id in the same format as SelectedVariable: file_path|scope_path|variable_name
+                    let unique_id = format!("{}|{}|{}", 
+                        file_path,
+                        result.scope_path,
+                        result.variable_name
+                    );
+                    
+                    // Store the formatted value (or fallback to raw value)
+                    let display_value = result.formatted_value
+                        .or(result.value)
+                        .unwrap_or_else(|| "No value".to_string());
+                    
+                    // Store signal value with unique identifier
+                    signal_values.insert(unique_id, display_value);
+                }
+            }
+            DownMsg::SignalValuesError { file_path: _, error: _ } => {
+                // Show error alert for signal value query failure  
+                // Signal value query error logged to console
+            }
         }
     })
 });
