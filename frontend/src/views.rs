@@ -2,7 +2,7 @@ use zoon::*;
 use zoon::events::{Click, KeyDown};
 use moonzoon_novyui::*;
 use moonzoon_novyui::tokens::theme::{Theme, toggle_theme, theme};
-use moonzoon_novyui::tokens::color::{neutral_1, neutral_2, neutral_4, neutral_8, neutral_9, neutral_10, neutral_11, neutral_12, primary_3, primary_6, primary_7};
+use moonzoon_novyui::tokens::color::{neutral_1, neutral_2, neutral_4, neutral_8, neutral_10, neutral_11, neutral_12, primary_3, primary_6, primary_7};
 use shared::{ScopeData, UpMsg, TrackedFile, SelectedVariable, FileState, SignalValueQuery};
 use crate::types::{get_variables_from_tracked_files, filter_variables_with_context};
 use crate::virtual_list::virtual_variables_list;
@@ -56,6 +56,458 @@ fn get_signal_type_for_selected_variable(selected_var: &SelectedVariable) -> Str
     "Loading...".to_string()
 }
 
+/// Get the default format for a signal type based on docs/signal_type_aware_formatting.md
+fn get_default_format_for_signal_type(signal_type: &str) -> shared::VarFormat {
+    // Based on signal_type_aware_formatting.md
+    let is_string = signal_type.contains("String") || signal_type.contains("string");
+    let is_real = signal_type.contains("Real") || signal_type.contains("real");
+    let is_single_bit = signal_type.contains("1-bit") || signal_type.contains("1 bit") || signal_type.contains("single");
+    
+    if is_string {
+        shared::VarFormat::ASCII
+    } else if is_real {
+        shared::VarFormat::ASCII // For real signals, use ASCII/Text format
+    } else if is_single_bit {
+        shared::VarFormat::Binary // 1-bit signals default to Binary
+    } else {
+        shared::VarFormat::Hexadecimal // Multi-bit binary signals default to Hex
+    }
+}
+
+// Format options and display functions moved to format_utils.rs
+
+/// Create a smart dropdown with viewport edge detection using web-sys APIs
+fn create_smart_dropdown(
+    dropdown_options: Vec<crate::format_utils::DropdownFormatOption>, 
+    selected_format: Mutable<String>,
+    is_open: Mutable<bool>,
+    trigger_id: String
+) -> impl Element {
+    use wasm_bindgen::JsCast;
+    use web_sys::{window, HtmlElement};
+    
+    // Calculate actual dropdown height based on content
+    // Modern library approach: account for all box model properties + safety margin
+    let vertical_padding = 12.0; // .y(6) = 6px top + 6px bottom
+    let explicit_line_height = 16.0; // Set explicit line-height to avoid browser variations
+    let item_height = vertical_padding + explicit_line_height; // 28px total per item
+    let border_height = 2.0; // Border::new().width(1) = 1px top + 1px bottom
+    let safety_margin = 4.0; // Safety buffer for fractional pixel rendering
+    
+    let content_height = dropdown_options.len() as f64 * item_height;
+    let calculated_height = content_height + border_height + safety_margin;
+    let dynamic_dropdown_height = (calculated_height.min(300.0)).ceil(); // Math.ceil() for fractional pixels
+    
+    // Create unique ID for positioning calculations
+    let dropdown_id = format!("smart-dropdown-{}", js_sys::Date::now() as u64);
+    
+    // Create dropdown with smart edge detection positioning
+    Column::new()
+        .s(Transform::new().move_down(0))
+        .s(Background::new().color_signal(neutral_1()))
+        .s(Borders::all_signal(neutral_4().map(|color| 
+            Border::new().width(1).color(color)
+        )))
+        .s(RoundedCorners::all(4))
+        .s(Shadows::new([
+            Shadow::new()
+                .y(4)
+                .blur(6)
+                .spread(-1)
+                .color("oklch(70% 0.09 255 / 0.22)"),
+            Shadow::new()
+                .y(2)
+                .blur(4) 
+                .spread(-2)
+                .color("oklch(70% 0.09 255 / 0.22)")
+        ]))
+        .s(Scrollbars::both())
+        .update_raw_el({
+            let dropdown_id = dropdown_id.clone();
+            move |raw_el| {
+                if let Some(html_el) = raw_el.dom_element().dyn_ref::<HtmlElement>() {
+                    html_el.set_id(&dropdown_id);
+                    
+                    // Apply initial positioning
+                    let style = html_el.style();
+                    let _ = style.set_property("position", "fixed");
+                    let _ = style.set_property("z-index", "9999");
+                    let _ = style.set_property("min-width", "200px");
+                    let _ = style.set_property("max-height", &format!("{}px", dynamic_dropdown_height));
+                    let _ = style.set_property("overflow-y", "auto");
+                    
+                    // Edge detection and smart positioning using web-sys
+                    if let Some(window) = window() {
+                        if let Some(document) = window.document() {
+                            if let Some(trigger_element) = document.get_element_by_id(&trigger_id) {
+                                let viewport_width = window.inner_width().unwrap().as_f64().unwrap_or(1024.0);
+                                let viewport_height = window.inner_height().unwrap().as_f64().unwrap_or(768.0);
+                                
+                                // Get trigger's bounding rect for positioning reference
+                                let trigger_rect = trigger_element.get_bounding_client_rect();
+                                let dropdown_width = 200.0; // min-width from CSS
+                                let dropdown_height = dynamic_dropdown_height; // Use the calculated height
+                                
+                                // Start with default positioning below trigger
+                                let mut x = trigger_rect.left();
+                                let mut y = trigger_rect.bottom() + 1.0; // 1px gap below trigger
+                                
+                                // Right edge detection - shift left if dropdown would overflow
+                                if x + dropdown_width > viewport_width {
+                                    x = viewport_width - dropdown_width - 8.0; // 8px margin from edge
+                                }
+                                
+                                // Left edge protection - ensure dropdown doesn't go off-screen left
+                                if x < 8.0 {
+                                    x = 8.0;
+                                }
+                                
+                                // Bottom edge detection - flip to above trigger if insufficient space below
+                                if y + dropdown_height > viewport_height {
+                                    let space_above = trigger_rect.top();
+                                    
+                                    if space_above >= dropdown_height + 1.0 {
+                                        // Enough space above - position above trigger
+                                        y = trigger_rect.top() - dropdown_height - 1.0; // 1px gap above
+                                    } else {
+                                        // Not enough space above either - constrain within viewport
+                                        y = viewport_height - dropdown_height - 8.0; // 8px margin from bottom
+                                    }
+                                }
+                                
+                                // Top edge protection
+                                if y < 8.0 {
+                                    y = 8.0;
+                                }
+                                
+                                // Apply calculated position
+                                let _ = style.set_property("left", &format!("{}px", x));
+                                let _ = style.set_property("top", &format!("{}px", y));
+                            }
+                        }
+                    }
+                }
+                
+                raw_el
+            }
+        })
+        .items(
+            dropdown_options.iter().map(|option| {
+                let option_format = format!("{:?}", option.format);
+                let option_display = option.display_text.clone();
+                let option_disabled = option.disabled;
+                
+                El::new()
+                    .s(Width::fill())
+                    .s(Padding::new().x(12).y(6))
+                    .s(Cursor::new(if option_disabled {
+                        CursorIcon::NotAllowed
+                    } else {
+                        CursorIcon::Pointer
+                    }))
+                    .s(Font::new()
+                        .color_signal(
+                            always(option_disabled).map_bool_signal(
+                                || neutral_4(),
+                                || neutral_8()
+                            )
+                        )
+                        .size(12)
+                    )
+                    .child(
+                        // Use Variables panel styling pattern: value left, format right
+                        Row::new()
+                            .s(Width::fill())
+                            .s(Gap::new().x(8))
+                            .item(
+                                // Value - left aligned, contrasting color (like variable name)
+                                El::new()
+                                    .s(Font::new().color_signal(
+                                        always(option_disabled).map_bool_signal(
+                                            || neutral_4(),
+                                            || neutral_11()
+                                        )
+                                    ).size(12).line_height(16).no_wrap())
+                                    .s(Width::growable())
+                                    .child({
+                                        // Extract just the value part (before the format name)
+                                        let value_only = if let Some(space_pos) = option_display.rfind(' ') {
+                                            option_display[..space_pos].to_string()
+                                        } else {
+                                            option_display.clone()
+                                        };
+                                        Text::new(&value_only)
+                                    })
+                            )
+                            .item(El::new().s(Width::fill())) // Spacer to push format to right
+                            .item(
+                                // Format name - right aligned, blueish color (like variable type)
+                                El::new()
+                                    .s(Font::new().color_signal(
+                                        always(option_disabled).map_bool_signal(
+                                            || neutral_4(),
+                                            || primary_6()
+                                        )
+                                    ).size(11).line_height(16).no_wrap())
+                                    .s(Align::new().right())
+                                    .child({
+                                        // Extract just the format name (after the last space)
+                                        let format_name = if let Some(space_pos) = option_display.rfind(' ') {
+                                            option_display[space_pos + 1..].to_string()
+                                        } else {
+                                            // If no space, show the format enum name
+                                            match option.format {
+                                                shared::VarFormat::ASCII => "ASCII",
+                                                shared::VarFormat::Binary => "Bin",
+                                                shared::VarFormat::BinaryWithGroups => "Bin",
+                                                shared::VarFormat::Hexadecimal => "Hex",
+                                                shared::VarFormat::Octal => "Oct",
+                                                shared::VarFormat::Signed => "Signed",
+                                                shared::VarFormat::Unsigned => "Unsigned",
+                                            }.to_string()
+                                        };
+                                        Text::new(&format_name)
+                                    })
+                            )
+                    )
+                    .on_click({
+                        let selected_format = selected_format.clone();
+                        let is_open = is_open.clone();
+                        let option_format = option_format.clone();
+                        move || {
+                            if !option_disabled {
+                                selected_format.set(option_format.clone());
+                                is_open.set(false);
+                            }
+                        }
+                    })
+            }).collect::<Vec<_>>()
+        )
+}
+
+/// Create a format selection component for a selected variable using NovyUI Select
+fn create_format_select_component(selected_var: &SelectedVariable) -> impl Element {
+    use crate::state::SIGNAL_VALUES;
+    
+    let unique_id = selected_var.unique_id.clone();
+    
+    // Get signal type for format options and default
+    let signal_type = get_signal_type_for_selected_variable(selected_var);
+    
+    // Use signal-type aware default if current format is default Hexadecimal and signal type suggests otherwise
+    let current_format = if selected_var.formatter == shared::VarFormat::Hexadecimal {
+        // Check if we should use a signal-type aware default instead  
+        let type_aware_default = get_default_format_for_signal_type(&signal_type);
+        if type_aware_default != shared::VarFormat::Hexadecimal {
+            // Update the variable with the type-aware default
+            update_variable_format(&unique_id, type_aware_default);
+            type_aware_default
+        } else {
+            selected_var.formatter
+        }
+    } else {
+        selected_var.formatter
+    };
+    
+    // Format options are now generated dynamically in the reactive signal based on MultiFormatValue
+    
+    // Get current multi-format signal value
+    let signal_values = SIGNAL_VALUES.lock_ref();
+    let multi_value = signal_values.get(&unique_id).cloned();
+    drop(signal_values);
+    
+    // Create default multi-value if not available yet
+    let _multi_value = multi_value.unwrap_or_else(|| {
+        crate::format_utils::MultiFormatValue::new("Loading...".to_string())
+    });
+    
+    // Create reactive state for selection changes
+    let selected_format = Mutable::new(format!("{:?}", current_format));
+    
+    // Listen for changes and update backend
+    Task::start({
+        let unique_id = unique_id.clone();
+        let selected_format = selected_format.clone();
+        let previous_format = Mutable::new(format!("{:?}", current_format));
+        
+        selected_format.signal_cloned().for_each_sync(move |new_format_str| {
+            if new_format_str != previous_format.get_cloned() {
+                previous_format.set(new_format_str.clone());
+                
+                // Parse the format string back to VarFormat
+                let new_format = match new_format_str.as_str() {
+                    "ASCII" => shared::VarFormat::ASCII,
+                    "Binary" => shared::VarFormat::Binary,
+                    "BinaryWithGroups" => shared::VarFormat::BinaryWithGroups,
+                    "Hexadecimal" => shared::VarFormat::Hexadecimal,
+                    "Octal" => shared::VarFormat::Octal,
+                    "Signed" => shared::VarFormat::Signed,
+                    "Unsigned" => shared::VarFormat::Unsigned,
+                    _ => shared::VarFormat::Hexadecimal, // Default fallback
+                };
+                
+                update_variable_format(&unique_id, new_format);
+            }
+        })
+    });
+    
+    // Create custom dropdown that shows value+format with working dropdown menu
+    let is_open = Mutable::new(false);
+    
+    El::new()
+        .s(Width::fill())
+        .s(Height::fill())
+        .s(Padding::new().x(8).y(6))
+        .s(Align::new().center_y().left())
+        .child_signal(
+            map_ref! {
+                let signal_values = SIGNAL_VALUES.signal_cloned(),
+                let format_state = selected_format.signal_cloned() => {
+                    // Get current multi-format value
+                    let current_multi_value = signal_values.get(&unique_id).cloned()
+                        .unwrap_or_else(|| crate::format_utils::MultiFormatValue::new("Loading...".to_string()));
+                    
+                    // Parse current format for proper display
+                    let current_format_enum = match format_state.as_str() {
+                        "ASCII" => shared::VarFormat::ASCII,
+                        "Binary" => shared::VarFormat::Binary,
+                        "BinaryWithGroups" => shared::VarFormat::BinaryWithGroups,
+                        "Hexadecimal" => shared::VarFormat::Hexadecimal,
+                        "Octal" => shared::VarFormat::Octal,
+                        "Signed" => shared::VarFormat::Signed,
+                        "Unsigned" => shared::VarFormat::Unsigned,
+                        _ => shared::VarFormat::Hexadecimal,
+                    };
+                    
+                    let display_text = current_multi_value.get_display_with_format(&current_format_enum);
+                    
+                    // Generate dropdown options with formatted values
+                    let dropdown_options = crate::format_utils::generate_dropdown_options(&current_multi_value, &signal_type);
+                    
+                    // Create unique trigger ID for positioning reference
+                    let trigger_id = format!("select-trigger-{}", unique_id);
+                    
+                    // Create custom select trigger that shows value+format
+                    Row::new()
+                        .s(Width::fill())
+                        .s(Height::exact(SELECTED_VARIABLES_ROW_HEIGHT - 2))
+                        .s(Padding::new().x(8).y(4))
+                        .s(Borders::all_signal(neutral_4().map(|color| 
+                            Border::new().width(1).color(color)
+                        )))
+                        .s(RoundedCorners::all(6))
+                        .s(Background::new().color_signal(neutral_1()))
+                        .s(Cursor::new(CursorIcon::Pointer))
+                        .s(Align::new().center_y().left())
+                        .update_raw_el({
+                            let trigger_id = trigger_id.clone();
+                            move |raw_el| {
+                                if let Some(html_el) = raw_el.dom_element().dyn_ref::<web_sys::HtmlElement>() {
+                                    html_el.set_id(&trigger_id);
+                                }
+                                raw_el
+                            }
+                        })
+                        .item(
+                            // Use Variables panel styling pattern: value left, format right
+                            Row::new()
+                                .s(Width::fill())
+                                .s(Gap::new().x(8))
+                                .item(
+                                    // Value - left aligned, contrasting color (like variable name)
+                                    El::new()
+                                        .s(Font::new().color_signal(neutral_11()).size(13).no_wrap())
+                                        .s(Width::growable())
+                                        .child({
+                                            // Extract just the value part (before the format name)
+                                            let value_only = if let Some(space_pos) = display_text.rfind(' ') {
+                                                display_text[..space_pos].to_string()
+                                            } else {
+                                                display_text.clone()
+                                            };
+                                            Text::new(&value_only)
+                                        })
+                                )
+                                .item(El::new().s(Width::fill())) // Spacer to push format to right
+                                .item(
+                                    // Format name - right aligned, blueish color (like variable type)
+                                    El::new()
+                                        .s(Font::new().color_signal(primary_6()).size(11).no_wrap())
+                                        .s(Align::new().right())
+                                        .child({
+                                            // Extract just the format name (after the last space)
+                                            let format_name = if let Some(space_pos) = display_text.rfind(' ') {
+                                                display_text[space_pos + 1..].to_string()
+                                            } else {
+                                                // If no space, show the format enum name
+                                                match current_format_enum {
+                                                    shared::VarFormat::ASCII => "ASCII",
+                                                    shared::VarFormat::Binary => "Bin",
+                                                    shared::VarFormat::BinaryWithGroups => "Bin",
+                                                    shared::VarFormat::Hexadecimal => "Hex",
+                                                    shared::VarFormat::Octal => "Oct",
+                                                    shared::VarFormat::Signed => "Signed",
+                                                    shared::VarFormat::Unsigned => "Unsigned",
+                                                }.to_string()
+                                            };
+                                            Text::new(&format_name)
+                                        })
+                                )
+                        )
+                        .item(
+                            IconBuilder::new(IconName::ChevronDown)
+                                .size(IconSize::Small)
+                                .color(IconColor::Muted)
+                                .build()
+                        )
+                        .element_below_signal(is_open.signal().map_true({
+                            let selected_format = selected_format.clone();
+                            let is_open = is_open.clone();
+                            let trigger_id = trigger_id.clone();
+                            
+                            move || {
+                                create_smart_dropdown(dropdown_options.clone(), selected_format.clone(), is_open.clone(), trigger_id.clone())
+                            }
+                        }))
+                        .on_click({
+                            let is_open = is_open.clone();
+                            move || {
+                                is_open.set_neq(!is_open.get());
+                            }
+                        })
+                        .on_click_outside({
+                            let is_open = is_open.clone();
+                            move || is_open.set(false)
+                        })
+                }
+            }
+        )
+}
+
+/// Update the format for a selected variable and trigger config save + query refresh
+fn update_variable_format(unique_id: &str, new_format: shared::VarFormat) {
+    use crate::state::{SELECTED_VARIABLES, SELECTED_VARIABLE_FORMATS};
+    
+    // Update the global format tracking
+    let mut formats = SELECTED_VARIABLE_FORMATS.lock_mut();
+    formats.insert(unique_id.to_string(), new_format);
+    drop(formats);
+    
+    // Update the SELECTED_VARIABLES vec by finding and updating the specific variable
+    let mut selected_vars = SELECTED_VARIABLES.lock_mut();
+    if let Some(var_index) = selected_vars.iter().position(|var| var.unique_id == unique_id) {
+        let mut updated_var = selected_vars[var_index].clone();
+        updated_var.formatter = new_format;
+        selected_vars.set_cloned(var_index, updated_var);
+    }
+    drop(selected_vars);
+    
+    // Save config immediately
+    config::save_current_config();
+    
+    // Trigger signal value query refresh with new format
+    trigger_signal_value_queries();
+}
 
 /// Query signal values for selected variables at a specific time
 fn query_signal_values_at_time(time_seconds: f64) {
@@ -77,6 +529,7 @@ fn query_signal_values_at_time(time_seconds: f64) {
                 scope_path,
                 variable_name,
                 time_seconds,
+                format: selected_var.formatter,
             };
             
             queries_by_file.entry(file_path).or_insert_with(Vec::new).push(query);
@@ -95,7 +548,6 @@ fn query_signal_values_at_time(time_seconds: f64) {
 /// Trigger signal value queries when variables are present
 pub fn trigger_signal_value_queries() {
     // Trigger signal value queries for selected variables
-    // Debug: Show current selected variables
     let selected_vars = SELECTED_VARIABLES.lock_ref();
     for _var in selected_vars.iter() {
         // Process selected variable for signal query
@@ -482,12 +934,12 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                         El::new()
                             .s(Height::exact_signal(
                                 SELECTED_VARIABLES.signal_vec_cloned().len().map(|vars_count| {
-                                    // Add one extra row height for scrollbar (names/values) or footer/timeline (canvas)
-                                    (vars_count + 1) as u32 * SELECTED_VARIABLES_ROW_HEIGHT
+                                    // Add extra height to prevent clipping - footer height plus small buffer
+                                    (vars_count as u32 * SELECTED_VARIABLES_ROW_HEIGHT) + SELECTED_VARIABLES_ROW_HEIGHT + 2
                                 })
                             ))
                             .s(Width::fill())
-                            .s(Scrollbars::both())
+                            .s(Scrollbars::y_and_clip_x())
                             .child(
                                 Row::new()
                                     .s(Height::fill())
@@ -513,6 +965,10 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                             Border::new().width(1).color(color)
                                                         )))
                                                         .s(Gap::new().x(4))
+                                                        .update_raw_el(|raw_el| {
+                                                            raw_el.style("overflow", "hidden")
+                                                                  .style("max-width", "100%")
+                                                        })
                                                         .item({
                                                             let unique_id = selected_var.unique_id.clone();
                                                             button()
@@ -520,6 +976,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                                 .variant(ButtonVariant::DestructiveGhost)
                                                                 .size(ButtonSize::Small)
                                                                 .on_press(move || {
+                                                                    zoon::println!("🚨 REMOVE BUTTON CLICKED for {}", &unique_id);
                                                                     remove_selected_variable(&unique_id);
                                                                 })
                                                                 .build()
@@ -541,6 +998,12 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                                     El::new()
                                                                         .s(Font::new().color_signal(primary_6()).size(11).no_wrap())
                                                                         .s(Align::new().right())
+                                                                        .update_raw_el(|raw_el| {
+                                                                            raw_el
+                                                                                .style("overflow", "hidden") // Hide any overflow
+                                                                                .style("text-overflow", "ellipsis") // Show ellipsis for long text
+                                                                                .style("max-width", "100%") // Ensure it doesn't exceed container
+                                                                        })
                                                                         .child_signal({
                                                                             let selected_var = selected_var.clone();
                                                                             use crate::state::FILE_LOADING_TRIGGER;
@@ -597,30 +1060,16 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                             .s(Width::exact_signal(VARIABLES_VALUE_COLUMN_WIDTH.signal()))
                                             .s(Height::fill())
                                             .s(Align::new().top())
-                                            .s(Scrollbars::x_and_clip_y())
-                                            .update_raw_el(|raw_el| {
-                                                raw_el.style("scrollbar-width", "thin")
-                                            })
                                             .items_signal_vec(
                                                 SELECTED_VARIABLES.signal_vec_cloned().map(|selected_var| {
-                                                    let unique_id = selected_var.unique_id.clone();
                                                     El::new()
                                                         .s(Height::exact(SELECTED_VARIABLES_ROW_HEIGHT))
                                                         .s(Width::fill())
-                                                        .s(Padding::all(8))
                                                         .s(Borders::new().bottom_signal(neutral_4().map(|color| 
                                                             Border::new().width(1).color(color)
                                                         )))
-                                                        .s(Font::new().color_signal(neutral_9()).size(13).no_wrap())
-                                                        .update_raw_el(|raw_el| {
-                                                            raw_el.style("white-space", "nowrap")
-                                                        })
-                                                        .child_signal(
-                                                            crate::state::SIGNAL_VALUES.signal_ref(move |values| {
-                                                                values.get(&unique_id)
-                                                                    .cloned()
-                                                                    .unwrap_or_else(|| "Loading...".to_string())
-                                                            })
+                                                        .child(
+                                                            create_format_select_component(&selected_var)
                                                         )
                                                 })
                                             )

@@ -6,6 +6,7 @@ publish.workspace = true
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
+convert-base = "1.1.2"
 
 [dev-dependencies]
 serde_json = "1.0"

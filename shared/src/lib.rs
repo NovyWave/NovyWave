@@ -1,6 +1,7 @@
 use serde::{Serialize, Deserialize, Deserializer};
 use std::collections::HashMap;
 use std::str::FromStr;
+use convert_base;
 
 // ===== MESSAGE TYPES =====
 
@@ -47,6 +48,7 @@ pub struct SignalValueQuery {
     pub scope_path: String,
     pub variable_name: String,
     pub time_seconds: f64,
+    pub format: VarFormat,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -54,8 +56,9 @@ pub struct SignalValueResult {
     pub scope_path: String,
     pub variable_name: String,
     pub time_seconds: f64,
-    pub value: Option<String>, // None if signal not found or no value at that time
-    pub formatted_value: Option<String>, // Formatted for display (hex, binary, etc.)
+    pub raw_value: Option<String>, // Raw binary value from waveform
+    pub formatted_value: Option<String>, // Formatted according to requested format
+    pub format: VarFormat, // Format used for this result
 }
 
 // ===== FILESYSTEM TYPES =====
@@ -130,8 +133,8 @@ pub struct SelectedVariable {
     /// Pipe-separated identifier: "/full/path/file.vcd|scope_path|variable_name"
     /// Example: "/home/user/test_files/simple.vcd|simple_tb.s|A"
     pub unique_id: String,
-    /// Formatter type for display - defaults to "DEFAULT"
-    pub formatter: String,
+    /// Format type for display - defaults to Hexadecimal
+    pub formatter: VarFormat,
 }
 
 impl SelectedVariable {
@@ -140,11 +143,11 @@ impl SelectedVariable {
         
         Self {
             unique_id,
-            formatter: "DEFAULT".to_string(),
+            formatter: VarFormat::default(),
         }
     }
     
-    pub fn new_with_formatter(variable: Signal, file_path: String, scope_full_name: String, formatter: String) -> Self {
+    pub fn new_with_formatter(variable: Signal, file_path: String, scope_full_name: String, formatter: VarFormat) -> Self {
         let unique_id = format!("{}|{}|{}", file_path, scope_full_name, variable.name);
         
         Self {
@@ -209,6 +212,199 @@ impl SelectedVariable {
             format!("{}: {}.{}", file_name, scope_path, variable_name)
         } else {
             format!("Invalid: {}", self.unique_id)
+        }
+    }
+}
+
+// ===== VARIABLE FORMATTING =====
+
+#[derive(Default, Clone, Copy, Debug, Serialize, PartialEq, Eq, Hash)]
+#[serde(crate = "serde")]
+pub enum VarFormat {
+    ASCII,
+    Binary,
+    BinaryWithGroups,
+    #[default]
+    Hexadecimal,
+    Octal,
+    Signed,
+    Unsigned,
+}
+
+// Custom deserializer for VarFormat with backward compatibility for "DEFAULT"
+impl<'de> Deserialize<'de> for VarFormat {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        use serde::de::Error;
+        let s = String::deserialize(deserializer)?;
+        match s.as_str() {
+            "ASCII" => Ok(VarFormat::ASCII),
+            "Binary" => Ok(VarFormat::Binary),
+            "BinaryWithGroups" => Ok(VarFormat::BinaryWithGroups),
+            "Hexadecimal" => Ok(VarFormat::Hexadecimal),
+            "Octal" => Ok(VarFormat::Octal),
+            "Signed" => Ok(VarFormat::Signed),
+            "Unsigned" => Ok(VarFormat::Unsigned),
+            // Backward compatibility for old config files
+            "DEFAULT" => Ok(VarFormat::Hexadecimal), // Map old DEFAULT to Hexadecimal
+            _ => Err(D::Error::custom(format!(
+                "unknown variant `{}`, expected one of `ASCII`, `Binary`, `BinaryWithGroups`, `Hexadecimal`, `Octal`, `Signed`, `Unsigned` (or legacy `DEFAULT`)", 
+                s
+            ))),
+        }
+    }
+}
+
+impl VarFormat {
+    pub fn as_static_str(&self) -> &'static str {
+        match self {
+            VarFormat::ASCII => "Text",
+            VarFormat::Binary => "Bin",
+            VarFormat::BinaryWithGroups => "Bins",
+            VarFormat::Hexadecimal => "Hex",
+            VarFormat::Octal => "Oct",
+            VarFormat::Signed => "Int",
+            VarFormat::Unsigned => "UInt",
+        }
+    }
+
+    pub fn next(&self) -> Self {
+        match self {
+            VarFormat::ASCII => VarFormat::Binary,
+            VarFormat::Binary => VarFormat::BinaryWithGroups,
+            VarFormat::BinaryWithGroups => VarFormat::Hexadecimal,
+            VarFormat::Hexadecimal => VarFormat::Octal,
+            VarFormat::Octal => VarFormat::Signed,
+            VarFormat::Signed => VarFormat::Unsigned,
+            VarFormat::Unsigned => VarFormat::ASCII,
+        }
+    }
+
+    /// Format a binary string value according to the selected format
+    /// Expects the input to be a binary string (e.g., "10110101")
+    pub fn format(&self, binary_value: &str) -> String {
+        if binary_value.is_empty() {
+            return binary_value.to_string();
+        }
+
+        match self {
+            VarFormat::ASCII => {
+                let mut formatted_value = String::new();
+                for group_index in 0..binary_value.len() / 8 {
+                    let offset = group_index * 8;
+                    let group = &binary_value[offset..offset + 8];
+                    if let Ok(byte_char) = u8::from_str_radix(group, 2) {
+                        formatted_value.push(byte_char as char);
+                    }
+                }
+                formatted_value
+            }
+            VarFormat::Binary => binary_value.to_string(),
+            VarFormat::BinaryWithGroups => {
+                let char_count = binary_value.len();
+                binary_value
+                    .chars()
+                    .enumerate()
+                    .fold(String::new(), |mut value, (index, one_or_zero)| {
+                        value.push(one_or_zero);
+                        let is_last = index == char_count - 1;
+                        if !is_last && (index + 1) % 4 == 0 {
+                            value.push(' ');
+                        }
+                        value
+                    })
+            }
+            VarFormat::Hexadecimal => {
+                let ones_and_zeros = binary_value
+                    .chars()
+                    .rev()
+                    .map(|char| char.to_digit(2).unwrap_or(0))
+                    .collect::<Vec<_>>();
+                let mut base = convert_base::Convert::new(2, 16);
+                let output = base.convert::<u32, u32>(&ones_and_zeros);
+                let value: String = output
+                    .into_iter()
+                    .rev()
+                    .map(|number| char::from_digit(number, 16).unwrap_or('?'))
+                    .collect();
+                // Remove leading zeros but keep at least one digit
+                value.trim_start_matches('0').chars().next().map_or("0".to_string(), |_| {
+                    let trimmed = value.trim_start_matches('0');
+                    if trimmed.is_empty() { "0".to_string() } else { trimmed.to_string() }
+                })
+            }
+            VarFormat::Octal => {
+                let ones_and_zeros = binary_value
+                    .chars()
+                    .rev()
+                    .map(|char| char.to_digit(2).unwrap_or(0))
+                    .collect::<Vec<_>>();
+                let mut base = convert_base::Convert::new(2, 8);
+                let output = base.convert::<u32, u32>(&ones_and_zeros);
+                let value: String = output
+                    .into_iter()
+                    .rev()
+                    .map(|number| char::from_digit(number, 8).unwrap_or('?'))
+                    .collect();
+                // Remove leading zeros but keep at least one digit
+                let trimmed = value.trim_start_matches('0');
+                if trimmed.is_empty() { "0".to_string() } else { trimmed.to_string() }
+            }
+            VarFormat::Signed => {
+                let mut ones_and_zeros = binary_value
+                    .chars()
+                    .rev()
+                    .map(|char| char.to_digit(2).unwrap_or(0))
+                    .collect::<Vec<_>>();
+
+                // Two's complement conversion - https://builtin.com/articles/twos-complement
+                let sign = if ones_and_zeros.last().unwrap_or(&0) == &0 {
+                    ""
+                } else {
+                    "-"
+                };
+                if sign == "-" {
+                    let mut one_found = false;
+                    for one_or_zero in &mut ones_and_zeros {
+                        if one_found {
+                            *one_or_zero = if one_or_zero == &0 { 1 } else { 0 }
+                        } else if one_or_zero == &1 {
+                            one_found = true;
+                        }
+                    }
+                }
+
+                let mut base = convert_base::Convert::new(2, 10);
+                let output = base.convert::<u32, u32>(&ones_and_zeros);
+                let value_without_sign: String = output
+                    .into_iter()
+                    .rev()
+                    .map(|number| char::from_digit(number, 10).unwrap_or('?'))
+                    .collect();
+                // Remove leading zeros but keep at least one digit for the number part
+                let trimmed = value_without_sign.trim_start_matches('0');
+                let number_part = if trimmed.is_empty() { "0" } else { trimmed };
+                format!("{}{}", sign, number_part)
+            }
+            VarFormat::Unsigned => {
+                let ones_and_zeros = binary_value
+                    .chars()
+                    .rev()
+                    .map(|char| char.to_digit(2).unwrap_or(0))
+                    .collect::<Vec<_>>();
+                let mut base = convert_base::Convert::new(2, 10);
+                let output = base.convert::<u32, u32>(&ones_and_zeros);
+                let value: String = output
+                    .into_iter()
+                    .rev()
+                    .map(|number| char::from_digit(number, 10).unwrap_or('?'))
+                    .collect();
+                // Remove leading zeros but keep at least one digit
+                let trimmed = value.trim_start_matches('0');
+                if trimmed.is_empty() { "0".to_string() } else { trimmed.to_string() }
+            }
         }
     }
 }
@@ -1064,6 +1260,122 @@ mod tests {
         
         // Check that warnings were generated
         assert_eq!(warnings.len(), 5);
+    }
+    
+    #[test]
+    fn test_var_format_serialization() {
+        // Test enum serialization
+        assert_eq!(serde_json::to_string(&VarFormat::Hexadecimal).unwrap(), "\"Hexadecimal\"");
+        assert_eq!(serde_json::to_string(&VarFormat::Binary).unwrap(), "\"Binary\"");
+        
+        // Test enum deserialization
+        assert_eq!(serde_json::from_str::<VarFormat>("\"Binary\"").unwrap(), VarFormat::Binary);
+        assert_eq!(serde_json::from_str::<VarFormat>("\"Hexadecimal\"").unwrap(), VarFormat::Hexadecimal);
+        
+        // Test default
+        assert_eq!(VarFormat::default(), VarFormat::Hexadecimal);
+    }
+    
+    #[test]
+    fn test_var_format_as_static_str() {
+        assert_eq!(VarFormat::ASCII.as_static_str(), "Text");
+        assert_eq!(VarFormat::Binary.as_static_str(), "Bin");
+        assert_eq!(VarFormat::BinaryWithGroups.as_static_str(), "Bins");
+        assert_eq!(VarFormat::Hexadecimal.as_static_str(), "Hex");
+        assert_eq!(VarFormat::Octal.as_static_str(), "Oct");
+        assert_eq!(VarFormat::Signed.as_static_str(), "Int");
+        assert_eq!(VarFormat::Unsigned.as_static_str(), "UInt");
+    }
+    
+    #[test]
+    fn test_var_format_next() {
+        assert_eq!(VarFormat::ASCII.next(), VarFormat::Binary);
+        assert_eq!(VarFormat::Binary.next(), VarFormat::BinaryWithGroups);
+        assert_eq!(VarFormat::BinaryWithGroups.next(), VarFormat::Hexadecimal);
+        assert_eq!(VarFormat::Hexadecimal.next(), VarFormat::Octal);
+        assert_eq!(VarFormat::Octal.next(), VarFormat::Signed);
+        assert_eq!(VarFormat::Signed.next(), VarFormat::Unsigned);
+        assert_eq!(VarFormat::Unsigned.next(), VarFormat::ASCII);
+    }
+    
+    #[test]
+    fn test_var_format_binary_formatting() {
+        let binary_value = "10110101";
+        
+        // Test binary format (should be unchanged)
+        assert_eq!(VarFormat::Binary.format(binary_value), "10110101");
+        
+        // Test binary with groups
+        assert_eq!(VarFormat::BinaryWithGroups.format(binary_value), "1011 0101");
+        
+        // Test empty string
+        assert_eq!(VarFormat::Binary.format(""), "");
+        assert_eq!(VarFormat::Hexadecimal.format(""), "");
+    }
+    
+    #[test]
+    fn test_var_format_hexadecimal() {
+        let binary_value = "10110101"; // Should be B5 in hex
+        assert_eq!(VarFormat::Hexadecimal.format(binary_value), "b5");
+        
+        let binary_value2 = "11111111"; // Should be FF in hex
+        assert_eq!(VarFormat::Hexadecimal.format(binary_value2), "ff");
+        
+        let binary_value3 = "00001010"; // Should be 0A in hex
+        assert_eq!(VarFormat::Hexadecimal.format(binary_value3), "a");
+    }
+    
+    #[test]
+    fn test_var_format_octal() {
+        let binary_value = "10110101"; // Should be 265 in octal
+        assert_eq!(VarFormat::Octal.format(binary_value), "265");
+        
+        let binary_value2 = "11111111"; // Should be 377 in octal
+        assert_eq!(VarFormat::Octal.format(binary_value2), "377");
+    }
+    
+    #[test]
+    fn test_var_format_unsigned() {
+        let binary_value = "10110101"; // Should be 181 in decimal
+        assert_eq!(VarFormat::Unsigned.format(binary_value), "181");
+        
+        let binary_value2 = "11111111"; // Should be 255 in decimal
+        assert_eq!(VarFormat::Unsigned.format(binary_value2), "255");
+        
+        let binary_value3 = "00000000"; // Should be 0 in decimal
+        assert_eq!(VarFormat::Unsigned.format(binary_value3), "0");
+    }
+    
+    #[test]
+    fn test_var_format_signed() {
+        // Positive numbers (MSB = 0)
+        let binary_value = "01111111"; // Should be 127 in signed decimal
+        assert_eq!(VarFormat::Signed.format(binary_value), "127");
+        
+        // Negative numbers (MSB = 1) - two's complement
+        let binary_value2 = "10000001"; // Should be -127 in signed decimal
+        assert_eq!(VarFormat::Signed.format(binary_value2), "-127");
+        
+        let binary_value3 = "11111111"; // Should be -1 in signed decimal
+        assert_eq!(VarFormat::Signed.format(binary_value3), "-1");
+        
+        let binary_value4 = "10000000"; // Should be -128 in signed decimal
+        assert_eq!(VarFormat::Signed.format(binary_value4), "-128");
+    }
+    
+    #[test]
+    fn test_var_format_ascii() {
+        // Test ASCII conversion - 8-bit groups
+        let binary_value = "0100100001000101"; // Should be "HE" (0x48, 0x45)
+        assert_eq!(VarFormat::ASCII.format(binary_value), "HE");
+        
+        // Test single character
+        let binary_value2 = "01001000"; // Should be "H" (0x48)
+        assert_eq!(VarFormat::ASCII.format(binary_value2), "H");
+        
+        // Test incomplete group (should be ignored)
+        let binary_value3 = "0100100001000101010"; // 17 bits, only first 16 used
+        assert_eq!(VarFormat::ASCII.format(binary_value3), "HE");
     }
     
     #[test]

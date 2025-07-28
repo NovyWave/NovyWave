@@ -74,8 +74,11 @@ pub static EXPANDED_SCOPES: Lazy<Mutable<IndexSet<String>>> = lazy::default();
 pub static SELECTED_VARIABLES: Lazy<MutableVec<shared::SelectedVariable>> = lazy::default();
 pub static SELECTED_VARIABLES_INDEX: Lazy<Mutable<IndexSet<String>>> = lazy::default();
 
-// Signal values for selected variables
-pub static SIGNAL_VALUES: Lazy<Mutable<HashMap<String, String>>> = lazy::default();
+// Signal values for selected variables - now stores multi-format cached values
+pub static SIGNAL_VALUES: Lazy<Mutable<HashMap<String, crate::format_utils::MultiFormatValue>>> = lazy::default();
+
+// Format selections for selected variables (unique_id -> VarFormat)
+pub static SELECTED_VARIABLE_FORMATS: Lazy<Mutable<HashMap<String, shared::VarFormat>>> = lazy::default();
 
 // ===== ERROR DISPLAY SYSTEM =====
 

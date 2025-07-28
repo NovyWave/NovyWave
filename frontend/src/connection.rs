@@ -157,6 +157,7 @@ static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 crate::FILE_PICKER_ERROR.set_neq(None);
             }
             DownMsg::ConfigLoaded(config) => {
+                zoon::println!("🔧 Received ConfigLoaded from backend!");
                 crate::config::apply_config(config);
             }
             DownMsg::ConfigSaved => {
@@ -202,13 +203,14 @@ static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                         result.variable_name
                     );
                     
-                    // Store the formatted value (or fallback to raw value)
-                    let display_value = result.formatted_value
-                        .or(result.value)
-                        .unwrap_or_else(|| "No value".to_string());
+                    // Create MultiFormatValue from raw binary value
+                    let raw_binary = result.raw_value
+                        .unwrap_or_else(|| "Loading...".to_string());
                     
-                    // Store signal value with unique identifier
-                    signal_values.insert(unique_id, display_value);
+                    let multi_format_value = crate::format_utils::MultiFormatValue::new(raw_binary);
+                    
+                    // Store multi-format signal value with unique identifier
+                    signal_values.insert(unique_id, multi_format_value);
                 }
             }
             DownMsg::SignalValuesError { file_path: _, error: _ } => {

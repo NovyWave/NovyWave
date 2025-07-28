@@ -856,6 +856,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "convert-base"
+version = "1.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e56a404f2112d00ba80a516b60ca3744ef6bd776baa14126eb7d7c11b42cac8a"
+
+[[package]]
 name = "convert_case"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4466,6 +4472,7 @@ dependencies = [
 name = "shared"
 version = "0.1.0"
 dependencies = [
+ "convert-base",
  "serde",
  "serde_json",
 ]

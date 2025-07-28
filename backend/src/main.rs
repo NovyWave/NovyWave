@@ -689,23 +689,38 @@ async fn query_signal_values(file_path: String, queries: Vec<SignalValueQuery>, 
                     Some((_, signal)) => {
                         if let Some(offset) = signal.get_offset(time_idx) {
                             let value = signal.get_value_at(&offset, 0);
-                            let value_str = format!("{}", value);
-                            let formatted_value = format_signal_value(&value);
+                            
+                            // Try to convert to binary string for VarFormat processing
+                            let (raw_value, formatted_value) = match signal_value_to_binary_string(&value) {
+                                Some(binary_str) => {
+                                    // Successfully converted to binary - apply requested format
+                                    let formatted = query.format.format(&binary_str);
+                                    (Some(binary_str), Some(formatted))
+                                }
+                                None => {
+                                    // Cannot convert to binary (e.g., X/Z states, strings, reals)
+                                    // Use fallback formatting and set raw_value to original string representation
+                                    let fallback_formatted = format_non_binary_signal_value(&value);
+                                    (Some(format!("{}", value)), Some(fallback_formatted))
+                                }
+                            };
                             
                             results.push(SignalValueResult {
                                 scope_path: query.scope_path,
                                 variable_name: query.variable_name,
                                 time_seconds: query.time_seconds,
-                                value: Some(value_str),
-                                formatted_value: Some(formatted_value),
+                                raw_value,
+                                formatted_value,
+                                format: query.format,
                             });
                         } else {
                             results.push(SignalValueResult {
                                 scope_path: query.scope_path,
                                 variable_name: query.variable_name,
                                 time_seconds: query.time_seconds,
-                                value: None,
+                                raw_value: None,
                                 formatted_value: None,
+                                format: query.format,
                             });
                         }
                     }
@@ -714,8 +729,9 @@ async fn query_signal_values(file_path: String, queries: Vec<SignalValueQuery>, 
                             scope_path: query.scope_path,
                             variable_name: query.variable_name,
                             time_seconds: query.time_seconds,
-                            value: None,
+                            raw_value: None,
                             formatted_value: Some("Signal load failed".to_string()),
+                            format: query.format,
                         });
                     }
                 }
@@ -725,8 +741,9 @@ async fn query_signal_values(file_path: String, queries: Vec<SignalValueQuery>, 
                     scope_path: query.scope_path,
                     variable_name: query.variable_name,
                     time_seconds: query.time_seconds,
-                    value: None,
+                    raw_value: None,
                     formatted_value: Some("Signal not found".to_string()),
+                    format: query.format,
                 });
             }
         }
@@ -738,21 +755,66 @@ async fn query_signal_values(file_path: String, queries: Vec<SignalValueQuery>, 
     }, session_id, cor_id).await;
 }
 
-// Format signal value for display
-fn format_signal_value(value: &wellen::SignalValue) -> String {
+// Convert wellen::SignalValue to binary string for VarFormat processing
+fn signal_value_to_binary_string(value: &wellen::SignalValue) -> Option<String> {
     match value {
         wellen::SignalValue::Binary(bits, width) => {
             if *width == 1 {
                 // Single bit
+                if bits.is_empty() { 
+                    None // Cannot convert unknown/undefined values
+                } else { 
+                    Some(format!("{}", bits[0] & 1))
+                }
+            } else {
+                // Multi-bit binary - convert to binary string
+                value.to_bit_string()
+            }
+        }
+        wellen::SignalValue::FourValue(bits, width) => {
+            if *width == 1 {
+                // Single bit 4-state - only convert 0/1, not X/Z
+                if bits.is_empty() { 
+                    None
+                } else {
+                    match bits[0] & 3 {
+                        0 => Some("0".to_string()),
+                        1 => Some("1".to_string()),
+                        _ => None, // X, Z cannot be converted to binary for formatting
+                    }
+                }
+            } else {
+                // Multi-bit 4-state - try to convert, may fail for X/Z values
+                value.to_bit_string()
+            }
+        }
+        wellen::SignalValue::NineValue(_bits, _width) => {
+            // Try to convert, may fail for non-binary values
+            value.to_bit_string()
+        }
+        wellen::SignalValue::String(_) => {
+            // String values cannot be converted to binary format
+            None
+        }
+        wellen::SignalValue::Real(_) => {
+            // Real values cannot be converted to binary format
+            None
+        }
+    }
+}
+
+// Fallback formatting for non-binary signal values
+fn format_non_binary_signal_value(value: &wellen::SignalValue) -> String {
+    match value {
+        wellen::SignalValue::Binary(bits, width) => {
+            if *width == 1 {
                 if bits.is_empty() { "X".to_string() } else { format!("{}", bits[0] & 1) }
             } else {
-                // Multi-bit - show as binary
                 value.to_bit_string().unwrap_or_else(|| "?".to_string())
             }
         }
         wellen::SignalValue::FourValue(bits, width) => {
             if *width == 1 {
-                // Single bit 4-state
                 if bits.is_empty() { "X".to_string() } 
                 else {
                     match bits[0] & 3 {
@@ -764,7 +826,6 @@ fn format_signal_value(value: &wellen::SignalValue) -> String {
                     }
                 }
             } else {
-                // Multi-bit 4-state
                 value.to_bit_string().unwrap_or_else(|| "?".to_string())
             }
         }

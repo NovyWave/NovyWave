@@ -11,6 +11,8 @@ mod debug_utils;
 mod file_utils;
 use file_utils::*;
 
+mod format_utils;
+
 mod connection;
 use connection::*;
 
@@ -62,13 +64,17 @@ pub fn main() {
         init_connection();
         
         // Load configuration FIRST before setting up reactive triggers
+        zoon::println!("🔧 Sending LoadConfig request to backend...");
         send_up_msg(UpMsg::LoadConfig);
         
         // Wait for CONFIG_LOADED flag, then set up reactive system
         Task::start(async {
             // Wait for config to actually load from backend
             CONFIG_LOADED.signal().for_each_sync(|loaded| {
+                zoon::println!("🔧 CONFIG_LOADED signal received: {}", loaded);
                 if loaded {
+                    zoon::println!("🔧 Config loaded successfully! Starting UI...");
+                
                     
                     // Initialize bidirectional sync between config store and global state FIRST
                     sync_config_to_globals();

@@ -17,7 +17,6 @@ dock_mode = "bottom"
 expanded_scopes = [
     "/home/martinkavik/repos/NovyWave/test_files/simple.vcd",
     "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb",
-    "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb",
     "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst",
     "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP",
 ]
@@ -31,14 +30,15 @@ load_files_expanded_directories = [
     "/",
     "/home/martinkavik/repos/NovyWave/test_files/nested_dir",
 ]
-selected_scope_id = "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s"
+selected_scope_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP"
 load_files_scroll_position = 861
+variables_search_filter = "payload_data"
 
 [workspace.docked_bottom_dimensions]
 files_and_scopes_panel_width = 464.0
-files_and_scopes_panel_height = 345.0
+files_and_scopes_panel_height = 364.0
 selected_variables_panel_name_column_width = 400.0
-selected_variables_panel_value_column_width = 353.0
+selected_variables_panel_value_column_width = 306.0
 
 [workspace.docked_right_dimensions]
 files_and_scopes_panel_width = 400.0
@@ -47,25 +47,37 @@ selected_variables_panel_name_column_width = 202.0
 selected_variables_panel_value_column_width = 142.0
 
 [[workspace.selected_variables]]
-unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP|debugReset"
-formatter = "DEFAULT"
-
-[[workspace.selected_variables]]
-unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP|EmbeddedRiscvJtag_logic_jtag_tdi"
-formatter = "DEFAULT"
-
-[[workspace.selected_variables]]
-unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP|FetchL1Plugin_logic_bus_cmd_payload_address"
-formatter = "DEFAULT"
-
-[[workspace.selected_variables]]
-unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP|FetchL1Plugin_logic_bus_rsp_payload_data"
-formatter = "DEFAULT"
-
-[[workspace.selected_variables]]
 unique_id = "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s|A"
-formatter = "DEFAULT"
+formatter = "Hexadecimal"
 
 [[workspace.selected_variables]]
 unique_id = "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s|B"
-formatter = "DEFAULT"
+formatter = "Hexadecimal"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP|FetchL1Plugin_logic_bus_rsp_payload_data"
+formatter = "Hexadecimal"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP|LsuL1TlPlugin_bus_a_payload_data"
+formatter = "Hexadecimal"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP|LsuL1TlPlugin_bus_d_payload_data"
+formatter = "Hexadecimal"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP|LsuPlugin_logic_bus_cmd_payload_data"
+formatter = "Hexadecimal"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP|LsuPlugin_logic_bus_rsp_payload_data"
+formatter = "Hexadecimal"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv|AlignerPlugin_logic_buffer_data"
+formatter = "Hexadecimal"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv|FetchL1Plugin_logic_bus_rsp_payload_data"
+formatter = "Hexadecimal"
