@@ -135,7 +135,13 @@ pub struct SelectedVariable {
     pub unique_id: String,
     /// Format type for display - defaults to Hexadecimal
     pub formatter: VarFormat,
+    /// Track whether user explicitly set this formatter (vs auto-assigned default)
+    #[serde(default = "default_false", skip_serializing_if = "is_false")]
+    pub user_has_set_format: bool,
 }
+
+fn default_false() -> bool { false }
+fn is_false(value: &bool) -> bool { !value }
 
 impl SelectedVariable {
     pub fn new(variable: Signal, file_path: String, scope_full_name: String) -> Self {
@@ -143,7 +149,8 @@ impl SelectedVariable {
         
         Self {
             unique_id,
-            formatter: VarFormat::default(),
+            formatter: VarFormat::default(), // Still default for display, but not saved
+            user_has_set_format: false, // Not set by user initially
         }
     }
     
@@ -153,6 +160,7 @@ impl SelectedVariable {
         Self {
             unique_id,
             formatter,
+            user_has_set_format: true, // Explicitly set by caller
         }
     }
     

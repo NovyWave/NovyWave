@@ -1,6 +1,26 @@
 use shared::VarFormat;
 use std::collections::HashMap;
 
+/// Truncate a value string if it's longer than max_chars, preserving important parts
+fn truncate_value(value: &str, max_chars: usize) -> String {
+    if value.len() <= max_chars {
+        return value.to_string();
+    }
+    
+    // For very short limits, just truncate with ellipsis
+    if max_chars < 10 {
+        return format!("{}...", &value[..max_chars.saturating_sub(3)]);
+    }
+    
+    // For longer values, show beginning and end with ellipsis in middle
+    let start_chars = max_chars / 2 - 1;
+    let end_chars = max_chars - start_chars - 3; // 3 for "..."
+    
+    format!("{}...{}", 
+        &value[..start_chars], 
+        &value[value.len().saturating_sub(end_chars)..])
+}
+
 /// Container for multi-format signal values
 #[derive(Debug, Clone)]
 pub struct MultiFormatValue {
@@ -64,6 +84,24 @@ impl MultiFormatValue {
         }
     }
 
+    /// Get display string with truncated value for dropdowns (e.g., "101010101...1010 Bin")
+    pub fn get_truncated_display_with_format(&self, format: &VarFormat, max_chars: usize) -> String {
+        let formatted_value = self.get_formatted(format);
+        let format_name = format.as_static_str();
+        
+        if formatted_value.is_empty() || formatted_value == "(empty)" {
+            format!("({})", format_name)
+        } else {
+            let truncated_value = truncate_value(&formatted_value, max_chars);
+            format!("{} {}", truncated_value, format_name)
+        }
+    }
+
+    /// Get full untruncated display string for tooltip
+    pub fn get_full_display_with_format(&self, format: &VarFormat) -> String {
+        self.get_display_with_format(format)
+    }
+
     /// Check if raw binary value is valid (not empty, loading, or error)
     pub fn is_valid(&self) -> bool {
         !self.raw_binary.is_empty() 
@@ -77,14 +115,16 @@ impl MultiFormatValue {
 pub struct DropdownFormatOption {
     pub format: VarFormat,
     pub display_text: String,
+    pub full_text: String,    // For tooltip
     pub disabled: bool,
 }
 
 impl DropdownFormatOption {
-    pub fn new(format: VarFormat, display_text: String, disabled: bool) -> Self {
+    pub fn new(format: VarFormat, display_text: String, full_text: String, disabled: bool) -> Self {
         Self {
             format,
             display_text,
+            full_text,
             disabled,
         }
     }
@@ -94,6 +134,15 @@ impl DropdownFormatOption {
 pub fn generate_dropdown_options(
     multi_value: &MultiFormatValue, 
     signal_type: &str
+) -> Vec<DropdownFormatOption> {
+    generate_dropdown_options_with_truncation(multi_value, signal_type, 30)
+}
+
+/// Generate dropdown options with configurable value truncation
+pub fn generate_dropdown_options_with_truncation(
+    multi_value: &MultiFormatValue, 
+    signal_type: &str,
+    max_value_chars: usize
 ) -> Vec<DropdownFormatOption> {
     let all_formats = [
         VarFormat::ASCII,
@@ -108,28 +157,25 @@ pub fn generate_dropdown_options(
     all_formats
         .iter()
         .map(|format| {
-            let display_text = if multi_value.is_valid() {
-                multi_value.get_display_with_format(format)
+            let (display_text, full_text) = if multi_value.is_valid() {
+                let full = multi_value.get_full_display_with_format(format);
+                let truncated = multi_value.get_truncated_display_with_format(format, max_value_chars);
+                (truncated, full)
             } else {
-                format!("({}) {}", "Loading", format.as_static_str())
+                let text = format!("({}) {}", "Loading", format.as_static_str());
+                (text.clone(), text)
             };
 
             let disabled = is_format_disabled_for_signal_type(format, signal_type);
 
-            DropdownFormatOption::new(*format, display_text, disabled)
+            DropdownFormatOption::new(*format, display_text, full_text, disabled)
         })
         .collect()
 }
 
-/// Determine if a format should be disabled for a given signal type
-fn is_format_disabled_for_signal_type(format: &VarFormat, signal_type: &str) -> bool {
-    match format {
-        VarFormat::ASCII => {
-            // ASCII only makes sense for signals that are multiples of 8 bits
-            !signal_type.contains("Wire") || signal_type.contains("1-bit")
-        }
-        _ => false, // All other formats are generally applicable
-    }
+/// All formats are now available for all signal types - no disabling
+fn is_format_disabled_for_signal_type(_format: &VarFormat, _signal_type: &str) -> bool {
+    false // Always enable all format options
 }
 
 #[cfg(test)]

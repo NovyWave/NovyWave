@@ -5,7 +5,7 @@ use zoon::*;
 
 // Font Families - VERIFIED TO MATCH ORIGINAL
 pub const FONT_FAMILY_SANS: &str = "'Inter', 'system-ui', 'Segoe UI', 'Arial', sans-serif";
-pub const FONT_FAMILY_MONO: &str = "'FiraCode', 'Menlo', 'Monaco', 'Consolas', monospace";
+pub const FONT_FAMILY_MONO: &str = "Fira Code, Menlo, Monaco, Consolas, monospace";
 pub const FONT_FAMILY_DISPLAY: &str = "'Audiowide', 'system-ui', 'Arial', sans-serif";
 
 // Font Sizes - VERIFIED TO MATCH ORIGINAL
@@ -42,5 +42,5 @@ pub const LETTER_SPACING_2: f32 = 0.02;   // 2%
 
 // Typography helper functions - Using proper token names
 pub fn font_mono() -> impl Style<'static> {
-    Font::new().family([FontFamily::new(FONT_FAMILY_MONO)])
+    Font::new().family([FontFamily::new("Fira Code"), FontFamily::new("Menlo"), FontFamily::new("Monaco"), FontFamily::new("Consolas"), FontFamily::Monospace])
 }

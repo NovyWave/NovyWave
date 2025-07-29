@@ -199,6 +199,7 @@ fn root() -> impl Element {
         .s(Height::screen())
         .s(Width::fill())
         .s(Background::new().color_signal(neutral_1()))
+        .s(Font::new().family([FontFamily::new("Inter"), FontFamily::new("system-ui"), FontFamily::new("Segoe UI"), FontFamily::new("Arial"), FontFamily::SansSerif]))
         .layer(main_layout())
         .layer_signal(SHOW_FILE_DIALOG.signal().map_true(
             || file_paths_dialog()

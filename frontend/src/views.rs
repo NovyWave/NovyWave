@@ -3,6 +3,7 @@ use zoon::events::{Click, KeyDown};
 use moonzoon_novyui::*;
 use moonzoon_novyui::tokens::theme::{Theme, toggle_theme, theme};
 use moonzoon_novyui::tokens::color::{neutral_1, neutral_2, neutral_4, neutral_8, neutral_10, neutral_11, neutral_12, primary_3, primary_6, primary_7};
+use moonzoon_novyui::tokens::typography::font_mono;
 use shared::{ScopeData, UpMsg, TrackedFile, SelectedVariable, FileState, SignalValueQuery};
 use crate::types::{get_variables_from_tracked_files, filter_variables_with_context};
 use crate::virtual_list::virtual_variables_list;
@@ -57,22 +58,6 @@ fn get_signal_type_for_selected_variable(selected_var: &SelectedVariable) -> Str
 }
 
 /// Get the default format for a signal type based on docs/signal_type_aware_formatting.md
-fn get_default_format_for_signal_type(signal_type: &str) -> shared::VarFormat {
-    // Based on signal_type_aware_formatting.md
-    let is_string = signal_type.contains("String") || signal_type.contains("string");
-    let is_real = signal_type.contains("Real") || signal_type.contains("real");
-    let is_single_bit = signal_type.contains("1-bit") || signal_type.contains("1 bit") || signal_type.contains("single");
-    
-    if is_string {
-        shared::VarFormat::ASCII
-    } else if is_real {
-        shared::VarFormat::ASCII // For real signals, use ASCII/Text format
-    } else if is_single_bit {
-        shared::VarFormat::Binary // 1-bit signals default to Binary
-    } else {
-        shared::VarFormat::Hexadecimal // Multi-bit binary signals default to Hex
-    }
-}
 
 // Format options and display functions moved to format_utils.rs
 
@@ -195,16 +180,65 @@ fn create_smart_dropdown(
             dropdown_options.iter().map(|option| {
                 let option_format = format!("{:?}", option.format);
                 let option_display = option.display_text.clone();
+                let option_full_text = option.full_text.clone();
                 let option_disabled = option.disabled;
                 
                 El::new()
                     .s(Width::fill())
+                    .s(Height::exact(28))
                     .s(Padding::new().x(12).y(6))
                     .s(Cursor::new(if option_disabled {
                         CursorIcon::NotAllowed
                     } else {
                         CursorIcon::Pointer
                     }))
+                    .update_raw_el({
+                        let full_text = option_full_text.clone();
+                        let display_text = option_display.clone();
+                        move |raw_el| {
+                            // Add tooltip with full text if it differs from display text
+                            if full_text != display_text {
+                                // Extract value-only part from full_text (remove format name)
+                                let value_only = if let Some(space_pos) = full_text.rfind(' ') {
+                                    full_text[..space_pos].to_string()
+                                } else {
+                                    full_text.clone()
+                                };
+                                // Apply same unicode filtering as display text
+                                let filtered_tooltip = value_only
+                                    .chars()
+                                    .filter(|&c| {
+                                        // Keep regular spaces and visible characters only
+                                        c == ' ' || unicode_width::UnicodeWidthChar::width(c).unwrap_or(0) > 0
+                                    })
+                                    .collect::<String>()
+                                    .trim()
+                                    .to_string();
+                                
+                                // Only show tooltip if it differs from the displayed text
+                                let display_value_only = if let Some(space_pos) = display_text.rfind(' ') {
+                                    display_text[..space_pos].to_string()
+                                } else {
+                                    display_text.clone()
+                                };
+                                let filtered_display = display_value_only
+                                    .chars()
+                                    .filter(|&c| {
+                                        c == ' ' || unicode_width::UnicodeWidthChar::width(c).unwrap_or(0) > 0
+                                    })
+                                    .collect::<String>()
+                                    .trim()
+                                    .to_string();
+                                
+                                if filtered_tooltip != filtered_display {
+                                    if let Some(html_el) = raw_el.dom_element().dyn_ref::<web_sys::HtmlElement>() {
+                                        html_el.set_title(&filtered_tooltip);
+                                    }
+                                }
+                            }
+                            raw_el
+                        }
+                    })
                     .s(Font::new()
                         .color_signal(
                             always(option_disabled).map_bool_signal(
@@ -228,15 +262,27 @@ fn create_smart_dropdown(
                                             || neutral_11()
                                         )
                                     ).size(12).line_height(16).no_wrap())
+                                    .s(font_mono())
                                     .s(Width::growable())
                                     .child({
                                         // Extract just the value part (before the format name)
-                                        let value_only = if let Some(space_pos) = option_display.rfind(' ') {
-                                            option_display[..space_pos].to_string()
+                                        let display_text = option.display_text.clone();
+                                        let value_only = if let Some(space_pos) = display_text.rfind(' ') {
+                                            display_text[..space_pos].to_string()
                                         } else {
-                                            option_display.clone()
+                                            display_text.clone()
                                         };
-                                        Text::new(&value_only)
+                                        // Remove invisible characters that cause UI layout issues
+                                        let filtered_value = value_only
+                                            .chars()
+                                            .filter(|&c| {
+                                                // Keep regular spaces and visible characters only
+                                                c == ' ' || unicode_width::UnicodeWidthChar::width(c).unwrap_or(0) > 0
+                                            })
+                                            .collect::<String>()
+                                            .trim()
+                                            .to_string();
+                                        Text::new(&filtered_value)
                                     })
                             )
                             .item(El::new().s(Width::fill())) // Spacer to push format to right
@@ -252,8 +298,9 @@ fn create_smart_dropdown(
                                     .s(Align::new().right())
                                     .child({
                                         // Extract just the format name (after the last space)
-                                        let format_name = if let Some(space_pos) = option_display.rfind(' ') {
-                                            option_display[space_pos + 1..].to_string()
+                                        let display_text = option.display_text.clone();
+                                        let format_name = if let Some(space_pos) = display_text.rfind(' ') {
+                                            display_text[space_pos + 1..].to_string()
                                         } else {
                                             // If no space, show the format enum name
                                             match option.format {
@@ -294,20 +341,8 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
     // Get signal type for format options and default
     let signal_type = get_signal_type_for_selected_variable(selected_var);
     
-    // Use signal-type aware default if current format is default Hexadecimal and signal type suggests otherwise
-    let current_format = if selected_var.formatter == shared::VarFormat::Hexadecimal {
-        // Check if we should use a signal-type aware default instead  
-        let type_aware_default = get_default_format_for_signal_type(&signal_type);
-        if type_aware_default != shared::VarFormat::Hexadecimal {
-            // Update the variable with the type-aware default
-            update_variable_format(&unique_id, type_aware_default);
-            type_aware_default
-        } else {
-            selected_var.formatter
-        }
-    } else {
-        selected_var.formatter
-    };
+    // Use the formatter exactly as set by user, no automatic guessing
+    let current_format = selected_var.formatter;
     
     // Format options are now generated dynamically in the reactive signal based on MultiFormatValue
     
@@ -379,7 +414,9 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
                         _ => shared::VarFormat::Hexadecimal,
                     };
                     
-                    let display_text = current_multi_value.get_display_with_format(&current_format_enum);
+                    // Use truncated display for trigger, keep full text for tooltip
+                    let display_text = current_multi_value.get_truncated_display_with_format(&current_format_enum, 30);
+                    let full_display_text = current_multi_value.get_full_display_with_format(&current_format_enum);
                     
                     // Generate dropdown options with formatted values
                     let dropdown_options = crate::format_utils::generate_dropdown_options(&current_multi_value, &signal_type);
@@ -401,9 +438,49 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
                         .s(Align::new().center_y().left())
                         .update_raw_el({
                             let trigger_id = trigger_id.clone();
+                            let full_text = full_display_text.clone();
+                            let display_text_for_tooltip = display_text.clone();
                             move |raw_el| {
                                 if let Some(html_el) = raw_el.dom_element().dyn_ref::<web_sys::HtmlElement>() {
                                     html_el.set_id(&trigger_id);
+                                    // Add tooltip if text is truncated
+                                    if full_text != display_text_for_tooltip {
+                                        // Extract value-only part from full_text (remove format name)
+                                        let value_only = if let Some(space_pos) = full_text.rfind(' ') {
+                                            full_text[..space_pos].to_string()
+                                        } else {
+                                            full_text.clone()
+                                        };
+                                        // Apply same unicode filtering as display text
+                                        let filtered_tooltip = value_only
+                                            .chars()
+                                            .filter(|&c| {
+                                                // Keep regular spaces and visible characters only
+                                                c == ' ' || unicode_width::UnicodeWidthChar::width(c).unwrap_or(0) > 0
+                                            })
+                                            .collect::<String>()
+                                            .trim()
+                                            .to_string();
+                                        
+                                        // Only show tooltip if it differs from the displayed text
+                                        let display_value_only = if let Some(space_pos) = display_text_for_tooltip.rfind(' ') {
+                                            display_text_for_tooltip[..space_pos].to_string()
+                                        } else {
+                                            display_text_for_tooltip.clone()
+                                        };
+                                        let filtered_display = display_value_only
+                                            .chars()
+                                            .filter(|&c| {
+                                                c == ' ' || unicode_width::UnicodeWidthChar::width(c).unwrap_or(0) > 0
+                                            })
+                                            .collect::<String>()
+                                            .trim()
+                                            .to_string();
+                                        
+                                        if filtered_tooltip != filtered_display {
+                                            html_el.set_title(&filtered_tooltip);
+                                        }
+                                    }
                                 }
                                 raw_el
                             }
@@ -417,6 +494,7 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
                                     // Value - left aligned, contrasting color (like variable name)
                                     El::new()
                                         .s(Font::new().color_signal(neutral_11()).size(13).no_wrap())
+                                        .s(font_mono())
                                         .s(Width::growable())
                                         .child({
                                             // Extract just the value part (before the format name)
@@ -425,7 +503,17 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
                                             } else {
                                                 display_text.clone()
                                             };
-                                            Text::new(&value_only)
+                                            // Remove invisible characters that cause UI layout issues
+                                            let filtered_value = value_only
+                                                .chars()
+                                                .filter(|&c| {
+                                                    // Keep regular spaces and visible characters only
+                                                    c == ' ' || unicode_width::UnicodeWidthChar::width(c).unwrap_or(0) > 0
+                                                })
+                                                .collect::<String>()
+                                                .trim()
+                                                .to_string();
+                                            Text::new(&filtered_value)
                                         })
                                 )
                                 .item(El::new().s(Width::fill())) // Spacer to push format to right
@@ -498,6 +586,7 @@ fn update_variable_format(unique_id: &str, new_format: shared::VarFormat) {
     if let Some(var_index) = selected_vars.iter().position(|var| var.unique_id == unique_id) {
         let mut updated_var = selected_vars[var_index].clone();
         updated_var.formatter = new_format;
+        updated_var.user_has_set_format = true; // Mark as explicitly set by user
         selected_vars.set_cloned(var_index, updated_var);
     }
     drop(selected_vars);
