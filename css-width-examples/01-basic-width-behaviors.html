@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Basic Width Property Behaviors</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 20px;
+            background: #f5f5f5;
+        }
+        
+        .demo-section {
+            margin-bottom: 40px;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .demo-title {
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 10px;
+            color: #333;
+        }
+        
+        .demo-description {
+            color: #666;
+            margin-bottom: 15px;
+            font-size: 14px;
+        }
+        
+        .container {
+            width: 300px;
+            height: 150px;
+            border: 2px solid #007acc;
+            overflow: auto;
+            background: #f9f9f9;
+            margin: 10px 0;
+        }
+        
+        .item {
+            padding: 8px 12px;
+            margin: 2px 0;
+            border-left: 4px solid #007acc;
+            font-size: 14px;
+        }
+        
+        /* Different width approaches */
+        .width-100 {
+            width: 100%;
+            background: rgba(255, 193, 7, 0.3);
+        }
+        
+        .width-fit-content {
+            width: fit-content;
+            background: rgba(40, 167, 69, 0.3);
+        }
+        
+        .width-max-content {
+            width: max-content;
+            background: rgba(220, 53, 69, 0.3);
+        }
+        
+        .min-width-max-content {
+            width: 100%;
+            min-width: max-content;
+            background: rgba(108, 117, 125, 0.3);
+        }
+        
+        .min-width-fit-content {
+            width: 100%;
+            min-width: fit-content;
+            background: rgba(23, 162, 184, 0.3);
+        }
+        
+        .code {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 4px;
+            padding: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            margin: 5px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>CSS Width Property Behaviors for TreeView/List Components</h1>
+    
+    <div class="demo-section">
+        <div class="demo-title">1. width: 100% (Yellow Background)</div>
+        <div class="demo-description">
+            Items fill container width. Background extends to container edge but not beyond for wide content.
+        </div>
+        <div class="code">width: 100%;</div>
+        <div class="container">
+            <div class="item width-100">Short item</div>
+            <div class="item width-100">Medium length item text</div>
+            <div class="item width-100">Very long item text that extends far beyond the container width and should trigger horizontal scrolling</div>
+            <div class="item width-100">Another short</div>
+        </div>
+    </div>
+    
+    <div class="demo-section">
+        <div class="demo-title">2. width: fit-content (Green Background)</div>
+        <div class="demo-description">
+            Items shrink to content size. Background only covers actual content, leaving gaps on narrow items.
+        </div>
+        <div class="code">width: fit-content;</div>
+        <div class="container">
+            <div class="item width-fit-content">Short item</div>
+            <div class="item width-fit-content">Medium length item text</div>
+            <div class="item width-fit-content">Very long item text that extends far beyond the container width and should trigger horizontal scrolling</div>
+            <div class="item width-fit-content">Another short</div>
+        </div>
+    </div>
+    
+    <div class="demo-section">
+        <div class="demo-title">3. width: max-content (Red Background)</div>
+        <div class="demo-description">
+            Items expand to maximum content width. Background covers full content but may not fill narrow containers.
+        </div>
+        <div class="code">width: max-content;</div>
+        <div class="container">
+            <div class="item width-max-content">Short item</div>
+            <div class="item width-max-content">Medium length item text</div>
+            <div class="item width-max-content">Very long item text that extends far beyond the container width and should trigger horizontal scrolling</div>
+            <div class="item width-max-content">Another short</div>
+        </div>
+    </div>
+    
+    <div class="demo-section">
+        <div class="demo-title">4. width: 100%; min-width: max-content (Gray Background)</div>
+        <div class="demo-description">
+            <strong>RECOMMENDED:</strong> Items fill container width AND expand for wide content. Best of both worlds!
+        </div>
+        <div class="code">width: 100%; min-width: max-content;</div>
+        <div class="container">
+            <div class="item min-width-max-content">Short item</div>
+            <div class="item min-width-max-content">Medium length item text</div>
+            <div class="item min-width-max-content">Very long item text that extends far beyond the container width and should trigger horizontal scrolling</div>
+            <div class="item min-width-max-content">Another short</div>
+        </div>
+    </div>
+    
+    <div class="demo-section">
+        <div class="demo-title">5. width: 100%; min-width: fit-content (Blue Background)</div>
+        <div class="demo-description">
+            Similar to #4 but uses fit-content. In most cases behaves identically to max-content approach.
+        </div>
+        <div class="code">width: 100%; min-width: fit-content;</div>
+        <div class="container">
+            <div class="item min-width-fit-content">Short item</div>
+            <div class="item min-width-fit-content">Medium length item text</div>
+            <div class="item min-width-fit-content">Very long item text that extends far beyond the container width and should trigger horizontal scrolling</div>
+            <div class="item min-width-fit-content">Another short</div>
+        </div>
+    </div>
+    
+    <div class="demo-section">
+        <div class="demo-title">Key Observations</div>
+        <div class="demo-description">
+            <ul>
+                <li><strong>width: 100%</strong> - Good for consistent backgrounds, but wide content gets clipped backgrounds</li>
+                <li><strong>width: fit-content/max-content</strong> - Good for wide content, but leaves gaps on narrow items</li>
+                <li><strong>width: 100%; min-width: max-content</strong> - Perfect hybrid: fills container AND expands for wide content</li>
+                <li>Background rendering is crucial for TreeView selection states and hover effects</li>
+                <li>The combined approach (width: 100%; min-width: max-content) is ideal for TreeView components</li>
+            </ul>
+        </div>
+    </div>
+</body>
+</html>

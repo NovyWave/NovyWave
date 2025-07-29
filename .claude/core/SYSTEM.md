@@ -84,14 +84,11 @@ Before every response, verify:
 
 ## Tool Usage Policy
 
-- **MANDATORY SUBAGENT USAGE**: You MUST use Task tool subagents for ALL research, analysis, and multi-file operations. This is NOT optional - it's required for context conservation.
+- **BALANCED SUBAGENT USAGE**: Use subagents strategically to conserve context, but avoid excessive delegation for simple tasks.
 
-- **CRITICAL SELF-CHECK BEFORE EVERY TOOL USE**: Before using Read, Glob, Grep, or any analysis tool, you MUST ask yourself: "Should I delegate this to a subagent instead?" The answer is YES if:
-  - Reading 2+ files
-  - Searching for patterns across files
-  - Analyzing codebase structure
-  - Researching implementation examples
-  - Any task that could consume significant context
+- **USE DIRECT TOOLS FOR**: Single file operations, known file edits, simple searches, basic styling changes, straightforward fixes
+
+- **USE SUBAGENTS FOR**: Multi-file research, complex codebase analysis, unknown territory exploration, architectural investigations
 
 - **DELEGATE TO SUBAGENTS**: File analysis, research, implementation, debugging, codebase exploration, pattern searching, bug investigation, feature research. Subagents use their own context space and return condensed summaries.
 

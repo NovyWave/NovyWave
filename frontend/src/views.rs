@@ -1023,12 +1023,12 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                         El::new()
                             .s(Height::exact_signal(
                                 SELECTED_VARIABLES.signal_vec_cloned().len().map(|vars_count| {
-                                    // Add extra height to prevent clipping - footer height plus small buffer
-                                    (vars_count as u32 * SELECTED_VARIABLES_ROW_HEIGHT) + SELECTED_VARIABLES_ROW_HEIGHT + 2
+                                    // Add one extra row height for scrollbar (names/values) or footer/timeline (canvas)
+                                    (vars_count + 1) as u32 * SELECTED_VARIABLES_ROW_HEIGHT
                                 })
                             ))
                             .s(Width::fill())
-                            .s(Scrollbars::y_and_clip_x())
+                            .s(Scrollbars::both())
                             .child(
                                 Row::new()
                                     .s(Height::fill())
@@ -1049,15 +1049,8 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                     Row::new()
                                                         .s(Height::exact(SELECTED_VARIABLES_ROW_HEIGHT))
                                                         .s(Width::fill())
-                                                        .s(Padding::new().right(8))
-                                                        .s(Borders::new().bottom_signal(neutral_4().map(|color| 
-                                                            Border::new().width(1).color(color)
-                                                        )))
+                                                        .s(Padding::new().x(2).y(4))
                                                         .s(Gap::new().x(4))
-                                                        .update_raw_el(|raw_el| {
-                                                            raw_el.style("overflow", "hidden")
-                                                                  .style("max-width", "100%")
-                                                        })
                                                         .item({
                                                             let unique_id = selected_var.unique_id.clone();
                                                             button()
@@ -1089,7 +1082,6 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                                         .s(Align::new().right())
                                                                         .update_raw_el(|raw_el| {
                                                                             raw_el
-                                                                                .style("overflow", "hidden") // Hide any overflow
                                                                                 .style("text-overflow", "ellipsis") // Show ellipsis for long text
                                                                                 .style("max-width", "100%") // Ensure it doesn't exceed container
                                                                         })
@@ -1149,6 +1141,10 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                             .s(Width::exact_signal(VARIABLES_VALUE_COLUMN_WIDTH.signal()))
                                             .s(Height::fill())
                                             .s(Align::new().top())
+                                            .s(Scrollbars::x_and_clip_y())
+                                            .update_raw_el(|raw_el| {
+                                                raw_el.style("scrollbar-width", "thin")
+                                            })
                                             .items_signal_vec(
                                                 SELECTED_VARIABLES.signal_vec_cloned().map(|selected_var| {
                                                     El::new()

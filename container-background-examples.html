@@ -1,0 +1,983 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Container-Level Background Styling Examples</title>
+    <style>
+        /* ==========================================================================
+           GLOBAL STYLES & CSS CUSTOM PROPERTIES
+           ========================================================================== */
+        
+        :root {
+            /* Row height system - consistent across all examples */
+            --row-height-small: 32px;
+            --row-height-medium: 40px;
+            --row-height-large: 48px;
+            
+            /* Color system with light-dark() for automatic theme switching */
+            --stripe-light: light-dark(rgba(0, 0, 0, 0.02), rgba(255, 255, 255, 0.02));
+            --stripe-medium: light-dark(rgba(0, 0, 0, 0.05), rgba(255, 255, 255, 0.05));
+            --stripe-dark: light-dark(rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.08));
+            
+            /* Background colors */
+            --bg-primary: light-dark(#ffffff, #1a1a1a);
+            --bg-secondary: light-dark(#f8f9fa, #2d2d2d);
+            --text-primary: light-dark(#212529, #ffffff);
+            --text-secondary: light-dark(#6c757d, #adb5bd);
+            
+            /* Border colors */
+            --border-color: light-dark(rgba(0, 0, 0, 0.1), rgba(255, 255, 255, 0.1));
+        }
+
+        /* Support for older browsers without light-dark() */
+        @supports not (color: light-dark(white, black)) {
+            :root {
+                --stripe-light: rgba(0, 0, 0, 0.02);
+                --stripe-medium: rgba(0, 0, 0, 0.05);
+                --stripe-dark: rgba(0, 0, 0, 0.08);
+                --bg-primary: #ffffff;
+                --bg-secondary: #f8f9fa;
+                --text-primary: #212529;
+                --text-secondary: #6c757d;
+                --border-color: rgba(0, 0, 0, 0.1);
+            }
+            
+            @media (prefers-color-scheme: dark) {
+                :root {
+                    --stripe-light: rgba(255, 255, 255, 0.02);
+                    --stripe-medium: rgba(255, 255, 255, 0.05);
+                    --stripe-dark: rgba(255, 255, 255, 0.08);
+                    --bg-primary: #1a1a1a;
+                    --bg-secondary: #2d2d2d;
+                    --text-primary: #ffffff;
+                    --text-secondary: #adb5bd;
+                    --border-color: rgba(255, 255, 255, 0.1);
+                }
+            }
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 20px;
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .example {
+            margin-bottom: 60px;
+            background: var(--bg-primary);
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+
+        .example-header {
+            padding: 20px 24px;
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .example-title {
+            margin: 0 0 8px 0;
+            font-size: 20px;
+            font-weight: 600;
+        }
+
+        .example-description {
+            margin: 0;
+            color: var(--text-secondary);
+            font-size: 14px;
+        }
+
+        .example-content {
+            height: 300px;
+            overflow-y: auto;
+            position: relative;
+        }
+
+        /* Common styles for demo items */
+        .demo-item {
+            padding: 8px 24px;
+            display: flex;
+            align-items: center;
+            height: var(--row-height-medium);
+            box-sizing: border-box;
+            font-size: 14px;
+        }
+
+        .demo-item-icon {
+            width: 16px;
+            height: 16px;
+            background: var(--text-secondary);
+            border-radius: 2px;
+            margin-right: 12px;
+            opacity: 0.6;
+        }
+
+        .demo-item-text {
+            flex: 1;
+        }
+
+        .demo-item-meta {
+            color: var(--text-secondary);
+            font-size: 12px;
+        }
+
+        /* ==========================================================================
+           TECHNIQUE 1: REPEATING LINEAR GRADIENT STRIPES
+           ========================================================================== */
+
+        .stripe-basic {
+            background: repeating-linear-gradient(
+                to bottom,
+                transparent 0,
+                transparent var(--row-height-medium),
+                var(--stripe-light) var(--row-height-medium),
+                var(--stripe-light) calc(var(--row-height-medium) * 2)
+            );
+            background-attachment: local; /* Scrolls with content */
+        }
+
+        /* ==========================================================================
+           TECHNIQUE 2: PSEUDO-ELEMENT OVERLAY WITH GPU ACCELERATION
+           ========================================================================== */
+
+        .pseudo-overlay {
+            position: relative;
+        }
+
+        .pseudo-overlay::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: repeating-linear-gradient(
+                to bottom,
+                transparent 0,
+                transparent calc(var(--row-height-medium) - 1px),
+                var(--stripe-medium) calc(var(--row-height-medium) - 1px),
+                var(--stripe-medium) var(--row-height-medium)
+            );
+            will-change: transform; /* Creates GPU layer */
+            pointer-events: none; /* Allow clicks through to content */
+            z-index: 1;
+        }
+
+        .pseudo-overlay .demo-item {
+            position: relative;
+            z-index: 2; /* Above the overlay */
+        }
+
+        /* ==========================================================================
+           TECHNIQUE 3: ADVANCED GRADIENT PATTERNS WITH CALC()
+           ========================================================================== */
+
+        .advanced-pattern {
+            background: 
+                /* Primary stripes */
+                repeating-linear-gradient(
+                    to bottom,
+                    var(--stripe-light) 0,
+                    var(--stripe-light) var(--row-height-medium),
+                    transparent var(--row-height-medium),
+                    transparent calc(var(--row-height-medium) * 2)
+                ),
+                /* Secondary accent lines */
+                repeating-linear-gradient(
+                    to bottom,
+                    transparent 0,
+                    transparent calc(var(--row-height-medium) * 5 - 1px),
+                    var(--stripe-dark) calc(var(--row-height-medium) * 5 - 1px),
+                    var(--stripe-dark) calc(var(--row-height-medium) * 5)
+                );
+            background-attachment: local;
+        }
+
+        /* ==========================================================================
+           TECHNIQUE 4: CSS GRID-BASED BACKGROUND SIMULATION
+           ========================================================================== */
+
+        .grid-background {
+            background: 
+                linear-gradient(
+                    to bottom,
+                    var(--stripe-light) 0,
+                    var(--stripe-light) 50%,
+                    transparent 50%,
+                    transparent 100%
+                );
+            background-size: 100% calc(var(--row-height-medium) * 2);
+            background-attachment: local;
+        }
+
+        /* ==========================================================================
+           TECHNIQUE 5: MULTI-LAYER GRADIENT EFFECTS
+           ========================================================================== */
+
+        .multi-layer {
+            background: 
+                /* Top fade */
+                linear-gradient(
+                    to bottom,
+                    rgba(0, 0, 0, 0.03) 0%,
+                    transparent 20px
+                ),
+                /* Bottom fade */
+                linear-gradient(
+                    to top,
+                    rgba(0, 0, 0, 0.03) 0%,
+                    transparent 20px
+                ),
+                /* Stripe pattern */
+                repeating-linear-gradient(
+                    to bottom,
+                    transparent 0,
+                    transparent var(--row-height-medium),
+                    var(--stripe-light) var(--row-height-medium),
+                    var(--stripe-light) calc(var(--row-height-medium) * 2)
+                );
+            background-attachment: local, local, local;
+        }
+
+        /* ==========================================================================
+           TECHNIQUE 6: MODERN CSS @PROPERTY WITH ANIMATIONS
+           ========================================================================== */
+
+        /* Define custom properties for animation */
+        @property --stripe-opacity {
+            syntax: '<number>';
+            initial-value: 0.02;
+            inherits: false;
+        }
+
+        @property --stripe-width {
+            syntax: '<length>';
+            initial-value: 1px;
+            inherits: false;
+        }
+
+        .animated-stripes {
+            background: repeating-linear-gradient(
+                to bottom,
+                transparent 0,
+                transparent calc(var(--row-height-medium) - var(--stripe-width)),
+                rgba(0, 0, 0, var(--stripe-opacity)) calc(var(--row-height-medium) - var(--stripe-width)),
+                rgba(0, 0, 0, var(--stripe-opacity)) var(--row-height-medium)
+            );
+            background-attachment: local;
+            transition: --stripe-opacity 0.3s ease, --stripe-width 0.3s ease;
+        }
+
+        .animated-stripes:hover {
+            --stripe-opacity: 0.08;
+            --stripe-width: 2px;
+        }
+
+        /* Fallback for browsers without @property support */
+        @supports not (background: paint(something)) {
+            .animated-stripes {
+                background: repeating-linear-gradient(
+                    to bottom,
+                    transparent 0,
+                    transparent calc(var(--row-height-medium) - 1px),
+                    rgba(0, 0, 0, 0.02) calc(var(--row-height-medium) - 1px),
+                    rgba(0, 0, 0, 0.02) var(--row-height-medium)
+                );
+            }
+            
+            .animated-stripes:hover {
+                background: repeating-linear-gradient(
+                    to bottom,
+                    transparent 0,
+                    transparent calc(var(--row-height-medium) - 2px),
+                    rgba(0, 0, 0, 0.08) calc(var(--row-height-medium) - 2px),
+                    rgba(0, 0, 0, 0.08) var(--row-height-medium)
+                );
+            }
+        }
+
+        /* ==========================================================================
+           TECHNIQUE 7: CONTAINER QUERIES FOR RESPONSIVE PATTERNS
+           ========================================================================== */
+
+        .responsive-container {
+            container-type: inline-size;
+            background: repeating-linear-gradient(
+                to bottom,
+                transparent 0,
+                transparent var(--row-height-medium),
+                var(--stripe-light) var(--row-height-medium),
+                var(--stripe-light) calc(var(--row-height-medium) * 2)
+            );
+            background-attachment: local;
+        }
+
+        /* Adjust pattern based on container width */
+        @container (max-width: 480px) {
+            .responsive-container {
+                --row-height-medium: var(--row-height-small);
+                background: repeating-linear-gradient(
+                    to bottom,
+                    transparent 0,
+                    transparent var(--row-height-small),
+                    var(--stripe-medium) var(--row-height-small),
+                    var(--stripe-medium) calc(var(--row-height-small) * 2)
+                );
+            }
+        }
+
+        @container (min-width: 800px) {
+            .responsive-container {
+                --row-height-medium: var(--row-height-large);
+                background: repeating-linear-gradient(
+                    to bottom,
+                    transparent 0,
+                    transparent var(--row-height-large),
+                    var(--stripe-light) var(--row-height-large),
+                    var(--stripe-light) calc(var(--row-height-large) * 2)
+                );
+            }
+        }
+
+        /* ==========================================================================
+           TECHNIQUE 8: CSS CONTAINMENT FOR PERFORMANCE
+           ========================================================================== */
+
+        .performance-optimized {
+            contain: layout style paint; /* Isolate layout calculations */
+            background: repeating-linear-gradient(
+                to bottom,
+                transparent 0,
+                transparent var(--row-height-medium),
+                var(--stripe-light) var(--row-height-medium),
+                var(--stripe-light) calc(var(--row-height-medium) * 2)
+            );
+            background-attachment: local;
+            will-change: transform; /* Create GPU layer */
+        }
+
+        /* Remove will-change when not interacting to save GPU memory */
+        .performance-optimized:not(:hover):not(:focus-within) {
+            will-change: auto;
+        }
+
+        /* ==========================================================================
+           TECHNIQUE 9: CONIC GRADIENT DIAGONAL PATTERNS
+           ========================================================================== */
+
+        .diagonal-pattern {
+            background: 
+                repeating-conic-gradient(
+                    from 45deg at 0 0,
+                    transparent 0deg,
+                    transparent 87deg,
+                    var(--stripe-light) 87deg,
+                    var(--stripe-light) 93deg,
+                    transparent 93deg,
+                    transparent 180deg
+                ),
+                repeating-linear-gradient(
+                    to bottom,
+                    transparent 0,
+                    transparent calc(var(--row-height-medium) - 1px),
+                    var(--border-color) calc(var(--row-height-medium) - 1px),
+                    var(--border-color) var(--row-height-medium)
+                );
+            background-size: 40px 40px, 100% var(--row-height-medium);
+            background-attachment: local;
+        }
+
+        /* ==========================================================================
+           TECHNIQUE 10: MASK-BASED PATTERNS
+           ========================================================================== */
+
+        .mask-pattern {
+            background: linear-gradient(
+                45deg,
+                var(--stripe-light) 25%,
+                transparent 25%,
+                transparent 75%,
+                var(--stripe-light) 75%
+            );
+            background-size: 20px 20px;
+            mask: repeating-linear-gradient(
+                to bottom,
+                black 0,
+                black var(--row-height-medium),
+                transparent var(--row-height-medium),
+                transparent calc(var(--row-height-medium) * 2)
+            );
+        }
+
+        /* ==========================================================================
+           ACCESSIBILITY & REDUCED MOTION
+           ========================================================================== */
+
+        @media (prefers-reduced-motion: reduce) {
+            .animated-stripes {
+                transition: none;
+            }
+            
+            .performance-optimized {
+                will-change: auto;
+            }
+        }
+
+        /* ==========================================================================
+           MOBILE OPTIMIZATIONS
+           ========================================================================== */
+
+        @media (max-width: 768px) {
+            .example-content {
+                height: 250px;
+            }
+            
+            .demo-item {
+                padding: 6px 16px;
+                height: var(--row-height-small);
+            }
+            
+            /* Use simpler patterns on mobile for better performance */
+            .multi-layer,
+            .diagonal-pattern,
+            .mask-pattern {
+                background: repeating-linear-gradient(
+                    to bottom,
+                    transparent 0,
+                    transparent var(--row-height-small),
+                    var(--stripe-light) var(--row-height-small),
+                    var(--stripe-light) calc(var(--row-height-small) * 2)
+                );
+                background-attachment: local;
+            }
+        }
+
+        /* ==========================================================================
+           DEBUG UTILITIES (REMOVE IN PRODUCTION)
+           ========================================================================== */
+
+        .debug-grid {
+            position: relative;
+        }
+
+        .debug-grid::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: repeating-linear-gradient(
+                to bottom,
+                red 0,
+                red 1px,
+                transparent 1px,
+                transparent var(--row-height-medium)
+            );
+            pointer-events: none;
+            opacity: 0.1;
+            z-index: 999;
+        }
+
+        /* Performance monitoring styles */
+        .perf-monitor {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 12px;
+            z-index: 1000;
+            display: none; /* Show via JS when needed */
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Container-Level Background Styling Examples</h1>
+        <p>Comprehensive examples of modern CSS techniques for styling scrollable container backgrounds without touching individual elements.</p>
+
+        <!-- TECHNIQUE 1: Basic Repeating Linear Gradient -->
+        <div class="example">
+            <div class="example-header">
+                <h2 class="example-title">1. Basic Repeating Linear Gradient Stripes</h2>
+                <p class="example-description">
+                    <strong>Performance:</strong> Excellent | <strong>Browser Support:</strong> IE10+ | <strong>Best For:</strong> Simple alternating row backgrounds
+                </p>
+            </div>
+            <div class="example-content stripe-basic">
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Document.pdf</div>
+                    <div class="demo-item-meta">2.4 MB</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Presentation.pptx</div>
+                    <div class="demo-item-meta">15.7 MB</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Spreadsheet.xlsx</div>
+                    <div class="demo-item-meta">892 KB</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Image.jpg</div>
+                    <div class="demo-item-meta">3.2 MB</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Video.mp4</div>
+                    <div class="demo-item-meta">127 MB</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Archive.zip</div>
+                    <div class="demo-item-meta">45.1 MB</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Code.js</div>
+                    <div class="demo-item-meta">12 KB</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Database.db</div>
+                    <div class="demo-item-meta">234 MB</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Config.json</div>
+                    <div class="demo-item-meta">3 KB</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Log.txt</div>
+                    <div class="demo-item-meta">156 KB</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TECHNIQUE 2: Pseudo-Element Overlay -->
+        <div class="example">
+            <div class="example-header">
+                <h2 class="example-title">2. Pseudo-Element Overlay with GPU Acceleration</h2>
+                <p class="example-description">
+                    <strong>Performance:</strong> Excellent (GPU accelerated) | <strong>Browser Support:</strong> IE9+ | <strong>Best For:</strong> Complex overlays that don't interfere with content
+                </p>
+            </div>
+            <div class="example-content pseudo-overlay">
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Task: Design Homepage</div>
+                    <div class="demo-item-meta">Due: Today</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Task: Review Code</div>
+                    <div class="demo-item-meta">Due: Tomorrow</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Task: Client Meeting</div>
+                    <div class="demo-item-meta">Due: Friday</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Task: Update Documentation</div>
+                    <div class="demo-item-meta">Due: Next Week</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Task: Performance Testing</div>
+                    <div class="demo-item-meta">Due: Monday</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Task: Deploy to Production</div>
+                    <div class="demo-item-meta">Due: Tuesday</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Task: User Research</div>
+                    <div class="demo-item-meta">Due: Wednesday</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Task: Bug Fixes</div>
+                    <div class="demo-item-meta">Due: Thursday</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TECHNIQUE 3: Advanced Gradient Patterns -->
+        <div class="example">
+            <div class="example-header">
+                <h2 class="example-title">3. Advanced Multi-Layer Gradient Patterns</h2>
+                <p class="example-description">
+                    <strong>Performance:</strong> Good | <strong>Browser Support:</strong> IE10+ | <strong>Best For:</strong> Complex visual hierarchies with accent lines
+                </p>
+            </div>
+            <div class="example-content advanced-pattern">
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">John Smith</div>
+                    <div class="demo-item-meta">Manager</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Sarah Johnson</div>
+                    <div class="demo-item-meta">Developer</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Mike Davis</div>
+                    <div class="demo-item-meta">Designer</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Emily Chen</div>
+                    <div class="demo-item-meta">QA Engineer</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Alex Rodriguez</div>
+                    <div class="demo-item-meta">DevOps</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Lisa Wong</div>
+                    <div class="demo-item-meta">Product Owner</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">David Brown</div>
+                    <div class="demo-item-meta">Architect</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Anna Taylor</div>
+                    <div class="demo-item-meta">UX Researcher</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TECHNIQUE 4: CSS Grid Background Simulation -->
+        <div class="example">
+            <div class="example-header">
+                <h2 class="example-title">4. CSS Grid-Based Background Simulation</h2>
+                <p class="example-description">
+                    <strong>Performance:</strong> Excellent | <strong>Browser Support:</strong> IE11+ | <strong>Best For:</strong> Simple, clean alternating backgrounds
+                </p>
+            </div>
+            <div class="example-content grid-background">
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Order #1001</div>
+                    <div class="demo-item-meta">$234.50</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Order #1002</div>
+                    <div class="demo-item-meta">$89.99</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Order #1003</div>
+                    <div class="demo-item-meta">$156.75</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Order #1004</div>
+                    <div class="demo-item-meta">$45.00</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Order #1005</div>
+                    <div class="demo-item-meta">$312.20</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Order #1006</div>
+                    <div class="demo-item-meta">$98.45</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TECHNIQUE 5: Multi-Layer Gradient Effects -->
+        <div class="example">
+            <div class="example-header">
+                <h2 class="example-title">5. Multi-Layer Gradient Effects with Fade</h2>
+                <p class="example-description">
+                    <strong>Performance:</strong> Good | <strong>Browser Support:</strong> IE10+ | <strong>Best For:</strong> Lists with visual depth and fade effects
+                </p>
+            </div>
+            <div class="example-content multi-layer">
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Message from Alice</div>
+                    <div class="demo-item-meta">2 min ago</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Meeting reminder</div>
+                    <div class="demo-item-meta">5 min ago</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">System notification</div>
+                    <div class="demo-item-meta">10 min ago</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Update available</div>
+                    <div class="demo-item-meta">1 hour ago</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Welcome message</div>
+                    <div class="demo-item-meta">2 hours ago</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Security alert</div>
+                    <div class="demo-item-meta">Yesterday</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TECHNIQUE 6: Modern CSS @property Animations -->
+        <div class="example">
+            <div class="example-header">
+                <h2 class="example-title">6. Modern CSS @property with Smooth Animations</h2>
+                <p class="example-description">
+                    <strong>Performance:</strong> Excellent (with GPU acceleration) | <strong>Browser Support:</strong> Chrome 85+, Firefox 128+, Safari 16.4+ | <strong>Best For:</strong> Interactive patterns with smooth transitions
+                </p>
+            </div>
+            <div class="example-content animated-stripes">
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Hover to see animation</div>
+                    <div class="demo-item-meta">Modern browsers</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Smooth property transitions</div>
+                    <div class="demo-item-meta">CSS @property</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">GPU accelerated</div>
+                    <div class="demo-item-meta">High performance</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Fallback support</div>
+                    <div class="demo-item-meta">Older browsers</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TECHNIQUE 7: Container Queries Responsive -->
+        <div class="example">
+            <div class="example-header">
+                <h2 class="example-title">7. Container Queries for Responsive Patterns</h2>
+                <p class="example-description">
+                    <strong>Performance:</strong> Excellent | <strong>Browser Support:</strong> Chrome 105+, Firefox 110+, Safari 16+ | <strong>Best For:</strong> Responsive design patterns that adapt to container size
+                </p>
+            </div>
+            <div class="example-content responsive-container">
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Resize browser window</div>
+                    <div class="demo-item-meta">See pattern change</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Container-based media queries</div>
+                    <div class="demo-item-meta">Not viewport-based</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Adaptive row heights</div>
+                    <div class="demo-item-meta">Better mobile experience</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Future-proof design</div>
+                    <div class="demo-item-meta">Modern CSS feature</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TECHNIQUE 8: Performance Optimized -->
+        <div class="example">
+            <div class="example-header">
+                <h2 class="example-title">8. CSS Containment for Large Dataset Performance</h2>
+                <p class="example-description">
+                    <strong>Performance:</strong> Excellent (optimized for large datasets) | <strong>Browser Support:</strong> Chrome 52+, Firefox 69+, Safari 15.4+ | <strong>Best For:</strong> Large lists with thousands of items
+                </p>
+            </div>
+            <div class="example-content performance-optimized">
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">CSS contain: layout style paint</div>
+                    <div class="demo-item-meta">Isolated rendering</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">GPU layer management</div>
+                    <div class="demo-item-meta">will-change optimization</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Prevents reflow cascading</div>
+                    <div class="demo-item-meta">Better scroll performance</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Optimized for large datasets</div>
+                    <div class="demo-item-meta">10,000+ items</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TECHNIQUE 9: Diagonal Pattern -->
+        <div class="example">
+            <div class="example-header">
+                <h2 class="example-title">9. Conic Gradient Diagonal Patterns</h2>
+                <p class="example-description">
+                    <strong>Performance:</strong> Good | <strong>Browser Support:</strong> Chrome 69+, Firefox 83+, Safari 12.1+ | <strong>Best For:</strong> Unique visual patterns and design differentiation
+                </p>
+            </div>
+            <div class="example-content diagonal-pattern">
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Unique diagonal texture</div>
+                    <div class="demo-item-meta">Conic gradients</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Combined with row stripes</div>
+                    <div class="demo-item-meta">Multi-layer background</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Modern gradient features</div>
+                    <div class="demo-item-meta">Creative possibilities</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Brand differentiation</div>
+                    <div class="demo-item-meta">Unique visual identity</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TECHNIQUE 10: Mask-Based Patterns -->
+        <div class="example">
+            <div class="example-header">
+                <h2 class="example-title">10. CSS Mask-Based Selective Patterns</h2>
+                <p class="example-description">
+                    <strong>Performance:</strong> Good | <strong>Browser Support:</strong> Chrome 54+, Firefox 53+, Safari 15.4+ | <strong>Best For:</strong> Complex patterns that need selective application
+                </p>
+            </div>
+            <div class="example-content mask-pattern">
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Masked diagonal pattern</div>
+                    <div class="demo-item-meta">Only on alternating rows</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Complex visual effects</div>
+                    <div class="demo-item-meta">CSS mask property</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Selective pattern application</div>
+                    <div class="demo-item-meta">Advanced CSS technique</div>
+                </div>
+                <div class="demo-item">
+                    <div class="demo-item-icon"></div>
+                    <div class="demo-item-text">Creative possibilities</div>
+                    <div class="demo-item-meta">Unique designs</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Performance Monitor (hidden by default) -->
+    <div class="perf-monitor">
+        <div>FPS: <span id="fps">--</span></div>
+        <div>Paint Time: <span id="paint-time">--</span>ms</div>
+    </div>
+
+    <script>
+        // Performance monitoring (optional)
+        let lastTime = performance.now();
+        let frameCount = 0;
+        let fps = 0;
+
+        function measurePerformance() {
+            frameCount++;
+            const currentTime = performance.now();
+            
+            if (currentTime - lastTime >= 1000) {
+                fps = Math.round((frameCount * 1000) / (currentTime - lastTime));
+                frameCount = 0;
+                lastTime = currentTime;
+                
+                const fpsElement = document.getElementById('fps');
+                if (fpsElement) {
+                    fpsElement.textContent = fps;
+                }
+            }
+            
+            requestAnimationFrame(measurePerformance);
+        }
+
+        // Start performance monitoring (uncomment to enable)
+        // measurePerformance();
+        // document.querySelector('.perf-monitor').style.display = 'block';
+
+        // Theme toggle example (optional)
+        function toggleTheme() {
+            const root = document.documentElement;
+            const currentScheme = getComputedStyle(root).getPropertyValue('color-scheme').trim();
+            
+            if (currentScheme === 'dark') {
+                root.style.colorScheme = 'light';
+            } else {
+                root.style.colorScheme = 'dark';
+            }
+        }
+
+        // Add theme toggle button (uncomment to enable)
+        /*
+        const themeButton = document.createElement('button');
+        themeButton.textContent = 'Toggle Theme';
+        themeButton.style.position = 'fixed';
+        themeButton.style.top = '10px';
+        themeButton.style.left = '10px';
+        themeButton.style.zIndex = '1001';
+        themeButton.onclick = toggleTheme;
+        document.body.appendChild(themeButton);
+        */
+    </script>
+</body>
+</html>
