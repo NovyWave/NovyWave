@@ -19,6 +19,7 @@ expanded_scopes = [
     "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb",
     "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst",
     "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP",
+    "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP",
 ]
 load_files_expanded_directories = [
     "/home/martinkavik/repos/NovyWave",
@@ -30,14 +31,14 @@ load_files_expanded_directories = [
     "/",
     "/home/martinkavik/repos/NovyWave/test_files/nested_dir",
 ]
+selected_scope_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv"
 load_files_scroll_position = 886
-variables_search_filter = "jhj"
 
 [workspace.docked_bottom_dimensions]
 files_and_scopes_panel_width = 464.0
 files_and_scopes_panel_height = 364.0
 selected_variables_panel_name_column_width = 337.0
-selected_variables_panel_value_column_width = 371.0
+selected_variables_panel_value_column_width = 370.0
 
 [workspace.docked_right_dimensions]
 files_and_scopes_panel_width = 288.0

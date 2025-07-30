@@ -3,13 +3,15 @@ use std::collections::HashMap;
 
 /// Truncate a value string if it's longer than max_chars, preserving important parts
 fn truncate_value(value: &str, max_chars: usize) -> String {
+    // ASCII-only: can use byte length directly since 1 char = 1 byte
     if value.len() <= max_chars {
         return value.to_string();
     }
     
     // For very short limits, just truncate with ellipsis
     if max_chars < 10 {
-        return format!("{}...", &value[..max_chars.saturating_sub(3)]);
+        let truncate_at = max_chars.saturating_sub(3);
+        return format!("{}...", &value[..truncate_at]);
     }
     
     // For longer values, show beginning and end with ellipsis in middle
@@ -77,11 +79,8 @@ impl MultiFormatValue {
         let formatted_value = self.get_formatted(format);
         let format_name = format.as_static_str();
         
-        if formatted_value.is_empty() || formatted_value == "(empty)" {
-            format!("({})", format_name)
-        } else {
-            format!("{} {}", formatted_value, format_name)
-        }
+        let display_value = if formatted_value.is_empty() { "-" } else { &formatted_value };
+        format!("{} {}", display_value, format_name)
     }
 
     /// Get display string with truncated value for dropdowns (e.g., "101010101...1010 Bin")
@@ -89,12 +88,9 @@ impl MultiFormatValue {
         let formatted_value = self.get_formatted(format);
         let format_name = format.as_static_str();
         
-        if formatted_value.is_empty() || formatted_value == "(empty)" {
-            format!("({})", format_name)
-        } else {
-            let truncated_value = truncate_value(&formatted_value, max_chars);
-            format!("{} {}", truncated_value, format_name)
-        }
+        let display_value = if formatted_value.is_empty() { "-" } else { &formatted_value };
+        let truncated_value = truncate_value(display_value, max_chars);
+        format!("{} {}", truncated_value, format_name)
     }
 
     /// Get full untruncated display string for tooltip
@@ -133,15 +129,15 @@ impl DropdownFormatOption {
 /// Generate dropdown options with formatted values for a signal
 pub fn generate_dropdown_options(
     multi_value: &MultiFormatValue, 
-    signal_type: &str
+    _signal_type: &str
 ) -> Vec<DropdownFormatOption> {
-    generate_dropdown_options_with_truncation(multi_value, signal_type, 30)
+    generate_dropdown_options_with_truncation(multi_value, _signal_type, 30)
 }
 
 /// Generate dropdown options with configurable value truncation
 pub fn generate_dropdown_options_with_truncation(
     multi_value: &MultiFormatValue, 
-    signal_type: &str,
+    _signal_type: &str,
     max_value_chars: usize
 ) -> Vec<DropdownFormatOption> {
     let all_formats = [
@@ -166,17 +162,11 @@ pub fn generate_dropdown_options_with_truncation(
                 (text.clone(), text)
             };
 
-            let disabled = is_format_disabled_for_signal_type(format, signal_type);
-
-            DropdownFormatOption::new(*format, display_text, full_text, disabled)
+            DropdownFormatOption::new(*format, display_text, full_text, false)
         })
         .collect()
 }
 
-/// All formats are now available for all signal types - no disabling
-fn is_format_disabled_for_signal_type(_format: &VarFormat, _signal_type: &str) -> bool {
-    false // Always enable all format options
-}
 
 #[cfg(test)]
 mod tests {

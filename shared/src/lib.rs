@@ -268,7 +268,7 @@ impl<'de> Deserialize<'de> for VarFormat {
 impl VarFormat {
     pub fn as_static_str(&self) -> &'static str {
         match self {
-            VarFormat::ASCII => "Text",
+            VarFormat::ASCII => "ASCII",
             VarFormat::Binary => "Bin",
             VarFormat::BinaryWithGroups => "Bins",
             VarFormat::Hexadecimal => "Hex",
@@ -299,15 +299,26 @@ impl VarFormat {
 
         match self {
             VarFormat::ASCII => {
-                let mut formatted_value = String::new();
+                let mut ascii_bytes = Vec::with_capacity(binary_value.len() / 8);
                 for group_index in 0..binary_value.len() / 8 {
                     let offset = group_index * 8;
                     let group = &binary_value[offset..offset + 8];
                     if let Ok(byte_char) = u8::from_str_radix(group, 2) {
-                        formatted_value.push(byte_char as char);
+                        if byte_char.is_ascii() {
+                            ascii_bytes.push(byte_char);
+                        } else {
+                            // Non-ASCII byte - replace with '?' to indicate invalid data
+                            ascii_bytes.push(b'?');
+                        }
+                    } else {
+                        // Invalid binary group - replace with '?' 
+                        ascii_bytes.push(b'?');
                     }
                 }
-                formatted_value
+                String::from_utf8(ascii_bytes).unwrap_or_else(|_| {
+                    // This should never happen since we only push ASCII bytes, but be safe
+                    "Invalid ASCII data".to_string()
+                })
             }
             VarFormat::Binary => binary_value.to_string(),
             VarFormat::BinaryWithGroups => {
@@ -1286,7 +1297,7 @@ mod tests {
     
     #[test]
     fn test_var_format_as_static_str() {
-        assert_eq!(VarFormat::ASCII.as_static_str(), "Text");
+        assert_eq!(VarFormat::ASCII.as_static_str(), "ASCII");
         assert_eq!(VarFormat::Binary.as_static_str(), "Bin");
         assert_eq!(VarFormat::BinaryWithGroups.as_static_str(), "Bins");
         assert_eq!(VarFormat::Hexadecimal.as_static_str(), "Hex");

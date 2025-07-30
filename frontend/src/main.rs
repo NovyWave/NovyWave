@@ -6,6 +6,8 @@ use moonzoon_novyui::tokens::color::{neutral_1};
 mod virtual_list;
 
 mod debug_utils;
+
+mod clipboard;
 // use debug_utils::{debug_throttled, debug_critical}; // Unused - kept for future debugging
 
 mod file_utils;
@@ -64,16 +66,13 @@ pub fn main() {
         init_connection();
         
         // Load configuration FIRST before setting up reactive triggers
-        zoon::println!("🔧 Sending LoadConfig request to backend...");
         send_up_msg(UpMsg::LoadConfig);
         
         // Wait for CONFIG_LOADED flag, then set up reactive system
         Task::start(async {
             // Wait for config to actually load from backend
             CONFIG_LOADED.signal().for_each_sync(|loaded| {
-                zoon::println!("🔧 CONFIG_LOADED signal received: {}", loaded);
                 if loaded {
-                    zoon::println!("🔧 Config loaded successfully! Starting UI...");
                 
                     
                     // Initialize bidirectional sync between config store and global state FIRST

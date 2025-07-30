@@ -157,7 +157,6 @@ static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 crate::FILE_PICKER_ERROR.set_neq(None);
             }
             DownMsg::ConfigLoaded(config) => {
-                zoon::println!("🔧 Received ConfigLoaded from backend!");
                 crate::config::apply_config(config);
             }
             DownMsg::ConfigSaved => {

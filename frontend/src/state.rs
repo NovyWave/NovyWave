@@ -110,6 +110,7 @@ pub enum ErrorType {
     ConnectionError,
     #[allow(dead_code)]
     ConfigError,
+    ClipboardError,
 }
 
 impl ErrorAlert {
@@ -149,6 +150,18 @@ impl ErrorAlert {
             error_type: ErrorType::ConnectionError,
             timestamp: js_sys::Date::now() as u64,
             auto_dismiss_ms: Some(crate::config::current_toast_dismiss_ms()), // Use configured dismiss time
+        }
+    }
+    
+    pub fn new_clipboard_error(error: String) -> Self {
+        Self {
+            id: format!("clipboard_error_{}", js_sys::Date::now() as u64),
+            title: "Clipboard Error".to_string(),
+            message: "Failed to copy to clipboard. Your browser may not support clipboard access or you may need to use HTTPS.".to_string(),
+            technical_error: format!("Clipboard operation failed: {}", error),
+            error_type: ErrorType::ClipboardError,
+            timestamp: js_sys::Date::now() as u64,
+            auto_dismiss_ms: Some(crate::config::current_toast_dismiss_ms()),
         }
     }
 }

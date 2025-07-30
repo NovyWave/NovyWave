@@ -19,7 +19,7 @@ use crate::{
     FILE_PATHS, show_file_paths_dialog, LOAD_FILES_VIEWPORT_Y,
     FILE_PICKER_EXPANDED, FILE_PICKER_SELECTED,
     FILE_PICKER_ERROR, FILE_PICKER_ERROR_CACHE, FILE_TREE_CACHE, send_up_msg, DOCK_TOGGLE_IN_PROGRESS,
-    TRACKED_FILES, state, file_validation::validate_file_state
+    TRACKED_FILES, state, file_validation::validate_file_state, clipboard
 };
 use crate::state::SELECTED_VARIABLES_ROW_HEIGHT;
 use crate::state::{SELECTED_VARIABLES, clear_selected_variables, remove_selected_variable};
@@ -209,7 +209,7 @@ fn create_smart_dropdown(
                                     .chars()
                                     .filter(|&c| {
                                         // Keep regular spaces and visible characters only
-                                        c == ' ' || unicode_width::UnicodeWidthChar::width(c).unwrap_or(0) > 0
+                                        c == ' ' || (c.is_ascii() && c.is_ascii_graphic())
                                     })
                                     .collect::<String>()
                                     .trim()
@@ -224,7 +224,7 @@ fn create_smart_dropdown(
                                 let filtered_display = display_value_only
                                     .chars()
                                     .filter(|&c| {
-                                        c == ' ' || unicode_width::UnicodeWidthChar::width(c).unwrap_or(0) > 0
+                                        c == ' ' || (c.is_ascii() && c.is_ascii_graphic())
                                     })
                                     .collect::<String>()
                                     .trim()
@@ -277,12 +277,22 @@ fn create_smart_dropdown(
                                             .chars()
                                             .filter(|&c| {
                                                 // Keep regular spaces and visible characters only
-                                                c == ' ' || unicode_width::UnicodeWidthChar::width(c).unwrap_or(0) > 0
+                                                c == ' ' || (c.is_ascii() && c.is_ascii_graphic())
                                             })
                                             .collect::<String>()
                                             .trim()
                                             .to_string();
-                                        Text::new(&filtered_value)
+                                        El::new()
+                                            .s(Font::new()
+                                                .color_signal(
+                                                    always(filtered_value.trim() == "-").map_bool_signal(
+                                                        || neutral_8(),  // Muted color for placeholder
+                                                        || neutral_11()  // Normal color for real values
+                                                    )
+                                                )
+                                                .no_wrap()
+                                            )
+                                            .child(Text::new(&filtered_value))
                                     })
                             )
                             .item(El::new().s(Width::fill())) // Spacer to push format to right
@@ -414,8 +424,8 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
                         _ => shared::VarFormat::Hexadecimal,
                     };
                     
-                    // Use truncated display for trigger, keep full text for tooltip
-                    let display_text = current_multi_value.get_truncated_display_with_format(&current_format_enum, 30);
+                    // Use full display text - CSS ellipsis will handle truncation dynamically
+                    let display_text = current_multi_value.get_full_display_with_format(&current_format_enum);
                     let full_display_text = current_multi_value.get_full_display_with_format(&current_format_enum);
                     
                     // Generate dropdown options with formatted values
@@ -429,6 +439,7 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
                         .s(Width::fill())
                         .s(Height::exact(SELECTED_VARIABLES_ROW_HEIGHT - 2))
                         .s(Padding::new().x(8).y(4))
+                        .s(Gap::new().x(2))
                         .s(Borders::all_signal(neutral_4().map(|color| 
                             Border::new().width(1).color(color)
                         )))
@@ -456,7 +467,7 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
                                             .chars()
                                             .filter(|&c| {
                                                 // Keep regular spaces and visible characters only
-                                                c == ' ' || unicode_width::UnicodeWidthChar::width(c).unwrap_or(0) > 0
+                                                c == ' ' || (c.is_ascii() && c.is_ascii_graphic())
                                             })
                                             .collect::<String>()
                                             .trim()
@@ -471,7 +482,7 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
                                         let filtered_display = display_value_only
                                             .chars()
                                             .filter(|&c| {
-                                                c == ' ' || unicode_width::UnicodeWidthChar::width(c).unwrap_or(0) > 0
+                                                c == ' ' || (c.is_ascii() && c.is_ascii_graphic())
                                             })
                                             .collect::<String>()
                                             .trim()
@@ -486,42 +497,127 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
                             }
                         })
                         .item(
-                            // Use Variables panel styling pattern: value left, format right
+                            // Pure flexbox approach - value, format, gap for chevron
                             Row::new()
                                 .s(Width::fill())
-                                .s(Gap::new().x(8))
+                                .s(Gap::new().x(4))
+                                .s(Align::new().center_y())
                                 .item(
-                                    // Value - left aligned, contrasting color (like variable name)
+                                    // Value with programmatic truncation - fixed flex-grow to prevent jumping
                                     El::new()
                                         .s(Font::new().color_signal(neutral_11()).size(13).no_wrap())
                                         .s(font_mono())
-                                        .s(Width::growable())
-                                        .child({
-                                            // Extract just the value part (before the format name)
-                                            let value_only = if let Some(space_pos) = display_text.rfind(' ') {
-                                                display_text[..space_pos].to_string()
-                                            } else {
-                                                display_text.clone()
-                                            };
-                                            // Remove invisible characters that cause UI layout issues
-                                            let filtered_value = value_only
-                                                .chars()
-                                                .filter(|&c| {
-                                                    // Keep regular spaces and visible characters only
-                                                    c == ' ' || unicode_width::UnicodeWidthChar::width(c).unwrap_or(0) > 0
-                                                })
-                                                .collect::<String>()
-                                                .trim()
-                                                .to_string();
-                                            Text::new(&filtered_value)
+                                        .s(Width::fill())
+                                        .update_raw_el(|raw_el| {
+                                            raw_el
+                                                .style("flex-grow", "1")
+                                                .style("flex-shrink", "1")
+                                                .style("flex-basis", "0")
+                                                .style("min-width", "0")
                                         })
+                                        .child_signal(
+                                            map_ref! {
+                                                let text = zoon::always(display_text.clone()),
+                                                let column_width = VARIABLES_VALUE_COLUMN_WIDTH.signal() => {
+                                                    // Extract just the value part (before the format name)
+                                                    let value_only = if let Some(space_pos) = text.rfind(' ') {
+                                                        text[..space_pos].to_string()
+                                                    } else {
+                                                        text.clone()
+                                                    };
+                                                    let filtered_value = value_only
+                                                        .chars()
+                                                        .filter(|&c| {
+                                                            c == ' ' || (c.is_ascii() && c.is_ascii_graphic())
+                                                        })
+                                                        .collect::<String>()
+                                                        .trim()
+                                                        .to_string();
+                                                    
+                                                    // Dynamic truncation constants - adjust these to fine-tune layout
+                                                    const MONOSPACE_CHAR_WIDTH_PX: f32 = 8.0;  // Width per character in monospace font
+                                                    const TRIGGER_PADDING_PX: f32 = 16.0;      // Row padding (.x(8).y(4) = 8px each side)
+                                                    const ELEMENT_GAPS_PX: f32 = 12.0;         // Gaps between value/copy/format/chevron (4px * 3 gaps)
+                                                    const COPY_BUTTON_WIDTH_PX: f32 = 24.0;    // Small ghost button width
+                                                    const FORMAT_TEXT_WIDTH_PX: f32 = 30.0;    // "Hex", "Bin", etc. text width
+                                                    const CHEVRON_ICON_WIDTH_PX: f32 = 20.0;   // Dropdown chevron icon width
+                                                    const LAYOUT_BUFFER_PX: f32 = 8.0;         // Safety margin for stable layout
+                                                    
+                                                    // Calculate available space for value text
+                                                    let total_reserved_width = TRIGGER_PADDING_PX + ELEMENT_GAPS_PX + COPY_BUTTON_WIDTH_PX 
+                                                        + FORMAT_TEXT_WIDTH_PX + CHEVRON_ICON_WIDTH_PX + LAYOUT_BUFFER_PX;
+                                                    let available_text_width = (*column_width as f32 - total_reserved_width).max(40.0);
+                                                    
+                                                    // Convert width to character count with minimum safety threshold
+                                                    const MIN_VISIBLE_CHARS: usize = 6;
+                                                    let max_displayable_chars = ((available_text_width / MONOSPACE_CHAR_WIDTH_PX) as usize).max(MIN_VISIBLE_CHARS);
+                                                    
+                                                    // Apply truncation with ellipsis if text exceeds available space
+                                                    let truncated_text = if filtered_value.len() > max_displayable_chars {
+                                                        format!("{}...", &filtered_value[..max_displayable_chars.saturating_sub(3)])
+                                                    } else {
+                                                        filtered_value
+                                                    };
+                                                    El::new()
+                                                        .s(Font::new()
+                                                            .color_signal(
+                                                                always(truncated_text.trim() == "-").map_bool_signal(
+                                                                    || neutral_8(),  // Muted color for placeholder
+                                                                    || neutral_11()  // Normal color for real values
+                                                                )
+                                                            )
+                                                            .no_wrap()
+                                                        )
+                                                        .child(Text::new(&truncated_text))
+                                                }
+                                            }
+                                        )
                                 )
-                                .item(El::new().s(Width::fill())) // Spacer to push format to right
                                 .item(
-                                    // Format name - right aligned, blueish color (like variable type)
+                                    // Copy button - small, minimal, wrapped to prevent event bubbling
+                                    El::new()
+                                        .update_raw_el(|raw_el| {
+                                            raw_el.event_handler(|event: Click| {
+                                                event.stop_propagation();
+                                            })
+                                        })
+                                        .child(
+                                            button()
+                                                .left_icon(IconName::Copy)
+                                                .variant(ButtonVariant::Ghost)
+                                                .size(ButtonSize::Small)
+                                                .on_press({
+                                                    let display_text = display_text.clone();
+                                                    move || {
+                                                        // Extract just the value part for copying
+                                                        let value_only = if let Some(space_pos) = display_text.rfind(' ') {
+                                                            display_text[..space_pos].to_string()
+                                                        } else {
+                                                            display_text.clone()
+                                                        };
+                                                        let filtered_value = value_only
+                                                            .chars()
+                                                            .filter(|&c| {
+                                                                c == ' ' || (c.is_ascii() && c.is_ascii_graphic())
+                                                            })
+                                                            .collect::<String>()
+                                                            .trim()
+                                                            .to_string();
+                                                        
+                                                        // Copy to clipboard
+                                                        clipboard::copy_variable_value(&filtered_value);
+                                                    }
+                                                })
+                                                .build()
+                                        )
+                                )
+                                .item(
+                                    // Format name - fixed width, no shrinking
                                     El::new()
                                         .s(Font::new().color_signal(primary_6()).size(11).no_wrap())
-                                        .s(Align::new().right())
+                                        .update_raw_el(|raw_el| {
+                                            raw_el.style("flex-shrink", "0") // Don't shrink
+                                        })
                                         .child({
                                             // Extract just the format name (after the last space)
                                             let format_name = if let Some(space_pos) = display_text.rfind(' ') {
