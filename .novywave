@@ -41,7 +41,7 @@ selected_variables_panel_name_column_width = 386.0
 selected_variables_panel_value_column_width = 370.0
 
 [workspace.docked_right_dimensions]
-files_and_scopes_panel_width = 269.0
+files_and_scopes_panel_width = 216.0
 files_and_scopes_panel_height = 332.0
 selected_variables_panel_name_column_width = 318.0
 selected_variables_panel_value_column_width = 301.0
@@ -116,10 +116,6 @@ formatter = "Hexadecimal"
 
 [[workspace.selected_variables]]
 unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv|AlignerPlugin_logic_buffer_hm_GSharePlugin_GSHARE_COUNTER_2"
-formatter = "Hexadecimal"
-
-[[workspace.selected_variables]]
-unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv|AlignerPlugin_api_haltIt"
 formatter = "Hexadecimal"
 
 [[workspace.selected_variables]]

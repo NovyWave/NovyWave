@@ -1140,7 +1140,12 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                             ),
                         // Resizable columns layout with draggable separators
                         El::new()
-                            .s(Height::fill())
+                            .s(Height::exact_signal(
+                                SELECTED_VARIABLES.signal_vec_cloned().len().map(|vars_count| {
+                                    // Add one extra row height for scrollbar (names/values) or footer/timeline (canvas)
+                                    (vars_count + 1) as u32 * SELECTED_VARIABLES_ROW_HEIGHT
+                                })
+                            ))
                             .s(Width::fill())
                             .s(Scrollbars::x_and_clip_y())
                             .child(
