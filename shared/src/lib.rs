@@ -299,26 +299,34 @@ impl VarFormat {
 
         match self {
             VarFormat::ASCII => {
+                // ASCII requires at least 8 bits to form one character
+                if binary_value.len() < 8 {
+                    return "-".to_string();
+                }
+                
                 let mut ascii_bytes = Vec::with_capacity(binary_value.len() / 8);
                 for group_index in 0..binary_value.len() / 8 {
                     let offset = group_index * 8;
                     let group = &binary_value[offset..offset + 8];
-                    if let Ok(byte_char) = u8::from_str_radix(group, 2) {
-                        if byte_char.is_ascii() {
-                            ascii_bytes.push(byte_char);
-                        } else {
-                            // Non-ASCII byte - replace with '?' to indicate invalid data
+                    match u8::from_str_radix(group, 2) {
+                        Ok(byte_value) => {
+                            // Check if it's printable ASCII (32-126, plus some common ones like newline)
+                            if byte_value.is_ascii() && (byte_value.is_ascii_graphic() || byte_value.is_ascii_whitespace()) {
+                                ascii_bytes.push(byte_value);
+                            } else {
+                                // Non-printable or control character - replace with '?'
+                                ascii_bytes.push(b'?');
+                            }
+                        }
+                        Err(_) => {
+                            // Invalid binary group - replace with '?' 
                             ascii_bytes.push(b'?');
                         }
-                    } else {
-                        // Invalid binary group - replace with '?' 
-                        ascii_bytes.push(b'?');
                     }
                 }
-                String::from_utf8(ascii_bytes).unwrap_or_else(|_| {
-                    // This should never happen since we only push ASCII bytes, but be safe
-                    "Invalid ASCII data".to_string()
-                })
+                
+                // Convert to string - this should always succeed since we only push valid ASCII
+                String::from_utf8(ascii_bytes).unwrap_or_else(|_| "?".to_string())
             }
             VarFormat::Binary => binary_value.to_string(),
             VarFormat::BinaryWithGroups => {
@@ -1395,6 +1403,23 @@ mod tests {
         // Test incomplete group (should be ignored)
         let binary_value3 = "0100100001000101010"; // 17 bits, only first 16 used
         assert_eq!(VarFormat::ASCII.format(binary_value3), "HE");
+        
+        // Test binary values shorter than 8 bits should show placeholder
+        assert_eq!(VarFormat::ASCII.format("0"), "-");
+        assert_eq!(VarFormat::ASCII.format("1"), "-");
+        assert_eq!(VarFormat::ASCII.format("101"), "-");
+        assert_eq!(VarFormat::ASCII.format("1010101"), "-"); // 7 bits
+        
+        // Test 9+ bits processes complete 8-bit groups, ignores remainder
+        assert_eq!(VarFormat::ASCII.format("010010000"), "H"); // 9 bits, processes first 8
+        
+        // Test control characters get replaced with '?'
+        assert_eq!(VarFormat::ASCII.format("00000000"), "?"); // NULL character
+        assert_eq!(VarFormat::ASCII.format("00000001"), "?"); // SOH control character
+        
+        // Test printable ASCII works
+        assert_eq!(VarFormat::ASCII.format("00100000"), " "); // Space (32)
+        assert_eq!(VarFormat::ASCII.format("00110000"), "0"); // '0' character (48)
     }
     
     #[test]

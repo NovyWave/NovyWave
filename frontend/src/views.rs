@@ -23,6 +23,7 @@ use crate::{
 };
 use crate::state::SELECTED_VARIABLES_ROW_HEIGHT;
 use crate::state::{SELECTED_VARIABLES, clear_selected_variables, remove_selected_variable};
+use crate::format_utils::truncate_value;
 
 /// Get signal type information for a selected variable
 fn get_signal_type_for_selected_variable(selected_var: &SelectedVariable) -> String {
@@ -553,11 +554,7 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
                                                     let max_displayable_chars = ((available_text_width / MONOSPACE_CHAR_WIDTH_PX) as usize).max(MIN_VISIBLE_CHARS);
                                                     
                                                     // Apply truncation with ellipsis if text exceeds available space
-                                                    let truncated_text = if filtered_value.len() > max_displayable_chars {
-                                                        format!("{}...", &filtered_value[..max_displayable_chars.saturating_sub(3)])
-                                                    } else {
-                                                        filtered_value
-                                                    };
+                                                    let truncated_text = truncate_value(&filtered_value, max_displayable_chars);
                                                     El::new()
                                                         .s(Font::new()
                                                             .color_signal(
@@ -568,6 +565,19 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
                                                             )
                                                             .no_wrap()
                                                         )
+                                                        .update_raw_el({
+                                                            let filtered_value = filtered_value.clone();
+                                                            let truncated_text = truncated_text.clone();
+                                                            move |raw_el| {
+                                                                // Add tooltip with full text if truncated
+                                                                if filtered_value != truncated_text {
+                                                                    if let Some(html_el) = raw_el.dom_element().dyn_ref::<web_sys::HtmlElement>() {
+                                                                        html_el.set_title(&filtered_value);
+                                                                    }
+                                                                }
+                                                                raw_el
+                                                            }
+                                                        })
                                                         .child(Text::new(&truncated_text))
                                                 }
                                             }
@@ -639,10 +649,23 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
                                 )
                         )
                         .item(
-                            IconBuilder::new(IconName::ChevronDown)
-                                .size(IconSize::Small)
-                                .color(IconColor::Muted)
-                                .build()
+                            El::new()
+                                .child(
+                                    IconBuilder::new(IconName::ChevronDown)
+                                        .size(IconSize::Small)
+                                        .color(IconColor::Muted)
+                                        .build()
+                                )
+                                .update_raw_el({
+                                    let is_open = is_open.clone();
+                                    move |raw_el| {
+                                        raw_el.style_signal("transform", is_open.signal().map_bool(
+                                            || "rotate(180deg)".to_string(),
+                                            || "rotate(0deg)".to_string()
+                                        ))
+                                        .style("transition", "transform 0.2s ease")
+                                    }
+                                })
                         )
                         .element_below_signal(is_open.signal().map_true({
                             let selected_format = selected_format.clone();

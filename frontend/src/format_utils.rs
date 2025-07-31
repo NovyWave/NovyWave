@@ -1,26 +1,16 @@
 use shared::VarFormat;
 use std::collections::HashMap;
 
-/// Truncate a value string if it's longer than max_chars, preserving important parts
-fn truncate_value(value: &str, max_chars: usize) -> String {
+/// Truncate a value string if it's longer than max_chars, using simple right truncation
+pub fn truncate_value(value: &str, max_chars: usize) -> String {
     // ASCII-only: can use byte length directly since 1 char = 1 byte
     if value.len() <= max_chars {
         return value.to_string();
     }
     
-    // For very short limits, just truncate with ellipsis
-    if max_chars < 10 {
-        let truncate_at = max_chars.saturating_sub(3);
-        return format!("{}...", &value[..truncate_at]);
-    }
-    
-    // For longer values, show beginning and end with ellipsis in middle
-    let start_chars = max_chars / 2 - 1;
-    let end_chars = max_chars - start_chars - 3; // 3 for "..."
-    
-    format!("{}...{}", 
-        &value[..start_chars], 
-        &value[value.len().saturating_sub(end_chars)..])
+    // Simple right truncation with ellipsis
+    let truncate_at = max_chars.saturating_sub(3);
+    format!("{}...", &value[..truncate_at])
 }
 
 /// Container for multi-format signal values
