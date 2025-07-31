@@ -42,6 +42,7 @@ pub struct ButtonBuilder {
     on_press: Option<Box<dyn Fn()>>,
     min_width: Option<u32>,
     align: Option<Align>,
+    custom_padding: Option<(u32, u32)>,
 }
 
 impl ButtonBuilder {
@@ -63,6 +64,7 @@ impl ButtonBuilder {
             on_press: None,
             min_width: None,
             align: None,
+            custom_padding: None,
         }
     }
 
@@ -161,23 +163,35 @@ impl ButtonBuilder {
         self
     }
 
+    pub fn custom_padding(mut self, x: u32, y: u32) -> Self {
+        self.custom_padding = Some((x, y));
+        self
+    }
+
 
     pub fn build(self) -> impl Element {
         let (hovered, hovered_signal) = Mutable::new_and_signal(false);
         let (focused, focused_signal) = Mutable::new_and_signal(false);
 
-        // Size-based styling
+        // Size-based styling with custom padding override
         let (padding_x, padding_y, font_size, icon_size) = match self.size {
             ButtonSize::Small => (SPACING_12, SPACING_6, FONT_SIZE_14, IconSize::Small),
             ButtonSize::Medium => (SPACING_16, SPACING_8, FONT_SIZE_16, IconSize::Medium),
             ButtonSize::Large => (SPACING_20, SPACING_12, FONT_SIZE_18, IconSize::Large),
         };
 
+        // Apply custom padding override if provided
+        let (padding_x, padding_y) = if let Some((custom_x, custom_y)) = self.custom_padding {
+            (custom_x, custom_y)
+        } else {
+            (padding_x, padding_y)
+        };
+
         // Determine if this is an icon-only button
         let is_icon_only = self.label.is_none() && (self.left_icon.is_some() || self.left_icon_element.is_some() || self.right_icon.is_some() || self.right_icon_element.is_some());
 
-        // Adjust padding for icon-only buttons
-        let (final_padding_x, final_padding_y) = if is_icon_only {
+        // Adjust padding for icon-only buttons (unless custom padding is set)
+        let (final_padding_x, final_padding_y) = if is_icon_only && self.custom_padding.is_none() {
             (padding_y, padding_y) // Square padding for icon-only buttons
         } else {
             (padding_x, padding_y)

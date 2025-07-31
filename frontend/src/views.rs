@@ -403,7 +403,6 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
     El::new()
         .s(Width::fill())
         .s(Height::fill())
-        .s(Padding::new().x(8).y(6))
         .s(Align::new().center_y().left())
         .child_signal(
             map_ref! {
@@ -596,6 +595,7 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
                                                 .left_icon(IconName::Copy)
                                                 .variant(ButtonVariant::Ghost)
                                                 .size(ButtonSize::Small)
+                                                .custom_padding(4, 2)
                                                 .on_press({
                                                     let display_text = display_text.clone();
                                                     move || {
@@ -1176,6 +1176,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                                 .left_icon(IconName::X)
                                                                 .variant(ButtonVariant::DestructiveGhost)
                                                                 .size(ButtonSize::Small)
+                                                                .custom_padding(4, 2)
                                                                 .on_press(move || {
                                                                     zoon::println!("🚨 REMOVE BUTTON CLICKED for {}", &unique_id);
                                                                     remove_selected_variable(&unique_id);
@@ -1269,9 +1270,6 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                     El::new()
                                                         .s(Height::exact(SELECTED_VARIABLES_ROW_HEIGHT))
                                                         .s(Width::fill())
-                                                        .s(Borders::new().bottom_signal(neutral_4().map(|color| 
-                                                            Border::new().width(1).color(color)
-                                                        )))
                                                         .child(
                                                             create_format_select_component(&selected_var)
                                                         )
@@ -1330,6 +1328,7 @@ pub fn selected_panel() -> impl Element {
                                     .label("×")
                                     .variant(ButtonVariant::Ghost)
                                     .size(ButtonSize::Small)
+                                    .custom_padding(4, 2)
                                     .on_press(|| {})
                                     .build()
                             )
@@ -1349,6 +1348,7 @@ pub fn selected_panel() -> impl Element {
                                     .label("×")
                                     .variant(ButtonVariant::Ghost)
                                     .size(ButtonSize::Small)
+                                    .custom_padding(4, 2)
                                     .on_press(|| {})
                                     .build()
                             )

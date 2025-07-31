@@ -13,7 +13,7 @@ opened_files = [
     "/home/martinkavik/repos/NovyWave/test_files/simple.vcd",
     "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst",
 ]
-dock_mode = "bottom"
+dock_mode = "right"
 expanded_scopes = [
     "/home/martinkavik/repos/NovyWave/test_files/simple.vcd",
     "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb",
@@ -36,12 +36,12 @@ load_files_scroll_position = 886
 
 [workspace.docked_bottom_dimensions]
 files_and_scopes_panel_width = 464.0
-files_and_scopes_panel_height = 364.0
-selected_variables_panel_name_column_width = 337.0
+files_and_scopes_panel_height = 360.0
+selected_variables_panel_name_column_width = 386.0
 selected_variables_panel_value_column_width = 370.0
 
 [workspace.docked_right_dimensions]
-files_and_scopes_panel_width = 288.0
+files_and_scopes_panel_width = 377.0
 files_and_scopes_panel_height = 357.0
 selected_variables_panel_name_column_width = 318.0
 selected_variables_panel_value_column_width = 301.0
@@ -76,4 +76,92 @@ formatter = "Hexadecimal"
 
 [[workspace.selected_variables]]
 unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv|AlignerPlugin_logic_buffer_data"
+formatter = "Hexadecimal"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv|AlignerPlugin_logic_buffer_haltUp"
+formatter = "Hexadecimal"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv|AlignerPlugin_logic_buffer_flushIt"
+formatter = "Hexadecimal"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv|AlignerPlugin_logic_buffer_pc"
+formatter = "Hexadecimal"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv|AlignerPlugin_logic_buffer_hm_Prediction_WORD_SLICES_BRANCH"
+formatter = "Hexadecimal"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv|AlignerPlugin_logic_buffer_hm_Prediction_WORD_JUMP_SLICE"
+formatter = "Hexadecimal"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv|AlignerPlugin_logic_buffer_hm_Prediction_WORD_JUMP_PC"
+formatter = "Hexadecimal"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv|AlignerPlugin_logic_buffer_hm_GSharePlugin_GSHARE_COUNTER_0"
+formatter = "Hexadecimal"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv|AlignerPlugin_logic_buffer_hm_GSharePlugin_GSHARE_COUNTER_1"
+formatter = "Hexadecimal"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv|AlignerPlugin_logic_buffer_hm_GSharePlugin_GSHARE_COUNTER_3"
+formatter = "Hexadecimal"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv|AlignerPlugin_logic_buffer_hm_GSharePlugin_GSHARE_COUNTER_2"
+formatter = "Hexadecimal"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv|AlignerPlugin_api_haltIt"
+formatter = "Hexadecimal"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv|A_PUT_PARTIAL_DATA"
+formatter = "Hexadecimal"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv|A_GET"
+formatter = "Hexadecimal"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv|A_ACQUIRE_PERM"
+formatter = "Hexadecimal"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv|AlignerPlugin_logic_extractors_0_slicesOh"
+formatter = "Hexadecimal"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv|AlignerPlugin_logic_extractors_0_usableMask_bools_0"
+formatter = "Hexadecimal"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv|AlignerPlugin_logic_extractors_0_usableMask_bools_1"
+formatter = "Hexadecimal"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv|AlignerPlugin_logic_extractors_1_slicesOh"
+formatter = "Hexadecimal"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv|AlignerPlugin_logic_extractors_1_first"
+formatter = "Hexadecimal"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv|AlignerPlugin_logic_extractors_1_ctx_instruction"
+formatter = "Hexadecimal"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv|AlignerPlugin_logic_extractors_1_ctx_hm_Prediction_WORD_JUMP_PC"
+formatter = "Hexadecimal"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv|AlignerPlugin_logic_extractors_1_ctx_hm_GSharePlugin_GSHARE_COUNTER_3"
 formatter = "Hexadecimal"
