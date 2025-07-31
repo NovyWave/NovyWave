@@ -64,7 +64,6 @@ pub fn rust_virtual_variables_list_simple_fill(variables: Vec<VariableWithContex
                 .on_viewport_size_change({
                     let height_mutable = height_mutable.clone();
                     move |_width, height| {
-                        // Remove height cap to allow unlimited panel height (Step 1)
                         let constrained_height = (height as f64).max(100.0) as u32;
                         height_mutable.set_neq(constrained_height);
                     }

@@ -220,7 +220,7 @@ fn main_layout() -> impl Element {
     El::new()
         .s(Height::screen())
         .s(Width::fill())
-        .s(Scrollbars::both())
+        // TEST 3: Remove root container scrollbars
         .text_content_selecting_signal(
             is_any_divider_dragging.map(|is_dragging| {
                 if is_dragging {
@@ -300,13 +300,12 @@ fn docked_layout_wrapper() -> impl Element {
     El::new()
         .s(Height::screen())
         .s(Width::fill())
-        .s(Scrollbars::both())
+        // TEST 3: Remove root container scrollbars
         .child_signal(IS_DOCKED_TO_BOTTOM.signal().map(|is_docked| {
             if is_docked {
                 // Docked to Bottom layout
                 El::new()
                     .s(Height::fill())
-                    .s(Scrollbars::both())
                     .child(
                         Column::new()
                             .s(Height::fill())
@@ -315,18 +314,33 @@ fn docked_layout_wrapper() -> impl Element {
                                 Row::new()
                                     .s(Height::exact_signal(FILES_PANEL_HEIGHT.signal()))
                                     .s(Width::fill())
-                                    .item(files_panel_docked())
+                                    .item(
+                                        El::new()
+                                            .s(Width::exact_signal(FILES_PANEL_WIDTH.signal()))
+                                            .s(Height::fill())
+                                            .child(files_panel_with_height())
+                                    )
                                     .item(vertical_divider(VERTICAL_DIVIDER_DRAGGING.clone()))
-                                    .item(variables_panel_docked())
+                                    .item(
+                                        El::new()
+                                            .s(Width::fill())
+                                            .s(Height::fill())
+                                            .child(variables_panel_with_fill())
+                                    )
                             )
                             .item(horizontal_divider(HORIZONTAL_DIVIDER_DRAGGING.clone()))
-                            .item(selected_variables_with_waveform_panel())
+                            .item(
+                                El::new()
+                                    .s(Width::fill())
+                                    .s(Height::fill())
+                                    .s(Scrollbars::both())
+                                    .child(selected_variables_with_waveform_panel())
+                            )
                     )
             } else {
                 // Docked to Right layout
                 El::new()
                     .s(Height::fill())
-                    .s(Scrollbars::both())
                     .child(
                         Row::new()
                             .s(Height::fill())

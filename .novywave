@@ -36,13 +36,13 @@ load_files_scroll_position = 886
 
 [workspace.docked_bottom_dimensions]
 files_and_scopes_panel_width = 464.0
-files_and_scopes_panel_height = 360.0
+files_and_scopes_panel_height = 362.0
 selected_variables_panel_name_column_width = 386.0
 selected_variables_panel_value_column_width = 370.0
 
 [workspace.docked_right_dimensions]
-files_and_scopes_panel_width = 377.0
-files_and_scopes_panel_height = 357.0
+files_and_scopes_panel_width = 269.0
+files_and_scopes_panel_height = 332.0
 selected_variables_panel_name_column_width = 318.0
 selected_variables_panel_value_column_width = 301.0
 

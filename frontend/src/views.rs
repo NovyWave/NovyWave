@@ -1140,14 +1140,9 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                             ),
                         // Resizable columns layout with draggable separators
                         El::new()
-                            .s(Height::exact_signal(
-                                SELECTED_VARIABLES.signal_vec_cloned().len().map(|vars_count| {
-                                    // Add one extra row height for scrollbar (names/values) or footer/timeline (canvas)
-                                    (vars_count + 1) as u32 * SELECTED_VARIABLES_ROW_HEIGHT
-                                })
-                            ))
+                            .s(Height::fill())
                             .s(Width::fill())
-                            .s(Scrollbars::both())
+                            .s(Scrollbars::x_and_clip_y())
                             .child(
                                 Row::new()
                                     .s(Height::fill())
@@ -1420,10 +1415,10 @@ pub fn waveform_panel() -> impl Element {
 // Helper functions for different panel configurations
 
 pub fn files_panel_with_height() -> impl Element {
+    // TEST 2: Remove Scrollbars::both() from individual panels
     El::new()
         .s(Height::exact_signal(FILES_PANEL_HEIGHT.signal()))
         .s(Width::growable())
-        .s(Scrollbars::both())
         .update_raw_el(|raw_el| {
             raw_el.style("scrollbar-width", "thin")
                 .style_signal("scrollbar-color", primary_6().map(|thumb| primary_3().map(move |track| format!("{} {}", thumb, track))).flatten())
@@ -1432,15 +1427,36 @@ pub fn files_panel_with_height() -> impl Element {
 }
 
 pub fn variables_panel_with_fill() -> impl Element {
+    // TEST 2: Remove Scrollbars::both() from individual panels
     El::new()
         .s(Width::growable())
         .s(Height::fill())
         .s(Scrollbars::both())
-        .update_raw_el(|raw_el| {
-            raw_el.style("scrollbar-width", "thin")
-                .style_signal("scrollbar-color", primary_6().map(|thumb| primary_3().map(move |track| format!("{} {}", thumb, track))).flatten())
-        })
-        .child(variables_panel())
+        .child_signal(IS_DOCKED_TO_BOTTOM.signal().map(|is_docked| {
+            if is_docked {
+                // When docked to bottom, use FILES_PANEL_HEIGHT signal for synchronized resizing
+                El::new()
+                    .s(Width::fill())
+                    .s(Height::exact_signal(FILES_PANEL_HEIGHT.signal()))
+                    .update_raw_el(|raw_el| {
+                        raw_el.style("scrollbar-width", "thin")
+                            .style_signal("scrollbar-color", primary_6().map(|thumb| primary_3().map(move |track| format!("{} {}", thumb, track))).flatten())
+                    })
+                    .child(variables_panel())
+                    .into_element()
+            } else {
+                // When docked to right, fill available height
+                El::new()
+                    .s(Width::fill())
+                    .s(Height::fill())
+                    .update_raw_el(|raw_el| {
+                        raw_el.style("scrollbar-width", "thin")
+                            .style_signal("scrollbar-color", primary_6().map(|thumb| primary_3().map(move |track| format!("{} {}", thumb, track))).flatten())
+                    })
+                    .child(variables_panel())
+                    .into_element()
+            }
+        }))
 }
 
 pub fn files_panel_docked() -> impl Element {
@@ -1472,13 +1488,21 @@ fn create_panel(header_content: impl Element, content: impl Element) -> impl Ele
     El::new()
         .s(Height::fill())
         .s(Width::growable())
+        .s(Scrollbars::both())
         .s(Background::new().color_signal(neutral_2()))
+        .update_raw_el(|raw_el| {
+            raw_el.style("scrollbar-width", "thin")
+        })
         .s(Borders::all_signal(neutral_4().map(|color| {
             Border::new().width(1).color(color)
         })))
         .child(
             Column::new()
                 .s(Height::fill())
+                .s(Scrollbars::both())
+                .update_raw_el(|raw_el| {
+                    raw_el.style("scrollbar-width", "thin")
+                })
                 .item(
                     El::new()
                         .s(Padding::new().x(12).y(4))
