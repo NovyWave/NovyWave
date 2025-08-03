@@ -48,7 +48,7 @@ selected_variables_panel_value_column_width = 301.0
 
 [[workspace.selected_variables]]
 unique_id = "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s|A"
-formatter = "Hexadecimal"
+formatter = "BinaryWithGroups"
 
 [[workspace.selected_variables]]
 unique_id = "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s|B"
