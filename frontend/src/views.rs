@@ -352,8 +352,8 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
     // Get signal type for format options and default
     let signal_type = get_signal_type_for_selected_variable(selected_var);
     
-    // Use the formatter exactly as set by user, no automatic guessing
-    let current_format = selected_var.formatter;
+    // Use the formatter exactly as set by user, or default to Hexadecimal
+    let current_format = selected_var.formatter.unwrap_or_default();
     
     // Format options are now generated dynamically in the reactive signal based on MultiFormatValue
     
@@ -704,14 +704,13 @@ fn update_variable_format(unique_id: &str, new_format: shared::VarFormat) {
     let mut selected_vars = SELECTED_VARIABLES.lock_mut();
     if let Some(var_index) = selected_vars.iter().position(|var| var.unique_id == unique_id) {
         let mut updated_var = selected_vars[var_index].clone();
-        updated_var.formatter = new_format;
-        updated_var.user_has_set_format = true; // Mark as explicitly set by user
+        updated_var.formatter = Some(new_format); // Mark as explicitly set by user
         selected_vars.set_cloned(var_index, updated_var);
     }
     drop(selected_vars);
     
-    // Save config immediately
-    config::save_current_config();
+    // Save config immediately  
+    crate::state::save_selected_variables();
     
     // Trigger signal value query refresh with new format
     trigger_signal_value_queries();
@@ -737,7 +736,7 @@ fn query_signal_values_at_time(time_seconds: f64) {
                 scope_path,
                 variable_name,
                 time_seconds,
-                format: selected_var.formatter,
+                format: selected_var.formatter.unwrap_or_default(),
             };
             
             queries_by_file.entry(file_path).or_insert_with(Vec::new).push(query);
@@ -1178,7 +1177,6 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                                 .size(ButtonSize::Small)
                                                                 .custom_padding(4, 2)
                                                                 .on_press(move || {
-                                                                    zoon::println!("🚨 REMOVE BUTTON CLICKED for {}", &unique_id);
                                                                     remove_selected_variable(&unique_id);
                                                                 })
                                                                 .build()

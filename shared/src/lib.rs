@@ -133,15 +133,11 @@ pub struct SelectedVariable {
     /// Pipe-separated identifier: "/full/path/file.vcd|scope_path|variable_name"
     /// Example: "/home/user/test_files/simple.vcd|simple_tb.s|A"
     pub unique_id: String,
-    /// Format type for display - defaults to Hexadecimal
-    pub formatter: VarFormat,
-    /// Track whether user explicitly set this formatter (vs auto-assigned default)
-    #[serde(default = "default_false", skip_serializing_if = "is_false")]
-    pub user_has_set_format: bool,
+    /// Format type for display - None uses default (Hexadecimal)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub formatter: Option<VarFormat>,
 }
 
-fn default_false() -> bool { false }
-fn is_false(value: &bool) -> bool { !value }
 
 impl SelectedVariable {
     pub fn new(variable: Signal, file_path: String, scope_full_name: String) -> Self {
@@ -149,8 +145,7 @@ impl SelectedVariable {
         
         Self {
             unique_id,
-            formatter: VarFormat::default(), // Still default for display, but not saved
-            user_has_set_format: false, // Not set by user initially
+            formatter: None, // Use default (Hexadecimal)
         }
     }
     
@@ -159,8 +154,7 @@ impl SelectedVariable {
         
         Self {
             unique_id,
-            formatter,
-            user_has_set_format: true, // Explicitly set by caller
+            formatter: Some(formatter), // Explicitly set by user
         }
     }
     
