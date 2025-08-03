@@ -15,6 +15,8 @@ use file_utils::*;
 
 mod format_utils;
 
+mod waveform_canvas;
+
 mod connection;
 use connection::*;
 

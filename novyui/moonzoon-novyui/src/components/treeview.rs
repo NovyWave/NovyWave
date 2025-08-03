@@ -739,7 +739,7 @@ fn render_tree_item(
                             El::new()
                                 .s(Padding::new().x(SPACING_4))
                                 .child({
-                                    // Apply inline smart label styling if label contains '/'
+                                    // Apply inline smart label styling if label contains '/' or timeline info
                                     if item.label.contains('/') {
                                         // Parse smart label to separate prefix from filename
                                         if let Some(last_slash) = item.label.rfind('/') {
@@ -768,8 +768,34 @@ fn render_tree_item(
                                             // Fallback to regular text if parsing fails
                                             Text::new(&item.label).unify()
                                         }
+                                    } else if item.label.contains(" (") && item.label.contains("–") && item.label.ends_with(')') {
+                                        // Parse timeline info to separate filename from time range
+                                        if let Some(timeline_start) = item.label.rfind(" (") {
+                                            let filename = &item.label[..timeline_start];
+                                            let timeline_info = &item.label[timeline_start..];
+                                            
+                                            // Create Paragraph with filename and dimmed timeline info
+                                            zoon::Paragraph::new()
+                                                .content(
+                                                    El::new()
+                                                        .s(Font::new().color_signal(theme().map(|t| match t {
+                                                            crate::tokens::theme::Theme::Light => "oklch(15% 0.14 250)", // neutral_11 light
+                                                            crate::tokens::theme::Theme::Dark => "oklch(95% 0.14 250)", // neutral_11 dark
+                                                        })).no_wrap())
+                                                        .child(filename)
+                                                )
+                                                .content(
+                                                    El::new()
+                                                        .s(Font::new().color_signal(crate::tokens::color::neutral_8()).no_wrap())
+                                                        .child(timeline_info)
+                                                )
+                                                .unify()
+                                        } else {
+                                            // Fallback to regular text if parsing fails
+                                            Text::new(&item.label).unify()
+                                        }
                                     } else {
-                                        // No prefix, use regular text
+                                        // No prefix or timeline info, use regular text
                                         Text::new(&item.label).unify()
                                     }
                                 })

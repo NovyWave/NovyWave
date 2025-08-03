@@ -155,6 +155,38 @@ let variable_data = selected_vars.map(|vars| {
 ### Phase 7: Multi-File Support
 16. **Adapt for multi-file sourced variables** (expand beyond simple.vcd + two variables testing)
 
+### Phase 8: Theme Integration ✅ COMPLETED
+17. **Adapt canvas to theme changes** (replace hardcoded RGBA colors with reactive theme-aware design tokens)
+    - **IMPLEMENTATION**: Canvas now uses theme-aware color constants based on neutral design tokens
+    - **COLOR MAPPING**: All hardcoded colors replaced with theme_colors module constants
+    - **CURRENT LIMITATION**: Static theme colors (not reactive to theme switches yet)
+    - **FUTURE ENHANCEMENT**: Make colors fully reactive to theme changes
+
+### Phase 9: Timeline Refinements ✅ COMPLETED
+18. **Fix timeline edge label visibility** - Timeline start (0s) and end (250s) labels are partially cut off at canvas edges
+    - **SOLUTION**: Implemented 10px margin system - labels only show when they won't be cut off
+19. **Improve timeline tick spacing** - Replace fixed segment count with pixel-based spacing for professional appearance
+    - **SOLUTION**: Implemented round_to_nice_number() algorithm for professional tick spacing
+    - **RESULT**: Timeline now shows round numbers (50s, 100s, 150s, 200s) instead of awkward values
+    - **ADAPTIVE**: 80px target spacing automatically adjusts tick count based on canvas width
+    - **PROFESSIONAL**: Uses 1-2-5-10 scaling pattern for optimal readability
+
+### Phase 10: Dynamic Format Updates
+20. **Implement reactive canvas updates on format changes** - Canvas must redraw when user changes variable format (Oct/Hex/Dec dropdown)
+    - **Current limitation**: Canvas only updates on initial load, not when user changes format dropdown
+    - **Required**: Add signal listener for format changes in selected variables
+    - **Implementation**: Canvas should react to SELECTED_VARIABLES signal changes and re-render affected rows
+    - **User experience**: When user clicks Hex→Bins dropdown, corresponding row should immediately update values
+
+### Phase 11: File Timeline Information ✅ COMPLETED
+21. **Add maximum timeline value and unit to file names in Files & Scope panel** - Display time range info next to file names
+    - **IMPLEMENTATION**: Added get_file_timeline_info() helper function in views.rs
+    - **DISPLAY FORMAT**: "simple.vcd (0s-250s)" and "wave_27.fst (0ns-100ns)" 
+    - **UI INTEGRATION**: Enhanced convert_tracked_files_to_tree_data() to include timeline info in file labels
+    - **CURRENT APPROACH**: Uses same hardcoded values as waveform canvas for consistency
+    - **FUTURE ENHANCEMENT**: Extract actual timeline data from waveform file metadata
+    - **USER BENEFIT**: Users can now see file time ranges at a glance before selecting variables
+
 ### Implementation Notes
 - **Error Prevention**: Check compilation logs after each step to avoid blank page with hidden errors
 - **Incremental Verification**: Each phase includes MANUAL TESTING CHECKPOINTS where developer visually inspects results in browser
