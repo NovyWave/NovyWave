@@ -11,7 +11,7 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(web_sys_unstable_apis)'] }
 zoon.workspace = true
 serde = { version = "1.0", features = ["derive"] }
 indexmap = "2.0"
-fast2d = { git = "https://github.com/NovyWave/Fast2D", rev = "c84195b8a0053e9afdbb8c73f7ea41ef63f695c3", default-features = false, features = [
+fast2d = { path = "../../Fast2D/crates/fast2d", default-features = false, features = [
     # Choose one of the following rendering APIs:
     # "webgl",
     # "webgpu",

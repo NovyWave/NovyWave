@@ -1452,7 +1452,6 @@ dependencies = [
 [[package]]
 name = "fast2d"
 version = "0.1.0"
-source = "git+https://github.com/NovyWave/Fast2D?rev=c84195b8a0053e9afdbb8c73f7ea41ef63f695c3#c84195b8a0053e9afdbb8c73f7ea41ef63f695c3"
 dependencies = [
  "cfg-if",
  "ttf-parser",
