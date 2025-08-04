@@ -137,11 +137,40 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
                         wellen::FileFormat::Unknown => FileFormat::VCD, // Fallback
                     };
                     
+                    // Extract timeline range from time_table and normalize to seconds
+                    let (min_time, max_time) = if !body_result.time_table.is_empty() {
+                        let raw_min = *body_result.time_table.first().unwrap() as f64;
+                        let raw_max = *body_result.time_table.last().unwrap() as f64;
+                        
+                        // Convert to seconds based on file format
+                        let (min_seconds, max_seconds) = match header_result.file_format {
+                            wellen::FileFormat::Vcd => {
+                                // VCD: time table is in VCD's native units (depends on $timescale)
+                                // For $timescale 1s: values are already in seconds
+                                // TODO: Parse actual timescale from VCD header for proper conversion
+                                (raw_min, raw_max)
+                            },
+                            _ => {
+                                // FST and other formats: time table is in femtoseconds, convert to seconds
+                                (raw_min / 1_000_000_000_000.0, raw_max / 1_000_000_000_000.0)
+                            }
+                        };
+                        
+                        println!("DEBUG: File format: {:?}, Raw time_table - min: {}, max: {}, Normalized to seconds - min: {}, max: {}", 
+                                header_result.file_format, raw_min, raw_max, min_seconds, max_seconds);
+                        (Some(min_seconds), Some(max_seconds))
+                    } else {
+                        println!("DEBUG: Empty time_table");
+                        (None, None)
+                    };
+                    
                     let waveform_file = WaveformFile {
                         id: file_id.clone(),
                         filename,
                         format,
                         scopes,
+                        min_time,
+                        max_time,
                     };
                     
                     let file_hierarchy = FileHierarchy {

@@ -1,18 +1,47 @@
 use zoon::*;
 use fast2d;
-use crate::state::SELECTED_VARIABLES;
+use crate::state::{SELECTED_VARIABLES, LOADED_FILES};
+use crate::config::current_theme;
 use shared::{SelectedVariable, VarFormat};
 use std::rc::Rc;
 use std::cell::RefCell;
-// Theme-aware color constants for Fast2D rendering
-// TODO: Make these reactive to theme changes in a future update
-mod theme_colors {
-    // Dark theme colors (current default)
-    pub const NEUTRAL_2_RGBA: (u8, u8, u8, f32) = (45, 47, 50, 1.0);    // neutral_2() equivalent
-    pub const NEUTRAL_3_RGBA: (u8, u8, u8, f32) = (52, 54, 58, 1.0);    // neutral_3() equivalent  
-    pub const NEUTRAL_4_RGBA: (u8, u8, u8, f32) = (65, 69, 75, 1.0);    // neutral_4() equivalent
-    pub const NEUTRAL_5_RGBA: (u8, u8, u8, f32) = (75, 79, 86, 1.0);    // neutral_5() equivalent
-    pub const NEUTRAL_12_RGBA: (u8, u8, u8, f32) = (253, 253, 253, 1.0); // neutral_12() equivalent (high contrast text)
+use moonzoon_novyui::tokens::theme::Theme as NovyUITheme;
+use shared::Theme as SharedTheme;
+
+// Convert shared theme to NovyUI theme
+fn convert_theme(shared_theme: &SharedTheme) -> NovyUITheme {
+    match shared_theme {
+        SharedTheme::Dark => NovyUITheme::Dark,
+        SharedTheme::Light => NovyUITheme::Light,
+    }
+}
+
+// Get current theme colors as RGBA tuples based on current theme
+fn get_current_theme_colors(current_theme: &NovyUITheme) -> ThemeColors {
+    match current_theme {
+        NovyUITheme::Dark => ThemeColors {
+            neutral_2: (45, 47, 50, 1.0),     // Dark theme neutral_2
+            neutral_3: (52, 54, 58, 1.0),     // Dark theme neutral_3
+            neutral_4: (65, 69, 75, 1.0),     // Dark theme neutral_4
+            neutral_5: (75, 79, 86, 1.0),     // Dark theme neutral_5
+            neutral_12: (253, 253, 253, 1.0), // Dark theme high contrast text
+        },
+        NovyUITheme::Light => ThemeColors {
+            neutral_2: (249, 250, 251, 1.0),  // Light theme neutral_2
+            neutral_3: (243, 244, 246, 1.0),  // Light theme neutral_3
+            neutral_4: (229, 231, 235, 1.0),  // Light theme neutral_4
+            neutral_5: (209, 213, 219, 1.0),  // Light theme neutral_5
+            neutral_12: (17, 24, 39, 1.0),    // Light theme high contrast text
+        },
+    }
+}
+
+struct ThemeColors {
+    neutral_2: (u8, u8, u8, f32),
+    neutral_3: (u8, u8, u8, f32),
+    neutral_4: (u8, u8, u8, f32),
+    neutral_5: (u8, u8, u8, f32),
+    neutral_12: (u8, u8, u8, f32),
 }
 
 // Helper function to round raw time steps to professional-looking numbers
@@ -34,10 +63,10 @@ pub fn waveform_canvas() -> impl Element {
     El::new()
         .s(Width::fill())
         .s(Height::fill())
-        .child_signal(canvas_element().into_signal_option())
+        .child_signal(create_canvas_element().into_signal_option())
 }
 
-async fn canvas_element() -> impl Element {
+async fn create_canvas_element() -> impl Element {
     let mut zoon_canvas = Canvas::new()
         .width(0)
         .height(0)
@@ -47,25 +76,42 @@ async fn canvas_element() -> impl Element {
     let dom_canvas = zoon_canvas.raw_el_mut().dom_element();
     let mut canvas_wrapper = fast2d::CanvasWrapper::new_with_canvas(dom_canvas).await;
 
-    // Initialize with current selected variables
-    canvas_wrapper.update_objects(move |objects| {
+    // Initialize with default dark theme (theme reactivity will update it)
+    canvas_wrapper.update_objects(|objects| {
         let selected_vars = SELECTED_VARIABLES.lock_ref();
-        *objects = create_waveform_objects(&selected_vars);
+        *objects = create_waveform_objects_with_theme(&selected_vars, &NovyUITheme::Dark);
     });
 
     // Wrap canvas_wrapper in Rc<RefCell> for sharing
     let canvas_wrapper_shared = Rc::new(RefCell::new(canvas_wrapper));
     let canvas_wrapper_for_signal = canvas_wrapper_shared.clone();
 
-    // Phase 10: Add reactive updates when SELECTED_VARIABLES changes
+    // Add reactive updates when SELECTED_VARIABLES changes
     Task::start(async move {
         SELECTED_VARIABLES.signal_vec_cloned().for_each(move |_| {
             let canvas_wrapper_for_signal = canvas_wrapper_for_signal.clone();
             async move {
                 zoon::println!("SELECTED_VARIABLES changed, updating canvas");
-                canvas_wrapper_for_signal.borrow_mut().update_objects(move |objects| {
+                canvas_wrapper_for_signal.borrow_mut().update_objects(|objects| {
                     let selected_vars = SELECTED_VARIABLES.lock_ref();
-                    *objects = create_waveform_objects(&selected_vars);
+                    // This will be updated by theme change handler - use fallback for now
+                    *objects = create_waveform_objects_with_theme(&selected_vars, &NovyUITheme::Dark);
+                });
+            }
+        }).await;
+    });
+
+    // Add reactive updates when theme changes
+    let canvas_wrapper_for_theme = canvas_wrapper_shared.clone();
+    Task::start(async move {
+        current_theme().for_each(move |theme_value| {
+            let canvas_wrapper_for_theme = canvas_wrapper_for_theme.clone();
+            async move {
+                zoon::println!("Theme changed, updating canvas colors");
+                canvas_wrapper_for_theme.borrow_mut().update_objects(move |objects| {
+                    let selected_vars = SELECTED_VARIABLES.lock_ref();
+                    let novyui_theme = convert_theme(&theme_value);
+                    *objects = create_waveform_objects_with_theme(&selected_vars, &novyui_theme);
                 });
             }
         }).await;
@@ -79,21 +125,27 @@ async fn canvas_element() -> impl Element {
             // Re-create objects with new dimensions
             canvas_wrapper_for_resize.borrow_mut().update_objects(move |objects| {
                 let selected_vars = SELECTED_VARIABLES.lock_ref();
-                *objects = create_waveform_objects_with_dimensions(&selected_vars, width as f32, height as f32);
+                *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, width as f32, height as f32, &NovyUITheme::Dark);
             });
         })
     })
 }
 
-fn create_waveform_objects(selected_vars: &[SelectedVariable]) -> Vec<fast2d::Object2d> {
-    create_waveform_objects_with_dimensions(selected_vars, 800.0, 400.0)
+
+
+
+fn create_waveform_objects_with_theme(selected_vars: &[SelectedVariable], theme: &NovyUITheme) -> Vec<fast2d::Object2d> {
+    create_waveform_objects_with_dimensions_and_theme(selected_vars, 800.0, 400.0, theme)
 }
 
-fn create_waveform_objects_with_dimensions(selected_vars: &[SelectedVariable], canvas_width: f32, canvas_height: f32) -> Vec<fast2d::Object2d> {
+fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVariable], canvas_width: f32, canvas_height: f32, theme: &NovyUITheme) -> Vec<fast2d::Object2d> {
     let mut objects = Vec::new();
     
     zoon::println!("Creating waveform objects for {} selected variables with dimensions {}x{}", 
                    selected_vars.len(), canvas_width, canvas_height);
+    
+    // Get current theme colors
+    let theme_colors = get_current_theme_colors(theme);
     
     // Calculate row layout according to specs
     let total_rows = selected_vars.len() + 1; // variables + timeline
@@ -104,11 +156,11 @@ fn create_waveform_objects_with_dimensions(selected_vars: &[SelectedVariable], c
         let y_position = index as f32 * row_height;
         let is_even_row = index % 2 == 0;
         
-        // Theme-aware alternating backgrounds using design token equivalents 
+        // Theme-aware alternating backgrounds using current theme colors
         let background_color = if is_even_row {
-            theme_colors::NEUTRAL_2_RGBA
+            theme_colors.neutral_2
         } else {
-            theme_colors::NEUTRAL_3_RGBA
+            theme_colors.neutral_3
         };
         
         zoon::println!("Creating row {} for variable {} at y={} with size {}x{}", 
@@ -162,13 +214,18 @@ fn create_waveform_objects_with_dimensions(selected_vars: &[SelectedVariable], c
             vec![(0.0, "0")]
         };
         
-        // Calculate total time based on source file
-        let total_time = if file_name == "simple.vcd" {
-            250.0  // simple.vcd max time
-        } else if file_name == "wave_27.fst" {
-            100.0  // wave_27.fst placeholder max time (TODO: get actual max time)
-        } else {
-            100.0  // Default fallback
+        // Get actual total time from loaded file data
+        let total_time = {
+            let loaded_files = LOADED_FILES.lock_ref();
+            if let Some(loaded_file) = loaded_files.iter().find(|f| f.id == file_path) {
+                if let Some(file_max) = loaded_file.max_time {
+                    file_max as f32
+                } else {
+                    250.0 // Fallback if no max_time available
+                }
+            } else {
+                250.0 // Fallback if file not found
+            }
         };
         
         for (rect_index, (start_time, binary_value)) in time_value_pairs.iter().enumerate() {
@@ -186,11 +243,11 @@ fn create_waveform_objects_with_dimensions(selected_vars: &[SelectedVariable], c
             let rect_width = rect_end_x - rect_start_x;
             let is_even_rect = rect_index % 2 == 0;
             
-            // Theme-aware alternating rectangle colors using design token equivalents
+            // Theme-aware alternating rectangle colors using current theme colors
             let rect_color = if is_even_rect {
-                theme_colors::NEUTRAL_4_RGBA
+                theme_colors.neutral_4
             } else {
-                theme_colors::NEUTRAL_5_RGBA
+                theme_colors.neutral_5
             };
             
             // Create value rectangle with actual time-based width
@@ -206,7 +263,7 @@ fn create_waveform_objects_with_dimensions(selected_vars: &[SelectedVariable], c
             let formatted_value = format.format(binary_value);
             
             // Add formatted value text centered in rectangle with theme-aware color
-            let text_color = theme_colors::NEUTRAL_12_RGBA; // High contrast text
+            let text_color = theme_colors.neutral_12; // High contrast text
             objects.push(
                 fast2d::Text::new()
                     .text(formatted_value)
@@ -225,7 +282,7 @@ fn create_waveform_objects_with_dimensions(selected_vars: &[SelectedVariable], c
         let timeline_y = (total_rows - 1) as f32 * row_height;
         zoon::println!("Creating timeline row at y={} with size {}x{}", timeline_y, canvas_width, row_height);
         
-        let timeline_bg_color = theme_colors::NEUTRAL_2_RGBA; // Consistent with alternating backgrounds
+        let timeline_bg_color = theme_colors.neutral_2; // Consistent with alternating backgrounds
         objects.push(
             fast2d::Rectangle::new()
                 .position(0.0, timeline_y)
@@ -234,32 +291,33 @@ fn create_waveform_objects_with_dimensions(selected_vars: &[SelectedVariable], c
                 .into()
         );
         
-        // Calculate actual timeline range from selected variables' files  
-        // Phase 7: Find maximum time across all files referenced by selected variables
-        let mut max_time: f32 = 0.0;
+        // Calculate actual timeline range from loaded files with real time_table data
+        let mut min_time: f32 = f32::MAX;
+        let mut max_time: f32 = f32::MIN;
+        let loaded_files = LOADED_FILES.lock_ref();
         let selected_vars = SELECTED_VARIABLES.lock_ref();
         
+        // Get timeline ranges from actual loaded files based on selected variables
         for var in selected_vars.iter() {
             let file_path = var.unique_id.split('|').next().unwrap_or("");
-            let file_name = file_path.split('/').last().unwrap_or("unknown");
             
-            let file_max_time = if file_name == "simple.vcd" {
-                250.0  // simple.vcd max time  
-            } else if file_name == "wave_27.fst" {
-                100.0  // wave_27.fst placeholder max time
-            } else {
-                100.0  // Default fallback
-            };
-            
-            max_time = max_time.max(file_max_time);
+            // Find the corresponding loaded file
+            if let Some(loaded_file) = loaded_files.iter().find(|f| f.id == file_path) {
+                if let (Some(file_min), Some(file_max)) = (loaded_file.min_time, loaded_file.max_time) {
+                    zoon::println!("DEBUG: File {} has timeline range: {} to {}", file_path, file_min, file_max);
+                    min_time = min_time.min(file_min as f32);
+                    max_time = max_time.max(file_max as f32);
+                }
+            }
         }
         
-        // Fallback if no variables selected
-        if max_time == 0.0 {
-            max_time = 250.0;
+        // Fallback to default values if no valid timeline data found
+        if min_time == f32::MAX || max_time == f32::MIN {
+            min_time = 0.0;
+            max_time = 250.0; // Default fallback
         }
         
-        let min_time = 0.0;   // TODO: Extract actual start time from waveform data - files may not start at 0!
+        zoon::println!("DEBUG: Final timeline values - min: {}, max: {}", min_time, max_time);
         let time_range = max_time - min_time;
         
         // Phase 9: Pixel-based spacing algorithm for professional timeline
@@ -281,7 +339,7 @@ fn create_waveform_objects_with_dimensions(selected_vars: &[SelectedVariable], c
             let should_show_label = x_position >= label_margin && x_position <= (canvas_width - label_margin);
             
             // Create vertical tick mark with theme-aware color
-            let tick_color = theme_colors::NEUTRAL_12_RGBA; // High contrast for visibility
+            let tick_color = theme_colors.neutral_12; // High contrast for visibility
             objects.push(
                 fast2d::Rectangle::new()
                     .position(x_position, timeline_y + row_height - 8.0)
@@ -293,7 +351,7 @@ fn create_waveform_objects_with_dimensions(selected_vars: &[SelectedVariable], c
             // Add time label with actual time units and theme-aware color (only if not cut off)
             if should_show_label {
                 let time_label = format!("{}s", time_value as u32);
-                let label_color = theme_colors::NEUTRAL_12_RGBA; // High contrast text
+                let label_color = theme_colors.neutral_12; // High contrast text
                 objects.push(
                     fast2d::Text::new()
                         .text(time_label)

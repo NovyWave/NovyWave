@@ -103,6 +103,8 @@ pub struct WaveformFile {
     pub filename: String,
     pub format: FileFormat,
     pub scopes: Vec<ScopeData>,
+    pub min_time: Option<f64>,
+    pub max_time: Option<f64>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
