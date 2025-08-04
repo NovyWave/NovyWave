@@ -83,6 +83,7 @@ pub struct WorkspaceSection {
     pub load_files_expanded_directories: MutableVec<String>,
     pub panel_layouts: Mutable<PanelLayouts>,
     pub selected_variables: MutableVec<shared::SelectedVariable>,
+    pub timeline_cursor_position: Mutable<f32>,
 }
 
 // DockMode enum now imported from shared crate for type safety
@@ -196,6 +197,7 @@ impl Default for WorkspaceSection {
             load_files_expanded_directories: MutableVec::new(),
             panel_layouts: Mutable::new(PanelLayouts::default()),
             selected_variables: MutableVec::new(),
+            timeline_cursor_position: Mutable::new(10.0),
         }
     }
 }
@@ -289,6 +291,7 @@ pub struct SerializableWorkspaceSection {
     pub load_files_expanded_directories: Vec<String>,
     pub panel_layouts: SerializablePanelLayouts,
     pub selected_variables: Vec<shared::SelectedVariable>,
+    pub timeline_cursor_position: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -362,6 +365,7 @@ impl ConfigStore {
                         variables_value_column_width: self.workspace.lock_ref().panel_layouts.lock_ref().docked_to_right.lock_ref().variables_value_column_width.get(),
                     },
                 },
+                timeline_cursor_position: self.workspace.lock_ref().timeline_cursor_position.get(),
             },
             dialogs: SerializableDialogSection {
                 show_file_dialog: self.dialogs.lock_ref().show_file_dialog.get(),
@@ -402,6 +406,8 @@ impl ConfigStore {
         self.workspace.lock_mut().expanded_scopes.lock_mut().replace_cloned(config.workspace.expanded_scopes);
         self.workspace.lock_mut().load_files_expanded_directories.lock_mut().replace_cloned(config.workspace.load_files_expanded_directories);
         self.workspace.lock_mut().selected_variables.lock_mut().replace_cloned(config.workspace.selected_variables);
+        
+        self.workspace.lock_mut().timeline_cursor_position.set(config.workspace.timeline_cursor_position);
 
         {
             let workspace_ref = self.workspace.lock_ref();
@@ -601,6 +607,17 @@ fn store_config_on_any_change() {
             }
         }).await
     });
+    
+    // Timeline cursor position changes trigger config save
+    let timeline_cursor_position_signal = crate::state::TIMELINE_CURSOR_POSITION.signal();
+    Task::start(async move {
+        timeline_cursor_position_signal.for_each_sync(|_| {
+            // Only save if initialization is complete to prevent race conditions
+            if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
+                save_config_to_backend();
+            }
+        }).await
+    });
 }
 
 /// Backend-compatible panel dimensions with only the 2 fields that exist in shared schema
@@ -666,6 +683,7 @@ pub fn save_config_to_backend() {
             load_files_scroll_position: serializable_config.session.file_picker.scroll_position,
             variables_search_filter: serializable_config.session.variables_search_filter,
             selected_variables: serializable_config.workspace.selected_variables,
+            timeline_cursor_position: crate::state::TIMELINE_CURSOR_POSITION.get(),
         },
     };
 
@@ -766,6 +784,7 @@ pub fn apply_config(config: shared::AppConfig) {
             expanded_scopes: config.workspace.expanded_scopes,
             load_files_expanded_directories: config.workspace.load_files_expanded_directories,
             selected_variables: config.workspace.selected_variables,
+            timeline_cursor_position: config.workspace.timeline_cursor_position,
             panel_layouts: SerializablePanelLayouts {
                 docked_to_bottom: SerializablePanelDimensions {
                     files_panel_width: config.workspace.docked_bottom_dimensions.files_and_scopes_panel_width as f32,
@@ -817,6 +836,9 @@ pub fn apply_config(config: shared::AppConfig) {
     
     // Manual sync of scroll position from config to legacy globals
     sync_load_files_scroll_position_from_config();
+    
+    // Manual sync of timeline cursor position from config to legacy globals
+    sync_timeline_cursor_position_from_config();
     
     // Set config loaded flag
     CONFIG_LOADED.set_neq(true);
@@ -970,6 +992,15 @@ fn sync_column_widths_from_config() {
     // Restore column widths
     VARIABLES_NAME_COLUMN_WIDTH.set_neq(name_width as u32);
     VARIABLES_VALUE_COLUMN_WIDTH.set_neq(value_width as u32);
+}
+
+fn sync_timeline_cursor_position_from_config() {
+    let cursor_position = config_store().workspace.lock_ref().timeline_cursor_position.get();
+    
+    // Validate cursor position is non-negative (basic sanity check)
+    let validated_position = cursor_position.max(0.0);
+    
+    crate::state::TIMELINE_CURSOR_POSITION.set_neq(validated_position);
 }
 
 pub fn current_dock_mode() -> impl Signal<Item = DockMode> {

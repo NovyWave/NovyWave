@@ -709,6 +709,10 @@ fn default_toast_dismiss_ms() -> u64 {
     10000 // Default 10 seconds
 }
 
+fn default_timeline_cursor_position() -> f32 {
+    10.0 // Default timeline cursor position in seconds
+}
+
 impl Default for UiSection {
     fn default() -> Self {
         Self {
@@ -751,6 +755,8 @@ pub struct WorkspaceSection {
     pub variables_search_filter: String,
     #[serde(default)]
     pub selected_variables: Vec<SelectedVariable>,
+    #[serde(default = "default_timeline_cursor_position")]
+    pub timeline_cursor_position: f32,
 }
 
 impl Default for WorkspaceSection {
@@ -766,6 +772,7 @@ impl Default for WorkspaceSection {
             load_files_scroll_position: 0,
             variables_search_filter: String::new(),
             selected_variables: Vec::new(),
+            timeline_cursor_position: default_timeline_cursor_position(),
         }
     }
 }

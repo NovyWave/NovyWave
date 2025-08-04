@@ -156,11 +156,8 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
                             }
                         };
                         
-                        println!("DEBUG: File format: {:?}, Raw time_table - min: {}, max: {}, Normalized to seconds - min: {}, max: {}", 
-                                header_result.file_format, raw_min, raw_max, min_seconds, max_seconds);
                         (Some(min_seconds), Some(max_seconds))
                     } else {
-                        println!("DEBUG: Empty time_table");
                         (None, None)
                     };
                     

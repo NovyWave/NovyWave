@@ -32,12 +32,13 @@ load_files_expanded_directories = [
 ]
 selected_scope_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP"
 load_files_scroll_position = 886
+timeline_cursor_position = 86.20690155029297
 
 [workspace.docked_bottom_dimensions]
 files_and_scopes_panel_width = 464.0
 files_and_scopes_panel_height = 362.0
 selected_variables_panel_name_column_width = 174.0
-selected_variables_panel_value_column_width = 178.0
+selected_variables_panel_value_column_width = 325.0
 
 [workspace.docked_right_dimensions]
 files_and_scopes_panel_width = 216.0

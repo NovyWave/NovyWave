@@ -44,6 +44,20 @@ use file_validation::*;
 mod error_ui;
 use error_ui::*;
 
+fn init_timeline_signal_handlers() {
+    // Watch for timeline cursor position changes and trigger signal value queries
+    // Use debounce to avoid excessive backend queries during rapid cursor movements
+    Task::start(async {
+        TIMELINE_CURSOR_POSITION.signal()
+            .dedupe()  // Skip duplicate values
+            .for_each_sync(|cursor_position| {
+                // Only query if we have selected variables and config is loaded
+                if CONFIG_LOADED.get() && !SELECTED_VARIABLES.lock_ref().is_empty() {
+                    views::query_signal_values_at_time(cursor_position as f64);
+                }
+            }).await
+    });
+}
 
 /// Entry point: loads fonts and starts the app.
 pub fn main() {
@@ -58,6 +72,9 @@ pub fn main() {
         
         // Initialize signal-based loading completion handling
         init_signal_chains();
+        
+        // Initialize timeline cursor signal value queries
+        init_timeline_signal_handlers();
         
         // Initialize error display system
         init_error_display_system();

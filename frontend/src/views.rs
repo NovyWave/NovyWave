@@ -717,7 +717,7 @@ fn update_variable_format(unique_id: &str, new_format: shared::VarFormat) {
 }
 
 /// Query signal values for selected variables at a specific time
-fn query_signal_values_at_time(time_seconds: f64) {
+pub fn query_signal_values_at_time(time_seconds: f64) {
     let selected_vars = SELECTED_VARIABLES.lock_ref();
     // Process signal value queries for selected variables
     
@@ -761,8 +761,8 @@ pub fn trigger_signal_value_queries() {
     }
     drop(selected_vars);
     
-    // Query at 10 seconds as requested by the user
-    query_signal_values_at_time(10.0);
+    // Query at current timeline cursor position
+    query_signal_values_at_time(crate::state::TIMELINE_CURSOR_POSITION.get() as f64);
 }
 
 

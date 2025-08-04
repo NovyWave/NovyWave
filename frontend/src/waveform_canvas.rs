@@ -95,7 +95,6 @@ async fn create_canvas_element() -> impl Element {
         SELECTED_VARIABLES.signal_vec_cloned().for_each(move |_| {
             let canvas_wrapper_for_signal = canvas_wrapper_for_signal.clone();
             async move {
-                zoon::println!("SELECTED_VARIABLES changed, updating canvas");
                 canvas_wrapper_for_signal.borrow_mut().update_objects(|objects| {
                     let selected_vars = SELECTED_VARIABLES.lock_ref();
                     let cursor_pos = TIMELINE_CURSOR_POSITION.get();
@@ -114,7 +113,6 @@ async fn create_canvas_element() -> impl Element {
         current_theme().for_each(move |theme_value| {
             let canvas_wrapper_for_theme = canvas_wrapper_for_theme.clone();
             async move {
-                zoon::println!("Theme changed, updating canvas colors");
                 canvas_wrapper_for_theme.borrow_mut().update_objects(move |objects| {
                     let selected_vars = SELECTED_VARIABLES.lock_ref();
                     let cursor_pos = TIMELINE_CURSOR_POSITION.get();
@@ -130,7 +128,6 @@ async fn create_canvas_element() -> impl Element {
     let canvas_wrapper_for_resize = canvas_wrapper_shared.clone();
     zoon_canvas.update_raw_el(move |raw_el| {
         raw_el.on_resize(move |width, height| {
-            zoon::println!("Canvas resized to {}x{}", width, height);
             
             // Store canvas dimensions for click calculations
             CANVAS_WIDTH.set(width as f32);
@@ -172,8 +169,6 @@ async fn create_canvas_element() -> impl Element {
                 // Clamp to valid range
                 let clicked_time = clicked_time.max(min_time).min(max_time);
                 
-                zoon::println!("Canvas clicked: page_x={}, canvas_left={}, relative_x={}, canvas_width={}, time_range={}, calculated time: {}s", 
-                               page_click_x, canvas_left, click_x, canvas_width, time_range, clicked_time);
                 
                 // Update cursor position
                 TIMELINE_CURSOR_POSITION.set(clicked_time);
@@ -225,8 +220,6 @@ fn create_waveform_objects_with_theme(selected_vars: &[SelectedVariable], theme:
 fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVariable], canvas_width: f32, canvas_height: f32, theme: &NovyUITheme, cursor_position: f32) -> Vec<fast2d::Object2d> {
     let mut objects = Vec::new();
     
-    zoon::println!("Creating waveform objects for {} selected variables with dimensions {}x{}", 
-                   selected_vars.len(), canvas_width, canvas_height);
     
     // Get current theme colors
     let theme_colors = get_current_theme_colors(theme);
@@ -247,8 +240,6 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
             theme_colors.neutral_3
         };
         
-        zoon::println!("Creating row {} for variable {} at y={} with size {}x{}", 
-                       index, var.unique_id, y_position, canvas_width, row_height);
         
         objects.push(
             fast2d::Rectangle::new()
@@ -364,7 +355,6 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
     // Create timeline row background (last row) using theme-aware color
     if total_rows > 0 {
         let timeline_y = (total_rows - 1) as f32 * row_height;
-        zoon::println!("Creating timeline row at y={} with size {}x{}", timeline_y, canvas_width, row_height);
         
         let timeline_bg_color = theme_colors.neutral_2; // Consistent with alternating backgrounds
         objects.push(
@@ -445,10 +435,8 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
                     .into()
             );
             
-            zoon::println!("Added cursor line at {}s (x={})", cursor_position, cursor_x);
         }
     }
     
-    zoon::println!("Created {} objects total", objects.len());
     objects
 }
