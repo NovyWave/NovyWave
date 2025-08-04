@@ -1273,6 +1273,20 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                         )
                                                 })
                                             )
+                                            .item(
+                                                // Footer row with selected time display
+                                                El::new()
+                                                    .s(Height::exact(SELECTED_VARIABLES_ROW_HEIGHT))
+                                                    .s(Width::fill())
+                                                    .s(Padding::all(8))
+                                                    .s(Font::new().color_signal(neutral_8()).size(12).center())
+                                                    .s(Transform::new().move_up(4))
+                                                    .child_signal(
+                                                        crate::state::TIMELINE_CURSOR_POSITION.signal().map(|cursor_pos| {
+                                                            Text::new(&format!("{}s", cursor_pos))
+                                                        })
+                                                    )
+                                            )
                                     )
                                     .item(variables_vertical_divider(VARIABLES_VALUE_DIVIDER_DRAGGING.clone()))
                                     .item(

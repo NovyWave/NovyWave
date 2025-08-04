@@ -18,6 +18,13 @@ pub static VARIABLES_VALUE_DIVIDER_DRAGGING: Lazy<Mutable<bool>> = lazy::default
 // Selected Variables panel row height
 pub const SELECTED_VARIABLES_ROW_HEIGHT: u32 = 30;
 
+// Timeline cursor position (in seconds)
+pub static TIMELINE_CURSOR_POSITION: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(10.0));
+
+// Canvas dimensions for click calculations
+pub static CANVAS_WIDTH: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(800.0));
+pub static CANVAS_HEIGHT: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(400.0));
+
 // Search filter for Variables panel
 pub static VARIABLES_SEARCH_FILTER: Lazy<Mutable<String>> = lazy::default();
 

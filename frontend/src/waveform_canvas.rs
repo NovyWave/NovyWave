@@ -1,12 +1,13 @@
 use zoon::*;
 use fast2d;
-use crate::state::{SELECTED_VARIABLES, LOADED_FILES};
+use crate::state::{SELECTED_VARIABLES, LOADED_FILES, TIMELINE_CURSOR_POSITION, CANVAS_WIDTH, CANVAS_HEIGHT};
 use crate::config::current_theme;
-use shared::{SelectedVariable, VarFormat};
+use shared::SelectedVariable;
 use std::rc::Rc;
 use std::cell::RefCell;
 use moonzoon_novyui::tokens::theme::Theme as NovyUITheme;
 use shared::Theme as SharedTheme;
+use wasm_bindgen::JsCast;
 
 // Convert shared theme to NovyUI theme
 fn convert_theme(shared_theme: &SharedTheme) -> NovyUITheme {
@@ -25,6 +26,7 @@ fn get_current_theme_colors(current_theme: &NovyUITheme) -> ThemeColors {
             neutral_4: (65, 69, 75, 1.0),     // Dark theme neutral_4
             neutral_5: (75, 79, 86, 1.0),     // Dark theme neutral_5
             neutral_12: (253, 253, 253, 1.0), // Dark theme high contrast text
+            cursor_color: (59, 130, 246, 0.8), // Bright blue cursor with transparency
         },
         NovyUITheme::Light => ThemeColors {
             neutral_2: (249, 250, 251, 1.0),  // Light theme neutral_2
@@ -32,6 +34,7 @@ fn get_current_theme_colors(current_theme: &NovyUITheme) -> ThemeColors {
             neutral_4: (229, 231, 235, 1.0),  // Light theme neutral_4
             neutral_5: (209, 213, 219, 1.0),  // Light theme neutral_5
             neutral_12: (17, 24, 39, 1.0),    // Light theme high contrast text
+            cursor_color: (37, 99, 235, 0.8),  // Bright blue cursor with transparency
         },
     }
 }
@@ -42,6 +45,7 @@ struct ThemeColors {
     neutral_4: (u8, u8, u8, f32),
     neutral_5: (u8, u8, u8, f32),
     neutral_12: (u8, u8, u8, f32),
+    cursor_color: (u8, u8, u8, f32),
 }
 
 // Helper function to round raw time steps to professional-looking numbers
@@ -94,8 +98,11 @@ async fn create_canvas_element() -> impl Element {
                 zoon::println!("SELECTED_VARIABLES changed, updating canvas");
                 canvas_wrapper_for_signal.borrow_mut().update_objects(|objects| {
                     let selected_vars = SELECTED_VARIABLES.lock_ref();
-                    // This will be updated by theme change handler - use fallback for now
-                    *objects = create_waveform_objects_with_theme(&selected_vars, &NovyUITheme::Dark);
+                    let cursor_pos = TIMELINE_CURSOR_POSITION.get();
+                    let canvas_width = CANVAS_WIDTH.get();
+                    let canvas_height = CANVAS_HEIGHT.get();
+                    // Use dark theme as fallback - theme handler will update with correct theme
+                    *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &NovyUITheme::Dark, cursor_pos);
                 });
             }
         }).await;
@@ -110,8 +117,11 @@ async fn create_canvas_element() -> impl Element {
                 zoon::println!("Theme changed, updating canvas colors");
                 canvas_wrapper_for_theme.borrow_mut().update_objects(move |objects| {
                     let selected_vars = SELECTED_VARIABLES.lock_ref();
+                    let cursor_pos = TIMELINE_CURSOR_POSITION.get();
+                    let canvas_width = CANVAS_WIDTH.get();
+                    let canvas_height = CANVAS_HEIGHT.get();
                     let novyui_theme = convert_theme(&theme_value);
-                    *objects = create_waveform_objects_with_theme(&selected_vars, &novyui_theme);
+                    *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &novyui_theme, cursor_pos);
                 });
             }
         }).await;
@@ -121,12 +131,59 @@ async fn create_canvas_element() -> impl Element {
     zoon_canvas.update_raw_el(move |raw_el| {
         raw_el.on_resize(move |width, height| {
             zoon::println!("Canvas resized to {}x{}", width, height);
+            
+            // Store canvas dimensions for click calculations
+            CANVAS_WIDTH.set(width as f32);
+            CANVAS_HEIGHT.set(height as f32);
+            
             canvas_wrapper_for_resize.borrow_mut().resized(width, height);
             // Re-create objects with new dimensions
             canvas_wrapper_for_resize.borrow_mut().update_objects(move |objects| {
                 let selected_vars = SELECTED_VARIABLES.lock_ref();
-                *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, width as f32, height as f32, &NovyUITheme::Dark);
+                let cursor_pos = TIMELINE_CURSOR_POSITION.get();
+                // Use dark theme as fallback - theme handler will update with correct theme
+                *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, width as f32, height as f32, &NovyUITheme::Dark, cursor_pos);
             });
+        })
+        .event_handler({
+            let canvas_wrapper_for_click = canvas_wrapper_shared.clone();
+            move |event: events::Click| {
+                // Handle click to move cursor position
+                let page_click_x = event.x() as f32;
+                
+                // Get canvas element's position relative to page
+                let canvas_element = event.target().unwrap();
+                let canvas_rect = canvas_element.dyn_into::<web_sys::Element>()
+                    .unwrap().get_bounding_client_rect();
+                let canvas_left = canvas_rect.left() as f32;
+                
+                // Calculate click position relative to canvas
+                let click_x = page_click_x - canvas_left;
+                
+                // Use stored canvas width
+                let canvas_width = CANVAS_WIDTH.get();
+                let canvas_height = CANVAS_HEIGHT.get();
+                
+                // Calculate time from click position using consistent timeline range
+                let (min_time, max_time) = get_current_timeline_range();
+                let time_range = max_time - min_time;
+                let clicked_time = min_time + (click_x / canvas_width) * time_range;
+                
+                // Clamp to valid range
+                let clicked_time = clicked_time.max(min_time).min(max_time);
+                
+                zoon::println!("Canvas clicked: page_x={}, canvas_left={}, relative_x={}, canvas_width={}, time_range={}, calculated time: {}s", 
+                               page_click_x, canvas_left, click_x, canvas_width, time_range, clicked_time);
+                
+                // Update cursor position
+                TIMELINE_CURSOR_POSITION.set(clicked_time);
+                
+                // Immediately update canvas with new cursor position to prevent visual glitches
+                canvas_wrapper_for_click.borrow_mut().update_objects(move |objects| {
+                    let selected_vars = SELECTED_VARIABLES.lock_ref();
+                    *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &NovyUITheme::Dark, clicked_time);
+                });
+            }
         })
     })
 }
@@ -134,11 +191,38 @@ async fn create_canvas_element() -> impl Element {
 
 
 
-fn create_waveform_objects_with_theme(selected_vars: &[SelectedVariable], theme: &NovyUITheme) -> Vec<fast2d::Object2d> {
-    create_waveform_objects_with_dimensions_and_theme(selected_vars, 800.0, 400.0, theme)
+// Consolidated function to get current timeline range
+fn get_current_timeline_range() -> (f32, f32) {
+    let mut min_time: f32 = f32::MAX;
+    let mut max_time: f32 = f32::MIN;
+    let loaded_files = LOADED_FILES.lock_ref();
+    let selected_vars = SELECTED_VARIABLES.lock_ref();
+    
+    for var in selected_vars.iter() {
+        let file_path = var.unique_id.split('|').next().unwrap_or("");
+        if let Some(loaded_file) = loaded_files.iter().find(|f| f.id == file_path) {
+            if let (Some(file_min), Some(file_max)) = (loaded_file.min_time, loaded_file.max_time) {
+                min_time = min_time.min(file_min as f32);
+                max_time = max_time.max(file_max as f32);
+            }
+        }
+    }
+    
+    if min_time == f32::MAX || max_time == f32::MIN {
+        (0.0, 250.0) // Default fallback
+    } else {
+        (min_time, max_time)
+    }
 }
 
-fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVariable], canvas_width: f32, canvas_height: f32, theme: &NovyUITheme) -> Vec<fast2d::Object2d> {
+fn create_waveform_objects_with_theme(selected_vars: &[SelectedVariable], theme: &NovyUITheme) -> Vec<fast2d::Object2d> {
+    let cursor_pos = TIMELINE_CURSOR_POSITION.get();
+    let canvas_width = CANVAS_WIDTH.get();
+    let canvas_height = CANVAS_HEIGHT.get();
+    create_waveform_objects_with_dimensions_and_theme(selected_vars, canvas_width, canvas_height, theme, cursor_pos)
+}
+
+fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVariable], canvas_width: f32, canvas_height: f32, theme: &NovyUITheme, cursor_position: f32) -> Vec<fast2d::Object2d> {
     let mut objects = Vec::new();
     
     zoon::println!("Creating waveform objects for {} selected variables with dimensions {}x{}", 
@@ -291,33 +375,8 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
                 .into()
         );
         
-        // Calculate actual timeline range from loaded files with real time_table data
-        let mut min_time: f32 = f32::MAX;
-        let mut max_time: f32 = f32::MIN;
-        let loaded_files = LOADED_FILES.lock_ref();
-        let selected_vars = SELECTED_VARIABLES.lock_ref();
-        
-        // Get timeline ranges from actual loaded files based on selected variables
-        for var in selected_vars.iter() {
-            let file_path = var.unique_id.split('|').next().unwrap_or("");
-            
-            // Find the corresponding loaded file
-            if let Some(loaded_file) = loaded_files.iter().find(|f| f.id == file_path) {
-                if let (Some(file_min), Some(file_max)) = (loaded_file.min_time, loaded_file.max_time) {
-                    zoon::println!("DEBUG: File {} has timeline range: {} to {}", file_path, file_min, file_max);
-                    min_time = min_time.min(file_min as f32);
-                    max_time = max_time.max(file_max as f32);
-                }
-            }
-        }
-        
-        // Fallback to default values if no valid timeline data found
-        if min_time == f32::MAX || max_time == f32::MIN {
-            min_time = 0.0;
-            max_time = 250.0; // Default fallback
-        }
-        
-        zoon::println!("DEBUG: Final timeline values - min: {}, max: {}", min_time, max_time);
+        // Get consistent timeline range
+        let (min_time, max_time) = get_current_timeline_range();
         let time_range = max_time - min_time;
         
         // Phase 9: Pixel-based spacing algorithm for professional timeline
@@ -363,6 +422,30 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
                         .into()
                 );
             }
+        }
+    }
+    
+    // Add timeline cursor line spanning all rows
+    if total_rows > 0 {
+        // Use consistent timeline range
+        let (min_time, max_time) = get_current_timeline_range();
+        let time_range = max_time - min_time;
+        
+        // Calculate cursor x position only if cursor is within visible range
+        if cursor_position >= min_time && cursor_position <= max_time {
+            let cursor_x = ((cursor_position - min_time) / time_range) * canvas_width;
+            
+            // Draw vertical cursor line spanning all rows (including timeline)
+            let cursor_color = theme_colors.cursor_color;
+            objects.push(
+                fast2d::Rectangle::new()
+                    .position(cursor_x - 1.0, 0.0) // Center the 3px line
+                    .size(3.0, canvas_height) // 3px thick line spanning full height
+                    .color(cursor_color.0, cursor_color.1, cursor_color.2, cursor_color.3)
+                    .into()
+            );
+            
+            zoon::println!("Added cursor line at {}s (x={})", cursor_position, cursor_x);
         }
     }
     
