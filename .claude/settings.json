@@ -1,5 +1,15 @@
 {
   "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"/home/martinkavik/repos/NovyWave/.claude/hooks/PreResponse\""
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "mcp__memory__.*",
@@ -26,6 +36,10 @@
           {
             "type": "command",
             "command": "bash \"/home/martinkavik/repos/NovyWave/.claude/hooks/claude-finished-notification.sh\""
+          },
+          {
+            "type": "command",
+            "command": "bash \"/home/martinkavik/repos/NovyWave/.claude/hooks/PostResponse\""
           }
         ]
       }

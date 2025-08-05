@@ -216,6 +216,14 @@ static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 // Show error alert for signal value query failure  
                 // Signal value query error logged to console
             }
+            DownMsg::SignalTransitions { file_path: _, results: _ } => {
+                // TODO: Handle signal transitions response for future use
+                // Currently using static data in canvas, will integrate later
+            }
+            DownMsg::SignalTransitionsError { file_path: _, error: _ } => {
+                // TODO: Handle signal transitions error for future use
+                // Currently using static data in canvas, will integrate later
+            }
         }
     })
 });

@@ -17,6 +17,11 @@ pub enum UpMsg {
         file_path: String,
         queries: Vec<SignalValueQuery>,
     },
+    QuerySignalTransitions {
+        file_path: String,
+        signal_queries: Vec<SignalTransitionQuery>,
+        time_range: (f64, f64),
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -36,6 +41,14 @@ pub enum DownMsg {
         results: Vec<SignalValueResult>,
     },
     SignalValuesError {
+        file_path: String,
+        error: String,
+    },
+    SignalTransitions {
+        file_path: String,
+        results: Vec<SignalTransitionResult>,
+    },
+    SignalTransitionsError {
         file_path: String,
         error: String,
     },
@@ -59,6 +72,27 @@ pub struct SignalValueResult {
     pub raw_value: Option<String>, // Raw binary value from waveform
     pub formatted_value: Option<String>, // Formatted according to requested format
     pub format: VarFormat, // Format used for this result
+}
+
+// ===== SIGNAL TRANSITION QUERY TYPES =====
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SignalTransitionQuery {
+    pub scope_path: String,
+    pub variable_name: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SignalTransitionResult {
+    pub scope_path: String,
+    pub variable_name: String,
+    pub transitions: Vec<SignalTransition>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SignalTransition {
+    pub time_seconds: f64,
+    pub value: String,
 }
 
 // ===== FILESYSTEM TYPES =====

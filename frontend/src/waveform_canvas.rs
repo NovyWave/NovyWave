@@ -9,6 +9,9 @@ use moonzoon_novyui::tokens::theme::Theme as NovyUITheme;
 use shared::Theme as SharedTheme;
 use wasm_bindgen::JsCast;
 
+// Prevent canvas redraw race conditions
+static CANVAS_REDRAW_PENDING: Lazy<Mutable<bool>> = lazy::default();
+
 // Convert shared theme to NovyUI theme
 fn convert_theme(shared_theme: &SharedTheme) -> NovyUITheme {
     match shared_theme {
@@ -161,6 +164,11 @@ async fn create_canvas_element() -> impl Element {
                 let canvas_width = CANVAS_WIDTH.get();
                 let canvas_height = CANVAS_HEIGHT.get();
                 
+                // Prevent race conditions from multiple rapid clicks
+                if CANVAS_REDRAW_PENDING.get() {
+                    return;
+                }
+                
                 // Calculate time from click position using consistent timeline range
                 let (min_time, max_time) = get_current_timeline_range();
                 let time_range = max_time - min_time;
@@ -169,6 +177,8 @@ async fn create_canvas_element() -> impl Element {
                 // Clamp to valid range
                 let clicked_time = clicked_time.max(min_time).min(max_time);
                 
+                // Set redraw lock
+                CANVAS_REDRAW_PENDING.set(true);
                 
                 // Update cursor position
                 TIMELINE_CURSOR_POSITION.set(clicked_time);
@@ -178,6 +188,12 @@ async fn create_canvas_element() -> impl Element {
                     let selected_vars = SELECTED_VARIABLES.lock_ref();
                     *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &NovyUITheme::Dark, clicked_time);
                 });
+                
+                // Release redraw lock after a short delay to prevent rapid successive redraws
+                let redraw_pending = CANVAS_REDRAW_PENDING.clone();
+                Timer::once(16, move || {
+                    redraw_pending.set(false);
+                });
             }
         })
     })
@@ -186,25 +202,98 @@ async fn create_canvas_element() -> impl Element {
 
 
 
+// Get signal transitions for a variable within time range
+fn get_signal_transitions_for_variable(var: &SelectedVariable, time_range: (f32, f32)) -> Vec<(f32, String)> {
+    // Parse unique_id: "/path/file.ext|scope|variable"
+    let parts: Vec<&str> = var.unique_id.split('|').collect();
+    if parts.len() < 3 {
+        return vec![(time_range.0, "0".to_string())];
+    }
+    
+    let file_path = parts[0];
+    let _scope_path = parts[1]; 
+    let variable_name = parts[2];
+    let file_name = file_path.split('/').last().unwrap_or("unknown");
+    
+    // For now, generate more realistic signal transitions based on file and variable
+    // This will be replaced with real backend queries once async integration is complete
+    match file_name {
+        "simple.vcd" => {
+            if variable_name == "A" {
+                // Generate realistic transitions across the time range
+                vec![
+                    (time_range.0, "1010".to_string()),
+                    (time_range.0 + (time_range.1 - time_range.0) * 0.2, "1100".to_string()),
+                    (time_range.0 + (time_range.1 - time_range.0) * 0.6, "0001".to_string()),
+                    (time_range.0 + (time_range.1 - time_range.0) * 0.8, "0".to_string()),
+                ]
+            } else if variable_name == "B" {
+                vec![
+                    (time_range.0, "11".to_string()),
+                    (time_range.0 + (time_range.1 - time_range.0) * 0.2, "101".to_string()),
+                    (time_range.0 + (time_range.1 - time_range.0) * 0.6, "010".to_string()),
+                    (time_range.0 + (time_range.1 - time_range.0) * 0.8, "0".to_string()),
+                ]
+            } else {
+                // Other variables get a simple pattern
+                vec![
+                    (time_range.0, "1".to_string()),
+                    (time_range.0 + (time_range.1 - time_range.0) * 0.5, "0".to_string()),
+                ]
+            }
+        }
+        "wave_27.fst" => {
+            // FST file with more complex transitions
+            match variable_name {
+                name if name.contains("fetch") => vec![
+                    (time_range.0, "80000080".to_string()),
+                    (time_range.0 + (time_range.1 - time_range.0) * 0.1, "ac7508324d7f5c178d553fa".to_string()),
+                    (time_range.0 + (time_range.1 - time_range.0) * 0.3, "1111".to_string()),
+                    (time_range.0 + (time_range.1 - time_range.0) * 0.7, "0000".to_string()),
+                ],
+                name if name.contains("logic") => vec![
+                    (time_range.0, "f38131d64be690be14c8a1c".to_string()),
+                    (time_range.0 + (time_range.1 - time_range.0) * 0.25, "1010".to_string()),
+                    (time_range.0 + (time_range.1 - time_range.0) * 0.5, "1100".to_string()),
+                    (time_range.0 + (time_range.1 - time_range.0) * 0.75, "0011".to_string()),
+                ],
+                _ => vec![
+                    (time_range.0, "1111".to_string()),
+                    (time_range.0 + (time_range.1 - time_range.0) * 0.33, "0101".to_string()),
+                    (time_range.0 + (time_range.1 - time_range.0) * 0.66, "1010".to_string()),
+                ],
+            }
+        }
+        _ => {
+            // Default pattern for unknown files
+            vec![
+                (time_range.0, "1".to_string()),
+                (time_range.0 + (time_range.1 - time_range.0) * 0.5, "0".to_string()),
+            ]
+        }
+    }
+}
+
 // Consolidated function to get current timeline range
 fn get_current_timeline_range() -> (f32, f32) {
+    let loaded_files = LOADED_FILES.lock_ref();
+    
+    // Get timeline range from ALL loaded files, not just selected variables
     let mut min_time: f32 = f32::MAX;
     let mut max_time: f32 = f32::MIN;
-    let loaded_files = LOADED_FILES.lock_ref();
-    let selected_vars = SELECTED_VARIABLES.lock_ref();
+    let mut has_valid_files = false;
     
-    for var in selected_vars.iter() {
-        let file_path = var.unique_id.split('|').next().unwrap_or("");
-        if let Some(loaded_file) = loaded_files.iter().find(|f| f.id == file_path) {
-            if let (Some(file_min), Some(file_max)) = (loaded_file.min_time, loaded_file.max_time) {
-                min_time = min_time.min(file_min as f32);
-                max_time = max_time.max(file_max as f32);
-            }
+    for file in loaded_files.iter() {
+        if let (Some(file_min), Some(file_max)) = (file.min_time, file.max_time) {
+            min_time = min_time.min(file_min as f32);
+            max_time = max_time.max(file_max as f32);
+            has_valid_files = true;
         }
     }
     
-    if min_time == f32::MAX || max_time == f32::MIN {
-        (0.0, 250.0) // Default fallback
+    if !has_valid_files || min_time == max_time {
+        // Reasonable default for empty/invalid files
+        (0.0, 100.0)
     } else {
         (min_time, max_time)
     }
@@ -250,7 +339,7 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
         );
         
         // Create value rectangles based on live data from selected variables
-        let variable_name = var.unique_id.split('|').last().unwrap_or("Unknown");
+        let _variable_name = var.unique_id.split('|').last().unwrap_or("Unknown");
         
         // Get the user's selected format for this variable
         let format = var.formatter.unwrap_or_default();
@@ -258,36 +347,10 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
         // Phase 7: Multi-file support - get data based on variable's source file
         // Parse file path from unique_id: "/path/file.ext|scope|variable"
         let file_path = var.unique_id.split('|').next().unwrap_or("");
-        let file_name = file_path.split('/').last().unwrap_or("unknown");
+        let _file_name = file_path.split('/').last().unwrap_or("unknown");
         
-        let time_value_pairs = if file_name == "simple.vcd" {
-            // Data from simple.vcd file (timescale: 1s, max time: 250s)
-            if variable_name == "A" {
-                vec![
-                    (0.0, "1010"),    // #0: b1010 from simple.vcd
-                    (50.0, "1100"),   // #50: b1100 from simple.vcd  
-                    (150.0, "0"),     // #150: b0 from simple.vcd
-                ]
-            } else { // Variable B
-                vec![
-                    (0.0, "11"),      // #0: b11 from simple.vcd
-                    (50.0, "101"),    // #50: b101 from simple.vcd
-                    (150.0, "0"),     // #150: b0 from simple.vcd
-                ]
-            }
-        } else if file_name == "wave_27.fst" {
-            // TODO: Get actual data from wave_27.fst file
-            // For now, using placeholder data showing different pattern
-            vec![
-                (0.0, "1111"),    // Different pattern for FST variables
-                (25.0, "0101"),   // Different timing
-                (75.0, "1010"),   
-                (100.0, "0000"),
-            ]
-        } else {
-            // Fallback for unknown files
-            vec![(0.0, "0")]
-        };
+        let current_time_range = get_current_timeline_range();
+        let time_value_pairs = get_signal_transitions_for_variable(var, current_time_range);
         
         // Get actual total time from loaded file data
         let total_time = {

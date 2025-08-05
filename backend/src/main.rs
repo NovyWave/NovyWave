@@ -1,5 +1,5 @@
 use moon::*;
-use shared::{self, UpMsg, DownMsg, AppConfig, FileHierarchy, WaveformFile, FileFormat, ScopeData, FileSystemItem, SignalValueQuery, SignalValueResult};
+use shared::{self, UpMsg, DownMsg, AppConfig, FileHierarchy, WaveformFile, FileFormat, ScopeData, FileSystemItem, SignalValueQuery, SignalValueResult, SignalTransitionQuery, SignalTransition, SignalTransitionResult};
 use std::path::Path;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -51,6 +51,9 @@ async fn up_msg_handler(req: UpMsgRequest<UpMsg>) {
         }
         UpMsg::QuerySignalValues { file_path, queries } => {
             query_signal_values(file_path, queries, session_id, cor_id).await;
+        }
+        UpMsg::QuerySignalTransitions { file_path, signal_queries, time_range } => {
+            query_signal_transitions(file_path, signal_queries, time_range, session_id, cor_id).await;
         }
     }
 }
@@ -776,6 +779,101 @@ async fn query_signal_values(file_path: String, queries: Vec<SignalValueQuery>, 
     }
     
     send_down_msg(DownMsg::SignalValues {
+        file_path,
+        results,
+    }, session_id, cor_id).await;
+}
+
+async fn query_signal_transitions(
+    file_path: String, 
+    signal_queries: Vec<SignalTransitionQuery>, 
+    time_range: (f64, f64), 
+    session_id: SessionId, 
+    cor_id: CorId
+) {
+    let store = WAVEFORM_DATA_STORE.lock().unwrap();
+    let waveform_data = match store.get(&file_path) {
+        Some(data) => data,
+        None => {
+            send_down_msg(DownMsg::SignalTransitionsError {
+                file_path,
+                error: "Waveform file not loaded or signal data not available".to_string(),
+            }, session_id, cor_id).await;
+            return;
+        }
+    };
+    
+    let mut results = Vec::new();
+    
+    for query in signal_queries {
+        let key = format!("{}|{}", query.scope_path, query.variable_name);
+        
+        match waveform_data.signals.get(&key) {
+            Some(&signal_ref) => {
+                let mut transitions = Vec::new();
+                
+                // Convert time range to time table indices based on file format
+                let (start_time, end_time) = match waveform_data.file_format {
+                    wellen::FileFormat::Vcd => {
+                        // For VCD: time table is in VCD's native units (depends on $timescale)
+                        (time_range.0 as u64, time_range.1 as u64)
+                    },
+                    _ => {
+                        // For other formats, use femtosecond conversion  
+                        ((time_range.0 * 1_000_000_000_000.0) as u64, (time_range.1 * 1_000_000_000_000.0) as u64)
+                    }
+                };
+                
+                // Load signal once for efficiency
+                let mut signal_source = waveform_data.signal_source.lock().unwrap();
+                let loaded_signals = signal_source.load_signals(&[signal_ref], &waveform_data.hierarchy, true);
+                
+                if let Some((_, signal)) = loaded_signals.into_iter().next() {
+                    // Iterate through time table within time range
+                    for (idx, &time_val) in waveform_data.time_table.iter().enumerate() {
+                        if time_val >= start_time && time_val <= end_time {
+                            // Convert time back to seconds for frontend
+                            let time_seconds = match waveform_data.file_format {
+                                wellen::FileFormat::Vcd => time_val as f64,
+                                _ => time_val as f64 / 1_000_000_000_000.0,
+                            };
+                            
+                            // Get signal value at this time index
+                            if let Some(offset) = signal.get_offset(idx as u32) {
+                                let value = signal.get_value_at(&offset, 0);
+                                
+                                // Convert to string for frontend display
+                                let value_str = match signal_value_to_binary_string(&value) {
+                                    Some(binary_str) => binary_str,
+                                    None => format!("{}", value),
+                                };
+                                
+                                transitions.push(SignalTransition {
+                                    time_seconds,
+                                    value: value_str,
+                                });
+                            }
+                        }
+                    }
+                }
+                
+                results.push(SignalTransitionResult {
+                    scope_path: query.scope_path,
+                    variable_name: query.variable_name,
+                    transitions,
+                });
+            }
+            None => {
+                results.push(SignalTransitionResult {
+                    scope_path: query.scope_path,
+                    variable_name: query.variable_name,
+                    transitions: vec![],
+                });
+            }
+        }
+    }
+    
+    send_down_msg(DownMsg::SignalTransitions {
         file_path,
         results,
     }, session_id, cor_id).await;
