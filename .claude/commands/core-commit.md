@@ -1,79 +1,120 @@
-# /core-commit Command
+---
+allowed-tools: Bash
+description: 'Smart git commit with checkpoint conversion and auto-amend detection'
+---
 
-## Purpose
-Create clean conventional commit from accumulated CHECKPOINT changes
+# Smart Git Commit
 
-## CRITICAL: Slash Command = Automation
+Intelligent git commit workflow with checkpoint conversion, change analysis, and auto-amend detection.
 
-**NEVER provide consultation when user types `/core-commit`**
-**ALWAYS execute the workflow immediately**
-
-## Workflow
-
-### 1. Git Analysis (Parallel Execution)
-Run these commands in parallel using Bash tool:
+## Usage
 
 ```bash
-# Analyze current repository state
-git status
-git diff --staged
-git diff HEAD
-git log --oneline -10
+/core-commit              # Interactive commit with suggested message
 ```
 
-### 2. Change Analysis
-Identify distinct logical changes by scope:
-- `ui` - User interface changes
-- `config` - Configuration updates  
-- `feat` - New features
-- `fix` - Bug fixes
-- `refactor` - Code restructuring
-- `docs` - Documentation changes
-- `chore` - Maintenance tasks
+## Your Task
 
-### 3. Commit Creation
-Create single commit with multi-line message format:
+### Smart Commit Workflow:
 
-**Single-Line Format (when one logical change):**
-```
-fix(ui): resolve panel resize issues
-```
+1. **Analyze Current State:**
+   - Run `git status` to see untracked/modified files
+   - Run `git diff --staged` and `git diff` to see actual changes
+   - Run `git log -1 --oneline` to see recent commit style
+   - Check if last commit was pushed: `git log origin/main..HEAD --oneline`
 
-**Multi-Line Format (when multiple logical changes):**
-```
-fix(ui): resolve panel resize issues in docked-to-bottom mode
-fix(config): preserve dock mode settings during workspace saves  
-refactor(frontend): modularize main.rs into focused modules
-```
+2. **Checkpoint Detection (Priority #1):**
+   - Check if last commit message = "CHECKPOINT"
+   - If CHECKPOINT found: Skip normal workflow, go to checkpoint conversion
+   - If no CHECKPOINT: Continue to normal amend detection
 
-### 4. Git Operations (Parallel Execution)
+3. **Smart Amend Detection (if not CHECKPOINT):**
+   - Analyze current changes vs last commit scope
+   - Check if last commit is unpushed (safe to amend)
+   - Determine if amend makes sense or new commit is better
+
+4. **Present Options:**
+
+   **Option A: CHECKPOINT Conversion**
+   ```
+   🔄 Found CHECKPOINT commit with accumulated changes
+   📋 Analyzing all changes since last real commit...
+   
+   💭 Suggested commit message:
+   "feat(ui): add button component with styling improvements"
+   
+   ✅ Convert CHECKPOINT to proper commit?
+   y) Use suggested message
+   n) Cancel  
+   custom message) Type your own
+   ```
+
+   **Option B: Amend makes sense (non-CHECKPOINT)**
+   ```
+   📝 Last commit: "feat(ui): add button component"
+   📋 Current changes: Button styling improvements
+   
+   💭 Updated commit message:
+   "feat(ui): add button component with styling improvements"
+   
+   ✅ Recommended: AMEND (similar scope, unpushed)
+   
+   Options:
+   a) Amend with updated message
+   n) Create new commit instead
+   ```
+
+   **Option C: New commit recommended**
+   ```
+   📋 Changed files:
+   M  src/auth/login.rs
+   A  src/utils/validation.rs
+   
+   💭 Suggested commit message:
+   "feat(auth): add input validation to login flow"
+   
+   ⚠️  New commit recommended (different scope from last commit)
+   
+   Options:
+   y) Use suggested message
+   n) Cancel
+   custom message) Type your own
+   ```
+
+5. **Execute:**
+
+   **For CHECKPOINT Conversion:**
+   - Stage any unstaged changes: `git add .`
+   - Amend CHECKPOINT with staged changes: `git commit --amend -m "new message"`
+   - Show: "✅ Converted CHECKPOINT to: [message]"
+
+   **For Normal Workflow:**
+   - Stage changes with `git add .`
+   - For amend: Use `git commit --amend -m "updated message"` (rewrite message based on all accumulated changes)
+   - For new commit: Use `git commit -m "message"` (clean conventional format, no Claude boilerplate)
+   - Show final `git status` to confirm
+
+## Examples
+
+**Checkpoint conversion workflow:**
 ```bash
-# Stage relevant files
-git add .
-
-# Create commit with heredoc format
-git commit -m "$(cat <<'EOF'
-fix(ui): resolve panel resize issues in docked-to-bottom mode
-fix(config): preserve dock mode settings during workspace saves
-refactor(frontend): modularize main.rs into focused modules
-EOF
-)"
-
-# Verify success
-git status
+# After using /core-checkpoint for rapid iteration...
+/core-commit
+# 🔄 Found CHECKPOINT commit with accumulated changes
+# Analyzes all changes, suggests proper conventional commit
 ```
 
-## Benefits
-- **Clear git blame**: Shows all relevant changes when investigating specific files
-- **Semantic organization**: Each line follows conventional commits with proper scoping
-- **Better debugging**: Complete context visible in file history
-- **Clean history**: One commit per development session with clear scope breakdown
+**Normal interactive commit:**
+```bash
+/core-commit
+# Shows analysis, suggests message, waits for approval
+```
 
-## Safety Rules
-- **CRITICAL: NEVER perform destructive git operations without explicit user confirmation**
-- Never use git commands with `-i` flag (interactive not supported)
-- DO NOT push to remote repository unless explicitly asked
-- Only create commit - never rebase, reset, or force operations
+## Features
 
-## Anti-Consultation Guard
-This command MUST execute automation immediately. Never explain how it works unless explicitly asked after completion.
+- **Checkpoint conversion**: Automatically converts CHECKPOINT commits to proper conventional commits
+- **Smart amend detection**: Analyzes if current changes should amend previous commit
+- **Safety checks**: Warns about rewriting published history
+- **Scope analysis**: Compares change types between current and last commit
+- **Conventional commits**: Suggests proper commit message format
+- **Seamless workflow**: Perfect partner with `/core-checkpoint` for rapid iteration

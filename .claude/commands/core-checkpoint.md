@@ -1,43 +1,65 @@
-# /core-checkpoint Command
+---
+allowed-tools: Bash
+description: 'Ultra-fast WIP saves: first call creates CHECKPOINT, subsequent calls amend'
+---
 
-## Purpose
-Rapid development checkpoint during active coding
+# Ultra-Fast Checkpoint
 
-## CRITICAL: Slash Command = Automation
+Lightning-fast work-in-progress saves for rapid iteration without thinking about commit messages.
 
-**NEVER provide consultation when user types `/core-checkpoint`**
-**ALWAYS execute the checkpoint workflow immediately**
+## Usage
 
-## Workflow
-
-### 1. Quick Repository State Check
 ```bash
-git status
-git diff --name-only
+/core-checkpoint             # Ultra-fast WIP save
 ```
 
-### 2. Create Checkpoint Commit
+## Your Task
+
+### Ultra-Fast Checkpoint Workflow:
+
+1. **Check Last Commit:**
+   - Run `git log -1 --pretty=format:"%s"` to get last commit message
+
+2. **Checkpoint Logic:**
+   
+   **If last commit ≠ "CHECKPOINT":**
+   - Stage all changes: `git add .`
+   - Create new checkpoint: `git commit -m "CHECKPOINT"`
+   - Show: "✅ Created CHECKPOINT"
+
+   **If last commit = "CHECKPOINT":**
+   - Stage all changes: `git add .`  
+   - Amend to existing: `git commit --amend --no-edit`
+   - Show: "✅ Updated CHECKPOINT"
+
+3. **No Analysis:**
+   - No diff analysis
+   - No scope checking
+   - No conventional commit formatting
+   - No user confirmation
+   - Just fast, reliable saves
+
+## Examples
+
+**Rapid iteration workflow:**
 ```bash
-# Stage all changes
-git add .
+# Work on feature...
+/core-checkpoint    # "✅ Created CHECKPOINT"
 
-# Create timestamped checkpoint
-git commit -m "CHECKPOINT: $(date '+%Y-%m-%d %H:%M:%S')"
+# More changes...  
+/core-checkpoint    # "✅ Updated CHECKPOINT"
 
-# Verify success
-git log --oneline -1
+# Even more changes...
+/core-checkpoint    # "✅ Updated CHECKPOINT"
+
+# Ready for final commit...
+/core-commit        # Analyzes all accumulated changes
+                    # Creates proper conventional commit
 ```
 
-## Use Cases
-- Preserves work-in-progress state
-- Rapid iteration during development sessions
-- Before attempting risky refactoring
-- End-of-session backup before stopping work
+## Features
 
-## Safety Rules
-- Creates simple timestamped commits
-- Never performs destructive operations
-- Safe for frequent use during development
-
-## Anti-Consultation Guard
-This command MUST execute automation immediately. Never explain the workflow unless explicitly asked after completion.
+- **Lightning fast**: No analysis, no checks, just save
+- **Never lose work**: Always have a safety net
+- **Seamless workflow**: Perfect partner with `/core-commit`
+- **Zero friction**: Type and go, no thinking required
