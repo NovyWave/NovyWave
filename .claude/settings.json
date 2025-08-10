@@ -1,7 +1,7 @@
 {
   "statusLine": {
     "type": "command", 
-    "command": "echo \"\\e[32m$USER\\e[0m@\\e[33m$(hostname -s)\\e[0m:\\e[34m$(basename $PWD)\\e[0m [\\e[35m$(git branch --show-current 2>/dev/null || echo 'no-git')\\e[0m]\"",
+    "command": "bash -c 'input=$(timeout 1 cat 2>/dev/null || echo \"{}\"); DIR=$(echo \"$input\" | jq -r \".workspace.current_dir // \\\"$PWD\\\"\"); HOME_DIR=$(getent passwd \"$USER\" | cut -d: -f6); DISPLAY_DIR=$(echo \"$DIR\" | sed \"s|^$HOME_DIR|~|\"); MODEL=$(echo \"$input\" | jq -r \".model.display_name // empty\"); SID=$(echo \"$input\" | jq -r \".session_id // empty\" | cut -c1-13); cd \"$DIR\" 2>/dev/null; BRANCH=$(git branch --show-current 2>/dev/null); printf \"\\033[32m%s\\033[0m@\\033[33m%s\\033[0m:\\033[34m%s\\033[0m\" \"$USER\" \"$(hostname -s)\" \"$DISPLAY_DIR\"; [ -n \"$BRANCH\" ] && printf \" [\\033[35m%s\\033[0m]\" \"$BRANCH\"; [ -n \"$MODEL\" ] && printf \" \\033[36m%s\\033[0m\" \"$MODEL\"; [ -n \"$SID\" ] && printf \" \\033[90mSID %s\\033[0m\" \"$SID\"; printf \"\\n\"'",
     "padding": 0
   },
   "hooks": {
@@ -10,7 +10,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"/home/martinkavik/repos/NovyWave/.claude/hooks/claude-finished-notification.sh\""
+            "command": "notify-send \"🤖 Claude finished!\" --urgency=critical --icon=face-robot --expire-time=8000 --category=im.received && paplay /usr/share/sounds/freedesktop/stereo/complete.oga"
           }
         ]
       }

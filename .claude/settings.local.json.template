@@ -8,7 +8,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"/YOUR/PATH/TO/NovyWave/.claude/hooks/claude-finished-notification.sh\""
+            "command": "notify-send \"🤖 Claude finished!\" --urgency=critical --icon=face-robot --expire-time=8000 --category=im.received"
           }
         ]
       }
