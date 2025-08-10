@@ -187,7 +187,7 @@ Claude uses Task tool subagents extensively for context conservation. Instead of
 - `hooks/` - Automatic scripts
 - `tmp/` - Temporary workspace
 - `settings.json` - Hook configuration
-- `ai-memory.json` - Memory MCP storage
+- `session-notes.md` - Current session discoveries and state
 
 ## 🎯 Best Practices for Effective Collaboration
 

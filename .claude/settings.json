@@ -1,55 +1,16 @@
 {
+  "statusLine": {
+    "type": "command", 
+    "command": "echo \"\\e[32m$USER\\e[0m@\\e[33m$(hostname -s)\\e[0m:\\e[34m$(basename $PWD)\\e[0m [\\e[35m$(git branch --show-current 2>/dev/null || echo 'no-git')\\e[0m]\"",
+    "padding": 0
+  },
   "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"/home/martinkavik/repos/NovyWave/.claude/hooks/SessionStart\""
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "mcp__memory__.*",
-        "hooks": [
-          {
-            "type": "command", 
-            "command": "bash \"/home/martinkavik/repos/NovyWave/.claude/hooks/update-context-from-memory.sh\""
-          }
-        ]
-      },
-      {
-        "matcher": ".*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"/home/martinkavik/repos/NovyWave/.claude/hooks/restore-session-after-compaction.sh\""
-          }
-        ]
-      }
-    ],
     "Stop": [
       {
         "hooks": [
           {
             "type": "command",
             "command": "bash \"/home/martinkavik/repos/NovyWave/.claude/hooks/claude-finished-notification.sh\""
-          },
-          {
-            "type": "command",
-            "command": "bash \"/home/martinkavik/repos/NovyWave/.claude/hooks/PostResponse\""
-          }
-        ]
-      }
-    ],
-    "PreCompact": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"/home/martinkavik/repos/NovyWave/.claude/hooks/preserve-session-before-compaction.sh\""
           }
         ]
       }

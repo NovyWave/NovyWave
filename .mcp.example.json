@@ -7,17 +7,6 @@
         "@browsermcp/mcp@latest"
       ],
       "env": {}
-    },
-    "memory": {
-      "type": "stdio",
-      "command": "npx",
-      "args": [
-        "-y",
-        "@modelcontextprotocol/server-memory"
-      ],
-      "env": {
-        "MEMORY_FILE_PATH": "/path/to/your/repo/novywave/ai-memory.json"
-      }
     }
   }
 }

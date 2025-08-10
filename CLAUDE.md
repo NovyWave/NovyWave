@@ -4,7 +4,6 @@ Core guidance for Claude Code when working with NovyWave.
 
 <!-- Core System Layer - Universal Claude Configuration -->
 @.claude/core/SYSTEM.md
-@.claude/core/memory-management.md
 @.claude/core/mcp-tools.md
 @.claude/core/development.md
 
@@ -21,8 +20,10 @@ Core guidance for Claude Code when working with NovyWave.
 @.claude/ai-docs/focus-context.md
 
 <!-- Remaining AI Documentation -->
-@.claude/ai-docs/memory-best-practices.md
-@.claude/ai-docs/memory-mcp.md
+@.claude/ai-docs/technical-solutions.md
+@.claude/ai-docs/project-architecture.md
+@.claude/ai-docs/bug-fixes-reference.md
+@.claude/ai-docs/development-workflows.md
 @.claude/ai-docs/browser-mcp.md
 
 ## Command Execution Protocol
@@ -32,7 +33,7 @@ Core guidance for Claude Code when working with NovyWave.
 **Examples of CORRECT behavior:**
 - User types `/core-commit` → Immediately run git analysis commands and present results
 - User types `/core-checkpoint` → Immediately execute checkpoint workflow
-- User types `/memory-search term` → Immediately search and return results
+- User types `/core-remember-important` → Immediately store session discoveries
 
 **Examples of WRONG behavior (never do this):**
 - ❌ "Here's how /core-commit works..."

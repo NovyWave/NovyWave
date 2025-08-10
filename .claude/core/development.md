@@ -111,7 +111,6 @@ For example, if the user asks you how to approach something, you should do your 
 - **CRITICAL: If you cannot verify a fix works, tell the user immediately**
 - Report verification failures honestly: "I cannot verify this works because [reason]"
 - Never claim completion without actual successful testing
-- Update Memory MCP with solutions immediately
 
 **Example Response Pattern:**
 ```
@@ -203,7 +202,6 @@ When creating a pull request:
 **ALL new Claude Code hooks MUST use shared infrastructure:**
 - Source `shared-functions.sh` for common utilities
 - Use `init_hook_env` for project detection and setup
-- Use `update_memory_mcp` for Memory MCP integration
 
 **Template for new hooks:**
 ```bash

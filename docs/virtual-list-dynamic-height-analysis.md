@@ -201,9 +201,9 @@ When implementing solutions:
 - **Test Data**: `test_files/wave_27.fst` (5371 variables)
 - **This Analysis**: `docs/virtual-list-dynamic-height-analysis.md`
 
-## Memory Context
+## Documentation Context
 
-Key insights stored in Memory MCP:
+Key insights stored in technical documentation:
 - Systematic A→B→C approach all failed at same point
 - `clientHeight=0, scrollHeight=0` is the fundamental blocker
 - Height detection works but scroll behavior breaks

@@ -5,9 +5,9 @@ HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HOOK_DIR/shared-functions.sh"
 init_hook_env
 
-# Quick update context after Memory MCP usage
+# Quick update context from session notes
 CONTEXT_FILE="$PROJECT_ROOT/.claude/ai-docs/focus-context.md"
-MEMORY_FILE="$PROJECT_ROOT/.claude/ai-memory.json"
+SESSION_NOTES="$PROJECT_ROOT/.claude/session-notes.md"
 TIMESTAMP=$(date)
 
 # Only regenerate if file missing - avoid timestamp noise in git
@@ -18,15 +18,9 @@ else
     # File doesn't exist - regenerate focused productivity context
     echo "🔄 Context file missing - regenerating focused context: $TIMESTAMP" >> "$HOOK_LOG"
     
-    # Check if Memory MCP file exists
-    if [ ! -f "$MEMORY_FILE" ]; then
-        echo "❌ Memory MCP file not found: $MEMORY_FILE" >> "$HOOK_LOG"
-        exit 1
-    fi
-    
     # Generate focused context file
     cat > "$CONTEXT_FILE" << EOF
-# Auto-Generated Session Context
+# Session Context
 
 *Last updated: $TIMESTAMP*
 
@@ -34,41 +28,21 @@ else
 
 EOF
 
-    # Extract productivity-focused data using jq if available
-    if command -v jq >/dev/null 2>&1; then
-        # Current project state (limit to last 5)
-        echo "**Current State:**" >> "$CONTEXT_FILE"
-        jq -r 'select(.type == "entity" and .name == "current_session_state") | .observations[-5:] | .[] | "- " + .' "$MEMORY_FILE" >> "$CONTEXT_FILE" 2>/dev/null || echo "- No current session state recorded" >> "$CONTEXT_FILE"
+    # Extract recent session notes if available
+    if [ -f "$SESSION_NOTES" ]; then
+        echo "**Recent Session Notes:**" >> "$CONTEXT_FILE"
+        # Get last 10 lines from session notes
+        tail -n 10 "$SESSION_NOTES" >> "$CONTEXT_FILE" 2>/dev/null || echo "- No session notes available" >> "$CONTEXT_FILE"
         echo "" >> "$CONTEXT_FILE"
-        
-        # Recent solutions (limit to 5 most recent - updated from 3)
-        echo "**Recent Solutions (Don't Repeat):**" >> "$CONTEXT_FILE"
-        jq -r 'select(.type == "entity" and .name == "recent_solutions") | .observations[-5:] | .[] | "- " + .' "$MEMORY_FILE" >> "$CONTEXT_FILE" 2>/dev/null || echo "- No recent solutions recorded" >> "$CONTEXT_FILE"
-        echo "" >> "$CONTEXT_FILE"
-        
-        # Active blockers (limit to last 5 - updated from 3)
-        echo "**Current Blockers:**" >> "$CONTEXT_FILE"
-        jq -r 'select(.type == "entity" and .name == "active_blockers") | .observations[-5:] | .[] | "- " + .' "$MEMORY_FILE" >> "$CONTEXT_FILE" 2>/dev/null || echo "- None" >> "$CONTEXT_FILE"
-        echo "" >> "$CONTEXT_FILE"
-        
-        # Daily patterns (limit to 5)
-        echo "**Essential Daily Patterns:**" >> "$CONTEXT_FILE"
-        jq -r 'select(.type == "entity" and .name == "daily_patterns") | .observations[-5:] | .[] | "- " + .' "$MEMORY_FILE" >> "$CONTEXT_FILE" 2>/dev/null || echo "- No daily patterns recorded" >> "$CONTEXT_FILE"
-        echo "" >> "$CONTEXT_FILE"
-        
-        # Next steps (limit to last 5)
-        echo "**Next Steps:**" >> "$CONTEXT_FILE"
-        jq -r 'select(.type == "entity" and .name == "next_steps") | .observations[-5:] | .[] | "- " + .' "$MEMORY_FILE" >> "$CONTEXT_FILE" 2>/dev/null || echo "- Continue with current implementation" >> "$CONTEXT_FILE"
-        
     else
-        echo "**Memory MCP Data:**" >> "$CONTEXT_FILE"
-        echo "- Install \`jq\` for focused data extraction" >> "$CONTEXT_FILE"
-        echo "- Use \`/memory-search\` for specific queries" >> "$CONTEXT_FILE"
+        echo "**No Session Notes:**" >> "$CONTEXT_FILE"
+        echo "- Use /core-remember-important to store session discoveries" >> "$CONTEXT_FILE"
+        echo "" >> "$CONTEXT_FILE"
     fi
 
     # Add footer
     echo "" >> "$CONTEXT_FILE"
-    echo "*Focused productivity context generated at $TIMESTAMP*" >> "$CONTEXT_FILE"
+    echo "*Context generated from session notes at $TIMESTAMP*" >> "$CONTEXT_FILE"
     
-    echo "✅ Session context regenerated with focused data: $TIMESTAMP" >> "$HOOK_LOG"
+    echo "✅ Session context regenerated from session notes: $TIMESTAMP" >> "$HOOK_LOG"
 fi

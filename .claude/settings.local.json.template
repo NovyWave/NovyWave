@@ -1,45 +1,14 @@
 {
   "enabledMcpjsonServers": [
-    "browsermcp",
-    "memory"
+    "browsermcp"
   ],
   "hooks": {
-    "PostToolUse": [
-      {
-        "matcher": "mcp__memory__.*",
-        "hooks": [
-          {
-            "type": "command", 
-            "command": "bash \"/YOUR/PATH/TO/NovyWave/.claude/hooks/update-context-from-memory.sh\""
-          }
-        ]
-      },
-      {
-        "matcher": ".*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"/YOUR/PATH/TO/NovyWave/.claude/hooks/restore-session-after-compaction.sh\""
-          }
-        ]
-      }
-    ],
     "Stop": [
       {
         "hooks": [
           {
             "type": "command",
             "command": "bash \"/YOUR/PATH/TO/NovyWave/.claude/hooks/claude-finished-notification.sh\""
-          }
-        ]
-      }
-    ],
-    "PreCompact": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"/YOUR/PATH/TO/NovyWave/.claude/hooks/preserve-session-before-compaction.sh\""
           }
         ]
       }

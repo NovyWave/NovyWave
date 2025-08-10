@@ -9,17 +9,6 @@
       "env": {
         "TERM": "dumb"
       }
-    },
-    "memory": {
-      "type": "stdio",
-      "command": "npx",
-      "args": [
-        "-y",
-        "@modelcontextprotocol/server-memory"
-      ],
-      "env": {
-        "MEMORY_FILE_PATH": "/home/martinkavik/repos/NovyWave/.claude/ai-memory.json"
-      }
     }
   }
 }

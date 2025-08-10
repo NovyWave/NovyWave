@@ -40,15 +40,3 @@ init_hook_env() {
     export PROJECT_ROOT HOOK_LOG
 }
 
-# Update Memory MCP with survival data
-update_memory_mcp() {
-    local entity_name="$1"
-    local content="$2"
-    
-    echo "  📝 Storing in $entity_name: $content" >> "$HOOK_LOG"
-    
-    # CRITICAL: Do NOT write directly to ai-memory.json as it corrupts NDJSON format
-    # Instead, store to separate survival log for manual recovery if needed
-    local timestamp=$(date -Iseconds)
-    echo "$timestamp: [$entity_name] $content" >> ".claude/precompact-survival.log"
-}

@@ -1,31 +1,5 @@
 # MCP Tools Usage Patterns
 
-## Memory MCP (@modelcontextprotocol/server-memory)
-
-**Purpose:** Persistent knowledge graph storage across Claude Code sessions
-
-### Knowledge Graph Structure
-- **Entities**: Primary nodes with observations
-- **Relations**: Directed connections in active voice
-- **Observations**: Facts about entities
-
-### Usage Patterns
-- Always begin sessions by retrieving relevant memory context
-- Create entities for major components, people, and concepts
-- Use active voice for relations ("uses", "depends on", "implements")
-- Add observations for specific facts, decisions, and preferences
-
-### Memory Categories
-- **Identity**: Key people (developers, contributors, stakeholders)
-- **Technical**: Framework choices, library decisions, build system preferences
-- **Behavioral**: Development patterns, testing approaches, code style preferences
-- **Goals**: Project objectives, feature roadmap, performance targets
-- **Relationships**: Dependencies between components, integration patterns
-
-### Best Practices
-- Maintain 3 degrees of separation for relationships
-- Store discoveries immediately after solving problems
-- Use focused entities for productivity tracking
 
 ## Browser MCP (@browsermcp/mcp)
 

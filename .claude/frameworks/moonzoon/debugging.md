@@ -49,23 +49,18 @@
 - Manual testing is done through visual examples in the UI
 - Always run lint and typecheck commands after completing tasks if available
 
-## Memory MCP Workflow
+## Session Documentation
 
-**SESSION START PATTERN:**
-Always begin with memory search: `mcp__memory__search_nodes` for relevant context
+**PATTERN STORAGE:**
+Store important discoveries using `/core-remember-important` before ending sessions:
+- Bug fixes and compilation solutions
+- New UI patterns and component usage examples  
+- Architectural decisions and implementation choices
+- Framework-specific patterns (Zoon, NovyUI, Fast2D)
+- Responsive design solutions and layout fixes
+- Feature implementation notes
 
-**IMMEDIATE STORAGE TRIGGERS:**
-Store in Memory MCP immediately when you:
-- Solve any bug or compilation error (store both problem and solution)
-- Create new UI patterns or component usage examples  
-- Make architectural decisions or choose between alternatives
-- Discover framework-specific patterns (Zoon, NovyUI, Fast2D)
-- Fix responsive design issues or layout problems
-- Implement new features or modify existing ones
-
-**STORAGE FORMAT:**
-Use atomic observations connected to existing entities (NovyWave project, framework entities, developer preferences)
-
-**Memory vs CLAUDE.md Division:**
-- **Memory MCP:** Component patterns, debugging solutions, library examples, temporary workarounds, session discoveries
+**DOCUMENTATION DIVISION:**
+- **Session Notes:** Temporary discoveries, debugging solutions, implementation examples
 - **CLAUDE.md:** General project rules, architecture decisions, permanent guidelines, framework-wide patterns
+- **Static Docs:** Technical solutions, project architecture, bug fixes reference, development workflows
