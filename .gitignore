@@ -65,6 +65,7 @@ test_files/big_3_GB.vcd
 .claude/last-recovery.lock
 .claude/settings.local.json
 .claude/ai-docs/focus-context.md
+.claude/task-start-time
 
 # Prevent ai-memory.json from being created in root (should only be in .claude/)
 ai-memory.json

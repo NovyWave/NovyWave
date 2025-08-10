@@ -1,11 +1,11 @@
 {
   "hooks": {
-    "UserPromptSubmit": [
+    "SessionStart": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"/home/martinkavik/repos/NovyWave/.claude/hooks/PreResponse\""
+            "command": "bash \"/home/martinkavik/repos/NovyWave/.claude/hooks/SessionStart\""
           }
         ]
       }
