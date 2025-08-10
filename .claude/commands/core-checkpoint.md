@@ -1,57 +1,43 @@
----
-allowed-tools: Bash
-description: 'Ultra-fast WIP saves: first call creates CHECKPOINT, subsequent calls amend'
----
+# /core-checkpoint Command
 
-# Ultra-Fast Checkpoint
+## Purpose
+Rapid development checkpoint during active coding
 
-Lightning-fast work-in-progress saves for rapid iteration without thinking about commit messages.
+## CRITICAL: Slash Command = Automation
 
-## Usage
+**NEVER provide consultation when user types `/core-checkpoint`**
+**ALWAYS execute the checkpoint workflow immediately**
 
+## Workflow
+
+### 1. Quick Repository State Check
 ```bash
-/core-checkpoint             # Ultra-fast WIP save
+git status
+git diff --name-only
 ```
 
-## Your Task
-
-**Execute this single command:**
+### 2. Create Checkpoint Commit
 ```bash
-git add . && \
-if [ "$(git log -1 --pretty=format:'%s')" = "CHECKPOINT" ]; then \
-  git commit --amend --no-edit && echo "✅ Updated CHECKPOINT"; \
-else \
-  git commit -m "CHECKPOINT" && echo "✅ Created CHECKPOINT"; \
-fi
+# Stage all changes
+git add .
+
+# Create timestamped checkpoint
+git commit -m "CHECKPOINT: $(date '+%Y-%m-%d %H:%M:%S')"
+
+# Verify success
+git log --oneline -1
 ```
 
-**Logic:**
-- Always stage all changes first
-- If last commit is "CHECKPOINT": amend it
-- If last commit is not "CHECKPOINT": create new one
-- Fast, atomic operation with no analysis
+## Use Cases
+- Preserves work-in-progress state
+- Rapid iteration during development sessions
+- Before attempting risky refactoring
+- End-of-session backup before stopping work
 
-## Examples
+## Safety Rules
+- Creates simple timestamped commits
+- Never performs destructive operations
+- Safe for frequent use during development
 
-**Rapid iteration workflow:**
-```bash
-# Work on feature...
-/core-checkpoint    # "✅ Created CHECKPOINT"
-
-# More changes...  
-/core-checkpoint    # "✅ Updated CHECKPOINT"
-
-# Even more changes...
-/core-checkpoint    # "✅ Updated CHECKPOINT"
-
-# Ready for final commit...
-/core-commit        # Analyzes all accumulated changes
-                    # Creates proper conventional commit
-```
-
-## Features
-
-- **Lightning fast**: No analysis, no checks, just save
-- **Never lose work**: Always have a safety net
-- **Seamless workflow**: Perfect partner with `/core-commit`
-- **Zero friction**: Type and go, no thinking required
+## Anti-Consultation Guard
+This command MUST execute automation immediately. Never explain the workflow unless explicitly asked after completion.

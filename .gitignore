@@ -64,8 +64,17 @@ test_files/big_3_GB.vcd
 .claude/session-recovery-completed
 .claude/last-recovery.lock
 .claude/settings.local.json
-.claude/ai-docs/focus-context.md
 .claude/task-start-time
+
+# Session files (ephemeral - now in dedicated directories)
+.claude/extra/session-logs/
+.claude/logs/
+
+# Research files (moved to docs/research)
+docs/research/
+
+# Development logs (now properly covered by *.log above)
+**/dev_server.log
 
 
 # Prevent .claude directories in subdirectories (should only be at project root)

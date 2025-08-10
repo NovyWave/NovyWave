@@ -1,8 +1,17 @@
 #!/bin/bash
 # Claude Code Stop Notification
 
-source "$(dirname "$0")/shared-functions.sh"
-init_hook_env
+# Get project root using git or fallback
+if command -v git >/dev/null 2>&1 && git rev-parse --show-toplevel >/dev/null 2>&1; then
+    PROJECT_ROOT=$(git rev-parse --show-toplevel)
+else
+    PROJECT_ROOT="/home/martinkavik/repos/NovyWave"
+fi
+
+cd "$PROJECT_ROOT" || exit 1
+mkdir -p "$PROJECT_ROOT/.claude"
+HOOK_LOG="$PROJECT_ROOT/.claude/hooks.log"
+touch "$HOOK_LOG"
 
 # Desktop notification
 notify-send "🤖 Claude finished!" --urgency=critical --icon=face-robot --expire-time=8000 --category=im.received
