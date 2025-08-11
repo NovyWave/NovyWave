@@ -1,17 +1,5 @@
 {
   "enabledMcpjsonServers": [
     "browsermcp"
-  ],
-  "hooks": {
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "notify-send \"🤖 Claude finished!\" --urgency=critical --icon=face-robot --expire-time=8000 --category=im.received"
-          }
-        ]
-      }
-    ]
-  }
+  ]
 }
