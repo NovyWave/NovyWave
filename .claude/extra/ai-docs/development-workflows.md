@@ -36,7 +36,7 @@ mcp__browsermcp__browser_screenshot  # Document state before/after
 
 ### Server Management Rules
 - **ABSOLUTE PROHIBITION: NEVER restart dev server without explicit user permission**
-- **MANDATORY: ALWAYS ask user to use `/project-stop` or `/project-start` commands**
+- **MANDATORY: ALWAYS ask user to use `makers kill` or `makers start` commands**
 - Backend/shared crate compilation takes DOZENS OF SECONDS TO MINUTES - this is normal
 - **WAIT ENFORCEMENT: Must wait for compilation to complete, no matter how long**
 
@@ -51,9 +51,10 @@ tail -f dev_server.log
 # Clean log when it gets too long (token efficiency)
 > dev_server.log
 
-# Project commands (preferred)
-/project-stop    # User command to stop server
-/project-start   # User command to start server
+# Development server commands (preferred)
+makers kill      # Stop development server
+makers start     # Start development server
+makers open      # Start and open browser
 ```
 
 ### Log Monitoring Patterns

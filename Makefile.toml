@@ -13,91 +13,70 @@ namespace = "default"
 [tasks.default]
 alias = "start"
 
-# Browser-specific tasks with dev_server.log protection
-# Protection includes: file locking, automatic log cleanup, signal handling
 [tasks.start]
-description = "Start in browser mode with auto-reload (with log protection)"
+description = "Start in browser mode with auto-reload"
 dependencies = ["install"]
 script = '''
-LOG_FILE="dev_server.log"
-LOCK_FILE="dev_server.lock"
-
-# Function to clean up on exit
-cleanup() {
-    echo "Cleaning up..."
-    rm -f "$LOCK_FILE"
-    exit 0
-}
-
-# Set up signal handlers
-trap cleanup EXIT INT TERM
-
-# Check if already running
-if [ -f "$LOCK_FILE" ]; then
-    echo "Development server appears to already be running (lock file exists)"
-    echo "If you're sure it's not running, remove $LOCK_FILE and try again"
-    exit 1
-fi
-
-# Create lock file
-echo $$ > "$LOCK_FILE"
-
-# Clean previous log
-> "$LOG_FILE"
-
-echo "Starting NovyWave development server with file locking..."
-echo "Output will be logged to $LOG_FILE"
-echo "Press Ctrl+C to stop"
-
-# Start the server
-mzoon/bin/mzoon start ${@} >> "$LOG_FILE" 2>&1 &
-SERVER_PID=$!
-
-# Wait for the server process
-wait $SERVER_PID
+> dev_server.log
+mzoon/bin/mzoon start ${@} >> dev_server.log 2>&1
 '''
 
 [tasks.open]
-description = "Start in browser mode and open browser (with log protection)"
+description = "Start in browser mode and open browser"
 dependencies = ["install"]
-env = { "MZOON_BROWSER_SYNC" = false }
 script = '''
-LOG_FILE="dev_server.log"
-LOCK_FILE="dev_server.lock"
+> dev_server.log
+mzoon/bin/mzoon start --open ${@} >> dev_server.log 2>&1
+'''
 
-# Function to clean up on exit
-cleanup() {
-    echo "Cleaning up..."
-    rm -f "$LOCK_FILE"
-    exit 0
-}
+[tasks.kill]
+description = "Stop all development processes"
+script = '''
+PORT=$(grep "^port = " MoonZoon.toml | head -1 | cut -d' ' -f3)
+KILLED_ANY=false
 
-# Set up signal handlers
-trap cleanup EXIT INT TERM
-
-# Check if already running
-if [ -f "$LOCK_FILE" ]; then
-    echo "Development server appears to already be running (lock file exists)"
-    echo "If you're sure it's not running, remove $LOCK_FILE and try again"
-    exit 1
+# Kill process on configured port
+PID=$(lsof -ti:$PORT 2>/dev/null || true)
+if [ -n "$PID" ]; then
+    if kill -TERM $PID 2>/dev/null; then
+        echo "Sent TERM signal to process on port $PORT"
+        KILLED_ANY=true
+    fi
 fi
 
-# Create lock file
-echo $$ > "$LOCK_FILE"
+# Kill makers processes
+if pkill -TERM -f "makers start" 2>/dev/null; then
+    echo "Sent TERM signal to makers process"
+    KILLED_ANY=true
+fi
 
-# Clean previous log
-> "$LOG_FILE"
+# Kill mzoon processes  
+if pkill -TERM -f "mzoon" 2>/dev/null; then
+    echo "Sent TERM signal to mzoon process"
+    KILLED_ANY=true
+fi
 
-echo "Starting NovyWave development server with file locking..."
-echo "Output will be logged to $LOG_FILE"
-echo "Press Ctrl+C to stop"
+if [ "$KILLED_ANY" = "true" ]; then
+    echo "Waiting 2 seconds for graceful shutdown..."
+    sleep 2
+    
+    # Force kill if still running
+    PID=$(lsof -ti:$PORT 2>/dev/null || true)
+    if [ -n "$PID" ]; then
+        if kill -KILL $PID 2>/dev/null; then
+            echo "Force killed process on port $PORT"
+        fi
+    fi
+    
+    pkill -KILL -f "makers start" 2>/dev/null && echo "Force killed makers process" || true
+    pkill -KILL -f "mzoon" 2>/dev/null && echo "Force killed mzoon process" || true
+    
+    echo "✓ Development processes terminated"
+else
+    echo "No development processes found to kill"
+fi
 
-# Start the server
-mzoon/bin/mzoon start --open ${@} >> "$LOG_FILE" 2>&1 &
-SERVER_PID=$!
-
-# Wait for the server process
-wait $SERVER_PID
+> dev_server.log
 '''
 
 # Tauri-specific tasks

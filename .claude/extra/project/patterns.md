@@ -252,7 +252,7 @@ El::new()
 
 **CRITICAL WORKFLOW:**
 - **ABSOLUTE PROHIBITION: NEVER restart MoonZoon dev server without explicit user permission**
-- **MANDATORY: ALWAYS ask user to use /project-stop or /project-start commands**
+- **MANDATORY: ALWAYS ask user to use `makers kill` or `makers start` commands**
 - **PATIENCE REQUIREMENT: Backend/shared crate compilation takes DOZENS OF SECONDS TO MINUTES**
 - **WAIT ENFORCEMENT: You MUST wait for compilation to complete, no matter how long it takes**
 - **COMPILATION MONITORING ONLY:** Monitor with `tail -f dev_server.log` - DO NOT manage processes

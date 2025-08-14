@@ -21,7 +21,7 @@ std::println!("Debug message");
 - **NEVER restart dev server without permission** - backend/shared crates take minutes to compile
 - Backend/shared compilation takes dozens of seconds to minutes - this is normal
 - Wait for compilation to complete, don't restart repeatedly
-- Use `/project-stop` and `/project-start` commands instead of manual process management
+- Use `makers kill` and `makers start` commands instead of manual process management
 
 ## Fast2D Graphics Integration
 
