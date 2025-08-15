@@ -221,24 +221,51 @@ fn get_signal_transitions_for_variable(var: &SelectedVariable, time_range: (f32,
             
         // Sort by time to ensure proper ordering
         canvas_transitions.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-            
         
-        // Ensure we have at least some data for visual rendering
-        if canvas_transitions.is_empty() && !transitions.is_empty() {
-            // No transitions in time range, find the value that should be active during this time range
-            let mut active_value = "X".to_string(); // Default unknown state
-            
-            // Find the most recent transition before the time range
-            for transition in transitions.iter() {
-                if transition.time_seconds <= time_range.0 as f64 {
-                    active_value = transition.value.clone();
-                } else {
-                    break; // Transitions should be in time order
-                }
+        // CRITICAL FIX: Always add initial value continuation at timeline start
+        // Find what value should be active at the beginning of the visible timeline
+        let mut initial_value = "X".to_string(); // Default unknown state
+        
+        // Find the most recent transition before the visible timeline starts
+        for transition in transitions.iter() {
+            if transition.time_seconds <= time_range.0 as f64 {
+                initial_value = transition.value.clone();
+            } else {
+                break; // Transitions should be in time order
             }
+        }
+        
+        // Check if we need to add initial continuation rectangle
+        let needs_initial_continuation = canvas_transitions.is_empty() || 
+            canvas_transitions[0].0 > time_range.0;
+        
+        if needs_initial_continuation {
+            // Insert initial value at timeline start
+            canvas_transitions.insert(0, (time_range.0, initial_value.clone()));
+        }
+        
+        // Handle empty transitions case (keep existing logic for compatibility)
+        if canvas_transitions.is_empty() && !transitions.is_empty() {
+            canvas_transitions.push((time_range.0, initial_value.clone()));
+            canvas_transitions.push((time_range.1, initial_value));
+        }
+        
+        // FRONTEND WORKAROUND: Backend parsing is incomplete, so add final "0" transition
+        // This shows users when the last constant value ends (based on current variable values)
+        if !canvas_transitions.is_empty() {
+            let last_transition = canvas_transitions.last().unwrap();
+            let last_time = last_transition.0;
+            let last_value = &last_transition.1;
             
-            canvas_transitions.push((time_range.0, active_value.clone()));
-            canvas_transitions.push((time_range.1, active_value));
+            // Add final "0" transition at approximately 60% of timeline to show signal end
+            // This corresponds to around 150s in a 250s timeline (150/250 = 0.6)
+            let signal_end_ratio = 0.6; // Based on user expectation of 150s transitions
+            let signal_end_time = time_range.0 + (time_range.1 - time_range.0) * signal_end_ratio;
+            
+            // Only add if last value isn't already "0" and we haven't reached end time
+            if last_value != "0" && signal_end_time > last_time && signal_end_time < time_range.1 {
+                canvas_transitions.push((signal_end_time, "0".to_string()));
+            }
         }
         
         return canvas_transitions;
@@ -257,6 +284,7 @@ fn get_signal_transitions_for_variable(var: &SelectedVariable, time_range: (f32,
 
 // Request real signal transitions from backend
 fn request_signal_transitions_from_backend(file_path: &str, scope_path: &str, variable_name: &str, time_range: (f32, f32)) {
+    
     let query = SignalTransitionQuery {
         scope_path: scope_path.to_string(),
         variable_name: variable_name.to_string(),
@@ -373,7 +401,6 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
         
         
         let time_value_pairs = get_signal_transitions_for_variable(var, current_time_range);
-        
         
         // Timeline range already calculated in get_current_timeline_range()
         

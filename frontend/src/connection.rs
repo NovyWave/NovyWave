@@ -221,7 +221,6 @@ static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 for result in results {
                     let cache_key = format!("{}|{}|{}", file_path, result.scope_path, result.variable_name);
                     
-                    
                     // Store real backend data in canvas cache
                     crate::waveform_canvas::SIGNAL_TRANSITIONS_CACHE.lock_mut()
                         .insert(cache_key, result.transitions);

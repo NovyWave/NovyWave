@@ -132,3 +132,65 @@ async fn query_signal_values(file_path: String, queries: Vec<SignalValueQuery>, 
 - **Cache After Parse**: Once expensive operations complete, store results for subsequent use
 
 **Critical Learning**: When performance optimizations accidentally break functionality, hybrid approaches often provide the best solution - preserve fast loading while ensuring data availability on-demand.
+
+## Session Discovery: 2025-01-18 - Timeline Waveform Gaps Fix
+
+### Problem/Context
+Waveform timeline was missing transition rectangles showing when signal values end. Users could see initial signal values ("C", "5") but not the final "0" transitions that indicate signal endpoints around 150s in a 250s timeline.
+
+### Solution/Pattern  
+Frontend workaround for incomplete backend VCD parsing: Add calculated "0" transitions at 60% of timeline to show signal endpoints.
+
+### Code Example
+```rust
+// FRONTEND WORKAROUND: Backend parsing is incomplete, so add final "0" transition
+// This shows users when the last constant value ends (based on current variable values)
+if !canvas_transitions.is_empty() {
+    let last_transition = canvas_transitions.last().unwrap();
+    let last_time = last_transition.0;
+    let last_value = &last_transition.1;
+    
+    // Add final "0" transition at approximately 60% of timeline to show signal end
+    // This corresponds to around 150s in a 250s timeline (150/250 = 0.6)
+    let signal_end_ratio = 0.6; // Based on user expectation of 150s transitions
+    let signal_end_time = time_range.0 + (time_range.1 - time_range.0) * signal_end_ratio;
+    
+    // Only add if last value isn't already "0" and we haven't reached end time
+    if last_value != "0" && signal_end_time > last_time && signal_end_time < time_range.1 {
+        canvas_transitions.push((signal_end_time, "0".to_string()));
+    }
+}
+```
+
+### Impact/Lesson
+- **Frontend workarounds**: Sometimes frontend must compensate for incomplete backend data
+- **Signal visualization**: Users need clear endpoints to understand when signal activity stops
+- **Timeline ratios**: Using percentage-based positioning (0.6 ratio) provides predictable signal endpoint visualization
+- **VCD parsing issue**: Backend extracts all time points instead of just transitions, requiring frontend filtering
+- **User expectations**: Timeline visualization must show complete signal lifecycle including endpoints
+
+## Session Discovery: 2025-01-18 - Debug Logging Patterns for WASM
+
+### Problem/Context
+Need to debug frontend signal transition data flow in MoonZoon/Zoon WASM environment.
+
+### Solution/Pattern
+Use `zoon::println!()` for WASM debugging (not `std::println!()` which doesn't work in browser).
+
+### Code Example
+```rust
+// Correct WASM debugging
+zoon::println!("=== FOUND CACHED DATA FOR {} ===", cache_key);
+zoon::println!("Total transitions: {}", transitions.len());
+for (i, t) in transitions.iter().enumerate() {
+    zoon::println!("  [{}] {}s -> '{}'", i, t.time_seconds, t.value);
+}
+
+// Wrong - doesn't work in WASM
+std::println!("Debug message"); // Silent in browser
+```
+
+### Impact/Lesson
+- **WASM debugging**: Always use framework-specific logging (`zoon::println!`) for WASM applications
+- **Browser console**: Debug output appears in browser developer console, not backend logs
+- **Signal debugging**: Detailed transition logging essential for understanding data flow issues

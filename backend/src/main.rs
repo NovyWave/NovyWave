@@ -198,11 +198,8 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
                                 })
                                 .unwrap_or(1.0);
                             
-                            println!("DEBUG VCD Quick scan - raw times: {} to {}", min_time, max_time);
-                            println!("DEBUG VCD Timescale factor: {:.2e}", timescale_factor);
                             let converted_min = min_time * timescale_factor;
                             let converted_max = max_time * timescale_factor;
-                            println!("DEBUG VCD Final times: {:.6} to {:.6} seconds", converted_min, converted_max);
                             
                             (converted_min, converted_max)
                         }
