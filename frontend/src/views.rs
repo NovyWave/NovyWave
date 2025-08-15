@@ -1589,22 +1589,52 @@ fn get_file_timeline_info(file_path: &str, _waveform_file: &shared::WaveformFile
     // IMPORTANT: Files can start at ANY time value, not necessarily 0!
     // Backend has time_table[0] (min_time) and time_table.last() (max_time)
     
-    let file_name = file_path.split('/').last().unwrap_or("unknown");
+    let _file_name = file_path.split('/').last().unwrap_or("unknown");
     
-    // Using known test data for consistency with canvas implementation
-    // In production, this should extract from actual waveform metadata
-    let (min_time, max_time, unit) = if file_name == "simple.vcd" {
-        (0, 250, "s")  // simple.vcd: actually starts at 0s, ends at 250s (verified from file)
-    } else if file_name == "wave_27.fst" {
-        (0, 100, "ns")  // wave_27.fst placeholder (TODO: get actual time range)
+    // Extract real timeline data from loaded files instead of hardcoded values
+    let loaded_files = LOADED_FILES.lock_ref();
+    
+    let (min_time_f64, max_time_f64, unit) = if let Some(loaded_file) = loaded_files.iter().find(|f| f.id == file_path) {
+        if let (Some(min_time), Some(max_time)) = (loaded_file.min_time, loaded_file.max_time) {
+            // Determine appropriate time unit based on time range magnitude
+            let time_range = max_time - min_time;
+            
+            if time_range >= 1.0 {
+                // Seconds range
+                (min_time, max_time, "s")
+            } else if time_range >= 0.001 {
+                // Milliseconds range  
+                (min_time * 1000.0, max_time * 1000.0, "ms")
+            } else if time_range >= 0.000001 {
+                // Microseconds range
+                (min_time * 1_000_000.0, max_time * 1_000_000.0, "μs")
+            } else {
+                // Nanoseconds range
+                (min_time * 1_000_000_000.0, max_time * 1_000_000_000.0, "ns")
+            }
+        } else {
+            // File loaded but no timeline data available
+            (0.0, 0.0, "loading...")
+        }
     } else {
-        // Generic fallback - assumes 0 start but this may not be correct!
-        (0, 100, "ns")
+        // File not yet loaded
+        (0.0, 0.0, "loading...")
+    };
+    
+    // Convert to integers for display, handle loading state
+    let (min_time, max_time) = if unit == "loading..." {
+        (0, 0)
+    } else {
+        (min_time_f64 as i32, max_time_f64 as i32)
     };
     
     // Use space + parentheses format - TreeView will render as regular text
     // TODO: Enhance TreeView component to style timeline info with lower contrast
-    format!(" ({}{}\u{2013}{}{})", min_time, unit, max_time, unit)
+    if unit == "loading..." {
+        format!(" ({})", unit)
+    } else {
+        format!(" ({}{}\u{2013}{}{})", min_time, unit, max_time, unit)
+    }
 }
 
 fn convert_tracked_files_to_tree_data(tracked_files: &[TrackedFile]) -> Vec<TreeViewItemData> {

@@ -1,16 +1,21 @@
 use zoon::*;
 use fast2d;
 use crate::state::{SELECTED_VARIABLES, LOADED_FILES, TIMELINE_CURSOR_POSITION, CANVAS_WIDTH, CANVAS_HEIGHT};
+use crate::connection::send_up_msg;
 use crate::config::current_theme;
-use shared::SelectedVariable;
+use shared::{SelectedVariable, UpMsg, SignalTransitionQuery, SignalTransition};
 use std::rc::Rc;
 use std::cell::RefCell;
 use moonzoon_novyui::tokens::theme::Theme as NovyUITheme;
 use shared::Theme as SharedTheme;
 use wasm_bindgen::JsCast;
 
-// Prevent canvas redraw race conditions
-static CANVAS_REDRAW_PENDING: Lazy<Mutable<bool>> = lazy::default();
+
+// Cache for real signal transition data from backend - PUBLIC for connection.rs
+pub static SIGNAL_TRANSITIONS_CACHE: Lazy<Mutable<HashMap<String, Vec<SignalTransition>>>> = Lazy::new(|| {
+    Mutable::new(HashMap::new())
+});
+use std::collections::HashMap;
 
 // Convert shared theme to NovyUI theme
 fn convert_theme(shared_theme: &SharedTheme) -> NovyUITheme {
@@ -164,11 +169,6 @@ async fn create_canvas_element() -> impl Element {
                 let canvas_width = CANVAS_WIDTH.get();
                 let canvas_height = CANVAS_HEIGHT.get();
                 
-                // Prevent race conditions from multiple rapid clicks
-                if CANVAS_REDRAW_PENDING.get() {
-                    return;
-                }
-                
                 // Calculate time from click position using consistent timeline range
                 let (min_time, max_time) = get_current_timeline_range();
                 let time_range = max_time - min_time;
@@ -177,22 +177,14 @@ async fn create_canvas_element() -> impl Element {
                 // Clamp to valid range
                 let clicked_time = clicked_time.max(min_time).min(max_time);
                 
-                // Set redraw lock
-                CANVAS_REDRAW_PENDING.set(true);
-                
                 // Update cursor position
                 TIMELINE_CURSOR_POSITION.set(clicked_time);
                 
-                // Immediately update canvas with new cursor position to prevent visual glitches
+                // Immediately redraw canvas with new cursor position
                 canvas_wrapper_for_click.borrow_mut().update_objects(move |objects| {
                     let selected_vars = SELECTED_VARIABLES.lock_ref();
-                    *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &NovyUITheme::Dark, clicked_time);
-                });
-                
-                // Release redraw lock after a short delay to prevent rapid successive redraws
-                let redraw_pending = CANVAS_REDRAW_PENDING.clone();
-                Timer::once(16, move || {
-                    redraw_pending.set(false);
+                    let novyui_theme = NovyUITheme::Dark;
+                    *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &novyui_theme, clicked_time);
                 });
             }
         })
@@ -211,67 +203,95 @@ fn get_signal_transitions_for_variable(var: &SelectedVariable, time_range: (f32,
     }
     
     let file_path = parts[0];
-    let _scope_path = parts[1]; 
+    let scope_path = parts[1]; 
     let variable_name = parts[2];
-    let file_name = file_path.split('/').last().unwrap_or("unknown");
     
-    // For now, generate more realistic signal transitions based on file and variable
-    // This will be replaced with real backend queries once async integration is complete
-    match file_name {
-        "simple.vcd" => {
-            if variable_name == "A" {
-                // Generate realistic transitions across the time range
-                vec![
-                    (time_range.0, "1010".to_string()),
-                    (time_range.0 + (time_range.1 - time_range.0) * 0.2, "1100".to_string()),
-                    (time_range.0 + (time_range.1 - time_range.0) * 0.6, "0001".to_string()),
-                    (time_range.0 + (time_range.1 - time_range.0) * 0.8, "0".to_string()),
-                ]
-            } else if variable_name == "B" {
-                vec![
-                    (time_range.0, "11".to_string()),
-                    (time_range.0 + (time_range.1 - time_range.0) * 0.2, "101".to_string()),
-                    (time_range.0 + (time_range.1 - time_range.0) * 0.6, "010".to_string()),
-                    (time_range.0 + (time_range.1 - time_range.0) * 0.8, "0".to_string()),
-                ]
-            } else {
-                // Other variables get a simple pattern
-                vec![
-                    (time_range.0, "1".to_string()),
-                    (time_range.0 + (time_range.1 - time_range.0) * 0.5, "0".to_string()),
-                ]
+    // Create cache key for this specific signal
+    let cache_key = format!("{}|{}|{}", file_path, scope_path, variable_name);
+    
+    // Check if we have real backend data cached
+    let cache = SIGNAL_TRANSITIONS_CACHE.lock_ref();
+    if let Some(transitions) = cache.get(&cache_key) {
+        
+        // Convert real backend data to canvas format with proper waveform logic
+        // Include ALL transitions to determine proper rectangle boundaries
+        let mut canvas_transitions: Vec<(f32, String)> = transitions.iter()
+            .map(|t| (t.time_seconds as f32, t.value.clone()))
+            .collect();
+            
+        // Sort by time to ensure proper ordering
+        canvas_transitions.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+            
+        
+        // Ensure we have at least some data for visual rendering
+        if canvas_transitions.is_empty() && !transitions.is_empty() {
+            // No transitions in time range, find the value that should be active during this time range
+            let mut active_value = "X".to_string(); // Default unknown state
+            
+            // Find the most recent transition before the time range
+            for transition in transitions.iter() {
+                if transition.time_seconds <= time_range.0 as f64 {
+                    active_value = transition.value.clone();
+                } else {
+                    break; // Transitions should be in time order
+                }
             }
+            
+            canvas_transitions.push((time_range.0, active_value.clone()));
+            canvas_transitions.push((time_range.1, active_value));
         }
-        "wave_27.fst" => {
-            // FST file with more complex transitions
-            match variable_name {
-                name if name.contains("fetch") => vec![
-                    (time_range.0, "80000080".to_string()),
-                    (time_range.0 + (time_range.1 - time_range.0) * 0.1, "ac7508324d7f5c178d553fa".to_string()),
-                    (time_range.0 + (time_range.1 - time_range.0) * 0.3, "1111".to_string()),
-                    (time_range.0 + (time_range.1 - time_range.0) * 0.7, "0000".to_string()),
-                ],
-                name if name.contains("logic") => vec![
-                    (time_range.0, "f38131d64be690be14c8a1c".to_string()),
-                    (time_range.0 + (time_range.1 - time_range.0) * 0.25, "1010".to_string()),
-                    (time_range.0 + (time_range.1 - time_range.0) * 0.5, "1100".to_string()),
-                    (time_range.0 + (time_range.1 - time_range.0) * 0.75, "0011".to_string()),
-                ],
-                _ => vec![
-                    (time_range.0, "1111".to_string()),
-                    (time_range.0 + (time_range.1 - time_range.0) * 0.33, "0101".to_string()),
-                    (time_range.0 + (time_range.1 - time_range.0) * 0.66, "1010".to_string()),
-                ],
-            }
-        }
-        _ => {
-            // Default pattern for unknown files
-            vec![
-                (time_range.0, "1".to_string()),
-                (time_range.0 + (time_range.1 - time_range.0) * 0.5, "0".to_string()),
-            ]
-        }
+        
+        return canvas_transitions;
     }
+    drop(cache);
+    
+    // No cached data - request real data from backend
+    request_signal_transitions_from_backend(file_path, scope_path, variable_name, time_range);
+    
+    // Return minimal data while waiting for real backend response
+    vec![
+        (time_range.0, "LOADING...".to_string()),
+        (time_range.1, "LOADING...".to_string()),
+    ]
+}
+
+// Request real signal transitions from backend
+fn request_signal_transitions_from_backend(file_path: &str, scope_path: &str, variable_name: &str, time_range: (f32, f32)) {
+    let query = SignalTransitionQuery {
+        scope_path: scope_path.to_string(),
+        variable_name: variable_name.to_string(),
+    };
+    
+    // Request wider time range to get transitions that affect visible area
+    // Include entire file range to get proper rectangle boundaries
+    let (file_min, file_max) = {
+        let loaded_files = LOADED_FILES.lock_ref();
+        if let Some(loaded_file) = loaded_files.iter().find(|f| f.id == file_path) {
+            (
+                loaded_file.min_time.unwrap_or(0.0) as f64,
+                loaded_file.max_time.unwrap_or(250.0) as f64
+            )
+        } else {
+            (0.0, 250.0) // Fallback range
+        }
+    };
+    
+    let message = UpMsg::QuerySignalTransitions {
+        file_path: file_path.to_string(),
+        signal_queries: vec![query],
+        time_range: (file_min, file_max), // Request entire file range
+    };
+    
+    // Send real backend request
+    send_up_msg(message);
+}
+
+// Trigger canvas redraw when new signal data arrives
+pub fn trigger_canvas_redraw() {
+    // Trigger canvas redraw without disturbing variable state
+    // Use cursor position signal to force redraw
+    let current_cursor = TIMELINE_CURSOR_POSITION.get();
+    TIMELINE_CURSOR_POSITION.set(current_cursor);
 }
 
 // Consolidated function to get current timeline range
@@ -350,35 +370,39 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
         let _file_name = file_path.split('/').last().unwrap_or("unknown");
         
         let current_time_range = get_current_timeline_range();
+        
+        
         let time_value_pairs = get_signal_transitions_for_variable(var, current_time_range);
         
-        // Get actual total time from loaded file data
-        let total_time = {
-            let loaded_files = LOADED_FILES.lock_ref();
-            if let Some(loaded_file) = loaded_files.iter().find(|f| f.id == file_path) {
-                if let Some(file_max) = loaded_file.max_time {
-                    file_max as f32
-                } else {
-                    250.0 // Fallback if no max_time available
-                }
-            } else {
-                250.0 // Fallback if file not found
-            }
-        };
+        
+        // Timeline range already calculated in get_current_timeline_range()
+        
+        
+        // Get visible time range for proper clipping
+        let (min_time, max_time) = get_current_timeline_range();
         
         for (rect_index, (start_time, binary_value)) in time_value_pairs.iter().enumerate() {
-            // Calculate rectangle position and width based on actual time spans
-            let rect_start_x = (start_time / total_time) * canvas_width;
-            
             // Calculate end time for this rectangle (next transition time or total_time)
             let end_time = if rect_index + 1 < time_value_pairs.len() {
                 time_value_pairs[rect_index + 1].0 // Next transition time
             } else {
-                total_time // Last rectangle extends to end
+                max_time // Last rectangle extends to visible end
             };
             
-            let rect_end_x = (end_time / total_time) * canvas_width;
+            // Skip rectangles completely outside visible range
+            if end_time <= min_time || *start_time >= max_time {
+                continue;
+            }
+            
+            // Clip rectangle to visible time range
+            let visible_start_time = start_time.max(min_time);
+            let visible_end_time = end_time.min(max_time);
+            
+            // Calculate rectangle position and width for visible portion
+            let rect_start_x = ((visible_start_time - min_time) / (max_time - min_time)) * canvas_width;
+            let rect_end_x = ((visible_end_time - min_time) / (max_time - min_time)) * canvas_width;
             let rect_width = rect_end_x - rect_start_x;
+            
             let is_even_rect = rect_index % 2 == 0;
             
             // Theme-aware alternating rectangle colors using current theme colors

@@ -529,17 +529,27 @@ fn calculate_timeline_with_file_format(file: &LoadingFile, time_range: (f32, f32
 
 ## CRITICAL PRIORITY: Fix Hardcoded Timeline Data Corruption
 
-### **UPDATE (August 5, 2025): Major Discovery of Fake Timeline Data**
+### **UPDATE (August 15, 2025): Files & Scope Timeline Fixed, Performance Issues Discovered**
 
 **Issue Status:** ✅ PARTIALLY FIXED
 - Timeline range calculation bug fixed
-- Canvas redraw race conditions fixed
+- Canvas redraw race conditions fixed  
 - Signal transition API infrastructure complete
-- **REMAINING CRITICAL ISSUE:** Hardcoded fake timeline data throughout system
+- ✅ **FILES & SCOPE PANEL FIXED:** Real timeline data now displays instead of fake hardcoded values
+- ⚠️ **PERFORMANCE ISSUE DISCOVERED:** Large VCD files (3GB+) cause prolonged "loading..." states and system strain
+- **REMAINING CRITICAL ISSUE:** Canvas mock signal transition data still needs backend integration
 
-### **The Hardcoded Timeline Problem**
+### **The Hardcoded Timeline Problem (PARTIALLY RESOLVED)**
 
-**Discovery:** The Files & Scope panel shows "wave_27.fst (0ns-100ns)" but this is **completely fake data** with no connection to the actual file contents.
+**FIXED (August 15, 2025):** Files & Scope panel now extracts real timeline data from `LOADED_FILES` instead of displaying fake hardcoded values.
+
+**Performance Issue Discovered:** Large VCD files (3GB+) experience prolonged parsing that causes:
+- Extended "loading..." states in Files & Scope panel
+- High CPU usage during file processing 
+- System strain (fan noise, unresponsive UI)
+- Suggests current backend parsing algorithm may be too aggressive for large files
+
+**Optimization Needed:** Consider header-only parsing for timeline metadata vs full file parsing for initial display.
 
 **Evidence:**
 ```rust

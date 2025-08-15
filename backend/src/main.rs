@@ -850,8 +850,9 @@ async fn query_signal_transitions(
                                 
                                 transitions.push(SignalTransition {
                                     time_seconds,
-                                    value: value_str,
+                                    value: value_str.clone(),
                                 });
+                                
                             }
                         }
                     }

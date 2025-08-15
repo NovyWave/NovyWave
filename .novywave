@@ -33,13 +33,13 @@ load_files_expanded_directories = [
 ]
 selected_scope_id = "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s"
 load_files_scroll_position = 886
-timeline_cursor_position = 33.620689392089844
+timeline_cursor_position = 65.93850708007813
 
 [workspace.docked_bottom_dimensions]
 files_and_scopes_panel_width = 464.0
 files_and_scopes_panel_height = 362.0
 selected_variables_panel_name_column_width = 174.0
-selected_variables_panel_value_column_width = 325.0
+selected_variables_panel_value_column_width = 287.0
 
 [workspace.docked_right_dimensions]
 files_and_scopes_panel_width = 216.0
@@ -49,6 +49,7 @@ selected_variables_panel_value_column_width = 301.0
 
 [[workspace.selected_variables]]
 unique_id = "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s|A"
+formatter = "Hexadecimal"
 
 [[workspace.selected_variables]]
 unique_id = "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s|B"
