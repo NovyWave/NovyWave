@@ -33,7 +33,7 @@ Intelligent git commit workflow with checkpoint conversion, change analysis, and
    - Check if last commit is unpushed (safe to amend)
    - Determine if amend makes sense or new commit is better
 
-4. **Present Options:**
+4. **Present Options & WAIT FOR USER INPUT:**
 
    **Option A: CHECKPOINT Conversion**
    ```
@@ -44,9 +44,12 @@ Intelligent git commit workflow with checkpoint conversion, change analysis, and
    "feat(ui): add button component with styling improvements"
    
    ✅ Convert CHECKPOINT to proper commit?
+   **Type your choice:**
    y) Use suggested message
    n) Cancel  
    custom message) Type your own
+   
+   **WAITING FOR YOUR RESPONSE...**
    ```
 
    **Option B: Amend makes sense (non-CHECKPOINT)**
@@ -59,9 +62,11 @@ Intelligent git commit workflow with checkpoint conversion, change analysis, and
    
    ✅ Recommended: AMEND (similar scope, unpushed)
    
-   Options:
+   **Type your choice:**
    a) Amend with updated message
    n) Create new commit instead
+   
+   **WAITING FOR YOUR RESPONSE...**
    ```
 
    **Option C: New commit recommended**
@@ -75,13 +80,20 @@ Intelligent git commit workflow with checkpoint conversion, change analysis, and
    
    ⚠️  New commit recommended (different scope from last commit)
    
-   Options:
+   **Type your choice:**
    y) Use suggested message
    n) Cancel
    custom message) Type your own
+   
+   **WAITING FOR YOUR RESPONSE...**
    ```
 
-5. **Execute:**
+5. **CRITICAL: WAIT FOR USER CONFIRMATION**
+   - **NEVER auto-execute commits without user confirmation**
+   - **STOP after presenting options and wait for user input**
+   - **Only proceed to Execute step after user responds**
+
+6. **Execute (ONLY after user confirmation):**
 
    **For CHECKPOINT Conversion:**
    - Stage any unstaged changes: `git add .`
@@ -118,3 +130,27 @@ Intelligent git commit workflow with checkpoint conversion, change analysis, and
 - **Scope analysis**: Compares change types between current and last commit
 - **Conventional commits**: Suggests proper commit message format
 - **Seamless workflow**: Perfect partner with `/core-checkpoint` for rapid iteration
+
+## Anti-Automation Guard
+
+**CRITICAL BEHAVIORAL RULE**: This command MUST be interactive and wait for user confirmation.
+
+**NEVER do these things:**
+- ❌ Auto-execute commits without user input
+- ❌ Assume "y" when user hasn't responded
+- ❌ Skip the "WAITING FOR YOUR RESPONSE..." step
+- ❌ Proceed directly to git commands after presenting options
+
+**ALWAYS do these things:**
+- ✅ Present analysis and suggested message
+- ✅ Show clear options with "Type your choice:"
+- ✅ Display "WAITING FOR YOUR RESPONSE..."
+- ✅ STOP and wait for user to type y/n/a/custom message
+- ✅ Only execute git commands AFTER user confirms
+
+**Red flags indicating failure:**
+- 🚨 Executing `git add` or `git commit` immediately after showing options
+- 🚨 Not waiting for user input before proceeding
+- 🚨 Skipping the interactive confirmation step
+
+**This command is INTERACTIVE by design - user confirmation is mandatory.**
