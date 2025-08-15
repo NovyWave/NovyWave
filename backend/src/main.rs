@@ -1159,6 +1159,9 @@ async fn query_signal_transitions(
                 let loaded_signals = signal_source.load_signals(&[signal_ref], &waveform_data.hierarchy, true);
                 
                 if let Some((_, signal)) = loaded_signals.into_iter().next() {
+                    let mut last_value: Option<String> = None;
+                    let mut last_transition_time: Option<f64> = None;
+                    
                     // Iterate through time table within time range
                     for (idx, &time_val) in waveform_data.time_table.iter().enumerate() {
                         if time_val >= start_time && time_val <= end_time {
@@ -1178,11 +1181,35 @@ async fn query_signal_transitions(
                                     None => format!("{}", value),
                                 };
                                 
+                                // TRANSITION DETECTION: Only send when value actually changes
+                                if last_value.as_ref() != Some(&value_str) {
+                                    transitions.push(SignalTransition {
+                                        time_seconds,
+                                        value: value_str.clone(),
+                                    });
+                                    last_value = Some(value_str);
+                                    last_transition_time = Some(time_seconds);
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Add filler rectangle: add "0" transition at the actual signal end time  
+                    // This shows users where signal values end (e.g., A=c and B=5 end at 150s in simple.vcd)
+                    if let (Some(last_val), Some(last_time)) = (&last_value, last_transition_time) {
+                        if last_val != "0" {
+                            // Calculate actual file end time for proper filler timing
+                            let file_end_time_seconds = match waveform_data.file_format {
+                                wellen::FileFormat::Vcd => end_time as f64,
+                                _ => end_time as f64 / 1_000_000_000_000.0,
+                            };
+                            
+                            // Add "0" filler at actual signal end time (not viewing window end)
+                            if last_time < file_end_time_seconds {
                                 transitions.push(SignalTransition {
-                                    time_seconds,
-                                    value: value_str.clone(),
+                                    time_seconds: file_end_time_seconds,
+                                    value: "0".to_string(),
                                 });
-                                
                             }
                         }
                     }

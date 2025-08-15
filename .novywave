@@ -35,7 +35,7 @@ load_files_expanded_directories = [
 ]
 selected_scope_id = "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s"
 load_files_scroll_position = 886
-timeline_cursor_position = 171.81979370117188
+timeline_cursor_position = 89.83815002441406
 timeline_zoom_level = 1.0
 timeline_visible_range_start = 0.0
 timeline_visible_range_end = 250.0

@@ -315,12 +315,25 @@ fn main_layout() -> impl Element {
             raw_el.global_event_handler(move |event: zoon::events::KeyDown| {
                 match event.key().as_str() {
                     "w" | "W" => {
-                        // Zoom in
-                        crate::waveform_canvas::zoom_in();
+                        // Start smooth zoom in
+                        crate::waveform_canvas::start_smooth_zoom_in();
                     },
                     "s" | "S" => {
-                        // Zoom out
-                        crate::waveform_canvas::zoom_out();
+                        // Start smooth zoom out
+                        crate::waveform_canvas::start_smooth_zoom_out();
+                    },
+                    _ => {} // Ignore other keys
+                }
+            })
+            .global_event_handler(move |event: zoon::events::KeyUp| {
+                match event.key().as_str() {
+                    "w" | "W" => {
+                        // Stop smooth zoom in
+                        crate::waveform_canvas::stop_smooth_zoom_in();
+                    },
+                    "s" | "S" => {
+                        // Stop smooth zoom out
+                        crate::waveform_canvas::stop_smooth_zoom_out();
                     },
                     _ => {} // Ignore other keys
                 }

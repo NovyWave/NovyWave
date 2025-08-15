@@ -21,6 +21,7 @@ use crate::{
     FILE_PICKER_ERROR, FILE_PICKER_ERROR_CACHE, FILE_TREE_CACHE, send_up_msg, DOCK_TOGGLE_IN_PROGRESS,
     TRACKED_FILES, state, file_validation::validate_file_state, clipboard
 };
+use crate::state::TIMELINE_ZOOM_LEVEL;
 use crate::state::SELECTED_VARIABLES_ROW_HEIGHT;
 use crate::state::{SELECTED_VARIABLES, clear_selected_variables, remove_selected_variable};
 use crate::format_utils::truncate_value;
@@ -1274,17 +1275,34 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                 })
                                             )
                                             .item(
-                                                // Footer row with selected time display
+                                                // Footer row with selected time and zoom percentage display
                                                 El::new()
                                                     .s(Height::exact(SELECTED_VARIABLES_ROW_HEIGHT))
                                                     .s(Width::fill())
                                                     .s(Padding::all(8))
-                                                    .s(Font::new().color_signal(neutral_8()).size(12).center())
                                                     .s(Transform::new().move_up(4))
-                                                    .child_signal(
-                                                        crate::state::TIMELINE_CURSOR_POSITION.signal().map(|cursor_pos| {
-                                                            Text::new(&format!("{}s", cursor_pos))
-                                                        })
+                                                    .child(
+                                                        Row::new()
+                                                            .s(Gap::new().x(16))
+                                                            .s(Align::new().center_y())
+                                                            .s(Font::new().color_signal(neutral_8()).size(12))
+                                                            .item(
+                                                                // Selected time display
+                                                                Text::with_signal(
+                                                                    crate::state::TIMELINE_CURSOR_POSITION.signal().map(|cursor_pos| {
+                                                                        format!("Selected: {}s", cursor_pos)
+                                                                    })
+                                                                )
+                                                            )
+                                                            .item(
+                                                                // Zoom percentage display
+                                                                Text::with_signal(
+                                                                    TIMELINE_ZOOM_LEVEL.signal().map(|zoom_level| {
+                                                                        let percentage = (zoom_level * 100.0) as u32;
+                                                                        format!("Zoom: {}%", percentage)
+                                                                    })
+                                                                )
+                                                            )
                                                     )
                                             )
                                     )
