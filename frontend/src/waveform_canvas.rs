@@ -269,10 +269,10 @@ fn request_signal_transitions_from_backend(file_path: &str, scope_path: &str, va
         if let Some(loaded_file) = loaded_files.iter().find(|f| f.id == file_path) {
             (
                 loaded_file.min_time.unwrap_or(0.0) as f64,
-                loaded_file.max_time.unwrap_or(250.0) as f64
+                loaded_file.max_time.unwrap_or(100.0) as f64
             )
         } else {
-            (0.0, 250.0) // Fallback range
+            (0.0, 100.0) // Fallback range
         }
     };
     

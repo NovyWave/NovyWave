@@ -501,6 +501,7 @@ version = "0.1.0"
 dependencies = [
  "dirs 5.0.1",
  "jwalk",
+ "memmap2",
  "moon",
  "serde",
  "shared",

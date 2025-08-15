@@ -104,16 +104,24 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
             }
             send_progress_update(file_id.clone(), 0.3, session_id, cor_id).await;
             
-            // Read the body to get signal data and time table
-            match wellen::viewers::read_body(header_result.body, &header_result.hierarchy, None) {
-                Ok(body_result) => {
+            // Handle FST and VCD differently for progressive loading
+            match header_result.file_format {
+                wellen::FileFormat::Fst => {
+                    // FST: Time table available immediately from header parsing
+                    // Progressive loading: extract time table quickly, defer full signal data
+                    match wellen::viewers::read_body(header_result.body, &header_result.hierarchy, None) {
+                        Ok(body_result) => {
                     {
                         let mut p = progress.lock().unwrap();
                         *p = 0.7; // Body parsed
                     }
                     send_progress_update(file_id.clone(), 0.7, session_id, cor_id).await;
                     
-                    // Extract scopes first 
+                    // FST: Extract time range first before moving body_result
+                    let (min_seconds, max_seconds) = extract_fst_time_range(&body_result);
+                    let (min_time, max_time) = (Some(min_seconds), Some(max_seconds));
+                    
+                    // Extract scopes from hierarchy 
                     let scopes = extract_scopes_from_hierarchy(&header_result.hierarchy, &file_path);
                     
                     // Build signal reference map for quick lookup
@@ -133,36 +141,8 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
                         let mut store = WAVEFORM_DATA_STORE.lock().unwrap();
                         store.insert(file_path.clone(), waveform_data);
                     }
-                    let format = match header_result.file_format {
-                        wellen::FileFormat::Vcd => FileFormat::VCD,
-                        wellen::FileFormat::Fst => FileFormat::FST,
-                        wellen::FileFormat::Ghw => FileFormat::VCD, // Treat as VCD for now
-                        wellen::FileFormat::Unknown => FileFormat::VCD, // Fallback
-                    };
                     
-                    // Extract timeline range from time_table and normalize to seconds
-                    let (min_time, max_time) = if !body_result.time_table.is_empty() {
-                        let raw_min = *body_result.time_table.first().unwrap() as f64;
-                        let raw_max = *body_result.time_table.last().unwrap() as f64;
-                        
-                        // Convert to seconds based on file format
-                        let (min_seconds, max_seconds) = match header_result.file_format {
-                            wellen::FileFormat::Vcd => {
-                                // VCD: time table is in VCD's native units (depends on $timescale)
-                                // For $timescale 1s: values are already in seconds
-                                // TODO: Parse actual timescale from VCD header for proper conversion
-                                (raw_min, raw_max)
-                            },
-                            _ => {
-                                // FST and other formats: time table is in femtoseconds, convert to seconds
-                                (raw_min / 1_000_000_000_000.0, raw_max / 1_000_000_000_000.0)
-                            }
-                        };
-                        
-                        (Some(min_seconds), Some(max_seconds))
-                    } else {
-                        (None, None)
-                    };
+                    let format = FileFormat::FST;
                     
                     let waveform_file = WaveformFile {
                         id: file_id.clone(),
@@ -190,9 +170,160 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
                     
                     cleanup_parsing_session(&file_id);
                 }
-                Err(e) => {
-                    let error_msg = format!("Failed to read waveform body from '{}': {}", file_path, e);
-                    send_down_msg(DownMsg::ParsingError { file_id, error: error_msg }, session_id, cor_id).await;
+                        Err(e) => {
+                            let error_msg = format!("Failed to read waveform body from '{}': {}", file_path, e);
+                            send_down_msg(DownMsg::ParsingError { file_id, error: error_msg }, session_id, cor_id).await;
+                        }
+                    }
+                }
+                wellen::FileFormat::Vcd => {
+                    // VCD: Use progressive loading with quick time bounds extraction
+                    
+                    // First: Try quick time bounds extraction (much faster)
+                    let (min_seconds, max_seconds) = match extract_vcd_time_bounds_fast(&file_path) {
+                        Ok((min_time, max_time)) => {
+                            // Apply proper timescale conversion for VCD based on unit
+                            let timescale_factor = header_result.hierarchy.timescale()
+                                .map(|ts| {
+                                    use wellen::TimescaleUnit;
+                                    match ts.unit {
+                                        TimescaleUnit::FemtoSeconds => ts.factor as f64 * 1e-15,
+                                        TimescaleUnit::PicoSeconds => ts.factor as f64 * 1e-12,
+                                        TimescaleUnit::NanoSeconds => ts.factor as f64 * 1e-9,
+                                        TimescaleUnit::MicroSeconds => ts.factor as f64 * 1e-6,
+                                        TimescaleUnit::MilliSeconds => ts.factor as f64 * 1e-3,
+                                        TimescaleUnit::Seconds => ts.factor as f64,
+                                        TimescaleUnit::Unknown => ts.factor as f64, // Default to no conversion
+                                    }
+                                })
+                                .unwrap_or(1.0);
+                            
+                            println!("DEBUG VCD Quick scan - raw times: {} to {}", min_time, max_time);
+                            println!("DEBUG VCD Timescale factor: {:.2e}", timescale_factor);
+                            let converted_min = min_time * timescale_factor;
+                            let converted_max = max_time * timescale_factor;
+                            println!("DEBUG VCD Final times: {:.6} to {:.6} seconds", converted_min, converted_max);
+                            
+                            (converted_min, converted_max)
+                        }
+                        Err(_) => {
+                            // Fallback to slower method if quick scan fails
+                            println!("VCD quick scan failed, falling back to full parsing");
+                            (0.0, 100.0) // Will be updated after full parsing
+                        }
+                    };
+                    
+                    {
+                        let mut p = progress.lock().unwrap();
+                        *p = 0.5; // Quick time bounds extracted
+                    }
+                    send_progress_update(file_id.clone(), 0.5, session_id, cor_id).await;
+                    
+                    // Extract scopes from header (immediate - no body parsing needed)
+                    let scopes = extract_scopes_from_hierarchy(&header_result.hierarchy, &file_path);
+                    
+                    let format = FileFormat::VCD;
+                    let (min_time, max_time) = (Some(min_seconds), Some(max_seconds));
+                    
+                    // Create lightweight file data WITHOUT full signal source
+                    let waveform_file = WaveformFile {
+                        id: file_id.clone(),
+                        filename,
+                        format,
+                        scopes,
+                        min_time,
+                        max_time,
+                    };
+                    
+                    let file_hierarchy = FileHierarchy {
+                        files: vec![waveform_file],
+                    };
+                    
+                    {
+                        let mut p = progress.lock().unwrap();
+                        *p = 1.0; // Complete - fast header-only loading!
+                    }
+                    send_progress_update(file_id.clone(), 1.0, session_id, cor_id).await;
+                    
+                    send_down_msg(DownMsg::FileLoaded { 
+                        file_id: file_id.clone(), 
+                        hierarchy: file_hierarchy 
+                    }, session_id, cor_id).await;
+                    
+                    cleanup_parsing_session(&file_id);
+                }
+                wellen::FileFormat::Ghw | wellen::FileFormat::Unknown => {
+                    // GHW and Unknown formats: Use existing full body parsing logic
+                    match wellen::viewers::read_body(header_result.body, &header_result.hierarchy, None) {
+                        Ok(body_result) => {
+                            {
+                                let mut p = progress.lock().unwrap();
+                                *p = 0.7; // Body parsed
+                            }
+                            send_progress_update(file_id.clone(), 0.7, session_id, cor_id).await;
+                            
+                            // Extract scopes first 
+                            let scopes = extract_scopes_from_hierarchy(&header_result.hierarchy, &file_path);
+                            
+                            // Build signal reference map for quick lookup
+                            let mut signals: HashMap<String, wellen::SignalRef> = HashMap::new();
+                            build_signal_reference_map(&header_result.hierarchy, &mut signals);
+                            
+                            // Store waveform data for signal value queries
+                            let waveform_data = WaveformData {
+                                hierarchy: header_result.hierarchy,
+                                signal_source: Arc::new(Mutex::new(body_result.source)),
+                                time_table: body_result.time_table.clone(),
+                                signals,
+                                file_format: header_result.file_format,
+                            };
+                            
+                            {
+                                let mut store = WAVEFORM_DATA_STORE.lock().unwrap();
+                                store.insert(file_path.clone(), waveform_data);
+                            }
+                            let format = FileFormat::VCD; // Treat as VCD for now
+                            
+                            // Extract timeline range from time_table and normalize to seconds
+                            let (min_time, max_time) = if !body_result.time_table.is_empty() {
+                                let raw_min = *body_result.time_table.first().unwrap() as f64;
+                                let raw_max = *body_result.time_table.last().unwrap() as f64;
+                                (Some(raw_min), Some(raw_max)) // Treat as already in seconds
+                            } else {
+                                (None, None)
+                            };
+                            
+                            let waveform_file = WaveformFile {
+                                id: file_id.clone(),
+                                filename,
+                                format,
+                                scopes,
+                                min_time,
+                                max_time,
+                            };
+                            
+                            let file_hierarchy = FileHierarchy {
+                                files: vec![waveform_file],
+                            };
+                            
+                            {
+                                let mut p = progress.lock().unwrap();
+                                *p = 1.0; // Complete
+                            }
+                            send_progress_update(file_id.clone(), 1.0, session_id, cor_id).await;
+                            
+                            send_down_msg(DownMsg::FileLoaded { 
+                                file_id: file_id.clone(), 
+                                hierarchy: file_hierarchy 
+                            }, session_id, cor_id).await;
+                            
+                            cleanup_parsing_session(&file_id);
+                        }
+                        Err(e) => {
+                            let error_msg = format!("Failed to read waveform body from '{}': {}", file_path, e);
+                            send_down_msg(DownMsg::ParsingError { file_id, error: error_msg }, session_id, cor_id).await;
+                        }
+                    }
                 }
             }
         }
@@ -203,6 +334,144 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
     }
 }
 
+
+fn extract_fst_time_range(body_result: &wellen::viewers::BodyResult) -> (f64, f64) {
+    if body_result.time_table.is_empty() {
+        return (0.0, 100.0); // Default fallback
+    }
+    
+    let raw_min = *body_result.time_table.first().unwrap() as f64;
+    let raw_max = *body_result.time_table.last().unwrap() as f64;
+    
+    // FST time values are in femtoseconds, convert to seconds
+    (raw_min / 1_000_000_000_000.0, raw_max / 1_000_000_000_000.0)
+}
+
+fn extract_vcd_time_bounds_fast(file_path: &str) -> Result<(f64, f64), Box<dyn std::error::Error>> {
+    use std::fs::File;
+    
+    let file = File::open(file_path)?;
+    let file_size = file.metadata()?.len();
+    
+    // For large files, use memory-mapped scanning
+    if file_size > 100_000_000 { // 100MB threshold
+        extract_vcd_time_bounds_mmap(file_path)
+    } else {
+        extract_vcd_time_bounds_small(file_path)
+    }
+}
+
+fn extract_vcd_time_bounds_mmap(file_path: &str) -> Result<(f64, f64), Box<dyn std::error::Error>> {
+    use std::fs::File;
+    
+    let file = File::open(file_path)?;
+    let mmap = unsafe { memmap2::Mmap::map(&file)? };
+    
+    // Find end of header ($enddefinitions $end)
+    let header_end = find_vcd_definitions_end(&mmap)?;
+    let body_section = &mmap[header_end..];
+    
+    // Scan for first timestamp from beginning of body
+    let first_time = find_first_vcd_timestamp(body_section)?;
+    
+    // Scan for last timestamp from end (more efficient)
+    let last_time = find_last_vcd_timestamp_reverse(body_section)?;
+    
+    Ok((first_time, last_time))
+}
+
+fn extract_vcd_time_bounds_small(file_path: &str) -> Result<(f64, f64), Box<dyn std::error::Error>> {
+    use std::fs;
+    
+    let content = fs::read_to_string(file_path)?;
+    
+    // Find end of header
+    let header_end = content.find("$enddefinitions $end")
+        .ok_or("VCD header end marker not found")?;
+    
+    let body_section = &content[header_end..];
+    
+    // Find first and last timestamps
+    let first_time = find_first_vcd_timestamp_str(body_section)?;
+    let last_time = find_last_vcd_timestamp_str(body_section)?;
+    
+    Ok((first_time, last_time))
+}
+
+fn find_vcd_definitions_end(data: &[u8]) -> Result<usize, Box<dyn std::error::Error>> {
+    let pattern = b"$enddefinitions $end";
+    let pos = data.windows(pattern.len())
+        .position(|window| window == pattern)
+        .ok_or("VCD header end marker not found")?;
+    Ok(pos + pattern.len())
+}
+
+fn find_first_vcd_timestamp(data: &[u8]) -> Result<f64, Box<dyn std::error::Error>> {
+    let mut i = 0;
+    while i < data.len() {
+        if data[i] == b'#' {
+            // Found timestamp marker, parse the number
+            i += 1;
+            let mut timestamp_str = String::new();
+            while i < data.len() && data[i].is_ascii_digit() {
+                timestamp_str.push(data[i] as char);
+                i += 1;
+            }
+            if !timestamp_str.is_empty() {
+                return Ok(timestamp_str.parse::<f64>()?);
+            }
+        }
+        i += 1;
+    }
+    Err("No VCD timestamp found".into())
+}
+
+fn find_last_vcd_timestamp_reverse(data: &[u8]) -> Result<f64, Box<dyn std::error::Error>> {
+    let mut i = data.len();
+    while i > 0 {
+        i -= 1;
+        if data[i] == b'#' && i + 1 < data.len() && data[i + 1].is_ascii_digit() {
+            // Found timestamp marker, parse the number forward
+            let mut j = i + 1;
+            let mut timestamp_str = String::new();
+            while j < data.len() && data[j].is_ascii_digit() {
+                timestamp_str.push(data[j] as char);
+                j += 1;
+            }
+            if !timestamp_str.is_empty() {
+                return Ok(timestamp_str.parse::<f64>()?);
+            }
+        }
+    }
+    Err("No VCD timestamp found in reverse scan".into())
+}
+
+fn find_first_vcd_timestamp_str(body: &str) -> Result<f64, Box<dyn std::error::Error>> {
+    for line in body.lines() {
+        if line.starts_with('#') {
+            let timestamp_str = &line[1..].split_whitespace().next().unwrap_or("");
+            if !timestamp_str.is_empty() {
+                return Ok(timestamp_str.parse::<f64>()?);
+            }
+        }
+    }
+    Err("No VCD timestamp found".into())
+}
+
+fn find_last_vcd_timestamp_str(body: &str) -> Result<f64, Box<dyn std::error::Error>> {
+    let mut last_timestamp = None;
+    for line in body.lines() {
+        if line.starts_with('#') {
+            let timestamp_str = &line[1..].split_whitespace().next().unwrap_or("");
+            if !timestamp_str.is_empty() {
+                if let Ok(timestamp) = timestamp_str.parse::<f64>() {
+                    last_timestamp = Some(timestamp);
+                }
+            }
+        }
+    }
+    last_timestamp.ok_or("No VCD timestamp found in body".into())
+}
 
 fn extract_scopes_from_hierarchy(hierarchy: &wellen::Hierarchy, file_path: &str) -> Vec<ScopeData> {
     hierarchy.scopes().map(|scope_ref| {
@@ -672,7 +941,60 @@ fn build_signals_for_scope_recursive(hierarchy: &wellen::Hierarchy, scope_ref: w
 }
 
 // Handle signal value queries
+// Load VCD body data on-demand for signal value queries
+async fn ensure_vcd_body_loaded(file_path: &str) -> Result<(), String> {
+    // Check if already loaded
+    {
+        let store = WAVEFORM_DATA_STORE.lock().unwrap();
+        if store.contains_key(file_path) {
+            return Ok(());
+        }
+    }
+    
+    // Need to parse VCD body - reparse the file
+    let options = wellen::LoadOptions::default();
+    match wellen::viewers::read_header_from_file(file_path, &options) {
+        Ok(header_result) => {
+            match wellen::viewers::read_body(header_result.body, &header_result.hierarchy, None) {
+                Ok(body_result) => {
+                    // Build signal reference map
+                    let mut signals: HashMap<String, wellen::SignalRef> = HashMap::new();
+                    build_signal_reference_map(&header_result.hierarchy, &mut signals);
+                    
+                    // Store waveform data
+                    let waveform_data = WaveformData {
+                        hierarchy: header_result.hierarchy,
+                        signal_source: Arc::new(Mutex::new(body_result.source)),
+                        time_table: body_result.time_table.clone(),
+                        signals,
+                        file_format: header_result.file_format,
+                    };
+                    
+                    {
+                        let mut store = WAVEFORM_DATA_STORE.lock().unwrap();
+                        store.insert(file_path.to_string(), waveform_data);
+                    }
+                    Ok(())
+                }
+                Err(e) => Err(format!("Failed to parse VCD body: {}", e))
+            }
+        }
+        Err(e) => Err(format!("Failed to read VCD file: {}", e))
+    }
+}
+
 async fn query_signal_values(file_path: String, queries: Vec<SignalValueQuery>, session_id: SessionId, cor_id: CorId) {
+    // For VCD files, ensure body is loaded on-demand
+    if file_path.ends_with(".vcd") {
+        if let Err(e) = ensure_vcd_body_loaded(&file_path).await {
+            send_down_msg(DownMsg::SignalValuesError {
+                file_path,
+                error: e,
+            }, session_id, cor_id).await;
+            return;
+        }
+    }
+    
     let store = WAVEFORM_DATA_STORE.lock().unwrap();
     let waveform_data = match store.get(&file_path) {
         Some(data) => data,
@@ -791,6 +1113,17 @@ async fn query_signal_transitions(
     session_id: SessionId, 
     cor_id: CorId
 ) {
+    // For VCD files, ensure body is loaded on-demand
+    if file_path.ends_with(".vcd") {
+        if let Err(e) = ensure_vcd_body_loaded(&file_path).await {
+            send_down_msg(DownMsg::SignalTransitionsError {
+                file_path,
+                error: e,
+            }, session_id, cor_id).await;
+            return;
+        }
+    }
+    
     let store = WAVEFORM_DATA_STORE.lock().unwrap();
     let waveform_data = match store.get(&file_path) {
         Some(data) => data,
