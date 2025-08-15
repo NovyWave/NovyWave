@@ -21,6 +21,11 @@ pub const SELECTED_VARIABLES_ROW_HEIGHT: u32 = 30;
 // Timeline cursor position (in seconds)
 pub static TIMELINE_CURSOR_POSITION: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(10.0));
 
+// Timeline zoom state
+pub static TIMELINE_ZOOM_LEVEL: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(1.0)); // 1.0 = normal, 16.0 = max zoom
+pub static TIMELINE_VISIBLE_RANGE_START: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(0.0)); // Visible time window start
+pub static TIMELINE_VISIBLE_RANGE_END: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(100.0)); // Visible time window end
+
 // Canvas dimensions for click calculations
 pub static CANVAS_WIDTH: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(800.0));
 pub static CANVAS_HEIGHT: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(400.0));

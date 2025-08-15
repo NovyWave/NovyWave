@@ -133,6 +133,24 @@ async fn create_canvas_element() -> impl Element {
         }).await;
     });
 
+    // Add reactive updates when zoom state changes
+    let canvas_wrapper_for_zoom = canvas_wrapper_shared.clone();
+    Task::start(async move {
+        crate::state::TIMELINE_ZOOM_LEVEL.signal().for_each(move |_| {
+            let canvas_wrapper_for_zoom = canvas_wrapper_for_zoom.clone();
+            async move {
+                canvas_wrapper_for_zoom.borrow_mut().update_objects(move |objects| {
+                    let selected_vars = SELECTED_VARIABLES.lock_ref();
+                    let cursor_pos = TIMELINE_CURSOR_POSITION.get();
+                    let canvas_width = CANVAS_WIDTH.get();
+                    let canvas_height = CANVAS_HEIGHT.get();
+                    // Use dark theme as fallback - theme handler will update with correct theme
+                    *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &NovyUITheme::Dark, cursor_pos);
+                });
+            }
+        }).await;
+    });
+
     let canvas_wrapper_for_resize = canvas_wrapper_shared.clone();
     zoon_canvas.update_raw_el(move |raw_el| {
         raw_el.on_resize(move |width, height| {
@@ -283,7 +301,7 @@ fn get_signal_transitions_for_variable(var: &SelectedVariable, time_range: (f32,
 }
 
 // Request real signal transitions from backend
-fn request_signal_transitions_from_backend(file_path: &str, scope_path: &str, variable_name: &str, time_range: (f32, f32)) {
+fn request_signal_transitions_from_backend(file_path: &str, scope_path: &str, variable_name: &str, _time_range: (f32, f32)) {
     
     let query = SignalTransitionQuery {
         scope_path: scope_path.to_string(),
@@ -324,6 +342,21 @@ pub fn trigger_canvas_redraw() {
 
 // Consolidated function to get current timeline range
 fn get_current_timeline_range() -> (f32, f32) {
+    let zoom_level = crate::state::TIMELINE_ZOOM_LEVEL.get();
+    
+    // If zoomed in, return the visible range
+    if zoom_level > 1.0 {
+        let range_start = crate::state::TIMELINE_VISIBLE_RANGE_START.get();
+        let range_end = crate::state::TIMELINE_VISIBLE_RANGE_END.get();
+        
+        // Validate range is sensible
+        if range_end > range_start && range_start >= 0.0 {
+            return (range_start, range_end);
+        }
+        // Fall through to full range if zoom range is invalid
+    }
+    
+    // Default behavior: get full file range
     let loaded_files = LOADED_FILES.lock_ref();
     
     // Get timeline range from ALL loaded files, not just selected variables
@@ -341,6 +374,89 @@ fn get_current_timeline_range() -> (f32, f32) {
     
     if !has_valid_files || min_time == max_time {
         // Reasonable default for empty/invalid files
+        (0.0, 100.0)
+    } else {
+        (min_time, max_time)
+    }
+}
+
+// Zoom functions with center-focused behavior and bounds checking
+pub fn zoom_in() {
+    let current_zoom = crate::state::TIMELINE_ZOOM_LEVEL.get();
+    let cursor_pos = crate::state::TIMELINE_CURSOR_POSITION.get();
+    
+    // Apply zoom increment with bounds checking (max 16x zoom)
+    let new_zoom = (current_zoom * 1.5).min(16.0);
+    
+    if new_zoom != current_zoom {
+        update_zoom_level_and_visible_range(new_zoom, cursor_pos);
+    }
+}
+
+pub fn zoom_out() {
+    let current_zoom = crate::state::TIMELINE_ZOOM_LEVEL.get();
+    let cursor_pos = crate::state::TIMELINE_CURSOR_POSITION.get();
+    
+    // Apply zoom decrement with bounds checking (min 1x zoom)
+    let new_zoom = (current_zoom / 1.5).max(1.0);
+    
+    if new_zoom != current_zoom {
+        update_zoom_level_and_visible_range(new_zoom, cursor_pos);
+    }
+}
+
+fn update_zoom_level_and_visible_range(new_zoom: f32, center_time: f32) {
+    // Set the new zoom level
+    crate::state::TIMELINE_ZOOM_LEVEL.set_neq(new_zoom);
+    
+    if new_zoom <= 1.0 {
+        // Full zoom - use entire file range
+        let (file_min, file_max) = get_full_file_range();
+        crate::state::TIMELINE_VISIBLE_RANGE_START.set_neq(file_min);
+        crate::state::TIMELINE_VISIBLE_RANGE_END.set_neq(file_max);
+    } else {
+        // Zoomed in - calculate visible range centered on cursor
+        let (file_min, file_max) = get_full_file_range();
+        let full_range = file_max - file_min;
+        let visible_range = full_range / new_zoom;
+        
+        // Center the visible range on the cursor position
+        let half_visible = visible_range / 2.0;
+        let mut range_start = center_time - half_visible;
+        let mut range_end = center_time + half_visible;
+        
+        // Clamp to file bounds
+        if range_start < file_min {
+            let offset = file_min - range_start;
+            range_start = file_min;
+            range_end = (range_end + offset).min(file_max);
+        } else if range_end > file_max {
+            let offset = range_end - file_max;
+            range_end = file_max;
+            range_start = (range_start - offset).max(file_min);
+        }
+        
+        crate::state::TIMELINE_VISIBLE_RANGE_START.set_neq(range_start);
+        crate::state::TIMELINE_VISIBLE_RANGE_END.set_neq(range_end);
+    }
+}
+
+fn get_full_file_range() -> (f32, f32) {
+    let loaded_files = LOADED_FILES.lock_ref();
+    
+    let mut min_time: f32 = f32::MAX;
+    let mut max_time: f32 = f32::MIN;
+    let mut has_valid_files = false;
+    
+    for file in loaded_files.iter() {
+        if let (Some(file_min), Some(file_max)) = (file.min_time, file.max_time) {
+            min_time = min_time.min(file_min as f32);
+            max_time = max_time.max(file_max as f32);
+            has_valid_files = true;
+        }
+    }
+    
+    if !has_valid_files || min_time == max_time {
         (0.0, 100.0)
     } else {
         (min_time, max_time)
@@ -491,11 +607,16 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
         // Calculate round time intervals
         let raw_time_step = time_range / (tick_count - 1) as f32;
         let time_step = round_to_nice_number(raw_time_step);
-        let actual_tick_count = ((time_range / time_step).ceil() as i32 + 1).min(tick_count + 2);
+        
+        // Find the first tick that's >= min_time (aligned to step boundaries)
+        let first_tick = (min_time / time_step).ceil() * time_step;
+        let last_tick = max_time;
+        let actual_tick_count = ((last_tick - first_tick) / time_step).ceil() as i32 + 1;
         
         for tick_index in 0..actual_tick_count {
-            let time_value = (tick_index as f32 * time_step).min(max_time);
-            let x_position = (time_value / time_range) * canvas_width;
+            let time_value = first_tick + (tick_index as f32 * time_step);
+            let time_value = time_value.min(max_time);
+            let x_position = ((time_value - min_time) / time_range) * canvas_width;
             
             // Skip edge labels to prevent cutoff (10px margin on each side)
             let label_margin = 10.0;

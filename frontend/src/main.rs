@@ -311,6 +311,21 @@ fn main_layout() -> impl Element {
                 });
             }
         })
+        .update_raw_el(move |raw_el| {
+            raw_el.global_event_handler(move |event: zoon::events::KeyDown| {
+                match event.key().as_str() {
+                    "w" | "W" => {
+                        // Zoom in
+                        crate::waveform_canvas::zoom_in();
+                    },
+                    "s" | "S" => {
+                        // Zoom out
+                        crate::waveform_canvas::zoom_out();
+                    },
+                    _ => {} // Ignore other keys
+                }
+            })
+        })
         .child(docked_layout_wrapper())
 }
 

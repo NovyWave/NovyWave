@@ -84,6 +84,9 @@ pub struct WorkspaceSection {
     pub panel_layouts: Mutable<PanelLayouts>,
     pub selected_variables: MutableVec<shared::SelectedVariable>,
     pub timeline_cursor_position: Mutable<f32>,
+    pub timeline_zoom_level: Mutable<f32>,
+    pub timeline_visible_range_start: Mutable<f32>,
+    pub timeline_visible_range_end: Mutable<f32>,
 }
 
 // DockMode enum now imported from shared crate for type safety
@@ -198,6 +201,9 @@ impl Default for WorkspaceSection {
             panel_layouts: Mutable::new(PanelLayouts::default()),
             selected_variables: MutableVec::new(),
             timeline_cursor_position: Mutable::new(10.0),
+            timeline_zoom_level: Mutable::new(1.0),
+            timeline_visible_range_start: Mutable::new(0.0),
+            timeline_visible_range_end: Mutable::new(100.0),
         }
     }
 }
@@ -292,6 +298,9 @@ pub struct SerializableWorkspaceSection {
     pub panel_layouts: SerializablePanelLayouts,
     pub selected_variables: Vec<shared::SelectedVariable>,
     pub timeline_cursor_position: f32,
+    pub timeline_zoom_level: f32,
+    pub timeline_visible_range_start: f32,
+    pub timeline_visible_range_end: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -366,6 +375,9 @@ impl ConfigStore {
                     },
                 },
                 timeline_cursor_position: self.workspace.lock_ref().timeline_cursor_position.get(),
+                timeline_zoom_level: self.workspace.lock_ref().timeline_zoom_level.get(),
+                timeline_visible_range_start: self.workspace.lock_ref().timeline_visible_range_start.get(),
+                timeline_visible_range_end: self.workspace.lock_ref().timeline_visible_range_end.get(),
             },
             dialogs: SerializableDialogSection {
                 show_file_dialog: self.dialogs.lock_ref().show_file_dialog.get(),
@@ -408,6 +420,9 @@ impl ConfigStore {
         self.workspace.lock_mut().selected_variables.lock_mut().replace_cloned(config.workspace.selected_variables);
         
         self.workspace.lock_mut().timeline_cursor_position.set(config.workspace.timeline_cursor_position);
+        self.workspace.lock_mut().timeline_zoom_level.set(config.workspace.timeline_zoom_level);
+        self.workspace.lock_mut().timeline_visible_range_start.set(config.workspace.timeline_visible_range_start);
+        self.workspace.lock_mut().timeline_visible_range_end.set(config.workspace.timeline_visible_range_end);
 
         {
             let workspace_ref = self.workspace.lock_ref();
@@ -618,6 +633,36 @@ fn store_config_on_any_change() {
             }
         }).await
     });
+    
+    // Timeline zoom level changes
+    let timeline_zoom_level_signal = crate::state::TIMELINE_ZOOM_LEVEL.signal();
+    Task::start(async move {
+        timeline_zoom_level_signal.for_each_sync(|_| {
+            if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
+                save_config_to_backend();
+            }
+        }).await
+    });
+    
+    // Timeline visible range start changes
+    let timeline_visible_range_start_signal = crate::state::TIMELINE_VISIBLE_RANGE_START.signal();
+    Task::start(async move {
+        timeline_visible_range_start_signal.for_each_sync(|_| {
+            if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
+                save_config_to_backend();
+            }
+        }).await
+    });
+    
+    // Timeline visible range end changes
+    let timeline_visible_range_end_signal = crate::state::TIMELINE_VISIBLE_RANGE_END.signal();
+    Task::start(async move {
+        timeline_visible_range_end_signal.for_each_sync(|_| {
+            if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
+                save_config_to_backend();
+            }
+        }).await
+    });
 }
 
 /// Backend-compatible panel dimensions with only the 2 fields that exist in shared schema
@@ -684,6 +729,9 @@ pub fn save_config_to_backend() {
             variables_search_filter: serializable_config.session.variables_search_filter,
             selected_variables: serializable_config.workspace.selected_variables,
             timeline_cursor_position: crate::state::TIMELINE_CURSOR_POSITION.get(),
+            timeline_zoom_level: crate::state::TIMELINE_ZOOM_LEVEL.get(),
+            timeline_visible_range_start: Some(crate::state::TIMELINE_VISIBLE_RANGE_START.get()),
+            timeline_visible_range_end: Some(crate::state::TIMELINE_VISIBLE_RANGE_END.get()),
         },
     };
 
@@ -785,6 +833,9 @@ pub fn apply_config(config: shared::AppConfig) {
             load_files_expanded_directories: config.workspace.load_files_expanded_directories,
             selected_variables: config.workspace.selected_variables,
             timeline_cursor_position: config.workspace.timeline_cursor_position,
+            timeline_zoom_level: config.workspace.timeline_zoom_level,
+            timeline_visible_range_start: config.workspace.timeline_visible_range_start.unwrap_or(0.0),
+            timeline_visible_range_end: config.workspace.timeline_visible_range_end.unwrap_or(100.0),
             panel_layouts: SerializablePanelLayouts {
                 docked_to_bottom: SerializablePanelDimensions {
                     files_panel_width: config.workspace.docked_bottom_dimensions.files_and_scopes_panel_width as f32,
@@ -839,6 +890,9 @@ pub fn apply_config(config: shared::AppConfig) {
     
     // Manual sync of timeline cursor position from config to legacy globals
     sync_timeline_cursor_position_from_config();
+    
+    // Manual sync of timeline zoom state from config to global state
+    sync_timeline_zoom_state_from_config();
     
     // Set config loaded flag
     CONFIG_LOADED.set_neq(true);
@@ -1001,6 +1055,28 @@ fn sync_timeline_cursor_position_from_config() {
     let validated_position = cursor_position.max(0.0);
     
     crate::state::TIMELINE_CURSOR_POSITION.set_neq(validated_position);
+}
+
+fn sync_timeline_zoom_state_from_config() {
+    let workspace = config_store().workspace.lock_ref();
+    
+    // Sync zoom level with validation (1.0 = normal, max 16.0)
+    let zoom_level = workspace.timeline_zoom_level.get().max(1.0).min(16.0);
+    crate::state::TIMELINE_ZOOM_LEVEL.set_neq(zoom_level);
+    
+    // Sync visible range
+    let range_start = workspace.timeline_visible_range_start.get();
+    let range_end = workspace.timeline_visible_range_end.get();
+    
+    // Basic validation - ensure end > start
+    if range_end > range_start {
+        crate::state::TIMELINE_VISIBLE_RANGE_START.set_neq(range_start);
+        crate::state::TIMELINE_VISIBLE_RANGE_END.set_neq(range_end);
+    } else {
+        // Use safe defaults if invalid range
+        crate::state::TIMELINE_VISIBLE_RANGE_START.set_neq(0.0);
+        crate::state::TIMELINE_VISIBLE_RANGE_END.set_neq(100.0);
+    }
 }
 
 pub fn current_dock_mode() -> impl Signal<Item = DockMode> {

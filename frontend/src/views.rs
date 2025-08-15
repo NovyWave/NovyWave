@@ -1382,7 +1382,9 @@ pub fn waveform_panel() -> impl Element {
                             .left_icon(IconName::ZoomIn)
                             .variant(ButtonVariant::Outline)
                             .size(ButtonSize::Small)
-                            .on_press(|| {})
+                            .on_press(|| {
+                                crate::waveform_canvas::zoom_in();
+                            })
                             .build()
                     )
                     .item(
@@ -1391,7 +1393,9 @@ pub fn waveform_panel() -> impl Element {
                             .left_icon(IconName::ZoomOut)
                             .variant(ButtonVariant::Outline)
                             .size(ButtonSize::Small)
-                            .on_press(|| {})
+                            .on_press(|| {
+                                crate::waveform_canvas::zoom_out();
+                            })
                             .build()
                     ),
                 Column::new()

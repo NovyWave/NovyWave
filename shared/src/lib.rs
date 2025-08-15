@@ -747,6 +747,10 @@ fn default_timeline_cursor_position() -> f32 {
     10.0 // Default timeline cursor position in seconds
 }
 
+fn default_timeline_zoom_level() -> f32 {
+    1.0 // Default zoom level (1.0 = normal, no zoom)
+}
+
 impl Default for UiSection {
     fn default() -> Self {
         Self {
@@ -791,6 +795,12 @@ pub struct WorkspaceSection {
     pub selected_variables: Vec<SelectedVariable>,
     #[serde(default = "default_timeline_cursor_position")]
     pub timeline_cursor_position: f32,
+    #[serde(default = "default_timeline_zoom_level")]
+    pub timeline_zoom_level: f32,
+    #[serde(default)]
+    pub timeline_visible_range_start: Option<f32>,
+    #[serde(default)]
+    pub timeline_visible_range_end: Option<f32>,
 }
 
 impl Default for WorkspaceSection {
@@ -807,6 +817,9 @@ impl Default for WorkspaceSection {
             variables_search_filter: String::new(),
             selected_variables: Vec::new(),
             timeline_cursor_position: default_timeline_cursor_position(),
+            timeline_zoom_level: default_timeline_zoom_level(),
+            timeline_visible_range_start: None,
+            timeline_visible_range_end: None,
         }
     }
 }
