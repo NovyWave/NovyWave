@@ -1,7 +1,7 @@
 use zoon::*;
 use fast2d;
 use crate::state::{SELECTED_VARIABLES, LOADED_FILES, TIMELINE_CURSOR_POSITION, CANVAS_WIDTH, CANVAS_HEIGHT, 
-    IS_ZOOMING_IN, IS_ZOOMING_OUT, MOUSE_X_POSITION, MOUSE_TIME_POSITION, TIMELINE_ZOOM_LEVEL, 
+    IS_ZOOMING_IN, IS_ZOOMING_OUT, IS_PANNING_LEFT, IS_PANNING_RIGHT, MOUSE_X_POSITION, MOUSE_TIME_POSITION, TIMELINE_ZOOM_LEVEL, 
     TIMELINE_VISIBLE_RANGE_START, TIMELINE_VISIBLE_RANGE_END};
 use crate::connection::send_up_msg;
 use crate::config::current_theme;
@@ -544,6 +544,85 @@ pub fn stop_smooth_zoom_in() {
 
 pub fn stop_smooth_zoom_out() {
     IS_ZOOMING_OUT.set_neq(false);
+}
+
+// Smooth pan functions
+pub fn start_smooth_pan_left() {
+    if !IS_PANNING_LEFT.get() {
+        IS_PANNING_LEFT.set_neq(true);
+        Task::start(async move {
+            while IS_PANNING_LEFT.get() {
+                let zoom_level = TIMELINE_ZOOM_LEVEL.get();
+                if zoom_level > 1.0 {  // Only pan when zoomed in
+                    let current_start = TIMELINE_VISIBLE_RANGE_START.get();
+                    let current_end = TIMELINE_VISIBLE_RANGE_END.get();
+                    let visible_range = current_end - current_start;
+                    
+                    // Smooth pan: 2% of visible range per frame
+                    let pan_distance = visible_range * 0.02;
+                    
+                    // Get file bounds for clamping
+                    let (file_min, _file_max) = get_full_file_range();
+                    
+                    // Calculate new positions
+                    let new_start = (current_start - pan_distance).max(file_min);
+                    let new_end = new_start + visible_range;
+                    
+                    // Update if changed (pan left succeeded)
+                    if new_start != current_start {
+                        TIMELINE_VISIBLE_RANGE_START.set_neq(new_start);
+                        TIMELINE_VISIBLE_RANGE_END.set_neq(new_end);
+                    } else {
+                        break; // Hit left boundary
+                    }
+                }
+                Timer::sleep(16).await; // 60fps for smooth motion
+            }
+        });
+    }
+}
+
+pub fn start_smooth_pan_right() {
+    if !IS_PANNING_RIGHT.get() {
+        IS_PANNING_RIGHT.set_neq(true);
+        Task::start(async move {
+            while IS_PANNING_RIGHT.get() {
+                let zoom_level = TIMELINE_ZOOM_LEVEL.get();
+                if zoom_level > 1.0 {  // Only pan when zoomed in
+                    let current_start = TIMELINE_VISIBLE_RANGE_START.get();
+                    let current_end = TIMELINE_VISIBLE_RANGE_END.get();
+                    let visible_range = current_end - current_start;
+                    
+                    // Smooth pan: 2% of visible range per frame
+                    let pan_distance = visible_range * 0.02;
+                    
+                    // Get file bounds for clamping
+                    let (_file_min, file_max) = get_full_file_range();
+                    
+                    // Calculate new positions
+                    let new_end = (current_end + pan_distance).min(file_max);
+                    let new_start = new_end - visible_range;
+                    
+                    // Update if changed (pan right succeeded)
+                    if new_end != current_end {
+                        TIMELINE_VISIBLE_RANGE_START.set_neq(new_start);
+                        TIMELINE_VISIBLE_RANGE_END.set_neq(new_end);
+                    } else {
+                        break; // Hit right boundary
+                    }
+                }
+                Timer::sleep(16).await; // 60fps for smooth motion
+            }
+        });
+    }
+}
+
+pub fn stop_smooth_pan_left() {
+    IS_PANNING_LEFT.set_neq(false);
+}
+
+pub fn stop_smooth_pan_right() {
+    IS_PANNING_RIGHT.set_neq(false);
 }
 
 // Legacy zoom functions for button compatibility

@@ -322,6 +322,14 @@ fn main_layout() -> impl Element {
                         // Start smooth zoom out
                         crate::waveform_canvas::start_smooth_zoom_out();
                     },
+                    "a" | "A" => {
+                        // Start smooth pan left
+                        crate::waveform_canvas::start_smooth_pan_left();
+                    },
+                    "d" | "D" => {
+                        // Start smooth pan right
+                        crate::waveform_canvas::start_smooth_pan_right();
+                    },
                     _ => {} // Ignore other keys
                 }
             })
@@ -334,6 +342,14 @@ fn main_layout() -> impl Element {
                     "s" | "S" => {
                         // Stop smooth zoom out
                         crate::waveform_canvas::stop_smooth_zoom_out();
+                    },
+                    "a" | "A" => {
+                        // Stop smooth pan left
+                        crate::waveform_canvas::stop_smooth_pan_left();
+                    },
+                    "d" | "D" => {
+                        // Stop smooth pan right
+                        crate::waveform_canvas::stop_smooth_pan_right();
                     },
                     _ => {} // Ignore other keys
                 }
