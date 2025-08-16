@@ -942,14 +942,14 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
             let x_position = ((time_value - min_time) / time_range) * canvas_width;
             
             // Skip edge labels to prevent cutoff (10px margin on each side)
-            let label_margin = 10.0;
+            let label_margin = 35.0;
             let should_show_label = x_position >= label_margin && x_position <= (canvas_width - label_margin);
             
             // Create vertical tick mark with theme-aware color
             let tick_color = theme_colors.neutral_12; // High contrast for visibility
             objects.push(
                 fast2d::Rectangle::new()
-                    .position(x_position, timeline_y + row_height - 8.0)
+                    .position(x_position, timeline_y)
                     .size(1.0, 8.0) // Thin vertical line
                     .color(tick_color.0, tick_color.1, tick_color.2, tick_color.3)
                     .into()
@@ -958,17 +958,23 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
             // Add time label with actual time units and theme-aware color (only if not cut off)
             if should_show_label {
                 let time_label = format!("{}s", time_value as u32);
-                let label_color = theme_colors.neutral_12; // High contrast text
-                objects.push(
-                    fast2d::Text::new()
-                        .text(time_label)
-                        .position(x_position - 10.0, timeline_y + 5.0)
-                        .size(20.0, row_height - 15.0)
-                        .color(label_color.0, label_color.1, label_color.2, label_color.3)
-                        .font_size(10.0)
-                        .family(fast2d::Family::name("Inter")) // Standard UI font for timeline
-                        .into()
-                );
+                
+                // Check if this milestone would overlap with the right edge label
+                let is_near_right_edge = x_position > (canvas_width - 60.0); // Increased margin to prevent overlap
+                
+                if !is_near_right_edge {  // Only draw if not overlapping with edge label
+                    let label_color = theme_colors.neutral_12; // High contrast text
+                    objects.push(
+                        fast2d::Text::new()
+                            .text(time_label)
+                            .position(x_position - 10.0, timeline_y + 15.0)
+                            .size(20.0, row_height - 15.0)
+                            .color(label_color.0, label_color.1, label_color.2, label_color.3)
+                            .font_size(10.0)
+                            .family(fast2d::Family::name("Inter")) // Standard UI font for timeline
+                            .into()
+                    );
+                }
             }
         }
     }
@@ -994,6 +1000,40 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
             );
             
         }
+    }
+    
+    // Add sticky range start and end labels to timeline edges
+    if total_rows > 0 {
+        let timeline_y = (total_rows - 1) as f32 * row_height;
+        let (min_time, max_time) = get_current_timeline_range();
+        let label_color = theme_colors.neutral_12; // High contrast text
+        
+        // Left edge - range start (2px padding to align with value rectangles)
+        let start_label = format!("{}s", min_time.round() as i32);
+        objects.push(
+            fast2d::Text::new()
+                .text(start_label)
+                .position(2.0, timeline_y + 15.0)
+                .size(40.0, row_height - 15.0)
+                .color(label_color.0, label_color.1, label_color.2, label_color.3)
+                .font_size(10.0)
+                .family(fast2d::Family::name("Inter"))
+                .into()
+        );
+        
+        // Right edge - range end (2px padding from right edge)
+        let end_label = format!("{}s", max_time.round() as i32);
+        let estimated_width = (end_label.len() as f32) * 6.0; // More accurate width based on character count
+        objects.push(
+            fast2d::Text::new()
+                .text(end_label)
+                .position(canvas_width - estimated_width - 2.0, timeline_y + 15.0)
+                .size(40.0, row_height - 15.0)
+                .color(label_color.0, label_color.1, label_color.2, label_color.3)
+                .font_size(10.0)
+                .family(fast2d::Family::name("Inter"))
+                .into()
+        );
     }
     
     objects

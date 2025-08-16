@@ -3,6 +3,7 @@ use zoon::events::{Click, KeyDown};
 use moonzoon_novyui::*;
 use moonzoon_novyui::tokens::theme::{Theme, toggle_theme, theme};
 use moonzoon_novyui::tokens::color::{neutral_1, neutral_2, neutral_4, neutral_8, neutral_10, neutral_11, neutral_12, primary_3, primary_6, primary_7};
+use moonzoon_novyui::components::{kbd, KbdSize, KbdVariant};
 use moonzoon_novyui::tokens::typography::font_mono;
 use shared::{ScopeData, UpMsg, TrackedFile, SelectedVariable, FileState, SignalValueQuery};
 use crate::types::{get_variables_from_tracked_files, filter_variables_with_context};
@@ -14,7 +15,7 @@ use crate::{
     VERTICAL_DIVIDER_DRAGGING, HORIZONTAL_DIVIDER_DRAGGING,
     VARIABLES_NAME_COLUMN_WIDTH, VARIABLES_VALUE_COLUMN_WIDTH,
     VARIABLES_NAME_DIVIDER_DRAGGING, VARIABLES_VALUE_DIVIDER_DRAGGING,
-    VARIABLES_SEARCH_FILTER, SHOW_FILE_DIALOG, IS_LOADING,
+    VARIABLES_SEARCH_FILTER, VARIABLES_SEARCH_INPUT_FOCUSED, SHOW_FILE_DIALOG, IS_LOADING,
     LOADED_FILES, SELECTED_SCOPE_ID, TREE_SELECTED_ITEMS, EXPANDED_SCOPES,
     FILE_PATHS, show_file_paths_dialog, LOAD_FILES_VIEWPORT_Y,
     FILE_PICKER_EXPANDED, FILE_PICKER_SELECTED,
@@ -1095,6 +1096,8 @@ pub fn variables_panel() -> impl Element {
                                     .on_right_icon_click(|| VARIABLES_SEARCH_FILTER.set_neq(String::new()))
                                     .size(InputSize::Small)
                                     .on_change(|text| VARIABLES_SEARCH_FILTER.set_neq(text))
+                                    .on_focus(|| VARIABLES_SEARCH_INPUT_FOCUSED.set_neq(true))
+                                    .on_blur(|| VARIABLES_SEARCH_INPUT_FOCUSED.set_neq(false))
                                     .build()
                             )
                     ),
@@ -1234,22 +1237,32 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                 })
                                             )
                                             .item(
-                                                // Footer row with variable count
+                                                // Footer row with zoom percentage
                                                 El::new()
                                                     .s(Height::exact(SELECTED_VARIABLES_ROW_HEIGHT))
                                                     .s(Width::fill())
                                                     .s(Padding::all(8))
                                                     .s(Font::new().color_signal(neutral_8()).size(12).center())
                                                     .s(Transform::new().move_up(4))
-                                                    .child_signal(
-                                                        SELECTED_VARIABLES.signal_vec_cloned().len().map(|count| {
-                                                            let text = if count == 1 {
-                                                                "1 variable".to_string()
-                                                            } else {
-                                                                format!("{} variables", count)
-                                                            };
-                                                            Text::new(&text)
-                                                        })
+                                                    .child(
+                                                        Row::new()
+                                                            .s(Align::center())
+                                                            .s(Gap::new().x(6))
+                                                            .item(kbd("W").size(KbdSize::Small).variant(KbdVariant::Outlined).build())
+                                                            .item(
+                                                                El::new()
+                                                                    .s(Width::exact(45))
+                                                                    .s(Font::new().color_signal(neutral_11()).center())
+                                                                    .child(
+                                                                        Text::with_signal(
+                                                                            TIMELINE_ZOOM_LEVEL.signal().map(|zoom_level| {
+                                                                                let percentage = (zoom_level * 100.0) as u32;
+                                                                                format!("{}%", percentage)
+                                                                            })
+                                                                        )
+                                                                    )
+                                                            )
+                                                            .item(kbd("S").size(KbdSize::Small).variant(KbdVariant::Outlined).build())
                                                     )
                                             )
                                     )
@@ -1283,26 +1296,22 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                     .s(Transform::new().move_up(4))
                                                     .child(
                                                         Row::new()
-                                                            .s(Gap::new().x(16))
-                                                            .s(Align::new().center_y())
+                                                            .s(Align::center())
+                                                            .s(Gap::new().x(6))
                                                             .s(Font::new().color_signal(neutral_8()).size(12))
+                                                            .item(kbd("A").size(KbdSize::Small).variant(KbdVariant::Outlined).build())
                                                             .item(
-                                                                // Selected time display
-                                                                Text::with_signal(
-                                                                    crate::state::TIMELINE_CURSOR_POSITION.signal().map(|cursor_pos| {
-                                                                        format!("Selected: {}s", cursor_pos)
-                                                                    })
-                                                                )
+                                                                El::new()
+                                                                    .s(Font::new().color_signal(neutral_11()))
+                                                                    .child(
+                                                                        Text::with_signal(
+                                                                            crate::state::TIMELINE_CURSOR_POSITION.signal().map(|cursor_pos| {
+                                                                                format!("{}s", cursor_pos.round() as i32)
+                                                                            })
+                                                                        )
+                                                                    )
                                                             )
-                                                            .item(
-                                                                // Zoom percentage display
-                                                                Text::with_signal(
-                                                                    TIMELINE_ZOOM_LEVEL.signal().map(|zoom_level| {
-                                                                        let percentage = (zoom_level * 100.0) as u32;
-                                                                        format!("Zoom: {}%", percentage)
-                                                                    })
-                                                                )
-                                                            )
+                                                            .item(kbd("D").size(KbdSize::Small).variant(KbdVariant::Outlined).build())
                                                     )
                                             )
                                     )

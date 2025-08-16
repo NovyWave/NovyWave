@@ -45,6 +45,9 @@ pub static CANVAS_HEIGHT: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(400.0))
 // Search filter for Variables panel
 pub static VARIABLES_SEARCH_FILTER: Lazy<Mutable<String>> = lazy::default();
 
+// Input focus tracking for keyboard control prevention
+pub static VARIABLES_SEARCH_INPUT_FOCUSED: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
+
 // File loading trigger signal for reactive type updates
 pub static FILE_LOADING_TRIGGER: Lazy<Mutable<u32>> = lazy::default();
 

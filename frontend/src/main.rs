@@ -31,6 +31,7 @@ use views::*;
 
 mod state;
 use state::*;
+use state::VARIABLES_SEARCH_INPUT_FOCUSED;
 
 mod utils;
 use utils::*;
@@ -313,6 +314,11 @@ fn main_layout() -> impl Element {
         })
         .update_raw_el(move |raw_el| {
             raw_el.global_event_handler(move |event: zoon::events::KeyDown| {
+                // Skip timeline controls if typing in search input
+                if VARIABLES_SEARCH_INPUT_FOCUSED.get() {
+                    return;
+                }
+                
                 match event.key().as_str() {
                     "w" | "W" => {
                         // Start smooth zoom in
@@ -334,6 +340,11 @@ fn main_layout() -> impl Element {
                 }
             })
             .global_event_handler(move |event: zoon::events::KeyUp| {
+                // Skip timeline controls if typing in search input
+                if VARIABLES_SEARCH_INPUT_FOCUSED.get() {
+                    return;
+                }
+                
                 match event.key().as_str() {
                     "w" | "W" => {
                         // Stop smooth zoom in
