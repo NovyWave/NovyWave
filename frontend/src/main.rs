@@ -45,6 +45,7 @@ use file_validation::*;
 mod error_ui;
 use error_ui::*;
 
+
 fn init_timeline_signal_handlers() {
     // Watch for timeline cursor position changes and trigger signal value queries
     // Use debounce to avoid excessive backend queries during rapid cursor movements

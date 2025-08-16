@@ -11,13 +11,82 @@ use std::cell::RefCell;
 use moonzoon_novyui::tokens::theme::Theme as NovyUITheme;
 use shared::Theme as SharedTheme;
 use wasm_bindgen::JsCast;
-
+use moonzoon_novyui::tokens::color::{primary_3, primary_4, primary_6, neutral_1, neutral_2, neutral_3, neutral_7};
+use palette::{Oklch, Srgb, IntoColor};
 
 // Cache for real signal transition data from backend - PUBLIC for connection.rs
 pub static SIGNAL_TRANSITIONS_CACHE: Lazy<Mutable<HashMap<String, Vec<SignalTransition>>>> = Lazy::new(|| {
     Mutable::new(HashMap::new())
 });
+
+// Store current theme for synchronous access
+static CURRENT_THEME_CACHE: Lazy<Mutable<NovyUITheme>> = Lazy::new(|| {
+    Mutable::new(NovyUITheme::Dark) // Default to dark
+});
+
+// Store hover information for tooltip display
+static HOVER_INFO: Lazy<Mutable<Option<HoverInfo>>> = Lazy::new(|| {
+    Mutable::new(None)
+});
+
+#[derive(Clone, Debug, PartialEq)]
+struct HoverInfo {
+    mouse_x: f32,
+    mouse_y: f32,
+    time: f32,
+    variable_name: String,
+    value: String,
+}
+
 use std::collections::HashMap;
+
+// OKLCH to RGB conversion utility
+fn oklch_to_rgb(l: f32, c: f32, h: f32) -> (u8, u8, u8, f32) {
+    let oklch = Oklch::new(l, c, h);
+    let rgb: Srgb<f32> = oklch.into_color();
+    (
+        (rgb.red * 255.0).round() as u8,
+        (rgb.green * 255.0).round() as u8,
+        (rgb.blue * 255.0).round() as u8,
+        1.0
+    )
+}
+
+// Convert NovyUI theme tokens to canvas RGB values
+fn get_theme_token_rgb(theme: &NovyUITheme, token: &str) -> (u8, u8, u8, f32) {
+    match (theme, token) {
+        // Dark theme conversions
+        (NovyUITheme::Dark, "neutral_1") => oklch_to_rgb(0.12, 0.025, 255.0),  // Panel background
+        (NovyUITheme::Dark, "neutral_2") => oklch_to_rgb(0.15, 0.025, 255.0),  // Subtle background - footer color  
+        (NovyUITheme::Dark, "neutral_3") => oklch_to_rgb(0.30, 0.045, 255.0),  // Medium background
+        (NovyUITheme::Dark, "neutral_4") => oklch_to_rgb(0.22, 0.025, 255.0),  // Darker neutral
+        (NovyUITheme::Dark, "neutral_5") => oklch_to_rgb(0.28, 0.025, 255.0),  // Medium neutral
+        (NovyUITheme::Dark, "neutral_12") => oklch_to_rgb(0.95, 0.025, 255.0), // High contrast text
+        // Contrasting value rectangle colors
+        (NovyUITheme::Dark, "value_light_blue") => (18, 25, 40, 1.0),   // Lighter blue for better contrast
+        (NovyUITheme::Dark, "value_dark_gray") => (8, 8, 12, 1.0),      // Dark gray for alternating
+        (NovyUITheme::Dark, "primary_1") => oklch_to_rgb(0.16, 0.02, 250.0),   // Very dark primary
+        (NovyUITheme::Dark, "primary_2") => oklch_to_rgb(0.18, 0.03, 250.0),   // Darker primary
+        (NovyUITheme::Dark, "primary_3") => oklch_to_rgb(0.30, 0.05, 250.0),   // Subtle primary
+        (NovyUITheme::Dark, "primary_4") => oklch_to_rgb(0.35, 0.07, 250.0),   // Medium primary
+        
+        // Light theme conversions
+        (NovyUITheme::Light, "neutral_1") => oklch_to_rgb(0.99, 0.025, 255.0),
+        (NovyUITheme::Light, "neutral_2") => oklch_to_rgb(0.97, 0.025, 255.0),
+        (NovyUITheme::Light, "neutral_3") => oklch_to_rgb(0.92, 0.045, 255.0),
+        (NovyUITheme::Light, "neutral_4") => oklch_to_rgb(0.90, 0.025, 255.0),
+        (NovyUITheme::Light, "neutral_5") => oklch_to_rgb(0.85, 0.025, 255.0),
+        (NovyUITheme::Light, "neutral_12") => oklch_to_rgb(0.15, 0.025, 255.0),
+        // Light theme value rectangles - prettier original colors
+        (NovyUITheme::Light, "value_light_blue") => (219, 234, 254, 1.0),   // Light bluish background
+        (NovyUITheme::Light, "value_dark_gray") => (191, 219, 254, 1.0),    // Slightly darker light blue
+        (NovyUITheme::Light, "primary_3") => oklch_to_rgb(0.90, 0.05, 250.0),
+        (NovyUITheme::Light, "primary_4") => oklch_to_rgb(0.85, 0.07, 250.0),
+        
+        // Fallback for unknown tokens
+        _ => (128, 128, 128, 1.0),
+    }
+}
 
 // Clear processed signal cache to force fresh calculation for timeline changes
 pub fn clear_processed_signal_cache() {
@@ -42,20 +111,34 @@ fn convert_theme(shared_theme: &SharedTheme) -> NovyUITheme {
 fn get_current_theme_colors(current_theme: &NovyUITheme) -> ThemeColors {
     match current_theme {
         NovyUITheme::Dark => ThemeColors {
-            neutral_2: (45, 47, 50, 1.0),     // Dark theme neutral_2
-            neutral_3: (52, 54, 58, 1.0),     // Dark theme neutral_3
-            neutral_4: (65, 69, 75, 1.0),     // Dark theme neutral_4
-            neutral_5: (75, 79, 86, 1.0),     // Dark theme neutral_5
-            neutral_12: (253, 253, 253, 1.0), // Dark theme high contrast text
-            cursor_color: (59, 130, 246, 0.8), // Bright blue cursor with transparency
+            neutral_2: get_theme_token_rgb(current_theme, "neutral_2"),     // Proper neutral_2 for timeline footer
+            neutral_3: get_theme_token_rgb(current_theme, "neutral_3"),     // Proper neutral_3 
+            neutral_4: get_theme_token_rgb(current_theme, "neutral_4"),     // OKLCH neutral_4 (no hardcode)
+            neutral_5: get_theme_token_rgb(current_theme, "neutral_5"),     // OKLCH neutral_5 (no hardcode)
+            neutral_12: get_theme_token_rgb(current_theme, "neutral_12"),   // OKLCH text color (no hardcode)
+            cursor_color: (37, 99, 235, 0.9), // Primary_6 cursor for consistency
+            value_color_1: get_theme_token_rgb(current_theme, "value_light_blue"), // Lighter blue for contrast
+            value_color_2: get_theme_token_rgb(current_theme, "value_dark_gray"), // Dark gray for alternating
+            border_color: (107, 114, 128, 0.3), // Neutral_7 for subtle borders
+            grid_color: (75, 79, 86, 0.15), // More subtle grid lines
+            separator_color: (75, 79, 86, 0.2), // Very subtle row separators
+            hover_panel_bg: (20, 22, 25, 0.95), // Very dark like select dropdown
+            hover_panel_text: get_theme_token_rgb(current_theme, "neutral_12"), // OKLCH text (no hardcode)
         },
         NovyUITheme::Light => ThemeColors {
-            neutral_2: (249, 250, 251, 1.0),  // Light theme neutral_2
-            neutral_3: (243, 244, 246, 1.0),  // Light theme neutral_3
-            neutral_4: (229, 231, 235, 1.0),  // Light theme neutral_4
-            neutral_5: (209, 213, 219, 1.0),  // Light theme neutral_5
-            neutral_12: (17, 24, 39, 1.0),    // Light theme high contrast text
-            cursor_color: (37, 99, 235, 0.8),  // Bright blue cursor with transparency
+            neutral_2: get_theme_token_rgb(current_theme, "neutral_2"),     // Proper neutral_2 for timeline footer
+            neutral_3: get_theme_token_rgb(current_theme, "neutral_3"),     // Proper neutral_3 
+            neutral_4: get_theme_token_rgb(current_theme, "neutral_4"),     // OKLCH neutral_4
+            neutral_5: get_theme_token_rgb(current_theme, "neutral_5"),     // OKLCH neutral_5
+            neutral_12: get_theme_token_rgb(current_theme, "neutral_12"),   // OKLCH text color
+            cursor_color: (37, 99, 235, 0.9), // Primary_6 cursor for consistency
+            value_color_1: get_theme_token_rgb(current_theme, "value_light_blue"), // Light blue for contrast
+            value_color_2: get_theme_token_rgb(current_theme, "value_dark_gray"), // Light gray for alternating
+            border_color: (107, 114, 128, 0.3), // Neutral_7 for subtle borders
+            grid_color: (209, 213, 219, 0.4), // Subtle grid lines for light theme
+            separator_color: (209, 213, 219, 0.3), // Very subtle row separators
+            hover_panel_bg: (250, 251, 252, 0.95), // Almost white like select dropdown
+            hover_panel_text: get_theme_token_rgb(current_theme, "neutral_12"), // OKLCH text
         },
     }
 }
@@ -67,6 +150,13 @@ struct ThemeColors {
     neutral_5: (u8, u8, u8, f32),
     neutral_12: (u8, u8, u8, f32),
     cursor_color: (u8, u8, u8, f32),
+    value_color_1: (u8, u8, u8, f32),  // Primary color for value rectangles
+    value_color_2: (u8, u8, u8, f32),  // Secondary color for value rectangles
+    border_color: (u8, u8, u8, f32),   // Border color for value rectangles
+    grid_color: (u8, u8, u8, f32),     // Grid lines color
+    separator_color: (u8, u8, u8, f32), // Row separator color
+    hover_panel_bg: (u8, u8, u8, f32), // Bluish background for hover panel
+    hover_panel_text: (u8, u8, u8, f32), // High contrast text for hover panel
 }
 
 // Helper function to round raw time steps to professional-looking numbers
@@ -101,10 +191,11 @@ async fn create_canvas_element() -> impl Element {
     let dom_canvas = zoon_canvas.raw_el_mut().dom_element();
     let mut canvas_wrapper = fast2d::CanvasWrapper::new_with_canvas(dom_canvas).await;
 
-    // Initialize with default dark theme (theme reactivity will update it)
+    // Initialize with current theme (theme reactivity will update it)
     canvas_wrapper.update_objects(|objects| {
         let selected_vars = SELECTED_VARIABLES.lock_ref();
-        *objects = create_waveform_objects_with_theme(&selected_vars, &NovyUITheme::Dark);
+        let novyui_theme = CURRENT_THEME_CACHE.get();
+        *objects = create_waveform_objects_with_theme(&selected_vars, &novyui_theme);
     });
 
     // Wrap canvas_wrapper in Rc<RefCell> for sharing
@@ -121,8 +212,9 @@ async fn create_canvas_element() -> impl Element {
                     let cursor_pos = TIMELINE_CURSOR_POSITION.get();
                     let canvas_width = CANVAS_WIDTH.get();
                     let canvas_height = CANVAS_HEIGHT.get();
-                    // Use dark theme as fallback - theme handler will update with correct theme
-                    *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &NovyUITheme::Dark, cursor_pos);
+                    // Get current theme from cache (updated by theme handler)
+                    let novyui_theme = CURRENT_THEME_CACHE.get();
+                    *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &novyui_theme, cursor_pos);
                 });
             }
         }).await;
@@ -134,12 +226,15 @@ async fn create_canvas_element() -> impl Element {
         current_theme().for_each(move |theme_value| {
             let canvas_wrapper_for_theme = canvas_wrapper_for_theme.clone();
             async move {
+                // Update the theme cache for other handlers to use
+                let novyui_theme = convert_theme(&theme_value);
+                CURRENT_THEME_CACHE.set_neq(novyui_theme.clone());
+                
                 canvas_wrapper_for_theme.borrow_mut().update_objects(move |objects| {
                     let selected_vars = SELECTED_VARIABLES.lock_ref();
                     let cursor_pos = TIMELINE_CURSOR_POSITION.get();
                     let canvas_width = CANVAS_WIDTH.get();
                     let canvas_height = CANVAS_HEIGHT.get();
-                    let novyui_theme = convert_theme(&theme_value);
                     *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &novyui_theme, cursor_pos);
                 });
             }
@@ -157,8 +252,9 @@ async fn create_canvas_element() -> impl Element {
                     let cursor_pos = TIMELINE_CURSOR_POSITION.get();
                     let canvas_width = CANVAS_WIDTH.get();
                     let canvas_height = CANVAS_HEIGHT.get();
-                    // Use dark theme as fallback - theme handler will update with correct theme
-                    *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &NovyUITheme::Dark, cursor_pos);
+                    // Get current theme from cache (updated by theme handler)
+                    let novyui_theme = CURRENT_THEME_CACHE.get();
+                    *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &novyui_theme, cursor_pos);
                 });
             }
         }).await;
@@ -175,8 +271,9 @@ async fn create_canvas_element() -> impl Element {
                     let cursor_pos = TIMELINE_CURSOR_POSITION.get();
                     let canvas_width = CANVAS_WIDTH.get();
                     let canvas_height = CANVAS_HEIGHT.get();
-                    // Use dark theme as fallback - theme handler will update with correct theme
-                    *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &NovyUITheme::Dark, cursor_pos);
+                    // Get current theme from cache (updated by theme handler)
+                    let novyui_theme = CURRENT_THEME_CACHE.get();
+                    *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &novyui_theme, cursor_pos);
                 });
             }
         }).await;
@@ -193,8 +290,28 @@ async fn create_canvas_element() -> impl Element {
                     let cursor_pos = TIMELINE_CURSOR_POSITION.get();
                     let canvas_width = CANVAS_WIDTH.get();
                     let canvas_height = CANVAS_HEIGHT.get();
-                    // Use dark theme as fallback - theme handler will update with correct theme
-                    *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &NovyUITheme::Dark, cursor_pos);
+                    // Get current theme from cache (updated by theme handler)
+                    let novyui_theme = CURRENT_THEME_CACHE.get();
+                    *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &novyui_theme, cursor_pos);
+                });
+            }
+        }).await;
+    });
+
+    // Add reactive updates when hover info changes (for tooltip display)
+    let canvas_wrapper_for_hover = canvas_wrapper_shared.clone();
+    Task::start(async move {
+        HOVER_INFO.signal_ref(|_| ()).for_each(move |_| {
+            let canvas_wrapper_for_hover = canvas_wrapper_for_hover.clone();
+            async move {
+                canvas_wrapper_for_hover.borrow_mut().update_objects(move |objects| {
+                    let selected_vars = SELECTED_VARIABLES.lock_ref();
+                    let cursor_pos = TIMELINE_CURSOR_POSITION.get();
+                    let canvas_width = CANVAS_WIDTH.get();
+                    let canvas_height = CANVAS_HEIGHT.get();
+                    // Get current theme from cache (updated by theme handler)
+                    let novyui_theme = CURRENT_THEME_CACHE.get();
+                    *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &novyui_theme, cursor_pos);
                 });
             }
         }).await;
@@ -222,7 +339,8 @@ async fn create_canvas_element() -> impl Element {
                     let cursor_pos = TIMELINE_CURSOR_POSITION.get();
                     let canvas_width = CANVAS_WIDTH.get();
                     let canvas_height = CANVAS_HEIGHT.get();
-                    *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &NovyUITheme::Dark, cursor_pos);
+                    let novyui_theme = CURRENT_THEME_CACHE.get();
+                    *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &novyui_theme, cursor_pos);
                 });
             }
         }).await;
@@ -241,8 +359,9 @@ async fn create_canvas_element() -> impl Element {
             canvas_wrapper_for_resize.borrow_mut().update_objects(move |objects| {
                 let selected_vars = SELECTED_VARIABLES.lock_ref();
                 let cursor_pos = TIMELINE_CURSOR_POSITION.get();
-                // Use dark theme as fallback - theme handler will update with correct theme
-                *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, width as f32, height as f32, &NovyUITheme::Dark, cursor_pos);
+                // Get current theme from cache (updated by theme handler)
+                let novyui_theme = CURRENT_THEME_CACHE.get();
+                *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, width as f32, height as f32, &novyui_theme, cursor_pos);
             });
         })
         .event_handler({
@@ -278,7 +397,7 @@ async fn create_canvas_element() -> impl Element {
                 // Immediately redraw canvas with new cursor position
                 canvas_wrapper_for_click.borrow_mut().update_objects(move |objects| {
                     let selected_vars = SELECTED_VARIABLES.lock_ref();
-                    let novyui_theme = NovyUITheme::Dark;
+                    let novyui_theme = CURRENT_THEME_CACHE.get();
                     *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &novyui_theme, clicked_time);
                 });
             }
@@ -286,19 +405,23 @@ async fn create_canvas_element() -> impl Element {
         .event_handler(move |event: events::PointerMove| {
             // Track mouse position for zoom center calculations
             let page_mouse_x = event.x() as f32;
+            let page_mouse_y = event.y() as f32;
             
             // Get canvas element's position relative to page
             let canvas_element = event.target().unwrap();
             let canvas_rect = canvas_element.dyn_into::<web_sys::Element>()
                 .unwrap().get_bounding_client_rect();
             let canvas_left = canvas_rect.left() as f32;
+            let canvas_top = canvas_rect.top() as f32;
             
             // Calculate mouse position relative to canvas
             let mouse_x = page_mouse_x - canvas_left;
+            let mouse_y = page_mouse_y - canvas_top;
             MOUSE_X_POSITION.set_neq(mouse_x);
             
             // Convert mouse X to timeline time
             let canvas_width = CANVAS_WIDTH.get();
+            let canvas_height = CANVAS_HEIGHT.get();
             let (min_time, max_time) = get_current_timeline_range();
             let time_range = max_time - min_time;
             let mouse_time = min_time + (mouse_x / canvas_width) * time_range;
@@ -306,6 +429,48 @@ async fn create_canvas_element() -> impl Element {
             // Clamp to valid range and update mouse time position
             let mouse_time = mouse_time.max(min_time).min(max_time);
             MOUSE_TIME_POSITION.set_neq(mouse_time);
+            
+            // Calculate hover info for tooltip
+            let selected_vars = SELECTED_VARIABLES.lock_ref();
+            let total_rows = selected_vars.len() + 1; // variables + timeline
+            let row_height = if total_rows > 0 { canvas_height / total_rows as f32 } else { canvas_height };
+            
+            // Determine which variable row the mouse is over
+            let hover_row = (mouse_y / row_height) as usize;
+            
+            if hover_row < selected_vars.len() {
+                // Mouse is over a variable row
+                let var = &selected_vars[hover_row];
+                let variable_name = var.unique_id.split('|').last().unwrap_or("Unknown").to_string();
+                
+                // Get value at current time
+                let current_time_range = get_current_timeline_range();
+                let time_value_pairs = get_signal_transitions_for_variable(var, current_time_range);
+                
+                // Find the value at the current mouse time
+                let mut current_value = "X".to_string(); // Default unknown
+                for (time, value) in time_value_pairs.iter() {
+                    if *time <= mouse_time {
+                        current_value = value.clone();
+                    } else {
+                        break;
+                    }
+                }
+                
+                // Format the value using the variable's formatter
+                let formatted_value = var.formatter.unwrap_or_default().format(&current_value);
+                
+                HOVER_INFO.set_neq(Some(HoverInfo {
+                    mouse_x,
+                    mouse_y,
+                    time: mouse_time,
+                    variable_name,
+                    value: formatted_value,
+                }));
+            } else {
+                // Mouse is over timeline or outside variable area
+                HOVER_INFO.set_neq(None);
+            }
         })
     })
 }
@@ -864,11 +1029,11 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
             
             let is_even_rect = rect_index % 2 == 0;
             
-            // Theme-aware alternating rectangle colors using current theme colors
+            // Theme-aware alternating rectangle colors using enhanced contrast
             let rect_color = if is_even_rect {
-                theme_colors.neutral_4
+                theme_colors.value_color_1
             } else {
-                theme_colors.neutral_5
+                theme_colors.value_color_2
             };
             
             // Create value rectangle with actual time-based width
@@ -879,6 +1044,15 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
                     .color(rect_color.0, rect_color.1, rect_color.2, rect_color.3)
                     .into()
             );
+            
+            // TEMPORARY: Border drawing disabled to test color lightening issue
+            // objects.push(
+            //     fast2d::Rectangle::new()
+            //         .position(rect_start_x - 0.5, y_position + 1.5)
+            //         .size(rect_width + 1.0, row_height - 3.0)
+            //         .color(theme_colors.border_color.0, theme_colors.border_color.1, theme_colors.border_color.2, theme_colors.border_color.3)
+            //         .into()
+            // );
             
             // Format the binary value using the user's selected format (without prefix)
             let formatted_value = format.format(binary_value);
@@ -897,11 +1071,23 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
                         .position(rect_start_x + text_padding, y_position + row_height / 3.0)
                         .size(text_width, text_height)
                         .color(text_color.0, text_color.1, text_color.2, text_color.3)
-                        .font_size(12.0)
+                        .font_size(11.0)
                         .family(fast2d::Family::name("Fira Code")) // FiraCode monospace font
                         .into()
                 );
             }
+        }
+        
+        // Add horizontal row separator line below each variable row
+        if index < selected_vars.len() - 1 { // Don't add separator after last variable
+            let separator_y = (index + 1) as f32 * row_height;
+            objects.push(
+                fast2d::Rectangle::new()
+                    .position(0.0, separator_y - 0.5)
+                    .size(canvas_width, 1.0)
+                    .color(theme_colors.separator_color.0, theme_colors.separator_color.1, theme_colors.separator_color.2, theme_colors.separator_color.3)
+                    .into()
+            );
         }
     }
     
@@ -909,12 +1095,12 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
     if total_rows > 0 {
         let timeline_y = (total_rows - 1) as f32 * row_height;
         
-        let timeline_bg_color = theme_colors.neutral_2; // Consistent with alternating backgrounds
+        let timeline_bg_color = theme_colors.neutral_2; // Match panel background for transparency effect
         objects.push(
             fast2d::Rectangle::new()
                 .position(0.0, timeline_y)
                 .size(canvas_width, row_height)
-                .color(timeline_bg_color.0, timeline_bg_color.1, timeline_bg_color.2, timeline_bg_color.3)
+                .color(timeline_bg_color.0, timeline_bg_color.1, timeline_bg_color.2, 1.0) // Solid color like dropdowns
                 .into()
         );
         
@@ -923,7 +1109,7 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
         let time_range = max_time - min_time;
         
         // Phase 9: Pixel-based spacing algorithm for professional timeline
-        let target_tick_spacing = 80.0; // Target 80 pixels between ticks
+        let target_tick_spacing = 60.0; // Target 60 pixels between ticks
         let max_tick_count = (canvas_width / target_tick_spacing).floor() as i32;
         let tick_count = max_tick_count.max(2).min(8); // Ensure 2-8 ticks
         
@@ -955,6 +1141,15 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
                     .into()
             );
             
+            // Add vertical grid line extending through all variable rows
+            objects.push(
+                fast2d::Rectangle::new()
+                    .position(x_position, 0.0)
+                    .size(1.0, timeline_y) // Extends from top to timeline
+                    .color(theme_colors.grid_color.0, theme_colors.grid_color.1, theme_colors.grid_color.2, theme_colors.grid_color.3)
+                    .into()
+            );
+            
             // Add time label with actual time units and theme-aware color (only if not cut off)
             if should_show_label {
                 let time_label = format!("{}s", time_value as u32);
@@ -970,7 +1165,7 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
                             .position(x_position - 10.0, timeline_y + 15.0)
                             .size(20.0, row_height - 15.0)
                             .color(label_color.0, label_color.1, label_color.2, label_color.3)
-                            .font_size(10.0)
+                            .font_size(11.0)
                             .family(fast2d::Family::name("Inter")) // Standard UI font for timeline
                             .into()
                     );
@@ -1008,30 +1203,73 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
         let (min_time, max_time) = get_current_timeline_range();
         let label_color = theme_colors.neutral_12; // High contrast text
         
-        // Left edge - range start (2px padding to align with value rectangles)
+        // Match tick label vertical position exactly
+        let label_y = timeline_y + 15.0; // Same level as tick labels
+        
+        // Left edge - range start (positioned to avoid tick overlap)
         let start_label = format!("{}s", min_time.round() as i32);
         objects.push(
             fast2d::Text::new()
                 .text(start_label)
-                .position(2.0, timeline_y + 15.0)
-                .size(40.0, row_height - 15.0)
+                .position(5.0, label_y) // Close to left edge, avoid tick overlap
+                .size(30.0, row_height - 15.0) // Match tick label size
                 .color(label_color.0, label_color.1, label_color.2, label_color.3)
-                .font_size(10.0)
+                .font_size(11.0)
                 .family(fast2d::Family::name("Inter"))
                 .into()
         );
         
-        // Right edge - range end (2px padding from right edge)
+        // Right edge - range end (positioned close to right edge)
         let end_label = format!("{}s", max_time.round() as i32);
-        let estimated_width = (end_label.len() as f32) * 6.0; // More accurate width based on character count
+        let label_width = (end_label.len() as f32 * 7.0).max(30.0); // Dynamic width
         objects.push(
             fast2d::Text::new()
                 .text(end_label)
-                .position(canvas_width - estimated_width - 2.0, timeline_y + 15.0)
-                .size(40.0, row_height - 15.0)
+                .position(canvas_width - label_width - 5.0, label_y) // Close to right edge
+                .size(label_width, row_height - 15.0) // Match tick label size  
                 .color(label_color.0, label_color.1, label_color.2, label_color.3)
-                .font_size(10.0)
+                .font_size(11.0)
                 .family(fast2d::Family::name("Inter"))
+                .into()
+        );
+    }
+    
+    // Add hover tooltip if mouse is over a variable
+    if let Some(hover_info) = HOVER_INFO.lock_ref().clone() {
+        let tooltip_bg_color = theme_colors.hover_panel_bg; // Bluish background
+        let tooltip_text_color = theme_colors.hover_panel_text; // High contrast text
+        
+        // Create tooltip text with better formatting
+        let tooltip_text = format!("{} = {} at {:.2}s", hover_info.variable_name, hover_info.value, hover_info.time);
+        
+        // Position tooltip above cursor with offset
+        let tooltip_x = hover_info.mouse_x + 10.0; // 10px right of cursor
+        let tooltip_y = hover_info.mouse_y - 20.0; // Reduced to 20px above cursor
+        
+        // Clamp tooltip position to canvas bounds (larger font needs wider estimate)
+        let tooltip_width = (tooltip_text.len() as f32 * 8.0).min(220.0); // Wider for 12pt font
+        let tooltip_height = 14.0; // Tighter height for 12pt font
+        let clamped_x = tooltip_x.max(5.0).min(canvas_width - tooltip_width - 5.0);
+        let clamped_y = tooltip_y.max(5.0).min(canvas_height - tooltip_height - 5.0);
+        
+        // Tooltip background with minimal padding
+        objects.push(
+            fast2d::Rectangle::new()
+                .position(clamped_x - 1.0, clamped_y - 0.5)
+                .size(tooltip_width + 2.0, tooltip_height + 1.0)
+                .color(tooltip_bg_color.0, tooltip_bg_color.1, tooltip_bg_color.2, 0.95)
+                .into()
+        );
+        
+        // Tooltip text with improved readability
+        objects.push(
+            fast2d::Text::new()
+                .text(tooltip_text)
+                .position(clamped_x, clamped_y)
+                .size(tooltip_width, tooltip_height)
+                .color(tooltip_text_color.0, tooltip_text_color.1, tooltip_text_color.2, tooltip_text_color.3)
+                .font_size(12.0)
+                .family(fast2d::Family::name("Fira Code")) // Monospace for better alignment
                 .into()
         );
     }
