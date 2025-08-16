@@ -194,3 +194,151 @@ std::println!("Debug message"); // Silent in browser
 - **WASM debugging**: Always use framework-specific logging (`zoon::println!`) for WASM applications
 - **Browser console**: Debug output appears in browser developer console, not backend logs
 - **Signal debugging**: Detailed transition logging essential for understanding data flow issues
+
+## Session Discovery: 2025-08-16 - Timeline Canvas Color System & Rendering Issues
+
+### Problem/Context
+Timeline footer and value rectangles had incorrect colors that didn't match the NovyUI design system. Colors appeared much lighter than expected despite code changes, and the system was using hardcoded RGB approximations instead of proper OKLCH color tokens.
+
+### Solution/Pattern
+**Proper OKLCH to RGB Conversion System**: Added `palette` crate for accurate color space conversion and identified critical rendering overlay issue.
+
+**Root Cause Analysis**:
+1. **Color System Bypass**: Canvas used hardcoded RGB values instead of NovyUI OKLCH tokens
+2. **Border Overlay Issue**: Semi-transparent borders (30% alpha) drawn OVER value rectangles were visually lightening them
+3. **Missing Conversion Layer**: No bridge between NovyUI OKLCH design tokens and Fast2D RGB requirements
+
+### Code Example
+```rust
+// Proper OKLCH to RGB conversion using palette crate
+use palette::{Oklch, Srgb, IntoColor};
+
+fn oklch_to_rgb(l: f32, c: f32, h: f32) -> (u8, u8, u8, f32) {
+    let oklch = Oklch::new(l, c, h);
+    let rgb: Srgb<f32> = oklch.into_color();
+    (
+        (rgb.red * 255.0).round() as u8,
+        (rgb.green * 255.0).round() as u8,
+        (rgb.blue * 255.0).round() as u8,
+        1.0
+    )
+}
+
+// Convert NovyUI theme tokens to canvas RGB values
+fn get_theme_token_rgb(theme: &NovyUITheme, token: &str) -> (u8, u8, u8, f32) {
+    match (theme, token) {
+        (NovyUITheme::Dark, "neutral_2") => oklch_to_rgb(0.15, 0.025, 255.0), // Footer background
+        (NovyUITheme::Dark, "value_light_blue") => (18, 25, 40, 1.0),         // Dark blue rectangles
+        // ... exact OKLCH conversions for all design tokens
+    }
+}
+
+// Removed problematic border overlay
+// BEFORE: Border drawn OVER value rectangles (causing lightening)
+// objects.push(border_rectangle); // REMOVED - was causing visual interference
+
+// Timeline label positioning fix
+let label_y = timeline_y + 15.0; // Match tick label level exactly
+objects.push(
+    fast2d::Text::new()
+        .text(label_text)
+        .position(5.0, label_y) // Fixed position within footer row
+        .size(30.0, row_height - 15.0) // Match tick label sizing
+);
+```
+
+### Impact/Lesson
+- **Color System Architecture**: Canvas graphics need proper conversion layer between design tokens and rendering API
+- **OKLCH vs RGB**: Modern design systems use OKLCH color space - requires conversion utilities for canvas rendering
+- **Drawing Order Matters**: Semi-transparent overlays can visually alter colors underneath - check rendering order
+- **Debug Methodology**: Use extreme test colors (black/red) to verify color system functionality
+- **Theme Consistency**: Both light and dark themes need proper OKLCH conversion, not just hardcoded approximations
+- **Label Positioning**: Timeline elements need consistent positioning relative to each other (labels match tick positions)
+
+**Critical Pattern**: When colors appear wrong despite code changes, investigate:
+1. Color space conversion accuracy (OKLCH → RGB)
+2. Rendering overlays that might alter visual appearance  
+3. Hardcoded overrides bypassing the intended color system
+4. Drawing order issues where elements cover each other
+
+**Palette Crate Integration**: Essential for WASM applications needing accurate color space conversion between design tokens and canvas rendering APIs.
+
+## Session Discovery: 2025-08-16 - Ultra-Compact Keyboard Controls Layout
+
+### Problem/Context
+Keyboard shortcut layout in waveform viewer needed UX improvements: W/S zoom keys felt backwards, A/D pan keys positioned around cursor time but didn't control cursor, and users expected more intuitive spatial mapping.
+
+### Solution/Pattern
+**Ultra-Compact Footer Layout with Spatial Function Mapping**: Redesigned keyboard controls to match visual position with functional behavior.
+
+**Key Insights**:
+1. **Spatial Logic**: Outer keys (A/D) for broad operations (view panning), inner keys (Q/E) for precise operations (cursor movement)
+2. **Fixed-Width Prevents Layout Jumping**: Time display needs consistent width container like zoom percentage display
+3. **Edge Alignment**: Pan controls should be at footer edges, not grouped with cursor controls
+4. **Smooth Animation Consistency**: All timeline controls should use same 60fps animation system
+
+### Code Example
+```rust
+// Ultra-compact footer layout: A [spacer] Q 132s E [spacer] D
+Row::new()
+    .s(Align::new().center_y())  // Only center vertically, not horizontally
+    .s(Font::new().color_signal(neutral_8()).size(12))
+    .item(kbd("A").size(KbdSize::Small).variant(KbdVariant::Outlined).build())
+    .item(El::new().s(Width::fill()))  // Push A to left edge
+    .item(
+        Row::new()
+            .s(Gap::new().x(2))  // Tight spacing for cursor group
+            .item(kbd("Q").size(KbdSize::Small).variant(KbdVariant::Outlined).build())
+            .item(
+                El::new()
+                    .s(Width::exact(45))  // Fixed width prevents jumping
+                    .s(Font::new().color_signal(neutral_11()).center())
+                    .child(Text::with_signal(cursor_time_display))
+            )
+            .item(kbd("E").size(KbdSize::Small).variant(KbdVariant::Outlined).build())
+    )
+    .item(El::new().s(Width::fill()))  // Push D to right edge
+    .item(kbd("D").size(KbdSize::Small).variant(KbdVariant::Outlined).build())
+
+// Smooth cursor movement state management
+pub static IS_CURSOR_MOVING_LEFT: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
+pub static IS_CURSOR_MOVING_RIGHT: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
+
+// KeyDown/KeyUp handlers for smooth animation
+"q" | "Q" => crate::waveform_canvas::start_smooth_cursor_left(),
+"e" | "E" => crate::waveform_canvas::start_smooth_cursor_right(),
+// KeyUp handlers
+"q" | "Q" => crate::waveform_canvas::stop_smooth_cursor_left(),
+"e" | "E" => crate::waveform_canvas::stop_smooth_cursor_right(),
+
+// Smooth cursor movement implementation (60fps)
+pub fn start_smooth_cursor_left() {
+    if !IS_CURSOR_MOVING_LEFT.get() {
+        IS_CURSOR_MOVING_LEFT.set_neq(true);
+        Task::start(async move {
+            while IS_CURSOR_MOVING_LEFT.get() {
+                let visible_range = TIMELINE_VISIBLE_RANGE_END.get() - TIMELINE_VISIBLE_RANGE_START.get();
+                let step_size = (visible_range * 0.005).max(0.05); // 0.5% per frame
+                let new_cursor = (TIMELINE_CURSOR_POSITION.get() - step_size).max(0.0);
+                TIMELINE_CURSOR_POSITION.set_neq(new_cursor);
+                Timer::sleep(16).await; // ~60fps
+            }
+        });
+    }
+}
+```
+
+### Impact/Lesson
+- **Spatial UI Design**: Visual arrangement should match functional hierarchy (outer=broad, inner=precise)
+- **Fixed Width Containers**: Prevent layout jumping for dynamic content (time displays, percentages)
+- **Edge Alignment Pattern**: Use `Width::fill()` spacers to push elements to container edges
+- **Align Strategy**: `Align::center()` centers all content, `Align::new().center_y()` allows horizontal distribution
+- **Smooth Animation Consistency**: All timeline controls should use same KeyDown/KeyUp + Timer pattern
+- **Step Size Calculation**: Base movement speed on visible range percentage for zoom-aware behavior
+- **Focus Guard Integration**: Search input focus correctly blocks keyboard events to prevent typing interference
+
+**Critical Pattern**: Ultra-compact control layouts work best when:
+1. Visual grouping matches functional grouping
+2. Fixed-width containers prevent UI jumping  
+3. Smooth animations provide professional feel
+4. Spatial positioning implies operational scope (edge=broad, center=precise)

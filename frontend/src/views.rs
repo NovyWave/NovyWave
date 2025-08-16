@@ -1296,21 +1296,29 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                     .s(Transform::new().move_up(4))
                                                     .child(
                                                         Row::new()
-                                                            .s(Align::center())
-                                                            .s(Gap::new().x(6))
+                                                            .s(Align::new().center_y())
                                                             .s(Font::new().color_signal(neutral_8()).size(12))
                                                             .item(kbd("A").size(KbdSize::Small).variant(KbdVariant::Outlined).build())
+                                                            .item(El::new().s(Width::fill()))
                                                             .item(
-                                                                El::new()
-                                                                    .s(Font::new().color_signal(neutral_11()))
-                                                                    .child(
-                                                                        Text::with_signal(
-                                                                            crate::state::TIMELINE_CURSOR_POSITION.signal().map(|cursor_pos| {
-                                                                                format!("{}s", cursor_pos.round() as i32)
-                                                                            })
-                                                                        )
+                                                                Row::new()
+                                                                    .s(Gap::new().x(2))
+                                                                    .item(kbd("Q").size(KbdSize::Small).variant(KbdVariant::Outlined).build())
+                                                                    .item(
+                                                                        El::new()
+                                                                            .s(Width::exact(45))
+                                                                            .s(Font::new().color_signal(neutral_11()).center())
+                                                                            .child(
+                                                                                Text::with_signal(
+                                                                                    crate::state::TIMELINE_CURSOR_POSITION.signal().map(|cursor_pos| {
+                                                                                        format!("{}s", cursor_pos.round() as i32)
+                                                                                    })
+                                                                                )
+                                                                            )
                                                                     )
+                                                                    .item(kbd("E").size(KbdSize::Small).variant(KbdVariant::Outlined).build())
                                                             )
+                                                            .item(El::new().s(Width::fill()))
                                                             .item(kbd("D").size(KbdSize::Small).variant(KbdVariant::Outlined).build())
                                                     )
                                             )

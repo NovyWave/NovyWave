@@ -1,8 +1,8 @@
 use zoon::*;
 use fast2d;
 use crate::state::{SELECTED_VARIABLES, LOADED_FILES, TIMELINE_CURSOR_POSITION, CANVAS_WIDTH, CANVAS_HEIGHT, 
-    IS_ZOOMING_IN, IS_ZOOMING_OUT, IS_PANNING_LEFT, IS_PANNING_RIGHT, MOUSE_X_POSITION, MOUSE_TIME_POSITION, TIMELINE_ZOOM_LEVEL, 
-    TIMELINE_VISIBLE_RANGE_START, TIMELINE_VISIBLE_RANGE_END};
+    IS_ZOOMING_IN, IS_ZOOMING_OUT, IS_PANNING_LEFT, IS_PANNING_RIGHT, IS_CURSOR_MOVING_LEFT, IS_CURSOR_MOVING_RIGHT,
+    MOUSE_X_POSITION, MOUSE_TIME_POSITION, TIMELINE_ZOOM_LEVEL, TIMELINE_VISIBLE_RANGE_START, TIMELINE_VISIBLE_RANGE_END};
 use crate::connection::send_up_msg;
 use crate::config::current_theme;
 use shared::{SelectedVariable, UpMsg, SignalTransitionQuery, SignalTransition};
@@ -11,7 +11,7 @@ use std::cell::RefCell;
 use moonzoon_novyui::tokens::theme::Theme as NovyUITheme;
 use shared::Theme as SharedTheme;
 use wasm_bindgen::JsCast;
-use moonzoon_novyui::tokens::color::{primary_3, primary_4, primary_6, neutral_1, neutral_2, neutral_3, neutral_7};
+// Note: Only import colors that are actually used in the canvas rendering
 use palette::{Oklch, Srgb, IntoColor};
 
 // Cache for real signal transition data from backend - PUBLIC for connection.rs
@@ -113,13 +113,10 @@ fn get_current_theme_colors(current_theme: &NovyUITheme) -> ThemeColors {
         NovyUITheme::Dark => ThemeColors {
             neutral_2: get_theme_token_rgb(current_theme, "neutral_2"),     // Proper neutral_2 for timeline footer
             neutral_3: get_theme_token_rgb(current_theme, "neutral_3"),     // Proper neutral_3 
-            neutral_4: get_theme_token_rgb(current_theme, "neutral_4"),     // OKLCH neutral_4 (no hardcode)
-            neutral_5: get_theme_token_rgb(current_theme, "neutral_5"),     // OKLCH neutral_5 (no hardcode)
             neutral_12: get_theme_token_rgb(current_theme, "neutral_12"),   // OKLCH text color (no hardcode)
             cursor_color: (37, 99, 235, 0.9), // Primary_6 cursor for consistency
             value_color_1: get_theme_token_rgb(current_theme, "value_light_blue"), // Lighter blue for contrast
             value_color_2: get_theme_token_rgb(current_theme, "value_dark_gray"), // Dark gray for alternating
-            border_color: (107, 114, 128, 0.3), // Neutral_7 for subtle borders
             grid_color: (75, 79, 86, 0.15), // More subtle grid lines
             separator_color: (75, 79, 86, 0.2), // Very subtle row separators
             hover_panel_bg: (20, 22, 25, 0.95), // Very dark like select dropdown
@@ -128,13 +125,10 @@ fn get_current_theme_colors(current_theme: &NovyUITheme) -> ThemeColors {
         NovyUITheme::Light => ThemeColors {
             neutral_2: get_theme_token_rgb(current_theme, "neutral_2"),     // Proper neutral_2 for timeline footer
             neutral_3: get_theme_token_rgb(current_theme, "neutral_3"),     // Proper neutral_3 
-            neutral_4: get_theme_token_rgb(current_theme, "neutral_4"),     // OKLCH neutral_4
-            neutral_5: get_theme_token_rgb(current_theme, "neutral_5"),     // OKLCH neutral_5
             neutral_12: get_theme_token_rgb(current_theme, "neutral_12"),   // OKLCH text color
             cursor_color: (37, 99, 235, 0.9), // Primary_6 cursor for consistency
             value_color_1: get_theme_token_rgb(current_theme, "value_light_blue"), // Light blue for contrast
             value_color_2: get_theme_token_rgb(current_theme, "value_dark_gray"), // Light gray for alternating
-            border_color: (107, 114, 128, 0.3), // Neutral_7 for subtle borders
             grid_color: (209, 213, 219, 0.4), // Subtle grid lines for light theme
             separator_color: (209, 213, 219, 0.3), // Very subtle row separators
             hover_panel_bg: (250, 251, 252, 0.95), // Almost white like select dropdown
@@ -146,13 +140,10 @@ fn get_current_theme_colors(current_theme: &NovyUITheme) -> ThemeColors {
 struct ThemeColors {
     neutral_2: (u8, u8, u8, f32),
     neutral_3: (u8, u8, u8, f32),
-    neutral_4: (u8, u8, u8, f32),
-    neutral_5: (u8, u8, u8, f32),
     neutral_12: (u8, u8, u8, f32),
     cursor_color: (u8, u8, u8, f32),
     value_color_1: (u8, u8, u8, f32),  // Primary color for value rectangles
     value_color_2: (u8, u8, u8, f32),  // Secondary color for value rectangles
-    border_color: (u8, u8, u8, f32),   // Border color for value rectangles
     grid_color: (u8, u8, u8, f32),     // Grid lines color
     separator_color: (u8, u8, u8, f32), // Row separator color
     hover_panel_bg: (u8, u8, u8, f32), // Bluish background for hover panel
@@ -548,23 +539,6 @@ fn get_signal_transitions_for_variable(var: &SelectedVariable, time_range: (f32,
     vec![]
 }
 
-// Get the actual end time of the waveform file for a variable
-fn get_actual_signal_end_time(var: &SelectedVariable) -> Option<f32> {
-    // Parse file path from unique_id: "/path/file.ext|scope|variable"
-    let file_path = var.unique_id.split('|').next()?;
-    
-    // Find the corresponding WaveformFile in LOADED_FILES
-    let loaded_files = crate::state::LOADED_FILES.lock_ref();
-    for waveform_file in loaded_files.iter() {
-        // Check if this file's path matches the variable's file path
-        if file_path.ends_with(&waveform_file.filename) || file_path == waveform_file.filename {
-            return waveform_file.max_time.map(|t| t as f32);
-        }
-    }
-    
-    None
-}
-
 // Request real signal transitions from backend
 fn request_signal_transitions_from_backend(file_path: &str, scope_path: &str, variable_name: &str, _time_range: (f32, f32)) {
     
@@ -790,6 +764,57 @@ pub fn stop_smooth_pan_right() {
     IS_PANNING_RIGHT.set_neq(false);
 }
 
+// Smooth cursor movement functions
+pub fn start_smooth_cursor_left() {
+    if !IS_CURSOR_MOVING_LEFT.get() {
+        IS_CURSOR_MOVING_LEFT.set_neq(true);
+        Task::start(async move {
+            while IS_CURSOR_MOVING_LEFT.get() {
+                let current_cursor = TIMELINE_CURSOR_POSITION.get();
+                let visible_start = TIMELINE_VISIBLE_RANGE_START.get();
+                let visible_end = TIMELINE_VISIBLE_RANGE_END.get();
+                let visible_range = visible_end - visible_start;
+                
+                // Calculate step size based on visible range (roughly 0.5% per frame)
+                let step_size = (visible_range * 0.005).max(0.05);
+                let new_cursor = (current_cursor - step_size).max(0.0);
+                
+                TIMELINE_CURSOR_POSITION.set_neq(new_cursor);
+                Timer::sleep(16).await; // ~60fps
+            }
+        });
+    }
+}
+
+pub fn start_smooth_cursor_right() {
+    if !IS_CURSOR_MOVING_RIGHT.get() {
+        IS_CURSOR_MOVING_RIGHT.set_neq(true);
+        Task::start(async move {
+            while IS_CURSOR_MOVING_RIGHT.get() {
+                let current_cursor = TIMELINE_CURSOR_POSITION.get();
+                let visible_start = TIMELINE_VISIBLE_RANGE_START.get();
+                let visible_end = TIMELINE_VISIBLE_RANGE_END.get();
+                let visible_range = visible_end - visible_start;
+                
+                // Calculate step size based on visible range (roughly 0.5% per frame)
+                let step_size = (visible_range * 0.005).max(0.05);
+                let new_cursor = current_cursor + step_size;
+                
+                TIMELINE_CURSOR_POSITION.set_neq(new_cursor);
+                Timer::sleep(16).await; // ~60fps
+            }
+        });
+    }
+}
+
+pub fn stop_smooth_cursor_left() {
+    IS_CURSOR_MOVING_LEFT.set_neq(false);
+}
+
+pub fn stop_smooth_cursor_right() {
+    IS_CURSOR_MOVING_RIGHT.set_neq(false);
+}
+
 // Legacy zoom functions for button compatibility
 pub fn zoom_in() {
     let current_zoom = TIMELINE_ZOOM_LEVEL.get();
@@ -807,41 +832,6 @@ pub fn zoom_out() {
     }
 }
 
-fn update_zoom_level_and_visible_range(new_zoom: f32, center_time: f32) {
-    // Set the new zoom level
-    crate::state::TIMELINE_ZOOM_LEVEL.set_neq(new_zoom);
-    
-    if new_zoom <= 1.0 {
-        // Full zoom - use entire file range
-        let (file_min, file_max) = get_full_file_range();
-        crate::state::TIMELINE_VISIBLE_RANGE_START.set_neq(file_min);
-        crate::state::TIMELINE_VISIBLE_RANGE_END.set_neq(file_max);
-    } else {
-        // Zoomed in - calculate visible range centered on cursor
-        let (file_min, file_max) = get_full_file_range();
-        let full_range = file_max - file_min;
-        let visible_range = full_range / new_zoom;
-        
-        // Center the visible range on the cursor position
-        let half_visible = visible_range / 2.0;
-        let mut range_start = center_time - half_visible;
-        let mut range_end = center_time + half_visible;
-        
-        // Clamp to file bounds
-        if range_start < file_min {
-            let offset = file_min - range_start;
-            range_start = file_min;
-            range_end = (range_end + offset).min(file_max);
-        } else if range_end > file_max {
-            let offset = range_end - file_max;
-            range_end = file_max;
-            range_start = (range_start - offset).max(file_min);
-        }
-        
-        crate::state::TIMELINE_VISIBLE_RANGE_START.set_neq(range_start);
-        crate::state::TIMELINE_VISIBLE_RANGE_END.set_neq(range_end);
-    }
-}
 
 // Mouse-centered zoom function
 fn update_zoom_with_mouse_center(new_zoom: f32) {

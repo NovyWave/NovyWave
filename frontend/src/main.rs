@@ -337,6 +337,14 @@ fn main_layout() -> impl Element {
                         // Start smooth pan right
                         crate::waveform_canvas::start_smooth_pan_right();
                     },
+                    "q" | "Q" => {
+                        // Start smooth cursor left
+                        crate::waveform_canvas::start_smooth_cursor_left();
+                    },
+                    "e" | "E" => {
+                        // Start smooth cursor right
+                        crate::waveform_canvas::start_smooth_cursor_right();
+                    },
                     _ => {} // Ignore other keys
                 }
             })
@@ -362,6 +370,14 @@ fn main_layout() -> impl Element {
                     "d" | "D" => {
                         // Stop smooth pan right
                         crate::waveform_canvas::stop_smooth_pan_right();
+                    },
+                    "q" | "Q" => {
+                        // Stop smooth cursor left
+                        crate::waveform_canvas::stop_smooth_cursor_left();
+                    },
+                    "e" | "E" => {
+                        // Stop smooth cursor right
+                        crate::waveform_canvas::stop_smooth_cursor_right();
                     },
                     _ => {} // Ignore other keys
                 }
