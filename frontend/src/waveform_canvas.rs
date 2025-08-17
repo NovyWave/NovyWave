@@ -40,6 +40,68 @@ struct HoverInfo {
 
 use std::collections::HashMap;
 
+// Time unit detection for intelligent timeline formatting
+#[derive(Debug, Clone, Copy)]
+enum TimeUnit {
+    Nanosecond,
+    Microsecond,
+    Millisecond,
+    Second,
+}
+
+impl TimeUnit {
+    fn suffix(&self) -> &'static str {
+        match self {
+            TimeUnit::Nanosecond => "ns",
+            TimeUnit::Microsecond => "μs",  // Proper microsecond symbol
+            TimeUnit::Millisecond => "ms",
+            TimeUnit::Second => "s",
+        }
+    }
+    
+    fn scale_factor(&self) -> f32 {
+        match self {
+            TimeUnit::Nanosecond => 1e9,
+            TimeUnit::Microsecond => 1e6,
+            TimeUnit::Millisecond => 1e3,
+            TimeUnit::Second => 1.0,
+        }
+    }
+}
+
+// Determine appropriate time unit based on time range
+fn get_time_unit_for_range(min_time: f32, max_time: f32) -> TimeUnit {
+    let range = max_time - min_time;
+    if range < 1e-6 {  // Less than 1 microsecond - use nanoseconds
+        TimeUnit::Nanosecond
+    } else if range < 1e-3 {  // Less than 1 millisecond - use microseconds
+        TimeUnit::Microsecond
+    } else if range < 1.0 {   // Less than 1 second - use milliseconds
+        TimeUnit::Millisecond
+    } else {
+        TimeUnit::Second
+    }
+}
+
+// Format time value with appropriate unit and precision
+fn format_time_with_unit(time_seconds: f32, unit: TimeUnit) -> String {
+    let scaled_value = time_seconds * unit.scale_factor();
+    match unit {
+        TimeUnit::Nanosecond => {
+            // For nanoseconds, show integers
+            format!("{}{}", scaled_value.round() as i32, unit.suffix())
+        }
+        TimeUnit::Microsecond => {
+            // For microseconds, show clean integers
+            format!("{}{}", scaled_value.round() as i32, unit.suffix())
+        }
+        _ => {
+            // Milliseconds and seconds use integer formatting
+            format!("{}{}", scaled_value.round() as i32, unit.suffix())
+        }
+    }
+}
+
 // OKLCH to RGB conversion utility
 fn oklch_to_rgb(l: f32, c: f32, h: f32) -> (u8, u8, u8, f32) {
     let oklch = Oklch::new(l, c, h);
@@ -154,6 +216,34 @@ struct ThemeColors {
 fn round_to_nice_number(raw: f32) -> f32 {
     if raw <= 0.0 { return 1.0; }
     
+    // Special handling for very small values (microsecond and nanosecond ranges)
+    if raw < 1e-8 {
+        // Nanosecond range - use 0.1, 0.2, 0.5, 1.0, 2.0, 5.0 nanosecond steps
+        let magnitude = 1e-9; // 1 nanosecond
+        let normalized = raw / magnitude;
+        let nice_normalized = if normalized <= 0.1 { 0.1 }
+        else if normalized <= 0.2 { 0.2 }
+        else if normalized <= 0.5 { 0.5 }
+        else if normalized <= 1.0 { 1.0 }
+        else if normalized <= 2.0 { 2.0 }
+        else if normalized <= 5.0 { 5.0 }
+        else { 10.0 };
+        return nice_normalized * magnitude;
+    } else if raw < 1e-5 {
+        // Microsecond range - use 0.1, 0.2, 0.5, 1.0, 2.0, 5.0 microsecond steps
+        let magnitude = 1e-6; // 1 microsecond
+        let normalized = raw / magnitude;
+        let nice_normalized = if normalized <= 0.1 { 0.1 }
+        else if normalized <= 0.2 { 0.2 }
+        else if normalized <= 0.5 { 0.5 }
+        else if normalized <= 1.0 { 1.0 }
+        else if normalized <= 2.0 { 2.0 }
+        else if normalized <= 5.0 { 5.0 }
+        else { 10.0 };
+        return nice_normalized * magnitude;
+    }
+    
+    // Standard 1-2-5 scaling for larger values
     let magnitude = 10.0_f32.powf(raw.log10().floor());
     let normalized = raw / magnitude;
     
@@ -308,6 +398,24 @@ async fn create_canvas_element() -> impl Element {
         }).await;
     });
 
+    // Update timeline range when selected variables change
+    Task::start(async move {
+        SELECTED_VARIABLES.signal_vec_cloned().for_each(move |_| {
+            async move {
+                
+                // Calculate new range from selected variables 
+                if let Some((min_time, max_time)) = get_current_timeline_range() {
+                    TIMELINE_VISIBLE_RANGE_START.set_neq(min_time);
+                    TIMELINE_VISIBLE_RANGE_END.set_neq(max_time);
+                } else {
+                    // No selected variables - use safe default range
+                    TIMELINE_VISIBLE_RANGE_START.set_neq(0.0);
+                    TIMELINE_VISIBLE_RANGE_END.set_neq(100.0);
+                }
+            }
+        }).await;
+    });
+
     // Clear cache and redraw when timeline range changes (critical for zoom operations)
     let canvas_wrapper_for_timeline_changes = canvas_wrapper_shared.clone();
     Task::start(async move {
@@ -375,22 +483,23 @@ async fn create_canvas_element() -> impl Element {
                 let canvas_height = CANVAS_HEIGHT.get();
                 
                 // Calculate time from click position using consistent timeline range
-                let (min_time, max_time) = get_current_timeline_range();
-                let time_range = max_time - min_time;
-                let clicked_time = min_time + (click_x / canvas_width) * time_range;
-                
-                // Clamp to valid range
-                let clicked_time = clicked_time.max(min_time).min(max_time);
-                
-                // Update cursor position
-                TIMELINE_CURSOR_POSITION.set(clicked_time);
-                
-                // Immediately redraw canvas with new cursor position
-                canvas_wrapper_for_click.borrow_mut().update_objects(move |objects| {
-                    let selected_vars = SELECTED_VARIABLES.lock_ref();
-                    let novyui_theme = CURRENT_THEME_CACHE.get();
-                    *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &novyui_theme, clicked_time);
-                });
+                if let Some((min_time, max_time)) = get_current_timeline_range() {
+                    let time_range = max_time - min_time;
+                    let clicked_time = min_time + (click_x / canvas_width) * time_range;
+                    
+                    // Clamp to valid range
+                    let clicked_time = clicked_time.max(min_time).min(max_time);
+                    
+                    // Update cursor position
+                    TIMELINE_CURSOR_POSITION.set(clicked_time);
+                    
+                    // Immediately redraw canvas with new cursor position
+                    canvas_wrapper_for_click.borrow_mut().update_objects(move |objects| {
+                        let selected_vars = SELECTED_VARIABLES.lock_ref();
+                        let novyui_theme = CURRENT_THEME_CACHE.get();
+                        *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &novyui_theme, clicked_time);
+                    });
+                }
             }
         })
         .event_handler(move |event: events::PointerMove| {
@@ -410,56 +519,58 @@ async fn create_canvas_element() -> impl Element {
             let mouse_y = page_mouse_y - canvas_top;
             MOUSE_X_POSITION.set_neq(mouse_x);
             
-            // Convert mouse X to timeline time
+            // Convert mouse X to timeline time and calculate hover info
             let canvas_width = CANVAS_WIDTH.get();
             let canvas_height = CANVAS_HEIGHT.get();
-            let (min_time, max_time) = get_current_timeline_range();
-            let time_range = max_time - min_time;
-            let mouse_time = min_time + (mouse_x / canvas_width) * time_range;
-            
-            // Clamp to valid range and update mouse time position
-            let mouse_time = mouse_time.max(min_time).min(max_time);
-            MOUSE_TIME_POSITION.set_neq(mouse_time);
-            
-            // Calculate hover info for tooltip
-            let selected_vars = SELECTED_VARIABLES.lock_ref();
-            let total_rows = selected_vars.len() + 1; // variables + timeline
-            let row_height = if total_rows > 0 { canvas_height / total_rows as f32 } else { canvas_height };
-            
-            // Determine which variable row the mouse is over
-            let hover_row = (mouse_y / row_height) as usize;
-            
-            if hover_row < selected_vars.len() {
-                // Mouse is over a variable row
-                let var = &selected_vars[hover_row];
-                let variable_name = var.unique_id.split('|').last().unwrap_or("Unknown").to_string();
+            if let Some((min_time, max_time)) = get_current_timeline_range() {
+                let time_range = max_time - min_time;
+                let mouse_time = min_time + (mouse_x / canvas_width) * time_range;
                 
-                // Get value at current time
-                let current_time_range = get_current_timeline_range();
-                let time_value_pairs = get_signal_transitions_for_variable(var, current_time_range);
+                // Clamp to valid range and update mouse time position
+                let mouse_time = mouse_time.max(min_time).min(max_time);
+                MOUSE_TIME_POSITION.set_neq(mouse_time);
                 
-                // Find the value at the current mouse time
-                let mut current_value = "X".to_string(); // Default unknown
-                for (time, value) in time_value_pairs.iter() {
-                    if *time <= mouse_time {
-                        current_value = value.clone();
-                    } else {
-                        break;
+                // Calculate hover info for tooltip
+                let selected_vars = SELECTED_VARIABLES.lock_ref();
+                let total_rows = selected_vars.len() + 1; // variables + timeline
+                let row_height = if total_rows > 0 { canvas_height / total_rows as f32 } else { canvas_height };
+                
+                // Determine which variable row the mouse is over
+                let hover_row = (mouse_y / row_height) as usize;
+                
+                if hover_row < selected_vars.len() {
+                    // Mouse is over a variable row
+                    let var = &selected_vars[hover_row];
+                    let variable_name = var.unique_id.split('|').last().unwrap_or("Unknown").to_string();
+                    
+                    let time_value_pairs = get_signal_transitions_for_variable(var, (min_time, max_time));
+                    
+                    // Find the value at the current mouse time
+                    let mut current_value = "X".to_string(); // Default unknown
+                    for (time, value) in time_value_pairs.iter() {
+                        if *time <= mouse_time {
+                            current_value = value.clone();
+                        } else {
+                            break;
+                        }
                     }
+                    
+                    // Format the value using the variable's formatter
+                    let formatted_value = var.formatter.unwrap_or_default().format(&current_value);
+                    
+                    HOVER_INFO.set_neq(Some(HoverInfo {
+                        mouse_x,
+                        mouse_y,
+                        time: mouse_time,
+                        variable_name,
+                        value: formatted_value,
+                    }));
+                } else {
+                    // Mouse is over timeline or outside variable area
+                    HOVER_INFO.set_neq(None);
                 }
-                
-                // Format the value using the variable's formatter
-                let formatted_value = var.formatter.unwrap_or_default().format(&current_value);
-                
-                HOVER_INFO.set_neq(Some(HoverInfo {
-                    mouse_x,
-                    mouse_y,
-                    time: mouse_time,
-                    variable_name,
-                    value: formatted_value,
-                }));
             } else {
-                // Mouse is over timeline or outside variable area
+                // No timeline range available - clear hover info
                 HOVER_INFO.set_neq(None);
             }
         })
@@ -584,8 +695,25 @@ pub fn trigger_canvas_redraw() {
     TIMELINE_CURSOR_POSITION.set_neq(current_cursor);
 }
 
+// Extract unique file paths from selected variables
+fn get_selected_variable_file_paths() -> std::collections::HashSet<String> {
+    let selected_vars = SELECTED_VARIABLES.lock_ref();
+    let mut file_paths = std::collections::HashSet::new();
+    
+    
+    for var in selected_vars.iter() {
+        // Parse unique_id: "file_path|scope|variable"
+        if let Some(file_path) = var.unique_id.split('|').next() {
+            file_paths.insert(file_path.to_string());
+        }
+    }
+    
+    file_paths
+}
+
 // ROCK-SOLID coordinate transformation system with zoom reliability
-fn get_current_timeline_range() -> (f32, f32) {
+// Returns None when no variables are selected (no timeline should be shown)
+fn get_current_timeline_range() -> Option<(f32, f32)> {
     let zoom_level = crate::state::TIMELINE_ZOOM_LEVEL.get();
     
     // If zoomed in, return the visible range with validation
@@ -594,12 +722,12 @@ fn get_current_timeline_range() -> (f32, f32) {
         let range_end = crate::state::TIMELINE_VISIBLE_RANGE_END.get();
         
         // CRITICAL: Enforce minimum time range to prevent coordinate precision loss
-        let min_zoom_range = 0.001; // Minimum 1ms range prevents division by near-zero
+        let min_zoom_range = 1e-9; // Minimum 1 nanosecond range prevents division by near-zero
         let current_range = range_end - range_start;
         
         // Validate range is sensible and has sufficient precision
         if range_end > range_start && range_start >= 0.0 && current_range >= min_zoom_range {
-            return (range_start, range_end);
+            return Some((range_start, range_end));
         }
         
         // If zoom range is too narrow, expand it to minimum viable range
@@ -608,38 +736,80 @@ fn get_current_timeline_range() -> (f32, f32) {
             let half_min_range = min_zoom_range / 2.0;
             let expanded_start = (range_center - half_min_range).max(0.0);
             let expanded_end = range_center + half_min_range;
-            return (expanded_start, expanded_end);
+            return Some((expanded_start, expanded_end));
         }
         
         // Fall through to full range if zoom range is invalid
     }
     
-    // Default behavior: get full file range with validation
+    // Default behavior: get range from files containing selected variables only
     let loaded_files = LOADED_FILES.lock_ref();
     
-    // Get timeline range from ALL loaded files, not just selected variables
+    // Get file paths that contain selected variables
+    let selected_file_paths = get_selected_variable_file_paths();
+    
     let mut min_time: f32 = f32::MAX;
     let mut max_time: f32 = f32::MIN;
     let mut has_valid_files = false;
     
-    for file in loaded_files.iter() {
-        if let (Some(file_min), Some(file_max)) = (file.min_time, file.max_time) {
-            min_time = min_time.min(file_min as f32);
-            max_time = max_time.max(file_max as f32);
-            has_valid_files = true;
+    // If no variables are selected, don't show timeline
+    if selected_file_paths.is_empty() {
+        return None;
+    } else {
+        // Calculate range from only files that contain selected variables
+        
+        for file in loaded_files.iter() {
+            
+            // Check if this file contains any selected variables
+            let file_matches = selected_file_paths.iter().any(|path| {
+                let matches = file.id == *path;
+                matches
+            });
+            
+            
+            if file_matches {
+                if let (Some(file_min), Some(file_max)) = (file.min_time, file.max_time) {
+                    min_time = min_time.min(file_min as f32);
+                    max_time = max_time.max(file_max as f32);
+                    has_valid_files = true;
+                }
+            }
         }
     }
     
     if !has_valid_files || min_time == max_time {
-        // Reasonable default for empty/invalid files
-        (0.0, 100.0)
-    } else {
-        // Ensure minimum range for coordinate precision
-        let file_range = max_time - min_time;
-        if file_range < 0.001 {
-            (min_time, min_time + 0.001)
+        // FALLBACK: No valid files with selected variables - check if any files exist at all
+        let mut fallback_min: f32 = f32::MAX;
+        let mut fallback_max: f32 = f32::MIN;
+        let mut has_any_files = false;
+        
+        for file in loaded_files.iter() {
+            if let (Some(file_min), Some(file_max)) = (file.min_time, file.max_time) {
+                fallback_min = fallback_min.min(file_min as f32);
+                fallback_max = fallback_max.max(file_max as f32);
+                has_any_files = true;
+            }
+        }
+        
+        if has_any_files && fallback_min != fallback_max {
+            // Use range from any available files as fallback
+            let fallback_range = fallback_max - fallback_min;
+            if fallback_range < 1e-9 {
+                Some((fallback_min, fallback_min + 1e-9))
+            } else {
+                Some((fallback_min, fallback_max))
+            }
         } else {
-            (min_time, max_time)
+            // No files at all - provide safe default range
+            Some((0.0, 100.0))
+        }
+    } else {
+        // Ensure minimum range for coordinate precision (but don't override valid microsecond ranges!)
+        let file_range = max_time - min_time;
+        if file_range < 1e-9 {  // Only enforce minimum for truly tiny ranges (< 1 nanosecond)
+            Some((min_time, min_time + 1e-9))  // Minimum 1 nanosecond range
+        } else {
+            Some((min_time, max_time))  // Use actual range, even if it's microseconds
         }
     }
 }
@@ -846,13 +1016,14 @@ fn update_zoom_with_mouse_center(new_zoom: f32) {
     TIMELINE_ZOOM_LEVEL.set_neq(new_zoom);
     
     if new_zoom <= 1.0 {
-        // Full zoom - use entire file range
-        let (file_min, file_max) = get_full_file_range();
+        // Full zoom - use range from selected variables only (consistent with timeline display)
+        let Some((file_min, file_max)) = get_current_timeline_range() else { return; };
+        zoon::println!("DEBUG ZOOM: Setting range to {:.9} - {:.9}", file_min, file_max);
         TIMELINE_VISIBLE_RANGE_START.set_neq(file_min);
         TIMELINE_VISIBLE_RANGE_END.set_neq(file_max);
     } else {
         // Zoomed in - calculate visible range centered on mouse position
-        let (current_start, current_end) = get_current_timeline_range();
+        let Some((current_start, current_end)) = get_current_timeline_range() else { return; };
         let current_range = current_end - current_start;
         
         // Calculate new range
@@ -958,7 +1129,10 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
         let file_path = var.unique_id.split('|').next().unwrap_or("");
         let _file_name = file_path.split('/').last().unwrap_or("unknown");
         
-        let current_time_range = get_current_timeline_range();
+        let Some(current_time_range) = get_current_timeline_range() else { 
+            // This should never happen now due to fallback logic, but add safety
+            continue;
+        };
         
         
         let time_value_pairs = get_signal_transitions_for_variable(var, current_time_range);
@@ -967,7 +1141,7 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
         
         
         // Get visible time range for proper clipping
-        let (min_time, max_time) = get_current_timeline_range();
+        let (min_time, max_time) = current_time_range;
         
         for (rect_index, (start_time, binary_value)) in time_value_pairs.iter().enumerate() {
             // Calculate end time for this rectangle (next transition time or view window end)
@@ -1099,8 +1273,14 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
         );
         
         // Get consistent timeline range
-        let (min_time, max_time) = get_current_timeline_range();
+        let (min_time, max_time) = get_current_timeline_range().unwrap_or_else(|| { 
+            // This should never happen now, but provide safe fallback
+            (0.0, 100.0)
+        });
         let time_range = max_time - min_time;
+        
+        // Determine appropriate time unit for the entire range
+        let time_unit = get_time_unit_for_range(min_time, max_time);
         
         // Phase 9: Pixel-based spacing algorithm for professional timeline
         let target_tick_spacing = 60.0; // Target 60 pixels between ticks
@@ -1146,7 +1326,7 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
             
             // Add time label with actual time units and theme-aware color (only if not cut off)
             if should_show_label {
-                let time_label = format!("{}s", time_value as u32);
+                let time_label = format_time_with_unit(time_value, time_unit);
                 
                 // Check if this milestone would overlap with the right edge label
                 let is_near_right_edge = x_position > (canvas_width - 60.0); // Increased margin to prevent overlap
@@ -1171,7 +1351,7 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
     // Add timeline cursor line spanning all rows
     if total_rows > 0 {
         // Use consistent timeline range
-        let (min_time, max_time) = get_current_timeline_range();
+        let (min_time, max_time) = get_current_timeline_range().unwrap_or((0.0, 100.0));
         let time_range = max_time - min_time;
         
         // Calculate cursor x position only if cursor is within visible range
@@ -1194,14 +1374,17 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
     // Add sticky range start and end labels to timeline edges
     if total_rows > 0 {
         let timeline_y = (total_rows - 1) as f32 * row_height;
-        let (min_time, max_time) = get_current_timeline_range();
+        let (min_time, max_time) = get_current_timeline_range().unwrap_or((0.0, 100.0));
         let label_color = theme_colors.neutral_12; // High contrast text
+        
+        // Determine appropriate time unit for edge labels
+        let time_unit = get_time_unit_for_range(min_time, max_time);
         
         // Match tick label vertical position exactly
         let label_y = timeline_y + 15.0; // Same level as tick labels
         
         // Left edge - range start (positioned to avoid tick overlap)
-        let start_label = format!("{}s", min_time.round() as i32);
+        let start_label = format_time_with_unit(min_time, time_unit);
         objects.push(
             fast2d::Text::new()
                 .text(start_label)
@@ -1214,7 +1397,7 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
         );
         
         // Right edge - range end (positioned close to right edge)
-        let end_label = format!("{}s", max_time.round() as i32);
+        let end_label = format_time_with_unit(max_time, time_unit);
         let label_width = (end_label.len() as f32 * 7.0).max(30.0); // Dynamic width
         objects.push(
             fast2d::Text::new()
@@ -1234,7 +1417,9 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
         let tooltip_text_color = theme_colors.hover_panel_text; // High contrast text
         
         // Create tooltip text with better formatting
-        let tooltip_text = format!("{} = {} at {:.2}s", hover_info.variable_name, hover_info.value, hover_info.time);
+        let time_unit = get_time_unit_for_range(0.0, hover_info.time * 2.0); // Estimate unit based on time value
+        let formatted_time = format_time_with_unit(hover_info.time, time_unit);
+        let tooltip_text = format!("{} = {} at {}", hover_info.variable_name, hover_info.value, formatted_time);
         
         // Position tooltip above cursor with offset
         let tooltip_x = hover_info.mouse_x + 10.0; // 10px right of cursor

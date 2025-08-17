@@ -20,7 +20,7 @@ use crate::{
     FILE_PATHS, show_file_paths_dialog, LOAD_FILES_VIEWPORT_Y,
     FILE_PICKER_EXPANDED, FILE_PICKER_SELECTED,
     FILE_PICKER_ERROR, FILE_PICKER_ERROR_CACHE, FILE_TREE_CACHE, DOCK_TOGGLE_IN_PROGRESS,
-    TRACKED_FILES, state, file_validation::validate_file_state, clipboard
+    TRACKED_FILES, state, clipboard
 };
 use crate::state::TIMELINE_ZOOM_LEVEL;
 use crate::state::SELECTED_VARIABLES_ROW_HEIGHT;
@@ -2182,38 +2182,21 @@ fn process_file_picker_selection() {
             }
             
             // CRITICAL: Validate files BEFORE sending to backend (from file picker)
-            // This prevents non-existent files from being misclassified as UnsupportedFormat
+            // Let backend handle all validation - no frontend heuristics
             Task::start({
                 let file_path = file_path.clone();
                 let file_id = file_id.clone();
                 async move {
-                    // Validate file state before adding to tracked system
-                    match validate_file_state(&file_path).await {
-                        Ok(()) => {
-                            // File is valid - proceed with normal loading flow
-                            state::add_tracked_file(file_path.clone(), shared::FileState::Loading(shared::LoadingStatus::Starting));
-                            
-                            // Also maintain legacy systems for backward compatibility during transition
-                            FILE_PATHS.lock_mut().insert(file_id.clone(), file_path.clone());
-                            config::save_file_list();
-                            Task::start(async move {
-                                use crate::platform::{Platform, CurrentPlatform};
-                                let _ = CurrentPlatform::send_message(UpMsg::LoadWaveformFile(file_path)).await;
-                            });
-                        },
-                        Err(error) => {
-                            // File validation failed - add with error state immediately, don't send to backend
-                            // File validation failed - handle error
-                            state::add_tracked_file(file_path.clone(), shared::FileState::Failed(error));
-                            
-                            // Still add to legacy system for consistency, but mark as failed
-                            FILE_PATHS.lock_mut().insert(file_id.clone(), file_path.clone());
-                            config::save_file_list();
-                            
-                            // NOTE: We deliberately do NOT send UpMsg::LoadWaveformFile for failed validation
-                            // This prevents the backend from wasting time on files we know are invalid
-                        }
-                    }
+                    // Add to tracked system immediately - backend will provide proper error feedback
+                    state::add_tracked_file(file_path.clone(), shared::FileState::Loading(shared::LoadingStatus::Starting));
+                    
+                    // Also maintain legacy systems for backward compatibility during transition
+                    FILE_PATHS.lock_mut().insert(file_id.clone(), file_path.clone());
+                    config::save_file_list();
+                    Task::start(async move {
+                        use crate::platform::{Platform, CurrentPlatform};
+                        let _ = CurrentPlatform::send_message(UpMsg::LoadWaveformFile(file_path)).await;
+                    });
                 }
             });
         }

@@ -470,31 +470,120 @@ impl VarFormat {
 
 #[derive(Clone, Debug)]
 pub enum FileError {
-    ParseError(String),
-    FileNotFound,
-    PermissionDenied,
-    UnsupportedFormat(String),
-    CorruptedFile(String),
+    /// Wellen parsing error with context
+    ParseError { 
+        source: String, // wellen error description
+        context: String, // additional context (file path, format, etc.)
+    },
+    /// File not found at specified path
+    FileNotFound { 
+        path: String,
+    },
+    /// Permission denied accessing file
+    PermissionDenied { 
+        path: String,
+    },
+    /// Unsupported file format
+    UnsupportedFormat { 
+        path: String,
+        extension: String,
+        supported_formats: Vec<String>,
+    },
+    /// File appears corrupted or has invalid structure
+    CorruptedFile { 
+        path: String,
+        details: String,
+    },
+    /// File is too large to process
+    FileTooLarge { 
+        path: String,
+        size: u64,
+        max_size: u64,
+    },
+    /// I/O error during file operations
+    IoError { 
+        path: String,
+        error: String,
+    },
+    /// Invalid file content (not valid VCD/FST)
+    InvalidFormat { 
+        path: String,
+        expected_format: String,
+        reason: String,
+    },
 }
 
 impl FileError {
     pub fn user_friendly_message(&self) -> String {
         match self {
-            FileError::ParseError(msg) => msg.clone(),
-            FileError::FileNotFound => "File not found".to_string(),
-            FileError::PermissionDenied => "Permission denied".to_string(),
-            FileError::UnsupportedFormat(format) => format!("Unsupported format: {}", format),
-            FileError::CorruptedFile(msg) => format!("Corrupted file: {}", msg),
+            FileError::ParseError { source, context } => {
+                format!("Failed to parse file: {} ({})", source, context)
+            },
+            FileError::FileNotFound { path } => {
+                format!("File not found: {}", path)
+            },
+            FileError::PermissionDenied { path } => {
+                format!("Permission denied accessing: {}", path)
+            },
+            FileError::UnsupportedFormat { path, extension, supported_formats } => {
+                let supported = supported_formats.join(", ");
+                format!("Unsupported format '{}' in file: {}. Supported formats: {}", 
+                        extension, path, supported)
+            },
+            FileError::CorruptedFile { path, details } => {
+                format!("Corrupted file: {} ({})", path, details)
+            },
+            FileError::FileTooLarge { path, size, max_size } => {
+                format!("File too large: {} ({} bytes). Maximum size: {} bytes", 
+                        path, size, max_size)
+            },
+            FileError::IoError { path, error } => {
+                format!("I/O error reading: {} ({})", path, error)
+            },
+            FileError::InvalidFormat { path, expected_format, reason } => {
+                format!("Invalid {} file: {} ({})", expected_format, path, reason)
+            },
         }
     }
     
     pub fn icon_name(&self) -> &'static str {
         match self {
-            FileError::ParseError(_) => "triangle-alert",
-            FileError::FileNotFound => "file",
-            FileError::PermissionDenied => "lock",
-            FileError::UnsupportedFormat(_) => "circle-help",
-            FileError::CorruptedFile(_) => "circle-alert",
+            FileError::ParseError { .. } => "triangle-alert",
+            FileError::FileNotFound { .. } => "file",
+            FileError::PermissionDenied { .. } => "lock",
+            FileError::UnsupportedFormat { .. } => "circle-help",
+            FileError::CorruptedFile { .. } => "circle-alert",
+            FileError::FileTooLarge { .. } => "circle-alert",
+            FileError::IoError { .. } => "triangle-alert",
+            FileError::InvalidFormat { .. } => "circle-help",
+        }
+    }
+
+    /// Get a short error category for logging/debugging
+    pub fn category(&self) -> &'static str {
+        match self {
+            FileError::ParseError { .. } => "ParseError",
+            FileError::FileNotFound { .. } => "FileNotFound",
+            FileError::PermissionDenied { .. } => "PermissionDenied",
+            FileError::UnsupportedFormat { .. } => "UnsupportedFormat",
+            FileError::CorruptedFile { .. } => "CorruptedFile",
+            FileError::FileTooLarge { .. } => "FileTooLarge",
+            FileError::IoError { .. } => "IoError",
+            FileError::InvalidFormat { .. } => "InvalidFormat",
+        }
+    }
+
+    /// Get the file path associated with this error
+    pub fn file_path(&self) -> &str {
+        match self {
+            FileError::ParseError { context, .. } => context, // Contains path
+            FileError::FileNotFound { path } => path,
+            FileError::PermissionDenied { path } => path,
+            FileError::UnsupportedFormat { path, .. } => path,
+            FileError::CorruptedFile { path, .. } => path,
+            FileError::FileTooLarge { path, .. } => path,
+            FileError::IoError { path, .. } => path,
+            FileError::InvalidFormat { path, .. } => path,
         }
     }
 }

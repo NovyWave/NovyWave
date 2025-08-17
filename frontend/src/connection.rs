@@ -108,7 +108,10 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
             DownMsg::ParsingError { file_id, error } => {
                 
                 // Update TRACKED_FILES with error state
-                let file_error = shared::FileError::ParseError(error.clone());
+                let file_error = shared::FileError::ParseError { 
+                    source: error.clone(),
+                    context: format!("Parsing file with ID: {}", file_id),
+                };
                 crate::state::update_tracked_file_state(&file_id, shared::FileState::Failed(file_error));
                 
                 // Find the filename for the error alert from TRACKED_FILES (more reliable for non-existent files)
@@ -188,7 +191,9 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 crate::FILE_PICKER_ERROR.set_neq(None);
             }
             DownMsg::ConfigLoaded(config) => {
+                zoon::println!("=== RECEIVED ConfigLoaded message ===");
                 crate::config::apply_config(config);
+                zoon::println!("=== Applied config successfully ===");
             }
             DownMsg::ConfigSaved => {
                 // Config saved successfully
@@ -371,7 +376,10 @@ fn handle_down_msg(down_msg: DownMsg) {
             }
         }
         DownMsg::ParsingError { file_id, error } => {
-            let file_error = shared::FileError::ParseError(error.clone());
+            let file_error = shared::FileError::ParseError { 
+                source: error.clone(),
+                context: format!("Parsing file with ID: {}", file_id),
+            };
             crate::state::update_tracked_file_state(&file_id, shared::FileState::Failed(file_error));
             
             let filename = {

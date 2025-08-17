@@ -5,6 +5,7 @@ use zoon::*;
 use serde::{Deserialize, Serialize};
 use shared::UpMsg;
 pub use shared::{Theme, DockMode}; // Re-export for frontend usage
+use crate::CONFIG_INITIALIZATION_COMPLETE;
 
 // =============================================================================
 // MAIN CONFIG STORE - Single Source of Truth with Reactive Fields
@@ -126,7 +127,7 @@ pub struct DialogSection {
 static CONFIG_STORE: Lazy<ConfigStore> = Lazy::new(|| ConfigStore::new());
 
 // Global flag to track config loading status (for compatibility with existing code)
-pub static CONFIG_LOADED: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
+pub static CONFIG_LOADED: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false)); // Start false, set true after config loads
 
 // =============================================================================
 // DEFAULT IMPLEMENTATIONS (Mutable-based)
@@ -757,19 +758,22 @@ pub fn config_store() -> &'static ConfigStore {
 
 // Bridge functions for gradual migration from old state.rs system
 pub fn save_scope_selection() {
-    // This is now handled automatically by the reactive triggers
-    // The new system auto-saves when config changes
+    if CONFIG_INITIALIZATION_COMPLETE.get() {
+        save_config_to_backend();
+    }
 }
 
 pub fn save_panel_layout() {
-    // This is now handled automatically by the reactive triggers
-    // The new system auto-saves when config changes
+    if CONFIG_INITIALIZATION_COMPLETE.get() {
+        save_config_to_backend();
+    }
 }
 
 #[allow(dead_code)]
 pub fn save_current_config() {
-    // This is now handled automatically by the reactive triggers
-    // The new system auto-saves when config changes
+    if CONFIG_INITIALIZATION_COMPLETE.get() {
+        save_config_to_backend();
+    }
 }
 
 pub fn save_file_list() {
@@ -883,6 +887,9 @@ pub fn apply_config(config: shared::AppConfig) {
     
     // Manual sync of selected variables from config to global state
     sync_selected_variables_from_config();
+    
+    // Manual sync of panel dimensions from config to global state 
+    sync_panel_dimensions_from_config();
     
     // Manual sync of column widths from config to global state
     sync_column_widths_from_config();
@@ -1030,6 +1037,32 @@ fn sync_selected_variables_from_config() {
     
     // Initialize selected variables with validation
     init_selected_variables_from_config(selected_vars);
+}
+
+// Manual sync function to restore panel dimensions from config to global state
+fn sync_panel_dimensions_from_config() {
+    use crate::state::{FILES_PANEL_WIDTH, FILES_PANEL_HEIGHT};
+    
+    // Get current dock mode and corresponding panel dimensions
+    let dock_mode = config_store().workspace.lock_ref().dock_mode.get_cloned();
+    let workspace_ref = config_store().workspace.lock_ref();
+    let layouts = workspace_ref.panel_layouts.lock_ref();
+    
+    let (files_width, files_height) = match dock_mode {
+        DockMode::Bottom => {
+            let dims = layouts.docked_to_bottom.lock_ref();
+            (dims.files_panel_width.get(), dims.files_panel_height.get())
+        }
+        DockMode::Right => {
+            let dims = layouts.docked_to_right.lock_ref();
+            (dims.files_panel_width.get(), dims.files_panel_height.get())
+        }
+    };
+    
+    // Restore panel dimensions
+    zoon::println!("DEBUG: Syncing panel dimensions - width: {} -> {}, height: {} -> {}", FILES_PANEL_WIDTH.get(), files_width as u32, FILES_PANEL_HEIGHT.get(), files_height as u32);
+    FILES_PANEL_WIDTH.set_neq(files_width as u32);
+    FILES_PANEL_HEIGHT.set_neq(files_height as u32);
 }
 
 // Manual sync function to restore column widths from config to global state

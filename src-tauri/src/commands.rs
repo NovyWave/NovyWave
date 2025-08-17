@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 use serde_json;
 use tauri::Emitter;
-use shared::{AppConfig, FileSystemItem, SignalValueQuery, SignalValueResult, SignalTransitionQuery, SignalTransitionResult};
+use shared::{AppConfig, SignalValueQuery};
 
 /// Load application configuration from file system
 #[tauri::command]

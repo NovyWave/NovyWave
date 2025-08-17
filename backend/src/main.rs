@@ -1,5 +1,5 @@
 use moon::*;
-use shared::{self, UpMsg, DownMsg, AppConfig, FileHierarchy, WaveformFile, FileFormat, ScopeData, FileSystemItem, SignalValueQuery, SignalValueResult, SignalTransitionQuery, SignalTransition, SignalTransitionResult};
+use shared::{self, UpMsg, DownMsg, AppConfig, FileHierarchy, WaveformFile, FileFormat, ScopeData, FileSystemItem, SignalValueQuery, SignalValueResult, SignalTransitionQuery, SignalTransition, SignalTransitionResult, FileError};
 use std::path::Path;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -22,6 +22,7 @@ struct WaveformData {
     time_table: Vec<wellen::Time>,
     signals: HashMap<String, wellen::SignalRef>, // scope_path|variable_name -> SignalRef
     file_format: wellen::FileFormat, // Store file format for proper time conversion
+    timescale_factor: f64, // Conversion factor from VCD native units to seconds
 }
 
 static WAVEFORM_DATA_STORE: Lazy<Arc<Mutex<HashMap<String, WaveformData>>>> = 
@@ -70,6 +71,8 @@ async fn load_waveform_file(file_path: String, session_id: SessionId, cor_id: Co
         return;
     }
     
+    // Let wellen handle all validation - it knows best
+    
     let filename = path.file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("unknown")
@@ -78,8 +81,16 @@ async fn load_waveform_file(file_path: String, session_id: SessionId, cor_id: Co
     let progress = Arc::new(Mutex::new(0.0));
     
     {
-        let mut sessions = PARSING_SESSIONS.lock().unwrap();
-        sessions.insert(file_path.clone(), progress.clone());
+        match PARSING_SESSIONS.lock() {
+            Ok(mut sessions) => {
+                sessions.insert(file_path.clone(), progress.clone());
+            }
+            Err(e) => {
+                let error_msg = format!("Internal error: Failed to access parsing sessions - {}", e);
+                send_parsing_error(file_path.clone(), filename, error_msg, session_id, cor_id).await;
+                return;
+            }
+        }
     }
     
     send_down_msg(DownMsg::ParsingStarted { 
@@ -91,31 +102,95 @@ async fn load_waveform_file(file_path: String, session_id: SessionId, cor_id: Co
     parse_waveform_file(file_path.clone(), file_path, filename, progress, session_id, cor_id).await;
 }
 
+
+async fn send_parsing_error(file_id: String, filename: String, error: String, session_id: SessionId, cor_id: CorId) {
+    println!("Parsing error for {}: {}", filename, error);
+    
+    send_down_msg(DownMsg::ParsingError { 
+        file_id, 
+        error 
+    }, session_id, cor_id).await;
+}
+
+/// Enhanced error sending with structured FileError - provides better error context
+async fn send_structured_parsing_error(file_id: String, filename: String, file_error: FileError, session_id: SessionId, cor_id: CorId) {
+    // Log the error with structured context for debugging
+    println!("Parsing error for {}: {} - {}", filename, file_error.category(), file_error.user_friendly_message());
+    
+    // Send the user-friendly message to maintain compatibility with existing frontend
+    send_down_msg(DownMsg::ParsingError { 
+        file_id, 
+        error: file_error.user_friendly_message()
+    }, session_id, cor_id).await;
+}
+
 async fn parse_waveform_file(file_path: String, file_id: String, filename: String, 
                        progress: Arc<Mutex<f32>>, session_id: SessionId, cor_id: CorId) {
     
     let options = wellen::LoadOptions::default();
     
-    match wellen::viewers::read_header_from_file(&file_path, &options) {
-        Ok(header_result) => {
-            {
-                let mut p = progress.lock().unwrap();
-                *p = 0.3; // Header parsed
+    // Catch panics from wellen parsing to prevent crashes
+    let parse_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        wellen::viewers::read_header_from_file(&file_path, &options)
+    }));
+    
+    let header_result = match parse_result {
+        Ok(Ok(header)) => header,
+        Ok(Err(e)) => {
+            let file_error = convert_wellen_error_to_file_error(&e.to_string(), &file_path);
+            send_structured_parsing_error(file_id, filename, file_error, session_id, cor_id).await;
+            return;
+        }
+        Err(_panic) => {
+            let file_error = convert_panic_to_file_error(&file_path);
+            send_structured_parsing_error(file_id, filename, file_error, session_id, cor_id).await;
+            return;
+        }
+    };
+    
+    {
+        match progress.lock() {
+            Ok(mut p) => *p = 0.3, // Header parsed
+            Err(_) => {
+                // Progress mutex poisoned - continue without progress updates
+                eprintln!("Warning: Progress tracking failed for {}", filename);
             }
-            send_progress_update(file_id.clone(), 0.3, session_id, cor_id).await;
+        }
+    }
+    send_progress_update(file_id.clone(), 0.3, session_id, cor_id).await;
+    
+    // Handle FST and VCD differently for progressive loading
+    match header_result.file_format {
+        wellen::FileFormat::Fst => {
+            // FST: Time table available immediately from header parsing
+            // Progressive loading: extract time table quickly, defer full signal data
+            let body_parse_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                wellen::viewers::read_body(header_result.body, &header_result.hierarchy, None)
+            }));
             
-            // Handle FST and VCD differently for progressive loading
-            match header_result.file_format {
-                wellen::FileFormat::Fst => {
-                    // FST: Time table available immediately from header parsing
-                    // Progressive loading: extract time table quickly, defer full signal data
-                    match wellen::viewers::read_body(header_result.body, &header_result.hierarchy, None) {
-                        Ok(body_result) => {
-                    {
-                        let mut p = progress.lock().unwrap();
-                        *p = 0.7; // Body parsed
+            let body_result = match body_parse_result {
+                Ok(Ok(body)) => body,
+                Ok(Err(e)) => {
+                    let file_error = convert_wellen_error_to_file_error(&e.to_string(), &file_path);
+                    send_structured_parsing_error(file_id, filename, file_error, session_id, cor_id).await;
+                    return;
+                }
+                Err(_panic) => {
+                    let file_error = convert_panic_to_file_error(&file_path);
+                    send_structured_parsing_error(file_id, filename, file_error, session_id, cor_id).await;
+                    return;
+                }
+            };
+            {
+                match progress.lock() {
+                    Ok(mut p) => *p = 0.7, // Body parsed
+                    Err(_) => {
+                        // Progress mutex poisoned - continue without progress updates
+                        eprintln!("Warning: Progress tracking failed for {}", filename);
                     }
-                    send_progress_update(file_id.clone(), 0.7, session_id, cor_id).await;
+                }
+            }
+            send_progress_update(file_id.clone(), 0.7, session_id, cor_id).await;
                     
                     // FST: Extract time range first before moving body_result
                     let (min_seconds, max_seconds) = extract_fst_time_range(&body_result);
@@ -135,18 +210,27 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
                         time_table: body_result.time_table.clone(),
                         signals,
                         file_format: header_result.file_format,
+                        timescale_factor: 1e-15, // FST uses femtoseconds
                     };
                     
                     {
-                        let mut store = WAVEFORM_DATA_STORE.lock().unwrap();
-                        store.insert(file_path.clone(), waveform_data);
+                        match WAVEFORM_DATA_STORE.lock() {
+                            Ok(mut store) => {
+                                store.insert(file_path.clone(), waveform_data);
+                            }
+                            Err(e) => {
+                                let error_msg = format!("Internal error: Failed to store waveform data - {}", e);
+                                send_parsing_error(file_id.clone(), filename, error_msg, session_id, cor_id).await;
+                                return;
+                            }
+                        }
                     }
                     
                     let format = FileFormat::FST;
                     
                     let waveform_file = WaveformFile {
                         id: file_id.clone(),
-                        filename,
+                        filename: filename.clone(),
                         format,
                         scopes,
                         min_time,
@@ -158,8 +242,13 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
                     };
                     
                     {
-                        let mut p = progress.lock().unwrap();
-                        *p = 1.0; // Complete
+                        match progress.lock() {
+                            Ok(mut p) => *p = 1.0, // Complete
+                            Err(_) => {
+                                // Progress mutex poisoned - continue without progress updates
+                                eprintln!("Warning: Progress tracking failed for {}", filename);
+                            }
+                        }
                     }
                     send_progress_update(file_id.clone(), 1.0, session_id, cor_id).await;
                     
@@ -169,14 +258,8 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
                     }, session_id, cor_id).await;
                     
                     cleanup_parsing_session(&file_id);
-                }
-                        Err(e) => {
-                            let error_msg = format!("Failed to read waveform body from '{}': {}", file_path, e);
-                            send_down_msg(DownMsg::ParsingError { file_id, error: error_msg }, session_id, cor_id).await;
-                        }
-                    }
-                }
-                wellen::FileFormat::Vcd => {
+        }
+        wellen::FileFormat::Vcd => {
                     // VCD: Use progressive loading with quick time bounds extraction
                     
                     // First: Try quick time bounds extraction (much faster)
@@ -211,8 +294,13 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
                     };
                     
                     {
-                        let mut p = progress.lock().unwrap();
-                        *p = 0.5; // Quick time bounds extracted
+                        match progress.lock() {
+                            Ok(mut p) => *p = 0.5, // Quick time bounds extracted
+                            Err(_) => {
+                                // Progress mutex poisoned - continue without progress updates
+                                eprintln!("Warning: Progress tracking failed for {}", filename);
+                            }
+                        }
                     }
                     send_progress_update(file_id.clone(), 0.5, session_id, cor_id).await;
                     
@@ -225,7 +313,7 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
                     // Create lightweight file data WITHOUT full signal source
                     let waveform_file = WaveformFile {
                         id: file_id.clone(),
-                        filename,
+                        filename: filename.clone(),
                         format,
                         scopes,
                         min_time,
@@ -237,8 +325,13 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
                     };
                     
                     {
-                        let mut p = progress.lock().unwrap();
-                        *p = 1.0; // Complete - fast header-only loading!
+                        match progress.lock() {
+                            Ok(mut p) => *p = 1.0, // Complete - fast header-only loading!
+                            Err(_) => {
+                                // Progress mutex poisoned - continue without progress updates
+                                eprintln!("Warning: Progress tracking failed for {}", filename);
+                            }
+                        }
                     }
                     send_progress_update(file_id.clone(), 1.0, session_id, cor_id).await;
                     
@@ -249,100 +342,87 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
                     
                     cleanup_parsing_session(&file_id);
                 }
-                wellen::FileFormat::Ghw | wellen::FileFormat::Unknown => {
-                    // GHW and Unknown formats: Use existing full body parsing logic
-                    match wellen::viewers::read_body(header_result.body, &header_result.hierarchy, None) {
-                        Ok(body_result) => {
-                            {
-                                let mut p = progress.lock().unwrap();
-                                *p = 0.7; // Body parsed
-                            }
-                            send_progress_update(file_id.clone(), 0.7, session_id, cor_id).await;
-                            
-                            // Extract scopes first 
-                            let scopes = extract_scopes_from_hierarchy(&header_result.hierarchy, &file_path);
-                            
-                            // Build signal reference map for quick lookup
-                            let mut signals: HashMap<String, wellen::SignalRef> = HashMap::new();
-                            build_signal_reference_map(&header_result.hierarchy, &mut signals);
-                            
-                            // Store waveform data for signal value queries
-                            let waveform_data = WaveformData {
-                                hierarchy: header_result.hierarchy,
-                                signal_source: Arc::new(Mutex::new(body_result.source)),
-                                time_table: body_result.time_table.clone(),
-                                signals,
-                                file_format: header_result.file_format,
-                            };
-                            
-                            {
-                                let mut store = WAVEFORM_DATA_STORE.lock().unwrap();
-                                store.insert(file_path.clone(), waveform_data);
-                            }
-                            let format = FileFormat::VCD; // Treat as VCD for now
-                            
-                            // Extract timeline range from time_table and normalize to seconds
-                            let (min_time, max_time) = if !body_result.time_table.is_empty() {
-                                let raw_min = *body_result.time_table.first().unwrap() as f64;
-                                let raw_max = *body_result.time_table.last().unwrap() as f64;
-                                (Some(raw_min), Some(raw_max)) // Treat as already in seconds
-                            } else {
-                                (None, None)
-                            };
-                            
-                            let waveform_file = WaveformFile {
-                                id: file_id.clone(),
-                                filename,
-                                format,
-                                scopes,
-                                min_time,
-                                max_time,
-                            };
-                            
-                            let file_hierarchy = FileHierarchy {
-                                files: vec![waveform_file],
-                            };
-                            
-                            {
-                                let mut p = progress.lock().unwrap();
-                                *p = 1.0; // Complete
-                            }
-                            send_progress_update(file_id.clone(), 1.0, session_id, cor_id).await;
-                            
-                            send_down_msg(DownMsg::FileLoaded { 
-                                file_id: file_id.clone(), 
-                                hierarchy: file_hierarchy 
-                            }, session_id, cor_id).await;
-                            
-                            cleanup_parsing_session(&file_id);
-                        }
-                        Err(e) => {
-                            let error_msg = format!("Failed to read waveform body from '{}': {}", file_path, e);
-                            send_down_msg(DownMsg::ParsingError { file_id, error: error_msg }, session_id, cor_id).await;
-                        }
-                    }
-                }
-            }
-        }
-        Err(e) => {
-            let error_msg = format!("Failed to parse waveform file '{}': {}", file_path, e);
-            send_down_msg(DownMsg::ParsingError { file_id, error: error_msg }, session_id, cor_id).await;
+        wellen::FileFormat::Ghw | wellen::FileFormat::Unknown => {
+            // TODO: Add proper error handling for GHW/Unknown formats
+            let error_msg = format!("GHW and Unknown formats temporarily disabled during error handling implementation");
+            send_parsing_error(file_id, filename, error_msg, session_id, cor_id).await;
         }
     }
 }
 
+/// Convert wellen parsing errors to structured FileError for better error handling
+fn convert_wellen_error_to_file_error(wellen_error: &str, file_path: &str) -> FileError {
+    let path = file_path.to_string();
+    
+    // Pattern match common wellen error messages to appropriate FileError types
+    if wellen_error.contains("No such file") || wellen_error.contains("not found") {
+        FileError::FileNotFound { path }
+    } else if wellen_error.contains("Permission denied") || wellen_error.contains("permission") {
+        FileError::PermissionDenied { path }
+    } else if wellen_error.contains("corrupted") || wellen_error.contains("invalid format") || wellen_error.contains("malformed") {
+        FileError::CorruptedFile { 
+            path, 
+            details: wellen_error.to_string() 
+        }
+    } else if wellen_error.contains("too large") || wellen_error.contains("size") {
+        // Extract size information if available, otherwise use defaults
+        FileError::FileTooLarge { 
+            path, 
+            size: 0, // Could parse from error message if needed
+            max_size: 1_000_000_000 // 1GB default
+        }
+    } else if wellen_error.contains("unsupported") || wellen_error.contains("format") {
+        let extension = std::path::Path::new(file_path)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("unknown");
+        FileError::UnsupportedFormat { 
+            path, 
+            extension: extension.to_string(),
+            supported_formats: vec!["vcd".to_string(), "fst".to_string()]
+        }
+    } else {
+        // Generic parsing error for everything else
+        FileError::ParseError { 
+            source: wellen_error.to_string(),
+            context: format!("Failed to parse waveform file: {}", file_path)
+        }
+    }
+}
+
+/// Convert panic messages to structured FileError
+fn convert_panic_to_file_error(file_path: &str) -> FileError {
+    FileError::CorruptedFile { 
+        path: file_path.to_string(),
+        details: "Critical error: Invalid waveform data or corrupted file".to_string()
+    }
+}
 
 fn extract_fst_time_range(body_result: &wellen::viewers::BodyResult) -> (f64, f64) {
     if body_result.time_table.is_empty() {
         return (0.0, 100.0); // Default fallback
     }
     
-    let raw_min = *body_result.time_table.first().unwrap() as f64;
-    let raw_max = *body_result.time_table.last().unwrap() as f64;
+    let raw_min = match body_result.time_table.first() {
+        Some(time) => *time as f64,
+        None => {
+            eprintln!("Warning: Empty time table in FST file");
+            return (0.0, 100.0);
+        }
+    };
+    
+    let raw_max = match body_result.time_table.last() {
+        Some(time) => *time as f64,
+        None => {
+            eprintln!("Warning: Empty time table in FST file");
+            return (0.0, 100.0);
+        }
+    };
     
     // FST time values are in femtoseconds, convert to seconds
     (raw_min / 1_000_000_000_000.0, raw_max / 1_000_000_000_000.0)
 }
+
 
 fn extract_vcd_time_bounds_fast(file_path: &str) -> Result<(f64, f64), Box<dyn std::error::Error>> {
     use std::fs::File;
@@ -509,11 +589,21 @@ fn extract_scope_data_with_file_path(hierarchy: &wellen::Hierarchy, scope_ref: w
 }
 
 async fn send_parsing_progress(file_id: String, session_id: SessionId, cor_id: CorId) {
-    let sessions = PARSING_SESSIONS.lock().unwrap();
+    let sessions = match PARSING_SESSIONS.lock() {
+        Ok(sessions) => sessions,
+        Err(_) => {
+            eprintln!("Warning: Failed to access parsing sessions for progress update");
+            return;
+        }
+    };
+    
     if let Some(progress) = sessions.get(&file_id) {
-        let current_progress = {
-            let p = progress.lock().unwrap();
-            *p
+        let current_progress = match progress.lock() {
+            Ok(p) => *p,
+            Err(_) => {
+                eprintln!("Warning: Failed to read progress for file {}", file_id);
+                return;
+            }
         };
         send_progress_update(file_id, current_progress, session_id, cor_id).await;
     }
@@ -642,8 +732,14 @@ fn save_config_to_file(config: &AppConfig) -> Result<(), Box<dyn std::error::Err
 }
 
 fn cleanup_parsing_session(file_id: &str) {
-    let mut sessions = PARSING_SESSIONS.lock().unwrap();
-    sessions.remove(file_id);
+    match PARSING_SESSIONS.lock() {
+        Ok(mut sessions) => {
+            sessions.remove(file_id);
+        }
+        Err(_) => {
+            eprintln!("Warning: Failed to cleanup parsing session for file {}", file_id);
+        }
+    }
 }
 
 
@@ -942,7 +1038,10 @@ fn build_signals_for_scope_recursive(hierarchy: &wellen::Hierarchy, scope_ref: w
 async fn ensure_vcd_body_loaded(file_path: &str) -> Result<(), String> {
     // Check if already loaded
     {
-        let store = WAVEFORM_DATA_STORE.lock().unwrap();
+        let store = match WAVEFORM_DATA_STORE.lock() {
+            Ok(store) => store,
+            Err(_) => return Err("Internal error: Failed to access waveform data store".to_string()),
+        };
         if store.contains_key(file_path) {
             return Ok(());
         }
@@ -950,34 +1049,72 @@ async fn ensure_vcd_body_loaded(file_path: &str) -> Result<(), String> {
     
     // Need to parse VCD body - reparse the file
     let options = wellen::LoadOptions::default();
-    match wellen::viewers::read_header_from_file(file_path, &options) {
-        Ok(header_result) => {
-            match wellen::viewers::read_body(header_result.body, &header_result.hierarchy, None) {
-                Ok(body_result) => {
-                    // Build signal reference map
-                    let mut signals: HashMap<String, wellen::SignalRef> = HashMap::new();
-                    build_signal_reference_map(&header_result.hierarchy, &mut signals);
-                    
-                    // Store waveform data
-                    let waveform_data = WaveformData {
-                        hierarchy: header_result.hierarchy,
-                        signal_source: Arc::new(Mutex::new(body_result.source)),
-                        time_table: body_result.time_table.clone(),
-                        signals,
-                        file_format: header_result.file_format,
-                    };
-                    
-                    {
-                        let mut store = WAVEFORM_DATA_STORE.lock().unwrap();
-                        store.insert(file_path.to_string(), waveform_data);
-                    }
-                    Ok(())
-                }
-                Err(e) => Err(format!("Failed to parse VCD body: {}", e))
-            }
+    
+    // Catch panics from header parsing
+    let header_result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        wellen::viewers::read_header_from_file(file_path, &options)
+    })) {
+        Ok(Ok(header)) => header,
+        Ok(Err(e)) => {
+            return Err(format!("Failed to parse VCD header for signal queries: {}", e));
         }
-        Err(e) => Err(format!("Failed to read VCD file: {}", e))
+        Err(_panic) => {
+            return Err(format!("Critical error parsing VCD header: Invalid waveform data"));
+        }
+    };
+    
+    // Catch panics from body parsing
+    let body_result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        wellen::viewers::read_body(header_result.body, &header_result.hierarchy, None)
+    })) {
+        Ok(Ok(body)) => body,
+        Ok(Err(e)) => {
+            return Err(format!("Failed to parse VCD body for signal queries: {}", e));
+        }
+        Err(_panic) => {
+            return Err(format!("Critical error parsing VCD body: Invalid signal data"));
+        }
+    };
+    
+    // Build signal reference map
+    let mut signals: HashMap<String, wellen::SignalRef> = HashMap::new();
+    build_signal_reference_map(&header_result.hierarchy, &mut signals);
+    
+    // Calculate timescale factor for VCD time conversion
+    let timescale_factor = header_result.hierarchy.timescale()
+        .map(|ts| {
+            use wellen::TimescaleUnit;
+            match ts.unit {
+                TimescaleUnit::FemtoSeconds => ts.factor as f64 * 1e-15,
+                TimescaleUnit::PicoSeconds => ts.factor as f64 * 1e-12,
+                TimescaleUnit::NanoSeconds => ts.factor as f64 * 1e-9,
+                TimescaleUnit::MicroSeconds => ts.factor as f64 * 1e-6,
+                TimescaleUnit::MilliSeconds => ts.factor as f64 * 1e-3,
+                TimescaleUnit::Seconds => ts.factor as f64,
+                TimescaleUnit::Unknown => ts.factor as f64,
+            }
+        })
+        .unwrap_or(1.0);
+    
+    // Store waveform data
+    let waveform_data = WaveformData {
+        hierarchy: header_result.hierarchy,
+        signal_source: Arc::new(Mutex::new(body_result.source)),
+        time_table: body_result.time_table.clone(),
+        signals,
+        file_format: header_result.file_format,
+        timescale_factor,
+    };
+    
+    {
+        match WAVEFORM_DATA_STORE.lock() {
+            Ok(mut store) => {
+                store.insert(file_path.to_string(), waveform_data);
+            }
+            Err(_) => return Err("Internal error: Failed to store waveform data".to_string()),
+        }
     }
+    Ok(())
 }
 
 async fn query_signal_values(file_path: String, queries: Vec<SignalValueQuery>, session_id: SessionId, cor_id: CorId) {
@@ -992,7 +1129,17 @@ async fn query_signal_values(file_path: String, queries: Vec<SignalValueQuery>, 
         }
     }
     
-    let store = WAVEFORM_DATA_STORE.lock().unwrap();
+    let store = match WAVEFORM_DATA_STORE.lock() {
+        Ok(store) => store,
+        Err(_) => {
+            send_down_msg(DownMsg::SignalValuesError {
+                file_path,
+                error: "Internal error: Failed to access waveform data store".to_string(),
+            }, session_id, cor_id).await;
+            return;
+        }
+    };
+    
     let waveform_data = match store.get(&file_path) {
         Some(data) => data,
         None => {
@@ -1011,12 +1158,11 @@ async fn query_signal_values(file_path: String, queries: Vec<SignalValueQuery>, 
         
         match waveform_data.signals.get(&key) {
             Some(&signal_ref) => {
-                // Convert time to time table index based on file format
+                // Convert time to time table index based on file format using proper timescale
                 let target_time = match waveform_data.file_format {
                     wellen::FileFormat::Vcd => {
-                        // For VCD: time table is in VCD's native units (depends on $timescale)
-                        // For $timescale 1s: values are already in seconds
-                        query.time_seconds as u64
+                        // For VCD: Convert from seconds to VCD native units using stored timescale
+                        (query.time_seconds / waveform_data.timescale_factor) as u64
                     },
                     _ => {
                         // For other formats, use femtosecond conversion  
@@ -1030,7 +1176,20 @@ async fn query_signal_values(file_path: String, queries: Vec<SignalValueQuery>, 
                 };
                 
                 // Load signal and get value
-                let mut signal_source = waveform_data.signal_source.lock().unwrap();
+                let mut signal_source = match waveform_data.signal_source.lock() {
+                    Ok(source) => source,
+                    Err(_) => {
+                        results.push(SignalValueResult {
+                            scope_path: query.scope_path,
+                            variable_name: query.variable_name,
+                            time_seconds: query.time_seconds,
+                            raw_value: Some("Error: Signal source unavailable".to_string()),
+                            formatted_value: Some("Error".to_string()),
+                            format: query.format,
+                        });
+                        continue;
+                    }
+                };
                 let loaded_signals = signal_source.load_signals(&[signal_ref], &waveform_data.hierarchy, true);
                 
                 match loaded_signals.into_iter().next() {
@@ -1121,7 +1280,16 @@ async fn query_signal_transitions(
         }
     }
     
-    let store = WAVEFORM_DATA_STORE.lock().unwrap();
+    let store = match WAVEFORM_DATA_STORE.lock() {
+        Ok(store) => store,
+        Err(_) => {
+            send_down_msg(DownMsg::SignalTransitionsError {
+                file_path,
+                error: "Internal error: Failed to access waveform data store".to_string(),
+            }, session_id, cor_id).await;
+            return;
+        }
+    };
     let waveform_data = match store.get(&file_path) {
         Some(data) => data,
         None => {
@@ -1142,11 +1310,14 @@ async fn query_signal_transitions(
             Some(&signal_ref) => {
                 let mut transitions = Vec::new();
                 
-                // Convert time range to time table indices based on file format
+                // Convert time range from seconds back to native file units
                 let (start_time, end_time) = match waveform_data.file_format {
                     wellen::FileFormat::Vcd => {
-                        // For VCD: time table is in VCD's native units (depends on $timescale)
-                        (time_range.0 as u64, time_range.1 as u64)
+                        // For VCD: Convert from seconds back to VCD native units using stored timescale
+                        // time_range is in seconds, need to convert to VCD native units
+                        let start_native = (time_range.0 / waveform_data.timescale_factor) as u64;
+                        let end_native = (time_range.1 / waveform_data.timescale_factor) as u64;
+                        (start_native, end_native)
                     },
                     _ => {
                         // For other formats, use femtosecond conversion  
@@ -1155,7 +1326,18 @@ async fn query_signal_transitions(
                 };
                 
                 // Load signal once for efficiency
-                let mut signal_source = waveform_data.signal_source.lock().unwrap();
+                let mut signal_source = match waveform_data.signal_source.lock() {
+                    Ok(source) => source,
+                    Err(_) => {
+                        // Return empty results for this query on mutex error
+                        results.push(SignalTransitionResult {
+                            scope_path: query.scope_path,
+                            variable_name: query.variable_name,
+                            transitions: vec![],
+                        });
+                        continue;
+                    }
+                };
                 let loaded_signals = signal_source.load_signals(&[signal_ref], &waveform_data.hierarchy, true);
                 
                 if let Some((_, signal)) = loaded_signals.into_iter().next() {
@@ -1165,9 +1347,12 @@ async fn query_signal_transitions(
                     // Iterate through time table within time range
                     for (idx, &time_val) in waveform_data.time_table.iter().enumerate() {
                         if time_val >= start_time && time_val <= end_time {
-                            // Convert time back to seconds for frontend
+                            // Convert time back to seconds for frontend using proper timescale
                             let time_seconds = match waveform_data.file_format {
-                                wellen::FileFormat::Vcd => time_val as f64,
+                                wellen::FileFormat::Vcd => {
+                                    // Convert VCD native units back to seconds using stored timescale
+                                    time_val as f64 * waveform_data.timescale_factor
+                                },
                                 _ => time_val as f64 / 1_000_000_000_000.0,
                             };
                             
@@ -1198,9 +1383,12 @@ async fn query_signal_transitions(
                     // This shows users where signal values end (e.g., A=c and B=5 end at 150s in simple.vcd)
                     if let (Some(last_val), Some(last_time)) = (&last_value, last_transition_time) {
                         if last_val != "0" {
-                            // Calculate actual file end time for proper filler timing
+                            // Calculate actual file end time for proper filler timing using proper timescale
                             let file_end_time_seconds = match waveform_data.file_format {
-                                wellen::FileFormat::Vcd => end_time as f64,
+                                wellen::FileFormat::Vcd => {
+                                    // Convert VCD native units to seconds using stored timescale
+                                    end_time as f64 * waveform_data.timescale_factor
+                                },
                                 _ => end_time as f64 / 1_000_000_000_000.0,
                             };
                             

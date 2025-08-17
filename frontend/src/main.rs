@@ -34,6 +34,7 @@ use views::*;
 mod state;
 use state::*;
 use state::VARIABLES_SEARCH_INPUT_FOCUSED;
+pub use state::CONFIG_INITIALIZATION_COMPLETE;
 
 mod utils;
 use utils::*;
@@ -41,8 +42,6 @@ use utils::*;
 mod error_display;
 use error_display::*;
 
-mod file_validation;
-use file_validation::*;
 
 mod error_ui;
 use error_ui::*;
@@ -83,17 +82,12 @@ pub fn main() {
         // Initialize error display system
         init_error_display_system();
         
-        // Initialize file validation system
-        init_file_validation_system();
         
         init_connection();
         
-        // Load configuration FIRST before setting up reactive triggers
-        use crate::platform::Platform;
-        let platform_result = platform::CurrentPlatform::send_message(UpMsg::LoadConfig).await;
-        if let Err(e) = platform_result {
-            zoon::println!("Failed to load config via platform: {}", e);
-        }
+        // Load actual config from backend
+        zoon::println!("=== Loading real config from backend ===");
+        send_up_msg(UpMsg::LoadConfig);
         
         // Wait for CONFIG_LOADED flag, then set up reactive system
         Task::start(async {
@@ -128,7 +122,12 @@ pub fn main() {
                                 Theme::Light => config::Theme::Light,
                                 Theme::Dark => config::Theme::Dark,
                             };
-                            config_store().ui.lock_mut().theme.set_neq(config_theme);
+                            config_store().ui.lock_mut().theme.set_neq(config_theme.clone());
+                            
+                            // Only save if initialization is complete to prevent startup overwrites
+                            if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
+                                config::save_config_to_backend();
+                            }
                         }))
                     );
                     
