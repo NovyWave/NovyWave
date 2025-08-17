@@ -15,10 +15,15 @@ alias = "start"
 
 [tasks.start]
 description = "Start in browser mode with auto-reload"
+alias = "start-web"
+
+[tasks.start-web]
+description = "Start in web mode (MoonZoon SSE)"
 dependencies = ["install"]
+env = { NOVYWAVE_PLATFORM = "WEB" }
 script = '''
 > dev_server.log
-mzoon/bin/mzoon start ${@} >> dev_server.log 2>&1
+./mzoon/bin/mzoon start ${@} >> dev_server.log 2>&1
 '''
 
 [tasks.open]
@@ -26,14 +31,16 @@ description = "Start in browser mode and open browser"
 dependencies = ["install"]
 script = '''
 > dev_server.log
-mzoon/bin/mzoon start --open ${@} >> dev_server.log 2>&1
+./mzoon/bin/mzoon start --open ${@} >> dev_server.log 2>&1
 '''
 
 [tasks.kill]
 description = "Stop all development processes"
 script = '''
-PORT=$(grep "^port = " MoonZoon.toml | head -1 | cut -d' ' -f3)
+PORT=$(grep "^port = " MoonZoon.toml | head -1 | cut -d' ' -f3 || echo "8080")
 KILLED_ANY=false
+
+echo "Stopping development processes on port $PORT..."
 
 # Kill process on configured port
 PID=$(lsof -ti:$PORT 2>/dev/null || true)
@@ -56,6 +63,12 @@ if pkill -TERM -f "mzoon" 2>/dev/null; then
     KILLED_ANY=true
 fi
 
+# Kill Tauri processes
+if pkill -TERM -f "cargo tauri" 2>/dev/null; then
+    echo "Sent TERM signal to Tauri process"
+    KILLED_ANY=true
+fi
+
 if [ "$KILLED_ANY" = "true" ]; then
     echo "Waiting 2 seconds for graceful shutdown..."
     sleep 2
@@ -70,6 +83,7 @@ if [ "$KILLED_ANY" = "true" ]; then
     
     pkill -KILL -f "makers start" 2>/dev/null && echo "Force killed makers process" || true
     pkill -KILL -f "mzoon" 2>/dev/null && echo "Force killed mzoon process" || true
+    pkill -KILL -f "cargo tauri" 2>/dev/null && echo "Force killed Tauri process" || true
     
     echo "✓ Development processes terminated"
 else
@@ -77,22 +91,63 @@ else
 fi
 
 > dev_server.log
+> dev_tauri.log
 '''
 
 # Tauri-specific tasks
 [tasks.tauri]
-description = "Start in Tauri desktop mode"
+description = "Start in Tauri desktop mode using running dev server"
+alias = "start-tauri"
+
+[tasks.start-tauri]
+description = "Start in Tauri mode using running dev server"
 dependencies = ["install", "install_tauri_cli"]
-command = "cargo"
-args = ["tauri", "dev"]
-cwd = "src-tauri"
+env = { NOVYWAVE_PLATFORM = "TAURI" }
+script = '''
+echo "Starting Tauri desktop mode using dev server at http://localhost:8080..."
+
+# Check if dev server is running on port 8080
+if ! curl -s http://localhost:8080 >/dev/null 2>&1; then
+    echo "ERROR: Dev server is not running on port 8080"
+    echo "Please start the dev server first with: makers start"
+    exit 1
+fi
+
+echo "✓ Dev server detected on port 8080"
+echo "✓ Starting Tauri with shared dev server..."
+echo "✓ Tauri logs will be written to dev_tauri.log"
+
+> dev_tauri.log
+cd src-tauri && cargo tauri dev --config tauri.dev.conf.json >> ../dev_tauri.log 2>&1
+'''
 
 [tasks.tauri-build]
-description = "Build Tauri desktop app"
+description = "Build Tauri desktop app with embedded backend"
 dependencies = ["install", "install_tauri_cli", "build"]
-command = "cargo"
-args = ["tauri", "build"]
-cwd = "src-tauri"
+script_runner = "@duckscript"
+script = '''
+echo "Building Tauri desktop app..."
+
+# Check if frontend_dist exists
+if path_exists frontend_dist
+    echo "Frontend assets found in frontend_dist/"
+else
+    echo "Warning: frontend_dist directory not found"
+end
+
+# Build Tauri app
+cd src-tauri
+exec cargo tauri build
+'''
+
+[tasks.tauri-dev-standalone]
+description = "Start Tauri with external backend (for debugging)"
+dependencies = ["install", "install_tauri_cli"]
+script = '''
+echo "Starting Tauri in standalone mode (requires separate backend)"
+echo "Start backend separately with: makers start"
+cd src-tauri && cargo tauri dev --no-dev-server
+'''
 
 # Common tasks
 [tasks.install]
@@ -104,13 +159,37 @@ dependencies = [
 
 [tasks.build]
 description = "Build for browser mode (release)"
+env = { NOVYWAVE_PLATFORM = "WEB" }
 command = "mzoon/bin/mzoon"
 args = ["build", "-r", "-f"]
+
+[tasks.build-web]
+description = "Build for web mode (MoonZoon)"
+env = { NOVYWAVE_PLATFORM = "WEB" }
+command = "mzoon/bin/mzoon" 
+args = ["build", "-r", "-f"]
+
+[tasks.build-tauri]
+description = "Build frontend for Tauri mode"
+env = { NOVYWAVE_PLATFORM = "TAURI" }
+command = "mzoon/bin/mzoon"
+args = ["build", "-r", "-f"]
+
+[tasks.build_for_tauri]
+description = "Build frontend for Tauri (run from src-tauri directory)"
+dependencies = ["install"]
+script = '''
+CURRENT_DIR=$(pwd)
+if [[ "$CURRENT_DIR" == *"src-tauri"* ]]; then
+    cd ..
+fi
+./mzoon/bin/mzoon build -r -f
+'''
 
 [tasks.clean]
 description = "Clean all build artifacts"
 script = '''
-mzoon/bin/mzoon clean
+./mzoon/bin/mzoon clean
 cd src-tauri && cargo clean
 rm -rf frontend_dist
 '''

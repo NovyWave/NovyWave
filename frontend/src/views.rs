@@ -19,7 +19,7 @@ use crate::{
     LOADED_FILES, SELECTED_SCOPE_ID, TREE_SELECTED_ITEMS, EXPANDED_SCOPES,
     FILE_PATHS, show_file_paths_dialog, LOAD_FILES_VIEWPORT_Y,
     FILE_PICKER_EXPANDED, FILE_PICKER_SELECTED,
-    FILE_PICKER_ERROR, FILE_PICKER_ERROR_CACHE, FILE_TREE_CACHE, send_up_msg, DOCK_TOGGLE_IN_PROGRESS,
+    FILE_PICKER_ERROR, FILE_PICKER_ERROR_CACHE, FILE_TREE_CACHE, DOCK_TOGGLE_IN_PROGRESS,
     TRACKED_FILES, state, file_validation::validate_file_state, clipboard
 };
 use crate::state::TIMELINE_ZOOM_LEVEL;
@@ -750,7 +750,10 @@ pub fn query_signal_values_at_time(time_seconds: f64) {
     // Send batch queries for each file
     for (file_path, queries) in queries_by_file {
         // Send batch signal value queries to backend
-        send_up_msg(UpMsg::QuerySignalValues { file_path, queries });
+        Task::start(async move {
+            use crate::platform::{Platform, CurrentPlatform};
+            let _ = CurrentPlatform::send_message(UpMsg::QuerySignalValues { file_path, queries }).await;
+        });
     }
 }
 
@@ -2094,7 +2097,10 @@ fn monitor_directory_expansions(expanded: HashSet<String>) {
     
     // Send batch request for maximum parallel processing with jwalk
     if !paths_to_request.is_empty() {
-        send_up_msg(UpMsg::BrowseDirectories(paths_to_request));
+        Task::start(async move {
+            use crate::platform::{Platform, CurrentPlatform};
+            let _ = CurrentPlatform::send_message(UpMsg::BrowseDirectories(paths_to_request)).await;
+        });
     }
     
     // Update last expanded set
@@ -2190,7 +2196,10 @@ fn process_file_picker_selection() {
                             // Also maintain legacy systems for backward compatibility during transition
                             FILE_PATHS.lock_mut().insert(file_id.clone(), file_path.clone());
                             config::save_file_list();
-                            send_up_msg(UpMsg::LoadWaveformFile(file_path));
+                            Task::start(async move {
+                                use crate::platform::{Platform, CurrentPlatform};
+                                let _ = CurrentPlatform::send_message(UpMsg::LoadWaveformFile(file_path)).await;
+                            });
                         },
                         Err(error) => {
                             // File validation failed - add with error state immediately, don't send to backend

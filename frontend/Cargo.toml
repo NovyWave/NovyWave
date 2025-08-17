@@ -5,7 +5,7 @@ edition.workspace = true
 publish.workspace = true
 
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(web_sys_unstable_apis)'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(web_sys_unstable_apis)', 'cfg(NOVYWAVE_PLATFORM)'] }
 
 [dependencies]
 zoon.workspace = true
@@ -19,7 +19,15 @@ fast2d = { path = "../../Fast2D/crates/fast2d", default-features = false, featur
 ] }
 moonzoon-novyui = { path = "../novyui/moonzoon-novyui" }
 web-sys = { version = "0.3", features = ["Performance", "Window", "console", "IntersectionObserver", "IntersectionObserverEntry", "IntersectionObserverInit", "Element", "HtmlElement", "DomRect", "Document", "HtmlHeadElement", "HtmlLinkElement", "Node", "Clipboard", "Navigator"] }
+js-sys = "0.3"
+serde-wasm-bindgen = "0.6"
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 shared = { path = "../shared" }
 palette = { version = "0.7", default-features = false, features = ["std"] }
+tauri-wasm = { git = "https://github.com/nanoqsh/tauri-wasm", optional = true }
+serde_json = "1.0"
+
+[features]
+default = []
+tauri = ["dep:tauri-wasm"]

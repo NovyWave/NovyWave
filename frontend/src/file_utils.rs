@@ -1,4 +1,4 @@
-use crate::{FILE_PATHS_INPUT, SHOW_FILE_DIALOG, send_up_msg, IS_LOADING, LOAD_FILES_VIEWPORT_Y, config::config_store};
+use crate::{FILE_PATHS_INPUT, SHOW_FILE_DIALOG, IS_LOADING, LOAD_FILES_VIEWPORT_Y, config::config_store};
 use crate::file_validation::validate_file_state;
 use shared::{UpMsg, generate_file_id, FileState};
 use zoon::{Task, Timer};
@@ -13,8 +13,11 @@ pub fn show_file_paths_dialog() {
     // SMART CACHE REFRESH - Request fresh data without clearing cache
     // This ensures users see newly added files without "Loading..." flicker
     // Fresh data will overwrite cached data when it arrives
-    send_up_msg(UpMsg::BrowseDirectory("/".to_string()));
-    send_up_msg(UpMsg::BrowseDirectory("~".to_string()));
+    Task::start(async {
+        use crate::platform::{Platform, CurrentPlatform};
+        let _ = CurrentPlatform::send_message(UpMsg::BrowseDirectory("/".to_string())).await;
+        let _ = CurrentPlatform::send_message(UpMsg::BrowseDirectory("~".to_string())).await;
+    });
     
     // Clear previous file picker selection but preserve expanded directories
     // SMART DEFAULT EXPANSION - Only expand ~ when no previous expansion state exists
@@ -86,7 +89,10 @@ pub fn process_file_paths() {
                         let file_id = generate_file_id(&path);
                         crate::FILE_PATHS.lock_mut().insert(file_id, path.clone());
                         
-                        send_up_msg(UpMsg::LoadWaveformFile(path));
+                        Task::start(async move {
+                            use crate::platform::{Platform, CurrentPlatform};
+                            let _ = CurrentPlatform::send_message(UpMsg::LoadWaveformFile(path)).await;
+                        });
                     },
                     Err(error) => {
                         // File validation failed - add with error state immediately, don't send to backend

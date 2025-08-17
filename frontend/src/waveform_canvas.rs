@@ -3,7 +3,7 @@ use fast2d;
 use crate::state::{SELECTED_VARIABLES, LOADED_FILES, TIMELINE_CURSOR_POSITION, CANVAS_WIDTH, CANVAS_HEIGHT, 
     IS_ZOOMING_IN, IS_ZOOMING_OUT, IS_PANNING_LEFT, IS_PANNING_RIGHT, IS_CURSOR_MOVING_LEFT, IS_CURSOR_MOVING_RIGHT,
     MOUSE_X_POSITION, MOUSE_TIME_POSITION, TIMELINE_ZOOM_LEVEL, TIMELINE_VISIBLE_RANGE_START, TIMELINE_VISIBLE_RANGE_END};
-use crate::connection::send_up_msg;
+use crate::platform::{Platform, CurrentPlatform};
 use crate::config::current_theme;
 use shared::{SelectedVariable, UpMsg, SignalTransitionQuery, SignalTransition};
 use std::rc::Rc;
@@ -569,7 +569,11 @@ fn request_signal_transitions_from_backend(file_path: &str, scope_path: &str, va
     };
     
     // Send real backend request
-    send_up_msg(message);
+    Task::start(async move {
+        if let Err(e) = CurrentPlatform::send_message(message).await {
+            zoon::println!("Failed to query signal transitions via platform: {}", e);
+        }
+    });
 }
 
 // Trigger canvas redraw when new signal data arrives

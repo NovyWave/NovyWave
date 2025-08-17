@@ -6,8 +6,38 @@ use crate::state::ErrorAlert;
 use crate::utils::restore_scope_selection_for_file;
 use shared::{UpMsg, DownMsg};
 use shared::{LoadingFile, LoadingStatus};
+use wasm_bindgen::JsValue;
+use js_sys::Reflect;
+
+// Tauri environment detection
+fn is_tauri_environment() -> bool {
+    if let Ok(global) = js_sys::global().dyn_into::<web_sys::Window>() {
+        // Check if __TAURI__ exists in the global scope
+        Reflect::has(&global, &JsValue::from_str("__TAURI__"))
+            .unwrap_or(false)
+    } else {
+        false
+    }
+}
+
+
+
+
+
 
 static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
+    // TEMPORARY: Both web and Tauri use port 8080 for easier testing
+    // TODO: Implement proper dynamic port detection for Tauri
+    zoon::println!("=== CONNECTION: Initializing with standard port 8080 ===");
+    
+    // DEBUG: Log environment and connection details
+    if is_tauri_environment() {
+        zoon::println!("=== CONNECTION: Running in Tauri environment - SSE may fail due to protocol mismatch ===");
+        zoon::println!("=== CONNECTION: Tauri origin is likely 'tauri://localhost', backend is 'http://localhost:8080' ===");
+    } else {
+        zoon::println!("=== CONNECTION: Running in web environment - standard SSE should work ===");
+    }
+    
     Connection::new(|down_msg, _| {
         // DownMsg logging disabled - causes CLI overflow with large files
         match down_msg {
@@ -239,15 +269,54 @@ static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
 
 pub fn send_up_msg(up_msg: UpMsg) {
     Task::start(async move {
-        let result = CONNECTION.send_up_msg(up_msg).await;
-        if let Err(error) = result {
-            // Create and display connection error alert
-            let error_alert = ErrorAlert::new_connection_error(format!("Failed to send message: {:?}", error));
+        // DEBUG: Log message sending attempt
+        zoon::println!("=== SEND_UP_MSG: Attempting to send {:?} ===", 
+            std::mem::discriminant(&up_msg));
+        
+        if is_tauri_environment() {
+            zoon::println!("=== SEND_UP_MSG: In Tauri environment - TODO: implement platform abstraction ===");
+            
+            // TODO: Use platform abstraction once implemented
+            // For now, show error that Tauri mode is not fully implemented
+            let error_alert = ErrorAlert::new_connection_error("Tauri platform not yet implemented - use web mode".to_string());
             add_error_alert(error_alert);
+        } else {
+            zoon::println!("=== SEND_UP_MSG: In web environment - using standard MoonZoon SSE ===");
+            
+            // Use standard MoonZoon SSE connection
+            let result = CONNECTION.send_up_msg(up_msg).await;
+            match result {
+                Ok(_) => {
+                    zoon::println!("=== SEND_UP_MSG: Message sent successfully via SSE ===");
+                }
+                Err(error) => {
+                    zoon::println!("=== SEND_UP_MSG: SSE ERROR - {:?} ===", error);
+                    
+                    // Create and display connection error alert
+                    let error_alert = ErrorAlert::new_connection_error(format!("SSE connection failed: {:?}", error));
+                    add_error_alert(error_alert);
+                }
+            }
         }
     });
 }
 
+
 pub fn init_connection() {
-    CONNECTION.init_lazy();
+    zoon::println!("=== Connection init starting ===");
+    
+    // Only initialize MoonZoon connection in web mode
+    // Tauri mode uses platform abstraction with direct IPC commands
+    #[cfg(NOVYWAVE_PLATFORM = "WEB")]
+    {
+        zoon::println!("=== Web mode: initializing MoonZoon connection ===");
+        CONNECTION.init_lazy();
+    }
+    
+    #[cfg(NOVYWAVE_PLATFORM = "TAURI")]
+    {
+        zoon::println!("=== Tauri mode: using platform abstraction (no SSE needed) ===");
+        // No connection initialization needed - using direct Tauri commands via platform abstraction
+    }
 }
+

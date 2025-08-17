@@ -685,7 +685,7 @@ impl From<SerializablePanelDimensions> for BackendPanelDimensions {
 }
 
 pub fn save_config_to_backend() {
-    use crate::connection::send_up_msg;
+    use crate::platform::{Platform, CurrentPlatform};
     
     // Convert to serializable format using existing infrastructure
     let serializable_config = config_store().to_serializable();
@@ -735,7 +735,12 @@ pub fn save_config_to_backend() {
         },
     };
 
-    send_up_msg(UpMsg::SaveConfig(app_config));
+    // Use platform abstraction instead of direct connection
+    Task::start(async move {
+        if let Err(e) = CurrentPlatform::send_message(UpMsg::SaveConfig(app_config)).await {
+            zoon::println!("Failed to save config via platform: {}", e);
+        }
+    });
 }
 
 // =============================================================================
@@ -957,7 +962,7 @@ fn sync_load_files_expanded_directories_from_config() {
 // Enhanced sync function to restore opened_files from config using TRACKED_FILES system
 fn sync_opened_files_from_config() {
     use crate::state::{init_tracked_files_from_config, FILE_PATHS};
-    use crate::send_up_msg;
+    use crate::platform::{Platform, CurrentPlatform};
     
     let opened_files = config_store().session.lock_ref().opened_files.lock_ref().to_vec();
     
@@ -977,7 +982,11 @@ fn sync_opened_files_from_config() {
         crate::state::add_tracked_file(file_path.clone(), shared::FileState::Loading(shared::LoadingStatus::Starting));
         
         // Reload the file
-        send_up_msg(shared::UpMsg::LoadWaveformFile(file_path));
+        Task::start(async move {
+            if let Err(e) = CurrentPlatform::send_message(shared::UpMsg::LoadWaveformFile(file_path)).await {
+                zoon::println!("Failed to reload file via platform: {}", e);
+            }
+        });
     }
 }
 

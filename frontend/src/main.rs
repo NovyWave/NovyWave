@@ -20,6 +20,8 @@ mod waveform_canvas;
 mod connection;
 use connection::*;
 
+mod platform;
+
 mod config;
 use config::{CONFIG_LOADED, config_store, create_config_triggers, sync_config_to_globals, sync_globals_to_config, sync_theme_to_novyui};
 
@@ -87,7 +89,11 @@ pub fn main() {
         init_connection();
         
         // Load configuration FIRST before setting up reactive triggers
-        send_up_msg(UpMsg::LoadConfig);
+        use crate::platform::Platform;
+        let platform_result = platform::CurrentPlatform::send_message(UpMsg::LoadConfig).await;
+        if let Err(e) = platform_result {
+            zoon::println!("Failed to load config via platform: {}", e);
+        }
         
         // Wait for CONFIG_LOADED flag, then set up reactive system
         Task::start(async {

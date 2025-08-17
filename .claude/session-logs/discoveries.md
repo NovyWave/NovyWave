@@ -342,3 +342,95 @@ pub fn start_smooth_cursor_left() {
 2. Fixed-width containers prevent UI jumping  
 3. Smooth animations provide professional feel
 4. Spatial positioning implies operational scope (edge=broad, center=precise)
+
+## Session Discovery: 2025-08-17 - Cross-Platform Makefile.toml & Shared Dev Server Architecture
+
+### Problem/Context
+Tauri development workflow was overly complex with embedded backend subprocess that conflicted with running MoonZoon dev server, causing "Address already in use" errors. Cross-platform compatibility was poor due to Unix-specific commands.
+
+### Solution/Pattern
+**Simplified Shared Dev Server Architecture**: Eliminated backend subprocess and implemented cross-platform build tasks using hybrid shell script + duckscript approach.
+
+**Key Architectural Changes**:
+1. **Surgical Backend Removal**: Removed all subprocess management from Tauri while preserving application commands
+2. **Shared Dev Server**: Single MoonZoon server serves both browser and Tauri via `tauri.dev.conf.json`
+3. **Cross-Platform Tasks**: Shell scripts for simple operations, avoiding duckscript complexity where possible
+4. **Clean Log Separation**: `dev_server.log` for MoonZoon, `dev_tauri.log` for Tauri
+
+### Code Example
+```rust
+// BEFORE: Complex subprocess management in src-tauri/src/lib.rs
+static BACKEND_PROCESS: Mutex<Option<Child>> = Mutex::new(None);
+async fn start_backend() -> Result<u16, String> {
+    let child = Command::new("cargo").args(["run", "--bin", "backend"]).spawn()?;
+    // ... complex process management
+}
+
+// AFTER: Clean Tauri setup without subprocess
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![
+            greet,
+            commands::load_config,  // Keep only application commands
+            commands::save_config,
+            // ... other app commands (no backend management)
+        ])
+        .setup(|_app| {
+            println!("=== Tauri app setup completed ===");
+            Ok(())
+        })
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}
+```
+
+```json
+// tauri.dev.conf.json - Development configuration
+{
+  "build": {
+    "devUrl": "http://localhost:8080",  // Connect to external MoonZoon server
+    "beforeDevCommand": ""              // No subprocess startup
+  }
+}
+```
+
+```bash
+# Cross-platform Makefile.toml tasks
+[tasks.start-tauri]
+script = '''
+# Simple curl-based server check (cross-platform)
+if ! curl -s http://localhost:8080 >/dev/null 2>&1; then
+    echo "ERROR: Dev server is not running on port 8080"
+    exit 1
+fi
+echo "✓ Starting Tauri with shared dev server..."
+> dev_tauri.log
+cd src-tauri && cargo tauri dev --config tauri.dev.conf.json >> ../dev_tauri.log 2>&1
+'''
+
+[tasks.kill]
+script = '''
+# Graceful cross-platform process termination
+PORT=$(grep "^port = " MoonZoon.toml | head -1 | cut -d' ' -f3 || echo "8080")
+PID=$(lsof -ti:$PORT 2>/dev/null || true)
+if [ -n "$PID" ]; then
+    kill -TERM $PID 2>/dev/null && sleep 2 && kill -KILL $PID 2>/dev/null || true
+fi
+pkill -TERM -f "mzoon\|makers start\|cargo tauri" 2>/dev/null || true
+> dev_server.log && > dev_tauri.log  # Clear both log files
+'''
+```
+
+### Impact/Lesson
+- **Architectural Simplicity**: One shared dev server is simpler than embedded subprocesses
+- **Surgical Code Changes**: Remove complex systems without breaking application functionality
+- **Cross-Platform Strategy**: Use shell scripts for basic tasks, avoid duckscript regex complexity
+- **Development Workflow**: `makers start` in one terminal, `makers tauri` in another
+- **Log File Management**: Clean separation between server logs and Tauri logs
+- **Port Conflict Resolution**: External server check prevents startup conflicts
+- **Process Management**: Graceful TERM → KILL progression for clean shutdowns
+
+**Critical Learning**: When subprocess architecture becomes complex and error-prone, stepping back to simpler external service patterns often provides better development experience and reliability.
+
+**Tauri + MoonZoon Pattern**: Desktop applications can effectively use external web servers via `devUrl` configuration, avoiding the complexity of embedded backend processes while maintaining all native functionality.
