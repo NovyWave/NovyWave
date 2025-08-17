@@ -13,6 +13,8 @@ opened_files = [
     "/home/martinkavik/repos/NovyWave/test_files/simple.vcd",
     "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst",
     "/home/martinkavik/repos/NovyWave/test_files/big_3_GB.vcd",
+    "/home/martinkavik/repos/NovyWave/test_files/complex.vcd",
+    "/home/martinkavik/repos/NovyWave/test_files/stress_test.vcd",
 ]
 dock_mode = "bottom"
 expanded_scopes = [
@@ -21,7 +23,11 @@ expanded_scopes = [
     "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP",
     "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst",
     "/home/martinkavik/repos/NovyWave/test_files/big_3_GB.vcd",
-    "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb",
+    "/home/martinkavik/repos/NovyWave/test_files/complex.vcd",
+    "/home/martinkavik/repos/NovyWave/test_files/stress_test.vcd",
+    "/home/martinkavik/repos/NovyWave/test_files/stress_test.vcd|stress_test",
+    "/home/martinkavik/repos/NovyWave/test_files/stress_test.vcd|stress_test",
+    "/home/martinkavik/repos/NovyWave/test_files/complex.vcd|top",
 ]
 load_files_expanded_directories = [
     "/home/martinkavik/repos/NovyWave",
@@ -33,16 +39,16 @@ load_files_expanded_directories = [
     "/",
     "/home/martinkavik/repos/NovyWave/test_files/nested_dir",
 ]
-selected_scope_id = "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s"
+selected_scope_id = "/home/martinkavik/repos/NovyWave/test_files/complex.vcd|top.debug"
 load_files_scroll_position = 886
 timeline_cursor_position = 112.58753204345703
-timeline_zoom_level = 1.0403999090194702
+timeline_zoom_level = 1.0
 timeline_visible_range_start = 0.0
-timeline_visible_range_end = 240.2921905517578
+timeline_visible_range_end = 300.0
 
 [workspace.docked_bottom_dimensions]
 files_and_scopes_panel_width = 464.0
-files_and_scopes_panel_height = 240.0
+files_and_scopes_panel_height = 539.0
 selected_variables_panel_name_column_width = 174.0
 selected_variables_panel_value_column_width = 247.0
 
@@ -58,3 +64,12 @@ formatter = "Binary"
 
 [[workspace.selected_variables]]
 unique_id = "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s|B"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/complex.vcd|top.debug|massive_debug"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/stress_test.vcd|stress_test.edge_cases|x_state"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/stress_test.vcd|stress_test.edge_cases|z_state"

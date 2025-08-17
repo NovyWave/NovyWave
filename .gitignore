@@ -55,6 +55,10 @@ Thumbs.db
 
 # Large test waveform files
 test_files/big_3_GB.vcd
+test_files/performance_test.vcd
+test_files/wave_27.fst
+test_files/nested_dir/wave_27.fst
+test_files/extreme_test.vcd
 
 # Claude Code temporary/runtime files
 .claude/hooks.log
