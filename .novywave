@@ -35,15 +35,14 @@ load_files_expanded_directories = [
 ]
 selected_scope_id = "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s"
 load_files_scroll_position = 886
-variables_search_filter = "wasdwd"
-timeline_cursor_position = 124.81395721435547
-timeline_zoom_level = 1.1040806770324707
+timeline_cursor_position = 112.58753204345703
+timeline_zoom_level = 1.0403999090194702
 timeline_visible_range_start = 0.0
-timeline_visible_range_end = 226.43231201171875
+timeline_visible_range_end = 240.2921905517578
 
 [workspace.docked_bottom_dimensions]
 files_and_scopes_panel_width = 464.0
-files_and_scopes_panel_height = 362.0
+files_and_scopes_panel_height = 240.0
 selected_variables_panel_name_column_width = 174.0
 selected_variables_panel_value_column_width = 247.0
 

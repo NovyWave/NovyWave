@@ -4,6 +4,7 @@ use crate::config::CONFIG_LOADED;
 use crate::error_display::add_error_alert;
 use crate::state::ErrorAlert;
 use crate::utils::restore_scope_selection_for_file;
+use crate::platform::{Platform, CurrentPlatform};
 use shared::{UpMsg, DownMsg};
 use shared::{LoadingFile, LoadingStatus};
 use wasm_bindgen::JsValue;
@@ -25,7 +26,7 @@ fn is_tauri_environment() -> bool {
 
 
 
-static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
+pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
     // TEMPORARY: Both web and Tauri use port 8080 for easier testing
     // TODO: Implement proper dynamic port detection for Tauri
     zoon::println!("=== CONNECTION: Initializing with standard port 8080 ===");
@@ -273,29 +274,17 @@ pub fn send_up_msg(up_msg: UpMsg) {
         zoon::println!("=== SEND_UP_MSG: Attempting to send {:?} ===", 
             std::mem::discriminant(&up_msg));
         
-        if is_tauri_environment() {
-            zoon::println!("=== SEND_UP_MSG: In Tauri environment - TODO: implement platform abstraction ===");
-            
-            // TODO: Use platform abstraction once implemented
-            // For now, show error that Tauri mode is not fully implemented
-            let error_alert = ErrorAlert::new_connection_error("Tauri platform not yet implemented - use web mode".to_string());
-            add_error_alert(error_alert);
-        } else {
-            zoon::println!("=== SEND_UP_MSG: In web environment - using standard MoonZoon SSE ===");
-            
-            // Use standard MoonZoon SSE connection
-            let result = CONNECTION.send_up_msg(up_msg).await;
-            match result {
-                Ok(_) => {
-                    zoon::println!("=== SEND_UP_MSG: Message sent successfully via SSE ===");
-                }
-                Err(error) => {
-                    zoon::println!("=== SEND_UP_MSG: SSE ERROR - {:?} ===", error);
-                    
-                    // Create and display connection error alert
-                    let error_alert = ErrorAlert::new_connection_error(format!("SSE connection failed: {:?}", error));
-                    add_error_alert(error_alert);
-                }
+        // Use platform abstraction for all message sending
+        match CurrentPlatform::send_message(up_msg).await {
+            Ok(_) => {
+                zoon::println!("=== SEND_UP_MSG: Message sent successfully via platform abstraction ===");
+            }
+            Err(error) => {
+                zoon::println!("=== SEND_UP_MSG: Platform send error - {:?} ===", error);
+                
+                // Create and display platform error alert
+                let error_alert = ErrorAlert::new_connection_error(format!("Platform communication failed: {}", error));
+                add_error_alert(error_alert);
             }
         }
     });
@@ -305,18 +294,205 @@ pub fn send_up_msg(up_msg: UpMsg) {
 pub fn init_connection() {
     zoon::println!("=== Connection init starting ===");
     
-    // Only initialize MoonZoon connection in web mode
-    // Tauri mode uses platform abstraction with direct IPC commands
-    #[cfg(NOVYWAVE_PLATFORM = "WEB")]
-    {
-        zoon::println!("=== Web mode: initializing MoonZoon connection ===");
-        CONNECTION.init_lazy();
+    // Initialize platform-specific connection handling
+    if CurrentPlatform::is_available() {
+        zoon::println!("=== Platform available, initializing message handler ===");
+        
+        // Initialize the DownMsg handler with our existing message processing logic
+        let handler = |down_msg: DownMsg| {
+            // Use the same DownMsg processing logic as the CONNECTION static
+            // This ensures consistent behavior across platforms
+            handle_down_msg(down_msg);
+        };
+        
+        CurrentPlatform::init_message_handler(handler);
+        
+        // In web mode, we still need to initialize the MoonZoon CONNECTION
+        #[cfg(NOVYWAVE_PLATFORM = "WEB")]
+        {
+            CONNECTION.init_lazy();
+        }
+    } else {
+        zoon::println!("=== Platform not available ===");
     }
-    
-    #[cfg(NOVYWAVE_PLATFORM = "TAURI")]
-    {
-        zoon::println!("=== Tauri mode: using platform abstraction (no SSE needed) ===");
-        // No connection initialization needed - using direct Tauri commands via platform abstraction
+}
+
+// Extract the DownMsg handling logic for reuse by platform abstraction
+fn handle_down_msg(down_msg: DownMsg) {
+    // This is the same logic from the CONNECTION static closure
+    match down_msg {
+        DownMsg::ParsingStarted { file_id, filename } => {
+            crate::state::update_tracked_file_state(&file_id, shared::FileState::Loading(shared::LoadingStatus::Parsing));
+            
+            let loading_file = LoadingFile {
+                file_id: file_id.clone(),
+                filename: filename.clone(),
+                progress: 0.0,
+                status: LoadingStatus::Starting,
+            };
+            
+            LOADING_FILES.lock_mut().push_cloned(loading_file);
+        }
+        DownMsg::ParsingProgress { file_id, progress } => {
+            let current_files: Vec<LoadingFile> = LOADING_FILES.lock_ref().iter().cloned().collect();
+            let updated_files: Vec<LoadingFile> = current_files.into_iter().map(|mut file| {
+                if file.file_id == file_id {
+                    file.progress = progress;
+                    file.status = LoadingStatus::Parsing;
+                }
+                file
+            }).collect();
+            LOADING_FILES.lock_mut().replace_cloned(updated_files);
+        }
+        DownMsg::FileLoaded { file_id, hierarchy } => {
+            if let Some(loaded_file) = hierarchy.files.first() {
+                crate::state::update_tracked_file_state(&file_id, shared::FileState::Loaded(loaded_file.clone()));
+                restore_scope_selection_for_file(loaded_file);
+            }
+            
+            for file in hierarchy.files {
+                LOADED_FILES.lock_mut().push_cloned(file.clone());
+            }
+            
+            let current_files: Vec<LoadingFile> = LOADING_FILES.lock_ref().iter().cloned().collect();
+            let updated_files: Vec<LoadingFile> = current_files.into_iter().map(|mut file| {
+                if file.file_id == file_id {
+                    file.progress = 1.0;
+                    file.status = LoadingStatus::Completed;
+                }
+                file
+            }).collect();
+            LOADING_FILES.lock_mut().replace_cloned(updated_files);
+            
+            check_loading_complete();
+            
+            if CONFIG_LOADED.get() {
+                config::save_file_list();
+            }
+        }
+        DownMsg::ParsingError { file_id, error } => {
+            let file_error = shared::FileError::ParseError(error.clone());
+            crate::state::update_tracked_file_state(&file_id, shared::FileState::Failed(file_error));
+            
+            let filename = {
+                let tracked_files = crate::state::TRACKED_FILES.lock_ref();
+                tracked_files.iter()
+                    .find(|file| file.id == file_id)
+                    .map(|file| file.filename.clone())
+                    .unwrap_or_else(|| {
+                        let current_files: Vec<LoadingFile> = LOADING_FILES.lock_ref().iter().cloned().collect();
+                        current_files.iter()
+                            .find(|file| file.file_id == file_id)
+                            .map(|file| file.filename.clone())
+                            .unwrap_or_else(|| "Unknown file".to_string())
+                    })
+            };
+            
+            let error_alert = ErrorAlert::new_file_parsing_error(
+                file_id.clone(),
+                filename,
+                error.clone()
+            );
+            add_error_alert(error_alert);
+            
+            let current_files: Vec<LoadingFile> = LOADING_FILES.lock_ref().iter().cloned().collect();
+            let updated_files: Vec<LoadingFile> = current_files.into_iter().map(|mut file| {
+                if file.file_id == file_id {
+                    file.status = LoadingStatus::Error(error.clone());
+                }
+                file
+            }).collect();
+            LOADING_FILES.lock_mut().replace_cloned(updated_files);
+            
+            check_loading_complete();
+        }
+        DownMsg::DirectoryContents { path, items } => {
+            crate::FILE_TREE_CACHE.lock_mut().insert(path.clone(), items.clone());
+            
+            if path.contains("/home/") || path.starts_with("/Users/") {
+                let mut expanded = crate::FILE_PICKER_EXPANDED.lock_mut();
+                expanded.insert(path.clone());
+                
+                let mut parent_path = std::path::Path::new(&path);
+                while let Some(parent) = parent_path.parent() {
+                    let parent_str = parent.to_string_lossy().to_string();
+                    if parent_str == "" || parent_str == "/" {
+                        break;
+                    }
+                    expanded.insert(parent_str);
+                    parent_path = parent;
+                }
+            }
+            
+            crate::FILE_PICKER_ERROR.set_neq(None);
+            crate::FILE_PICKER_ERROR_CACHE.lock_mut().remove(&path);
+        }
+        DownMsg::DirectoryError { path, error } => {
+            let error_alert = ErrorAlert::new_directory_error(path.clone(), error.clone());
+            add_error_alert(error_alert);
+            
+            crate::FILE_PICKER_ERROR_CACHE.lock_mut().insert(path.clone(), error);
+            crate::FILE_PICKER_ERROR.set_neq(None);
+        }
+        DownMsg::ConfigLoaded(config) => {
+            crate::config::apply_config(config);
+        }
+        DownMsg::ConfigSaved => {
+            // Config saved successfully
+        }
+        DownMsg::ConfigError(_error) => {
+            // Config error
+        }
+        DownMsg::BatchDirectoryContents { results } => {
+            for (path, result) in results {
+                match result {
+                    Ok(items) => {
+                        crate::FILE_TREE_CACHE.lock_mut().insert(path.clone(), items);
+                        crate::FILE_PICKER_ERROR_CACHE.lock_mut().remove(&path);
+                    }
+                    Err(error) => {
+                        let error_alert = crate::state::ErrorAlert::new_directory_error(path.clone(), error.clone());
+                        crate::error_display::add_error_alert(error_alert);
+                        crate::FILE_PICKER_ERROR_CACHE.lock_mut().insert(path.clone(), error);
+                    }
+                }
+            }
+            
+            crate::FILE_PICKER_ERROR.set_neq(None);
+        }
+        DownMsg::SignalValues { file_path, results } => {
+            let mut signal_values = crate::state::SIGNAL_VALUES.lock_mut();
+            
+            for result in results {
+                let unique_id = format!("{}|{}|{}", 
+                    file_path,
+                    result.scope_path,
+                    result.variable_name
+                );
+                
+                let raw_binary = result.raw_value
+                    .unwrap_or_else(|| "Loading...".to_string());
+                
+                let multi_format_value = crate::format_utils::MultiFormatValue::new(raw_binary);
+                signal_values.insert(unique_id, multi_format_value);
+            }
+        }
+        DownMsg::SignalValuesError { file_path: _, error: _ } => {
+            // Signal value query error
+        }
+        DownMsg::SignalTransitions { file_path, results } => {
+            for result in results {
+                let cache_key = format!("{}|{}|{}", file_path, result.scope_path, result.variable_name);
+                
+                crate::waveform_canvas::SIGNAL_TRANSITIONS_CACHE.lock_mut()
+                    .insert(cache_key, result.transitions);
+            }
+            
+            crate::waveform_canvas::trigger_canvas_redraw();
+        }
+        DownMsg::SignalTransitionsError { file_path: _, error: _ } => {
+            // Signal transitions error
+        }
     }
 }
 

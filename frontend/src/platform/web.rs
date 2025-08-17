@@ -15,9 +15,10 @@ impl Platform for WebPlatform {
     }
     
     async fn send_message(msg: UpMsg) -> Result<(), String> {
-        // Use existing connection.rs send_up_msg function
-        crate::connection::send_up_msg(msg);
-        Ok(())
+        // Use the MoonZoon CONNECTION directly to avoid infinite recursion
+        crate::connection::CONNECTION.send_up_msg(msg).await
+            .map(|_| ()) // Convert CorId to ()
+            .map_err(|e| format!("SSE connection failed: {:?}", e))
     }
     
     fn init_message_handler(_handler: fn(DownMsg)) {
