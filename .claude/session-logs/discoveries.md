@@ -750,3 +750,216 @@ Created comprehensive plan at `docs/canvas_subpixels_and_controls.md` including:
 - Future: Zoom presets, mixed timescale handling
 
 **Critical Discovery**: When rapid transitions don't appear, check the entire data pipeline from backend parsing to frontend rendering. The issue may be in time unit conversions, not visualization code.
+
+## Session Discovery: 2025-08-19 - Smooth Cursor Movement Implementation Using Zoon's Tweened
+
+### Problem/Context
+Q/E cursor movement was choppy compared to mouse-driven zoom center bar. Users reported Q/E keys "not working at all" but investigation revealed the movement was technically functioning but imperceptibly small and jittery.
+
+### Solution/Pattern
+**Zoon's Tweened Animation System Integration**: Replaced Timer::sleep(16) with proper requestAnimationFrame-based animation using Zoon's built-in Tweened for smooth 60fps interpolation.
+
+**Root Cause Analysis**:
+1. **Timer Misalignment**: `Timer::sleep(16)` creates arbitrary 16ms delays not synchronized with browser's RAF
+2. **Movement Scale**: Original 6 pixels per frame was too small to be visually perceptible at current zoom levels  
+3. **Direct Position Updates**: No smoothing between position changes, creating jittery movement
+4. **RAF Coordination**: Mouse-driven zoom center was smooth because it updated instantly on events (naturally RAF-aligned)
+
+### Code Example
+```rust
+// Smooth cursor animation using Zoon's Tweened for 60fps requestAnimationFrame
+static CURSOR_POSITION_TWEENED: Lazy<Mutable<Tweened>> = Lazy::new(|| {
+    Mutable::new(Tweened::new(0.0, Duration::milliseconds(80), ease::cubic_out))
+});
+
+// Bridge Tweened animation to TIMELINE_CURSOR_POSITION for smooth movement
+Task::start(async move {
+    CURSOR_POSITION_TWEENED.signal_ref(|tweened| tweened.signal()).flatten().for_each_sync(move |pos| {
+        // Convert f64 to f32 and update the main cursor position, which triggers canvas redraw
+        TIMELINE_CURSOR_POSITION.set_neq(pos as f32);
+    }).await;
+});
+
+// Continuous movement: Update target rapidly, let Tweened interpolate smoothly
+pub fn start_smooth_cursor_left() {
+    if !IS_CURSOR_MOVING_LEFT.get() {
+        IS_CURSOR_MOVING_LEFT.set_neq(true);
+        Task::start(async move {
+            while IS_CURSOR_MOVING_LEFT.get() {
+                let current_target = CURSOR_POSITION_TWEENED.lock_ref().get();
+                let visible_start = TIMELINE_VISIBLE_RANGE_START.get() as f64;
+                let visible_end = TIMELINE_VISIBLE_RANGE_END.get() as f64;
+                let visible_range = visible_end - visible_start;
+                
+                // Visual distance-based movement for consistent visual speed at all zoom levels
+                let canvas_width = CANVAS_WIDTH.get() as f64;
+                let pixels_per_frame = 20.0; // Increased from 6.0 for better visibility
+                let time_per_pixel = visible_range / canvas_width;
+                let step_size = pixels_per_frame * time_per_pixel;
+                let new_target = (current_target - step_size).max(0.0);
+                
+                // Update target position - Tweened handles smooth interpolation to this target
+                CURSOR_POSITION_TWEENED.lock_mut().go_to(new_target);
+                Timer::sleep(8).await; // Fast target updates (125 updates/sec)
+            }
+        });
+    }
+}
+
+// Initialize Tweened with current cursor position during canvas setup
+let current_cursor = TIMELINE_CURSOR_POSITION.get() as f64;
+CURSOR_POSITION_TWEENED.lock_mut().go_to(current_cursor);
+```
+
+### Impact/Lesson
+- **RAF vs Timer**: Browser's requestAnimationFrame (via Zoon's Tweened) provides much smoother animation than arbitrary Timer delays
+- **Hybrid Animation Pattern**: Fast target updates (8ms) + smooth RAF interpolation (80ms duration) = responsive controls + smooth visuals
+- **Movement Scale Critical**: 6 pixels → 20 pixels per frame made movement clearly visible at microsecond zoom levels
+- **Signal Bridge Pattern**: `Tweened.signal().flatten().for_each_sync()` correctly bridges f64 animation to f32 timeline position
+- **Cubic Easing Benefits**: Natural acceleration/deceleration makes movement feel professional
+- **Type Conversion Layer**: Tweened works with f64, timeline uses f32 - conversion needed in signal bridge
+- **Initialization Timing**: Set up signal bridge first, then initialize Tweened to current position
+
+**Before vs After Performance**:
+- **Before**: Timer::sleep(16) - choppy, not RAF-synchronized, barely visible movement
+- **After**: Zoon's Tweened - smooth 60fps, clearly visible movement, natural easing
+
+**Critical Debugging Discovery**: When users report controls "not working," systematically verify:
+1. ✅ Key events are detected (add debug logs)
+2. ✅ Animation logic is executing (verify function calls)  
+3. ✅ Position values are updating (check signal flow)
+4. ✅ Movement scale is visible (test with larger values)
+5. ✅ Rendering pipeline is working (verify canvas updates)
+
+**Architecture Benefits**:
+- **Fast2D stays pure renderer** - no animation logic mixed in
+- **Zoon handles timing** - leverages battle-tested RAF coordination  
+- **Application-level integration** - clean separation of concerns
+- **Extensible pattern** - can apply to pan/zoom animations if needed
+
+**Documentation Updated**: Added comprehensive "Animation Integration Patterns" section to `fast2d_optimizations.md` showing proper Fast2D + Zoon animation integration patterns for future reference.
+
+**Final Result**: Q/E cursor movement now as smooth as mouse-driven zoom center bar, achieving consistent professional user experience across all timeline interactions.
+
+## Session Discovery: 2025-08-19 - Timeline Cursor Jump Bug Fix & Backend Request Optimization
+
+### Problem/Context
+Timeline cursor was jumping unexpectedly when pressing Q/E keys after clicking to set position, and extensive investigation revealed two critical performance issues: cursor synchronization bugs and massive backend request floods causing JSON null errors.
+
+### Solution/Pattern
+**Dual-Layer Problem Resolution**: Fixed immediate cursor synchronization issue while identifying and documenting comprehensive backend optimization requirements through systematic subagent analysis.
+
+**Root Cause Analysis**:
+1. **Cursor Jump Issue**: Desynchronization between `TIMELINE_CURSOR_POSITION` (updated on clicks) and `CURSOR_POSITION_TWEENED` (used for smooth Q/E movement)
+2. **Backend Flood Issue**: Signal value queries (125/sec) and config saves during cursor movement overwhelming backend
+3. **JSON Null Errors**: Backend returning malformed responses under load due to concurrency issues
+
+### Code Example
+```rust
+// FIXED: Cursor synchronization issue
+// Click handler - immediately sync Tweened position
+TIMELINE_CURSOR_POSITION.set(clicked_time);
+// CRITICAL: Create instant Tweened (0ms duration) for immediate positioning
+let instant_tweened = Tweened::new(clicked_time as f64, Duration::milliseconds(0), ease::cubic_out);
+CURSOR_POSITION_TWEENED.set(instant_tweened);
+
+// FIXED: Transition/zoom functions - sync after position changes
+TIMELINE_CURSOR_POSITION.set_neq(prev_time as f32);
+CURSOR_POSITION_TWEENED.lock_mut().go_to(prev_time);
+
+// FIXED: Config save flood during cursor movement
+let save_pending = Mutable::new(false);
+timeline_cursor_position_signal
+    .dedupe()
+    .for_each_sync({
+        let save_pending = save_pending.clone();
+        move |_| {
+            // CRITICAL FIX: Debounce config saves during rapid cursor movement
+            if !save_pending.get() {
+                save_pending.set_neq(true);
+                Task::start(async move {
+                    Timer::sleep(200).await; // Wait 200ms after last change
+                    save_pending.set_neq(false);
+                    if CONFIG_INITIALIZATION_COMPLETE.get() {
+                        save_config_to_backend();
+                    }
+                });
+            }
+        }
+    })
+
+// TEMPORARILY DISABLED: Signal value queries during movement
+fn init_timeline_signal_handlers() {
+    // DISABLED: Signal value queries during cursor movement cause excessive backend load
+    // Signal values will be updated only on clicks and manual actions, not during smooth movement
+    // This prevents 125+ queries/sec during Q/E key holds that cause JSON null errors
+}
+```
+
+### Impact/Lesson
+- **Two-Phase Bug Investigation**: Immediate user-facing fix followed by systematic root cause analysis
+- **Subagent Analysis Value**: Independent backend and frontend analysis revealed comprehensive problem scope
+- **Request Flood Detection**: "Simple" cursor movement triggered 625 backend requests/sec (125 updates × 5 variables)
+- **Backend Fragility**: Server-side mutex poisoning, race conditions, and unsafe concurrent access under load
+- **Documentation Strategy**: Created comprehensive 180+ line optimization plan at `docs/backend_request_optimization.md`
+
+**Performance Impact**:
+- **Before**: 125 cursor updates/sec → 625 signal queries/sec → Backend overload → JSON null errors → Frontend crashes
+- **After**: 0 signal queries during movement, config saves debounced to max 1/200ms → Stable operation
+
+**Comprehensive Analysis Delivered**:
+- **Backend Issues**: Mutex poisoning, VCD body loading race conditions, panic recovery masking corruption
+- **Frontend Issues**: Signal transition query floods, missing error recovery, no request throttling  
+- **Implementation Plan**: 4-phase roadmap with specific code locations and performance targets
+
+**Critical Discovery**: The "simple" Q/E cursor movement was actually the tip of an iceberg - investigation revealed systematic backend performance and concurrency issues that would affect any high-frequency timeline operations.
+
+**Success Metrics**:
+- ✅ Cursor jumping completely eliminated
+- ✅ Q/E movement works smoothly without backend load  
+- ✅ JSON null errors prevented during cursor operations
+- ✅ Comprehensive optimization roadmap created for future implementation
+
+**Future Work**: The optimization document provides systematic fixes to achieve 95% reduction in backend requests, elimination of concurrency issues, and stable performance under load.
+
+**Testing Protocol Established**: Extended Q/E key holds with browser MCP verification confirmed complete resolution of immediate issues while backend optimization remains as planned improvement work.
+
+## Session Discovery: 2025-01-19
+
+### Problem/Context
+Timeline waveform data wasn't rendering in NovyWave - canvas showed empty stripes despite timeline markers being visible. Root cause was a request deduplication deadlock preventing signal transition queries from reaching the backend.
+
+### Solution/Pattern
+**Request Deduplication Deadlock Fix**: The frontend was setting "in-progress" flags for QuerySignalTransitions requests but never actually sending them, creating a permanent deadlock where subsequent requests were blocked.
+
+**Key Technical Discovery**: 
+- Two different request types: QuerySignalValues (discriminant 6) for variable panel vs QuerySignalTransitions (discriminant 7) for timeline waveforms
+- Deduplication logic blocked requests when first attempt failed to send
+- Timeline canvas initialization worked, but waveform rendering pipeline was starved of data
+
+### Code Example
+```rust
+// DEADLOCK PATTERN (problematic):
+{
+    let mut requests_in_progress = REQUESTS_IN_PROGRESS.lock_mut();
+    if requests_in_progress.contains(&cache_key) {
+        return; // Blocks forever if first request never completes
+    }
+    requests_in_progress.insert(cache_key.clone());
+}
+
+// FIX: Ensure requests actually complete or have timeout cleanup
+// Temporarily disable deduplication to diagnose root sending issue
+```
+
+### Fast2D Canvas Initialization Pattern
+**Timeline Canvas Timing Fix**: Canvas must wait for DOM insertion before requesting signal data. Fixed race condition with proper initialization order:
+1. Canvas created with default dimensions
+2. after_insert() callback triggers when canvas enters DOM  
+3. Get actual dimensions and trigger signal data requests
+4. Enhanced resize handler with validation
+
+### Impact/Lesson
+**Critical for NovyWave**: Timeline functionality depends on proper request/response pipeline between frontend signal rendering and backend VCD parsing. Request deduplication must include timeout mechanisms to prevent permanent deadlocks. Canvas initialization timing is critical for Fast2D rendering in MoonZoon applications.
+
+**Framework Pattern**: When debugging missing data in reactive UI frameworks, check the entire request pipeline: UI triggers → request deduplication → message sending → backend processing → response handling → cache population → UI updates.

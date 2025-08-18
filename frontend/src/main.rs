@@ -48,18 +48,14 @@ use error_ui::*;
 
 
 fn init_timeline_signal_handlers() {
-    // Watch for timeline cursor position changes and trigger signal value queries
-    // Use debounce to avoid excessive backend queries during rapid cursor movements
-    Task::start(async {
-        TIMELINE_CURSOR_POSITION.signal()
-            .dedupe()  // Skip duplicate values
-            .for_each_sync(|cursor_position| {
-                // Only query if we have selected variables and config is loaded
-                if CONFIG_LOADED.get() && !SELECTED_VARIABLES.lock_ref().is_empty() {
-                    views::query_signal_values_at_time(cursor_position as f64);
-                }
-            }).await
-    });
+    // DISABLED: Signal value queries during cursor movement cause excessive backend load
+    // Signal values will be updated only on clicks and manual actions, not during smooth movement
+    // This prevents 125+ queries/sec during Q/E key holds that cause JSON null errors
+    
+    // TODO: Re-enable with proper debouncing when needed:
+    // - Update values only when movement stops (key release)
+    // - Or use timer-based debouncing (200ms delay)
+    // - Or update only on significant position changes
 }
 
 /// Entry point: loads fonts and starts the app.
@@ -136,6 +132,21 @@ pub fn main() {
                     start_app("app", root);
                 }
             }).await
+        });
+        
+        // Update signal values when cursor position changes (debounced)
+        Task::start(async {
+            let last_query_time = Mutable::new(0.0);
+            
+            crate::state::TIMELINE_CURSOR_POSITION.signal().for_each_sync(move |cursor_pos| {
+                let now = js_sys::Date::now();
+                
+                // Only query if 50ms have passed since last query (debouncing)
+                if now - last_query_time.get() > 50.0 {
+                    crate::views::query_signal_values_at_time(cursor_pos as f64);
+                    last_query_time.set(now);
+                }
+            }).await;
         });
     });
 }
@@ -326,6 +337,10 @@ fn main_layout() -> impl Element {
                 }
                 
                 match event.key().as_str() {
+                    "Shift" => {
+                        // Track Shift key state
+                        crate::state::IS_SHIFT_PRESSED.set_neq(true);
+                    },
                     "w" | "W" => {
                         // Start smooth zoom in
                         crate::waveform_canvas::start_smooth_zoom_in();
@@ -343,12 +358,30 @@ fn main_layout() -> impl Element {
                         crate::waveform_canvas::start_smooth_pan_right();
                     },
                     "q" | "Q" => {
-                        // Start smooth cursor left
-                        crate::waveform_canvas::start_smooth_cursor_left();
+                        if crate::state::IS_SHIFT_PRESSED.get() {
+                            // Shift+Q: Jump to previous transition
+                            crate::waveform_canvas::jump_to_previous_transition();
+                        } else {
+                            // Q: Start smooth cursor left
+                            crate::waveform_canvas::start_smooth_cursor_left();
+                        }
                     },
                     "e" | "E" => {
-                        // Start smooth cursor right
-                        crate::waveform_canvas::start_smooth_cursor_right();
+                        if crate::state::IS_SHIFT_PRESSED.get() {
+                            // Shift+E: Jump to next transition
+                            crate::waveform_canvas::jump_to_next_transition();
+                        } else {
+                            // E: Start smooth cursor right
+                            crate::waveform_canvas::start_smooth_cursor_right();
+                        }
+                    },
+                    "r" | "R" => {
+                        // R: Reset zoom to 1x and fit all data
+                        crate::waveform_canvas::reset_zoom_to_fit_all();
+                    },
+                    "z" | "Z" => {
+                        // Z: Reset zoom center to 0
+                        crate::waveform_canvas::reset_zoom_center();
                     },
                     _ => {} // Ignore other keys
                 }
@@ -360,6 +393,10 @@ fn main_layout() -> impl Element {
                 }
                 
                 match event.key().as_str() {
+                    "Shift" => {
+                        // Track Shift key state
+                        crate::state::IS_SHIFT_PRESSED.set_neq(false);
+                    },
                     "w" | "W" => {
                         // Stop smooth zoom in
                         crate::waveform_canvas::stop_smooth_zoom_in();
@@ -377,11 +414,13 @@ fn main_layout() -> impl Element {
                         crate::waveform_canvas::stop_smooth_pan_right();
                     },
                     "q" | "Q" => {
-                        // Stop smooth cursor left
+                        // Always stop smooth cursor when Q is released 
+                        // (Shift+Q is instantaneous, normal Q is continuous)
                         crate::waveform_canvas::stop_smooth_cursor_left();
                     },
                     "e" | "E" => {
-                        // Stop smooth cursor right
+                        // Always stop smooth cursor when E is released
+                        // (Shift+E is instantaneous, normal E is continuous) 
                         crate::waveform_canvas::stop_smooth_cursor_right();
                     },
                     _ => {} // Ignore other keys

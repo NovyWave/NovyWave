@@ -28,33 +28,48 @@ struct WaveformData {
 static WAVEFORM_DATA_STORE: Lazy<Arc<Mutex<HashMap<String, WaveformData>>>> = 
     Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
 
+// Track VCD body loading in progress to prevent concurrent loading of same file
+static VCD_LOADING_IN_PROGRESS: Lazy<Arc<Mutex<std::collections::HashSet<String>>>> = 
+    Lazy::new(|| Arc::new(Mutex::new(std::collections::HashSet::new())));
+
 async fn up_msg_handler(req: UpMsgRequest<UpMsg>) {
-    let (session_id, cor_id) = (req.session_id, req.cor_id); 
+    let (session_id, cor_id) = (req.session_id, req.cor_id);
     
-    match req.up_msg {
+    // Log all incoming requests for debugging
+    // Removed spammy request type debug logging
+    
+    match &req.up_msg {
         UpMsg::LoadWaveformFile(file_path) => {
-            load_waveform_file(file_path, session_id, cor_id).await;
+            println!("BACKEND: Loading waveform file: {}", file_path);
+            load_waveform_file(file_path.clone(), session_id, cor_id).await;
         }
         UpMsg::GetParsingProgress(file_id) => {
-            send_parsing_progress(file_id, session_id, cor_id).await;
+            send_parsing_progress(file_id.clone(), session_id, cor_id).await;
         }
         UpMsg::LoadConfig => {
+            println!("BACKEND: Loading config");
             load_config(session_id, cor_id).await;
         }
         UpMsg::SaveConfig(config) => {
-            save_config(config, session_id, cor_id).await;
+            println!("BACKEND: Saving config");
+            save_config(config.clone(), session_id, cor_id).await;
         }
         UpMsg::BrowseDirectory(dir_path) => {
-            browse_directory(dir_path, session_id, cor_id).await;
+            println!("BACKEND: Browsing directory: {}", dir_path);
+            browse_directory(dir_path.clone(), session_id, cor_id).await;
         }
         UpMsg::BrowseDirectories(dir_paths) => {
-            browse_directories_batch(dir_paths, session_id, cor_id).await;
+            println!("BACKEND: Browsing {} directories", dir_paths.len());
+            browse_directories_batch(dir_paths.clone(), session_id, cor_id).await;
         }
         UpMsg::QuerySignalValues { file_path, queries } => {
-            query_signal_values(file_path, queries, session_id, cor_id).await;
+            // Removed spammy debug logging for signal queries
+            query_signal_values(file_path.clone(), queries.clone(), session_id, cor_id).await;
         }
         UpMsg::QuerySignalTransitions { file_path, signal_queries, time_range } => {
-            query_signal_transitions(file_path, signal_queries, time_range, session_id, cor_id).await;
+            println!("BACKEND: Querying {} signal transitions from {} (range: {:?})", 
+                    signal_queries.len(), file_path, time_range);
+            query_signal_transitions(file_path.clone(), signal_queries.clone(), time_range.clone(), session_id, cor_id).await;
         }
     }
 }
@@ -1047,6 +1062,23 @@ async fn ensure_vcd_body_loaded(file_path: &str) -> Result<(), String> {
         }
     }
     
+    // Check if loading is already in progress for this file
+    {
+        let mut loading_in_progress = match VCD_LOADING_IN_PROGRESS.lock() {
+            Ok(loading) => loading,
+            Err(_) => return Err("Internal error: Failed to access VCD loading tracker".to_string()),
+        };
+        
+        if loading_in_progress.contains(file_path) {
+            // Another thread is already loading this file, just return success
+            // The other thread will populate the data store
+            return Ok(());
+        }
+        
+        // Mark this file as being loaded
+        loading_in_progress.insert(file_path.to_string());
+    }
+    
     // Need to parse VCD body - reparse the file
     let options = wellen::LoadOptions::default();
     
@@ -1056,9 +1088,17 @@ async fn ensure_vcd_body_loaded(file_path: &str) -> Result<(), String> {
     })) {
         Ok(Ok(header)) => header,
         Ok(Err(e)) => {
+            // Remove from loading tracker on failure
+            if let Ok(mut loading_in_progress) = VCD_LOADING_IN_PROGRESS.lock() {
+                loading_in_progress.remove(file_path);
+            }
             return Err(format!("Failed to parse VCD header for signal queries: {}", e));
         }
         Err(_panic) => {
+            // Remove from loading tracker on panic
+            if let Ok(mut loading_in_progress) = VCD_LOADING_IN_PROGRESS.lock() {
+                loading_in_progress.remove(file_path);
+            }
             return Err(format!("Critical error parsing VCD header: Invalid waveform data"));
         }
     };
@@ -1069,9 +1109,17 @@ async fn ensure_vcd_body_loaded(file_path: &str) -> Result<(), String> {
     })) {
         Ok(Ok(body)) => body,
         Ok(Err(e)) => {
+            // Remove from loading tracker on failure
+            if let Ok(mut loading_in_progress) = VCD_LOADING_IN_PROGRESS.lock() {
+                loading_in_progress.remove(file_path);
+            }
             return Err(format!("Failed to parse VCD body for signal queries: {}", e));
         }
         Err(_panic) => {
+            // Remove from loading tracker on panic
+            if let Ok(mut loading_in_progress) = VCD_LOADING_IN_PROGRESS.lock() {
+                loading_in_progress.remove(file_path);
+            }
             return Err(format!("Critical error parsing VCD body: Invalid signal data"));
         }
     };
@@ -1111,9 +1159,21 @@ async fn ensure_vcd_body_loaded(file_path: &str) -> Result<(), String> {
             Ok(mut store) => {
                 store.insert(file_path.to_string(), waveform_data);
             }
-            Err(_) => return Err("Internal error: Failed to store waveform data".to_string()),
+            Err(_) => {
+                // Remove from loading tracker on failure
+                if let Ok(mut loading_in_progress) = VCD_LOADING_IN_PROGRESS.lock() {
+                    loading_in_progress.remove(file_path);
+                }
+                return Err("Internal error: Failed to store waveform data".to_string());
+            }
         }
     }
+    
+    // Remove from loading tracker on success
+    if let Ok(mut loading_in_progress) = VCD_LOADING_IN_PROGRESS.lock() {
+        loading_in_progress.remove(file_path);
+    }
+    
     Ok(())
 }
 
@@ -1509,5 +1569,14 @@ fn format_non_binary_signal_value(value: &wellen::SignalValue) -> String {
 
 #[moon::main]
 async fn main() -> std::io::Result<()> {
-    start(frontend, up_msg_handler, |_| {}).await
+    // Set panic hook to log all panics 
+    std::panic::set_hook(Box::new(|panic_info| {
+        println!("BACKEND PANIC: {:?}", panic_info);
+    }));
+    
+    println!("BACKEND: Starting NovyWave backend server...");
+    
+    start(frontend, up_msg_handler, |_error| {
+        println!("BACKEND ERROR: Request processing error occurred");
+    }).await
 }

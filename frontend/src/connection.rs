@@ -253,16 +253,20 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 // Signal value query error logged to console
             }
             DownMsg::SignalTransitions { file_path, results } => {
-                // Process real signal transitions from backend - UPDATE CACHE
+                zoon::println!("=== SIGNAL TRANSITIONS RECEIVED: {} results for {} ===", results.len(), file_path);
+                
+                // Process signal transitions from backend - UPDATE CACHE
                 for result in results {
                     let cache_key = format!("{}|{}|{}", file_path, result.scope_path, result.variable_name);
                     
-                    // Store real backend data in canvas cache
+                    zoon::println!("=== INSERTING TO CACHE: {} with {} transitions ===", cache_key, result.transitions.len());
+                    
+                    // Store backend data in cache
                     crate::waveform_canvas::SIGNAL_TRANSITIONS_CACHE.lock_mut()
                         .insert(cache_key, result.transitions);
                 }
                 
-                // Trigger canvas redraw to show real data
+                // Trigger canvas redraw when data arrives
                 crate::waveform_canvas::trigger_canvas_redraw();
             }
             DownMsg::SignalTransitionsError { file_path: _, error: _ } => {
@@ -279,16 +283,16 @@ pub fn send_up_msg(up_msg: UpMsg) {
         zoon::println!("=== SEND_UP_MSG: Attempting to send {:?} ===", 
             std::mem::discriminant(&up_msg));
         
-        // Use platform abstraction for all message sending
-        match CurrentPlatform::send_message(up_msg).await {
+        // Use the raw MoonZoon connection directly to avoid infinite recursion
+        match CONNECTION.send_up_msg(up_msg).await {
             Ok(_) => {
-                zoon::println!("=== SEND_UP_MSG: Message sent successfully via platform abstraction ===");
+                zoon::println!("=== SEND_UP_MSG: Message sent successfully via raw connection ===");
             }
             Err(error) => {
-                zoon::println!("=== SEND_UP_MSG: Platform send error - {:?} ===", error);
+                zoon::println!("=== SEND_UP_MSG: Raw connection send error - {:?} ===", error);
                 
-                // Create and display platform error alert
-                let error_alert = ErrorAlert::new_connection_error(format!("Platform communication failed: {}", error));
+                // Create and display connection error alert
+                let error_alert = ErrorAlert::new_connection_error(format!("Connection failed: {}", error));
                 add_error_alert(error_alert);
             }
         }
@@ -489,9 +493,15 @@ fn handle_down_msg(down_msg: DownMsg) {
             // Signal value query error
         }
         DownMsg::SignalTransitions { file_path, results } => {
+            zoon::println!("=== SECOND HANDLER - SIGNAL TRANSITIONS RECEIVED: {} results for {} ===", results.len(), file_path);
+            
+            // Process signal transitions from backend - UPDATE CACHE
             for result in results {
                 let cache_key = format!("{}|{}|{}", file_path, result.scope_path, result.variable_name);
                 
+                zoon::println!("=== SECOND HANDLER - INSERTING TO CACHE: {} with {} transitions ===", cache_key, result.transitions.len());
+                
+                // Store backend data in cache
                 crate::waveform_canvas::SIGNAL_TRANSITIONS_CACHE.lock_mut()
                     .insert(cache_key, result.transitions);
             }
@@ -499,7 +509,7 @@ fn handle_down_msg(down_msg: DownMsg) {
             crate::waveform_canvas::trigger_canvas_redraw();
         }
         DownMsg::SignalTransitionsError { file_path: _, error: _ } => {
-            // Signal transitions error
+            // Signal transitions error - no cleanup needed without deduplication
         }
     }
 }

@@ -338,37 +338,26 @@ Task::start(TIMELINE_ZOOM.signal().for_each_sync(|_| {
   - [ ] View updates (zoom, pan, timeline)
   - [ ] UI updates (theme, resize)
 
-#### 2. Animation Conflicts
+#### 2. Animation Conflicts (SOLVED)
 
 **Problem**: Multiple 60fps timers without coordination
 ```rust
-// Current pattern causing conflicts
+// OLD pattern causing conflicts
 Timer::interval(16, || update_zoom());    // 60fps zoom
 Timer::interval(16, || update_pan());     // 60fps pan
 Timer::interval(16, || update_cursor());  // 60fps cursor
 ```
 
-**TODO - HIGH**:
-- [ ] Implement single animation loop:
-  ```rust
-  struct AnimationScheduler {
-      animations: Vec<Box<dyn Animation>>,
-      frame_time: Duration,
-  }
-  
-  impl AnimationScheduler {
-      fn run_frame(&mut self, dt: Duration) {
-          for animation in &mut self.animations {
-              animation.update(dt);
-          }
-          self.render_once(); // Single render per frame
-      }
-  }
-  ```
+**SOLUTION IMPLEMENTED**:
+- ✅ **Cursor movement uses Zoon's Tweened** with requestAnimationFrame
+- ✅ **No more Timer::sleep(16) for cursor** - smooth interpolation
+- ✅ **Signal-based coordination** prevents timing conflicts
+- ✅ **Cubic easing** for natural acceleration/deceleration
 
-- [ ] Add interpolation for smooth animations
-- [ ] Implement easing functions
-- [ ] Add animation priorities and cancellation
+**REMAINING TODO - MEDIUM** (Pan/Zoom can keep Timer approach):
+- [ ] Consider applying Tweened pattern to pan/zoom if needed
+- [ ] Monitor for timing conflicts with multiple Timer loops
+- [ ] Add animation priorities and cancellation if required
 
 #### 3. Object Recreation Overhead
 
@@ -461,6 +450,115 @@ Timer::interval(16, || update_cursor());  // 60fps cursor
 - [ ] Use line strips instead of individual segments
 - [ ] Implement binary search for visible range
 - [ ] Add adaptive quality based on frame rate
+
+## Animation Integration Patterns
+
+### Fast2D + Zoon Animation Architecture
+
+**Recommended Architecture**: Keep Fast2D as a pure renderer, use Zoon's animation system for timing.
+
+```
+[User Input] → [Zoon Animation System] → [Position Signals] → [Fast2D Rendering]
+                        ↑
+                 (RAF timing here)
+```
+
+### Why Separate Animation from Fast2D
+
+1. **Separation of Concerns**
+   - Fast2D = Pure immediate-mode renderer (draw shapes, manage GPU buffers)
+   - Animation = Application behavior (what moves, when, how fast)
+   - Mixing violates single responsibility principle
+
+2. **Zoon Already Provides This**
+   - `Tweened`, `AnimationLoop`, `Oscillator` are battle-tested
+   - Integrate naturally with Zoon's signal system
+   - Use requestAnimationFrame internally
+
+3. **Flexibility for Different Use Cases**
+   - Each app has different animation needs
+   - NovyWave: smooth cursor/zoom animations
+   - Games: physics-based animations
+   - Charts: spring animations
+
+### Integration Patterns
+
+#### 1. Smooth Cursor Movement (IMPLEMENTED)
+```rust
+// Create Tweened for smooth position interpolation
+static CURSOR_POSITION_TWEENED: Lazy<Mutable<Tweened>> = Lazy::new(|| {
+    Mutable::new(Tweened::new(0.0, Duration::milliseconds(80), ease::cubic_out))
+});
+
+// Bridge Tweened animation to TIMELINE_CURSOR_POSITION for smooth movement
+Task::start(async move {
+    CURSOR_POSITION_TWEENED.signal_ref(|tweened| tweened.signal()).flatten().for_each_sync(move |pos| {
+        TIMELINE_CURSOR_POSITION.set_neq(pos as f32); // Triggers canvas redraw
+    });
+});
+
+// Continuous movement: Update target rapidly, let Tweened interpolate smoothly
+pub fn start_smooth_cursor_left() {
+    Task::start(async move {
+        while IS_CURSOR_MOVING_LEFT.get() {
+            let current_target = CURSOR_POSITION_TWEENED.lock_ref().get();
+            let step_size = calculate_movement_step();
+            let new_target = (current_target - step_size).max(0.0);
+            
+            CURSOR_POSITION_TWEENED.lock_mut().go_to(new_target); // Smooth interpolation
+            Timer::sleep(8).await; // Fast target updates (125 updates/sec)
+        }
+    });
+}
+```
+
+#### 2. Benefits of This Approach
+- **60fps requestAnimationFrame timing** through Zoon's AnimationLoop
+- **Smooth interpolation** with configurable easing functions
+- **No Timer::sleep(16) conflicts** - single RAF coordination
+- **Responsive controls** - targets update quickly, animation smooths them
+- **Natural acceleration/deceleration** with cubic easing
+
+#### 3. Performance Notes
+- Animation timing (RAF) happens in Zoon layer
+- Fast2D just renders current state - no timing concerns
+- Multiple animations coordinate through single RAF loop
+- Signal-based updates prevent timing conflicts
+
+### What Fast2D Should NOT Add
+
+Fast2D should remain focused on rendering performance only:
+- ❌ **Animation timing systems** - Zoon handles this
+- ❌ **Easing functions** - Application concern
+- ❌ **Animation curves** - Use Zoon's Tweened/Oscillator
+- ❌ **Frame coordination** - Browser/Zoon responsibility
+
+### What Fast2D COULD Add (Optional)
+
+If Fast2D wants to help with animations, focus on rendering efficiency:
+- ✅ **Incremental update API**: `update_object_position(id, x, y)` instead of recreating all objects
+- ✅ **Dirty flag system**: Only re-render changed objects  
+- ✅ **Transform caching**: Cache tessellation, apply transform matrices
+- ✅ **Animation-friendly object IDs**: Stable object references for updates
+
+### Solving Timer::sleep(16) Problems
+
+**OLD Pattern (Choppy)**:
+```rust
+Timer::sleep(16).await; // Arbitrary 16ms, not synced with RAF
+POSITION.set_neq(new_position); // Direct position updates
+```
+
+**NEW Pattern (Smooth)**:
+```rust
+Timer::sleep(8).await; // Fast target updates
+TWEENED.go_to(new_target); // Smooth RAF-based interpolation to target
+```
+
+This pattern gives you:
+- **Responsive controls** (8ms target updates)
+- **Smooth visuals** (RAF-based interpolation)
+- **No timing conflicts** (single RAF coordination)
 
 ## Optimization Roadmap
 

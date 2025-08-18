@@ -7,6 +7,30 @@ use shared::UpMsg;
 pub use shared::{Theme, DockMode}; // Re-export for frontend usage
 use crate::CONFIG_INITIALIZATION_COMPLETE;
 
+// Timeline validation constants
+const MIN_VALID_RANGE: f32 = 1e-6;       // 1 microsecond minimum range
+const SAFE_FALLBACK_START: f32 = 0.0;    // Safe fallback start time
+const SAFE_FALLBACK_END: f32 = 100.0;    // Safe fallback end time
+
+/// Validate timeline values from config to prevent NaN propagation
+fn validate_timeline_values(cursor: f32, zoom: f32, start: f32, end: f32) -> (f32, f32, f32, f32) {
+    // Validate cursor position
+    let safe_cursor = if cursor.is_finite() && cursor >= 0.0 { cursor } else { 50.0 };
+    
+    // Validate zoom level
+    let safe_zoom = if zoom.is_finite() && zoom >= 1.0 && zoom <= 1e9 { zoom } else { 1.0 };
+    
+    // Validate range
+    let (safe_start, safe_end) = if start.is_finite() && end.is_finite() && start < end && (end - start) >= MIN_VALID_RANGE {
+        (start, end)
+    } else {
+        zoon::println!("CONFIG: Invalid timeline range ({}, {}), using fallback", start, end);
+        (SAFE_FALLBACK_START, SAFE_FALLBACK_END)
+    };
+    
+    (safe_cursor, safe_zoom, safe_start, safe_end)
+}
+
 // =============================================================================
 // MAIN CONFIG STORE - Single Source of Truth with Reactive Fields
 // =============================================================================
@@ -420,10 +444,18 @@ impl ConfigStore {
         self.workspace.lock_mut().load_files_expanded_directories.lock_mut().replace_cloned(config.workspace.load_files_expanded_directories);
         self.workspace.lock_mut().selected_variables.lock_mut().replace_cloned(config.workspace.selected_variables);
         
-        self.workspace.lock_mut().timeline_cursor_position.set(config.workspace.timeline_cursor_position);
-        self.workspace.lock_mut().timeline_zoom_level.set(config.workspace.timeline_zoom_level);
-        self.workspace.lock_mut().timeline_visible_range_start.set(config.workspace.timeline_visible_range_start);
-        self.workspace.lock_mut().timeline_visible_range_end.set(config.workspace.timeline_visible_range_end);
+        // Validate timeline values before setting to prevent NaN propagation
+        let (safe_cursor, safe_zoom, safe_start, safe_end) = validate_timeline_values(
+            config.workspace.timeline_cursor_position,
+            config.workspace.timeline_zoom_level,
+            config.workspace.timeline_visible_range_start,
+            config.workspace.timeline_visible_range_end
+        );
+        
+        self.workspace.lock_mut().timeline_cursor_position.set(safe_cursor);
+        self.workspace.lock_mut().timeline_zoom_level.set(safe_zoom);
+        self.workspace.lock_mut().timeline_visible_range_start.set(safe_start);
+        self.workspace.lock_mut().timeline_visible_range_end.set(safe_end);
 
         {
             let workspace_ref = self.workspace.lock_ref();
@@ -624,46 +656,32 @@ fn store_config_on_any_change() {
         }).await
     });
     
-    // Timeline cursor position changes trigger config save
+    // Timeline cursor position changes - PROPERLY DEBOUNCED
     let timeline_cursor_position_signal = crate::state::TIMELINE_CURSOR_POSITION.signal();
     Task::start(async move {
-        timeline_cursor_position_signal.for_each_sync(|_| {
-            // Only save if initialization is complete to prevent race conditions
-            if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
-                save_config_to_backend();
-            }
-        }).await
+        timeline_cursor_position_signal
+            .dedupe() // Skip duplicate values  
+            .for_each_sync(|_| {
+                // Use global debouncing mechanism - will save after 1 second of inactivity
+                if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
+                    save_config_to_backend(); // Uses 1-second global debouncing
+                }
+            })
+            .await;
     });
     
-    // Timeline zoom level changes
-    let timeline_zoom_level_signal = crate::state::TIMELINE_ZOOM_LEVEL.signal();
-    Task::start(async move {
-        timeline_zoom_level_signal.for_each_sync(|_| {
-            if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
-                save_config_to_backend();
-            }
-        }).await
-    });
+    // Timeline zoom level changes - DISABLED to prevent backend flooding during smooth operations  
+    // Zoom changes will be saved when other config changes occur
+    // COMMENTED OUT - This signal may also cause flooding:
+    // let timeline_zoom_level_signal = crate::state::TIMELINE_ZOOM_LEVEL.signal();
     
-    // Timeline visible range start changes
-    let timeline_visible_range_start_signal = crate::state::TIMELINE_VISIBLE_RANGE_START.signal();
-    Task::start(async move {
-        timeline_visible_range_start_signal.for_each_sync(|_| {
-            if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
-                save_config_to_backend();
-            }
-        }).await
-    });
+    // Timeline visible range changes - DISABLED to prevent backend flooding
+    // Range changes are too frequent during smooth operations and don't need immediate persistence
+    // They will be saved when other config changes occur (cursor position, zoom, etc.)
     
-    // Timeline visible range end changes
-    let timeline_visible_range_end_signal = crate::state::TIMELINE_VISIBLE_RANGE_END.signal();
-    Task::start(async move {
-        timeline_visible_range_end_signal.for_each_sync(|_| {
-            if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
-                save_config_to_backend();
-            }
-        }).await
-    });
+    // COMMENTED OUT - These signals were causing the backend flooding:
+    // let timeline_visible_range_start_signal = crate::state::TIMELINE_VISIBLE_RANGE_START.signal();
+    // let timeline_visible_range_end_signal = crate::state::TIMELINE_VISIBLE_RANGE_END.signal();
 }
 
 /// Backend-compatible panel dimensions with only the 2 fields that exist in shared schema
@@ -685,7 +703,22 @@ impl From<SerializablePanelDimensions> for BackendPanelDimensions {
     }
 }
 
+// Global debouncing for config saves to prevent backend flooding
+static SAVE_CONFIG_PENDING: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
+
 pub fn save_config_to_backend() {
+    // CRITICAL: Debounce all config saves to prevent backend flooding
+    if !SAVE_CONFIG_PENDING.get() {
+        SAVE_CONFIG_PENDING.set_neq(true);
+        Task::start(async {
+            Timer::sleep(1000).await; // AGGRESSIVE: 1 second debounce to prevent flooding
+            save_config_immediately(); // Execute save FIRST
+            SAVE_CONFIG_PENDING.set_neq(false); // Clear flag AFTER save completes
+        });
+    }
+}
+
+fn save_config_immediately() {
     use crate::platform::{Platform, CurrentPlatform};
     
     // Convert to serializable format using existing infrastructure
@@ -729,10 +762,30 @@ pub fn save_config_to_backend() {
             load_files_scroll_position: serializable_config.session.file_picker.scroll_position,
             variables_search_filter: serializable_config.session.variables_search_filter,
             selected_variables: serializable_config.workspace.selected_variables,
-            timeline_cursor_position: crate::state::TIMELINE_CURSOR_POSITION.get(),
-            timeline_zoom_level: crate::state::TIMELINE_ZOOM_LEVEL.get(),
-            timeline_visible_range_start: Some(crate::state::TIMELINE_VISIBLE_RANGE_START.get()),
-            timeline_visible_range_end: Some(crate::state::TIMELINE_VISIBLE_RANGE_END.get()),
+            timeline_cursor_position: {
+                let pos = crate::state::TIMELINE_CURSOR_POSITION.get();
+                if pos.is_finite() && pos >= 0.0 { pos } else { 10.0 } // Default to 10.0s if invalid
+            },
+            timeline_zoom_level: {
+                let zoom = crate::state::TIMELINE_ZOOM_LEVEL.get();
+                if zoom.is_finite() && zoom >= 1.0 { zoom } else { 1.0 } // Default to 1.0 if invalid
+            },
+            timeline_visible_range_start: {
+                let start = crate::state::TIMELINE_VISIBLE_RANGE_START.get();
+                if start.is_finite() && start >= 0.0 {
+                    Some(start)
+                } else {
+                    None  // Send None instead of Some(NaN) to prevent JSON deserialization error
+                }
+            },
+            timeline_visible_range_end: {
+                let end = crate::state::TIMELINE_VISIBLE_RANGE_END.get();
+                if end.is_finite() && end > 0.0 {
+                    Some(end)
+                } else {
+                    None  // Send None instead of Some(NaN) to prevent JSON deserialization error
+                }
+            },
         },
     };
 
@@ -1102,8 +1155,8 @@ fn sync_timeline_cursor_position_from_config() {
 fn sync_timeline_zoom_state_from_config() {
     let workspace = config_store().workspace.lock_ref();
     
-    // Sync zoom level with validation (1.0 = normal, max 16.0)
-    let zoom_level = workspace.timeline_zoom_level.get().max(1.0).min(16.0);
+    // Sync zoom level with validation (1.0 = normal, max 1B for extreme zoom)
+    let zoom_level = workspace.timeline_zoom_level.get().max(1.0).min(1000000000.0);
     crate::state::TIMELINE_ZOOM_LEVEL.set_neq(zoom_level);
     
     // Sync visible range

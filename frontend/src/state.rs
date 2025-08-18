@@ -22,7 +22,7 @@ pub const SELECTED_VARIABLES_ROW_HEIGHT: u32 = 30;
 pub static TIMELINE_CURSOR_POSITION: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(10.0));
 
 // Timeline zoom state
-pub static TIMELINE_ZOOM_LEVEL: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(1.0)); // 1.0 = normal, 16.0 = max zoom
+pub static TIMELINE_ZOOM_LEVEL: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(1.0)); // 1.0 = normal, 1B max for extreme zoom
 pub static TIMELINE_VISIBLE_RANGE_START: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(0.0)); // Visible time window start
 pub static TIMELINE_VISIBLE_RANGE_END: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(100.0)); // Visible time window end
 
@@ -38,9 +38,15 @@ pub static IS_PANNING_RIGHT: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(fal
 pub static IS_CURSOR_MOVING_LEFT: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
 pub static IS_CURSOR_MOVING_RIGHT: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
 
+// Shift key state tracking for modifier combinations
+pub static IS_SHIFT_PRESSED: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
+
 // Mouse position tracking for zoom center
 pub static MOUSE_X_POSITION: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(0.0));
 pub static MOUSE_TIME_POSITION: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(10.0));
+
+// Zoom center position (in seconds) - separate from mouse position for explicit control
+pub static ZOOM_CENTER_POSITION: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(0.0));
 
 // Canvas dimensions for click calculations
 pub static CANVAS_WIDTH: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(800.0));
@@ -459,6 +465,24 @@ pub fn init_selected_variables_from_config(selected_vars: Vec<shared::SelectedVa
     // Trigger signal value queries if variables were restored
     if !valid_vars.is_empty() {
         crate::views::trigger_signal_value_queries();
+        
+        // Request transition data for all restored variables
+        if let Some((min_time, max_time)) = crate::waveform_canvas::get_current_timeline_range() {
+            for var in valid_vars.iter() {
+                let parts: Vec<&str> = var.unique_id.split('|').collect();
+                if parts.len() >= 3 {
+                    let file_path = parts[0];
+                    let scope_path = parts[1];
+                    let variable_name = parts[2];
+                    crate::waveform_canvas::request_signal_transitions_from_backend(
+                        file_path, scope_path, variable_name, (min_time, max_time)
+                    );
+                }
+            }
+        }
+        
+        // CRITICAL: Trigger canvas redraw to ensure transitions are visible
+        crate::waveform_canvas::trigger_canvas_redraw();
     }
 }
 

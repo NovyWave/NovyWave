@@ -22,7 +22,7 @@ use crate::{
     FILE_PICKER_ERROR, FILE_PICKER_ERROR_CACHE, FILE_TREE_CACHE, DOCK_TOGGLE_IN_PROGRESS,
     TRACKED_FILES, state, clipboard
 };
-use crate::state::TIMELINE_ZOOM_LEVEL;
+use crate::state::{TIMELINE_ZOOM_LEVEL, ZOOM_CENTER_POSITION};
 use crate::state::SELECTED_VARIABLES_ROW_HEIGHT;
 use crate::state::{SELECTED_VARIABLES, clear_selected_variables, remove_selected_variable};
 use crate::format_utils::truncate_value;
@@ -1258,14 +1258,46 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                                     .s(Font::new().color_signal(neutral_11()).center())
                                                                     .child(
                                                                         Text::with_signal(
-                                                                            TIMELINE_ZOOM_LEVEL.signal().map(|zoom_level| {
-                                                                                let percentage = (zoom_level * 100.0) as u32;
-                                                                                format!("{}%", percentage)
+                                                                            TIMELINE_ZOOM_LEVEL.signal().map(|zoom| {
+                                                                                fn format_zoom_value(value: f32, suffix: &str) -> String {
+                                                                                    if value.fract() == 0.0 {
+                                                                                        format!("{}{}×", value as i32, suffix)
+                                                                                    } else {
+                                                                                        format!("{:.1}{}×", value, suffix)
+                                                                                    }
+                                                                                }
+                                                                                
+                                                                                if zoom < 1000.0 {
+                                                                                    format_zoom_value(zoom, "")
+                                                                                } else if zoom < 1000000.0 {
+                                                                                    format_zoom_value(zoom / 1000.0, "k")
+                                                                                } else if zoom < 1000000000.0 {
+                                                                                    format_zoom_value(zoom / 1000000.0, "M")
+                                                                                } else {
+                                                                                    format_zoom_value(zoom / 1000000000.0, "B")
+                                                                                }
                                                                             })
                                                                         )
                                                                     )
                                                             )
                                                             .item(kbd("S").size(KbdSize::Small).variant(KbdVariant::Outlined).build())
+                                                            .item(
+                                                                El::new()
+                                                                    .s(Font::new().color_signal(neutral_8()).size(11))
+                                                                    .child(Text::new(" | "))
+                                                            )
+                                                            .item(
+                                                                El::new()
+                                                                    .s(Width::exact(50))
+                                                                    .s(Font::new().color_signal(neutral_10()).center().size(11))
+                                                                    .child(
+                                                                        Text::with_signal(
+                                                                            ZOOM_CENTER_POSITION.signal().map(|center_pos| {
+                                                                                format!("C:{}s", center_pos.round() as i32)
+                                                                            })
+                                                                        )
+                                                                    )
+                                                            )
                                                     )
                                             )
                                     )
@@ -1314,7 +1346,18 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                                             .child(
                                                                                 Text::with_signal(
                                                                                     crate::state::TIMELINE_CURSOR_POSITION.signal().map(|cursor_pos| {
-                                                                                        format!("{}s", cursor_pos.round() as i32)
+                                                                                        // Use proper time formatting with appropriate units instead of rounding to seconds
+                                                                                        if !cursor_pos.is_finite() || cursor_pos < 0.0 {
+                                                                                            "0s".to_string()
+                                                                                        } else if cursor_pos < 1e-6 {
+                                                                                            format!("{:.1}ns", cursor_pos * 1e9)
+                                                                                        } else if cursor_pos < 1e-3 {
+                                                                                            format!("{:.1}μs", cursor_pos * 1e6)
+                                                                                        } else if cursor_pos < 1.0 {
+                                                                                            format!("{:.1}ms", cursor_pos * 1e3)
+                                                                                        } else {
+                                                                                            format!("{:.1}s", cursor_pos)
+                                                                                        }
                                                                                     })
                                                                                 )
                                                                             )
