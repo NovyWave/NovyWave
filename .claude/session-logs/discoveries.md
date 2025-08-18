@@ -668,3 +668,85 @@ impl RenderCoordinator {
 **Critical Discovery**: WebGL/WebGPU theoretical advantages are negated by implementation anti-patterns. The optimization document provides systematic fixes to achieve expected GPU performance while maintaining Canvas 2D as reliable fallback.
 
 **Document Location**: Created comprehensive guide at `/home/martinkavik/repos/Fast2D/docs/performance_optimization_guide.md` for Fast2D library improvements and `/home/martinkavik/repos/NovyWave/docs/fast2d_optimizations.md` for NovyWave integration optimizations.
+
+## Session Discovery: 2025-08-18 - VCD Timescale Conversion Fix & Sub-Pixel Transition Visibility Planning
+
+### Problem/Context
+stress_test.vcd (1ns timescale) transitions weren't displaying on timeline while simple.vcd (1s timescale) worked fine. Backend had inconsistent time unit handling between file loading and signal queries, causing rapid transitions to be invisible.
+
+### Solution/Pattern
+**Timescale Consistency Fix**: Store timescale factor in WaveformData struct and apply consistent conversions throughout the backend pipeline.
+
+**Root Cause Analysis**:
+1. **File Loading**: Converted VCD times from native units to seconds using timescale factors
+2. **Signal Queries**: Treated incoming time ranges as raw VCD units instead of seconds
+3. **Mismatch**: Query functions couldn't find transitions because they were looking in wrong time units
+
+### Code Example
+```rust
+// Added timescale storage to WaveformData struct
+struct WaveformData {
+    hierarchy: wellen::Hierarchy,
+    signal_source: Arc<Mutex<wellen::SignalSource>>,
+    time_table: Vec<wellen::Time>,
+    signals: HashMap<String, wellen::SignalRef>,
+    file_format: wellen::FileFormat,
+    timescale_factor: f64, // NEW: Conversion factor from VCD native units to seconds
+}
+
+// Calculate timescale factor during VCD parsing
+let timescale_factor = header_result.hierarchy.timescale()
+    .map(|ts| {
+        use wellen::TimescaleUnit;
+        match ts.unit {
+            TimescaleUnit::FemtoSeconds => ts.factor as f64 * 1e-15,
+            TimescaleUnit::PicoSeconds => ts.factor as f64 * 1e-12,
+            TimescaleUnit::NanoSeconds => ts.factor as f64 * 1e-9,
+            TimescaleUnit::MicroSeconds => ts.factor as f64 * 1e-6,
+            TimescaleUnit::MilliSeconds => ts.factor as f64 * 1e-3,
+            TimescaleUnit::Seconds => ts.factor as f64,
+            TimescaleUnit::Unknown => ts.factor as f64,
+        }
+    })
+    .unwrap_or(1.0);
+
+// Fixed query_signal_transitions time conversion
+let (start_time, end_time) = match waveform_data.file_format {
+    wellen::FileFormat::Vcd => {
+        // Convert from seconds back to VCD native units using stored timescale
+        let start_native = (time_range.0 / waveform_data.timescale_factor) as u64;
+        let end_native = (time_range.1 / waveform_data.timescale_factor) as u64;
+        (start_native, end_native)
+    },
+    _ => {
+        // FST uses femtoseconds
+        ((time_range.0 * 1_000_000_000_000.0) as u64, (time_range.1 * 1_000_000_000_000.0) as u64)
+    }
+};
+
+// Convert time back to seconds for frontend
+let time_seconds = match waveform_data.file_format {
+    wellen::FileFormat::Vcd => {
+        time_val as f64 * waveform_data.timescale_factor
+    },
+    _ => time_val as f64 / 1_000_000_000_000.0,
+};
+```
+
+### Impact/Lesson
+- **Timescale Conversion Consistency**: Critical to maintain consistent time units throughout the entire data pipeline
+- **Store Conversion Factors**: Keep timescale factors with data structures for reuse in queries
+- **Bidirectional Conversion**: Frontend sends seconds, backend works in native units, must convert both ways
+- **Testing Multiple Scales**: Always test with files spanning 9+ orders of magnitude (ns to s)
+- **Root Cause vs Symptoms**: Initial assumption was rendering issue, but root cause was backend data retrieval
+
+**Sub-Pixel Transition Visibility Planning**:
+Created comprehensive plan at `docs/canvas_subpixels_and_controls.md` including:
+- 10000x zoom capability for ns→s scale differences
+- Shift+Q/E for direct transition jumping (essential debugging feature)
+- Performance optimization with transition culling and density-based rendering
+- Activity bands for >10 transitions/pixel scenarios
+- Zoom level UI indicator as high priority
+- Future: Zoom presets, mixed timescale handling
+
+**Critical Discovery**: When rapid transitions don't appear, check the entire data pipeline from backend parsing to frontend rendering. The issue may be in time unit conversions, not visualization code.
