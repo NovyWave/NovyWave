@@ -866,7 +866,7 @@ fn get_signal_transitions_for_variable(var: &SelectedVariable, time_range: (f32,
 }
 
 // Request real signal transitions from backend
-pub fn request_signal_transitions_from_backend(file_path: &str, scope_path: &str, variable_name: &str, _time_range: (f32, f32)) {
+pub fn request_signal_transitions_from_backend(file_path: &str, scope_path: &str, variable_name: &str, time_range: (f32, f32)) {
     zoon::println!("=== Requesting signal transitions for {}/{} ===", scope_path, variable_name);
     
     let query = SignalTransitionQuery {
@@ -893,7 +893,7 @@ pub fn request_signal_transitions_from_backend(file_path: &str, scope_path: &str
     let message = UpMsg::QuerySignalTransitions {
         file_path: file_path.to_string(),
         signal_queries: vec![query],
-        time_range: (file_min, file_max), // Request entire file range
+        time_range: (file_min, file_max), // Request entire file range to ensure all transitions available
     };
     
     // Send real backend request

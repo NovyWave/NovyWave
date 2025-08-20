@@ -1,4 +1,5 @@
 ---
+model: claude-sonnet-4-0
 allowed-tools: Bash
 description: 'Smart git commit with checkpoint conversion and auto-amend detection'
 ---

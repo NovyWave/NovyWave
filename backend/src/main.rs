@@ -226,8 +226,33 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
             }
             send_progress_update(file_id.clone(), 0.7, session_id, cor_id).await;
                     
-                    // FST: Extract time range first before moving body_result
-                    let (min_seconds, max_seconds) = extract_fst_time_range(&body_result);
+                    // Calculate timescale factor with intelligent FST inference
+                    let embedded_timescale_factor = match header_result.hierarchy.timescale() {
+                        Some(ts) => {
+                            use wellen::TimescaleUnit;
+                            let factor = match ts.unit {
+                                TimescaleUnit::FemtoSeconds => ts.factor as f64 * 1e-15,
+                                TimescaleUnit::PicoSeconds => ts.factor as f64 * 1e-12,
+                                TimescaleUnit::NanoSeconds => ts.factor as f64 * 1e-9,
+                                TimescaleUnit::MicroSeconds => ts.factor as f64 * 1e-6,
+                                TimescaleUnit::MilliSeconds => ts.factor as f64 * 1e-3,
+                                TimescaleUnit::Seconds => ts.factor as f64,
+                                TimescaleUnit::Unknown => ts.factor as f64,
+                            };
+                            println!("FST TIMESCALE DEBUG: {} factor={}, unit={:?}, computed_factor={}", filename, ts.factor, ts.unit, factor);
+                            factor
+                        }
+                        None => {
+                            println!("FST TIMESCALE DEBUG: {} has NO timescale info, using nanosecond default", filename);
+                            1e-9 // Default to nanoseconds if no timescale info
+                        }
+                    };
+                    
+                    // For FST files, check if embedded timescale produces unreasonable durations and override if needed
+                    let timescale_factor = infer_reasonable_fst_timescale(&body_result, embedded_timescale_factor, &filename);
+                    
+                    // FST: Extract time range using proper timescale
+                    let (min_seconds, max_seconds) = extract_fst_time_range(&body_result, timescale_factor);
                     let (min_time, max_time) = (Some(min_seconds), Some(max_seconds));
                     
                     // Extract scopes from hierarchy 
@@ -244,7 +269,7 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
                         time_table: body_result.time_table.clone(),
                         signals,
                         file_format: header_result.file_format,
-                        timescale_factor: 1e-15, // FST uses femtoseconds
+                        timescale_factor,
                     };
                     
                     {
@@ -432,7 +457,51 @@ fn convert_panic_to_file_error(file_path: &str) -> FileError {
     }
 }
 
-fn extract_fst_time_range(body_result: &wellen::viewers::BodyResult) -> (f64, f64) {
+/// Intelligent FST timescale inference to handle files with incorrect embedded timescale
+fn infer_reasonable_fst_timescale(body_result: &wellen::viewers::BodyResult, embedded_factor: f64, filename: &str) -> f64 {
+    if body_result.time_table.is_empty() {
+        return embedded_factor; // Can't infer from empty time table
+    }
+    
+    let raw_min = body_result.time_table.first().map(|&t| t as f64).unwrap_or(0.0);
+    let raw_max = body_result.time_table.last().map(|&t| t as f64).unwrap_or(0.0);
+    let raw_range = raw_max - raw_min;
+    
+    // Check if embedded timescale produces unreasonably long duration (>1000 seconds)
+    let computed_duration = raw_range * embedded_factor;
+    
+    if computed_duration > 1000.0 {
+        println!("FST INFERENCE WARNING: {} embedded timescale produces {:.1}s duration, too long for typical simulation", filename, computed_duration);
+        
+        // Heuristic inference based on value magnitude - optimized for typical FPGA/digital designs
+        let inferred_factor = if raw_range > 1e15 {
+            println!("FST INFERENCE: Very large values ({}), assuming femtoseconds", raw_range);
+            1e-15 // femtoseconds
+        } else if raw_range > 1e12 {
+            println!("FST INFERENCE: Large values ({}), assuming picoseconds", raw_range);
+            1e-12 // picoseconds
+        } else if raw_range > 1e6 {
+            println!("FST INFERENCE: Medium values ({}), assuming nanoseconds", raw_range);
+            1e-9  // nanoseconds - most common for FPGA/CPU designs (covers 1ms to 1000s of sim time)
+        } else if raw_range > 1e3 {
+            println!("FST INFERENCE: Small values ({}), assuming microseconds", raw_range);
+            1e-6  // microseconds
+        } else {
+            println!("FST INFERENCE: Very small values ({}), assuming milliseconds", raw_range);
+            1e-3  // milliseconds
+        };
+        
+        let inferred_duration = raw_range * inferred_factor;
+        println!("FST INFERENCE: Using factor {} -> {:.6}s duration", inferred_factor, inferred_duration);
+        
+        return inferred_factor;
+    }
+    
+    println!("FST INFERENCE: Embedded timescale produces reasonable duration ({:.6}s), keeping it", computed_duration);
+    embedded_factor
+}
+
+fn extract_fst_time_range(body_result: &wellen::viewers::BodyResult, timescale_factor: f64) -> (f64, f64) {
     if body_result.time_table.is_empty() {
         return (0.0, 100.0); // Default fallback
     }
@@ -453,8 +522,13 @@ fn extract_fst_time_range(body_result: &wellen::viewers::BodyResult) -> (f64, f6
         }
     };
     
-    // FST time values are in femtoseconds, convert to seconds
-    (raw_min / 1_000_000_000_000.0, raw_max / 1_000_000_000_000.0)
+    println!("FST TIME EXTRACTION DEBUG:");
+    println!("  Raw time values: {} to {}", raw_min, raw_max);
+    println!("  Timescale factor: {}", timescale_factor);
+    println!("  Converted seconds: {} to {}", raw_min * timescale_factor, raw_max * timescale_factor);
+    
+    // Convert FST time values to seconds using the proper timescale factor
+    (raw_min * timescale_factor, raw_max * timescale_factor)
 }
 
 
@@ -1244,8 +1318,8 @@ async fn query_signal_values(file_path: String, queries: Vec<SignalValueQuery>, 
                         (query.time_seconds / waveform_data.timescale_factor) as u64
                     },
                     _ => {
-                        // For other formats, use femtosecond conversion  
-                        (query.time_seconds * 1_000_000_000_000.0) as u64
+                        // For other formats, use proper timescale conversion
+                        (query.time_seconds / waveform_data.timescale_factor) as u64
                     }
                 };
                 
@@ -1381,8 +1455,8 @@ async fn process_signal_value_queries_internal(file_path: &str, queries: &[Signa
                 (query.time_seconds / waveform_data.timescale_factor) as u64
             },
             _ => {
-                // For other formats, use femtosecond conversion  
-                (query.time_seconds * 1_000_000_000_000.0) as u64
+                // For other formats, use proper timescale conversion
+                (query.time_seconds / waveform_data.timescale_factor) as u64
             }
         };
         
@@ -1512,7 +1586,7 @@ async fn query_signal_transitions(
                 let mut transitions = Vec::new();
                 
                 // Convert time range from seconds back to native file units
-                let (start_time, end_time) = match waveform_data.file_format {
+                let (mut start_time, mut end_time) = match waveform_data.file_format {
                     wellen::FileFormat::Vcd => {
                         // For VCD: Convert from seconds back to VCD native units using stored timescale
                         // time_range is in seconds, need to convert to VCD native units
@@ -1521,10 +1595,24 @@ async fn query_signal_transitions(
                         (start_native, end_native)
                     },
                     _ => {
-                        // For other formats, use femtosecond conversion  
-                        ((time_range.0 * 1_000_000_000_000.0) as u64, (time_range.1 * 1_000_000_000_000.0) as u64)
+                        // For other formats (like FST), use proper timescale conversion
+                        ((time_range.0 / waveform_data.timescale_factor) as u64, (time_range.1 / waveform_data.timescale_factor) as u64)
                     }
                 };
+                
+                // PERFORMANCE OPTIMIZATION: Clamp to actual file bounds to avoid processing non-existent time ranges
+                // This prevents scanning millions of non-existent time points when timeline is zoomed out beyond file data
+                if !waveform_data.time_table.is_empty() {
+                    let file_start = *waveform_data.time_table.first().unwrap();
+                    let file_end = *waveform_data.time_table.last().unwrap();
+                    start_time = start_time.max(file_start);
+                    end_time = end_time.min(file_end);
+                    
+                    println!("BACKEND CLAMP: Requested ({}, {}), file bounds ({}, {}), clamped to ({}, {})", 
+                        (time_range.0 / waveform_data.timescale_factor) as u64,
+                        (time_range.1 / waveform_data.timescale_factor) as u64,
+                        file_start, file_end, start_time, end_time);
+                }
                 
                 // Load signal once for efficiency
                 let mut signal_source = match waveform_data.signal_source.lock() {
@@ -1545,16 +1633,41 @@ async fn query_signal_transitions(
                     let mut last_value: Option<String> = None;
                     let mut last_transition_time: Option<f64> = None;
                     
-                    // Iterate through time table within time range
-                    for (idx, &time_val) in waveform_data.time_table.iter().enumerate() {
-                        if time_val >= start_time && time_val <= end_time {
+                    // Use binary search to find time range bounds - much faster than linear iteration
+                    let start_idx = match waveform_data.time_table.binary_search(&start_time) {
+                        Ok(exact_idx) => exact_idx,
+                        Err(insert_pos) => insert_pos,
+                    };
+                    
+                    let end_idx = match waveform_data.time_table.binary_search(&end_time) {
+                        Ok(exact_idx) => exact_idx + 1, // Include exact match
+                        Err(insert_pos) => insert_pos,
+                    };
+                    
+                    // PERFORMANCE OPTIMIZATION: Pixel-level decimation for dense signals
+                    let transition_count = end_idx - start_idx;
+                    let canvas_width = 1200.0; // Approximate canvas width in pixels
+                    let max_useful_transitions = (canvas_width * 2.0) as usize; // 2 transitions per pixel maximum
+                    
+                    let decimation_step = if transition_count > max_useful_transitions {
+                        let step = transition_count / max_useful_transitions;
+                        println!("BACKEND DECIMATION: {} transitions -> sampling every {} for performance", transition_count, step);
+                        step.max(1)
+                    } else {
+                        1 // No decimation needed
+                    };
+                    
+                    // Only iterate through the relevant time slice, with optional decimation
+                    let mut idx = start_idx;
+                    while idx < end_idx.min(waveform_data.time_table.len()) {
+                        if let Some(&time_val) = waveform_data.time_table.get(idx) {
                             // Convert time back to seconds for frontend using proper timescale
                             let time_seconds = match waveform_data.file_format {
                                 wellen::FileFormat::Vcd => {
                                     // Convert VCD native units back to seconds using stored timescale
                                     time_val as f64 * waveform_data.timescale_factor
                                 },
-                                _ => time_val as f64 / 1_000_000_000_000.0,
+                                _ => time_val as f64 * waveform_data.timescale_factor,
                             };
                             
                             // Get signal value at this time index
@@ -1578,6 +1691,8 @@ async fn query_signal_transitions(
                                 }
                             }
                         }
+                        
+                        idx += decimation_step; // Increment by decimation step for performance
                     }
                     
                     // Add filler rectangle: add "0" transition at the actual signal end time  
@@ -1590,7 +1705,7 @@ async fn query_signal_transitions(
                                     // Convert VCD native units to seconds using stored timescale
                                     end_time as f64 * waveform_data.timescale_factor
                                 },
-                                _ => end_time as f64 / 1_000_000_000_000.0,
+                                _ => end_time as f64 * waveform_data.timescale_factor,
                             };
                             
                             // Add "0" filler at actual signal end time (not viewing window end)

@@ -1,3 +1,9 @@
+---
+model: claude-sonnet-4-0
+allowed-tools: Read, Write, Bash, Glob, Grep
+description: 'Store session discoveries to permanent memory before ending sessions'
+---
+
 # /core-remember-important Command
 
 ## Purpose  
