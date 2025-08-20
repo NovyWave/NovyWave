@@ -24,7 +24,8 @@ expanded_scopes = [
     "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst",
     "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP",
     "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv",
-    "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb",
+    "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP",
+    "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv",
 ]
 load_files_expanded_directories = [
     "/",
@@ -35,12 +36,12 @@ load_files_expanded_directories = [
     "/home/martinkavik/repos/NovyWave",
     "/home/martinkavik/repos/NovyWave/test_files",
 ]
-selected_scope_id = "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s"
+selected_scope_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv.MmuPlugin_logic_invalidate_arbiter"
 load_files_scroll_position = 992
-timeline_cursor_position = 0.000006937861598999007
-timeline_zoom_level = 32589638.0
-timeline_visible_range_start = 0.0000032529460440855473
-timeline_visible_range_end = 0.000013850755749444943
+timeline_cursor_position = 0.000005711931407859083
+timeline_zoom_level = 15563973.0
+timeline_visible_range_start = 0.0
+timeline_visible_range_end = 0.000016062745999079198
 
 [workspace.docked_bottom_dimensions]
 files_and_scopes_panel_width = 518.0
@@ -71,3 +72,6 @@ unique_id = "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s|
 
 [[workspace.selected_variables]]
 unique_id = "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s|B"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv.MmuPlugin_logic_invalidate_arbiter|clk"

@@ -21,7 +21,7 @@ const MIN_VALID_RANGE: f32 = 1e-6;       // 1 microsecond minimum range
 const SAFE_FALLBACK_START: f32 = 0.0;    // Safe fallback start time
 const SAFE_FALLBACK_END: f32 = 100.0;    // Safe fallback end time
 const MOVEMENT_FRAME_MS: u32 = 16;       // 60fps animation frame timing
-const MAX_FAILURES: u32 = 10;           // Circuit breaker threshold
+const _MAX_FAILURES: u32 = 10;           // Circuit breaker threshold
 
 // High-precision timing for smooth cursor animation (nanoseconds)
 const ANIMATION_FRAME_NS: u64 = 16_666_666; // 16.666ms = 60fps in nanoseconds
@@ -54,7 +54,7 @@ struct DirectCursorAnimation {
     velocity_pixels_per_frame: f64, // Movement speed in pixels per frame
     is_animating: bool,        // Animation active flag
     direction: i8,             // -1 for left, 1 for right, 0 for stopped
-    last_frame_time: u64,      // Last animation frame timestamp (nanoseconds)
+    _last_frame_time: u64,      // Last animation frame timestamp (nanoseconds)
 }
 
 impl Default for DirectCursorAnimation {
@@ -65,7 +65,7 @@ impl Default for DirectCursorAnimation {
             velocity_pixels_per_frame: PIXELS_PER_FRAME,
             is_animating: false,
             direction: 0,
-            last_frame_time: 0,
+            _last_frame_time: 0,
         }
     }
 }
@@ -622,7 +622,7 @@ async fn create_canvas_element() -> impl Element {
     let canvas_wrapper_for_dims = canvas_wrapper_shared.clone();
     Task::start(async move {
         CANVAS_WIDTH.signal().for_each(move |_| {
-            let canvas_wrapper = canvas_wrapper_for_dims.clone();
+            let _canvas_wrapper = canvas_wrapper_for_dims.clone();
             async move {
                 trigger_canvas_redraw();
             }
@@ -630,7 +630,7 @@ async fn create_canvas_element() -> impl Element {
     });
 
     // Force initial render after canvas enters DOM
-    let canvas_wrapper_init = canvas_wrapper_shared.clone();
+    let _canvas_wrapper_init = canvas_wrapper_shared.clone();
     let dom_canvas_init = dom_canvas.clone();
     let zoon_canvas = zoon_canvas.after_insert(move |_| {
         // Canvas is now in DOM, trigger initial render
@@ -679,7 +679,7 @@ async fn create_canvas_element() -> impl Element {
                 
                 // Calculate time from click position with precision-safe calculations
                 if let Some((min_time, max_time)) = get_current_timeline_range() {
-                    let time_range = max_time - min_time;
+                    let _time_range = max_time - min_time;
                     
                     // Use f64 precision for calculation to avoid precision loss
                     let min_time_f64 = min_time as f64;
@@ -897,12 +897,12 @@ pub fn request_signal_transitions_from_backend(file_path: &str, scope_path: &str
     };
     
     // Send real backend request
-    zoon::println!("=== SENDING QuerySignalTransitions for {}/{} ===", scope_path, variable_name);
+    // zoon::println!("=== SENDING QuerySignalTransitions for {}/{} ===", scope_path, variable_name);
     Task::start(async move {
         if let Err(e) = CurrentPlatform::send_message(message).await {
             zoon::println!("Failed to query signal transitions via platform: {}", e);
         } else {
-            zoon::println!("=== QuerySignalTransitions sent successfully ===");
+            // zoon::println!("=== QuerySignalTransitions sent successfully ===");
         }
     });
 }

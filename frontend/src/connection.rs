@@ -259,7 +259,7 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 for result in results {
                     let cache_key = format!("{}|{}|{}", file_path, result.scope_path, result.variable_name);
                     
-                    zoon::println!("=== INSERTING TO CACHE: {} with {} transitions ===", cache_key, result.transitions.len());
+                    // zoon::println!("=== INSERTING TO CACHE: {} with {} transitions ===", cache_key, result.transitions.len());
                     
                     // Store backend data in cache
                     crate::waveform_canvas::SIGNAL_TRANSITIONS_CACHE.lock_mut()
@@ -273,6 +273,26 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 // TODO: Handle signal transitions error for future use
                 // Currently using static data in canvas, will integrate later
             }
+            DownMsg::BatchSignalValues { batch_id: _, file_results } => {
+                // Process batch signal values from backend (first handler)
+                for file_result in file_results {
+                    let mut signal_values = crate::state::SIGNAL_VALUES.lock_mut();
+                    
+                    for result in file_result.results {
+                        let unique_id = format!("{}|{}|{}", 
+                            file_result.file_path,
+                            result.scope_path,
+                            result.variable_name
+                        );
+                        
+                        let raw_binary = result.raw_value
+                            .unwrap_or_else(|| "Loading...".to_string());
+                        
+                        let multi_format_value = crate::format_utils::MultiFormatValue::new(raw_binary);
+                        signal_values.insert(unique_id, multi_format_value);
+                    }
+                }
+            }
         }
     })
 });
@@ -280,13 +300,13 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
 pub fn send_up_msg(up_msg: UpMsg) {
     Task::start(async move {
         // DEBUG: Log message sending attempt
-        zoon::println!("=== SEND_UP_MSG: Attempting to send {:?} ===", 
-            std::mem::discriminant(&up_msg));
+        // DEBUG: Log message sending attempt (commented out to reduce noise)
+        // zoon::println!("=== SEND_UP_MSG: Attempting to send {:?} ===", std::mem::discriminant(&up_msg));
         
         // Use the raw MoonZoon connection directly to avoid infinite recursion
         match CONNECTION.send_up_msg(up_msg).await {
             Ok(_) => {
-                zoon::println!("=== SEND_UP_MSG: Message sent successfully via raw connection ===");
+                // zoon::println!("=== SEND_UP_MSG: Message sent successfully via raw connection ===");
             }
             Err(error) => {
                 zoon::println!("=== SEND_UP_MSG: Raw connection send error - {:?} ===", error);
@@ -499,7 +519,7 @@ fn handle_down_msg(down_msg: DownMsg) {
             for result in results {
                 let cache_key = format!("{}|{}|{}", file_path, result.scope_path, result.variable_name);
                 
-                zoon::println!("=== SECOND HANDLER - INSERTING TO CACHE: {} with {} transitions ===", cache_key, result.transitions.len());
+                // zoon::println!("=== SECOND HANDLER - INSERTING TO CACHE: {} with {} transitions ===", cache_key, result.transitions.len());
                 
                 // Store backend data in cache
                 crate::waveform_canvas::SIGNAL_TRANSITIONS_CACHE.lock_mut()
@@ -510,6 +530,26 @@ fn handle_down_msg(down_msg: DownMsg) {
         }
         DownMsg::SignalTransitionsError { file_path: _, error: _ } => {
             // Signal transitions error - no cleanup needed without deduplication
+        }
+        DownMsg::BatchSignalValues { batch_id: _, file_results } => {
+            // Process batch signal values from backend
+            for file_result in file_results {
+                let mut signal_values = crate::state::SIGNAL_VALUES.lock_mut();
+                
+                for result in file_result.results {
+                    let unique_id = format!("{}|{}|{}", 
+                        file_result.file_path,
+                        result.scope_path,
+                        result.variable_name
+                    );
+                    
+                    let raw_binary = result.raw_value
+                        .unwrap_or_else(|| "Loading...".to_string());
+                    
+                    let multi_format_value = crate::format_utils::MultiFormatValue::new(raw_binary);
+                    signal_values.insert(unique_id, multi_format_value);
+                }
+            }
         }
     }
 }

@@ -17,6 +17,10 @@ pub enum UpMsg {
         file_path: String,
         queries: Vec<SignalValueQuery>,
     },
+    BatchQuerySignalValues {
+        batch_id: String,
+        file_queries: Vec<FileSignalQueries>,
+    },
     QuerySignalTransitions {
         file_path: String,
         signal_queries: Vec<SignalTransitionQuery>,
@@ -39,6 +43,10 @@ pub enum DownMsg {
     SignalValues {
         file_path: String,
         results: Vec<SignalValueResult>,
+    },
+    BatchSignalValues {
+        batch_id: String,
+        file_results: Vec<FileSignalResults>,
     },
     SignalValuesError {
         file_path: String,
@@ -72,6 +80,18 @@ pub struct SignalValueResult {
     pub raw_value: Option<String>, // Raw binary value from waveform
     pub formatted_value: Option<String>, // Formatted according to requested format
     pub format: VarFormat, // Format used for this result
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct FileSignalQueries {
+    pub file_path: String,
+    pub queries: Vec<SignalValueQuery>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct FileSignalResults {
+    pub file_path: String,
+    pub results: Vec<SignalValueResult>,
 }
 
 // ===== SIGNAL TRANSITION QUERY TYPES =====

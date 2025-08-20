@@ -134,18 +134,56 @@ pub fn main() {
             }).await
         });
         
-        // Update signal values when cursor position changes (debounced)
+        // Update signal values when cursor position changes (adaptive debouncing)
         Task::start(async {
             let last_query_time = Mutable::new(0.0);
+            let movement_start_time = Mutable::new(0.0);
+            let last_position = Mutable::new(0.0);
             
             crate::state::TIMELINE_CURSOR_POSITION.signal().for_each_sync(move |cursor_pos| {
                 let now = js_sys::Date::now();
+                let is_moving = crate::state::IS_CURSOR_MOVING_LEFT.get() || crate::state::IS_CURSOR_MOVING_RIGHT.get();
                 
-                // Only query if 50ms have passed since last query (debouncing)
-                if now - last_query_time.get() > 50.0 {
+                // Calculate movement velocity (pixels per second)
+                let time_delta = now - last_query_time.get();
+                let position_delta = (cursor_pos - last_position.get()).abs() as f64;
+                let velocity = if time_delta > 0.0 { position_delta / (time_delta / 1000.0) } else { 0.0 };
+                
+                // Adaptive debouncing based on movement state and velocity
+                let debounce_ms = if is_moving {
+                    // During continuous movement: aggressive debouncing
+                    if velocity > 1000.0 { 300.0 }      // Very fast movement
+                    else if velocity > 500.0 { 200.0 }  // Fast movement  
+                    else { 150.0 }                      // Moderate movement
+                } else {
+                    // Single clicks or movement stopped: responsive
+                    50.0
+                };
+                
+                // Track movement state changes
+                if is_moving && movement_start_time.get() == 0.0 {
+                    movement_start_time.set(now);
+                }
+                if !is_moving {
+                    movement_start_time.set(0.0);
+                }
+                
+                // Apply debouncing
+                if now - last_query_time.get() > debounce_ms {
                     crate::views::query_signal_values_at_time(cursor_pos as f64);
                     last_query_time.set(now);
+                } else if !is_moving {
+                    // Schedule final query when movement stops but within debounce window
+                    let final_cursor_pos = cursor_pos;
+                    let last_query_time_clone = last_query_time.clone();
+                    Task::start(async move {
+                        Timer::sleep(50).await;
+                        crate::views::query_signal_values_at_time(final_cursor_pos as f64);
+                        last_query_time_clone.set(js_sys::Date::now());
+                    });
                 }
+                
+                last_position.set(cursor_pos);
             }).await;
         });
     });

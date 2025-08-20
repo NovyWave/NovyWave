@@ -5,7 +5,7 @@ use moonzoon_novyui::tokens::theme::{Theme, toggle_theme, theme};
 use moonzoon_novyui::tokens::color::{neutral_1, neutral_2, neutral_4, neutral_8, neutral_10, neutral_11, neutral_12, primary_3, primary_6, primary_7};
 use moonzoon_novyui::components::{kbd, KbdSize, KbdVariant};
 use moonzoon_novyui::tokens::typography::font_mono;
-use shared::{ScopeData, UpMsg, TrackedFile, SelectedVariable, FileState, SignalValueQuery};
+use shared::{ScopeData, UpMsg, TrackedFile, SelectedVariable, FileState, SignalValueQuery, SignalValueResult};
 use crate::types::{get_variables_from_tracked_files, filter_variables_with_context};
 use crate::virtual_list::virtual_variables_list;
 use crate::config;
@@ -718,42 +718,120 @@ fn update_variable_format(unique_id: &str, new_format: shared::VarFormat) {
     trigger_signal_value_queries();
 }
 
+/// Compute signal value from cached transitions at a specific time
+fn compute_value_from_cached_transitions(
+    file_path: &str,
+    scope_path: &str, 
+    variable_name: &str,
+    time_seconds: f64
+) -> Option<String> {
+    let cache_key = format!("{}|{}|{}", file_path, scope_path, variable_name);
+    let cache = crate::waveform_canvas::SIGNAL_TRANSITIONS_CACHE.lock_ref();
+    
+    if let Some(transitions) = cache.get(&cache_key) {
+        // Find the most recent transition before or at the requested time
+        let mut current_value = None;
+        
+        for transition in transitions {
+            if transition.time_seconds <= time_seconds {
+                current_value = Some(transition.value.clone());
+            } else {
+                break; // Transitions should be sorted by time
+            }
+        }
+        
+        current_value
+    } else {
+        None // No cached data available
+    }
+}
+
 /// Query signal values for selected variables at a specific time
 pub fn query_signal_values_at_time(time_seconds: f64) {
     let selected_vars = SELECTED_VARIABLES.lock_ref();
-    // Process signal value queries for selected variables
     
     if selected_vars.is_empty() {
         return;
     }
     
-    // Group queries by file path for efficient batch processing
-    let mut queries_by_file: HashMap<String, Vec<SignalValueQuery>> = HashMap::new();
+    // Group queries by file path and separate cached vs uncached
+    let mut backend_queries_by_file: HashMap<String, Vec<SignalValueQuery>> = HashMap::new();
+    let mut cached_results: Vec<SignalValueResult> = Vec::new();
     
     for selected_var in selected_vars.iter() {
-        // Parse unique_id for signal query
         if let Some((file_path, scope_path, variable_name)) = selected_var.parse_unique_id() {
-            // Create signal value query for variable
-            let query = SignalValueQuery {
-                scope_path,
-                variable_name,
-                time_seconds,
-                format: selected_var.formatter.unwrap_or_default(),
-            };
-            
-            queries_by_file.entry(file_path).or_insert_with(Vec::new).push(query);
-        } else {
-            // Skip variable with invalid unique_id format
+            // Try to get value from cached transitions first
+            if let Some(cached_value) = compute_value_from_cached_transitions(
+                &file_path, &scope_path, &variable_name, time_seconds
+            ) {
+                // Use cached value - create a result directly
+                let result = SignalValueResult {
+                    scope_path: scope_path.clone(),
+                    variable_name: variable_name.clone(),
+                    time_seconds,
+                    raw_value: Some(cached_value.clone()),
+                    formatted_value: Some(cached_value), // TODO: Apply formatting
+                    format: selected_var.formatter.unwrap_or_default(),
+                };
+                cached_results.push(result);
+            } else {
+                // No cached data - need backend query
+                let query = SignalValueQuery {
+                    scope_path,
+                    variable_name,
+                    time_seconds,
+                    format: selected_var.formatter.unwrap_or_default(),
+                };
+                backend_queries_by_file.entry(file_path).or_insert_with(Vec::new).push(query);
+            }
         }
     }
     
-    // Send batch queries for each file
-    for (file_path, queries) in queries_by_file {
-        // Send batch signal value queries to backend
+    // Update UI immediately with cached results
+    if !cached_results.is_empty() {
+        update_signal_values_in_ui(&cached_results);
+    }
+    
+    // Send backend queries only for uncached variables
+    for (file_path, queries) in backend_queries_by_file {
         Task::start(async move {
             use crate::platform::{Platform, CurrentPlatform};
             let _ = CurrentPlatform::send_message(UpMsg::QuerySignalValues { file_path, queries }).await;
         });
+    }
+}
+
+/// Update signal values in UI from cached or backend results
+fn update_signal_values_in_ui(results: &[SignalValueResult]) {
+    let mut signal_values = crate::state::SIGNAL_VALUES.lock_mut();
+    
+    for result in results {
+        // Create unique_id in the same format as SelectedVariable: file_path|scope_path|variable_name
+        // Note: We need the file_path, but SignalValueResult doesn't include it
+        // We'll reconstruct it from the selected variables context
+        let _unique_id = format!("{}|{}", result.scope_path, result.variable_name);
+        
+        // Find the full unique_id by checking which selected variable matches
+        let selected_vars = SELECTED_VARIABLES.lock_ref();
+        if let Some(matching_var) = selected_vars.iter().find(|var| {
+            if let Some((_, scope, name)) = var.parse_unique_id() {
+                scope == result.scope_path && name == result.variable_name
+            } else {
+                false
+            }
+        }) {
+            let full_unique_id = matching_var.unique_id.clone();
+            
+            // Create MultiFormatValue from raw binary value
+            let raw_binary = result.raw_value
+                .clone()
+                .unwrap_or_else(|| "Loading...".to_string());
+            
+            let multi_format_value = crate::format_utils::MultiFormatValue::new(raw_binary);
+            
+            // Store multi-format signal value with unique identifier
+            signal_values.insert(full_unique_id, multi_format_value);
+        }
     }
 }
 

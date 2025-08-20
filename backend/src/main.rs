@@ -71,6 +71,25 @@ async fn up_msg_handler(req: UpMsgRequest<UpMsg>) {
                     signal_queries.len(), file_path, time_range);
             query_signal_transitions(file_path.clone(), signal_queries.clone(), time_range.clone(), session_id, cor_id).await;
         }
+        UpMsg::BatchQuerySignalValues { batch_id, file_queries } => {
+            // Handle batch signal value queries - process multiple files in one request
+            let mut file_results = Vec::new();
+            
+            for file_query in file_queries {
+                // Process each file's queries
+                let results = match process_signal_value_queries_internal(&file_query.file_path, &file_query.queries).await {
+                    Ok(results) => results,
+                    Err(_) => Vec::new(), // Skip failed file queries in batch
+                };
+                file_results.push(shared::FileSignalResults {
+                    file_path: file_query.file_path.clone(),
+                    results,
+                });
+            }
+            
+            // Send batch response
+            send_down_msg(DownMsg::BatchSignalValues { batch_id: batch_id.clone(), file_results }, session_id, cor_id).await;
+        }
     }
 }
 
@@ -1320,6 +1339,128 @@ async fn query_signal_values(file_path: String, queries: Vec<SignalValueQuery>, 
         file_path,
         results,
     }, session_id, cor_id).await;
+}
+
+// Helper function for batch processing - returns results instead of sending
+async fn process_signal_value_queries_internal(file_path: &str, queries: &[SignalValueQuery]) -> Result<Vec<SignalValueResult>, String> {
+    // For VCD files, ensure body is loaded on-demand
+    if file_path.ends_with(".vcd") {
+        if let Err(e) = ensure_vcd_body_loaded(file_path).await {
+            return Err(e);
+        }
+    }
+    
+    let store = WAVEFORM_DATA_STORE.lock().map_err(|_| "Failed to access waveform data store".to_string())?;
+    
+    let waveform_data = store.get(file_path)
+        .ok_or_else(|| "Waveform file not loaded or signal data not available".to_string())?;
+    
+    let mut results = Vec::new();
+    
+    for query in queries {
+        // Same logic as query_signal_values but collect results instead of sending
+        let key = format!("{}|{}", query.scope_path, query.variable_name);
+        let signal_ref = match waveform_data.signals.get(&key) {
+            Some(&signal_ref) => signal_ref,
+            None => {
+                results.push(SignalValueResult {
+                    scope_path: query.scope_path.clone(),
+                    variable_name: query.variable_name.clone(),
+                    time_seconds: query.time_seconds,
+                    raw_value: Some("Signal not found".to_string()),
+                    formatted_value: Some("N/A".to_string()),
+                    format: query.format.clone(),
+                });
+                continue;
+            }
+        };
+        
+        let target_time = match waveform_data.file_format {
+            wellen::FileFormat::Vcd => {
+                // For VCD: Convert from seconds to VCD native units using stored timescale
+                (query.time_seconds / waveform_data.timescale_factor) as u64
+            },
+            _ => {
+                // For other formats, use femtosecond conversion  
+                (query.time_seconds * 1_000_000_000_000.0) as u64
+            }
+        };
+        
+        let time_idx = match waveform_data.time_table.binary_search(&target_time) {
+            Ok(exact_idx) => exact_idx as u32,
+            Err(insert_pos) => insert_pos.saturating_sub(1) as u32,
+        };
+        
+        let mut signal_source = match waveform_data.signal_source.lock() {
+            Ok(source) => source,
+            Err(_) => {
+                results.push(SignalValueResult {
+                    scope_path: query.scope_path.clone(),
+                    variable_name: query.variable_name.clone(),
+                    time_seconds: query.time_seconds,
+                    raw_value: Some("Error: Signal source unavailable".to_string()),
+                    formatted_value: Some("Error".to_string()),
+                    format: query.format.clone(),
+                });
+                continue;
+            }
+        };
+        
+        let loaded_signals = signal_source.load_signals(&[signal_ref], &waveform_data.hierarchy, true);
+        
+        match loaded_signals.into_iter().next() {
+            Some((_, signal)) => {
+                if let Some(offset) = signal.get_offset(time_idx) {
+                    let value = signal.get_value_at(&offset, 0);
+                    
+                    // Try to convert to binary string for VarFormat processing
+                    let (raw_value, formatted_value) = match signal_value_to_binary_string(&value) {
+                        Some(binary_str) => {
+                            // Successfully converted to binary - apply requested format
+                            let formatted = query.format.format(&binary_str);
+                            (Some(binary_str), Some(formatted))
+                        }
+                        None => {
+                            // Cannot convert to binary (e.g., X/Z states, strings, reals)
+                            // Use fallback formatting and set raw_value to original string representation
+                            let fallback_formatted = format_non_binary_signal_value(&value);
+                            (Some(format!("{}", value)), Some(fallback_formatted))
+                        }
+                    };
+                    
+                    results.push(SignalValueResult {
+                        scope_path: query.scope_path.clone(),
+                        variable_name: query.variable_name.clone(),
+                        time_seconds: query.time_seconds,
+                        raw_value,
+                        formatted_value,
+                        format: query.format.clone(),
+                    });
+                } else {
+                    results.push(SignalValueResult {
+                        scope_path: query.scope_path.clone(),
+                        variable_name: query.variable_name.clone(),
+                        time_seconds: query.time_seconds,
+                        raw_value: Some("No data".to_string()),
+                        formatted_value: Some("X".to_string()),
+                        format: query.format.clone(),
+                    });
+                }
+            },
+            None => {
+                results.push(SignalValueResult {
+                    scope_path: query.scope_path.clone(),
+                    variable_name: query.variable_name.clone(),
+                    time_seconds: query.time_seconds,
+                    raw_value: Some("Failed to load signal".to_string()),
+                    formatted_value: Some("Error".to_string()),
+                    format: query.format.clone(),
+                });
+            }
+        }
+    }
+    
+    Ok(results)
 }
 
 async fn query_signal_transitions(
