@@ -43,6 +43,7 @@ Intelligent git commit workflow with checkpoint conversion, change analysis, and
    - **Feature Assessment**: Distinguish between major feature implementations vs minor tweaks
    - **Impact Analysis**: Count new functions, state changes, UI components, API changes
    - **NEVER minimize major implementations** - properly recognize substantial work
+   - **Multi-Impact Detection**: When multiple major change areas exist, use impact-based prioritization
 
 5. **Present Options & WAIT FOR USER INPUT:**
 
@@ -159,15 +160,56 @@ Intelligent git commit workflow with checkpoint conversion, change analysis, and
 # Shows analysis, suggests message, waits for approval
 ```
 
+## Multi-Impact Commit Strategy
+
+**When CHECKPOINT contains multiple major change types:**
+
+### Impact Classification Priority
+1. **Data Correctness** - Fixes that resolve incorrect data/calculations
+2. **Performance** - Optimizations that improve user experience 
+3. **Functionality** - New features or bug fixes
+4. **Development Infrastructure** - Workflow, tooling, architecture
+
+### Comprehensive Commit Message Format
+**Title**: Include ALL major impact areas, ordered by importance
+```
+Fix [data issue], optimize [performance area], and implement [infrastructure]
+```
+
+**Body**: List changes in impact priority order, not conventional commit categories
+- Lead with most user-critical fixes
+- Follow with performance improvements  
+- Include functionality changes
+- End with development/infrastructure additions
+
+### Example Multi-Impact Analysis
+```
+🎯 MULTI-IMPACT COMMIT DETECTED
+
+📊 Impact Classification:
+- Data Correctness: FST timescale calculation fix (CRITICAL)
+- Performance: Binary search + decimation (HIGH) 
+- Infrastructure: Agent architecture system (MEDIUM)
+
+💭 Comprehensive message:
+"Fix FST timescale calculation, optimize performance, and implement agent architecture"
+```
+
+### Why This Approach
+- **Git blame clarity**: Readers immediately understand all major work done
+- **Avoid artificial splitting**: Prevents redundant commits that hurt tooling
+- **Impact transparency**: Prioritizes by actual project value, not categories
+
 ## Features
 
 - **Comprehensive CHECKPOINT analysis**: Thoroughly analyzes ALL accumulated changes, not just unstaged files
 - **Smart feature detection**: Distinguishes major implementations from minor config changes
 - **File categorization**: Groups changes by type and impact for accurate commit message generation
+- **Multi-impact commit strategy**: Handles complex commits spanning multiple areas with impact-based prioritization
 - **Smart amend detection**: Analyzes if current changes should amend previous commit
 - **Safety checks**: Warns about rewriting published history
 - **Scope analysis**: Compares change types between current and last commit
-- **Conventional commits**: Suggests proper commit message format with detailed scope
+- **Flexible commit format**: Uses conventional commits for single-area changes, impact-based format for multi-area changes
 - **Seamless workflow**: Perfect partner with `/core-checkpoint` for rapid iteration
 
 ## Anti-Automation Guard
