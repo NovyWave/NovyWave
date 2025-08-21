@@ -29,14 +29,14 @@ fn is_tauri_environment() -> bool {
 pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
     // TEMPORARY: Both web and Tauri use port 8080 for easier testing
     // TODO: Implement proper dynamic port detection for Tauri
-    zoon::println!("=== CONNECTION: Initializing with standard port 8080 ===");
+    crate::debug_utils::debug_conditional("CONNECTION: Initializing with standard port 8080");
     
     // DEBUG: Log environment and connection details
     if is_tauri_environment() {
-        zoon::println!("=== CONNECTION: Running in Tauri environment - SSE may fail due to protocol mismatch ===");
-        zoon::println!("=== CONNECTION: Tauri origin is likely 'tauri://localhost', backend is 'http://localhost:8080' ===");
+        crate::debug_utils::debug_conditional("CONNECTION: Running in Tauri environment - SSE may fail due to protocol mismatch");
+        crate::debug_utils::debug_conditional("CONNECTION: Tauri origin is likely 'tauri://localhost', backend is 'http://localhost:8080'");
     } else {
-        zoon::println!("=== CONNECTION: Running in web environment - standard SSE should work ===");
+        crate::debug_utils::debug_conditional("CONNECTION: Running in web environment - standard SSE should work");
     }
     
     Connection::new(|down_msg, _| {
@@ -191,9 +191,9 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 crate::FILE_PICKER_ERROR.set_neq(None);
             }
             DownMsg::ConfigLoaded(config) => {
-                zoon::println!("=== RECEIVED ConfigLoaded message ===");
+                crate::debug_utils::debug_conditional("RECEIVED ConfigLoaded message");
                 crate::config::apply_config(config);
-                zoon::println!("=== Applied config successfully ===");
+                crate::debug_utils::debug_conditional("Applied config successfully");
             }
             DownMsg::ConfigSaved => {
                 // Config saved successfully
@@ -253,7 +253,7 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 // Signal value query error logged to console
             }
             DownMsg::SignalTransitions { file_path, results } => {
-                zoon::println!("=== SIGNAL TRANSITIONS RECEIVED: {} results for {} ===", results.len(), file_path);
+                crate::debug_utils::debug_signal_transitions(&format!("Received {} transitions for {}", results.len(), file_path));
                 
                 // Process signal transitions from backend - UPDATE CACHE
                 for result in results {
@@ -312,7 +312,7 @@ pub fn send_up_msg(up_msg: UpMsg) {
                 // zoon::println!("=== SEND_UP_MSG: Message sent successfully via raw connection ===");
             }
             Err(error) => {
-                zoon::println!("=== SEND_UP_MSG: Raw connection send error - {:?} ===", error);
+                zoon::println!("ERROR: Raw connection send error - {:?}", error);
                 
                 // Create and display connection error alert
                 let error_alert = ErrorAlert::new_connection_error(format!("Connection failed: {}", error));
@@ -324,11 +324,11 @@ pub fn send_up_msg(up_msg: UpMsg) {
 
 
 pub fn init_connection() {
-    zoon::println!("=== Connection init starting ===");
+    crate::debug_utils::debug_conditional("Connection init starting");
     
     // Initialize platform-specific connection handling
     if CurrentPlatform::is_available() {
-        zoon::println!("=== Platform available, initializing message handler ===");
+        crate::debug_utils::debug_conditional("Platform available, initializing message handler");
         
         // Initialize the DownMsg handler with our existing message processing logic
         let handler = |down_msg: DownMsg| {
@@ -345,7 +345,7 @@ pub fn init_connection() {
             CONNECTION.init_lazy();
         }
     } else {
-        zoon::println!("=== Platform not available ===");
+        crate::debug_utils::debug_conditional("Platform not available");
     }
 }
 
@@ -516,7 +516,7 @@ fn handle_down_msg(down_msg: DownMsg) {
             // Signal value query error
         }
         DownMsg::SignalTransitions { file_path, results } => {
-            zoon::println!("=== SECOND HANDLER - SIGNAL TRANSITIONS RECEIVED: {} results for {} ===", results.len(), file_path);
+            crate::debug_utils::debug_signal_transitions(&format!("SECOND HANDLER - Received {} transitions for {}", results.len(), file_path));
             
             // Process signal transitions from backend - UPDATE CACHE
             for result in results {

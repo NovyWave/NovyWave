@@ -274,10 +274,10 @@ El::new()
 - Essential for debugging TreeView, table, and scrollable content width constraints
 - Allows testing width behavior that's invisible in normal view
 
-**Multi-Subagent Problem Solving:**
-- Fire 3+ specialized subagents simultaneously for complex UI issues
-- Pattern: (1) Browser DOM/CSS inspection agent (2) Minimal test case creation agent (3) Comprehensive solution research agent
-- Each agent provides focused expertise while main session coordinates and implements
+**Conservative Subagent Problem Solving:**
+- **MAXIMUM 1 SUBAGENT** to prevent memory issues and infinite loops
+- Pattern: Single focused agent for specific analysis only
+- Main session coordinates and implements solutions directly
 - Use TodoWrite for systematic task breakdown and progress tracking
 
 **Width Constraint Debugging:**

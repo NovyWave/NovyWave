@@ -76,14 +76,14 @@ fn should_allow_request(cache_key: &str) -> bool {
         // Check if request is within debounce window
         if current_time - last_request_time < REQUEST_DEBOUNCE_MS {
             // Request is debounced
-            zoon::println!("=== REQUEST DEBOUNCED for {} ({}ms ago) ===", cache_key, current_time - last_request_time);
+            crate::debug_utils::debug_request_deduplication(&format!("REQUEST DEBOUNCED for {} ({}ms ago)", cache_key, current_time - last_request_time));
             return false;
         }
     }
     
     // Allow request and update timestamp
     active_requests.insert(cache_key.to_string(), current_time);
-    zoon::println!("=== REQUEST ALLOWED for {} ===", cache_key);
+    crate::debug_utils::debug_request_deduplication(&format!("REQUEST ALLOWED for {}", cache_key));
     true
 }
 
@@ -120,7 +120,7 @@ fn request_transitions_for_new_variables_only(time_range: Option<(f32, f32)>) {
             };
             
             if needs_request {
-                zoon::println!("Requesting transitions for NEW variable: {}", cache_key);
+                crate::debug_utils::debug_conditional(&format!("Requesting transitions for NEW variable: {}", cache_key));
                 request_signal_transitions_from_backend(file_path, scope_path, variable_name, (min_time, max_time));
             }
         }
@@ -148,7 +148,7 @@ fn request_transitions_for_all_variables(time_range: Option<(f32, f32)>) {
             // Create cache key for tracking requests
             let cache_key = format!("{}|{}|{}", file_path, scope_path, variable_name);
             
-            zoon::println!("Force requesting transitions for variable: {}", cache_key);
+            crate::debug_utils::debug_conditional(&format!("Force requesting transitions for variable: {}", cache_key));
             request_signal_transitions_from_backend(file_path, scope_path, variable_name, (min_time, max_time));
             
             // Update tracking after the request to avoid holding multiple locks
@@ -164,7 +164,7 @@ pub fn clear_transition_tracking_for_variable(unique_id: &str) {
         let cache_key = format!("{}|{}|{}", parts[0], parts[1], parts[2]);
         TRANSITIONS_REQUESTED.lock_mut().remove(&cache_key);
         ACTIVE_REQUESTS.lock_mut().remove(&cache_key);
-        zoon::println!("Cleared transition tracking for removed variable: {}", cache_key);
+        crate::debug_utils::debug_conditional(&format!("Cleared transition tracking for removed variable: {}", cache_key));
     }
 }
 
@@ -172,20 +172,20 @@ pub fn clear_transition_tracking_for_variable(unique_id: &str) {
 pub fn clear_all_transition_tracking() {
     TRANSITIONS_REQUESTED.lock_mut().clear();
     ACTIVE_REQUESTS.lock_mut().clear();
-    zoon::println!("Cleared all transition tracking and active requests");
+    crate::debug_utils::debug_conditional("Cleared all transition tracking and active requests");
 }
 
 /// Force clear all active request timestamps (useful for debugging)
 pub fn clear_active_requests() {
     ACTIVE_REQUESTS.lock_mut().clear();
-    zoon::println!("Cleared all active request timestamps");
+    crate::debug_utils::debug_conditional("Cleared all active request timestamps");
 }
 
 /// Get debug information about request deduplication state
 pub fn get_request_deduplication_info() -> (usize, usize) {
     let active_count = ACTIVE_REQUESTS.lock_ref().len();
     let requested_count = TRANSITIONS_REQUESTED.lock_ref().len();
-    zoon::println!("Request deduplication state: {} active, {} total requested", active_count, requested_count);
+    crate::debug_utils::debug_request_deduplication(&format!("Request deduplication state: {} active, {} total requested", active_count, requested_count));
     (active_count, requested_count)
 }
 
@@ -196,7 +196,7 @@ pub fn batch_request_transitions_for_variables(variables: &[shared::SelectedVari
     
     let mut requested_set = TRANSITIONS_REQUESTED.lock_mut();
     
-    zoon::println!("Batch requesting transitions for {} variables", variables.len());
+    crate::debug_utils::debug_conditional(&format!("Batch requesting transitions for {} variables", variables.len()));
     for var in variables.iter() {
         let parts: Vec<&str> = var.unique_id.split('|').collect();
         if parts.len() >= 3 {
@@ -207,7 +207,7 @@ pub fn batch_request_transitions_for_variables(variables: &[shared::SelectedVari
             let cache_key = format!("{}|{}|{}", file_path, scope_path, variable_name);
             
             // Always request for batch operations (don't check if already requested)
-            zoon::println!("Batch requesting transitions for: {}", cache_key);
+            crate::debug_utils::debug_conditional(&format!("Batch requesting transitions for: {}", cache_key));
             request_signal_transitions_from_backend(file_path, scope_path, variable_name, (min_time, max_time));
             requested_set.insert(cache_key);
         }
@@ -517,7 +517,7 @@ fn validate_startup_state() {
     if !cursor_pos.is_finite() || !zoom_level.is_finite() || !start.is_finite() || !end.is_finite() || 
        zoom_level <= 0.0 || start >= end || (end - start) < MIN_VALID_RANGE {
         
-        zoon::println!("STARTUP: Invalid timeline state detected, applying recovery");
+        crate::debug_utils::debug_timeline_validation("STARTUP: Invalid timeline state detected, applying recovery");
         let (recovery_start, recovery_end) = emergency_timeline_recovery();
         TIMELINE_VISIBLE_RANGE_START.set_neq(recovery_start);
         TIMELINE_VISIBLE_RANGE_END.set_neq(recovery_end);
@@ -525,7 +525,7 @@ fn validate_startup_state() {
         TIMELINE_ZOOM_LEVEL.set_neq(1.0);
         ZOOM_CENTER_POSITION.set_neq((recovery_start + recovery_end) / 2.0);
     } else {
-        zoon::println!("STARTUP: Timeline state validation passed");
+        crate::debug_utils::debug_timeline_validation("STARTUP: Timeline state validation passed");
     }
 }
 
@@ -1083,10 +1083,10 @@ fn get_signal_transitions_for_variable(var: &SelectedVariable, time_range: (f32,
     let raw_cache_key = format!("{}|{}|{}", file_path, scope_path, variable_name);
     
     if should_allow_request(&raw_cache_key) {
-        zoon::println!("=== CACHE MISS - requesting from backend for {}/{} ===", scope_path, variable_name);
+        crate::debug_utils::debug_cache_miss(&format!("requesting from backend for {}/{}", scope_path, variable_name));
         request_signal_transitions_from_backend(file_path, scope_path, variable_name, time_range);
     } else {
-        zoon::println!("=== CACHE MISS but request DEBOUNCED for {}/{} ===", scope_path, variable_name);
+        crate::debug_utils::debug_request_deduplication(&format!("CACHE MISS but request DEBOUNCED for {}/{}", scope_path, variable_name));
     }
     
     // Return empty data while waiting for real backend response
@@ -1098,7 +1098,7 @@ fn get_signal_transitions_for_variable(var: &SelectedVariable, time_range: (f32,
 pub fn request_signal_transitions_from_backend(file_path: &str, scope_path: &str, variable_name: &str, _time_range: (f32, f32)) {
     let _ = _time_range; // Suppress unused variable warning
     
-    zoon::println!("=== Requesting signal transitions for {}/{} ===", scope_path, variable_name);
+    crate::debug_utils::debug_conditional(&format!("Requesting signal transitions for {}/{}", scope_path, variable_name));
     
     let query = SignalTransitionQuery {
         scope_path: scope_path.to_string(),
@@ -1116,7 +1116,7 @@ pub fn request_signal_transitions_from_backend(file_path: &str, scope_path: &str
             )
         } else {
             // Don't make request if file isn't loaded yet - prevents race condition
-            zoon::println!("=== FILE NOT LOADED YET - cannot request transitions for {} ===", file_path);
+            crate::debug_utils::debug_conditional(&format!("FILE NOT LOADED YET - cannot request transitions for {}", file_path));
             return;
         }
     };
@@ -1131,7 +1131,7 @@ pub fn request_signal_transitions_from_backend(file_path: &str, scope_path: &str
     // zoon::println!("=== SENDING QuerySignalTransitions for {}/{} ===", scope_path, variable_name);
     Task::start(async move {
         if let Err(e) = CurrentPlatform::send_message(message).await {
-            zoon::println!("Failed to query signal transitions via platform: {}", e);
+            zoon::println!("ERROR: Failed to query signal transitions via platform: {}", e);
         } else {
             // zoon::println!("=== QuerySignalTransitions sent successfully ===");
         }
@@ -1187,7 +1187,7 @@ pub fn get_current_timeline_range() -> Option<(f32, f32)> {
             if range_start.is_finite() && range_end.is_finite() {
                 return Some((range_start, range_end));
             } else {
-                zoon::println!("WARNING: Timeline range not finite - start: {}, end: {}", range_start, range_end);
+                crate::debug_utils::debug_timeline_validation(&format!("WARNING: Timeline range not finite - start: {}, end: {}", range_start, range_end));
             }
         }
         
@@ -1200,10 +1200,10 @@ pub fn get_current_timeline_range() -> Option<(f32, f32)> {
             
             // ENHANCED: Validate expanded range is finite
             if expanded_start.is_finite() && expanded_end.is_finite() && expanded_end > expanded_start {
-                zoon::println!("Expanded narrow range from {:.12} to [{:.12}, {:.12}]", current_range, expanded_start, expanded_end);
+                crate::debug_utils::debug_timeline_validation(&format!("Expanded narrow range from {:.12} to [{:.12}, {:.12}]", current_range, expanded_start, expanded_end));
                 return Some((expanded_start, expanded_end));
             } else {
-                zoon::println!("WARNING: Failed to expand range - center: {}, half_range: {}", range_center, half_min_range);
+                crate::debug_utils::debug_timeline_validation(&format!("WARNING: Failed to expand range - center: {}, half_range: {}", range_center, half_min_range));
             }
         }
         
@@ -1274,7 +1274,7 @@ pub fn get_current_timeline_range() -> Option<(f32, f32)> {
     } else {
         // ENHANCED: Comprehensive validation before returning range
         if !min_time.is_finite() || !max_time.is_finite() {
-            zoon::println!("WARNING: Timeline range calculation produced non-finite values - min: {}, max: {}", min_time, max_time);
+            crate::debug_utils::debug_timeline_validation(&format!("WARNING: Timeline range calculation produced non-finite values - min: {}, max: {}", min_time, max_time));
             return Some((0.0, 100.0)); // Safe fallback
         }
         
@@ -1445,20 +1445,20 @@ pub fn stop_smooth_pan_right() {
 fn validate_and_sanitize_range(start: f32, end: f32) -> (f32, f32) {
     // Check for NaN/Infinity in inputs
     if !start.is_finite() || !end.is_finite() {
-        zoon::println!("TIMELINE DEBUG: Non-finite range detected - start: {}, end: {}, using fallback", start, end);
+        crate::debug_utils::debug_timeline_validation(&format!("Non-finite range detected - start: {}, end: {}, using fallback", start, end));
         return (SAFE_FALLBACK_START, SAFE_FALLBACK_END);
     }
     
     // Ensure proper ordering
     if start >= end {
-        zoon::println!("TIMELINE DEBUG: Invalid range ordering - start: {} >= end: {}, using fallback", start, end);
+        crate::debug_utils::debug_timeline_validation(&format!("Invalid range ordering - start: {} >= end: {}, using fallback", start, end));
         return (SAFE_FALLBACK_START, SAFE_FALLBACK_END);
     }
     
     // Enforce minimum viable range to prevent precision issues
     let range = end - start;
     if range < MIN_VALID_RANGE {
-        zoon::println!("TIMELINE DEBUG: Range too small: {:.3e}s, enforcing minimum", range);
+        crate::debug_utils::debug_timeline_validation(&format!("Range too small: {:.3e}s, enforcing minimum", range));
         let center = (start + end) / 2.0;
         let half_range = MIN_VALID_RANGE / 2.0;
         return (center - half_range, center + half_range);
@@ -1470,7 +1470,7 @@ fn validate_and_sanitize_range(start: f32, end: f32) -> (f32, f32) {
 
 /// Emergency recovery system for corrupted timeline state
 fn emergency_timeline_recovery() -> (f32, f32) {
-    zoon::println!("EMERGENCY: Timeline state corrupted, attempting recovery");
+    crate::debug_utils::debug_critical("EMERGENCY: Timeline state corrupted, attempting recovery");
     
     // Reset to safe defaults first
     TIMELINE_ZOOM_LEVEL.set_neq(1.0);
@@ -1479,12 +1479,12 @@ fn emergency_timeline_recovery() -> (f32, f32) {
     // Try to get actual file range
     if let Some((file_min, file_max)) = get_current_timeline_range() {
         let (validated_min, validated_max) = validate_and_sanitize_range(file_min, file_max);
-        zoon::println!("EMERGENCY: Recovered using file range: {} to {}", validated_min, validated_max);
+        crate::debug_utils::debug_critical(&format!("EMERGENCY: Recovered using file range: {} to {}", validated_min, validated_max));
         return (validated_min, validated_max);
     }
     
     // Ultimate fallback
-    zoon::println!("EMERGENCY: Using ultimate fallback range");
+    crate::debug_utils::debug_critical("EMERGENCY: Using ultimate fallback range");
     (SAFE_FALLBACK_START, SAFE_FALLBACK_END)
 }
 
@@ -1522,12 +1522,12 @@ fn convert_pixel_to_time_safe(pixel_offset: f64, current_time: f64) -> Option<f6
     
     // Validate remaining inputs
     if !current_time.is_finite() {
-        zoon::println!("CURSOR DEBUG: Non-finite current time: {}", current_time);
+        crate::debug_utils::debug_timeline_validation(&format!("CURSOR DEBUG: Non-finite current time: {}", current_time));
         return None;
     }
     
     if canvas_width <= 0.0 {
-        zoon::println!("CURSOR DEBUG: Invalid canvas width: {}", canvas_width);
+        crate::debug_utils::debug_timeline_validation(&format!("CURSOR DEBUG: Invalid canvas width: {}", canvas_width));
         return None;
     }
     
@@ -1540,7 +1540,7 @@ fn convert_pixel_to_time_safe(pixel_offset: f64, current_time: f64) -> Option<f6
     if new_time.is_finite() {
         Some(new_time)
     } else {
-        zoon::println!("CURSOR DEBUG: Calculation produced non-finite result");
+        crate::debug_utils::debug_timeline_validation("CURSOR DEBUG: Calculation produced non-finite result");
         None
     }
 }
@@ -1671,7 +1671,7 @@ pub fn zoom_out() {
 fn update_zoom_with_mouse_center(new_zoom: f32) {
     // Validate input zoom level
     if !new_zoom.is_finite() || new_zoom <= 0.0 {
-        zoon::println!("ZOOM DEBUG: Invalid zoom level {}, aborting", new_zoom);
+        crate::debug_utils::debug_timeline_validation(&format!("ZOOM DEBUG: Invalid zoom level {}, aborting", new_zoom));
         return;
     }
     
@@ -1680,7 +1680,7 @@ fn update_zoom_with_mouse_center(new_zoom: f32) {
     
     // Validate current state
     if !zoom_center_time.is_finite() || !current_zoom.is_finite() || current_zoom <= 0.0 {
-        zoon::println!("ZOOM DEBUG: Invalid current state - center: {}, zoom: {}, resetting", zoom_center_time, current_zoom);
+        crate::debug_utils::debug_timeline_validation(&format!("ZOOM DEBUG: Invalid current state - center: {}, zoom: {}, resetting", zoom_center_time, current_zoom));
         let (recovery_start, recovery_end) = emergency_timeline_recovery();
         TIMELINE_VISIBLE_RANGE_START.set_neq(recovery_start);
         TIMELINE_VISIBLE_RANGE_END.set_neq(recovery_end);
@@ -1721,21 +1721,21 @@ fn update_zoom_with_mouse_center(new_zoom: f32) {
         
         // Calculate zoom ratio with division-by-zero protection
         let zoom_ratio = if new_zoom == 0.0 {
-            zoon::println!("ZOOM DEBUG: Zero new_zoom detected, aborting");
+            crate::debug_utils::debug_timeline_validation("ZOOM DEBUG: Zero new_zoom detected, aborting");
             return;
         } else {
             current_zoom / new_zoom
         };
         
         if !zoom_ratio.is_finite() {
-            zoon::println!("ZOOM DEBUG: Invalid zoom ratio {}/{}, aborting", current_zoom, new_zoom);
+            crate::debug_utils::debug_timeline_validation(&format!("ZOOM DEBUG: Invalid zoom ratio {}/{}, aborting", current_zoom, new_zoom));
             return;
         }
         
         // Calculate new range with overflow protection
         let new_range = current_range * zoom_ratio;
         if !new_range.is_finite() || new_range <= 0.0 || new_range < MIN_VALID_RANGE {
-            zoon::println!("ZOOM DEBUG: Invalid new range: {:.3e}, aborting", new_range);
+            crate::debug_utils::debug_timeline_validation(&format!("ZOOM DEBUG: Invalid new range: {:.3e}, aborting", new_range));
             return;
         }
         
@@ -2356,7 +2356,7 @@ pub fn jump_to_previous_transition() {
         let mut animation = DIRECT_CURSOR_ANIMATION.lock_mut();
         animation.current_position = prev_time;
         animation.target_position = prev_time;
-        zoon::println!("Jumped to previous transition at {:.9}s", prev_time);
+        crate::debug_utils::debug_conditional(&format!("Jumped to previous transition at {:.9}s", prev_time));
     } else if !transitions.is_empty() {
         // If no previous transition, wrap to the last transition
         let last_transition = transitions[transitions.len() - 1];
@@ -2365,7 +2365,7 @@ pub fn jump_to_previous_transition() {
         let mut animation = DIRECT_CURSOR_ANIMATION.lock_mut();
         animation.current_position = last_transition;
         animation.target_position = last_transition;
-        zoon::println!("Wrapped to last transition at {:.9}s", last_transition);
+        crate::debug_utils::debug_conditional(&format!("Wrapped to last transition at {:.9}s", last_transition));
     }
 }
 
@@ -2403,7 +2403,7 @@ pub fn jump_to_next_transition() {
         let mut animation = DIRECT_CURSOR_ANIMATION.lock_mut();
         animation.current_position = next_time;
         animation.target_position = next_time;
-        zoon::println!("Jumped to next transition at {:.9}s", next_time);
+        crate::debug_utils::debug_conditional(&format!("Jumped to next transition at {:.9}s", next_time));
     } else if !transitions.is_empty() {
         // If no next transition, wrap to the first transition
         let first_transition = transitions[0];
@@ -2412,7 +2412,7 @@ pub fn jump_to_next_transition() {
         let mut animation = DIRECT_CURSOR_ANIMATION.lock_mut();
         animation.current_position = first_transition;
         animation.target_position = first_transition;
-        zoon::println!("Wrapped to first transition at {:.9}s", first_transition);
+        crate::debug_utils::debug_conditional(&format!("Wrapped to first transition at {:.9}s", first_transition));
     }
 }
 
@@ -2437,13 +2437,13 @@ pub fn reset_zoom_to_fit_all() {
     
     // Debug logging to verify correct range calculation
     let selected_variables = crate::state::SELECTED_VARIABLES.lock_ref();
-    zoon::println!("=== ZOOM RESET DEBUG ===");
-    zoon::println!("Selected variables count: {}", selected_variables.len());
+    crate::debug_utils::debug_conditional("=== ZOOM RESET DEBUG ===");
+    crate::debug_utils::debug_conditional(&format!("Selected variables count: {}", selected_variables.len()));
     for var in selected_variables.iter() {
-        zoon::println!("  Variable: {}", var.unique_id);
+        crate::debug_utils::debug_conditional(&format!("  Variable: {}", var.unique_id));
     }
-    zoon::println!("Reset range: {:.9}s to {:.9}s (span: {:.9}s)", file_min, file_max, file_max - file_min);
-    zoon::println!("Cursor positioned at: {:.9}s", middle_time);
+    crate::debug_utils::debug_conditional(&format!("Reset range: {:.9}s to {:.9}s (span: {:.9}s)", file_min, file_max, file_max - file_min));
+    crate::debug_utils::debug_conditional(&format!("Cursor positioned at: {:.9}s", middle_time));
 }
 
 /// Reset zoom center to 0 seconds
@@ -2451,5 +2451,5 @@ pub fn reset_zoom_center() {
     ZOOM_CENTER_POSITION.set_neq(0.0);
     // Also update mouse time position for consistency with zoom behavior
     MOUSE_TIME_POSITION.set_neq(0.0);
-    zoon::println!("Zoom center reset to 0s");
+    crate::debug_utils::debug_conditional("Zoom center reset to 0s");
 }

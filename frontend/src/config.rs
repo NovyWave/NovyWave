@@ -24,7 +24,7 @@ fn validate_timeline_values(cursor: f64, zoom: f32, start: f32, end: f32) -> (f6
     let (safe_start, safe_end) = if start.is_finite() && end.is_finite() && start < end && (end - start) >= MIN_VALID_RANGE {
         (start, end)
     } else {
-        zoon::println!("CONFIG: Invalid timeline range ({}, {}), using fallback", start, end);
+        crate::debug_utils::debug_critical(&format!("CONFIG: Invalid timeline range ({}, {}), using fallback", start, end));
         (SAFE_FALLBACK_START, SAFE_FALLBACK_END)
     };
     
@@ -792,7 +792,7 @@ fn save_config_immediately() {
     // Use platform abstraction instead of direct connection
     Task::start(async move {
         if let Err(e) = CurrentPlatform::send_message(UpMsg::SaveConfig(app_config)).await {
-            zoon::println!("Failed to save config via platform: {}", e);
+            zoon::println!("ERROR: Failed to save config via platform: {}", e);
         }
     });
 }
@@ -1044,7 +1044,7 @@ fn sync_opened_files_from_config() {
         // Reload the file
         Task::start(async move {
             if let Err(e) = CurrentPlatform::send_message(shared::UpMsg::LoadWaveformFile(file_path)).await {
-                zoon::println!("Failed to reload file via platform: {}", e);
+                zoon::println!("ERROR: Failed to reload file via platform: {}", e);
             }
         });
     }
@@ -1113,7 +1113,7 @@ fn sync_panel_dimensions_from_config() {
     };
     
     // Restore panel dimensions
-    zoon::println!("DEBUG: Syncing panel dimensions - width: {} -> {}, height: {} -> {}", FILES_PANEL_WIDTH.get(), files_width as u32, FILES_PANEL_HEIGHT.get(), files_height as u32);
+    crate::debug_utils::debug_conditional(&format!("Syncing panel dimensions - width: {} -> {}, height: {} -> {}", FILES_PANEL_WIDTH.get(), files_width as u32, FILES_PANEL_HEIGHT.get(), files_height as u32));
     FILES_PANEL_WIDTH.set_neq(files_width as u32);
     FILES_PANEL_HEIGHT.set_neq(files_height as u32);
 }

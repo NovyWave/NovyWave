@@ -10,15 +10,16 @@ FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memor
 ## Agent Usage Limits
 
 ### Main Session Rules
-- **Maximum 1-2 agents total per complex task**
-- **NEVER run agents in parallel unless absolutely necessary**
-- **Prefer single comprehensive agent over multiple specialized ones**
+- **Maximum 1 agent total per task** (reduced from 1-2 to prevent loops)
+- **NEVER run agents in parallel** - sequential only
+- **Prefer direct tool usage over agents when possible**
 
 ### Agent-to-Agent Delegation Rules
-- **Planner**: Maximum 1 research agent at a time
+- **Planner**: Maximum 1 research agent per session (then STOP - no further delegation)
 - **Implementor**: NEVER delegate to other agents - work directly
 - **Validator**: NEVER delegate to other agents - work directly  
-- **Researcher**: Can be the single delegated agent from planner
+- **Researcher**: NEVER delegate to other agents - work directly
+- **NO CHAINED DELEGATION**: Agents cannot request more agents
 
 ### Safe Usage Patterns
 ```

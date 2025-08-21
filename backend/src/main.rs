@@ -40,26 +40,21 @@ async fn up_msg_handler(req: UpMsgRequest<UpMsg>) {
     
     match &req.up_msg {
         UpMsg::LoadWaveformFile(file_path) => {
-            println!("BACKEND: Loading waveform file: {}", file_path);
             load_waveform_file(file_path.clone(), session_id, cor_id).await;
         }
         UpMsg::GetParsingProgress(file_id) => {
             send_parsing_progress(file_id.clone(), session_id, cor_id).await;
         }
         UpMsg::LoadConfig => {
-            println!("BACKEND: Loading config");
             load_config(session_id, cor_id).await;
         }
         UpMsg::SaveConfig(config) => {
-            println!("BACKEND: Saving config");
             save_config(config.clone(), session_id, cor_id).await;
         }
         UpMsg::BrowseDirectory(dir_path) => {
-            println!("BACKEND: Browsing directory: {}", dir_path);
             browse_directory(dir_path.clone(), session_id, cor_id).await;
         }
         UpMsg::BrowseDirectories(dir_paths) => {
-            println!("BACKEND: Browsing {} directories", dir_paths.len());
             browse_directories_batch(dir_paths.clone(), session_id, cor_id).await;
         }
         UpMsg::QuerySignalValues { file_path, queries } => {
@@ -67,8 +62,7 @@ async fn up_msg_handler(req: UpMsgRequest<UpMsg>) {
             query_signal_values(file_path.clone(), queries.clone(), session_id, cor_id).await;
         }
         UpMsg::QuerySignalTransitions { file_path, signal_queries, time_range } => {
-            println!("BACKEND: Querying {} signal transitions from {} (range: {:?})", 
-                    signal_queries.len(), file_path, time_range);
+            // Removed spammy debug logging for signal transition queries
             query_signal_transitions(file_path.clone(), signal_queries.clone(), time_range.clone(), session_id, cor_id).await;
         }
         UpMsg::BatchQuerySignalValues { batch_id, file_queries } => {
@@ -239,11 +233,11 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
                                 TimescaleUnit::Seconds => ts.factor as f64,
                                 TimescaleUnit::Unknown => ts.factor as f64,
                             };
-                            println!("FST TIMESCALE DEBUG: {} factor={}, unit={:?}, computed_factor={}", filename, ts.factor, ts.unit, factor);
+                            // Removed spammy FST timescale debug logging
                             factor
                         }
                         None => {
-                            println!("FST TIMESCALE DEBUG: {} has NO timescale info, using nanosecond default", filename);
+                            // No timescale info, using nanosecond default
                             1e-9 // Default to nanoseconds if no timescale info
                         }
                     };
@@ -458,7 +452,7 @@ fn convert_panic_to_file_error(file_path: &str) -> FileError {
 }
 
 /// Intelligent FST timescale inference to handle files with incorrect embedded timescale
-fn infer_reasonable_fst_timescale(body_result: &wellen::viewers::BodyResult, embedded_factor: f64, filename: &str) -> f64 {
+fn infer_reasonable_fst_timescale(body_result: &wellen::viewers::BodyResult, embedded_factor: f64, _filename: &str) -> f64 {
     if body_result.time_table.is_empty() {
         return embedded_factor; // Can't infer from empty time table
     }
@@ -471,33 +465,23 @@ fn infer_reasonable_fst_timescale(body_result: &wellen::viewers::BodyResult, emb
     let computed_duration = raw_range * embedded_factor;
     
     if computed_duration > 1000.0 {
-        println!("FST INFERENCE WARNING: {} embedded timescale produces {:.1}s duration, too long for typical simulation", filename, computed_duration);
+        // FST inference: embedded timescale produces unreasonably long duration
         
         // Heuristic inference based on value magnitude - optimized for typical FPGA/digital designs
         let inferred_factor = if raw_range > 1e15 {
-            println!("FST INFERENCE: Very large values ({}), assuming femtoseconds", raw_range);
             1e-15 // femtoseconds
         } else if raw_range > 1e12 {
-            println!("FST INFERENCE: Large values ({}), assuming picoseconds", raw_range);
             1e-12 // picoseconds
         } else if raw_range > 1e6 {
-            println!("FST INFERENCE: Medium values ({}), assuming nanoseconds", raw_range);
             1e-9  // nanoseconds - most common for FPGA/CPU designs (covers 1ms to 1000s of sim time)
         } else if raw_range > 1e3 {
-            println!("FST INFERENCE: Small values ({}), assuming microseconds", raw_range);
             1e-6  // microseconds
         } else {
-            println!("FST INFERENCE: Very small values ({}), assuming milliseconds", raw_range);
             1e-3  // milliseconds
         };
         
-        let inferred_duration = raw_range * inferred_factor;
-        println!("FST INFERENCE: Using factor {} -> {:.6}s duration", inferred_factor, inferred_duration);
-        
         return inferred_factor;
     }
-    
-    println!("FST INFERENCE: Embedded timescale produces reasonable duration ({:.6}s), keeping it", computed_duration);
     embedded_factor
 }
 
@@ -522,10 +506,7 @@ fn extract_fst_time_range(body_result: &wellen::viewers::BodyResult, timescale_f
         }
     };
     
-    println!("FST TIME EXTRACTION DEBUG:");
-    println!("  Raw time values: {} to {}", raw_min, raw_max);
-    println!("  Timescale factor: {}", timescale_factor);
-    println!("  Converted seconds: {} to {}", raw_min * timescale_factor, raw_max * timescale_factor);
+    // Removed spammy FST time extraction debug logging
     
     // Convert FST time values to seconds using the proper timescale factor
     (raw_min * timescale_factor, raw_max * timescale_factor)
@@ -1608,10 +1589,7 @@ async fn query_signal_transitions(
                     start_time = start_time.max(file_start);
                     end_time = end_time.min(file_end);
                     
-                    println!("BACKEND CLAMP: Requested ({}, {}), file bounds ({}, {}), clamped to ({}, {})", 
-                        (time_range.0 / waveform_data.timescale_factor) as u64,
-                        (time_range.1 / waveform_data.timescale_factor) as u64,
-                        file_start, file_end, start_time, end_time);
+                    // Clamped query range to file bounds for performance
                 }
                 
                 // Load signal once for efficiency
@@ -1651,7 +1629,7 @@ async fn query_signal_transitions(
                     
                     let decimation_step = if transition_count > max_useful_transitions {
                         let step = transition_count / max_useful_transitions;
-                        println!("BACKEND DECIMATION: {} transitions -> sampling every {} for performance", transition_count, step);
+                        // Using decimation for performance optimization
                         step.max(1)
                     } else {
                         1 // No decimation needed
@@ -1830,7 +1808,6 @@ async fn main() -> std::io::Result<()> {
         println!("BACKEND PANIC: {:?}", panic_info);
     }));
     
-    println!("BACKEND: Starting NovyWave backend server...");
     
     start(frontend, up_msg_handler, |_error| {
         println!("BACKEND ERROR: Request processing error occurred");

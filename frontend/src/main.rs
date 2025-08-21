@@ -82,7 +82,7 @@ pub fn main() {
         init_connection();
         
         // Load actual config from backend
-        zoon::println!("=== Loading real config from backend ===");
+        debug_utils::debug_conditional("Loading real config from backend");
         send_up_msg(UpMsg::LoadConfig);
         
         // Wait for CONFIG_LOADED flag, then set up reactive system

@@ -86,11 +86,10 @@ mcp__browsermcp__browser_click("Load Files button", "button_ref")
 mcp__browsermcp__browser_screenshot()  // After state
 ```
 
-### Multi-Subagent Testing Strategy
-Fire 3+ specialized subagents simultaneously for complex issues:
-1. **Browser DOM/CSS inspection agent** - Analyze actual DOM state
-2. **Minimal test case creation agent** - Create isolated reproduction
-3. **Comprehensive solution research agent** - Find proven solutions
+### Limited Subagent Testing Strategy
+**MAXIMUM 1 SUBAGENT** to prevent memory issues and infinite loops:
+1. **Single focused analysis agent** - Analyze the specific issue in detail
+2. **No parallel agents** - Sequential only to prevent recursion
 
 ### Auto-Scroll Testing for Width Issues
 ```rust
@@ -182,7 +181,7 @@ Use `/core-remember-important` when you:
 
 ## Subagent Delegation Strategy
 
-### MANDATORY: Use Task tool subagents extensively to preserve main session context
+### CONSERVATIVE: Use Task tool subagents selectively to preserve main session context
 
 ### Delegate to Subagents
 - File analysis & research (instead of main session reading multiple files)
