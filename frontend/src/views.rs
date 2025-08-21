@@ -856,7 +856,7 @@ pub fn trigger_signal_value_queries() {
     drop(selected_vars);
     
     // Query at current timeline cursor position
-    query_signal_values_at_time(crate::state::TIMELINE_CURSOR_POSITION.get() as f64);
+    query_signal_values_at_time(crate::state::TIMELINE_CURSOR_POSITION.get());
 }
 
 

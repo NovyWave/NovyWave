@@ -19,7 +19,7 @@ pub static VARIABLES_VALUE_DIVIDER_DRAGGING: Lazy<Mutable<bool>> = lazy::default
 pub const SELECTED_VARIABLES_ROW_HEIGHT: u32 = 30;
 
 // Timeline cursor position (in seconds)
-pub static TIMELINE_CURSOR_POSITION: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(10.0));
+pub static TIMELINE_CURSOR_POSITION: Lazy<Mutable<f64>> = Lazy::new(|| Mutable::new(10.0));
 
 // Timeline zoom state
 pub static TIMELINE_ZOOM_LEVEL: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(1.0)); // 1.0 = normal, 1B max for extreme zoom

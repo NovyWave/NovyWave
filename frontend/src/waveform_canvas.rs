@@ -185,8 +185,8 @@ static PENDING_CANVAS_UPDATE: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(fa
 static LAST_TRANSITION_NAVIGATION_TIME: Lazy<Mutable<u64>> = Lazy::new(|| Mutable::new(0));
 const TRANSITION_NAVIGATION_DEBOUNCE_MS: u64 = 100; // 100ms debounce
 
-// f32 precision tolerance for transition navigation (f32::EPSILON ≈ 1.19e-7, so 1.2e-6 gives ~10x margin)
-const F32_PRECISION_TOLERANCE: f64 = 1.2e-6;
+// f64 precision tolerance for transition navigation (much more precise than f32)
+const F64_PRECISION_TOLERANCE: f64 = 1e-15;
 
 
 #[derive(Clone, Debug, PartialEq)]
@@ -437,7 +437,7 @@ fn validate_startup_state() {
         let (recovery_start, recovery_end) = emergency_timeline_recovery();
         TIMELINE_VISIBLE_RANGE_START.set_neq(recovery_start);
         TIMELINE_VISIBLE_RANGE_END.set_neq(recovery_end);
-        TIMELINE_CURSOR_POSITION.set_neq((recovery_start + recovery_end) / 2.0);
+        TIMELINE_CURSOR_POSITION.set_neq((recovery_start + recovery_end) as f64 / 2.0);
         TIMELINE_ZOOM_LEVEL.set_neq(1.0);
         ZOOM_CENTER_POSITION.set_neq((recovery_start + recovery_end) / 2.0);
     } else {
@@ -473,7 +473,7 @@ async fn create_canvas_element() -> impl Element {
     CANVAS_HEIGHT.set_neq(400.0);
 
     // Initialize direct cursor animation with current cursor position
-    let current_cursor = TIMELINE_CURSOR_POSITION.get() as f64;
+    let current_cursor = TIMELINE_CURSOR_POSITION.get();
     DIRECT_CURSOR_ANIMATION.lock_mut().current_position = current_cursor;
     DIRECT_CURSOR_ANIMATION.lock_mut().target_position = current_cursor;
     let canvas_wrapper_for_signal = canvas_wrapper_shared.clone();
@@ -793,8 +793,7 @@ async fn create_canvas_element() -> impl Element {
                     
                     // Validate before applying
                     if clicked_time_f64.is_finite() && clicked_time_f64 >= 0.0 {
-                        let clicked_time_f32 = clicked_time_f64 as f32;
-                        let clamped_time = clicked_time_f32.max(min_time).min(max_time);
+                        let clamped_time = clicked_time_f64.max(min_time as f64).min(max_time as f64);
                         
                         // Update cursor position directly (no animation for clicks)
                         TIMELINE_CURSOR_POSITION.set(clamped_time);
@@ -1459,13 +1458,13 @@ fn start_direct_cursor_animation_loop() {
                 drop(animation);
                 
                 // Update timeline cursor with debouncing
-                update_timeline_cursor_with_debouncing(safe_time as f32);
+                update_timeline_cursor_with_debouncing(safe_time);
             } else {
                 // Fallback to percentage-based movement if pixel conversion fails
                 if let Some(new_time) = apply_fallback_movement(animation.direction as f64, animation.current_position) {
                     animation.current_position = new_time;
                     drop(animation);
-                    update_timeline_cursor_with_debouncing(new_time as f32);
+                    update_timeline_cursor_with_debouncing(new_time);
                 } else {
                     // Stop animation if both methods fail
                     animation.is_animating = false;
@@ -1477,7 +1476,7 @@ fn start_direct_cursor_animation_loop() {
 }
 
 // Smart cursor update with debouncing to reduce canvas redraw overhead
-fn update_timeline_cursor_with_debouncing(new_position: f32) {
+fn update_timeline_cursor_with_debouncing(new_position: f64) {
     TIMELINE_CURSOR_POSITION.set_neq(new_position);
     
     // Debounce canvas updates - only redraw every 16ms maximum
@@ -1508,7 +1507,7 @@ pub fn start_smooth_cursor_left() {
     let mut animation = DIRECT_CURSOR_ANIMATION.lock_mut();
     animation.direction = -1;
     animation.is_animating = true;
-    animation.current_position = TIMELINE_CURSOR_POSITION.get() as f64;
+    animation.current_position = TIMELINE_CURSOR_POSITION.get();
     IS_CURSOR_MOVING_LEFT.set_neq(true);
 }
 
@@ -1516,7 +1515,7 @@ pub fn start_smooth_cursor_right() {
     let mut animation = DIRECT_CURSOR_ANIMATION.lock_mut();
     animation.direction = 1;
     animation.is_animating = true;
-    animation.current_position = TIMELINE_CURSOR_POSITION.get() as f64;
+    animation.current_position = TIMELINE_CURSOR_POSITION.get();
     IS_CURSOR_MOVING_RIGHT.set_neq(true);
 }
 
@@ -1743,7 +1742,7 @@ fn create_waveform_objects_with_theme(selected_vars: &[SelectedVariable], theme:
     create_waveform_objects_with_dimensions_and_theme(selected_vars, canvas_width, canvas_height, theme, cursor_pos)
 }
 
-fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVariable], canvas_width: f32, canvas_height: f32, theme: &NovyUITheme, cursor_position: f32) -> Vec<fast2d::Object2d> {
+fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVariable], canvas_width: f32, canvas_height: f32, theme: &NovyUITheme, cursor_position: f64) -> Vec<fast2d::Object2d> {
     let mut objects = Vec::new();
     
     // Get current theme colors
@@ -2047,14 +2046,14 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
         let time_range = max_time - min_time;
         
         // Calculate cursor x position only if cursor is within visible range
-        if cursor_position >= min_time && cursor_position <= max_time {
-            let cursor_x = ((cursor_position - min_time) / time_range) * canvas_width;
+        if cursor_position >= min_time as f64 && cursor_position <= max_time as f64 {
+            let cursor_x = ((cursor_position - min_time as f64) / time_range as f64) * canvas_width as f64;
             
             // Draw vertical cursor line spanning all rows (including timeline) - now orange
             let cursor_color = (255, 165, 0, 1.0); // Orange color for cursor
             objects.push(
                 fast2d::Rectangle::new()
-                    .position(cursor_x - 1.0, 0.0) // Center the 3px line
+                    .position(cursor_x as f32 - 1.0, 0.0) // Center the 3px line
                     .size(3.0, canvas_height) // 3px thick line spanning full height
                     .color(cursor_color.0, cursor_color.1, cursor_color.2, cursor_color.3)
                     .into()
@@ -2064,7 +2063,7 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
         
         // Add zoom center line spanning all rows (if different from cursor)
         let zoom_center_position = ZOOM_CENTER_POSITION.get();
-        if zoom_center_position >= min_time && zoom_center_position <= max_time && zoom_center_position != cursor_position {
+        if zoom_center_position >= min_time && zoom_center_position <= max_time && zoom_center_position as f64 != cursor_position {
             let zoom_center_x = ((zoom_center_position - min_time) / time_range) * canvas_width;
             
             // Draw vertical zoom center line - now blue  
@@ -2201,8 +2200,8 @@ pub fn collect_all_transitions() -> Vec<f64> {
     // Remove duplicates and sort by time
     all_transitions.sort_by(|a, b| a.partial_cmp(b).unwrap());
     // Use f32-appropriate tolerance instead of f64 precision
-    // f32::EPSILON ≈ 1.19e-7, so F32_PRECISION_TOLERANCE gives us ~10x margin
-    all_transitions.dedup_by(|a, b| (*a - *b).abs() < F32_PRECISION_TOLERANCE); // Remove near-duplicate times with f32 precision
+    // f64 precision eliminates the tolerance issues we had with f32
+    all_transitions.dedup_by(|a, b| (*a - *b).abs() < F64_PRECISION_TOLERANCE); // Remove near-duplicate times with f64 precision
     
     all_transitions
 }
@@ -2222,7 +2221,7 @@ pub fn jump_to_previous_transition() {
         return; // No valid timeline range available
     }
     
-    let current_cursor = TIMELINE_CURSOR_POSITION.get() as f64;
+    let current_cursor = TIMELINE_CURSOR_POSITION.get();
     let transitions = collect_all_transitions();
     
     if transitions.is_empty() {
@@ -2233,7 +2232,7 @@ pub fn jump_to_previous_transition() {
     let mut previous_transition: Option<f64> = None;
     
     for &transition_time in transitions.iter() {
-        if transition_time < current_cursor - F32_PRECISION_TOLERANCE { // f32-appropriate tolerance to avoid precision issues
+        if transition_time < current_cursor - F64_PRECISION_TOLERANCE { // f64 precision tolerance
             previous_transition = Some(transition_time);
         } else {
             break; // Transitions are sorted, so we can stop here
@@ -2242,7 +2241,7 @@ pub fn jump_to_previous_transition() {
     
     if let Some(prev_time) = previous_transition {
         // Jump to previous transition
-        TIMELINE_CURSOR_POSITION.set_neq(prev_time as f32);
+        TIMELINE_CURSOR_POSITION.set_neq(prev_time);
         // Synchronize direct animation to prevent jumps when using Q/E after transition jump
         let mut animation = DIRECT_CURSOR_ANIMATION.lock_mut();
         animation.current_position = prev_time;
@@ -2251,7 +2250,7 @@ pub fn jump_to_previous_transition() {
     } else if !transitions.is_empty() {
         // If no previous transition, wrap to the last transition
         let last_transition = transitions[transitions.len() - 1];
-        TIMELINE_CURSOR_POSITION.set_neq(last_transition as f32);
+        TIMELINE_CURSOR_POSITION.set_neq(last_transition);
         // Synchronize direct animation to prevent jumps when using Q/E after transition jump
         let mut animation = DIRECT_CURSOR_ANIMATION.lock_mut();
         animation.current_position = last_transition;
@@ -2275,7 +2274,7 @@ pub fn jump_to_next_transition() {
         return; // No valid timeline range available
     }
     
-    let current_cursor = TIMELINE_CURSOR_POSITION.get() as f64;
+    let current_cursor = TIMELINE_CURSOR_POSITION.get();
     let transitions = collect_all_transitions();
     
     if transitions.is_empty() {
@@ -2284,12 +2283,12 @@ pub fn jump_to_next_transition() {
     
     // Find the smallest transition time that's greater than current cursor
     let next_transition = transitions.iter()
-        .find(|&&transition_time| transition_time > current_cursor + F32_PRECISION_TOLERANCE) // f32-appropriate tolerance to avoid precision issues
+        .find(|&&transition_time| transition_time > current_cursor + F64_PRECISION_TOLERANCE) // f64 precision tolerance
         .copied();
     
     if let Some(next_time) = next_transition {
         // Jump to next transition
-        TIMELINE_CURSOR_POSITION.set_neq(next_time as f32);
+        TIMELINE_CURSOR_POSITION.set_neq(next_time);
         // Synchronize direct animation to prevent jumps when using Q/E after transition jump
         let mut animation = DIRECT_CURSOR_ANIMATION.lock_mut();
         animation.current_position = next_time;
@@ -2298,7 +2297,7 @@ pub fn jump_to_next_transition() {
     } else if !transitions.is_empty() {
         // If no next transition, wrap to the first transition
         let first_transition = transitions[0];
-        TIMELINE_CURSOR_POSITION.set_neq(first_transition as f32);
+        TIMELINE_CURSOR_POSITION.set_neq(first_transition);
         // Synchronize direct animation to prevent jumps when using Q/E after transition jump
         let mut animation = DIRECT_CURSOR_ANIMATION.lock_mut();
         animation.current_position = first_transition;
@@ -2319,7 +2318,7 @@ pub fn reset_zoom_to_fit_all() {
     
     // Reset cursor to a reasonable position
     let middle_time = (file_min + file_max) / 2.0;
-    TIMELINE_CURSOR_POSITION.set_neq(middle_time);
+    TIMELINE_CURSOR_POSITION.set_neq(middle_time as f64);
     
     // Synchronize direct animation to prevent jumps when using Q/E after zoom reset
     let mut animation = DIRECT_CURSOR_ANIMATION.lock_mut();

@@ -942,7 +942,7 @@ fn default_toast_dismiss_ms() -> u64 {
     10000 // Default 10 seconds
 }
 
-fn default_timeline_cursor_position() -> f32 {
+fn default_timeline_cursor_position() -> f64 {
     10.0 // Default timeline cursor position in seconds
 }
 
@@ -993,7 +993,7 @@ pub struct WorkspaceSection {
     #[serde(default)]
     pub selected_variables: Vec<SelectedVariable>,
     #[serde(default = "default_timeline_cursor_position")]
-    pub timeline_cursor_position: f32,
+    pub timeline_cursor_position: f64,
     #[serde(default = "default_timeline_zoom_level")]
     pub timeline_zoom_level: f32,
     #[serde(default)]

@@ -13,7 +13,7 @@ const SAFE_FALLBACK_START: f32 = 0.0;    // Safe fallback start time
 const SAFE_FALLBACK_END: f32 = 100.0;    // Safe fallback end time
 
 /// Validate timeline values from config to prevent NaN propagation
-fn validate_timeline_values(cursor: f32, zoom: f32, start: f32, end: f32) -> (f32, f32, f32, f32) {
+fn validate_timeline_values(cursor: f64, zoom: f32, start: f32, end: f32) -> (f64, f32, f32, f32) {
     // Validate cursor position
     let safe_cursor = if cursor.is_finite() && cursor >= 0.0 { cursor } else { 50.0 };
     
@@ -108,7 +108,7 @@ pub struct WorkspaceSection {
     pub load_files_expanded_directories: MutableVec<String>,
     pub panel_layouts: Mutable<PanelLayouts>,
     pub selected_variables: MutableVec<shared::SelectedVariable>,
-    pub timeline_cursor_position: Mutable<f32>,
+    pub timeline_cursor_position: Mutable<f64>,
     pub timeline_zoom_level: Mutable<f32>,
     pub timeline_visible_range_start: Mutable<f32>,
     pub timeline_visible_range_end: Mutable<f32>,
@@ -322,7 +322,7 @@ pub struct SerializableWorkspaceSection {
     pub load_files_expanded_directories: Vec<String>,
     pub panel_layouts: SerializablePanelLayouts,
     pub selected_variables: Vec<shared::SelectedVariable>,
-    pub timeline_cursor_position: f32,
+    pub timeline_cursor_position: f64,
     pub timeline_zoom_level: f32,
     pub timeline_visible_range_start: f32,
     pub timeline_visible_range_end: f32,
