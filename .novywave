@@ -38,10 +38,10 @@ load_files_expanded_directories = [
 ]
 selected_scope_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv.MmuPlugin_logic_invalidate_arbiter"
 load_files_scroll_position = 992
-timeline_cursor_position = 30.91190108191654
-timeline_zoom_level = 1.0
-timeline_visible_range_start = 0.0
-timeline_visible_range_end = 100.0
+timeline_cursor_position = 0.0001767149283829964
+timeline_zoom_level = 468596.40625
+timeline_visible_range_start = 0.00007682539580855519
+timeline_visible_range_end = 0.0002902285777963698
 
 [workspace.docked_bottom_dimensions]
 files_and_scopes_panel_width = 518.0
@@ -75,3 +75,18 @@ unique_id = "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s|
 
 [[workspace.selected_variables]]
 unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv.MmuPlugin_logic_invalidate_arbiter|clk"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv.MmuPlugin_logic_invalidate_arbiter|io_chosenOH"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv.MmuPlugin_logic_invalidate_arbiter|io_inputs_0_ready"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv.MmuPlugin_logic_invalidate_arbiter|io_inputs_0_valid"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv.MmuPlugin_logic_invalidate_arbiter|io_output_fire"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv.MmuPlugin_logic_invalidate_arbiter|locked"

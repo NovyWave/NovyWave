@@ -263,7 +263,10 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                     
                     // Store backend data in cache
                     crate::waveform_canvas::SIGNAL_TRANSITIONS_CACHE.lock_mut()
-                        .insert(cache_key, result.transitions);
+                        .insert(cache_key.clone(), result.transitions);
+                    
+                    // Don't clear processed cache - data hasn't changed, just updated
+                    // Processed cache will remain valid for existing time ranges
                 }
                 
                 // Trigger canvas redraw when data arrives
@@ -523,7 +526,10 @@ fn handle_down_msg(down_msg: DownMsg) {
                 
                 // Store backend data in cache
                 crate::waveform_canvas::SIGNAL_TRANSITIONS_CACHE.lock_mut()
-                    .insert(cache_key, result.transitions);
+                    .insert(cache_key.clone(), result.transitions);
+                
+                // Don't clear processed cache - data hasn't changed, just updated
+                // Processed cache will remain valid for existing time ranges
             }
             
             crate::waveform_canvas::trigger_canvas_redraw();

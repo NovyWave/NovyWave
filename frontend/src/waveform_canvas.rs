@@ -8,7 +8,7 @@ use crate::config::current_theme;
 use shared::{SelectedVariable, UpMsg, SignalTransitionQuery, SignalTransition};
 use std::rc::Rc;
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
 use moonzoon_novyui::tokens::theme::Theme as NovyUITheme;
 use shared::Theme as SharedTheme;
 use wasm_bindgen::JsCast;
@@ -38,17 +38,73 @@ static TRANSITIONS_REQUESTED: Lazy<Mutable<HashSet<String>>> = Lazy::new(|| {
     Mutable::new(HashSet::new())
 });
 
+// Lock-free signal-based request deduplication to prevent backend flooding
+// Maps cache_key -> timestamp_ms to track recent requests
+static ACTIVE_REQUESTS: Lazy<Mutable<HashMap<String, f64>>> = Lazy::new(|| {
+    Mutable::new(HashMap::new())
+});
+
+// Debounce window: prevent duplicate requests within 50ms
+const REQUEST_DEBOUNCE_MS: f64 = 50.0;
+// Request timeout: clean up old timestamps after 5 seconds
+const REQUEST_TIMEOUT_MS: f64 = 5000.0;
+
+/// Get current timestamp in milliseconds (WASM-safe)
+fn get_timestamp_ms() -> f64 {
+    js_sys::Date::now()
+}
+
+/// Clean up old request timestamps to prevent memory leaks
+fn cleanup_old_requests() {
+    let current_time = get_timestamp_ms();
+    let mut active_requests = ACTIVE_REQUESTS.lock_mut();
+    active_requests.retain(|_, &mut timestamp| {
+        current_time - timestamp < REQUEST_TIMEOUT_MS
+    });
+}
+
+/// Check if a request should be allowed (not debounced)
+fn should_allow_request(cache_key: &str) -> bool {
+    let current_time = get_timestamp_ms();
+    
+    // Clean up old requests periodically
+    cleanup_old_requests();
+    
+    let mut active_requests = ACTIVE_REQUESTS.lock_mut();
+    
+    if let Some(&last_request_time) = active_requests.get(cache_key) {
+        // Check if request is within debounce window
+        if current_time - last_request_time < REQUEST_DEBOUNCE_MS {
+            // Request is debounced
+            zoon::println!("=== REQUEST DEBOUNCED for {} ({}ms ago) ===", cache_key, current_time - last_request_time);
+            return false;
+        }
+    }
+    
+    // Allow request and update timestamp
+    active_requests.insert(cache_key.to_string(), current_time);
+    zoon::println!("=== REQUEST ALLOWED for {} ===", cache_key);
+    true
+}
+
+// Cache for processed canvas transitions - prevents redundant processing and backend requests
+pub static PROCESSED_CANVAS_CACHE: Lazy<Mutable<HashMap<String, Vec<(f32, shared::SignalValue)>>>> = 
+    Lazy::new(|| Mutable::new(HashMap::new()));
+
 /// Request transitions only for variables that haven't been requested yet
 /// This prevents the O(N²) request flood when adding multiple variables
 fn request_transitions_for_new_variables_only(time_range: Option<(f32, f32)>) {
     let Some((min_time, max_time)) = time_range else { return; };
     
-    let selected_vars = SELECTED_VARIABLES.lock_ref();
-    let mut requested_set = TRANSITIONS_REQUESTED.lock_mut();
+    // Get variable data first, then release the lock to prevent deadlocks
+    let variables_to_check: Vec<String> = {
+        let selected_vars = SELECTED_VARIABLES.lock_ref();
+        selected_vars.iter().map(|var| var.unique_id.clone()).collect()
+    };
     
-    for var in selected_vars.iter() {
+    for unique_id in variables_to_check {
         // Parse unique_id: "/path/file.ext|scope|variable"
-        let parts: Vec<&str> = var.unique_id.split('|').collect();
+        let parts: Vec<&str> = unique_id.split('|').collect();
         if parts.len() >= 3 {
             let file_path = parts[0];
             let scope_path = parts[1]; 
@@ -57,11 +113,15 @@ fn request_transitions_for_new_variables_only(time_range: Option<(f32, f32)>) {
             // Create cache key for tracking requests
             let cache_key = format!("{}|{}|{}", file_path, scope_path, variable_name);
             
-            // Only request if we haven't requested this variable before
-            if !requested_set.contains(&cache_key) {
+            // Check and update request tracking separately to avoid holding multiple locks
+            let needs_request = {
+                let requested_set = TRANSITIONS_REQUESTED.lock_ref();
+                !requested_set.contains(&cache_key)
+            };
+            
+            if needs_request {
                 zoon::println!("Requesting transitions for NEW variable: {}", cache_key);
                 request_signal_transitions_from_backend(file_path, scope_path, variable_name, (min_time, max_time));
-                requested_set.insert(cache_key);
             }
         }
     }
@@ -71,12 +131,15 @@ fn request_transitions_for_new_variables_only(time_range: Option<(f32, f32)>) {
 fn request_transitions_for_all_variables(time_range: Option<(f32, f32)>) {
     let Some((min_time, max_time)) = time_range else { return; };
     
-    let selected_vars = SELECTED_VARIABLES.lock_ref();
-    let mut requested_set = TRANSITIONS_REQUESTED.lock_mut();
+    // Get variable data first, then release the lock to prevent deadlocks
+    let variables_to_request: Vec<String> = {
+        let selected_vars = SELECTED_VARIABLES.lock_ref();
+        selected_vars.iter().map(|var| var.unique_id.clone()).collect()
+    };
     
-    for var in selected_vars.iter() {
+    for unique_id in variables_to_request {
         // Parse unique_id: "/path/file.ext|scope|variable"
-        let parts: Vec<&str> = var.unique_id.split('|').collect();
+        let parts: Vec<&str> = unique_id.split('|').collect();
         if parts.len() >= 3 {
             let file_path = parts[0];
             let scope_path = parts[1]; 
@@ -87,7 +150,9 @@ fn request_transitions_for_all_variables(time_range: Option<(f32, f32)>) {
             
             zoon::println!("Force requesting transitions for variable: {}", cache_key);
             request_signal_transitions_from_backend(file_path, scope_path, variable_name, (min_time, max_time));
-            requested_set.insert(cache_key);
+            
+            // Update tracking after the request to avoid holding multiple locks
+            TRANSITIONS_REQUESTED.lock_mut().insert(cache_key);
         }
     }
 }
@@ -98,6 +163,7 @@ pub fn clear_transition_tracking_for_variable(unique_id: &str) {
     if parts.len() >= 3 {
         let cache_key = format!("{}|{}|{}", parts[0], parts[1], parts[2]);
         TRANSITIONS_REQUESTED.lock_mut().remove(&cache_key);
+        ACTIVE_REQUESTS.lock_mut().remove(&cache_key);
         zoon::println!("Cleared transition tracking for removed variable: {}", cache_key);
     }
 }
@@ -105,7 +171,22 @@ pub fn clear_transition_tracking_for_variable(unique_id: &str) {
 /// Clear all transition request tracking (useful for complete reset)
 pub fn clear_all_transition_tracking() {
     TRANSITIONS_REQUESTED.lock_mut().clear();
-    zoon::println!("Cleared all transition tracking");
+    ACTIVE_REQUESTS.lock_mut().clear();
+    zoon::println!("Cleared all transition tracking and active requests");
+}
+
+/// Force clear all active request timestamps (useful for debugging)
+pub fn clear_active_requests() {
+    ACTIVE_REQUESTS.lock_mut().clear();
+    zoon::println!("Cleared all active request timestamps");
+}
+
+/// Get debug information about request deduplication state
+pub fn get_request_deduplication_info() -> (usize, usize) {
+    let active_count = ACTIVE_REQUESTS.lock_ref().len();
+    let requested_count = TRANSITIONS_REQUESTED.lock_ref().len();
+    zoon::println!("Request deduplication state: {} active, {} total requested", active_count, requested_count);
+    (active_count, requested_count)
 }
 
 /// Batch add multiple variables without triggering O(N²) requests
@@ -147,6 +228,10 @@ static HOVER_INFO: Lazy<Mutable<Option<HoverInfo>>> = Lazy::new(|| {
 
 // Dedicated counter to force canvas redraws when incremented
 static FORCE_REDRAW: Lazy<Mutable<u32>> = Lazy::new(|| Mutable::new(0));
+
+// Throttle canvas redraws to prevent excessive backend requests
+static LAST_REDRAW_TIME: Lazy<Mutable<f64>> = Lazy::new(|| Mutable::new(0.0));
+const REDRAW_THROTTLE_MS: f64 = 16.0; // Max 60fps redraws
 
 // High-performance direct cursor animation state
 #[derive(Clone, Debug)]
@@ -198,7 +283,6 @@ struct HoverInfo {
     value: String,
 }
 
-use std::collections::HashMap;
 
 // Time unit detection for intelligent timeline formatting
 #[derive(Debug, Clone, Copy)]
@@ -914,10 +998,19 @@ fn get_signal_transitions_for_variable(var: &SelectedVariable, time_range: (f32,
     let scope_path = parts[1]; 
     let variable_name = parts[2];
     
-    // Create cache key for raw backend data (without timeline range since we'll process fresh each time)
-    let raw_cache_key = format!("{}|{}|{}", file_path, scope_path, variable_name);
+    // Create cache key for processed canvas data (includes time range for accurate caching)
+    let processed_cache_key = format!("{}|{}|{}|{:.6}|{:.6}", file_path, scope_path, variable_name, time_range.0, time_range.1);
     
-    // Check if we have real backend data cached
+    // Check processed canvas cache first - this prevents redundant processing and backend requests
+    let processed_cache = PROCESSED_CANVAS_CACHE.lock_ref();
+    if let Some(cached_transitions) = processed_cache.get(&processed_cache_key) {
+        // HIT: Data already processed for this exact time range, return immediately
+        return cached_transitions.clone();
+    }
+    drop(processed_cache);
+    
+    // Not in processed cache, check raw backend data cache
+    let raw_cache_key = format!("{}|{}|{}", file_path, scope_path, variable_name);
     let cache = SIGNAL_TRANSITIONS_CACHE.lock_ref();
     if let Some(transitions) = cache.get(&raw_cache_key) {
         
@@ -979,13 +1072,22 @@ fn get_signal_transitions_for_variable(var: &SelectedVariable, time_range: (f32,
         
         // Backend now provides proper signal termination transitions - no frontend workaround needed
         
+        // Cache the processed canvas transitions for future redraws
+        PROCESSED_CANVAS_CACHE.lock_mut().insert(processed_cache_key, canvas_transitions.clone());
+        
         return canvas_transitions;
     }
     drop(cache);
     
-    // No cached data - request real data from backend
-    zoon::println!("=== CACHE MISS - requesting from backend for {}/{} ===", scope_path, variable_name);
-    request_signal_transitions_from_backend(file_path, scope_path, variable_name, time_range);
+    // No cached data - request from backend if not recently requested (deduplication)
+    let raw_cache_key = format!("{}|{}|{}", file_path, scope_path, variable_name);
+    
+    if should_allow_request(&raw_cache_key) {
+        zoon::println!("=== CACHE MISS - requesting from backend for {}/{} ===", scope_path, variable_name);
+        request_signal_transitions_from_backend(file_path, scope_path, variable_name, time_range);
+    } else {
+        zoon::println!("=== CACHE MISS but request DEBOUNCED for {}/{} ===", scope_path, variable_name);
+    }
     
     // Return empty data while waiting for real backend response
     // This prevents premature filler rectangles from covering actual values
@@ -995,6 +1097,7 @@ fn get_signal_transitions_for_variable(var: &SelectedVariable, time_range: (f32,
 // Request real signal transitions from backend
 pub fn request_signal_transitions_from_backend(file_path: &str, scope_path: &str, variable_name: &str, _time_range: (f32, f32)) {
     let _ = _time_range; // Suppress unused variable warning
+    
     zoon::println!("=== Requesting signal transitions for {}/{} ===", scope_path, variable_name);
     
     let query = SignalTransitionQuery {
@@ -1037,8 +1140,15 @@ pub fn request_signal_transitions_from_backend(file_path: &str, scope_path: &str
 
 // Trigger canvas redraw when new signal data arrives
 pub fn trigger_canvas_redraw() {
-    // Increment counter to trigger the dedicated redraw signal
-    FORCE_REDRAW.update(|counter| counter + 1);
+    // Throttle redraws to prevent excessive backend requests
+    let now = js_sys::Date::now();
+    let last_redraw = LAST_REDRAW_TIME.get();
+    
+    if now - last_redraw >= REDRAW_THROTTLE_MS {
+        LAST_REDRAW_TIME.set_neq(now);
+        // Increment counter to trigger the dedicated redraw signal
+        FORCE_REDRAW.update(|counter| counter + 1);
+    }
 }
 
 // Extract unique file paths from selected variables

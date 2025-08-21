@@ -53,6 +53,8 @@ tail -100 dev_server.log | grep -E "error\[E|warning:|Failed|panic|Frontend buil
 - **NEVER use browser MCP tools** (that's for Validator agent)
 - **NEVER restart the dev server** (it handles recompilation automatically)
 - **NEVER claim success without checking logs**
+- **NEVER delegate to other agents** (to prevent memory crashes)
+- **AVOID Task tool usage** (implementors should work directly)
 
 ## Usage Patterns
 - Implementing detailed specifications with verification
