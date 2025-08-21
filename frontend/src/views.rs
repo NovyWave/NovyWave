@@ -724,11 +724,21 @@ fn compute_value_from_cached_transitions(
     scope_path: &str, 
     variable_name: &str,
     time_seconds: f64
-) -> Option<String> {
+) -> Option<shared::SignalValue> {
     let cache_key = format!("{}|{}|{}", file_path, scope_path, variable_name);
     let cache = crate::waveform_canvas::SIGNAL_TRANSITIONS_CACHE.lock_ref();
     
     if let Some(transitions) = cache.get(&cache_key) {
+        // Check if time exceeds file boundaries - return missing if so
+        let loaded_files = LOADED_FILES.lock_ref();
+        if let Some(loaded_file) = loaded_files.iter().find(|f| f.id == file_path) {
+            if let Some(max_time) = loaded_file.max_time {
+                if time_seconds > max_time {
+                    return Some(shared::SignalValue::Missing); // No data beyond file boundaries
+                }
+            }
+        }
+        
         // Find the most recent transition before or at the requested time
         let mut current_value = None;
         
@@ -740,7 +750,8 @@ fn compute_value_from_cached_transitions(
             }
         }
         
-        current_value
+        // Convert to SignalValue - if we found a transition, it's present data
+        current_value.map(|value| shared::SignalValue::Present(value))
     } else {
         None // No cached data available
     }
@@ -761,7 +772,7 @@ pub fn query_signal_values_at_time(time_seconds: f64) {
     for selected_var in selected_vars.iter() {
         if let Some((file_path, scope_path, variable_name)) = selected_var.parse_unique_id() {
             // Try to get value from cached transitions first
-            if let Some(cached_value) = compute_value_from_cached_transitions(
+            if let Some(cached_signal_value) = compute_value_from_cached_transitions(
                 &file_path, &scope_path, &variable_name, time_seconds
             ) {
                 // Use cached value - create a result directly
@@ -769,8 +780,8 @@ pub fn query_signal_values_at_time(time_seconds: f64) {
                     scope_path: scope_path.clone(),
                     variable_name: variable_name.clone(),
                     time_seconds,
-                    raw_value: Some(cached_value.clone()),
-                    formatted_value: Some(cached_value), // TODO: Apply formatting
+                    raw_value: cached_signal_value.as_option(),
+                    formatted_value: cached_signal_value.as_option(), // TODO: Apply formatting
                     format: selected_var.formatter.unwrap_or_default(),
                 };
                 cached_results.push(result);

@@ -190,11 +190,21 @@ Use `/core-remember-important` when you:
 - Investigation work (finding patterns, analyzing codebases)
 - Complex searches across many files
 
+### Implementor Agent Requirements
+**CRITICAL: Implementor agents MUST:**
+- Check dev_server.log after making changes
+- Report compilation errors AND warnings found
+- Never claim "compilation successful" without verification
+- Use `tail -50 dev_server.log | grep -E "error|Error|warning|Warning|Failed|Frontend built"` to verify
+- Fix ALL errors before returning control to main session
+- Report any warnings that remain after fixes
+
 ### Main Session Focus
 - High-level coordination & planning
 - User interaction & decision making
 - Architecture decisions & task delegation
 - Synthesis of subagent results
+- **MANDATORY: Run verifier agent after each implementor agent completes**
 
 ### Context Conservation Benefits
 - Subagents use their own context space, not main session's

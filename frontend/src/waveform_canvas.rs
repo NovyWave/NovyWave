@@ -759,7 +759,7 @@ async fn create_canvas_element() -> impl Element {
                     let time_value_pairs = get_signal_transitions_for_variable(var, (min_time, max_time));
                     
                     // Find the value at the current mouse time
-                    let mut current_value = "X".to_string(); // Default unknown
+                    let mut current_value = shared::SignalValue::present("X"); // Default unknown
                     for (time, value) in time_value_pairs.iter() {
                         if *time <= mouse_time {
                             current_value = value.clone();
@@ -769,7 +769,14 @@ async fn create_canvas_element() -> impl Element {
                     }
                     
                     // Format the value using the variable's formatter
-                    let formatted_value = var.formatter.unwrap_or_default().format(&current_value);
+                    let formatted_value = match current_value {
+                        shared::SignalValue::Present(ref value) => {
+                            var.formatter.unwrap_or_default().format(value)
+                        },
+                        shared::SignalValue::Missing => {
+                            "N/A".to_string()
+                        }
+                    };
                     
                     HOVER_INFO.set_neq(Some(HoverInfo {
                         mouse_x,
@@ -794,12 +801,11 @@ async fn create_canvas_element() -> impl Element {
 
 
 // Get signal transitions for a variable within time range
-fn get_signal_transitions_for_variable(var: &SelectedVariable, time_range: (f32, f32)) -> Vec<(f32, String)> {
-    // Removed excessive debug logging - was spamming console
+fn get_signal_transitions_for_variable(var: &SelectedVariable, time_range: (f32, f32)) -> Vec<(f32, shared::SignalValue)> {
     // Parse unique_id: "/path/file.ext|scope|variable"
     let parts: Vec<&str> = var.unique_id.split('|').collect();
     if parts.len() < 3 {
-        return vec![(time_range.0, "0".to_string())];
+        return vec![(time_range.0, shared::SignalValue::present("0"))];
     }
     
     let file_path = parts[0];
@@ -815,21 +821,40 @@ fn get_signal_transitions_for_variable(var: &SelectedVariable, time_range: (f32,
         
         // Convert real backend data to canvas format with proper waveform logic
         // Include ALL transitions to determine proper rectangle boundaries
-        let mut canvas_transitions: Vec<(f32, String)> = transitions.iter()
-            .map(|t| (t.time_seconds as f32, t.value.clone()))
+        let mut canvas_transitions: Vec<(f32, shared::SignalValue)> = transitions.iter()
+            .map(|t| (t.time_seconds as f32, shared::SignalValue::present(t.value.clone())))
             .collect();
             
         // Sort by time to ensure proper ordering
         canvas_transitions.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
         
+        // Check for time ranges beyond file boundaries and mark as missing
+        let loaded_files = LOADED_FILES.lock_ref();
+        if let Some(loaded_file) = loaded_files.iter().find(|f| f.id == file_path) {
+            if let Some(max_time) = loaded_file.max_time {
+                // If the timeline extends beyond the file's max time, add missing data transition
+                if time_range.1 > max_time as f32 {
+                    canvas_transitions.push((max_time as f32, shared::SignalValue::missing()));
+                }
+            }
+            if let Some(min_time) = loaded_file.min_time {
+                // If timeline starts before file's min time, add missing data at start
+                if time_range.0 < min_time as f32 {
+                    canvas_transitions.insert(0, (time_range.0, shared::SignalValue::missing()));
+                    canvas_transitions.insert(1, (min_time as f32, shared::SignalValue::present("X")));
+                }
+            }
+        }
+        drop(loaded_files);
+        
         // CRITICAL FIX: Always add initial value continuation at timeline start
         // Find what value should be active at the beginning of the visible timeline
-        let mut initial_value = "X".to_string(); // Default unknown state
+        let mut initial_value = shared::SignalValue::present("X"); // Default unknown state
         
         // Find the most recent transition before the visible timeline starts
         for transition in transitions.iter() {
             if transition.time_seconds <= time_range.0 as f64 {
-                initial_value = transition.value.clone();
+                initial_value = shared::SignalValue::present(transition.value.clone());
             } else {
                 break; // Transitions should be in time order
             }
@@ -866,7 +891,8 @@ fn get_signal_transitions_for_variable(var: &SelectedVariable, time_range: (f32,
 }
 
 // Request real signal transitions from backend
-pub fn request_signal_transitions_from_backend(file_path: &str, scope_path: &str, variable_name: &str, time_range: (f32, f32)) {
+pub fn request_signal_transitions_from_backend(file_path: &str, scope_path: &str, variable_name: &str, _time_range: (f32, f32)) {
+    let _ = _time_range; // Suppress unused variable warning
     zoon::println!("=== Requesting signal transitions for {}/{} ===", scope_path, variable_name);
     
     let query = SignalTransitionQuery {
@@ -1670,7 +1696,7 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
         // Get visible time range for proper clipping
         let (min_time, max_time) = current_time_range;
         
-        for (rect_index, (start_time, binary_value)) in time_value_pairs.iter().enumerate() {
+        for (rect_index, (start_time, signal_value)) in time_value_pairs.iter().enumerate() {
             // Calculate end time for this rectangle (next transition time or view window end)
             let end_time = if rect_index + 1 < time_value_pairs.len() {
                 time_value_pairs[rect_index + 1].0 // Next transition time
@@ -1742,13 +1768,21 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
                 continue; // Skip invalid rectangles
             }
             
-            let is_even_rect = rect_index % 2 == 0;
-            
-            // Theme-aware alternating rectangle colors using enhanced contrast
-            let rect_color = if is_even_rect {
-                theme_colors.value_color_1
-            } else {
-                theme_colors.value_color_2
+            // Theme-aware colors that differentiate between present data and missing data
+            let rect_color = match signal_value {
+                shared::SignalValue::Present(_) => {
+                    // Present data: use alternating colors as before
+                    let is_even_rect = rect_index % 2 == 0;
+                    if is_even_rect {
+                        theme_colors.value_color_1
+                    } else {
+                        theme_colors.value_color_2
+                    }
+                },
+                shared::SignalValue::Missing => {
+                    // Missing data: use muted background color to indicate no data
+                    theme_colors.neutral_2
+                }
             };
             
             // Create value rectangle with actual time-based width
@@ -1769,11 +1803,19 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
             //         .into()
             // );
             
-            // Format the binary value using the user's selected format (without prefix)
-            let formatted_value = format.format(binary_value);
+            // Format the signal value and determine colors based on whether data is present or missing
+            let (formatted_value, text_color) = match signal_value {
+                shared::SignalValue::Present(binary_value) => {
+                    // Present data: use normal formatting and high contrast text
+                    (format.format(&binary_value), theme_colors.neutral_12)
+                },
+                shared::SignalValue::Missing => {
+                    // Missing data: show "N/A" with muted color
+                    ("N/A".to_string(), theme_colors.neutral_3)
+                }
+            };
             
             // Add formatted value text with robust positioning
-            let text_color = theme_colors.neutral_12; // High contrast text
             let text_padding = 5.0;
             let text_width = (rect_width - (text_padding * 2.0)).max(0.0);
             let text_height = (row_height / 2.0).max(8.0); // Minimum readable height

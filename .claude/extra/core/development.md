@@ -94,15 +94,18 @@ For example, if the user asks you how to approach something, you should do your 
 - Get detailed technical solutions from each subagent
 - Example: "Analyze dialog centering issues", "Fix scrollbar thickness problems"
 
-### 3. Methodical Implementation
+### 3. Methodical Implementation with Verification
 - Apply fixes systematically, one issue at a time
+- **MANDATORY: After EVERY implementor agent run, MUST run verifier agent or check dev_server.log**
+- **CRITICAL: Never trust implementor's "compilation successful" claims - always verify independently**
+- Check for both errors AND warnings in compilation output
 - Update todo status as each fix is completed
 - Don't attempt to fix everything at once
 
 ### 4. Comprehensive Testing
 - Use browser MCP to verify changes visually
 - Take screenshots to document improvements
-- Check compilation logs for errors
+- Check compilation logs for errors AND warnings
 - Verify ALL requirements are met before claiming completion
 
 ### 5. Results Verification & Honesty

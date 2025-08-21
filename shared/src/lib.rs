@@ -64,6 +64,96 @@ pub enum DownMsg {
 
 // ===== SIGNAL VALUE QUERY TYPES =====
 
+/// Represents a signal value that can be either present or missing
+/// This allows distinguishing between actual "0" values and missing/no-data regions
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub enum SignalValue {
+    /// Signal has an actual value at this time
+    Present(String),
+    /// Signal has no data at this time (beyond file boundaries, gaps, etc.)
+    Missing,
+}
+
+impl SignalValue {
+    /// Create a present value
+    pub fn present(value: impl Into<String>) -> Self {
+        SignalValue::Present(value.into())
+    }
+    
+    /// Create a missing value
+    pub fn missing() -> Self {
+        SignalValue::Missing
+    }
+    
+    /// Check if the value is present
+    pub fn is_present(&self) -> bool {
+        matches!(self, SignalValue::Present(_))
+    }
+    
+    /// Check if the value is missing
+    pub fn is_missing(&self) -> bool {
+        matches!(self, SignalValue::Missing)
+    }
+    
+    /// Get the value as Option<String> for backward compatibility
+    pub fn as_option(&self) -> Option<String> {
+        match self {
+            SignalValue::Present(value) => Some(value.clone()),
+            SignalValue::Missing => None,
+        }
+    }
+    
+    /// Get the value or a placeholder for UI display
+    pub fn display_value(&self, placeholder: &str) -> String {
+        match self {
+            SignalValue::Present(value) => value.clone(),
+            SignalValue::Missing => placeholder.to_string(),
+        }
+    }
+    
+    /// Get the value with default "-" placeholder (matches UI conventions)
+    pub fn display_value_or_dash(&self) -> String {
+        self.display_value("-")
+    }
+    
+    /// Check if this represents actual signal data (not missing)
+    pub fn has_data(&self) -> bool {
+        self.is_present()
+    }
+    
+    /// Apply a format transformation to present values only
+    pub fn map_present<F>(&self, f: F) -> SignalValue
+    where
+        F: FnOnce(&str) -> String,
+    {
+        match self {
+            SignalValue::Present(value) => SignalValue::Present(f(value)),
+            SignalValue::Missing => SignalValue::Missing,
+        }
+    }
+}
+
+impl From<Option<String>> for SignalValue {
+    fn from(opt: Option<String>) -> Self {
+        match opt {
+            Some(value) => SignalValue::Present(value),
+            None => SignalValue::Missing,
+        }
+    }
+}
+
+impl From<String> for SignalValue {
+    fn from(value: String) -> Self {
+        SignalValue::Present(value)
+    }
+}
+
+impl From<&str> for SignalValue {
+    fn from(value: &str) -> Self {
+        SignalValue::Present(value.to_string())
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SignalValueQuery {
     pub scope_path: String,
@@ -1579,6 +1669,76 @@ mod tests {
         // Test printable ASCII works
         assert_eq!(VarFormat::ASCII.format("00100000"), " "); // Space (32)
         assert_eq!(VarFormat::ASCII.format("00110000"), "0"); // '0' character (48)
+    }
+    
+    #[test]
+    fn test_signal_value_enum() {
+        // Test creation
+        let present_value = SignalValue::present("10110101");
+        let missing_value = SignalValue::missing();
+        
+        // Test type checks
+        assert!(present_value.is_present());
+        assert!(!present_value.is_missing());
+        assert!(present_value.has_data());
+        
+        assert!(!missing_value.is_present());
+        assert!(missing_value.is_missing());
+        assert!(!missing_value.has_data());
+        
+        // Test as_option conversion
+        assert_eq!(present_value.as_option(), Some("10110101".to_string()));
+        assert_eq!(missing_value.as_option(), None);
+        
+        // Test display methods
+        assert_eq!(present_value.display_value("N/A"), "10110101");
+        assert_eq!(missing_value.display_value("N/A"), "N/A");
+        assert_eq!(present_value.display_value_or_dash(), "10110101");
+        assert_eq!(missing_value.display_value_or_dash(), "-");
+        
+        // Test map_present
+        let formatted = present_value.map_present(|v| format!("0b{}", v));
+        assert_eq!(formatted.as_option(), Some("0b10110101".to_string()));
+        
+        let formatted_missing = missing_value.map_present(|v| format!("0b{}", v));
+        assert_eq!(formatted_missing.as_option(), None);
+    }
+    
+    #[test]
+    fn test_signal_value_from_conversions() {
+        // Test From<Option<String>>
+        let from_some: SignalValue = Some("test".to_string()).into();
+        let from_none: SignalValue = None::<String>.into();
+        assert_eq!(from_some, SignalValue::Present("test".to_string()));
+        assert_eq!(from_none, SignalValue::Missing);
+        
+        // Test From<String>
+        let from_string: SignalValue = "hello".to_string().into();
+        assert_eq!(from_string, SignalValue::Present("hello".to_string()));
+        
+        // Test From<&str>
+        let from_str: SignalValue = "world".into();
+        assert_eq!(from_str, SignalValue::Present("world".to_string()));
+    }
+    
+    #[test]
+    fn test_signal_value_distinguishes_zero_from_missing() {
+        // This is the core enhancement - distinguish actual "0" from missing data
+        let actual_zero = SignalValue::present("0");
+        let missing_data = SignalValue::missing();
+        
+        // Both could be displayed as "0" or "-" but we can now distinguish them programmatically
+        assert!(actual_zero.is_present());
+        assert!(missing_data.is_missing());
+        
+        // Actual zero has real data
+        assert_eq!(actual_zero.display_value_or_dash(), "0");
+        // Missing data shows placeholder
+        assert_eq!(missing_data.display_value_or_dash(), "-");
+        
+        // This enables proper UI styling - missing data can be styled differently
+        assert_eq!(actual_zero.has_data(), true);
+        assert_eq!(missing_data.has_data(), false);
     }
     
     #[test]
