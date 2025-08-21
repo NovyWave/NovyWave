@@ -192,12 +192,44 @@ Use `/core-remember-important` when you:
 
 ### Implementor Agent Requirements
 **CRITICAL: Implementor agents MUST:**
-- Check dev_server.log after making changes
+- Check dev_server.log after making changes (READ ONLY - never run compilation)
 - Report compilation errors AND warnings found
 - Never claim "compilation successful" without verification
 - Use `tail -50 dev_server.log | grep -E "error|Error|warning|Warning|Failed|Frontend built"` to verify
 - Fix ALL errors before returning control to main session
 - Report any warnings that remain after fixes
+- **NEVER run `makers build`, `makers start`, or any compilation commands** - dev server auto-compiles
+- **NEVER use browser MCP tools** - that's exclusively for Verifier agents
+- **ONLY make code changes and read logs** - no testing, no browser access
+
+### Verifier Agent Requirements
+**CRITICAL: Verifier agents are responsible for:**
+- Checking dev_server.log for compilation status
+- Using browser MCP tools for visual verification (when available)
+- Testing functionality after Implementor changes
+- Reporting both compilation AND runtime issues
+- **ONLY Verifier agents can use browser MCP tools**
+- **NEVER make code changes** - only verify and test
+
+**AVAILABLE BROWSER MCP TOOLS FOR VERIFIER:**
+- `mcp__browsermcp__browser_navigate` - Navigate to URLs
+- `mcp__browsermcp__browser_screenshot` - Capture screenshots for verification
+- `mcp__browsermcp__browser_snapshot` - Get page accessibility tree
+- `mcp__browsermcp__browser_click` - Click elements for testing
+- `mcp__browsermcp__browser_type` - Type text for input testing
+- `mcp__browsermcp__browser_hover` - Test hover interactions
+- `mcp__browsermcp__browser_select_option` - Test dropdowns
+- `mcp__browsermcp__browser_press_key` - Test keyboard shortcuts
+- `mcp__browsermcp__browser_wait` - Wait between actions
+- `mcp__browsermcp__browser_get_console_logs` - Check for errors
+- `mcp__browsermcp__browser_go_back` / `mcp__browsermcp__browser_go_forward` - Navigation testing
+
+### Implementor-Verifier Collaboration Pattern
+**MANDATORY WORKFLOW:**
+1. **Implementor Agent**: Makes code changes, checks dev_server.log for compilation
+2. **Main Session**: MUST run Verifier agent immediately after Implementor completes
+3. **Verifier Agent**: Checks compilation, optionally tests with browser MCP
+4. **Main Session**: Decides next action based on Verifier results
 
 ### Main Session Focus
 - High-level coordination & planning
@@ -205,6 +237,7 @@ Use `/core-remember-important` when you:
 - Architecture decisions & task delegation
 - Synthesis of subagent results
 - **MANDATORY: Run verifier agent after each implementor agent completes**
+- **Orchestrate Implementor → Verifier workflow for all changes**
 
 ### Context Conservation Benefits
 - Subagents use their own context space, not main session's

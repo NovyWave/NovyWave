@@ -395,6 +395,9 @@ pub fn remove_selected_variable(unique_id: &str) {
     SELECTED_VARIABLES.lock_mut().retain(|var| var.unique_id != unique_id);
     SELECTED_VARIABLES_INDEX.lock_mut().shift_remove(unique_id);
     
+    // Clean up transition tracking for removed variable (prevents memory leaks)
+    crate::waveform_canvas::clear_transition_tracking_for_variable(unique_id);
+    
     // Now safe to call save_selected_variables() with no locks held
     save_selected_variables();
 }
@@ -403,6 +406,10 @@ pub fn remove_selected_variable(unique_id: &str) {
 pub fn clear_selected_variables() {
     SELECTED_VARIABLES.lock_mut().clear();
     SELECTED_VARIABLES_INDEX.lock_mut().clear();
+    
+    // Clear all transition tracking when clearing variables (prevents memory leaks)
+    crate::waveform_canvas::clear_all_transition_tracking();
+    
     save_selected_variables();
 }
 
@@ -466,20 +473,9 @@ pub fn init_selected_variables_from_config(selected_vars: Vec<shared::SelectedVa
     if !valid_vars.is_empty() {
         crate::views::trigger_signal_value_queries();
         
-        // Request transition data for all restored variables
-        if let Some((min_time, max_time)) = crate::waveform_canvas::get_current_timeline_range() {
-            for var in valid_vars.iter() {
-                let parts: Vec<&str> = var.unique_id.split('|').collect();
-                if parts.len() >= 3 {
-                    let file_path = parts[0];
-                    let scope_path = parts[1];
-                    let variable_name = parts[2];
-                    crate::waveform_canvas::request_signal_transitions_from_backend(
-                        file_path, scope_path, variable_name, (min_time, max_time)
-                    );
-                }
-            }
-        }
+        // Use optimized batch operation for config restore - prevents O(N²) during restore
+        let current_range = crate::waveform_canvas::get_current_timeline_range();
+        crate::waveform_canvas::batch_request_transitions_for_variables(&valid_vars, current_range);
         
         // CRITICAL: Trigger canvas redraw to ensure transitions are visible
         crate::waveform_canvas::trigger_canvas_redraw();

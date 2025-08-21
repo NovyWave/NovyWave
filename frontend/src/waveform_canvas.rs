@@ -8,6 +8,7 @@ use crate::config::current_theme;
 use shared::{SelectedVariable, UpMsg, SignalTransitionQuery, SignalTransition};
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::collections::HashSet;
 use moonzoon_novyui::tokens::theme::Theme as NovyUITheme;
 use shared::Theme as SharedTheme;
 use wasm_bindgen::JsCast;
@@ -30,6 +31,107 @@ const ANIMATION_FRAME_NS: u64 = 16_666_666; // 16.666ms = 60fps in nanoseconds
 pub static SIGNAL_TRANSITIONS_CACHE: Lazy<Mutable<HashMap<String, Vec<SignalTransition>>>> = Lazy::new(|| {
     Mutable::new(HashMap::new())
 });
+
+// Track which variables have had their transitions requested to prevent O(N²) request floods
+// Format: "file_path|scope_path|variable_name"
+static TRANSITIONS_REQUESTED: Lazy<Mutable<HashSet<String>>> = Lazy::new(|| {
+    Mutable::new(HashSet::new())
+});
+
+/// Request transitions only for variables that haven't been requested yet
+/// This prevents the O(N²) request flood when adding multiple variables
+fn request_transitions_for_new_variables_only(time_range: Option<(f32, f32)>) {
+    let Some((min_time, max_time)) = time_range else { return; };
+    
+    let selected_vars = SELECTED_VARIABLES.lock_ref();
+    let mut requested_set = TRANSITIONS_REQUESTED.lock_mut();
+    
+    for var in selected_vars.iter() {
+        // Parse unique_id: "/path/file.ext|scope|variable"
+        let parts: Vec<&str> = var.unique_id.split('|').collect();
+        if parts.len() >= 3 {
+            let file_path = parts[0];
+            let scope_path = parts[1]; 
+            let variable_name = parts[2];
+            
+            // Create cache key for tracking requests
+            let cache_key = format!("{}|{}|{}", file_path, scope_path, variable_name);
+            
+            // Only request if we haven't requested this variable before
+            if !requested_set.contains(&cache_key) {
+                zoon::println!("Requesting transitions for NEW variable: {}", cache_key);
+                request_signal_transitions_from_backend(file_path, scope_path, variable_name, (min_time, max_time));
+                requested_set.insert(cache_key);
+            }
+        }
+    }
+}
+
+/// Force request transitions for all variables (use for timeline range changes)
+fn request_transitions_for_all_variables(time_range: Option<(f32, f32)>) {
+    let Some((min_time, max_time)) = time_range else { return; };
+    
+    let selected_vars = SELECTED_VARIABLES.lock_ref();
+    let mut requested_set = TRANSITIONS_REQUESTED.lock_mut();
+    
+    for var in selected_vars.iter() {
+        // Parse unique_id: "/path/file.ext|scope|variable"
+        let parts: Vec<&str> = var.unique_id.split('|').collect();
+        if parts.len() >= 3 {
+            let file_path = parts[0];
+            let scope_path = parts[1]; 
+            let variable_name = parts[2];
+            
+            // Create cache key for tracking requests
+            let cache_key = format!("{}|{}|{}", file_path, scope_path, variable_name);
+            
+            zoon::println!("Force requesting transitions for variable: {}", cache_key);
+            request_signal_transitions_from_backend(file_path, scope_path, variable_name, (min_time, max_time));
+            requested_set.insert(cache_key);
+        }
+    }
+}
+
+/// Clear transition request tracking for removed variables
+pub fn clear_transition_tracking_for_variable(unique_id: &str) {
+    let parts: Vec<&str> = unique_id.split('|').collect();
+    if parts.len() >= 3 {
+        let cache_key = format!("{}|{}|{}", parts[0], parts[1], parts[2]);
+        TRANSITIONS_REQUESTED.lock_mut().remove(&cache_key);
+        zoon::println!("Cleared transition tracking for removed variable: {}", cache_key);
+    }
+}
+
+/// Clear all transition request tracking (useful for complete reset)
+pub fn clear_all_transition_tracking() {
+    TRANSITIONS_REQUESTED.lock_mut().clear();
+    zoon::println!("Cleared all transition tracking");
+}
+
+/// Batch add multiple variables without triggering O(N²) requests
+/// This is useful for config restore or bulk operations
+pub fn batch_request_transitions_for_variables(variables: &[shared::SelectedVariable], time_range: Option<(f32, f32)>) {
+    let Some((min_time, max_time)) = time_range else { return; };
+    
+    let mut requested_set = TRANSITIONS_REQUESTED.lock_mut();
+    
+    zoon::println!("Batch requesting transitions for {} variables", variables.len());
+    for var in variables.iter() {
+        let parts: Vec<&str> = var.unique_id.split('|').collect();
+        if parts.len() >= 3 {
+            let file_path = parts[0];
+            let scope_path = parts[1]; 
+            let variable_name = parts[2];
+            
+            let cache_key = format!("{}|{}|{}", file_path, scope_path, variable_name);
+            
+            // Always request for batch operations (don't check if already requested)
+            zoon::println!("Batch requesting transitions for: {}", cache_key);
+            request_signal_transitions_from_backend(file_path, scope_path, variable_name, (min_time, max_time));
+            requested_set.insert(cache_key);
+        }
+    }
+}
 
 
 
@@ -78,6 +180,13 @@ static DIRECT_CURSOR_ANIMATION: Lazy<Mutable<DirectCursorAnimation>> = Lazy::new
 // Canvas update debouncing to reduce redraw overhead
 static LAST_CANVAS_UPDATE: Lazy<Mutable<u64>> = Lazy::new(|| Mutable::new(0));
 static PENDING_CANVAS_UPDATE: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
+
+// Debouncing for transition navigation to prevent rapid key press issues
+static LAST_TRANSITION_NAVIGATION_TIME: Lazy<Mutable<u64>> = Lazy::new(|| Mutable::new(0));
+const TRANSITION_NAVIGATION_DEBOUNCE_MS: u64 = 100; // 100ms debounce
+
+// f32 precision tolerance for transition navigation (f32::EPSILON ≈ 1.19e-7, so 1.2e-6 gives ~10x margin)
+const F32_PRECISION_TOLERANCE: f64 = 1.2e-6;
 
 
 #[derive(Clone, Debug, PartialEq)]
@@ -530,7 +639,7 @@ async fn create_canvas_element() -> impl Element {
     // High-performance direct cursor animation with smart debouncing
     start_direct_cursor_animation_loop();
 
-    // Update timeline range when selected variables change
+    // Update timeline range when selected variables change - OPTIMIZED to prevent O(N²) requests
     Task::start(async move {
         SELECTED_VARIABLES.signal_vec_cloned().for_each(move |_| {
             async move {
@@ -540,18 +649,8 @@ async fn create_canvas_element() -> impl Element {
                     TIMELINE_VISIBLE_RANGE_START.set_neq(min_time);
                     TIMELINE_VISIBLE_RANGE_END.set_neq(max_time);
                     
-                    // Immediately request transition data for all selected variables
-                    let selected_vars = SELECTED_VARIABLES.lock_ref();
-                    for var in selected_vars.iter() {
-                        // Parse unique_id: "/path/file.ext|scope|variable"
-                        let parts: Vec<&str> = var.unique_id.split('|').collect();
-                        if parts.len() >= 3 {
-                            let file_path = parts[0];
-                            let scope_path = parts[1]; 
-                            let variable_name = parts[2];
-                            request_signal_transitions_from_backend(file_path, scope_path, variable_name, (min_time, max_time));
-                        }
-                    }
+                    // OPTIMIZED: Only request transition data for NEW variables (prevents O(N²) flood)
+                    request_transitions_for_new_variables_only(Some((min_time, max_time)));
                     
                     trigger_canvas_redraw();
                 } else {
@@ -579,6 +678,10 @@ async fn create_canvas_element() -> impl Element {
             async move {
                 // CRITICAL: Clear all cached processed data when timeline changes
                 clear_processed_signal_cache();
+                
+                // When timeline range changes (zoom/pan), request new data for ALL variables in new range
+                let current_range = get_current_timeline_range();
+                request_transitions_for_all_variables(current_range);
                 
                 canvas_wrapper.borrow_mut().update_objects(move |objects| {
                     let selected_vars = SELECTED_VARIABLES.lock_ref();
@@ -2097,13 +2200,23 @@ pub fn collect_all_transitions() -> Vec<f64> {
     
     // Remove duplicates and sort by time
     all_transitions.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    all_transitions.dedup_by(|a, b| (*a - *b).abs() < 1e-12); // Remove near-duplicate times
+    // Use f32-appropriate tolerance instead of f64 precision
+    // f32::EPSILON ≈ 1.19e-7, so F32_PRECISION_TOLERANCE gives us ~10x margin
+    all_transitions.dedup_by(|a, b| (*a - *b).abs() < F32_PRECISION_TOLERANCE); // Remove near-duplicate times with f32 precision
     
     all_transitions
 }
 
 /// Jump to the previous transition relative to current cursor position
 pub fn jump_to_previous_transition() {
+    // Debounce rapid key presses to prevent precision issues
+    let now = get_current_time_ns();
+    let last_navigation = LAST_TRANSITION_NAVIGATION_TIME.get();
+    if now - last_navigation < TRANSITION_NAVIGATION_DEBOUNCE_MS * 1_000_000 {
+        return; // Still within debounce period
+    }
+    LAST_TRANSITION_NAVIGATION_TIME.set_neq(now);
+    
     // Validate timeline range exists before attempting transition jump
     if get_current_timeline_range().is_none() {
         return; // No valid timeline range available
@@ -2120,7 +2233,7 @@ pub fn jump_to_previous_transition() {
     let mut previous_transition: Option<f64> = None;
     
     for &transition_time in transitions.iter() {
-        if transition_time < current_cursor - 1e-12 { // Small tolerance to avoid exact matches
+        if transition_time < current_cursor - F32_PRECISION_TOLERANCE { // f32-appropriate tolerance to avoid precision issues
             previous_transition = Some(transition_time);
         } else {
             break; // Transitions are sorted, so we can stop here
@@ -2149,6 +2262,14 @@ pub fn jump_to_previous_transition() {
 
 /// Jump to the next transition relative to current cursor position
 pub fn jump_to_next_transition() {
+    // Debounce rapid key presses to prevent precision issues
+    let now = get_current_time_ns();
+    let last_navigation = LAST_TRANSITION_NAVIGATION_TIME.get();
+    if now - last_navigation < TRANSITION_NAVIGATION_DEBOUNCE_MS * 1_000_000 {
+        return; // Still within debounce period
+    }
+    LAST_TRANSITION_NAVIGATION_TIME.set_neq(now);
+    
     // Validate timeline range exists before attempting transition jump
     if get_current_timeline_range().is_none() {
         return; // No valid timeline range available
@@ -2163,7 +2284,7 @@ pub fn jump_to_next_transition() {
     
     // Find the smallest transition time that's greater than current cursor
     let next_transition = transitions.iter()
-        .find(|&&transition_time| transition_time > current_cursor + 1e-12) // Small tolerance to avoid exact matches
+        .find(|&&transition_time| transition_time > current_cursor + F32_PRECISION_TOLERANCE) // f32-appropriate tolerance to avoid precision issues
         .copied();
     
     if let Some(next_time) = next_transition {
