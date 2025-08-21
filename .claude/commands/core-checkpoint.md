@@ -1,5 +1,5 @@
 ---
-model: claude-3-5-haiku-latest
+model: claude-sonnet-4-0
 allowed-tools: Bash
 description: 'Ultra-fast WIP saves: first call creates CHECKPOINT, subsequent calls amend'
 ---

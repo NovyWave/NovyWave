@@ -41,7 +41,7 @@ load_files_scroll_position = 992
 timeline_cursor_position = 30.91190108191654
 timeline_zoom_level = 1.0
 timeline_visible_range_start = 0.0
-timeline_visible_range_end = 250.0
+timeline_visible_range_end = 100.0
 
 [workspace.docked_bottom_dimensions]
 files_and_scopes_panel_width = 518.0

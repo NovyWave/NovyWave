@@ -192,26 +192,29 @@ Use `/core-remember-important` when you:
 
 ### Implementor Agent Requirements
 **CRITICAL: Implementor agents MUST:**
-- Check dev_server.log after making changes (READ ONLY - never run compilation)
+- Check dev_server.log after making changes (MANDATORY verification protocol)
 - Report compilation errors AND warnings found
 - Never claim "compilation successful" without verification
-- Use `tail -50 dev_server.log | grep -E "error|Error|warning|Warning|Failed|Frontend built"` to verify
+- Use `tail -100 dev_server.log | grep -E "error\[E|warning:|Failed|panic|Frontend built"` to verify
 - Fix ALL errors before returning control to main session
 - Report any warnings that remain after fixes
 - **NEVER run `makers build`, `makers start`, or any compilation commands** - dev server auto-compiles
-- **NEVER use browser MCP tools** - that's exclusively for Verifier agents
+- **NEVER use browser MCP tools** - that's exclusively for Validator agents
 - **ONLY make code changes and read logs** - no testing, no browser access
 
-### Verifier Agent Requirements
-**CRITICAL: Verifier agents are responsible for:**
+### Validator Agent Requirements
+**CRITICAL: Validator agents are responsible for:**
+- 4-phase validation: Compilation → Visual → Functional → Console
 - Checking dev_server.log for compilation status
-- Using browser MCP tools for visual verification (when available)
+- Using browser MCP tools for visual verification
 - Testing functionality after Implementor changes
-- Reporting both compilation AND runtime issues
-- **ONLY Verifier agents can use browser MCP tools**
-- **NEVER make code changes** - only verify and test
+- Screenshot documentation of UI states
+- Reporting comprehensive validation results
+- **ONLY Validator agents can use browser MCP tools**
+- **NEVER make code changes** - only validate and test
+- **AUTOMATIC activation** after Implementor agents complete
 
-**AVAILABLE BROWSER MCP TOOLS FOR VERIFIER:**
+**AVAILABLE BROWSER MCP TOOLS FOR VALIDATOR:**
 - `mcp__browsermcp__browser_navigate` - Navigate to URLs
 - `mcp__browsermcp__browser_screenshot` - Capture screenshots for verification
 - `mcp__browsermcp__browser_snapshot` - Get page accessibility tree
@@ -224,20 +227,20 @@ Use `/core-remember-important` when you:
 - `mcp__browsermcp__browser_get_console_logs` - Check for errors
 - `mcp__browsermcp__browser_go_back` / `mcp__browsermcp__browser_go_forward` - Navigation testing
 
-### Implementor-Verifier Collaboration Pattern
+### Implementor-Validator Collaboration Pattern
 **MANDATORY WORKFLOW:**
 1. **Implementor Agent**: Makes code changes, checks dev_server.log for compilation
-2. **Main Session**: MUST run Verifier agent immediately after Implementor completes
-3. **Verifier Agent**: Checks compilation, optionally tests with browser MCP
-4. **Main Session**: Decides next action based on Verifier results
+2. **Main Session**: MUST run Validator agent immediately after Implementor completes
+3. **Validator Agent**: Performs 4-phase validation including browser testing
+4. **Main Session**: Decides next action based on Validator results (✅ PASS, ⚠️ WARN, ❌ FAIL)
 
 ### Main Session Focus
 - High-level coordination & planning
 - User interaction & decision making
 - Architecture decisions & task delegation
 - Synthesis of subagent results
-- **MANDATORY: Run verifier agent after each implementor agent completes**
-- **Orchestrate Implementor → Verifier workflow for all changes**
+- **MANDATORY: Run Validator agent after each Implementor agent completes**
+- **Orchestrate Implementor → Validator workflow for all changes**
 
 ### Context Conservation Benefits
 - Subagents use their own context space, not main session's
