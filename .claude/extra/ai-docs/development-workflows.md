@@ -157,28 +157,6 @@ refactor(frontend): modularize main.rs into focused modules
 - DO NOT push to remote repository unless explicitly asked
 - **Only exceptions: `/core-checkpoint` and `/core-commit` commands where destruction is part of expected flow, but still be careful**
 
-## Session Discovery Storage
-
-### Important Discoveries Storage
-Use `/core-remember-important` before ending sessions to store:
-```bash
-/core-remember-important  # Store session discoveries to .claude/session-notes.md
-```
-
-### Storage Triggers
-Use `/core-remember-important` when you:
-- Solve any bug or compilation error
-- Create new UI patterns or component examples
-- Make architectural decisions
-- Discover framework-specific patterns
-- Fix responsive design issues
-
-### Storage Commands
-```bash
-/core-note "Fixed compilation by adding mut self"
-/core-memory-search "IconName"
-/core-remember-important  # Store important session discoveries
-```
 
 ## Subagent Delegation Strategy
 
