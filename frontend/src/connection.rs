@@ -80,6 +80,7 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 
                 // Also maintain legacy LOADED_FILES for backward compatibility during transition
                 for file in hierarchy.files {
+                    zoon::println!("DEBUG: Adding file to LOADED_FILES: {} (range: {:?} to {:?})", file.id, file.min_time, file.max_time);
                     LOADED_FILES.lock_mut().push_cloned(file.clone());
                     
                     // Store scope selection for later restoration (don't restore immediately)
@@ -383,6 +384,7 @@ fn handle_down_msg(down_msg: DownMsg) {
             }
             
             for file in hierarchy.files {
+                zoon::println!("DEBUG: Adding file to LOADED_FILES (fallback): {} (range: {:?} to {:?})", file.id, file.min_time, file.max_time);
                 LOADED_FILES.lock_mut().push_cloned(file.clone());
             }
             

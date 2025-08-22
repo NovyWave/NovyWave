@@ -22,7 +22,7 @@ use crate::{
     FILE_PICKER_ERROR, FILE_PICKER_ERROR_CACHE, FILE_TREE_CACHE, DOCK_TOGGLE_IN_PROGRESS,
     TRACKED_FILES, state, clipboard
 };
-use crate::state::{TIMELINE_ZOOM_LEVEL, ZOOM_CENTER_POSITION};
+use crate::state::TIMELINE_ZOOM_LEVEL;
 use crate::state::SELECTED_VARIABLES_ROW_HEIGHT;
 use crate::state::{SELECTED_VARIABLES, clear_selected_variables, remove_selected_variable};
 use crate::format_utils::truncate_value;
@@ -1338,55 +1338,51 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                     .s(Transform::new().move_up(4))
                                                     .child(
                                                         Row::new()
-                                                            .s(Align::center())
-                                                            .s(Gap::new().x(6))
-                                                            .item(kbd("W").size(KbdSize::Small).variant(KbdVariant::Outlined).build())
+                                                            .s(Align::new().center_y())
+                                                            // Left group: Z button
+                                                            .item(kbd("Z").size(KbdSize::Small).variant(KbdVariant::Outlined).build())
+                                                            // Spacer to push center and right groups apart
+                                                            .item(El::new().s(Width::fill()))
+                                                            // Center group: W - zoom display - S
                                                             .item(
-                                                                El::new()
-                                                                    .s(Width::exact(45))
-                                                                    .s(Font::new().color_signal(neutral_11()).center())
-                                                                    .child(
-                                                                        Text::with_signal(
-                                                                            TIMELINE_ZOOM_LEVEL.signal().map(|zoom| {
-                                                                                fn format_zoom_value(value: f32, suffix: &str) -> String {
-                                                                                    if value.fract() == 0.0 {
-                                                                                        format!("{}{}×", value as i32, suffix)
-                                                                                    } else {
-                                                                                        format!("{:.1}{}×", value, suffix)
-                                                                                    }
-                                                                                }
-                                                                                
-                                                                                if zoom < 1000.0 {
-                                                                                    format_zoom_value(zoom, "")
-                                                                                } else if zoom < 1000000.0 {
-                                                                                    format_zoom_value(zoom / 1000.0, "k")
-                                                                                } else if zoom < 1000000000.0 {
-                                                                                    format_zoom_value(zoom / 1000000.0, "M")
-                                                                                } else {
-                                                                                    format_zoom_value(zoom / 1000000000.0, "B")
-                                                                                }
-                                                                            })
-                                                                        )
+                                                                Row::new()
+                                                                    .s(Align::center())
+                                                                    .s(Gap::new().x(6))
+                                                                    .item(kbd("W").size(KbdSize::Small).variant(KbdVariant::Outlined).build())
+                                                                    .item(
+                                                                        El::new()
+                                                                            .s(Width::exact(45))
+                                                                            .s(Font::new().color_signal(neutral_11()).center())
+                                                                            .child(
+                                                                                Text::with_signal(
+                                                                                    TIMELINE_ZOOM_LEVEL.signal().map(|zoom| {
+                                                                                        fn format_zoom_value(value: f32, suffix: &str) -> String {
+                                                                                            if value.fract() == 0.0 {
+                                                                                                format!("{}{}×", value as i32, suffix)
+                                                                                            } else {
+                                                                                                format!("{:.1}{}×", value, suffix)
+                                                                                            }
+                                                                                        }
+                                                                                        
+                                                                                        if zoom < 1000.0 {
+                                                                                            format_zoom_value(zoom, "")
+                                                                                        } else if zoom < 1000000.0 {
+                                                                                            format_zoom_value(zoom / 1000.0, "k")
+                                                                                        } else if zoom < 1000000000.0 {
+                                                                                            format_zoom_value(zoom / 1000000.0, "M")
+                                                                                        } else {
+                                                                                            format_zoom_value(zoom / 1000000000.0, "B")
+                                                                                        }
+                                                                                    })
+                                                                                )
+                                                                            )
                                                                     )
+                                                                    .item(kbd("S").size(KbdSize::Small).variant(KbdVariant::Outlined).build())
                                                             )
-                                                            .item(kbd("S").size(KbdSize::Small).variant(KbdVariant::Outlined).build())
-                                                            .item(
-                                                                El::new()
-                                                                    .s(Font::new().color_signal(neutral_8()).size(11))
-                                                                    .child(Text::new(" | "))
-                                                            )
-                                                            .item(
-                                                                El::new()
-                                                                    .s(Width::exact(50))
-                                                                    .s(Font::new().color_signal(neutral_10()).center().size(11))
-                                                                    .child(
-                                                                        Text::with_signal(
-                                                                            ZOOM_CENTER_POSITION.signal().map(|center_pos| {
-                                                                                format!("C:{}s", center_pos.round() as i32)
-                                                                            })
-                                                                        )
-                                                                    )
-                                                            )
+                                                            // Spacer to push right group apart
+                                                            .item(El::new().s(Width::fill()))
+                                                            // Right group: R button
+                                                            .item(kbd("R").size(KbdSize::Small).variant(KbdVariant::Outlined).build())
                                                     )
                                             )
                                     )
@@ -1422,8 +1418,66 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                         Row::new()
                                                             .s(Align::new().center_y())
                                                             .s(Font::new().color_signal(neutral_8()).size(12))
-                                                            .item(kbd("A").size(KbdSize::Small).variant(KbdVariant::Outlined).build())
+                                                            // Left group: [min time] - A button (preserve width)
+                                                            .item(
+                                                                Row::new()
+                                                                    .s(Gap::new().x(6))
+                                                                    .item(
+                                                                        El::new()
+                                                                            .s(Font::new().color_signal(neutral_11()).center().size(11))
+                                                                            .update_raw_el(|raw_el| {
+                                                                                raw_el.style("width", "max-content")
+                                                                            })
+                                                                            .child(
+                                                                                Text::with_signal(
+                                                                                    // Get maximum timeline range (min value) - reactive signal that updates when either LOADED_FILES or SELECTED_VARIABLES changes
+                                                                                    crate::state::LOADED_FILES.signal_vec_cloned().to_signal_map(|_loaded_files| {
+                                                                                        crate::state::SELECTED_VARIABLES.signal_vec_cloned().to_signal_map(|_selected_vars| {
+                                                                                            if let Some((min_time, _max_time)) = crate::waveform_canvas::get_maximum_timeline_range() {
+                                                                                                // Smart time formatting that removes unnecessary decimals
+                                                                                                if !min_time.is_finite() || min_time <= 0.0 {
+                                                                                                    "0s".to_string()
+                                                                                                } else if min_time < 1e-6 {
+                                                                                                    let ns_val = min_time * 1e9;
+                                                                                                    if ns_val.fract() == 0.0 {
+                                                                                                        format!("{}ns", ns_val as i64)
+                                                                                                    } else {
+                                                                                                        format!("{:.1}ns", ns_val)
+                                                                                                    }
+                                                                                                } else if min_time < 1e-3 {
+                                                                                                    let us_val = min_time * 1e6;
+                                                                                                    if us_val.fract() == 0.0 {
+                                                                                                        format!("{}μs", us_val as i64)
+                                                                                                    } else {
+                                                                                                        format!("{:.1}μs", us_val)
+                                                                                                    }
+                                                                                                } else if min_time < 1.0 {
+                                                                                                    let ms_val = min_time * 1e3;
+                                                                                                    if ms_val.fract() == 0.0 {
+                                                                                                        format!("{}ms", ms_val as i64)
+                                                                                                    } else {
+                                                                                                        format!("{:.1}ms", ms_val)
+                                                                                                    }
+                                                                                                } else {
+                                                                                                    if min_time.fract() == 0.0 {
+                                                                                                        format!("{}s", min_time as i64)
+                                                                                                    } else {
+                                                                                                        format!("{:.1}s", min_time)
+                                                                                                    }
+                                                                                                }
+                                                                                            } else {
+                                                                                                "0s".to_string()
+                                                                                            }
+                                                                                        })
+                                                                                    }).flatten()
+                                                                                )
+                                                                            )
+                                                                    )
+                                                                    .item(kbd("A").size(KbdSize::Small).variant(KbdVariant::Outlined).build())
+                                                            )
+                                                            // Spacer to push center and right groups apart
                                                             .item(El::new().s(Width::fill()))
+                                                            // Center group: Q - [cursor time] - E
                                                             .item(
                                                                 Row::new()
                                                                     .s(Gap::new().x(2))
@@ -1453,8 +1507,65 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                                     )
                                                                     .item(kbd("E").size(KbdSize::Small).variant(KbdVariant::Outlined).build())
                                                             )
+                                                            // Spacer to push right group apart
                                                             .item(El::new().s(Width::fill()))
-                                                            .item(kbd("D").size(KbdSize::Small).variant(KbdVariant::Outlined).build())
+                                                            // Right group: D button (preserve width) - [max time]
+                                                            .item(
+                                                                Row::new()
+                                                                    .s(Gap::new().x(6))
+                                                                    .item(kbd("D").size(KbdSize::Small).variant(KbdVariant::Outlined).build())
+                                                                    .item(
+                                                                        El::new()
+                                                                            .s(Font::new().color_signal(neutral_11()).center().size(11))
+                                                                            .update_raw_el(|raw_el| {
+                                                                                raw_el.style("width", "max-content")
+                                                                            })
+                                                                            .child(
+                                                                                Text::with_signal(
+                                                                                    // Get maximum timeline range (max value) - reactive signal that updates when either LOADED_FILES or SELECTED_VARIABLES changes
+                                                                                    crate::state::LOADED_FILES.signal_vec_cloned().to_signal_map(|_loaded_files| {
+                                                                                        crate::state::SELECTED_VARIABLES.signal_vec_cloned().to_signal_map(|_selected_vars| {
+                                                                                            if let Some((_min_time, max_time)) = crate::waveform_canvas::get_maximum_timeline_range() {
+                                                                                                // Smart time formatting that removes unnecessary decimals
+                                                                                                if !max_time.is_finite() || max_time <= 0.0 {
+                                                                                                    "0s".to_string()
+                                                                                                } else if max_time < 1e-6 {
+                                                                                                    let ns_val = max_time * 1e9;
+                                                                                                    if ns_val.fract() == 0.0 {
+                                                                                                        format!("{}ns", ns_val as i64)
+                                                                                                    } else {
+                                                                                                        format!("{:.1}ns", ns_val)
+                                                                                                    }
+                                                                                                } else if max_time < 1e-3 {
+                                                                                                    let us_val = max_time * 1e6;
+                                                                                                    if us_val.fract() == 0.0 {
+                                                                                                        format!("{}μs", us_val as i64)
+                                                                                                    } else {
+                                                                                                        format!("{:.1}μs", us_val)
+                                                                                                    }
+                                                                                                } else if max_time < 1.0 {
+                                                                                                    let ms_val = max_time * 1e3;
+                                                                                                    if ms_val.fract() == 0.0 {
+                                                                                                        format!("{}ms", ms_val as i64)
+                                                                                                    } else {
+                                                                                                        format!("{:.1}ms", ms_val)
+                                                                                                    }
+                                                                                                } else {
+                                                                                                    if max_time.fract() == 0.0 {
+                                                                                                        format!("{}s", max_time as i64)
+                                                                                                    } else {
+                                                                                                        format!("{:.1}s", max_time)
+                                                                                                    }
+                                                                                                }
+                                                                                            } else {
+                                                                                                "100s".to_string()
+                                                                                            }
+                                                                                        })
+                                                                                    }).flatten()
+                                                                                )
+                                                                            )
+                                                                    )
+                                                            )
                                                     )
                                             )
                                     )

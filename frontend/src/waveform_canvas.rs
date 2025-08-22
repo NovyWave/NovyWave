@@ -1293,6 +1293,106 @@ pub fn get_current_timeline_range() -> Option<(f32, f32)> {
     }
 }
 
+/// Get the maximum timeline range (full file range regardless of zoom level)
+/// This behaves identically to get_current_timeline_range() when zoom level is 1.0 (unzoomed)
+pub fn get_maximum_timeline_range() -> Option<(f32, f32)> {
+    // Always get range from files containing selected variables only (ignore zoom level)
+    let loaded_files = LOADED_FILES.lock_ref();
+    
+    // Get file paths that contain selected variables
+    let selected_file_paths = get_selected_variable_file_paths();
+    
+    zoon::println!("DEBUG: get_maximum_timeline_range() called");
+    zoon::println!("DEBUG: Selected file paths: {:?}", selected_file_paths);
+    zoon::println!("DEBUG: Total loaded files: {}", loaded_files.len());
+    
+    // Debug: List all loaded files
+    for (i, file) in loaded_files.iter().enumerate() {
+        zoon::println!("DEBUG: Loaded file {}: {} (range: {:?} to {:?})", i, file.id, file.min_time, file.max_time);
+    }
+    
+    let mut min_time: f32 = f32::MAX;
+    let mut max_time: f32 = f32::MIN;
+    let mut has_valid_files = false;
+    
+    // If no variables are selected, don't show timeline
+    if selected_file_paths.is_empty() {
+        return None;
+    } else {
+        // Calculate range from only files that contain selected variables
+        
+        for file in loaded_files.iter() {
+            
+            // Check if this file contains any selected variables
+            let file_matches = selected_file_paths.iter().any(|path| {
+                let matches = file.id == *path;
+                matches
+            });
+            
+            zoon::println!("DEBUG: Checking file: {} (matches: {})", file.id, file_matches);
+            
+            if file_matches {
+                if let (Some(file_min), Some(file_max)) = (file.min_time, file.max_time) {
+                    zoon::println!("DEBUG: File {} has range: {}s to {}s", file.id, file_min, file_max);
+                    min_time = min_time.min(file_min as f32);
+                    max_time = max_time.max(file_max as f32);
+                    has_valid_files = true;
+                    zoon::println!("DEBUG: Updated range: {}s to {}s", min_time, max_time);
+                } else {
+                    zoon::println!("DEBUG: File {} has no time range data", file.id);
+                }
+            }
+        }
+    }
+    
+    if !has_valid_files || min_time == max_time {
+        // FALLBACK: No valid files with selected variables - check if any files exist at all
+        let mut fallback_min: f32 = f32::MAX;
+        let mut fallback_max: f32 = f32::MIN;
+        let mut has_any_files = false;
+        
+        for file in loaded_files.iter() {
+            if let (Some(file_min), Some(file_max)) = (file.min_time, file.max_time) {
+                fallback_min = fallback_min.min(file_min as f32);
+                fallback_max = fallback_max.max(file_max as f32);
+                has_any_files = true;
+            }
+        }
+        
+        if has_any_files && fallback_min != fallback_max {
+            // Use range from any available files as fallback
+            let fallback_range = fallback_max - fallback_min;
+            if fallback_range < 1e-9 {
+                Some((fallback_min, fallback_min + 1e-9))
+            } else {
+                Some((fallback_min, fallback_max))
+            }
+        } else {
+            // No files at all - provide safe default range
+            Some((0.0, 100.0))
+        }
+    } else {
+        // ENHANCED: Comprehensive validation before returning range
+        if !min_time.is_finite() || !max_time.is_finite() {
+            crate::debug_utils::debug_timeline_validation(&format!("WARNING: Maximum timeline range calculation produced non-finite values - min: {}, max: {}", min_time, max_time));
+            return Some((0.0, 100.0)); // Safe fallback
+        }
+        
+        // Ensure minimum range for coordinate precision (but don't override valid microsecond ranges!)
+        let file_range = max_time - min_time;
+        if file_range < 1e-9 {  // Only enforce minimum for truly tiny ranges (< 1 nanosecond)
+            let expanded_end = min_time + 1e-9;
+            if expanded_end.is_finite() {
+                Some((min_time, expanded_end))  // Minimum 1 nanosecond range
+            } else {
+                Some((0.0, 1e-9)) // Ultimate fallback
+            }
+        } else {
+            Some((min_time, max_time))  // Use actual range, even if it's microseconds
+        }
+    }
+}
+
 // Smooth zoom functions with mouse-centered behavior
 pub fn start_smooth_zoom_in() {
     if !IS_ZOOMING_IN.get() {
