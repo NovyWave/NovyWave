@@ -72,7 +72,7 @@ Intelligent git commit workflow with checkpoint conversion, change analysis, and
    - Canvas integration with dynamic range calculation
    
    💭 Suggested commit message:
-   "feat(timeline): implement zoom functionality with W/S keyboard shortcuts
+   "Implement timeline zoom functionality with keyboard shortcuts
    
    - Add timeline zoom state management with 1x-16x zoom range
    - Implement center-focused zoom in/out with bounds checking  
@@ -98,7 +98,7 @@ Intelligent git commit workflow with checkpoint conversion, change analysis, and
    📋 Current changes: Button styling improvements
    
    💭 Updated commit message:
-   "feat(ui): add button component with styling improvements"
+   "Add button component with styling improvements"
    
    ✅ Recommended: AMEND (similar scope, unpushed)
    
@@ -116,7 +116,7 @@ Intelligent git commit workflow with checkpoint conversion, change analysis, and
    A  src/utils/validation.rs
    
    💭 Suggested commit message:
-   "feat(auth): add input validation to login flow"
+   "Add input validation to login flow"
    
    ⚠️  New commit recommended (different scope from last commit)
    
@@ -143,7 +143,7 @@ Intelligent git commit workflow with checkpoint conversion, change analysis, and
    **For Normal Workflow:**
    - Stage changes with `git add .`
    - For amend: Use `git commit --amend -m "updated message"` (rewrite message based on all accumulated changes)
-   - For new commit: Use `git commit -m "message"` (clean conventional format, no Claude boilerplate)
+   - For new commit: Use `git commit -m "message"` (descriptive summary format, no prefixes, no Claude boilerplate)
    - Show final `git status` to confirm
 
 ## Examples
@@ -153,7 +153,7 @@ Intelligent git commit workflow with checkpoint conversion, change analysis, and
 # After using /core-checkpoint for rapid iteration...
 /core-commit
 # 🔄 Found CHECKPOINT commit with accumulated changes
-# Analyzes all changes, suggests proper conventional commit
+# Analyzes all changes, suggests descriptive commit with bullet points
 ```
 
 **Normal interactive commit:**
@@ -172,13 +172,13 @@ Intelligent git commit workflow with checkpoint conversion, change analysis, and
 3. **Functionality** - New features or bug fixes
 4. **Development Infrastructure** - Workflow, tooling, architecture
 
-### Comprehensive Commit Message Format
-**Title**: Include ALL major impact areas, ordered by importance
+### Natural Commit Message Format
+**Title**: Descriptive summary of primary changes (no prefixes)
 ```
-Fix [data issue], optimize [performance area], and implement [infrastructure]
+Fix FST timescale calculation, optimize performance, and implement agent architecture
 ```
 
-**Body**: List changes in impact priority order, not conventional commit categories
+**Body**: List changes in impact priority order with bullet points
 - Lead with most user-critical fixes
 - Follow with performance improvements  
 - Include functionality changes
@@ -193,8 +193,14 @@ Fix [data issue], optimize [performance area], and implement [infrastructure]
 - Performance: Binary search + decimation (HIGH) 
 - Infrastructure: Agent architecture system (MEDIUM)
 
-💭 Comprehensive message:
-"Fix FST timescale calculation, optimize performance, and implement agent architecture"
+💭 Natural commit message:
+"Fix FST timescale calculation, optimize performance, and implement agent architecture
+
+- Fix incorrect timescale calculations in FST file parsing
+- Implement binary search optimization for signal lookup  
+- Add decimation for smooth rendering performance
+- Create agent architecture system for task delegation
+- Update build configuration for new agent workflow"
 ```
 
 ### Why This Approach
@@ -211,7 +217,7 @@ Fix [data issue], optimize [performance area], and implement [infrastructure]
 - **Smart amend detection**: Analyzes if current changes should amend previous commit
 - **Safety checks**: Warns about rewriting published history
 - **Scope analysis**: Compares change types between current and last commit
-- **Flexible commit format**: Uses conventional commits for single-area changes, impact-based format for multi-area changes
+- **Natural commit format**: Uses descriptive summaries with bullet point details instead of artificial prefixes
 - **Seamless workflow**: Perfect partner with `/core-checkpoint` for rapid iteration
 
 ## Anti-Automation Guard
