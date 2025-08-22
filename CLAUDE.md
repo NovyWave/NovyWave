@@ -3,19 +3,14 @@
 Core guidance for Claude Code when working with NovyWave.
 
 <!-- Core System Layer -->
-@.claude/extra/core/SYSTEM.md
-@.claude/extra/core/mcp-tools.md
+@.claude/extra/core/system.md
 @.claude/extra/core/development.md
 
 <!-- Project Configuration -->
-@.claude/extra/project/project-overview.md
 @.claude/extra/project/patterns.md
 
-<!-- AI Documentation -->
-@.claude/extra/ai-docs/technical-solutions.md
-@.claude/extra/ai-docs/project-architecture.md
-@.claude/extra/ai-docs/bug-fixes-reference.md
-@.claude/extra/ai-docs/development-workflows.md
+<!-- Technical Reference -->
+@.claude/extra/technical/reference.md
 
 ## Command Execution Protocol
 

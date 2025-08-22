@@ -1,4 +1,4 @@
-# General Development Practices
+# Development Practices & Workflows
 
 ## Following Conventions
 
@@ -54,11 +54,67 @@ Once I understand these details clearly, I'll implement all the improvements eff
 
 **Never assume - always clarify ambiguous requirements upfront.**
 
+## Development Server Management
+
+### Server Management Rules
+- **ABSOLUTE PROHIBITION: NEVER restart dev server without explicit user permission**
+- **MANDATORY: ALWAYS ask user to use `makers kill` or `makers start` commands**
+- Backend/shared crate compilation takes DOZENS OF SECONDS TO MINUTES - this is normal
+- **WAIT ENFORCEMENT: Must wait for compilation to complete, no matter how long**
+
+### Log Monitoring Patterns
+```bash
+# Check for compilation errors
+tail -100 dev_server.log | grep -i "error"
+
+# Monitor for successful compilation
+tail -f dev_server.log | grep -i "compilation complete"
+
+# Debug patterns
+rg "println!" --type rust  # Find debug statements to clean up
+```
+
+## Testing & Verification Protocols
+
+### CRITICAL VERIFICATION REQUIREMENTS
+- **NEVER claim success without actual verification**
+- **ALWAYS use browser MCP for visual verification of UI changes**
+- **ALWAYS check compilation logs for errors before testing**
+- If you CANNOT verify a fix (compilation fails, browser unreachable, etc.) - **TELL THE USER IMMEDIATELY**
+- Never claim "it works" or "it's fixed" without actual testing
+
+### UI Testing Protocol
+```bash
+# 1. Check compilation status first
+tail -f dev_server.log
+
+# 2. Verify frontend compilation succeeds
+# Look for "Frontend compilation complete" or similar
+
+# 3. Use browser MCP to test changes
+mcp__browsermcp__browser_navigate "http://localhost:8080"
+mcp__browsermcp__browser_screenshot  # Full page or element-specific screenshots
+```
+
+**Screenshot Options:**
+- Full page: `mcp__browsermcp__browser_screenshot` (captures entire page)
+- Element-specific: Can target specific elements using CSS selectors to save tokens and focus on relevant UI areas
+
+### Example Honest Responses
+- "I cannot verify the fix works because compilation is failing"
+- "Browser shows the dialog is still not centered - the fix didn't work"
+- "I see scrollbar errors in the console - the styling isn't applying"
+
+### Three-Stage Testing Approach
+1. **Compilation Verification**: Ensure code builds without errors
+2. **Visual Verification**: Use browser MCP to test UI changes
+3. **Functional Verification**: Test actual behavior matches requirements
+
 ## Task Management
 
 You have access to the TodoWrite and TodoRead tools to help you manage and plan tasks. Use these tools VERY frequently to ensure that you are tracking your tasks and giving the user visibility into your progress.
 
-**MANDATORY TODO USAGE:**
+### MANDATORY TODO USAGE
 - Create detailed todos for ALL multi-step tasks (3+ steps)
 - Update todo status in real-time as you work
 - Use specific, actionable todo descriptions
@@ -69,55 +125,16 @@ These tools are also EXTREMELY helpful for planning tasks, and for breaking down
 
 It is critical that you mark todos as completed as soon as you are done with a task. Do not batch up multiple tasks before marking them as completed.
 
-## Proactiveness
+### Systematic Problem-Solving Process
+1. **Acknowledge & Analyze**: Never defend poor results, use TodoWrite to break down issues
+2. **Systematic Subagent Research**: Use Task tool subagents to analyze each issue separately
+3. **Methodical Implementation**: Apply fixes systematically, one issue at a time
+4. **Comprehensive Testing**: Use browser MCP to verify changes visually
+5. **Results Verification & Honesty**: Test each fix individually
 
-You are allowed to be proactive, but only when the user asks you to do something. You should strive to strike a balance between:
-1. Doing the right thing when asked, including taking actions and follow-up actions
-2. Not surprising the user with actions you take without asking
-
-For example, if the user asks you how to approach something, you should do your best to answer their question first, and not immediately jump into taking actions.
-
-3. Do not add additional code explanation summary unless requested by the user. After working on a file, just stop, rather than providing an explanation of what you did.
-
-## Systematic Improvement Process
-
-**WHEN USER PROVIDES FEEDBACK ABOUT POOR RESULTS:**
-
-### 1. Acknowledge & Analyze
-- Never defend poor results - acknowledge when quality is insufficient
-- Use TodoWrite to break down each specific issue
-- Create focused todos for each problem area
-
-### 2. Systematic Subagent Research
-- Use Task tool subagents to analyze each issue separately
-- One subagent per distinct problem for focused analysis
-- Get detailed technical solutions from each subagent
-- Example: "Analyze dialog centering issues", "Fix scrollbar thickness problems"
-
-### 3. Methodical Implementation with Verification
-- Apply fixes systematically, one issue at a time
-- **MANDATORY: After EVERY implementor agent run, MUST run verifier agent or check dev_server.log**
-- **CRITICAL: Never trust implementor's "compilation successful" claims - always verify independently**
-- Check for both errors AND warnings in compilation output
-- Update todo status as each fix is completed
-- Don't attempt to fix everything at once
-
-### 4. Comprehensive Testing
-- Use browser MCP to verify changes visually
-- Take screenshots to document improvements
-- Check compilation logs for errors AND warnings
-- Verify ALL requirements are met before claiming completion
-
-### 5. Results Verification & Honesty
-- Test each fix individually
-- Verify the overall solution meets all requirements
-- **CRITICAL: If you cannot verify a fix works, tell the user immediately**
-- Report verification failures honestly: "I cannot verify this works because [reason]"
-- Never claim completion without actual successful testing
-
-**Example Response Pattern:**
+### Example Response Pattern for Poor Results
 ```
-You're absolutely right - 1/5 is not acceptable. Let me use subagents to systematically analyze and fix each issue:
+1/5 is not acceptable. Let me use subagents to systematically analyze and fix each issue:
 
 [Creates detailed todos for each problem]
 [Uses Task tool subagents to analyze each issue separately]  
@@ -125,123 +142,104 @@ You're absolutely right - 1/5 is not acceptable. Let me use subagents to systema
 [Verifies all fixes work properly]
 ```
 
-**This process ensures accountability and drives high-quality results.**
+## Git Workflows
 
-## Git Operations
 
-### Committing Changes
-
-When the user asks you to create a new git commit, follow these steps carefully:
-
-1. Run the following bash commands in parallel:
-   - Run a git status command to see all untracked files
-   - Run a git diff command to see both staged and unstaged changes
-   - Run a git log command to see recent commit messages
-
-2. Analyze all staged changes and draft a commit message:
-   - Summarize the nature of the changes
-   - Check for any sensitive information
-   - Draft a concise (1-2 sentences) commit message
-   - Ensure it accurately reflects the changes
-
-3. Run the following commands in parallel:
-   - Add relevant untracked files to the staging area
-   - Create clean commit with no Claude mentions or boilerplate
-   - Run git status to verify success
-
-Important notes:
-- NEVER update the git config
-- NEVER run additional commands to read or explore code
-- DO NOT push to the remote repository unless explicitly asked
-- Never use git commands with the -i flag
+### Git Safety Rules
 - **CRITICAL: NEVER perform destructive git operations (reset, rebase, force push, branch deletion, stash drop) without explicit user confirmation**
 - **User lost hours of work from uncommitted changes - always confirm before any operation that could lose data**
-- **Only exceptions: /core-checkpoint and /core-commit commands where destruction is part of expected flow, but still be careful**
+- Never use git commands with `-i` flag (interactive not supported)
+- DO NOT push to remote repository unless explicitly asked
+- **Only exceptions: `/core-checkpoint` and `/core-commit` commands where destruction is part of expected flow, but still be careful**
 
-### Two-Stage Checkpoint Workflow
 
-**Single Commit with Multi-Line Messages:**
+## Subagent Delegation Strategy
 
-The `/core-commit` command creates one comprehensive commit with multi-line messages that organize logical changes clearly:
+### Strategic Subagent Usage
+**Use Task tool subagents selectively** to preserve main session context while extending effective session length.
 
-**Single-Line Format (when one logical change):**
-```
-fix(ui): resolve panel resize issues
-```
+### Delegate to Subagents
+- File analysis & research (instead of main session reading multiple files)
+- Implementation tasks (code changes, testing, debugging)
+- Investigation work (finding patterns, analyzing codebases)
+- Complex searches across many files
 
-**Multi-Line Format (when multiple logical changes):**
-```
-fix(ui): resolve panel resize issues in docked-to-bottom mode
-fix(config): preserve dock mode settings during workspace saves
-refactor(frontend): modularize main.rs into focused modules
-```
+### Implementor Agent Requirements
+**CRITICAL: Implementor agents MUST:**
+- Check dev_server.log after making changes (MANDATORY verification protocol)
+- Report compilation errors AND warnings found
+- Never claim "compilation successful" without verification
+- Use `tail -100 dev_server.log | grep -E "error\[E|warning:|Failed|panic|Frontend built"` to verify
+- Fix ALL errors before returning control to main session
+- Report any warnings that remain after fixes
+- **NEVER run `makers build`, `makers start`, or any compilation commands** - dev server auto-compiles
+- **NEVER use browser MCP tools** - that's exclusively for Validator agents
+- **ONLY make code changes and read logs** - no testing, no browser access
 
-**Benefits:**
-- **Clear git blame**: Shows all relevant changes when investigating specific files
-- **Semantic organization**: Each line follows conventional commits with proper scoping
-- **Simpler workflow**: No empty commits or complex splitting logic
-- **Better debugging**: Complete context visible in file history
-- **Clean history**: One commit per development session with clear scope breakdown
+### Validator Agent Requirements
+**CRITICAL: Validator agents are responsible for:**
+- 4-phase validation: Compilation → Visual → Functional → Console
+- Checking dev_server.log for compilation status
+- Using browser MCP tools for visual verification
+- Testing functionality after Implementor changes
+- Screenshot documentation of UI states
+- Reporting comprehensive validation results
+- **ONLY Validator agents can use browser MCP tools**
+- **NEVER make code changes** - only validate and test
+- **AUTOMATIC activation** after Implementor agents complete
 
-**Pattern:**
-- Analyze accumulated CHECKPOINT changes
-- Identify distinct logical changes by scope (ui, config, feat, fix, refactor, etc.)
-- Create single commit with one line per logical change
-- Use conventional commit format for each line
+### Implementor-Validator Collaboration Pattern
+**MANDATORY WORKFLOW:**
+1. **Implementor Agent**: Makes code changes, checks dev_server.log for compilation
+2. **Main Session**: MUST run Validator agent immediately after Implementor completes
+3. **Validator Agent**: Performs 4-phase validation including browser testing
+4. **Main Session**: Decides next action based on Validator results (✅ PASS, ⚠️ WARN, ❌ FAIL)
 
-### Pull Requests
+### Main Session Focus
+- High-level coordination & planning
+- User interaction & decision making
+- Architecture decisions & task delegation
+- Synthesis of subagent results
+- **MANDATORY: Run Validator agent after each Implementor agent completes**
+- **Orchestrate Implementor → Validator workflow for all changes**
 
-Use the gh command via the Bash tool for ALL GitHub-related tasks.
+### Context Conservation Benefits
+- Subagents use their own context space, not main session's
+- Main session gets condensed summaries instead of raw file contents
+- Can parallelize multiple research/implementation tasks
+- Dramatically extends effective session length (2-3x longer)
 
-When creating a pull request:
-1. Run commands in parallel to understand current state
-2. Analyze all changes that will be included
-3. Create PR using gh pr create with proper formatting
+### Self-Reminder Checklist
+Before using Read/Glob/Grep tools, ask: "Could a subagent research this instead?"
+- If reading 2+ files → delegate to Task tool
+- If searching for patterns → delegate to Task tool
+- If analyzing codebase structure → delegate to Task tool
+- Exception: Single specific files (configs, CLAUDE.md)
 
-## Claude Code Hooks
+## Quality Assurance & Best Practices
 
-### Hook Development Guidelines
+### Debug Cleanup Methodology
+1. Use Task tool subagents for parallel analysis
+2. Categorize warnings: definitely fixable vs maybe fixable vs keep as-is
+3. Remove dead code first
+4. Add TODO comments + `#[allow]` for future features
+5. Challenge clone variables - test compilation without them
+6. Achieve 100% warning cleanup for production-ready codebase
 
-**ALL new Claude Code hooks MUST use shared infrastructure:**
-- Source `shared-functions.sh` for common utilities
-- Use `init_hook_env` for project detection and setup
+### Error Handling Verification
+- Always use `error_display::add_error_alert()` for ALL error handling
+- Never duplicate logging
+- Test error states with invalid inputs
+- Verify graceful degradation
 
-**Template for new hooks:**
-```bash
-#!/bin/bash
-# Hook Description
-
-source "$(dirname "$0")/shared-functions.sh"
-init_hook_env
-
-# Hook-specific logic here
-echo "Hook action: $(date)" >> "$HOOK_LOG"
-```
-
-### Troubleshooting
-
-If you get blocked by a hook, determine if you can adjust your actions in response to the blocked message. If not, ask the user to check their hooks configuration.
-
-## Do's and Don'ts
-
-### Important Reminders
+### Important Development Reminders
 - Do what has been asked; nothing more, nothing less
 - NEVER create files unless they're absolutely necessary
 - ALWAYS prefer editing an existing file to creating a new one
 - NEVER proactively create documentation files (*.md) or README files unless explicitly requested
 
-### Claude Code System Maintenance
-
-**IMPORTANT: When updating Claude Code infrastructure files, always update the human documentation:**
-
-- Commands added/modified → Update `docs/working-with-claude.md`
-- Memory system changes → Update `docs/working-with-claude.md` 
-- Hook system changes → Update `docs/working-with-claude.md`
-- New slash commands → Update `docs/working-with-claude.md`
-
-The human documentation must stay synchronized with the actual system capabilities so users know what's available.
-
-### Planning
+### Planning Guidelines
 - Use the Task tool when you are in plan mode
 - Only use exit_plan_mode tool when planning implementation steps for code writing tasks
 - For research tasks (gathering information, searching, reading), do NOT use exit_plan_mode
+
