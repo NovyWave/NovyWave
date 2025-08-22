@@ -38,10 +38,10 @@ load_files_expanded_directories = [
 selected_scope_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv"
 load_files_scroll_position = 992
 variables_search_filter = "clk"
-timeline_cursor_position = 0.000006145583993278107
-timeline_zoom_level = 23734536.0
-timeline_visible_range_start = 0.0
-timeline_visible_range_end = 0.000010533176464377902
+timeline_cursor_position = 0.000007918348615613805
+timeline_zoom_level = 30101124.0
+timeline_visible_range_start = 0.0000016670715012878645
+timeline_visible_range_end = 0.000009972412954084575
 
 [workspace.docked_bottom_dimensions]
 files_and_scopes_panel_width = 518.0
