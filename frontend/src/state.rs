@@ -19,7 +19,10 @@ pub static VARIABLES_VALUE_DIVIDER_DRAGGING: Lazy<Mutable<bool>> = lazy::default
 pub const SELECTED_VARIABLES_ROW_HEIGHT: u32 = 30;
 
 // Timeline cursor position (in seconds)
-pub static TIMELINE_CURSOR_POSITION: Lazy<Mutable<f64>> = Lazy::new(|| Mutable::new(10.0));
+pub static TIMELINE_CURSOR_POSITION: Lazy<Mutable<f64>> = Lazy::new(|| Mutable::new(0.0));
+
+// Track if cursor position was set during startup before files loaded
+pub static STARTUP_CURSOR_POSITION_SET: Lazy<Mutable<bool>> = lazy::default();
 
 // Timeline zoom state
 pub static TIMELINE_ZOOM_LEVEL: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(1.0)); // 1.0 = normal, 1B max for extreme zoom
@@ -43,7 +46,7 @@ pub static IS_SHIFT_PRESSED: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(fal
 
 // Mouse position tracking for zoom center
 pub static MOUSE_X_POSITION: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(0.0));
-pub static MOUSE_TIME_POSITION: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(10.0));
+pub static MOUSE_TIME_POSITION: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(0.0));
 
 // Zoom center position (in seconds) - separate from mouse position for explicit control
 pub static ZOOM_CENTER_POSITION: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(0.0));
@@ -111,8 +114,8 @@ pub static EXPANDED_SCOPES: Lazy<Mutable<IndexSet<String>>> = lazy::default();
 pub static SELECTED_VARIABLES: Lazy<MutableVec<shared::SelectedVariable>> = lazy::default();
 pub static SELECTED_VARIABLES_INDEX: Lazy<Mutable<IndexSet<String>>> = lazy::default();
 
-// Signal values for selected variables - now stores multi-format cached values
-pub static SIGNAL_VALUES: Lazy<Mutable<HashMap<String, crate::format_utils::MultiFormatValue>>> = lazy::default();
+// Signal values for selected variables - now stores signal values with clear state distinction
+pub static SIGNAL_VALUES: Lazy<Mutable<HashMap<String, crate::format_utils::SignalValue>>> = lazy::default();
 
 // Format selections for selected variables (unique_id -> VarFormat)
 pub static SELECTED_VARIABLE_FORMATS: Lazy<Mutable<HashMap<String, shared::VarFormat>>> = lazy::default();

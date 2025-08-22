@@ -241,6 +241,16 @@ fn init_scope_selection_handlers() {
             }
         }).await
     });
+    
+    // Auto-query signal values when selected variables change
+    Task::start(async {
+        SELECTED_VARIABLES.signal_vec_cloned().for_each(move |_| async move {
+            if CONFIG_LOADED.get() && !IS_LOADING.get() {
+                let cursor_pos = TIMELINE_CURSOR_POSITION.get();
+                crate::views::query_signal_values_at_time(cursor_pos);
+            }
+        }).await
+    });
 }
 
 fn init_file_picker_handlers() {

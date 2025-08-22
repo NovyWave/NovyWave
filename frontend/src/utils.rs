@@ -1,7 +1,7 @@
 use zoon::*;
 use shared::{ScopeData, file_contains_scope};
 use shared::LoadingStatus;
-use crate::state::{LOADING_FILES, IS_LOADING, LOADED_FILES, SELECTED_SCOPE_ID, TREE_SELECTED_ITEMS, EXPANDED_SCOPES, USER_CLEARED_SELECTION};
+use crate::state::{LOADING_FILES, IS_LOADING, LOADED_FILES, SELECTED_SCOPE_ID, TREE_SELECTED_ITEMS, EXPANDED_SCOPES, USER_CLEARED_SELECTION, TIMELINE_CURSOR_POSITION, STARTUP_CURSOR_POSITION_SET};
 
 // Signal for completion state changes - triggers clearing of completed files
 static LOADING_COMPLETION_TRIGGER: Lazy<Mutable<u32>> = Lazy::new(|| Mutable::new(0));
@@ -20,6 +20,13 @@ pub fn check_loading_complete() {
         
         // Restore scope selections using proper signal sequencing
         restore_scope_selections_sequenced();
+        
+        // Check if cursor position was set during startup - re-trigger value queries if so
+        if STARTUP_CURSOR_POSITION_SET.get() {
+            let cursor_pos = TIMELINE_CURSOR_POSITION.get();
+            crate::views::query_signal_values_at_time(cursor_pos);
+            STARTUP_CURSOR_POSITION_SET.set_neq(false); // Reset flag
+        }
         
         // Trigger file clearing through signal chain instead of timer
         LOADING_COMPLETION_TRIGGER.update(|count| count + 1);

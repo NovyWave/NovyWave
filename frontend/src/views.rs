@@ -365,8 +365,8 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
     drop(signal_values);
     
     // Create default multi-value if not available yet
-    let _multi_value = multi_value.unwrap_or_else(|| {
-        crate::format_utils::MultiFormatValue::new_missing()
+    let _signal_value = multi_value.unwrap_or_else(|| {
+        crate::format_utils::SignalValue::missing()
     });
     
     // Create reactive state for selection changes
@@ -410,9 +410,9 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
             map_ref! {
                 let signal_values = SIGNAL_VALUES.signal_cloned(),
                 let format_state = selected_format.signal_cloned() => {
-                    // Get current multi-format value
-                    let current_multi_value = signal_values.get(&unique_id).cloned()
-                        .unwrap_or_else(|| crate::format_utils::MultiFormatValue::new_missing());
+                    // Get current signal value
+                    let current_signal_value = signal_values.get(&unique_id).cloned()
+                        .unwrap_or_else(|| crate::format_utils::SignalValue::missing());
                     
                     // Parse current format for proper display
                     let current_format_enum = match format_state.as_str() {
@@ -427,11 +427,11 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
                     };
                     
                     // Use full display text - CSS ellipsis will handle truncation dynamically
-                    let display_text = current_multi_value.get_full_display_with_format(&current_format_enum);
-                    let full_display_text = current_multi_value.get_full_display_with_format(&current_format_enum);
+                    let display_text = current_signal_value.get_full_display_with_format(&current_format_enum);
+                    let full_display_text = current_signal_value.get_full_display_with_format(&current_format_enum);
                     
                     // Generate dropdown options with formatted values
-                    let dropdown_options = crate::format_utils::generate_dropdown_options(&current_multi_value, &signal_type);
+                    let dropdown_options = crate::format_utils::generate_dropdown_options(&current_signal_value, &signal_type);
                     
                     // Create unique trigger ID for positioning reference
                     let trigger_id = format!("select-trigger-{}", unique_id);
@@ -741,19 +741,78 @@ fn compute_value_from_cached_transitions(
         
         // Find the most recent transition before or at the requested time
         let mut current_value = None;
+        let mut last_transition_time = None;
         
         for transition in transitions {
             if transition.time_seconds <= time_seconds {
                 current_value = Some(transition.value.clone());
+                last_transition_time = Some(transition.time_seconds);
             } else {
                 break; // Transitions should be sorted by time
             }
         }
         
-        // Convert to SignalValue - if we found a transition, it's present data
-        current_value.map(|value| shared::SignalValue::Present(value))
+        // If we found a value, check if the time gap is reasonable
+        if let (Some(value), Some(last_time)) = (&current_value, last_transition_time) {
+            let time_gap = time_seconds - last_time;
+            
+            // Calculate adaptive threshold based on transition spacing (same logic as backend)
+            let min_gap = if transitions.len() > 1 {
+                let mut min = f64::MAX;
+                for i in 1..transitions.len() {
+                    let gap = transitions[i].time_seconds - transitions[i-1].time_seconds;
+                    if gap > 0.0 {
+                        min = min.min(gap);
+                    }
+                }
+                if min == f64::MAX { 
+                    // No valid gaps found, use conservative threshold
+                    0.001 // 1ms default
+                } else { 
+                    min * 3.0 // 3x minimum gap as threshold
+                }
+            } else {
+                0.001 // Single transition, use conservative threshold
+            };
+            
+            if time_gap > min_gap {
+                // Gap too large - return None (will show as N/A)
+                None
+            } else {
+                // Gap is reasonable - return cached value
+                Some(shared::SignalValue::Present(value.clone()))
+            }
+        } else {
+            // No transition found
+            None
+        }
     } else {
         None // No cached data available
+    }
+}
+
+/// Check if cursor time is within a variable's file time range
+pub fn is_cursor_within_variable_time_range(unique_id: &str, cursor_time: f64) -> bool {
+    // Parse unique_id to get file path: "file_path|scope_path|variable_name"
+    let parts: Vec<&str> = unique_id.splitn(3, '|').collect();
+    if parts.len() < 3 {
+        return true; // Assume valid if we can't parse (maintains existing behavior)
+    }
+    let file_path = parts[0];
+    
+    // Find the loaded file and check its time range
+    let loaded_files = LOADED_FILES.lock_ref();
+    if let Some(loaded_file) = loaded_files.iter().find(|f| f.id == file_path) {
+        if let (Some(min_time), Some(max_time)) = (loaded_file.min_time, loaded_file.max_time) {
+            // Check if cursor time is within the file's time range
+            cursor_time >= min_time && cursor_time <= max_time
+        } else {
+            // File has no time range data - assume valid (maintains existing behavior)
+            true
+        }
+    } else {
+        // File not found - assume valid (maintains existing behavior)
+        true
     }
 }
 
@@ -765,23 +824,60 @@ pub fn query_signal_values_at_time(time_seconds: f64) {
         return;
     }
     
+    // Prevent queries during startup until files are properly loaded
+    let tracked_files = crate::state::TRACKED_FILES.lock_ref();
+    let has_loaded_files = tracked_files.iter().any(|f| matches!(f.state, shared::FileState::Loaded(_)));
+    let _loaded_count = tracked_files.iter().filter(|f| matches!(f.state, shared::FileState::Loaded(_))).count();
+    let _total_count = tracked_files.len();
+    drop(tracked_files);
+    
+    if !has_loaded_files {
+        return; // Don't query if no files are loaded yet
+    }
+    
+    
     // Group queries by file path and separate cached vs uncached
     let mut backend_queries_by_file: HashMap<String, Vec<SignalValueQuery>> = HashMap::new();
     let mut cached_results: Vec<SignalValueResult> = Vec::new();
     
     for selected_var in selected_vars.iter() {
         if let Some((file_path, scope_path, variable_name)) = selected_var.parse_unique_id() {
-            // Try to get value from cached transitions first
-            if let Some(cached_signal_value) = compute_value_from_cached_transitions(
-                &file_path, &scope_path, &variable_name, time_seconds
-            ) {
-                // Use cached value - create a result directly
+            // Check if cursor time is within this variable's file time range
+            if !is_cursor_within_variable_time_range(&selected_var.unique_id, time_seconds) {
+                // Cursor is beyond this variable's file time range - show N/A instead of held value
                 let result = SignalValueResult {
                     scope_path: scope_path.clone(),
                     variable_name: variable_name.clone(),
                     time_seconds,
-                    raw_value: cached_signal_value.as_option(),
-                    formatted_value: cached_signal_value.as_option(), // TODO: Apply formatting
+                    raw_value: None,  // None indicates N/A
+                    formatted_value: None,  // None will display as N/A in UI
+                    format: selected_var.formatter.unwrap_or_default(),
+                };
+                cached_results.push(result);
+                continue; // Skip backend query for this variable
+            }
+            
+            // TEMPORARILY DISABLE CACHED TRANSITIONS - Force fresh backend queries to get corrected values
+            if false && let Some(cached_signal_value) = compute_value_from_cached_transitions(
+                &file_path, &scope_path, &variable_name, time_seconds
+            ) {
+                // Use cached value - apply proper formatting
+                let raw_value = cached_signal_value.as_option();
+                let formatted_value = if let Some(raw_str) = &raw_value {
+                    // Apply the requested format to the cached raw value
+                    let format = selected_var.formatter.unwrap_or_default();
+                    let formatted = format.format(raw_str);
+                    Some(formatted)
+                } else {
+                    raw_value.clone()
+                };
+                
+                let result = SignalValueResult {
+                    scope_path: scope_path.clone(),
+                    variable_name: variable_name.clone(),
+                    time_seconds,
+                    raw_value,
+                    formatted_value,
                     format: selected_var.formatter.unwrap_or_default(),
                 };
                 cached_results.push(result);
@@ -834,21 +930,30 @@ fn update_signal_values_in_ui(results: &[SignalValueResult]) {
             let full_unique_id = matching_var.unique_id.clone();
             
             // Handle missing data properly - use N/A instead of "Loading..."
-            let multi_format_value = if let Some(raw_binary) = result.raw_value.clone() {
-                crate::format_utils::MultiFormatValue::new(raw_binary)
+            let signal_value = if let Some(raw_binary) = result.raw_value.clone() {
+                crate::format_utils::SignalValue::from_data(raw_binary)
             } else {
-                // For missing data, create a special N/A multi-format value
-                crate::format_utils::MultiFormatValue::new_missing()
+                // For missing data, create a special N/A signal value
+                crate::format_utils::SignalValue::missing()
             };
             
-            // Store multi-format signal value with unique identifier
-            signal_values.insert(full_unique_id, multi_format_value);
+            // Store signal value with unique identifier
+            signal_values.insert(full_unique_id, signal_value);
         }
     }
 }
 
 /// Trigger signal value queries when variables are present
 pub fn trigger_signal_value_queries() {
+    // Prevent queries during startup until files are properly loaded
+    let tracked_files = crate::state::TRACKED_FILES.lock_ref();
+    let has_loaded_files = tracked_files.iter().any(|f| matches!(f.state, shared::FileState::Loaded(_)));
+    drop(tracked_files);
+    
+    if !has_loaded_files {
+        return; // Don't query if no files are loaded yet
+    }
+    
     // Trigger signal value queries for selected variables
     let selected_vars = SELECTED_VARIABLES.lock_ref();
     for _var in selected_vars.iter() {

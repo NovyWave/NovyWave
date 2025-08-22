@@ -24,7 +24,7 @@ expanded_scopes = [
     "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst",
     "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP",
     "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv",
-    "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb",
+    "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP",
 ]
 load_files_expanded_directories = [
     "/",
@@ -35,12 +35,13 @@ load_files_expanded_directories = [
     "/home/martinkavik/repos/NovyWave",
     "/home/martinkavik/repos/NovyWave/test_files",
 ]
-selected_scope_id = "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s"
+selected_scope_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv"
 load_files_scroll_position = 992
-timeline_cursor_position = 0.000009701728314148988
-timeline_zoom_level = 7433395.0
+variables_search_filter = "clk"
+timeline_cursor_position = 0.000006145583993278107
+timeline_zoom_level = 23734536.0
 timeline_visible_range_start = 0.0
-timeline_visible_range_end = 0.00001345280179521069
+timeline_visible_range_end = 0.000010533176464377902
 
 [workspace.docked_bottom_dimensions]
 files_and_scopes_panel_width = 518.0
@@ -55,6 +56,15 @@ selected_variables_panel_name_column_width = 318.0
 selected_variables_panel_value_column_width = 301.0
 
 [[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/stress_test.vcd|stress_test.edge_cases|mixed_states"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/stress_test.vcd|stress_test.edge_cases|unknown_byte"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/stress_test.vcd|stress_test.edge_cases|x_state"
+
+[[workspace.selected_variables]]
 unique_id = "/home/martinkavik/repos/NovyWave/test_files/stress_test.vcd|stress_test.rapid_changes|byte_pattern"
 
 [[workspace.selected_variables]]
@@ -67,25 +77,10 @@ unique_id = "/home/martinkavik/repos/NovyWave/test_files/stress_test.vcd|stress_
 unique_id = "/home/martinkavik/repos/NovyWave/test_files/stress_test.vcd|stress_test.rapid_changes|word_counter"
 
 [[workspace.selected_variables]]
-unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv.MmuPlugin_logic_invalidate_arbiter|clk"
-
-[[workspace.selected_variables]]
-unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv.MmuPlugin_logic_invalidate_arbiter|io_chosenOH"
-
-[[workspace.selected_variables]]
-unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv.MmuPlugin_logic_invalidate_arbiter|io_inputs_0_ready"
-
-[[workspace.selected_variables]]
-unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv.MmuPlugin_logic_invalidate_arbiter|io_inputs_0_valid"
-
-[[workspace.selected_variables]]
-unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv.MmuPlugin_logic_invalidate_arbiter|io_output_fire"
-
-[[workspace.selected_variables]]
-unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv.MmuPlugin_logic_invalidate_arbiter|locked"
-
-[[workspace.selected_variables]]
 unique_id = "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s|A"
 
 [[workspace.selected_variables]]
 unique_id = "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s|B"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv|clk"

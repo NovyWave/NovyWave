@@ -176,12 +176,14 @@ pub fn clear_all_transition_tracking() {
 }
 
 /// Force clear all active request timestamps (useful for debugging)
+#[allow(dead_code)]
 pub fn clear_active_requests() {
     ACTIVE_REQUESTS.lock_mut().clear();
     crate::debug_utils::debug_conditional("Cleared all active request timestamps");
 }
 
 /// Get debug information about request deduplication state
+#[allow(dead_code)]
 pub fn get_request_deduplication_info() -> (usize, usize) {
     let active_count = ACTIVE_REQUESTS.lock_ref().len();
     let requested_count = TRANSITIONS_REQUESTED.lock_ref().len();
@@ -1302,14 +1304,6 @@ pub fn get_maximum_timeline_range() -> Option<(f32, f32)> {
     // Get file paths that contain selected variables
     let selected_file_paths = get_selected_variable_file_paths();
     
-    zoon::println!("DEBUG: get_maximum_timeline_range() called");
-    zoon::println!("DEBUG: Selected file paths: {:?}", selected_file_paths);
-    zoon::println!("DEBUG: Total loaded files: {}", loaded_files.len());
-    
-    // Debug: List all loaded files
-    for (i, file) in loaded_files.iter().enumerate() {
-        zoon::println!("DEBUG: Loaded file {}: {} (range: {:?} to {:?})", i, file.id, file.min_time, file.max_time);
-    }
     
     let mut min_time: f32 = f32::MAX;
     let mut max_time: f32 = f32::MIN;
@@ -1329,17 +1323,11 @@ pub fn get_maximum_timeline_range() -> Option<(f32, f32)> {
                 matches
             });
             
-            zoon::println!("DEBUG: Checking file: {} (matches: {})", file.id, file_matches);
-            
             if file_matches {
                 if let (Some(file_min), Some(file_max)) = (file.min_time, file.max_time) {
-                    zoon::println!("DEBUG: File {} has range: {}s to {}s", file.id, file_min, file_max);
                     min_time = min_time.min(file_min as f32);
                     max_time = max_time.max(file_max as f32);
                     has_valid_files = true;
-                    zoon::println!("DEBUG: Updated range: {}s to {}s", min_time, max_time);
-                } else {
-                    zoon::println!("DEBUG: File {} has no time range data", file.id);
                 }
             }
         }

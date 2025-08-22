@@ -4,6 +4,8 @@ use crate::config::CONFIG_LOADED;
 use crate::error_display::add_error_alert;
 use crate::state::ErrorAlert;
 use crate::utils::restore_scope_selection_for_file;
+use crate::views::is_cursor_within_variable_time_range;
+use crate::state::TIMELINE_CURSOR_POSITION;
 use crate::platform::{Platform, CurrentPlatform};
 use shared::{UpMsg, DownMsg};
 use shared::{LoadingFile, LoadingStatus};
@@ -80,7 +82,6 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 
                 // Also maintain legacy LOADED_FILES for backward compatibility during transition
                 for file in hierarchy.files {
-                    zoon::println!("DEBUG: Adding file to LOADED_FILES: {} (range: {:?} to {:?})", file.id, file.min_time, file.max_time);
                     LOADED_FILES.lock_mut().push_cloned(file.clone());
                     
                     // Store scope selection for later restoration (don't restore immediately)
@@ -239,14 +240,24 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                         result.variable_name
                     );
                     
-                    // Create MultiFormatValue from raw binary value
-                    let raw_binary = result.raw_value
-                        .unwrap_or_else(|| "Loading...".to_string());
+                    // Check if cursor time is within this variable's file time range
+                    let cursor_time = TIMELINE_CURSOR_POSITION.get();
+                    let within_time_range = is_cursor_within_variable_time_range(&unique_id, cursor_time);
                     
-                    let multi_format_value = crate::format_utils::MultiFormatValue::new(raw_binary);
+                    // Handle missing data properly - use SignalValue::missing() for None values
+                    // OR if cursor is beyond variable's time range
+                    let signal_value = if within_time_range {
+                        if let Some(raw_binary) = result.raw_value {
+                            crate::format_utils::SignalValue::from_data(raw_binary)
+                        } else {
+                            crate::format_utils::SignalValue::missing()
+                        }
+                    } else {
+                        crate::format_utils::SignalValue::missing()  // Beyond time range
+                    };
                     
-                    // Store multi-format signal value with unique identifier
-                    signal_values.insert(unique_id, multi_format_value);
+                    // Store signal value with unique identifier
+                    signal_values.insert(unique_id, signal_value);
                 }
             }
             DownMsg::SignalValuesError { file_path: _, error: _ } => {
@@ -289,11 +300,20 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                             result.variable_name
                         );
                         
-                        let raw_binary = result.raw_value
-                            .unwrap_or_else(|| "Loading...".to_string());
+                        // Check if cursor time is within this variable's file time range
+                        let cursor_time = TIMELINE_CURSOR_POSITION.get();
+                        let within_time_range = is_cursor_within_variable_time_range(&unique_id, cursor_time);
                         
-                        let multi_format_value = crate::format_utils::MultiFormatValue::new(raw_binary);
-                        signal_values.insert(unique_id, multi_format_value);
+                        let signal_value = if within_time_range {
+                            if let Some(raw_binary) = result.raw_value {
+                                crate::format_utils::SignalValue::from_data(raw_binary)
+                            } else {
+                                crate::format_utils::SignalValue::missing()
+                            }
+                        } else {
+                            crate::format_utils::SignalValue::missing()  // Beyond time range
+                        };
+                        signal_values.insert(unique_id, signal_value);
                     }
                 }
             }
@@ -384,7 +404,6 @@ fn handle_down_msg(down_msg: DownMsg) {
             }
             
             for file in hierarchy.files {
-                zoon::println!("DEBUG: Adding file to LOADED_FILES (fallback): {} (range: {:?} to {:?})", file.id, file.min_time, file.max_time);
                 LOADED_FILES.lock_mut().push_cloned(file.clone());
             }
             
@@ -507,11 +526,20 @@ fn handle_down_msg(down_msg: DownMsg) {
                     result.variable_name
                 );
                 
-                let raw_binary = result.raw_value
-                    .unwrap_or_else(|| "Loading...".to_string());
+                // Check if cursor time is within this variable's file time range
+                let cursor_time = TIMELINE_CURSOR_POSITION.get();
+                let within_time_range = is_cursor_within_variable_time_range(&unique_id, cursor_time);
                 
-                let multi_format_value = crate::format_utils::MultiFormatValue::new(raw_binary);
-                signal_values.insert(unique_id, multi_format_value);
+                let signal_value = if within_time_range {
+                    if let Some(raw_binary) = result.raw_value {
+                        crate::format_utils::SignalValue::from_data(raw_binary)
+                    } else {
+                        crate::format_utils::SignalValue::missing()
+                    }
+                } else {
+                    crate::format_utils::SignalValue::missing()  // Beyond time range
+                };
+                signal_values.insert(unique_id, signal_value);
             }
         }
         DownMsg::SignalValuesError { file_path: _, error: _ } => {
@@ -551,11 +579,20 @@ fn handle_down_msg(down_msg: DownMsg) {
                         result.variable_name
                     );
                     
-                    let raw_binary = result.raw_value
-                        .unwrap_or_else(|| "Loading...".to_string());
+                    // Check if cursor time is within this variable's file time range
+                    let cursor_time = TIMELINE_CURSOR_POSITION.get();
+                    let within_time_range = is_cursor_within_variable_time_range(&unique_id, cursor_time);
                     
-                    let multi_format_value = crate::format_utils::MultiFormatValue::new(raw_binary);
-                    signal_values.insert(unique_id, multi_format_value);
+                    let signal_value = if within_time_range {
+                        if let Some(raw_binary) = result.raw_value {
+                            crate::format_utils::SignalValue::from_data(raw_binary)
+                        } else {
+                            crate::format_utils::SignalValue::missing()
+                        }
+                    } else {
+                        crate::format_utils::SignalValue::missing()  // Beyond time range
+                    };
+                    signal_values.insert(unique_id, signal_value);
                 }
             }
         }

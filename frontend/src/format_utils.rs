@@ -13,46 +13,36 @@ pub fn truncate_value(value: &str, max_chars: usize) -> String {
     format!("{}...", &value[..truncate_at])
 }
 
-/// Container for multi-format signal values
+/// Clear distinction between different signal value states
 #[derive(Debug, Clone)]
-pub struct MultiFormatValue {
-    pub raw_binary: String,
-    pub formatted_values: HashMap<VarFormat, String>,
+pub enum SignalValue {
+    /// Real signal data from waveform file
+    Data {
+        raw_binary: String,
+        formatted_values: HashMap<VarFormat, String>,
+    },
+    /// Missing data (cursor beyond time range, file not loaded, etc.)
+    Missing,
+    /// Loading state (query in progress)
+    Loading,
 }
 
-impl MultiFormatValue {
-    /// Create a new MultiFormatValue from raw binary string
-    pub fn new(raw_binary: String) -> Self {
+impl SignalValue {
+    /// Create from real signal data
+    pub fn from_data(raw_binary: String) -> Self {
         let formatted_values = Self::generate_all_formats(&raw_binary);
-        Self {
-            raw_binary,
-            formatted_values,
-        }
+        Self::Data { raw_binary, formatted_values }
     }
 
-    /// Create a new MultiFormatValue for missing data (N/A)
-    pub fn new_missing() -> Self {
-        let mut formatted_values = HashMap::new();
-        
-        // All formats show "N/A" for missing data
-        let formats = [
-            VarFormat::ASCII,
-            VarFormat::Binary,
-            VarFormat::BinaryWithGroups,
-            VarFormat::Hexadecimal,
-            VarFormat::Octal,
-            VarFormat::Signed,
-            VarFormat::Unsigned,
-        ];
+    /// Create missing data marker
+    pub fn missing() -> Self {
+        Self::Missing
+    }
 
-        for format in formats {
-            formatted_values.insert(format, "N/A".to_string());
-        }
-        
-        Self {
-            raw_binary: "N/A".to_string(),
-            formatted_values,
-        }
+    /// Create loading state marker  
+    #[allow(dead_code)]
+    pub fn loading() -> Self {
+        Self::Loading
     }
 
     /// Generate formatted values for all VarFormat types
@@ -83,10 +73,13 @@ impl MultiFormatValue {
 
     /// Get formatted value for specific format
     pub fn get_formatted(&self, format: &VarFormat) -> String {
-        self.formatted_values
-            .get(format)
-            .cloned()
-            .unwrap_or_else(|| "(error)".to_string())
+        match self {
+            Self::Data { formatted_values, .. } => {
+                formatted_values.get(format).cloned().unwrap_or_else(|| "(error)".to_string())
+            }
+            Self::Missing => "N/A".to_string(),
+            Self::Loading => "(Loading)".to_string(),
+        }
     }
 
     /// Get display string with value and format name (e.g., "1010 Bin")
@@ -113,11 +106,18 @@ impl MultiFormatValue {
         self.get_display_with_format(format)
     }
 
-    /// Check if raw binary value is valid (not empty, loading, or error)
-    pub fn is_valid(&self) -> bool {
-        !self.raw_binary.is_empty() 
-            && self.raw_binary != "Loading..." 
-            && self.raw_binary != "No value"
+    /// Check if this represents real data (not missing/loading)
+    pub fn is_data(&self) -> bool {
+        matches!(self, Self::Data { .. })
+    }
+
+    /// Get raw binary if available
+    #[allow(dead_code)]
+    pub fn raw_binary(&self) -> Option<&str> {
+        match self {
+            Self::Data { raw_binary, .. } => Some(raw_binary),
+            _ => None,
+        }
     }
 }
 
@@ -143,15 +143,15 @@ impl DropdownFormatOption {
 
 /// Generate dropdown options with formatted values for a signal
 pub fn generate_dropdown_options(
-    multi_value: &MultiFormatValue, 
+    signal_value: &SignalValue, 
     _signal_type: &str
 ) -> Vec<DropdownFormatOption> {
-    generate_dropdown_options_with_truncation(multi_value, _signal_type, 30)
+    generate_dropdown_options_with_truncation(signal_value, _signal_type, 30)
 }
 
 /// Generate dropdown options with configurable value truncation
 pub fn generate_dropdown_options_with_truncation(
-    multi_value: &MultiFormatValue, 
+    signal_value: &SignalValue, 
     _signal_type: &str,
     max_value_chars: usize
 ) -> Vec<DropdownFormatOption> {
@@ -168,9 +168,9 @@ pub fn generate_dropdown_options_with_truncation(
     all_formats
         .iter()
         .map(|format| {
-            let (display_text, full_text) = if multi_value.is_valid() {
-                let full = multi_value.get_full_display_with_format(format);
-                let truncated = multi_value.get_truncated_display_with_format(format, max_value_chars);
+            let (display_text, full_text) = if signal_value.is_data() {
+                let full = signal_value.get_full_display_with_format(format);
+                let truncated = signal_value.get_truncated_display_with_format(format, max_value_chars);
                 (truncated, full)
             } else {
                 let text = format!("({}) {}", "Loading", format.as_static_str());
@@ -188,30 +188,45 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_multi_format_value_creation() {
+    fn test_signal_value_creation() {
         let binary = "1010".to_string();
-        let multi_value = MultiFormatValue::new(binary);
+        let signal_value = SignalValue::from_data(binary);
         
-        assert_eq!(multi_value.get_formatted(&VarFormat::Binary), "1010");
-        assert_eq!(multi_value.get_formatted(&VarFormat::Hexadecimal), "a");
-        assert_eq!(multi_value.get_formatted(&VarFormat::Unsigned), "10");
+        assert_eq!(signal_value.get_formatted(&VarFormat::Binary), "1010");
+        assert_eq!(signal_value.get_formatted(&VarFormat::Hexadecimal), "a");
+        assert_eq!(signal_value.get_formatted(&VarFormat::Unsigned), "10");
     }
 
     #[test]
     fn test_display_with_format() {
         let binary = "1010".to_string();
-        let multi_value = MultiFormatValue::new(binary);
+        let signal_value = SignalValue::from_data(binary);
         
-        assert_eq!(multi_value.get_display_with_format(&VarFormat::Binary), "1010 Bin");
-        assert_eq!(multi_value.get_display_with_format(&VarFormat::Hexadecimal), "a Hex");
-        assert_eq!(multi_value.get_display_with_format(&VarFormat::Unsigned), "10 UInt");
+        assert_eq!(signal_value.get_display_with_format(&VarFormat::Binary), "1010 Bin");
+        assert_eq!(signal_value.get_display_with_format(&VarFormat::Hexadecimal), "a Hex");
+        assert_eq!(signal_value.get_display_with_format(&VarFormat::Unsigned), "10 UInt");
+    }
+
+    #[test]
+    fn test_missing_vs_real_na_data() {
+        // Test real "N/A" data
+        let real_na = SignalValue::from_data("N/A".to_string());
+        assert!(real_na.is_data());
+        assert_eq!(real_na.raw_binary(), Some("N/A"));
+        
+        // Test missing data
+        let missing = SignalValue::missing();
+        assert!(!missing.is_data());
+        assert_eq!(missing.raw_binary(), None);
+        assert_eq!(missing.get_formatted(&VarFormat::Binary), "N/A");
+        assert_eq!(missing.get_formatted(&VarFormat::Hexadecimal), "N/A");
     }
 
     #[test]
     fn test_dropdown_options_generation() {
         let binary = "1010".to_string();
-        let multi_value = MultiFormatValue::new(binary);
-        let options = generate_dropdown_options(&multi_value, "Wire 4-bit");
+        let signal_value = SignalValue::from_data(binary);
+        let options = generate_dropdown_options(&signal_value, "Wire 4-bit");
         
         assert_eq!(options.len(), 7);
         

@@ -1150,6 +1150,11 @@ fn sync_timeline_cursor_position_from_config() {
     let validated_position = cursor_position.max(0.0);
     
     crate::state::TIMELINE_CURSOR_POSITION.set_neq(validated_position);
+    
+    // Mark that cursor position was set during startup (before files may be loaded)
+    if !crate::state::CONFIG_INITIALIZATION_COMPLETE.get() {
+        crate::state::STARTUP_CURSOR_POSITION_SET.set_neq(true);
+    }
 }
 
 fn sync_timeline_zoom_state_from_config() {

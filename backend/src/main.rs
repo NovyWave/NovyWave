@@ -1306,7 +1306,74 @@ async fn query_signal_values(file_path: String, queries: Vec<SignalValueQuery>, 
                 
                 let time_idx = match waveform_data.time_table.binary_search(&target_time) {
                     Ok(exact_idx) => exact_idx as u32,
-                    Err(insert_pos) => insert_pos.saturating_sub(1) as u32,
+                    Err(insert_pos) => {
+                        if insert_pos == 0 || query.time_seconds <= 0.0 {
+                            // Query is at time 0 or before any data - check if we have initial values
+                            if !waveform_data.time_table.is_empty() && waveform_data.time_table[0] == 0 {
+                                0 // Use time index 0 if it exists
+                            } else {
+                                // No data at time 0, return N/A
+                                results.push(SignalValueResult {
+                                    scope_path: query.scope_path,
+                                    variable_name: query.variable_name,
+                                    time_seconds: query.time_seconds,
+                                    raw_value: None,
+                                    formatted_value: None,
+                                    format: query.format,
+                                });
+                                continue;
+                            }
+                        } else {
+                            let prev_idx = insert_pos.saturating_sub(1);
+                            if prev_idx < waveform_data.time_table.len() {
+                                let prev_time = waveform_data.time_table[prev_idx];
+                                let time_gap = target_time.saturating_sub(prev_time);
+                                
+                                // If time gap is too large, return N/A instead of stale value
+                                // Calculate adaptive threshold based on actual signal transition spacing
+                                if let Some(last_time) = waveform_data.time_table.last() {
+                                    // Calculate minimum gap between consecutive transitions
+                                    let min_gap = if waveform_data.time_table.len() > 1 {
+                                        let mut min = u64::MAX;
+                                        for i in 1..waveform_data.time_table.len() {
+                                            let gap = waveform_data.time_table[i] - waveform_data.time_table[i-1];
+                                            if gap > 0 {
+                                                min = min.min(gap);
+                                            }
+                                        }
+                                        if min == u64::MAX { *last_time / 10 } else { min * 3 } // 3x minimum gap as threshold
+                                    } else {
+                                        *last_time / 10 // Fallback to 10% for single transition
+                                    };
+                                    
+                                    if time_gap > min_gap {
+                                        // Gap too large - return N/A
+                                        results.push(SignalValueResult {
+                                            scope_path: query.scope_path,
+                                            variable_name: query.variable_name,
+                                            time_seconds: query.time_seconds,
+                                            raw_value: None,
+                                            formatted_value: None,
+                                            format: query.format,
+                                        });
+                                        continue;
+                                    }
+                                }
+                                prev_idx as u32
+                            } else {
+                                // No previous data available - return N/A
+                                results.push(SignalValueResult {
+                                    scope_path: query.scope_path,
+                                    variable_name: query.variable_name,
+                                    time_seconds: query.time_seconds,
+                                    raw_value: None,
+                                    formatted_value: None,
+                                    format: query.format,
+                                });
+                                continue;
+                            }
+                        }
+                    },
                 };
                 
                 // Load signal and get value
@@ -1339,10 +1406,15 @@ async fn query_signal_values(file_path: String, queries: Vec<SignalValueQuery>, 
                                     (Some(binary_str), Some(formatted))
                                 }
                                 None => {
-                                    // Cannot convert to binary (e.g., X/Z states, strings, reals)
-                                    // Use fallback formatting and set raw_value to original string representation
-                                    let fallback_formatted = format_non_binary_signal_value(&value);
-                                    (Some(format!("{}", value)), Some(fallback_formatted))
+                                    // Cannot convert to binary - check if this should be N/A or formatted
+                                    if should_show_as_na(&value) {
+                                        // Return None to trigger N/A display
+                                        (None, None)
+                                    } else {
+                                        // Use proper formatting for valid non-binary values
+                                        let proper_formatted = format_non_binary_signal_value(&value);
+                                        (Some(proper_formatted.clone()), Some(proper_formatted))
+                                    }
                                 }
                             };
                             
@@ -1443,7 +1515,74 @@ async fn process_signal_value_queries_internal(file_path: &str, queries: &[Signa
         
         let time_idx = match waveform_data.time_table.binary_search(&target_time) {
             Ok(exact_idx) => exact_idx as u32,
-            Err(insert_pos) => insert_pos.saturating_sub(1) as u32,
+            Err(insert_pos) => {
+                if insert_pos == 0 || query.time_seconds <= 0.0 {
+                    // Query is at time 0 or before any data - check if we have initial values
+                    if !waveform_data.time_table.is_empty() && waveform_data.time_table[0] == 0 {
+                        0 // Use time index 0 if it exists
+                    } else {
+                        // No data at time 0, return N/A
+                        results.push(SignalValueResult {
+                            scope_path: query.scope_path.clone(),
+                            variable_name: query.variable_name.clone(),
+                            time_seconds: query.time_seconds,
+                            raw_value: None,
+                            formatted_value: None,
+                            format: query.format.clone(),
+                        });
+                        continue;
+                    }
+                } else {
+                    let prev_idx = insert_pos.saturating_sub(1);
+                    if prev_idx < waveform_data.time_table.len() {
+                        let prev_time = waveform_data.time_table[prev_idx];
+                        let time_gap = target_time.saturating_sub(prev_time);
+                        
+                        // If time gap is too large, return N/A instead of stale value
+                        // Calculate adaptive threshold based on actual signal transition spacing
+                        if let Some(last_time) = waveform_data.time_table.last() {
+                            // Calculate minimum gap between consecutive transitions
+                            let min_gap = if waveform_data.time_table.len() > 1 {
+                                let mut min = u64::MAX;
+                                for i in 1..waveform_data.time_table.len() {
+                                    let gap = waveform_data.time_table[i] - waveform_data.time_table[i-1];
+                                    if gap > 0 {
+                                        min = min.min(gap);
+                                    }
+                                }
+                                if min == u64::MAX { *last_time / 10 } else { min * 3 } // 3x minimum gap as threshold
+                            } else {
+                                *last_time / 10 // Fallback to 10% for single transition
+                            };
+                            
+                            if time_gap > min_gap {
+                                // Gap too large - return N/A
+                                results.push(SignalValueResult {
+                                    scope_path: query.scope_path.clone(),
+                                    variable_name: query.variable_name.clone(),
+                                    time_seconds: query.time_seconds,
+                                    raw_value: None,
+                                    formatted_value: None,
+                                    format: query.format.clone(),
+                                });
+                                continue;
+                            }
+                        }
+                        prev_idx as u32
+                    } else {
+                        // No previous data available - return N/A
+                        results.push(SignalValueResult {
+                            scope_path: query.scope_path.clone(),
+                            variable_name: query.variable_name.clone(),
+                            time_seconds: query.time_seconds,
+                            raw_value: None,
+                            formatted_value: None,
+                            format: query.format.clone(),
+                        });
+                        continue;
+                    }
+                }
+            },
         };
         
         let mut signal_source = match waveform_data.signal_source.lock() {
@@ -1476,10 +1615,15 @@ async fn process_signal_value_queries_internal(file_path: &str, queries: &[Signa
                             (Some(binary_str), Some(formatted))
                         }
                         None => {
-                            // Cannot convert to binary (e.g., X/Z states, strings, reals)
-                            // Use fallback formatting and set raw_value to original string representation
-                            let fallback_formatted = format_non_binary_signal_value(&value);
-                            (Some(format!("{}", value)), Some(fallback_formatted))
+                            // Cannot convert to binary - check if this should be N/A or formatted
+                            if should_show_as_na(&value) {
+                                // Return None to trigger N/A display
+                                (None, None)
+                            } else {
+                                // Use proper formatting for valid non-binary values
+                                let proper_formatted = format_non_binary_signal_value(&value);
+                                (Some(proper_formatted.clone()), Some(proper_formatted))
+                            }
                         }
                     };
                     
@@ -1655,7 +1799,7 @@ async fn query_signal_transitions(
                                 // Convert to string for frontend display
                                 let value_str = match signal_value_to_binary_string(&value) {
                                     Some(binary_str) => binary_str,
-                                    None => format!("{}", value),
+                                    None => format_non_binary_signal_value(&value),
                                 };
                                 
                                 // TRANSITION DETECTION: Only send when value actually changes
@@ -1728,11 +1872,13 @@ fn signal_value_to_binary_string(value: &wellen::SignalValue) -> Option<String> 
                 if bits.is_empty() { 
                     None // Cannot convert unknown/undefined values
                 } else { 
-                    Some(format!("{}", bits[0] & 1))
+                    let result = if (bits[0] & 1) == 0 { "0" } else { "1" }.to_string();
+                    Some(result)
                 }
             } else {
                 // Multi-bit binary - convert to binary string
-                value.to_bit_string()
+                let bit_string_result = value.to_bit_string();
+                bit_string_result
             }
         }
         wellen::SignalValue::FourValue(bits, width) => {
@@ -1768,13 +1914,60 @@ fn signal_value_to_binary_string(value: &wellen::SignalValue) -> Option<String> 
 }
 
 // Fallback formatting for non-binary signal values
+fn should_show_as_na(value: &wellen::SignalValue) -> bool {
+    match value {
+        wellen::SignalValue::Binary(bits, _width) => {
+            // Empty bits = uninitialized/undefined state = N/A
+            bits.is_empty()
+        }
+        wellen::SignalValue::FourValue(bits, width) => {
+            // Empty bits = uninitialized/undefined state = N/A
+            if bits.is_empty() {
+                return true;
+            }
+            
+            // Check for X/Z states - these were originally showing as N/A
+            if *width == 1 {
+                // Single bit: check if it's X (2) or Z (3)
+                let state = bits[0] & 3;
+                state == 2 || state == 3  // X or Z state = N/A (restoring original behavior)
+            } else {
+                // Multi-bit: if signal_value_to_binary_string would return None, show N/A
+                value.to_bit_string().is_none()
+            }
+        }
+        wellen::SignalValue::NineValue(bits, _width) => {
+            // Empty bits = uninitialized/undefined state = N/A
+            if bits.is_empty() {
+                return true;
+            }
+            // If can't convert to binary string, show as N/A (original behavior)
+            value.to_bit_string().is_none()
+        }
+        wellen::SignalValue::String(_) => {
+            // String values cannot be converted to binary, so were originally N/A
+            true
+        }
+        wellen::SignalValue::Real(_) => {
+            // Real values cannot be converted to binary, so were originally N/A
+            true
+        }
+    }
+}
+
 fn format_non_binary_signal_value(value: &wellen::SignalValue) -> String {
     match value {
         wellen::SignalValue::Binary(bits, width) => {
             if *width == 1 {
-                if bits.is_empty() { "X".to_string() } else { format!("{}", bits[0] & 1) }
+                if bits.is_empty() { 
+                    "X".to_string() 
+                } else { 
+                    let result = if (bits[0] & 1) == 0 { "0" } else { "1" }.to_string();
+                    result
+                }
             } else {
-                value.to_bit_string().unwrap_or_else(|| "?".to_string())
+                let bit_string_result = value.to_bit_string().unwrap_or_else(|| "?".to_string());
+                bit_string_result
             }
         }
         wellen::SignalValue::FourValue(bits, width) => {
