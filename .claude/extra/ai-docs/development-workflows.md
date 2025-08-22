@@ -151,10 +151,11 @@ refactor(frontend): modularize main.rs into focused modules
 ```
 
 ### Git Safety Rules
-- **CRITICAL: NEVER perform destructive git operations without explicit user confirmation**
+- **CRITICAL: NEVER perform destructive git operations (reset, rebase, force push, branch deletion, stash drop) without explicit user confirmation**
+- **User lost hours of work from uncommitted changes - always confirm before any operation that could lose data**
 - Never use git commands with `-i` flag (interactive not supported)
 - DO NOT push to remote repository unless explicitly asked
-- Only exceptions: `/core-checkpoint` and `/core-commit` commands
+- **Only exceptions: `/core-checkpoint` and `/core-commit` commands where destruction is part of expected flow, but still be careful**
 
 ## Session Discovery Storage
 
