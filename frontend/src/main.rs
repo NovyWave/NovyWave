@@ -134,53 +134,43 @@ pub fn main() {
             }).await
         });
         
-        // Update signal values when cursor position changes (adaptive debouncing)
+        // Query signal values when cursor movement stops (listen to movement flags directly)
         Task::start(async {
-            let last_query_time = Mutable::new(0.0);
-            let movement_start_time = Mutable::new(0.0);
+            let was_moving = Mutable::new(false);
+            
+            // Listen to movement flags directly instead of cursor position changes
+            let movement_signal = map_ref! {
+                let left = crate::state::IS_CURSOR_MOVING_LEFT.signal(),
+                let right = crate::state::IS_CURSOR_MOVING_RIGHT.signal() =>
+                *left || *right
+            };
+            
+            movement_signal.for_each_sync(move |is_moving| {
+                if is_moving {
+                    // Movement started - just track state, don't query
+                    was_moving.set(true);
+                } else if was_moving.get() {
+                    // Movement just stopped - use fast local data if cursor is in visible range
+                    was_moving.set(false);
+                    let cursor_pos = crate::state::TIMELINE_CURSOR_POSITION.get();
+                    
+                    // Use the unified caching logic with built-in range checking
+                    crate::views::trigger_signal_value_queries();
+                }
+            }).await;
+        });
+        
+        // Separate handler for direct cursor position changes (mouse clicks)
+        Task::start(async {
             let last_position = Mutable::new(0.0);
             
             crate::state::TIMELINE_CURSOR_POSITION.signal().for_each_sync(move |cursor_pos| {
-                let now = js_sys::Date::now();
                 let is_moving = crate::state::IS_CURSOR_MOVING_LEFT.get() || crate::state::IS_CURSOR_MOVING_RIGHT.get();
                 
-                // Calculate movement velocity (pixels per second)
-                let time_delta = now - last_query_time.get();
-                let position_delta = (cursor_pos - last_position.get()).abs() as f64;
-                let velocity = if time_delta > 0.0 { position_delta / (time_delta / 1000.0) } else { 0.0 };
-                
-                // Adaptive debouncing based on movement state and velocity
-                let debounce_ms = if is_moving {
-                    // During continuous movement: aggressive debouncing
-                    if velocity > 1000.0 { 300.0 }      // Very fast movement
-                    else if velocity > 500.0 { 200.0 }  // Fast movement  
-                    else { 150.0 }                      // Moderate movement
-                } else {
-                    // Single clicks or movement stopped: responsive
-                    50.0
-                };
-                
-                // Track movement state changes
-                if is_moving && movement_start_time.get() == 0.0 {
-                    movement_start_time.set(now);
-                }
-                if !is_moving {
-                    movement_start_time.set(0.0);
-                }
-                
-                // Apply debouncing
-                if now - last_query_time.get() > debounce_ms {
-                    crate::views::query_signal_values_at_time(cursor_pos as f64);
-                    last_query_time.set(now);
-                } else if !is_moving {
-                    // Schedule final query when movement stops but within debounce window
-                    let final_cursor_pos = cursor_pos;
-                    let last_query_time_clone = last_query_time.clone();
-                    Task::start(async move {
-                        Timer::sleep(50).await;
-                        crate::views::query_signal_values_at_time(final_cursor_pos as f64);
-                        last_query_time_clone.set(js_sys::Date::now());
-                    });
+                // Only query for direct position changes (not during Q/E movement)
+                if !is_moving && (cursor_pos - last_position.get()).abs() > 0.001 {
+                    // Use the unified caching logic with built-in range checking
+                    crate::views::trigger_signal_value_queries();
                 }
                 
                 last_position.set(cursor_pos);
@@ -188,6 +178,34 @@ pub fn main() {
         });
     });
 }
+
+// Helper functions for optimized variable value updates
+
+/// Check if cursor is within the currently visible timeline range
+pub fn is_cursor_in_visible_range(cursor_time: f64) -> bool {
+    let start = crate::state::TIMELINE_VISIBLE_RANGE_START.get() as f64;
+    let end = crate::state::TIMELINE_VISIBLE_RANGE_END.get() as f64;
+    cursor_time >= start && cursor_time <= end
+}
+
+/// Extract signal value at specific time from locally cached transition data
+fn get_value_from_transitions(unique_id: &str, time: f64) -> Option<crate::format_utils::SignalValue> {
+    let transitions_cache = crate::waveform_canvas::SIGNAL_TRANSITIONS_CACHE.lock_ref();
+    let signal_transitions = transitions_cache.get(unique_id)?;
+    
+    // Find the most recent transition at or before the given time
+    // Transitions should be sorted by time, so we iterate backwards for efficiency
+    for transition in signal_transitions.iter().rev() {
+        if transition.time_seconds <= time {
+            // Convert string value back to SignalValue format
+            return Some(crate::format_utils::SignalValue::from_data(transition.value.clone()));
+        }
+    }
+    
+    // If no transition found at or before this time, the signal hasn't started yet
+    None
+}
+
 
 
 fn init_scope_selection_handlers() {
@@ -247,7 +265,8 @@ fn init_scope_selection_handlers() {
         SELECTED_VARIABLES.signal_vec_cloned().for_each(move |_| async move {
             if CONFIG_LOADED.get() && !IS_LOADING.get() {
                 let cursor_pos = TIMELINE_CURSOR_POSITION.get();
-                crate::views::query_signal_values_at_time(cursor_pos);
+                // Variable selection changed - use unified caching logic
+                crate::views::trigger_signal_value_queries();
             }
         }).await
     });

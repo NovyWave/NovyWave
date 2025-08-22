@@ -656,16 +656,26 @@ fn store_config_on_any_change() {
         }).await
     });
     
-    // Timeline cursor position changes - PROPERLY DEBOUNCED
+    // Timeline cursor position changes - TRUE DEBOUNCING with droppable tasks
     let timeline_cursor_position_signal = crate::state::TIMELINE_CURSOR_POSITION.signal();
     Task::start(async move {
+        let debounce_task: Mutable<Option<TaskHandle<()>>> = Mutable::new(None);
+        
         timeline_cursor_position_signal
             .dedupe() // Skip duplicate values  
-            .for_each_sync(|_| {
-                // Use global debouncing mechanism - will save after 1 second of inactivity
-                if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
-                    save_config_to_backend(); // Uses 1-second global debouncing
-                }
+            .for_each_sync(move |_| {
+                // Drop any existing debounce task (true cancellation)
+                debounce_task.set(None);
+                
+                // Start a new droppable debounce timer
+                let new_handle = Task::start_droppable(async {
+                    Timer::sleep(1000).await; // 1 second of inactivity
+                    if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
+                        save_config_to_backend();
+                    }
+                });
+                
+                debounce_task.set(Some(new_handle));
             })
             .await;
     });

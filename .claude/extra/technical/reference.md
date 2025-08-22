@@ -357,6 +357,338 @@ if CONFIG_LOADED.get() {  // Prevent startup race conditions
 }
 ```
 
+## Debouncing and Task Management
+
+### True Debouncing with Task::start_droppable
+**Problem:** `Task::start().cancel()` doesn't guarantee immediate cancellation - tasks may still complete.
+
+**Solution:** Use `Task::start_droppable` with `TaskHandle` dropping for guaranteed abortion.
+
+```rust
+// ❌ Fake debouncing - tasks may still complete after "cancel"
+let debounce_task: Mutable<Option<Task<()>>> = Mutable::new(None);
+signal.for_each_sync(move |_| {
+    if let Some(existing_task) = debounce_task.take() {
+        existing_task.cancel(); // NOT guaranteed to prevent execution
+    }
+    let new_task = Task::start(async { /* work */ });
+    debounce_task.set(Some(new_task));
+});
+
+// ✅ True debouncing - dropping TaskHandle guarantees abortion
+let debounce_task: Mutable<Option<TaskHandle<()>>> = Mutable::new(None);
+signal.for_each_sync(move |_| {
+    debounce_task.set(None); // Drop immediately aborts the task
+    
+    let new_handle = Task::start_droppable(async {
+        Timer::sleep(1000).await; // Only completes if not dropped
+        perform_operation();
+    });
+    debounce_task.set(Some(new_handle));
+});
+```
+
+### Config Save Debouncing Pattern
+```rust
+// Prevent config save spam during rapid UI changes
+let timeline_cursor_position_signal = TIMELINE_CURSOR_POSITION.signal();
+Task::start(async move {
+    let debounce_task: Mutable<Option<TaskHandle<()>>> = Mutable::new(None);
+    
+    timeline_cursor_position_signal
+        .dedupe() // Skip duplicate values
+        .for_each_sync(move |_| {
+            debounce_task.set(None); // Abort previous save
+            
+            let new_handle = Task::start_droppable(async {
+                Timer::sleep(1000).await; // 1 second of inactivity
+                if CONFIG_INITIALIZATION_COMPLETE.get() {
+                    save_config_to_backend();
+                }
+            });
+            debounce_task.set(Some(new_handle));
+        })
+        .await;
+});
+```
+
+## State Management Patterns
+
+### MutableBTreeMap for Ordered Reactive State
+**Use when:** You need ordered iteration and reactive updates
+**Benefits:** Maintains sort order + signal reactivity
+
+```rust
+// Ordered state with reactive updates
+static SORTED_ITEMS: Lazy<MutableBTreeMap<String, ItemData>> = 
+    Lazy::new(MutableBTreeMap::new);
+
+// Reactive iteration in sort order
+SORTED_ITEMS.entries_cloned().for_each_sync(|entries| {
+    // entries are automatically sorted by key
+    for (key, value) in entries {
+        display_item(key, value);
+    }
+});
+```
+
+### Signal Handler Consolidation
+**Problem:** Multiple signal handlers for the same signal cause redundant processing
+**Solution:** Unify into single handler with built-in logic
+
+```rust
+// ❌ Multiple handlers for same signal - redundant triggers
+Task::start(async {
+    TIMELINE_CURSOR_POSITION.signal().for_each_sync(|pos| {
+        if is_in_visible_range(pos) {
+            update_from_cache(pos);
+        }
+    }).await;
+});
+
+Task::start(async {
+    TIMELINE_CURSOR_POSITION.signal().for_each_sync(|pos| {
+        if !is_in_visible_range(pos) {
+            query_server(pos);
+        }
+    }).await;
+});
+
+// ✅ Single unified handler - cleaner and more efficient
+Task::start(async {
+    TIMELINE_CURSOR_POSITION.signal().for_each_sync(|pos| {
+        trigger_unified_query_logic(); // Built-in range checking
+    }).await;
+});
+
+pub fn trigger_unified_query_logic() {
+    let cursor_pos = TIMELINE_CURSOR_POSITION.get();
+    let start = TIMELINE_VISIBLE_RANGE_START.get() as f64;
+    let end = TIMELINE_VISIBLE_RANGE_END.get() as f64;
+    
+    if cursor_pos >= start && cursor_pos <= end {
+        // Fast path - use cached data
+        update_from_cached_transitions();
+    } else {
+        // Slow path - query server
+        query_signal_values_at_time(cursor_pos);
+    }
+}
+```
+
+## Cache-First Signal Patterns
+
+### Timeline Cursor Caching with Range Buffering
+**Problem:** Cursor movements trigger server requests even when data is already cached
+**Solution:** Expand "visible range" with buffer + check cache first
+
+```rust
+pub fn trigger_signal_value_queries() {
+    let cursor_pos = TIMELINE_CURSOR_POSITION.get();
+    let start = TIMELINE_VISIBLE_RANGE_START.get() as f64;
+    let end = TIMELINE_VISIBLE_RANGE_END.get() as f64;
+    
+    if cursor_pos >= start && cursor_pos <= end {
+        // Fast path - use cached transition data
+        let selected_vars = SELECTED_VARIABLES.lock_ref();
+        let mut new_values = SIGNAL_VALUES.get_cloned();
+        let mut cache_hits = 0;
+        let mut cache_misses = 0;
+        
+        let transitions_cache = SIGNAL_TRANSITIONS_CACHE.lock_ref();
+        
+        for selected_var in selected_vars.iter() {
+            if let Some(signal_transitions) = transitions_cache.get(&selected_var.unique_id) {
+                // Find most recent transition at or before cursor time
+                for transition in signal_transitions.iter().rev() {
+                    if transition.time_seconds <= cursor_pos {
+                        let signal_value = SignalValue::from_data(transition.value.clone());
+                        new_values.insert(selected_var.unique_id.clone(), signal_value);
+                        cache_hits += 1;
+                        break;
+                    }
+                }
+            } else {
+                cache_misses += 1;
+            }
+        }
+        
+        zoon::println!("CACHE: Fast path results - {} hits, {} misses, UI {}", 
+                      cache_hits, cache_misses, if cache_hits > 0 { "updated" } else { "unchanged" });
+        
+        if cache_hits > 0 {
+            SIGNAL_VALUES.set(new_values); // Single UI update
+        }
+    } else {
+        // Slow path - query server for data outside cached range
+        query_signal_values_at_time(cursor_pos);
+    }
+}
+```
+
+### Generous Range Buffering for Better Cache Utilization
+```rust
+pub fn get_current_timeline_range() -> Option<(f32, f32)> {
+    // ... existing range calculation ...
+    
+    let raw_range = if has_valid_files && min_time < max_time {
+        // Add 20% buffer on each side to expand "visible range"
+        let time_range = max_time - min_time;
+        let buffer = time_range * 0.2; // 20% buffer
+        let expanded_min = (min_time - buffer).max(0.0);
+        let expanded_max = max_time + buffer;
+        
+        zoon::println!("CACHE: Expanding visible range from [{:.6}, {:.6}] to [{:.6}, {:.6}] (+{:.6}s buffer)", 
+                      min_time, max_time, expanded_min, expanded_max, buffer);
+        (expanded_min, expanded_max)
+    } else {
+        (SAFE_FALLBACK_START, SAFE_FALLBACK_END)
+    };
+    
+    validate_and_sanitize_range(raw_range.0, raw_range.1)
+}
+```
+
+### Cache Monitoring and Debug Patterns
+```rust
+// Debug cache effectiveness with clear output
+zoon::println!("CACHE: Fast path - checking {} variables in cache (cursor at {:.6})", var_count, cursor_pos);
+zoon::println!("CACHE: Fast path results - {} hits, {} misses, UI {}", cache_hits, cache_misses, 
+               if any_updated { "updated" } else { "unchanged" });
+zoon::println!("CACHE: Slow path - cursor outside visible range ({:.6} not in {:.6}-{:.6}), using server requests", 
+               cursor_pos, start, end);
+
+// Track cache vs server request ratios
+let total_server_queries: usize = backend_queries_by_file.values().map(|v| v.len()).sum();
+zoon::println!("CACHE: Slow path results - {} cached, {} server requests", cached_results.len(), total_server_queries);
+```
+
+## Configuration Save Optimization
+
+### Multi-Level Debouncing Strategy
+**Problem:** Frequent UI changes cause config save spam
+**Solution:** Different debounce timers for different types of changes
+
+```rust
+// Global debounce at backend level (1 second)
+pub fn save_config_to_backend() {
+    if !SAVE_CONFIG_PENDING.get() {
+        SAVE_CONFIG_PENDING.set_neq(true);
+        Task::start(async {
+            Timer::sleep(1000).await; // Backend-level debounce
+            save_config_immediately();
+            SAVE_CONFIG_PENDING.set_neq(false);
+        });
+    }
+}
+
+// Specific debouncing for different UI elements
+fn setup_config_triggers() {
+    // UI layout changes - immediate save (rare events)
+    PANEL_WIDTH.signal().for_each_sync(|_| {
+        if CONFIG_INITIALIZATION_COMPLETE.get() {
+            save_config_to_backend();
+        }
+    });
+    
+    // Cursor position - longer debounce (frequent events)
+    let debounce_task: Mutable<Option<TaskHandle<()>>> = Mutable::new(None);
+    TIMELINE_CURSOR_POSITION.signal().dedupe().for_each_sync(move |_| {
+        debounce_task.set(None); // True debouncing
+        let new_handle = Task::start_droppable(async {
+            Timer::sleep(1000).await; // Wait for inactivity
+            if CONFIG_INITIALIZATION_COMPLETE.get() {
+                save_config_to_backend();
+            }
+        });
+        debounce_task.set(Some(new_handle));
+    });
+}
+```
+
+### Initialization Race Condition Prevention
+```rust
+// Prevent config overwrites during startup
+static CONFIG_INITIALIZATION_COMPLETE: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
+
+pub async fn initialize_config() {
+    load_config().await;
+    CONFIG_INITIALIZATION_COMPLETE.set_neq(true); // Gate flag
+    setup_reactive_config_triggers(); // Start after loading
+}
+
+// All config save triggers check this flag
+if CONFIG_INITIALIZATION_COMPLETE.get() {
+    save_config_to_backend();
+}
+```
+
+### Config Save Prioritization
+```rust
+// Different urgencies for different config sections
+pub enum ConfigSaveUrgency {
+    Immediate,    // Critical UI state (window size, etc.)
+    Normal,       // User preferences (theme, etc.)
+    Deferred,     // Navigation state (cursor position, etc.)
+}
+
+// Route saves through appropriate debouncing based on urgency
+pub fn save_config_with_urgency(urgency: ConfigSaveUrgency) {
+    match urgency {
+        ConfigSaveUrgency::Immediate => save_config_immediately(),
+        ConfigSaveUrgency::Normal => save_config_to_backend(), // 1s debounce
+        ConfigSaveUrgency::Deferred => defer_config_save(),    // Longer debounce
+    }
+}
+```
+
+## Pattern Selection Guide
+
+### When to Use Each Pattern
+
+**Timeline Cursor Position Changes:**
+```rust
+// ✅ Use Task::start_droppable for true debouncing
+// ✅ Expand visible range with buffer for better cache hits  
+// ✅ Single unified signal handler with built-in range checking
+// ✅ 1-second debounce for config saves during navigation
+```
+
+**Frequent UI State Changes:**
+```rust  
+// ✅ Use cache-first patterns to avoid server requests
+// ✅ Debug monitoring to track cache effectiveness
+// ✅ Consolidate multiple signal handlers into single logic
+// ✅ Different debounce timers based on change frequency
+```
+
+**Config Save Optimization:**
+```rust
+// ✅ Multi-level debouncing (UI-specific + global backend)
+// ✅ Initialization gates to prevent startup race conditions  
+// ✅ TaskHandle dropping for guaranteed abortion
+// ✅ Save urgency classification for different config sections
+```
+
+**State Management:**
+```rust
+// ✅ MutableBTreeMap for ordered reactive collections
+// ✅ MutableVec for simple reactive lists
+// ✅ Signal deduplication for performance
+// ✅ Conditional signal processing with gates
+```
+
+### Common Anti-Patterns to Avoid
+
+```rust
+// ❌ Multiple signal handlers for same signal
+// ❌ Task::start().cancel() for debouncing (not guaranteed)
+// ❌ Fixed narrow ranges that cause cache misses
+// ❌ Config saves on every UI change without debouncing
+// ❌ Missing initialization gates causing startup overwrites
+// ❌ Using HashMap when order matters (use BTreeMap)
+```
+
 ### State Management Patterns
 ```rust
 // MutableVec for reactive collections

@@ -359,10 +359,8 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
     
     // Format options are now generated dynamically in the reactive signal based on MultiFormatValue
     
-    // Get current multi-format signal value
-    let signal_values = SIGNAL_VALUES.lock_ref();
-    let multi_value = signal_values.get(&unique_id).cloned();
-    drop(signal_values);
+    // Get current multi-format signal value from MutableBTreeMap
+    let multi_value = SIGNAL_VALUES.lock_ref().get(&unique_id).cloned();
     
     // Create default multi-value if not available yet
     let _signal_value = multi_value.unwrap_or_else(|| {
@@ -824,6 +822,8 @@ pub fn query_signal_values_at_time(time_seconds: f64) {
         return;
     }
     
+    zoon::println!("CACHE: Slow path query - {} variables at time {:.6}", selected_vars.len(), time_seconds);
+    
     // Prevent queries during startup until files are properly loaded
     let tracked_files = crate::state::TRACKED_FILES.lock_ref();
     let has_loaded_files = tracked_files.iter().any(|f| matches!(f.state, shared::FileState::Loaded(_)));
@@ -857,8 +857,8 @@ pub fn query_signal_values_at_time(time_seconds: f64) {
                 continue; // Skip backend query for this variable
             }
             
-            // TEMPORARILY DISABLE CACHED TRANSITIONS - Force fresh backend queries to get corrected values
-            if false && let Some(cached_signal_value) = compute_value_from_cached_transitions(
+            // Check cached transitions first to avoid unnecessary server requests
+            if let Some(cached_signal_value) = compute_value_from_cached_transitions(
                 &file_path, &scope_path, &variable_name, time_seconds
             ) {
                 // Use cached value - apply proper formatting
@@ -894,6 +894,10 @@ pub fn query_signal_values_at_time(time_seconds: f64) {
         }
     }
     
+    // Debug cache effectiveness
+    let total_queries: usize = backend_queries_by_file.values().map(|v| v.len()).sum();
+    zoon::println!("CACHE: Slow path results - {} cached, {} server requests", cached_results.len(), total_queries);
+    
     // Update UI immediately with cached results
     if !cached_results.is_empty() {
         update_signal_values_in_ui(&cached_results);
@@ -910,8 +914,6 @@ pub fn query_signal_values_at_time(time_seconds: f64) {
 
 /// Update signal values in UI from cached or backend results
 fn update_signal_values_in_ui(results: &[SignalValueResult]) {
-    let mut signal_values = crate::state::SIGNAL_VALUES.lock_mut();
-    
     for result in results {
         // Create unique_id in the same format as SelectedVariable: file_path|scope_path|variable_name
         // Note: We need the file_path, but SignalValueResult doesn't include it
@@ -937,8 +939,10 @@ fn update_signal_values_in_ui(results: &[SignalValueResult]) {
                 crate::format_utils::SignalValue::missing()
             };
             
-            // Store signal value with unique identifier
-            signal_values.insert(full_unique_id, signal_value);
+            // Update the value and trigger signal manually
+            let mut new_values = crate::state::SIGNAL_VALUES.get_cloned();
+            new_values.insert(full_unique_id, signal_value);
+            crate::state::SIGNAL_VALUES.set(new_values);
         }
     }
 }
@@ -954,16 +958,67 @@ pub fn trigger_signal_value_queries() {
         return; // Don't query if no files are loaded yet
     }
     
-    // Trigger signal value queries for selected variables
-    let selected_vars = SELECTED_VARIABLES.lock_ref();
-    for _var in selected_vars.iter() {
-        // Process selected variable for signal query
-    }
-    drop(selected_vars);
+    // Query at current timeline cursor position with range check
+    let cursor_pos = crate::state::TIMELINE_CURSOR_POSITION.get();
     
-    // Query at current timeline cursor position
-    query_signal_values_at_time(crate::state::TIMELINE_CURSOR_POSITION.get());
+    // Check if cursor is within visible timeline range
+    let start = crate::state::TIMELINE_VISIBLE_RANGE_START.get() as f64;
+    let end = crate::state::TIMELINE_VISIBLE_RANGE_END.get() as f64;
+    
+    if cursor_pos >= start && cursor_pos <= end {
+        // Cursor in visible range - use cached transition data (fast path)
+        let selected_vars = SELECTED_VARIABLES.lock_ref();
+        if selected_vars.is_empty() {
+            return;
+        }
+        
+        let var_count = selected_vars.len();
+        zoon::println!("CACHE: Fast path - checking {} variables in cache (cursor at {:.6})", var_count, cursor_pos);
+        
+        // Collect new values from cached transition data
+        let mut new_values = crate::state::SIGNAL_VALUES.get_cloned();
+        let mut any_updated = false;
+        let mut cache_hits = 0;
+        let mut cache_misses = 0;
+        
+        let transitions_cache = crate::waveform_canvas::SIGNAL_TRANSITIONS_CACHE.lock_ref();
+        
+        for selected_var in selected_vars.iter() {
+            if let Some(signal_transitions) = transitions_cache.get(&selected_var.unique_id) {
+                // Find the most recent transition at or before the given time
+                let mut found = false;
+                for transition in signal_transitions.iter().rev() {
+                    if transition.time_seconds <= cursor_pos {
+                        let signal_value = crate::format_utils::SignalValue::from_data(transition.value.clone());
+                        new_values.insert(selected_var.unique_id.clone(), signal_value);
+                        any_updated = true;
+                        found = true;
+                        break;
+                    }
+                }
+                if found {
+                    cache_hits += 1;
+                } else {
+                    cache_misses += 1;
+                }
+            } else {
+                cache_misses += 1;
+            }
+        }
+        
+        zoon::println!("CACHE: Fast path results - {} hits, {} misses, UI {}", cache_hits, cache_misses, if any_updated { "updated" } else { "unchanged" });
+        
+        // Trigger UI update if any values were found from cache
+        if any_updated {
+            crate::state::SIGNAL_VALUES.set(new_values);
+        }
+    } else {
+        // Cursor outside visible range - query backend (slow path)
+        zoon::println!("CACHE: Slow path - cursor outside visible range ({:.6} not in {:.6}-{:.6}), using server requests", cursor_pos, start, end);
+        query_signal_values_at_time(cursor_pos);
+    }
 }
+
 
 
 fn variables_vertical_divider(is_dragging: Mutable<bool>) -> impl Element {

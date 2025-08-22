@@ -1043,4 +1043,162 @@ fn handle_resource_exhaustion() {
 - Take breaks during extended analysis sessions
 - Monitor browser memory usage during heavy operations
 
+## PHASE 4: Q/E CURSOR MOVEMENT OPTIMIZATION
+
+### Problem: Persistent Request Flooding During Q/E Operations
+
+Despite implementing batching and throttling in Phases 1-3, Q/E cursor movement still generates excessive backend requests and causes stuttering:
+
+**Observed Issues:**
+- Rapid Q/E back-and-forth movements create accumulating request queues
+- Network tab shows growing pending requests to server
+- Application stutters during intensive cursor operations
+- Current 100ms throttling insufficient for cursor movement patterns
+
+**Root Cause: Cursor vs Zoom/Pan Movement Differences**
+- Cursor movement (Q/E) has different usage patterns than zoom/pan (WASD)
+- Q/E keys held for rapid sequential positioning vs smooth continuous movement
+- Each cursor position change can trigger timeline range recalculation
+- 60fps cursor animation bypasses existing throttling designed for zoom operations
+
+### PHASE 4A: Cursor-Specific Throttling Implementation
+
+#### Enhanced Throttling Architecture
+```rust
+// Different throttle rates for different operations
+const ANIMATION_REQUEST_INTERVAL_MS: f64 = 100.0; // 10/sec for zoom/pan
+const CURSOR_REQUEST_INTERVAL_MS: f64 = 500.0;    // 2/sec for cursor (5x more aggressive)
+
+// Separate tracking for cursor vs animation requests
+static LAST_CURSOR_REQUEST: Lazy<Mutable<f64>> = Lazy::new(|| Mutable::new(0.0));
+static LAST_ANIMATION_REQUEST: Lazy<Mutable<f64>> = Lazy::new(|| Mutable::new(0.0));
+```
+
+#### Smart Operation Detection
+```rust
+fn should_throttle_request() -> bool {
+    let now = get_timestamp_ms();
+    
+    // Cursor movement gets more aggressive throttling (500ms)
+    if IS_CURSOR_MOVING_LEFT.get() || IS_CURSOR_MOVING_RIGHT.get() {
+        if now - LAST_CURSOR_REQUEST.get() < CURSOR_REQUEST_INTERVAL_MS {
+            return true; // Skip - much more aggressive
+        }
+        LAST_CURSOR_REQUEST.set(now);
+        return false;
+    }
+    
+    // Zoom/pan gets normal throttling (100ms)
+    if IS_ZOOMING_IN.get() || IS_ZOOMING_OUT.get() || 
+       IS_PANNING_LEFT.get() || IS_PANNING_RIGHT.get() {
+        // Standard throttling logic
+    }
+    false
+}
+```
+
+### PHASE 4B: Request Cancellation System (PLANNED)
+
+#### Request ID Tracking
+```rust
+// Track active requests with IDs for cancellation
+static ACTIVE_REQUEST_ID: Lazy<Mutable<Option<u64>>> = Lazy::new(|| Mutable::new(None));
+
+fn send_cancellable_request(message: UpMsg) -> u64 {
+    // Cancel previous request if active
+    if let Some(prev_id) = ACTIVE_REQUEST_ID.get() {
+        cancel_request(prev_id);
+    }
+    
+    let request_id = generate_request_id();
+    ACTIVE_REQUEST_ID.set(Some(request_id));
+    
+    // Send with cancellation token
+    send_request_with_id(message, request_id);
+    request_id
+}
+```
+
+### PHASE 4C: Animation-Aware Request Skipping (PLANNED)
+
+#### Continuous Movement Detection
+```rust
+// Skip intermediate requests during rapid movement
+static CURSOR_MOVEMENT_START: Lazy<Mutable<Option<f64>>> = Lazy::new(|| Mutable::new(None));
+
+fn handle_cursor_movement_request() {
+    let now = get_timestamp_ms();
+    
+    // Mark start of movement sequence
+    if CURSOR_MOVEMENT_START.get().is_none() {
+        CURSOR_MOVEMENT_START.set(Some(now));
+    }
+    
+    // Skip requests during active movement
+    if now - CURSOR_MOVEMENT_START.get().unwrap() < MOVEMENT_SEQUENCE_MS {
+        return; // Skip intermediate requests
+    }
+    
+    // Send request only when movement settles
+    request_transitions_for_all_variables(get_current_timeline_range());
+    CURSOR_MOVEMENT_START.set(None);
+}
+```
+
+### PHASE 4D: Enhanced Pending Request Management (PLANNED)
+
+#### Priority-Based Request Queuing
+```rust
+#[derive(Debug, Clone, PartialEq)]
+enum RequestPriority {
+    Critical,   // User-initiated discrete actions
+    High,       // End of animation sequences
+    Medium,     // Background data loading
+    Low,        // Prefetch and optimization
+}
+
+struct PendingRequest {
+    id: u64,
+    message: UpMsg,
+    priority: RequestPriority,
+    timestamp: f64,
+}
+```
+
+### Implementation Progress
+
+#### Phase 4A: COMPLETED ✅
+- [✅] Enhanced `should_throttle_request()` with cursor detection
+- [✅] Added separate throttle constants (500ms cursor vs 100ms zoom/pan)
+- [✅] Implemented cursor-specific debug logging
+- [⏳] Testing Q/E rapid movements
+
+#### Phase 4B: PLANNED 📋
+- [ ] Request ID tracking system
+- [ ] Cancel mechanism for obsolete requests  
+- [ ] Hook cancellation into animation loops
+
+#### Phase 4C: PLANNED 📋
+- [ ] Continuous movement detection
+- [ ] Skip intermediate requests during rapid sequences
+- [ ] Only request data when movement pauses
+
+#### Phase 4D: PLANNED 📋
+- [ ] Priority-based request queuing
+- [ ] Enhanced pending flag system with timeouts
+- [ ] Per-file request management
+
+### Expected Results After Phase 4
+
+**Current State (After Phase 3):**
+- Batching: 10 variables = 1 request ✅
+- Throttling: 10 requests/second during zoom/pan ✅
+- **Problem:** Still 10 requests/second during Q/E = request accumulation
+
+**Target State (After Phase 4):**
+- Cursor throttling: Max 2 requests/second during Q/E operations
+- Request cancellation: Obsolete requests cancelled automatically
+- Smart skipping: Only send requests when movement completes
+- **Result:** Smooth Q/E navigation without request flooding or stuttering
+
 This comprehensive guide covers all identified and potential causes of the ERR_INSUFFICIENT_RESOURCES error, providing both immediate fixes and long-term architectural solutions.

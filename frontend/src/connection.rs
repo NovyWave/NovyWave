@@ -228,11 +228,10 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
             }
             DownMsg::SignalValues { file_path, results } => {
                 // Process signal values from backend
-                // Update signal values in the global state
-                let mut signal_values = crate::state::SIGNAL_VALUES.lock_mut();
+                let mut new_values = crate::state::SIGNAL_VALUES.get_cloned();
+                let mut any_changed = false;
                 
                 for result in results {
-                    // Create unique_id for signal value storage
                     // Create unique_id in the same format as SelectedVariable: file_path|scope_path|variable_name
                     let unique_id = format!("{}|{}|{}", 
                         file_path,
@@ -256,8 +255,13 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                         crate::format_utils::SignalValue::missing()  // Beyond time range
                     };
                     
-                    // Store signal value with unique identifier
-                    signal_values.insert(unique_id, signal_value);
+                    new_values.insert(unique_id, signal_value);
+                    any_changed = true;
+                }
+                
+                // Trigger signal by replacing the entire HashMap if any values changed
+                if any_changed {
+                    crate::state::SIGNAL_VALUES.set(new_values);
                 }
             }
             DownMsg::SignalValuesError { file_path: _, error: _ } => {
@@ -517,7 +521,8 @@ fn handle_down_msg(down_msg: DownMsg) {
             crate::FILE_PICKER_ERROR.set_neq(None);
         }
         DownMsg::SignalValues { file_path, results } => {
-            let mut signal_values = crate::state::SIGNAL_VALUES.lock_mut();
+            let mut new_values = crate::state::SIGNAL_VALUES.get_cloned();
+            let mut any_changed = false;
             
             for result in results {
                 let unique_id = format!("{}|{}|{}", 
@@ -539,7 +544,14 @@ fn handle_down_msg(down_msg: DownMsg) {
                 } else {
                     crate::format_utils::SignalValue::missing()  // Beyond time range
                 };
-                signal_values.insert(unique_id, signal_value);
+                
+                new_values.insert(unique_id, signal_value);
+                any_changed = true;
+            }
+            
+            // Trigger signal by replacing the entire HashMap if any values changed
+            if any_changed {
+                crate::state::SIGNAL_VALUES.set(new_values);
             }
         }
         DownMsg::SignalValuesError { file_path: _, error: _ } => {
@@ -570,7 +582,8 @@ fn handle_down_msg(down_msg: DownMsg) {
         DownMsg::BatchSignalValues { batch_id: _, file_results } => {
             // Process batch signal values from backend
             for file_result in file_results {
-                let mut signal_values = crate::state::SIGNAL_VALUES.lock_mut();
+                let mut new_values = crate::state::SIGNAL_VALUES.get_cloned();
+                let mut any_changed = false;
                 
                 for result in file_result.results {
                     let unique_id = format!("{}|{}|{}", 
@@ -592,7 +605,14 @@ fn handle_down_msg(down_msg: DownMsg) {
                     } else {
                         crate::format_utils::SignalValue::missing()  // Beyond time range
                     };
-                    signal_values.insert(unique_id, signal_value);
+                    
+                    new_values.insert(unique_id, signal_value);
+                    any_changed = true;
+                }
+                
+                // Trigger signal by replacing the entire HashMap if any values changed
+                if any_changed {
+                    crate::state::SIGNAL_VALUES.set(new_values);
                 }
             }
         }

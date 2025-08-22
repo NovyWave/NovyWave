@@ -24,7 +24,9 @@ pub fn check_loading_complete() {
         // Check if cursor position was set during startup - re-trigger value queries if so
         if STARTUP_CURSOR_POSITION_SET.get() {
             let cursor_pos = TIMELINE_CURSOR_POSITION.get();
-            crate::views::query_signal_values_at_time(cursor_pos);
+            
+            // Use unified caching logic with built-in range checking
+            crate::views::trigger_signal_value_queries();
             STARTUP_CURSOR_POSITION_SET.set_neq(false); // Reset flag
         }
         

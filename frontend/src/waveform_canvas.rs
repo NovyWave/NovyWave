@@ -8,7 +8,7 @@ use crate::config::current_theme;
 use shared::{SelectedVariable, UpMsg, SignalTransitionQuery, SignalTransition};
 use std::rc::Rc;
 use std::cell::RefCell;
-use std::collections::{HashSet, HashMap};
+use std::collections::HashMap;
 use moonzoon_novyui::tokens::theme::Theme as NovyUITheme;
 use shared::Theme as SharedTheme;
 use wasm_bindgen::JsCast;
@@ -32,60 +32,171 @@ pub static SIGNAL_TRANSITIONS_CACHE: Lazy<Mutable<HashMap<String, Vec<SignalTran
     Mutable::new(HashMap::new())
 });
 
-// Track which variables have had their transitions requested to prevent O(N²) request floods
-// Format: "file_path|scope_path|variable_name"
-static TRANSITIONS_REQUESTED: Lazy<Mutable<HashSet<String>>> = Lazy::new(|| {
-    Mutable::new(HashSet::new())
-});
+// Simplified request tracking - just a pending flag to prevent overlapping requests
+static HAS_PENDING_REQUEST: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
 
-// Lock-free signal-based request deduplication to prevent backend flooding
-// Maps cache_key -> timestamp_ms to track recent requests
-static ACTIVE_REQUESTS: Lazy<Mutable<HashMap<String, f64>>> = Lazy::new(|| {
-    Mutable::new(HashMap::new())
-});
+// Note: Old complex deduplication system removed - now using simple throttling + batching
 
-// Debounce window: prevent duplicate requests within 50ms
-const REQUEST_DEBOUNCE_MS: f64 = 50.0;
-// Request timeout: clean up old timestamps after 5 seconds
-const REQUEST_TIMEOUT_MS: f64 = 5000.0;
+// Animation request throttling - prevent flooding during smooth operations
+static LAST_ANIMATION_REQUEST: Lazy<Mutable<f64>> = Lazy::new(|| Mutable::new(0.0));
+const ANIMATION_REQUEST_INTERVAL_MS: f64 = 100.0; // Max 10 requests/second during animations
+
+// Cursor movement throttling - more aggressive for Q/E operations
+static LAST_CURSOR_REQUEST: Lazy<Mutable<f64>> = Lazy::new(|| Mutable::new(0.0));
+const CURSOR_REQUEST_INTERVAL_MS: f64 = 500.0; // Max 2 requests/second during cursor movement
+
+// Request cancellation system - prevent accumulation of obsolete requests
+static ACTIVE_REQUEST_ID: Lazy<Mutable<Option<u64>>> = Lazy::new(|| Mutable::new(None));
+static REQUEST_ID_COUNTER: Lazy<Mutable<u64>> = Lazy::new(|| Mutable::new(0));
+
+// Smart animation-aware request skipping for cursor movement
+static CURSOR_MOVEMENT_START: Lazy<Mutable<Option<f64>>> = Lazy::new(|| Mutable::new(None));
+static LAST_CURSOR_REQUEST_TIME: Lazy<Mutable<f64>> = Lazy::new(|| Mutable::new(0.0));
+const CURSOR_MOVEMENT_SETTLE_MS: f64 = 200.0; // Wait for cursor to settle before requesting
+
+// Request rate monitoring for debugging
+static REQUEST_COUNT: Lazy<Mutable<u32>> = Lazy::new(|| Mutable::new(0));
+static REQUEST_RATE_WINDOW_START: Lazy<Mutable<f64>> = Lazy::new(|| Mutable::new(get_timestamp_ms()));
+const REQUEST_RATE_WINDOW_MS: f64 = 1000.0; // 1 second window
 
 /// Get current timestamp in milliseconds (WASM-safe)
 fn get_timestamp_ms() -> f64 {
     js_sys::Date::now()
 }
 
-/// Clean up old request timestamps to prevent memory leaks
-fn cleanup_old_requests() {
-    let current_time = get_timestamp_ms();
-    let mut active_requests = ACTIVE_REQUESTS.lock_mut();
-    active_requests.retain(|_, &mut timestamp| {
-        current_time - timestamp < REQUEST_TIMEOUT_MS
+/// Generate unique request ID for cancellation tracking
+fn generate_request_id() -> u64 {
+    let current = REQUEST_ID_COUNTER.get();
+    REQUEST_ID_COUNTER.set(current + 1);
+    current + 1
+}
+
+/// Cancel previous request and prepare for new one
+fn prepare_cancellable_request() -> u64 {
+    // Cancel any active request
+    if let Some(prev_id) = ACTIVE_REQUEST_ID.get() {
+        zoon::println!("🚫 CANCELLING previous request ID: {}", prev_id);
+    }
+    
+    // Generate new request ID
+    let request_id = generate_request_id();
+    ACTIVE_REQUEST_ID.set(Some(request_id));
+    
+    zoon::println!("🆔 NEW REQUEST ID: {}", request_id);
+    request_id
+}
+
+/// Smart cursor movement handling - skip requests during continuous movement
+fn should_skip_cursor_request() -> bool {
+    let now = get_timestamp_ms();
+    
+    // Check if cursor is actively moving
+    let is_cursor_moving = IS_CURSOR_MOVING_LEFT.get() || IS_CURSOR_MOVING_RIGHT.get();
+    
+    if is_cursor_moving {
+        // Mark start of movement sequence if not already marked
+        if CURSOR_MOVEMENT_START.get().is_none() {
+            CURSOR_MOVEMENT_START.set(Some(now));
+            zoon::println!("🏃 CURSOR MOVEMENT STARTED");
+            
+            // Schedule a delayed request for when movement settles
+            schedule_cursor_settle_request();
+        }
+        
+        // Always skip requests during active movement
+        zoon::println!("⏭️ SKIPPING REQUEST: Cursor still moving");
+        return true;
+    }
+    
+    // Cursor stopped moving
+    if let Some(movement_start) = CURSOR_MOVEMENT_START.get() {
+        let movement_duration = now - movement_start;
+        
+        // Check if enough time has passed since movement stopped
+        if movement_duration < CURSOR_MOVEMENT_SETTLE_MS {
+            zoon::println!("⏳ CURSOR SETTLING: Waiting {}ms more", 
+                          CURSOR_MOVEMENT_SETTLE_MS - movement_duration);
+            return true;
+        }
+        
+        // Movement has settled, clear the start time
+        CURSOR_MOVEMENT_START.set(None);
+        zoon::println!("✅ CURSOR SETTLED: Allowing request after {}ms", movement_duration);
+    }
+    
+    false
+}
+
+/// Schedule a delayed request that fires when cursor movement settles
+fn schedule_cursor_settle_request() {
+    Task::start(async move {
+        // Wait for movement to settle
+        Timer::sleep((CURSOR_MOVEMENT_SETTLE_MS + 50.0) as u32).await; // Add 50ms buffer
+        
+        // Check if cursor is still idle
+        if !IS_CURSOR_MOVING_LEFT.get() && !IS_CURSOR_MOVING_RIGHT.get() {
+            zoon::println!("⏰ SCHEDULED REQUEST: Cursor movement settled, requesting data");
+            if let Some(range) = get_current_timeline_range() {
+                request_transitions_for_all_variables(Some(range));
+            }
+        } else {
+            zoon::println!("⏰ SCHEDULED REQUEST SKIPPED: Cursor still moving");
+        }
     });
 }
 
-/// Check if a request should be allowed (not debounced)
-fn should_allow_request(cache_key: &str) -> bool {
-    let current_time = get_timestamp_ms();
+/// Track request rate for debugging and monitoring
+fn track_request_rate() {
+    let current_count = REQUEST_COUNT.get();
+    REQUEST_COUNT.set(current_count + 1);
     
-    // Clean up old requests periodically
-    cleanup_old_requests();
+    let now = get_timestamp_ms();
+    let window_start = REQUEST_RATE_WINDOW_START.get();
     
-    let mut active_requests = ACTIVE_REQUESTS.lock_mut();
-    
-    if let Some(&last_request_time) = active_requests.get(cache_key) {
-        // Check if request is within debounce window
-        if current_time - last_request_time < REQUEST_DEBOUNCE_MS {
-            // Request is debounced
-            crate::debug_utils::debug_request_deduplication(&format!("REQUEST DEBOUNCED for {} ({}ms ago)", cache_key, current_time - last_request_time));
-            return false;
+    // Check if we've passed the 1-second window
+    if now - window_start >= REQUEST_RATE_WINDOW_MS {
+        let rate = REQUEST_COUNT.get();
+        if rate > 30 {
+            zoon::println!("⚠️ HIGH REQUEST RATE: {} requests/second", rate);
+        } else if rate > 0 {
+            zoon::println!("📊 Request rate: {} requests/second", rate);
         }
+        REQUEST_COUNT.set(0);
+        REQUEST_RATE_WINDOW_START.set(now);
+    }
+}
+
+/// Check if we should throttle requests during animations to prevent flooding
+fn should_throttle_request() -> bool {
+    let now = get_timestamp_ms();
+    
+    // Check for cursor movement (Q/E keys) - more aggressive throttling
+    if IS_CURSOR_MOVING_LEFT.get() || IS_CURSOR_MOVING_RIGHT.get() {
+        if now - LAST_CURSOR_REQUEST.get() < CURSOR_REQUEST_INTERVAL_MS {
+            return true; // Skip - cursor movement throttled more aggressively
+        }
+        LAST_CURSOR_REQUEST.set(now);
+        zoon::println!("🐌 CURSOR THROTTLED: Allowing request during cursor movement ({}ms since last)", 
+                      now - LAST_CURSOR_REQUEST.get());
+        return false;
     }
     
-    // Allow request and update timestamp
-    active_requests.insert(cache_key.to_string(), current_time);
-    crate::debug_utils::debug_request_deduplication(&format!("REQUEST ALLOWED for {}", cache_key));
-    true
+    // Check for zoom/pan animations (original throttling)
+    if IS_ZOOMING_IN.get() || IS_ZOOMING_OUT.get() || 
+       IS_PANNING_LEFT.get() || IS_PANNING_RIGHT.get() {
+        if now - LAST_ANIMATION_REQUEST.get() < ANIMATION_REQUEST_INTERVAL_MS {
+            return true; // Skip this request - too soon
+        }
+        LAST_ANIMATION_REQUEST.set(now);
+        zoon::println!("🚦 ZOOM/PAN THROTTLED: Allowing request during animation ({}ms since last)", 
+                      now - LAST_ANIMATION_REQUEST.get());
+    }
+    
+    false
 }
+
+/// Clean up old request timestamps to prevent memory leaks
+// Old complex deduplication functions removed - now using simple throttling + batching
 
 // Cache for processed canvas transitions - prevents redundant processing and backend requests
 pub static PROCESSED_CANVAS_CACHE: Lazy<Mutable<HashMap<String, Vec<(f32, shared::SignalValue)>>>> = 
@@ -94,37 +205,10 @@ pub static PROCESSED_CANVAS_CACHE: Lazy<Mutable<HashMap<String, Vec<(f32, shared
 /// Request transitions only for variables that haven't been requested yet
 /// This prevents the O(N²) request flood when adding multiple variables
 fn request_transitions_for_new_variables_only(time_range: Option<(f32, f32)>) {
-    let Some((min_time, max_time)) = time_range else { return; };
-    
-    // Get variable data first, then release the lock to prevent deadlocks
-    let variables_to_check: Vec<String> = {
-        let selected_vars = SELECTED_VARIABLES.lock_ref();
-        selected_vars.iter().map(|var| var.unique_id.clone()).collect()
-    };
-    
-    for unique_id in variables_to_check {
-        // Parse unique_id: "/path/file.ext|scope|variable"
-        let parts: Vec<&str> = unique_id.split('|').collect();
-        if parts.len() >= 3 {
-            let file_path = parts[0];
-            let scope_path = parts[1]; 
-            let variable_name = parts[2];
-            
-            // Create cache key for tracking requests
-            let cache_key = format!("{}|{}|{}", file_path, scope_path, variable_name);
-            
-            // Check and update request tracking separately to avoid holding multiple locks
-            let needs_request = {
-                let requested_set = TRANSITIONS_REQUESTED.lock_ref();
-                !requested_set.contains(&cache_key)
-            };
-            
-            if needs_request {
-                crate::debug_utils::debug_conditional(&format!("Requesting transitions for NEW variable: {}", cache_key));
-                request_signal_transitions_from_backend(file_path, scope_path, variable_name, (min_time, max_time));
-            }
-        }
-    }
+    // Simplified: delegate to the optimized batched function
+    // The batching and throttling will handle efficiency
+    crate::debug_utils::debug_conditional("New variables request: delegating to optimized batched function");
+    request_transitions_for_all_variables(time_range);
 }
 
 /// Force request transitions for all variables (use for timeline range changes)
@@ -137,83 +221,136 @@ fn request_transitions_for_all_variables(time_range: Option<(f32, f32)>) {
         selected_vars.iter().map(|var| var.unique_id.clone()).collect()
     };
     
+    if variables_to_request.is_empty() {
+        return;
+    }
+    
+    // Skip if we already have a pending request to prevent overlapping
+    if HAS_PENDING_REQUEST.get() {
+        zoon::println!("🚫 SKIPPING REQUESTS: Already have pending request");
+        return;
+    }
+    
+    // Group variables by file path to enable batching
+    let mut queries_by_file: HashMap<String, Vec<SignalTransitionQuery>> = HashMap::new();
+    
     for unique_id in variables_to_request {
         // Parse unique_id: "/path/file.ext|scope|variable"
         let parts: Vec<&str> = unique_id.split('|').collect();
         if parts.len() >= 3 {
-            let file_path = parts[0];
-            let scope_path = parts[1]; 
-            let variable_name = parts[2];
+            let file_path = parts[0].to_string();
+            let scope_path = parts[1].to_string();
+            let variable_name = parts[2].to_string();
             
-            // Create cache key for tracking requests
-            let cache_key = format!("{}|{}|{}", file_path, scope_path, variable_name);
+            // Create query for this variable
+            let query = SignalTransitionQuery {
+                scope_path,
+                variable_name,
+            };
             
-            crate::debug_utils::debug_conditional(&format!("Force requesting transitions for variable: {}", cache_key));
-            request_signal_transitions_from_backend(file_path, scope_path, variable_name, (min_time, max_time));
-            
-            // Update tracking after the request to avoid holding multiple locks
-            TRANSITIONS_REQUESTED.lock_mut().insert(cache_key);
+            // Group queries by file path
+            queries_by_file
+                .entry(file_path)
+                .or_insert_with(Vec::new)
+                .push(query);
         }
     }
-}
-
-/// Clear transition request tracking for removed variables
-pub fn clear_transition_tracking_for_variable(unique_id: &str) {
-    let parts: Vec<&str> = unique_id.split('|').collect();
-    if parts.len() >= 3 {
-        let cache_key = format!("{}|{}|{}", parts[0], parts[1], parts[2]);
-        TRANSITIONS_REQUESTED.lock_mut().remove(&cache_key);
-        ACTIVE_REQUESTS.lock_mut().remove(&cache_key);
-        crate::debug_utils::debug_conditional(&format!("Cleared transition tracking for removed variable: {}", cache_key));
+    
+    // Check if we should throttle during animations
+    if should_throttle_request() {
+        zoon::println!("🚦 SKIPPING REQUESTS: Throttled during animation");
+        return;
     }
+    
+    // Smart cursor movement handling - skip requests during rapid Q/E sequences
+    if should_skip_cursor_request() {
+        return;
+    }
+    
+    // Cancel any previous request and get new ID
+    let request_id = prepare_cancellable_request();
+    
+    // Send ONE batched request per file (instead of N individual requests)
+    for (file_path, signal_queries) in queries_by_file {
+        let batch_size = signal_queries.len();
+        zoon::println!("📦 BATCHED REQUEST: {} variables in 1 request for file {}", batch_size, file_path);
+        
+        // Track request rate for monitoring
+        track_request_rate();
+        
+        // Get file time range for this specific file
+        let (file_min, file_max) = {
+            let loaded_files = LOADED_FILES.lock_ref();
+            if let Some(loaded_file) = loaded_files.iter().find(|f| f.id == file_path || file_path.ends_with(&f.filename)) {
+                (
+                    loaded_file.min_time.unwrap_or(0.0) as f64,
+                    loaded_file.max_time.unwrap_or(1000.0) as f64
+                )
+            } else {
+                // Don't make request if file isn't loaded yet
+                crate::debug_utils::debug_conditional(&format!("FILE NOT LOADED YET - cannot request transitions for {}", file_path));
+                continue;
+            }
+        };
+        
+        // Create batched message with ALL queries for this file
+        let message = UpMsg::QuerySignalTransitions {
+            file_path,
+            signal_queries, // Multiple queries in one request!
+            time_range: (file_min, file_max),
+        };
+        
+        // Send the batched request
+        Task::start(async move {
+            if let Err(e) = CurrentPlatform::send_message(message).await {
+                zoon::println!("ERROR: Failed to query signal transitions via platform: {}", e);
+            }
+        });
+    }
+    
+    // Set pending flag and clear it after a reasonable timeout
+    HAS_PENDING_REQUEST.set(true);
+    Task::start(async move {
+        Timer::sleep(500).await; // 500ms timeout for batch requests
+        HAS_PENDING_REQUEST.set(false);
+    });
 }
 
-/// Clear all transition request tracking (useful for complete reset)
+/// Clear transition request tracking for removed variables (simplified)
+pub fn clear_transition_tracking_for_variable(_unique_id: &str) {
+    // Old complex tracking system removed - now just clear pending flag if needed
+    HAS_PENDING_REQUEST.set(false);
+    crate::debug_utils::debug_conditional("Cleared transition tracking (simplified)");
+}
+
+/// Clear all transition request tracking (simplified)
 pub fn clear_all_transition_tracking() {
-    TRANSITIONS_REQUESTED.lock_mut().clear();
-    ACTIVE_REQUESTS.lock_mut().clear();
-    crate::debug_utils::debug_conditional("Cleared all transition tracking and active requests");
+    HAS_PENDING_REQUEST.set(false);
+    crate::debug_utils::debug_conditional("Cleared all transition tracking (simplified)");
 }
 
-/// Force clear all active request timestamps (useful for debugging)
+/// Force clear all active request timestamps (simplified)
 #[allow(dead_code)]
 pub fn clear_active_requests() {
-    ACTIVE_REQUESTS.lock_mut().clear();
-    crate::debug_utils::debug_conditional("Cleared all active request timestamps");
+    HAS_PENDING_REQUEST.set(false);
+    crate::debug_utils::debug_conditional("Cleared active requests (simplified)");
 }
 
-/// Get debug information about request deduplication state
+/// Get debug information about request deduplication state (simplified)
 #[allow(dead_code)]
 pub fn get_request_deduplication_info() -> (usize, usize) {
-    let active_count = ACTIVE_REQUESTS.lock_ref().len();
-    let requested_count = TRANSITIONS_REQUESTED.lock_ref().len();
-    crate::debug_utils::debug_request_deduplication(&format!("Request deduplication state: {} active, {} total requested", active_count, requested_count));
-    (active_count, requested_count)
+    let pending = if HAS_PENDING_REQUEST.get() { 1 } else { 0 };
+    crate::debug_utils::debug_request_deduplication(&format!("Request state (simplified): {} pending", pending));
+    (pending, 0)
 }
 
-/// Batch add multiple variables without triggering O(N²) requests
+/// Batch add multiple variables without triggering O(N²) requests (simplified)
 /// This is useful for config restore or bulk operations
-pub fn batch_request_transitions_for_variables(variables: &[shared::SelectedVariable], time_range: Option<(f32, f32)>) {
-    let Some((min_time, max_time)) = time_range else { return; };
-    
-    let mut requested_set = TRANSITIONS_REQUESTED.lock_mut();
-    
-    crate::debug_utils::debug_conditional(&format!("Batch requesting transitions for {} variables", variables.len()));
-    for var in variables.iter() {
-        let parts: Vec<&str> = var.unique_id.split('|').collect();
-        if parts.len() >= 3 {
-            let file_path = parts[0];
-            let scope_path = parts[1]; 
-            let variable_name = parts[2];
-            
-            let cache_key = format!("{}|{}|{}", file_path, scope_path, variable_name);
-            
-            // Always request for batch operations (don't check if already requested)
-            crate::debug_utils::debug_conditional(&format!("Batch requesting transitions for: {}", cache_key));
-            request_signal_transitions_from_backend(file_path, scope_path, variable_name, (min_time, max_time));
-            requested_set.insert(cache_key);
-        }
-    }
+pub fn batch_request_transitions_for_variables(_variables: &[shared::SelectedVariable], time_range: Option<(f32, f32)>) {
+    // Simplified: just call our optimized batched request function
+    // It already handles batching and throttling properly
+    crate::debug_utils::debug_conditional("Batch request: delegating to optimized batched function");
+    request_transitions_for_all_variables(time_range);
 }
 
 
@@ -1081,15 +1218,9 @@ fn get_signal_transitions_for_variable(var: &SelectedVariable, time_range: (f32,
     }
     drop(cache);
     
-    // No cached data - request from backend if not recently requested (deduplication)
-    let raw_cache_key = format!("{}|{}|{}", file_path, scope_path, variable_name);
-    
-    if should_allow_request(&raw_cache_key) {
-        crate::debug_utils::debug_cache_miss(&format!("requesting from backend for {}/{}", scope_path, variable_name));
-        request_signal_transitions_from_backend(file_path, scope_path, variable_name, time_range);
-    } else {
-        crate::debug_utils::debug_request_deduplication(&format!("CACHE MISS but request DEBOUNCED for {}/{}", scope_path, variable_name));
-    }
+    // No cached data - request from backend (deduplication removed, now handled by batching)
+    crate::debug_utils::debug_cache_miss(&format!("requesting from backend for {}/{}", scope_path, variable_name));
+    request_signal_transitions_from_backend(file_path, scope_path, variable_name, time_range);
     
     // Return empty data while waiting for real backend response
     // This prevents premature filler rectangles from covering actual values
@@ -1882,9 +2013,16 @@ fn get_full_file_range() -> (f32, f32) {
         }
     }
     
-    // Use validation system for final result
+    // Use validation system for final result with generous buffer
     let raw_range = if has_valid_files && min_time < max_time {
-        (min_time, max_time)
+        // Add 20% buffer on each side to expand "visible range" for better cache utilization
+        let time_range = max_time - min_time;
+        let buffer = time_range * 0.2; // 20% buffer
+        let expanded_min = (min_time - buffer).max(0.0); // Don't go below 0
+        let expanded_max = max_time + buffer;
+        zoon::println!("CACHE: Expanding visible range from [{:.6}, {:.6}] to [{:.6}, {:.6}] (+{:.6}s buffer)", 
+                      min_time, max_time, expanded_min, expanded_max, buffer);
+        (expanded_min, expanded_max)
     } else {
         (SAFE_FALLBACK_START, SAFE_FALLBACK_END)
     };
