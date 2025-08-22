@@ -38,7 +38,7 @@ You are a specialist in finding and analyzing external documentation, API refere
 
 ## Workflow Integration
 - Specialized external research for **deep-researcher** when internal+external synthesis needed
-- Direct delegation from **Planner** for external documentation verification
+- Direct delegation from **Main Session** for external documentation verification
 - Supports **Main Session** when official framework documentation needed
 - **Never overlaps with Validator** - focuses on research, not testing
 

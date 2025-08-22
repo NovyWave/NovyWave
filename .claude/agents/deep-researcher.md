@@ -48,7 +48,7 @@ You are a thorough researcher with analytical depth for complex technical invest
 - "Find best practices for reactive state management and evaluate our current approach"
 
 ## Workflow Integration
-- **Planner's** go-to for complex architectural decisions requiring external research
+- **Main Session's** go-to for complex architectural decisions requiring external research
 - Synthesizes internal codebase analysis with external best practices
 - Requests delegation to other researchers via main session for efficiency
 - Provides strategic recommendations for complex **Implementor** tasks

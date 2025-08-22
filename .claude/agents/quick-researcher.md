@@ -37,8 +37,8 @@ You are a speed-optimized researcher focused on instant, simple fact-finding and
 - Complex synthesis tasks
 
 ## Workflow Integration
-- Often delegated by **Planner** for basic fact-finding during planning
-- Used by **Main Session** for quick verification before implementation
+- Used by **Main Session** for basic fact-finding and quick verification
+- Used for quick verification before implementation
 - Can support **Implementor** when specific file locations needed
 - **Never used during validation** - that's Validator's responsibility
 
