@@ -30,6 +30,31 @@ impl MultiFormatValue {
         }
     }
 
+    /// Create a new MultiFormatValue for missing data (N/A)
+    pub fn new_missing() -> Self {
+        let mut formatted_values = HashMap::new();
+        
+        // All formats show "N/A" for missing data
+        let formats = [
+            VarFormat::ASCII,
+            VarFormat::Binary,
+            VarFormat::BinaryWithGroups,
+            VarFormat::Hexadecimal,
+            VarFormat::Octal,
+            VarFormat::Signed,
+            VarFormat::Unsigned,
+        ];
+
+        for format in formats {
+            formatted_values.insert(format, "N/A".to_string());
+        }
+        
+        Self {
+            raw_binary: "N/A".to_string(),
+            formatted_values,
+        }
+    }
+
     /// Generate formatted values for all VarFormat types
     fn generate_all_formats(raw_binary: &str) -> HashMap<VarFormat, String> {
         let mut formatted = HashMap::new();

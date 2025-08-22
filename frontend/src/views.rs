@@ -366,7 +366,7 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
     
     // Create default multi-value if not available yet
     let _multi_value = multi_value.unwrap_or_else(|| {
-        crate::format_utils::MultiFormatValue::new("Loading...".to_string())
+        crate::format_utils::MultiFormatValue::new_missing()
     });
     
     // Create reactive state for selection changes
@@ -412,7 +412,7 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
                 let format_state = selected_format.signal_cloned() => {
                     // Get current multi-format value
                     let current_multi_value = signal_values.get(&unique_id).cloned()
-                        .unwrap_or_else(|| crate::format_utils::MultiFormatValue::new("Loading...".to_string()));
+                        .unwrap_or_else(|| crate::format_utils::MultiFormatValue::new_missing());
                     
                     // Parse current format for proper display
                     let current_format_enum = match format_state.as_str() {
@@ -833,12 +833,13 @@ fn update_signal_values_in_ui(results: &[SignalValueResult]) {
         }) {
             let full_unique_id = matching_var.unique_id.clone();
             
-            // Create MultiFormatValue from raw binary value
-            let raw_binary = result.raw_value
-                .clone()
-                .unwrap_or_else(|| "Loading...".to_string());
-            
-            let multi_format_value = crate::format_utils::MultiFormatValue::new(raw_binary);
+            // Handle missing data properly - use N/A instead of "Loading..."
+            let multi_format_value = if let Some(raw_binary) = result.raw_value.clone() {
+                crate::format_utils::MultiFormatValue::new(raw_binary)
+            } else {
+                // For missing data, create a special N/A multi-format value
+                crate::format_utils::MultiFormatValue::new_missing()
+            };
             
             // Store multi-format signal value with unique identifier
             signal_values.insert(full_unique_id, multi_format_value);
@@ -1271,7 +1272,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                                 .left_icon(IconName::X)
                                                                 .variant(ButtonVariant::DestructiveGhost)
                                                                 .size(ButtonSize::Small)
-                                                                .custom_padding(4, 2)
+                                                                .custom_padding(2, 2)
                                                                 .on_press(move || {
                                                                     remove_selected_variable(&unique_id);
                                                                 })
@@ -1294,6 +1295,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                                     El::new()
                                                                         .s(Font::new().color_signal(primary_6()).size(11).no_wrap())
                                                                         .s(Align::new().right())
+                                                                        .s(Padding::new().right(8))
                                                                         .update_raw_el(|raw_el| {
                                                                             raw_el
                                                                                 .style("text-overflow", "ellipsis") // Show ellipsis for long text
@@ -1340,7 +1342,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                         Row::new()
                                                             .s(Align::new().center_y())
                                                             // Left group: Z button
-                                                            .item(kbd("Z").size(KbdSize::Small).variant(KbdVariant::Outlined).build())
+                                                            .item(kbd("Z").size(KbdSize::Small).variant(KbdVariant::Outlined).title("Reset zoom center to time 0").build())
                                                             // Spacer to push center and right groups apart
                                                             .item(El::new().s(Width::fill()))
                                                             // Center group: W - zoom display - S
@@ -1348,7 +1350,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                                 Row::new()
                                                                     .s(Align::center())
                                                                     .s(Gap::new().x(6))
-                                                                    .item(kbd("W").size(KbdSize::Small).variant(KbdVariant::Outlined).build())
+                                                                    .item(kbd("W").size(KbdSize::Small).variant(KbdVariant::Outlined).title("Zoom in • Shift+W: Zoom in faster").build())
                                                                     .item(
                                                                         El::new()
                                                                             .s(Width::exact(45))
@@ -1377,12 +1379,12 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                                                 )
                                                                             )
                                                                     )
-                                                                    .item(kbd("S").size(KbdSize::Small).variant(KbdVariant::Outlined).build())
+                                                                    .item(kbd("S").size(KbdSize::Small).variant(KbdVariant::Outlined).title("Zoom out • Shift+S: Zoom out faster").build())
                                                             )
                                                             // Spacer to push right group apart
                                                             .item(El::new().s(Width::fill()))
                                                             // Right group: R button
-                                                            .item(kbd("R").size(KbdSize::Small).variant(KbdVariant::Outlined).build())
+                                                            .item(kbd("R").size(KbdSize::Small).variant(KbdVariant::Outlined).title("Reset zoom to 1x, fit all data, and center cursor").build())
                                                     )
                                             )
                                     )
@@ -1473,7 +1475,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                                                 )
                                                                             )
                                                                     )
-                                                                    .item(kbd("A").size(KbdSize::Small).variant(KbdVariant::Outlined).build())
+                                                                    .item(kbd("A").size(KbdSize::Small).variant(KbdVariant::Outlined).title("Pan left • Shift+A: Pan left faster").build())
                                                             )
                                                             // Spacer to push center and right groups apart
                                                             .item(El::new().s(Width::fill()))
@@ -1481,7 +1483,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                             .item(
                                                                 Row::new()
                                                                     .s(Gap::new().x(2))
-                                                                    .item(kbd("Q").size(KbdSize::Small).variant(KbdVariant::Outlined).build())
+                                                                    .item(kbd("Q").size(KbdSize::Small).variant(KbdVariant::Outlined).title("Move cursor left • Shift+Q: Jump to previous transition").build())
                                                                     .item(
                                                                         El::new()
                                                                             .s(Width::exact(45))
@@ -1505,7 +1507,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                                                 )
                                                                             )
                                                                     )
-                                                                    .item(kbd("E").size(KbdSize::Small).variant(KbdVariant::Outlined).build())
+                                                                    .item(kbd("E").size(KbdSize::Small).variant(KbdVariant::Outlined).title("Move cursor right • Shift+E: Jump to next transition").build())
                                                             )
                                                             // Spacer to push right group apart
                                                             .item(El::new().s(Width::fill()))
@@ -1513,7 +1515,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                             .item(
                                                                 Row::new()
                                                                     .s(Gap::new().x(6))
-                                                                    .item(kbd("D").size(KbdSize::Small).variant(KbdVariant::Outlined).build())
+                                                                    .item(kbd("D").size(KbdSize::Small).variant(KbdVariant::Outlined).title("Pan right • Shift+D: Pan right faster").build())
                                                                     .item(
                                                                         El::new()
                                                                             .s(Font::new().color_signal(neutral_11()).center().size(11))

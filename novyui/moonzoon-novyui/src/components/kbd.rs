@@ -23,6 +23,7 @@ pub struct KbdBuilder {
     variant: KbdVariant,
     text: String,
     aria_label: Option<String>,
+    title: Option<String>,
 }
 
 impl KbdBuilder {
@@ -32,6 +33,7 @@ impl KbdBuilder {
             variant: KbdVariant::Default,
             text: text.into(),
             aria_label: None,
+            title: None,
         }
     }
 
@@ -47,6 +49,11 @@ impl KbdBuilder {
 
     pub fn aria_label(mut self, label: impl Into<String>) -> Self {
         self.aria_label = Some(label.into());
+        self
+    }
+
+    pub fn title(mut self, title: impl Into<String>) -> Self {
+        self.title = Some(title.into());
         self
     }
 
@@ -127,11 +134,14 @@ impl KbdBuilder {
                         })
                     )
                     .apply(|el| {
+                        let mut el = el;
                         if let Some(aria_label) = &self.aria_label {
-                            el.attr("aria-label", aria_label)
-                        } else {
-                            el
+                            el = el.attr("aria-label", aria_label);
                         }
+                        if let Some(title) = &self.title {
+                            el = el.attr("title", title);
+                        }
+                        el
                     })
             })
             .child(self.build_content())
