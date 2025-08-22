@@ -1,10 +1,12 @@
 ---
 model: claude-sonnet-4-0
 allowed-tools: Bash
-description: 'Ultra-fast WIP saves: first call creates CHECKPOINT, subsequent calls amend'
+description: 'Ultra-fast work-in-progress saves for rapid development iteration'
 ---
 
-# Ultra-Fast Checkpoint
+# Git Checkpoint
+
+**Command:** `/checkpoint`
 
 Lightning-fast work-in-progress saves for rapid iteration without thinking about commit messages.
 

@@ -1,10 +1,12 @@
 ---
 model: claude-sonnet-4-0
 allowed-tools: Bash
-description: 'Smart git commit with checkpoint conversion and auto-amend detection'
+description: 'Smart git commit with comprehensive analysis and checkpoint conversion'
 ---
 
-# Smart Git Commit
+# Git Commit
+
+**Command:** `/commit`
 
 Intelligent git commit workflow with checkpoint conversion, change analysis, and auto-amend detection.
 
