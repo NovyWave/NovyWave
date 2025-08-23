@@ -23,7 +23,7 @@ use connection::*;
 mod platform;
 
 mod config;
-use config::{CONFIG_LOADED, config_store, create_config_triggers, sync_config_to_globals, sync_globals_to_config, sync_theme_to_novyui};
+use config::{CONFIG_LOADED, config_store, create_config_triggers, sync_theme_to_novyui};
 
 mod types;
 use shared::{UpMsg};
@@ -35,6 +35,9 @@ mod state;
 use state::*;
 use state::VARIABLES_SEARCH_INPUT_FOCUSED;
 pub use state::CONFIG_INITIALIZATION_COMPLETE;
+
+mod signal_data_service;
+use signal_data_service::*;
 
 mod utils;
 use utils::*;
@@ -48,14 +51,216 @@ use error_ui::*;
 
 
 fn init_timeline_signal_handlers() {
-    // DISABLED: Signal value queries during cursor movement cause excessive backend load
-    // Signal values will be updated only on clicks and manual actions, not during smooth movement
-    // This prevents 125+ queries/sec during Q/E key holds that cause JSON null errors
+    // Enhanced timeline cursor signal handler that directly calls SignalDataService
+    // This extends the existing cursor handling with direct service integration
+    zoon::println!("🚀 Initializing enhanced timeline cursor signal handler");
     
-    // TODO: Re-enable with proper debouncing when needed:
-    // - Update values only when movement stops (key release)
-    // - Or use timer-based debouncing (200ms delay)
-    // - Or update only on significant position changes
+    Task::start(async {
+        // Track last cursor position and request time to avoid duplicate requests
+        let last_position = Mutable::new(0.0);
+        let last_request_time = Mutable::new(0.0);
+        
+        zoon::println!("🔗 Timeline cursor signal handler: Starting signal monitoring");
+        
+        // Monitor timeline cursor position changes with intelligent debouncing
+        crate::state::TIMELINE_CURSOR_POSITION.signal().for_each_sync(move |cursor_pos| {
+            let last_position_clone = last_position.clone();
+            let last_request_time_clone = last_request_time.clone();
+            
+            // Always log signal fires for debugging (shows all cursor position signals)
+            let old_pos = last_position_clone.get();
+            let position_delta = (cursor_pos - old_pos).abs();
+            zoon::println!("📍 Timeline cursor signal: {:.6} (prev: {:.6}, Δ: {:.6})", cursor_pos, old_pos, position_delta);
+            
+            // Skip if position hasn't changed significantly (avoid noise)
+            if position_delta < 0.0000001 { // Ultra-low threshold for microsecond-level changes (0.1μs)
+                zoon::println!("⏭️ Timeline cursor signal: Delta too small, skipping");
+                return;
+            }
+            
+            // Debug: Always log position changes to verify handler is running
+            zoon::println!("🔍 Timeline cursor signal handler: Position change detected {:.6} -> {:.6} (Δ: {:.6})", 
+                         last_position_clone.get(), cursor_pos, position_delta);
+            
+            // Skip during active cursor movement to prevent excessive requests
+            let is_moving = crate::state::IS_CURSOR_MOVING_LEFT.get() || crate::state::IS_CURSOR_MOVING_RIGHT.get();
+            
+            if !is_moving {
+                // Simple time-based debouncing using js_sys::Date::now()
+                let current_time = js_sys::Date::now();
+                let time_since_last = current_time - last_request_time_clone.get();
+                
+                // Only proceed if enough time has passed (300ms debounce)
+                if time_since_last >= 300.0 {
+                    zoon::println!("🚀 Timeline cursor signal handler: Position changed to {:.6}, triggering SignalDataService", cursor_pos);
+                    
+                    // Get current selected variables for direct service call
+                    let selected_vars = crate::state::SELECTED_VARIABLES.lock_ref();
+                    if !selected_vars.is_empty() {
+                        
+                        // Create signal requests for direct SignalDataService call
+                        let signal_requests: Vec<crate::signal_data_service::SignalRequest> = selected_vars
+                            .iter()
+                            .filter_map(|var| {
+                                // Parse unique_id: "/path/file.ext|scope|variable"
+                                let parts: Vec<&str> = var.unique_id.split('|').collect();
+                                if parts.len() != 3 {
+                                    zoon::println!("⚠️ Timeline cursor signal handler: Invalid unique_id format: {}", var.unique_id);
+                                    return None;
+                                }
+                                
+                                Some(crate::signal_data_service::SignalRequest {
+                                    file_path: parts[0].to_string(),
+                                    scope_path: parts[1].to_string(),  
+                                    variable_name: parts[2].to_string(),
+                                    time_range: None, // Point query for cursor position
+                                    max_transitions: None, // Use service defaults
+                                    format: var.formatter.unwrap_or_default(), // Use VarFormat default
+                                })
+                            })
+                            .collect();
+                        
+                        if !signal_requests.is_empty() {
+                            zoon::println!("📡 Timeline cursor signal handler: Requesting signal data for {} variables at time {:.6}", 
+                                         signal_requests.len(), cursor_pos);
+                            
+                            // Direct call to SignalDataService
+                            crate::signal_data_service::SignalDataService::request_signal_data(
+                                signal_requests,
+                                Some(cursor_pos), // Cursor time for point queries
+                                true // High priority for timeline cursor requests
+                            );
+                            
+                            // Update last request time
+                            last_request_time_clone.set(current_time);
+                        } else {
+                            zoon::println!("⚠️ Timeline cursor signal handler: No valid signal requests generated");
+                        }
+                    } else {
+                        zoon::println!("⚠️ Timeline cursor signal handler: No selected variables, skipping request");
+                    }
+                } else {
+                    zoon::println!("⏱️ Timeline cursor signal handler: Request debounced ({:.0}ms since last)", time_since_last);
+                }
+            } else {
+                zoon::println!("🏃 Timeline cursor signal handler: Cursor moving, skipping request");
+            }
+            
+            // Always update last position
+            last_position_clone.set(cursor_pos);
+        }).await;
+    });
+}
+
+/// Initialize reactive handlers that bridge SELECTED_VARIABLES state to SignalDataService
+/// This ensures that when variables are added/removed, SignalDataService is automatically updated
+fn init_selected_variables_signal_service_bridge() {
+    zoon::println!("🔗 Initializing SELECTED_VARIABLES -> SignalDataService bridge");
+    
+    Task::start(async {
+        // Track previous state to detect additions and removals
+        let previous_vars: Mutable<Vec<shared::SelectedVariable>> = Mutable::new(Vec::new());
+        
+        // Use MutableVec.signal_vec_cloned().to_signal_cloned() to get Vec instead of VecDiff
+        SELECTED_VARIABLES.signal_vec_cloned().to_signal_cloned().for_each(move |current_vars| {
+            let previous_vars = previous_vars.clone();
+            async move {
+                // Only process changes after config initialization is complete
+                if !CONFIG_LOADED.get() || IS_LOADING.get() {
+                    zoon::println!("⏸️ SELECTED_VARIABLES bridge: Skipping (config loading or files loading)");
+                    return;
+                }
+                
+                let current_count = current_vars.len();
+                let previous_state = previous_vars.get_cloned();
+                let previous_count = previous_state.len();
+                
+                zoon::println!("🔄 SELECTED_VARIABLES bridge: Change detected - {} -> {} variables", 
+                             previous_count, current_count);
+                
+                if current_count == 0 && previous_count > 0 {
+                    // All variables were removed - clean up SignalDataService cache
+                    zoon::println!("🧹 SELECTED_VARIABLES bridge: All variables removed, clearing SignalDataService cache");
+                    crate::signal_data_service::SignalDataService::clear_all_caches();
+                } else if current_count > 0 {
+                    // Identify removed variables for targeted cleanup
+                    let previous_ids: std::collections::HashSet<String> = previous_state
+                        .iter()
+                        .map(|var| var.unique_id.clone())
+                        .collect();
+                        
+                    let current_ids: std::collections::HashSet<String> = current_vars
+                        .iter()
+                        .map(|var| var.unique_id.clone())
+                        .collect();
+                    
+                    // Find removed variables
+                    let removed_ids: Vec<String> = previous_ids
+                        .difference(&current_ids)
+                        .cloned()
+                        .collect();
+                    
+                    // Find added variables  
+                    let added_ids: Vec<String> = current_ids
+                        .difference(&previous_ids)
+                        .cloned()
+                        .collect();
+                    
+                    if !removed_ids.is_empty() {
+                        zoon::println!("🧹 SELECTED_VARIABLES bridge: {} variables removed, cleaning up: {:?}", 
+                                     removed_ids.len(), removed_ids);
+                        crate::signal_data_service::SignalDataService::cleanup_variables(&removed_ids);
+                    }
+                    
+                    if !added_ids.is_empty() || (!removed_ids.is_empty() && current_count > 0) {
+                        // Variables were added OR some removed but others remain - request data for current variables
+                        let current_cursor = TIMELINE_CURSOR_POSITION.get();
+                        
+                        // Create signal requests for all currently selected variables  
+                        let signal_requests: Vec<crate::signal_data_service::SignalRequest> = current_vars
+                            .iter()
+                            .filter_map(|var| {
+                                // Parse unique_id: "/path/file.ext|scope|variable"
+                                let parts: Vec<&str> = var.unique_id.split('|').collect();
+                                if parts.len() != 3 {
+                                    zoon::println!("⚠️ SELECTED_VARIABLES bridge: Invalid unique_id format: {}", var.unique_id);
+                                    return None;
+                                }
+                                
+                                Some(crate::signal_data_service::SignalRequest {
+                                    file_path: parts[0].to_string(),
+                                    scope_path: parts[1].to_string(),  
+                                    variable_name: parts[2].to_string(),
+                                    time_range: None, // Point query at current cursor position
+                                    max_transitions: None, // Use service defaults
+                                    format: var.formatter.unwrap_or_default(), // Use VarFormat default
+                                })
+                            })
+                            .collect();
+                        
+                        if !signal_requests.is_empty() {
+                            if !added_ids.is_empty() {
+                                zoon::println!("📡 SELECTED_VARIABLES bridge: {} new variables added, requesting data at time {:.6}", 
+                                             added_ids.len(), current_cursor);
+                            }
+                            
+                            // Register variables with SignalDataService and immediately request their data
+                            crate::signal_data_service::SignalDataService::request_signal_data(
+                                signal_requests,
+                                Some(current_cursor), // Request data at current cursor position
+                                false // Normal priority for variable selection changes
+                            );
+                        } else {
+                            zoon::println!("⚠️ SELECTED_VARIABLES bridge: No valid signal requests generated from selected variables");
+                        }
+                    }
+                }
+                
+                // Update previous state for next comparison
+                previous_vars.set_neq(current_vars);
+            }
+        }).await;
+    });
 }
 
 /// Entry point: loads fonts and starts the app.
@@ -72,12 +277,18 @@ pub fn main() {
         // Initialize signal-based loading completion handling
         init_signal_chains();
         
+        
         // Initialize timeline cursor signal value queries
         init_timeline_signal_handlers();
+        
+        // Initialize SELECTED_VARIABLES -> SignalDataService bridge
+        init_selected_variables_signal_service_bridge();
         
         // Initialize error display system
         init_error_display_system();
         
+        // Initialize unified signal data service
+        initialize_signal_data_service();
         
         init_connection();
         
@@ -92,9 +303,8 @@ pub fn main() {
                 if loaded {
                 
                     
-                    // Initialize bidirectional sync between config store and global state FIRST
-                    sync_config_to_globals();
-                    sync_globals_to_config();
+                    // Initialize reactive config persistence system
+                    config::setup_reactive_config_persistence();
                     
                     // Initialize reactive triggers AFTER config is loaded and synced
                     create_config_triggers();
@@ -130,6 +340,9 @@ pub fn main() {
                     
                     // NOW start the app after config is fully loaded and reactive system is set up
                     start_app("app", root);
+                    
+                    // Initialize the complete application flow with proper phases
+                    Task::start(initialize_complete_app_flow());
                 }
             }).await
         });
@@ -150,11 +363,8 @@ pub fn main() {
                     // Movement started - just track state, don't query
                     was_moving.set(true);
                 } else if was_moving.get() {
-                    // Movement just stopped - use fast local data if cursor is in visible range
+                    // Movement just stopped - use unified caching logic with built-in range checking
                     was_moving.set(false);
-                    let cursor_pos = crate::state::TIMELINE_CURSOR_POSITION.get();
-                    
-                    // Use the unified caching logic with built-in range checking
                     crate::views::trigger_signal_value_queries();
                 }
             }).await;
@@ -188,23 +398,6 @@ pub fn is_cursor_in_visible_range(cursor_time: f64) -> bool {
     cursor_time >= start && cursor_time <= end
 }
 
-/// Extract signal value at specific time from locally cached transition data
-fn get_value_from_transitions(unique_id: &str, time: f64) -> Option<crate::format_utils::SignalValue> {
-    let transitions_cache = crate::waveform_canvas::SIGNAL_TRANSITIONS_CACHE.lock_ref();
-    let signal_transitions = transitions_cache.get(unique_id)?;
-    
-    // Find the most recent transition at or before the given time
-    // Transitions should be sorted by time, so we iterate backwards for efficiency
-    for transition in signal_transitions.iter().rev() {
-        if transition.time_seconds <= time {
-            // Convert string value back to SignalValue format
-            return Some(crate::format_utils::SignalValue::from_data(transition.value.clone()));
-        }
-    }
-    
-    // If no transition found at or before this time, the signal hasn't started yet
-    None
-}
 
 
 
@@ -214,10 +407,10 @@ fn init_scope_selection_handlers() {
             selected_items.clone()
         }).for_each_sync(|selected_items| {
             // Find the first selected scope (not a file)
-            // Files are tracked in TRACKED_FILES, scopes are not
+            // Files are tracked in TRACKED_FILE_IDS cache, scopes are not
             if let Some(tree_id) = selected_items.iter().find(|id| {
-                // Check if this ID is NOT a tracked file ID
-                !TRACKED_FILES.lock_ref().iter().any(|file| &file.id == *id)
+                // Check if this ID is NOT a tracked file ID - use cache to prevent recursive locking
+                !TRACKED_FILE_IDS.lock_ref().contains(*id)
             }) {
                 // Convert TreeView scope ID back to original scope ID
                 let scope_id = if tree_id.starts_with("scope_") {
@@ -225,16 +418,17 @@ fn init_scope_selection_handlers() {
                 } else {
                     tree_id.clone()
                 };
+                
                 SELECTED_SCOPE_ID.set_neq(Some(scope_id));
                 // Clear the flag when a scope is selected
-                USER_CLEARED_SELECTION.set(false);
+                USER_CLEARED_SELECTION.set_neq(false);
             } else {
                 // No scope selected - check if this is user action or startup
                 SELECTED_SCOPE_ID.set_neq(None);
                 
                 // Only set flag if config is loaded (prevents startup interference)
                 if CONFIG_LOADED.get() {
-                    USER_CLEARED_SELECTION.set(true);
+                    USER_CLEARED_SELECTION.set_neq(true);
                 }
             }
         }).await
@@ -264,7 +458,6 @@ fn init_scope_selection_handlers() {
     Task::start(async {
         SELECTED_VARIABLES.signal_vec_cloned().for_each(move |_| async move {
             if CONFIG_LOADED.get() && !IS_LOADING.get() {
-                let cursor_pos = TIMELINE_CURSOR_POSITION.get();
                 // Variable selection changed - use unified caching logic
                 crate::views::trigger_signal_value_queries();
             }
@@ -295,6 +488,71 @@ async fn load_and_register_fonts() {
     fast2d::register_fonts(fonts).unwrap_throw();
 }
 
+
+/// Complete application initialization with proper phases to fix N/A bug
+async fn initialize_complete_app_flow() {
+    // Phase 1: Clear all caches to ensure fresh start
+    SignalDataService::clear_all_caches();
+    
+    // Phase 2: Load restored files from config (if any)
+    let config_store = config_store();
+    let opened_files = config_store.session.lock_ref().opened_files.lock_ref().to_vec();
+    
+    if !opened_files.is_empty() {
+        // Start loading files
+        for file_path in &opened_files {
+            send_up_msg(UpMsg::LoadWaveformFile(file_path.clone()));
+        }
+        
+        // Wait for all files to complete loading
+        wait_for_files_loaded(&opened_files).await;
+    }
+    
+    // Phase 4: Variable data requests are handled automatically by signal handlers
+    // Config sync restores selected variables, which triggers signal handlers that request data
+    // No manual SignalDataService call needed here (prevents duplicate requests)
+    
+    // Phase 5: Mark initialization as complete
+    crate::CONFIG_INITIALIZATION_COMPLETE.set_neq(true);
+}
+
+/// Wait for specific files to finish loading
+async fn wait_for_files_loaded(file_paths: &[String]) {
+    if file_paths.is_empty() {
+        return;
+    }
+    
+    // Wait until all files are either loaded or failed
+    let mut check_count = 0;
+    let max_checks = 300; // 30 seconds timeout (100ms * 300)
+    
+    loop {
+        // Check if all files are finished loading - minimize lock time
+        let all_finished = {
+            let tracked_files = crate::state::TRACKED_FILES.lock_ref();
+            file_paths.iter().all(|file_path| {
+                tracked_files.iter().any(|tracked| {
+                    tracked.path == *file_path && 
+                    matches!(tracked.state, shared::FileState::Loaded(_) | shared::FileState::Failed(_))
+                })
+            })
+        }; // Lock is released here
+        
+        if all_finished {
+            break;
+        }
+        
+        check_count += 1;
+        if check_count >= max_checks {
+            zoon::println!("⚠️  Timeout waiting for files to load - proceeding anyway");
+            break;
+        }
+        
+        // Yield to allow queue processor to run, then wait
+        Task::next_macro_tick().await;
+        Timer::sleep(100).await; // Check every 100ms
+    }
+}
 
 fn root() -> impl Element {
     // One-time Load Files dialog opening for development/debug

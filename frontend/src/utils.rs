@@ -1,7 +1,8 @@
 use zoon::*;
 use shared::{ScopeData, file_contains_scope};
 use shared::LoadingStatus;
-use crate::state::{LOADING_FILES, IS_LOADING, LOADED_FILES, SELECTED_SCOPE_ID, TREE_SELECTED_ITEMS, EXPANDED_SCOPES, USER_CLEARED_SELECTION, TIMELINE_CURSOR_POSITION, STARTUP_CURSOR_POSITION_SET};
+use crate::state::{LOADING_FILES, IS_LOADING, LOADED_FILES, SELECTED_SCOPE_ID, TREE_SELECTED_ITEMS, EXPANDED_SCOPES, USER_CLEARED_SELECTION, STARTUP_CURSOR_POSITION_SET};
+use std::collections::HashSet;
 
 // Signal for completion state changes - triggers clearing of completed files
 static LOADING_COMPLETION_TRIGGER: Lazy<Mutable<u32>> = Lazy::new(|| Mutable::new(0));
@@ -16,15 +17,13 @@ pub fn check_loading_complete() {
     });
     
     if all_done {
-        IS_LOADING.set(false);
+        IS_LOADING.set_neq(false);
         
         // Restore scope selections using proper signal sequencing
         restore_scope_selections_sequenced();
         
         // Check if cursor position was set during startup - re-trigger value queries if so
         if STARTUP_CURSOR_POSITION_SET.get() {
-            let cursor_pos = TIMELINE_CURSOR_POSITION.get();
-            
             // Use unified caching logic with built-in range checking
             crate::views::trigger_signal_value_queries();
             STARTUP_CURSOR_POSITION_SET.set_neq(false); // Reset flag
@@ -63,17 +62,24 @@ pub fn restore_scope_selections_sequenced() {
                 // Restore TreeView selection to match the persisted scope
                 // Convert scope ID to TreeView format (with "scope_" prefix)
                 let tree_id = format!("scope_{}", scope_id_clone);
-                TREE_SELECTED_ITEMS.lock_mut().insert(tree_id);
                 
-                // Re-trigger SELECTED_SCOPE_ID signal to update variables panel
-                SELECTED_SCOPE_ID.set(Some(scope_id_clone.clone()));
+                let mut items = TREE_SELECTED_ITEMS.lock_mut();
+                if !items.contains(&tree_id) {
+                    items.clear(); // Single selection mode
+                    items.insert(tree_id);
+                }
+                drop(items);
                 
                 // Clear the user cleared flag since we successfully restored
-                USER_CLEARED_SELECTION.set(false);
+                USER_CLEARED_SELECTION.set_neq(false);
                 
-                // Also expand parent scopes
+                // Also expand parent scopes (batched to avoid duplicates)
                 let loaded_files = LOADED_FILES.lock_ref();
-                for file in loaded_files.iter() {
+                let files_copy = loaded_files.to_vec();
+                drop(loaded_files); // Drop lock early
+                
+                // Use single batch expansion to prevent duplicate calls
+                for file in files_copy.iter() {
                     expand_parent_scopes(&file.scopes, &scope_id_clone);
                 }
             });
@@ -107,13 +113,15 @@ pub fn restore_scope_selection_for_file(loaded_file: &shared::WaveformFile) {
                 // Restore TreeView selection to match the persisted scope
                 // Convert scope ID to TreeView format (with "scope_" prefix)
                 let tree_id = format!("scope_{}", scope_id_clone);
-                TREE_SELECTED_ITEMS.lock_mut().insert(tree_id);
-                
-                // Re-trigger SELECTED_SCOPE_ID signal to update variables panel
-                SELECTED_SCOPE_ID.set(Some(scope_id_clone.clone()));
+                let mut items = TREE_SELECTED_ITEMS.lock_mut();
+                if !items.contains(&tree_id) {
+                    items.clear(); // Single selection mode
+                    items.insert(tree_id);
+                }
+                drop(items);
                 
                 // Clear the user cleared flag since we successfully restored
-                USER_CLEARED_SELECTION.set(false);
+                USER_CLEARED_SELECTION.set_neq(false);
                 
                 // Also expand parent scopes for this specific file
                 expand_parent_scopes(&scopes_clone, &scope_id_clone);
@@ -124,17 +132,52 @@ pub fn restore_scope_selection_for_file(loaded_file: &shared::WaveformFile) {
 
 
 fn expand_parent_scopes(scopes: &[ScopeData], target_scope_id: &str) {
+    static EXPANSION_IN_PROGRESS: Lazy<Mutable<HashSet<String>>> = Lazy::new(|| Mutable::new(HashSet::new()));
+    
+    // Prevent recursive expansion calls for same scope
+    if EXPANSION_IN_PROGRESS.lock_ref().contains(target_scope_id) {
+        // Already expanding, skip to prevent infinite recursion
+        return;
+    }
+    
+    EXPANSION_IN_PROGRESS.lock_mut().insert(target_scope_id.to_string());
+    
+    // Collect all parent scopes that need expansion (batch operation)
+    let mut scopes_to_expand = Vec::new();
+    collect_parent_scopes_recursive(scopes, target_scope_id, &mut scopes_to_expand);
+    
+    // Batch update: Add all parent scopes in single operation to minimize signal firing
+    if !scopes_to_expand.is_empty() {
+        let mut expanded = EXPANDED_SCOPES.lock_mut();
+        let mut added_count = 0;
+        for scope_id in scopes_to_expand {
+            if expanded.insert(scope_id) {
+                added_count += 1;
+            }
+        }
+        drop(expanded); // Trigger signals only once after batch operation
+        
+        if added_count > 0 {
+            zoon::println!("🌳 [DEBUG] expand_parent_scopes: batch expanded {} scopes for '{}'", added_count, target_scope_id);
+        }
+    }
+    
+    EXPANSION_IN_PROGRESS.lock_mut().remove(target_scope_id);
+}
+
+/// Recursively collect all parent scope IDs that contain the target scope
+fn collect_parent_scopes_recursive(scopes: &[ScopeData], target_scope_id: &str, result: &mut Vec<String>) {
     for scope in scopes {
         if scope.id == target_scope_id {
-            // Found the target scope, expand all parent scopes in the path
+            // Found the target scope, don't need to go deeper
             return;
         }
         
         if scope_contains_target(&scope.children, target_scope_id) {
-            // This scope is a parent of the target, expand it
-            EXPANDED_SCOPES.lock_mut().insert(scope.id.clone());
-            // Recursively expand children
-            expand_parent_scopes(&scope.children, target_scope_id);
+            // This scope is a parent of the target, add it to expansion list
+            result.push(scope.id.clone());
+            // Recursively collect from children
+            collect_parent_scopes_recursive(&scope.children, target_scope_id, result);
         }
     }
 }

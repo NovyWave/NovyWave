@@ -10,21 +10,23 @@ toast_dismiss_ms = 10000
 
 [workspace]
 opened_files = [
-    "/home/martinkavik/repos/NovyWave/test_files/stress_test.vcd",
     "/home/martinkavik/repos/NovyWave/test_files/simple.vcd",
+    "/home/martinkavik/repos/NovyWave/test_files/complex.vcd",
+    "/home/martinkavik/repos/NovyWave/test_files/stress_test.vcd",
     "/home/martinkavik/repos/NovyWave/test_files/big_3_GB.vcd",
     "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst",
+    "/home/martinkavik/repos/NovyWave/test_files/nested_dir/wave_27.fst",
 ]
 dock_mode = "bottom"
 expanded_scopes = [
-    "/home/martinkavik/repos/NovyWave/test_files/simple.vcd",
-    "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb",
     "/home/martinkavik/repos/NovyWave/test_files/stress_test.vcd|stress_test",
     "/home/martinkavik/repos/NovyWave/test_files/stress_test.vcd",
-    "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst",
     "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP",
     "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv",
-    "/home/martinkavik/repos/NovyWave/test_files/stress_test.vcd|stress_test",
+    "/home/martinkavik/repos/NovyWave/test_files/big_3_GB.vcd|TOP.miaou2",
+    "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb",
+    "/home/martinkavik/repos/NovyWave/test_files/simple.vcd",
+    "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb",
 ]
 load_files_expanded_directories = [
     "/",
@@ -34,17 +36,18 @@ load_files_expanded_directories = [
     "/home/martinkavik/repos",
     "/home/martinkavik/repos/NovyWave",
     "/home/martinkavik/repos/NovyWave/test_files",
+    "/home/martinkavik/repos/NovyWave/test_files/nested_dir",
 ]
-selected_scope_id = "/home/martinkavik/repos/NovyWave/test_files/stress_test.vcd|stress_test.strings"
+selected_scope_id = "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s"
 load_files_scroll_position = 992
-timeline_cursor_position = 0.000002520741165832449
-timeline_zoom_level = 18445370.0
+timeline_cursor_position = 0.000006
+timeline_zoom_level = 21417636.0
 timeline_visible_range_start = 0.0
-timeline_visible_range_end = 0.000013553605640481692
+timeline_visible_range_end = 0.000011672623259073589
 
 [workspace.docked_bottom_dimensions]
-files_and_scopes_panel_width = 518.0
-files_and_scopes_panel_height = 373.0
+files_and_scopes_panel_width = 470.0
+files_and_scopes_panel_height = 529.0
 selected_variables_panel_name_column_width = 222.0
 selected_variables_panel_value_column_width = 222.0
 
@@ -55,13 +58,14 @@ selected_variables_panel_name_column_width = 318.0
 selected_variables_panel_value_column_width = 301.0
 
 [[workspace.selected_variables]]
-unique_id = "/home/martinkavik/repos/NovyWave/test_files/stress_test.vcd|stress_test.edge_cases|mixed_states"
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s|A"
+formatter = "Hexadecimal"
 
 [[workspace.selected_variables]]
-unique_id = "/home/martinkavik/repos/NovyWave/test_files/stress_test.vcd|stress_test.edge_cases|unknown_byte"
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s|B"
 
 [[workspace.selected_variables]]
-unique_id = "/home/martinkavik/repos/NovyWave/test_files/stress_test.vcd|stress_test.edge_cases|x_state"
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/stress_test.vcd|stress_test.strings|ascii_text"
 
 [[workspace.selected_variables]]
 unique_id = "/home/martinkavik/repos/NovyWave/test_files/stress_test.vcd|stress_test.rapid_changes|byte_pattern"
@@ -74,20 +78,3 @@ unique_id = "/home/martinkavik/repos/NovyWave/test_files/stress_test.vcd|stress_
 
 [[workspace.selected_variables]]
 unique_id = "/home/martinkavik/repos/NovyWave/test_files/stress_test.vcd|stress_test.rapid_changes|word_counter"
-
-[[workspace.selected_variables]]
-unique_id = "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s|A"
-
-[[workspace.selected_variables]]
-unique_id = "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s|B"
-
-[[workspace.selected_variables]]
-unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv|clk"
-
-[[workspace.selected_variables]]
-unique_id = "/home/martinkavik/repos/NovyWave/test_files/stress_test.vcd|stress_test.strings|ascii_text"
-formatter = "ASCII"
-
-[[workspace.selected_variables]]
-unique_id = "/home/martinkavik/repos/NovyWave/test_files/stress_test.vcd|stress_test.strings|status_code"
-formatter = "ASCII"

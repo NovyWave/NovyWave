@@ -24,7 +24,7 @@ use crate::{
 };
 use crate::state::TIMELINE_ZOOM_LEVEL;
 use crate::state::SELECTED_VARIABLES_ROW_HEIGHT;
-use crate::state::{SELECTED_VARIABLES, clear_selected_variables, remove_selected_variable};
+use crate::state::{SELECTED_VARIABLES, clear_selected_variables, remove_selected_variable, EXPANDED_SCOPES_FOR_TREEVIEW};
 use crate::format_utils::truncate_value;
 
 /// Get signal type information for a selected variable
@@ -347,8 +347,6 @@ fn create_smart_dropdown(
 
 /// Create a format selection component for a selected variable using NovyUI Select
 fn create_format_select_component(selected_var: &SelectedVariable) -> impl Element {
-    use crate::state::SIGNAL_VALUES;
-    
     let unique_id = selected_var.unique_id.clone();
     
     // Get signal type for format options and default
@@ -356,16 +354,6 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
     
     // Use the formatter exactly as set by user, or default to Hexadecimal
     let current_format = selected_var.formatter.unwrap_or_default();
-    
-    // Format options are now generated dynamically in the reactive signal based on MultiFormatValue
-    
-    // Get current multi-format signal value from MutableBTreeMap
-    let multi_value = SIGNAL_VALUES.lock_ref().get(&unique_id).cloned();
-    
-    // Create default multi-value if not available yet
-    let _signal_value = multi_value.unwrap_or_else(|| {
-        crate::format_utils::SignalValue::missing()
-    });
     
     // Create reactive state for selection changes
     let selected_format = Mutable::new(format!("{:?}", current_format));
@@ -404,14 +392,12 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
         .s(Width::fill())
         .s(Height::fill())
         .s(Align::new().center_y().left())
-        .child_signal(
+        .child_signal({
+            let unique_id_for_signal = unique_id.clone();
             map_ref! {
-                let signal_values = SIGNAL_VALUES.signal_cloned(),
+                // ✅ NEW: Use unified SignalDataService instead of old SIGNAL_VALUES
+                let current_value = crate::signal_data_service::SignalDataService::cursor_value_signal(&unique_id_for_signal),
                 let format_state = selected_format.signal_cloned() => {
-                    // Get current signal value
-                    let current_signal_value = signal_values.get(&unique_id).cloned()
-                        .unwrap_or_else(|| crate::format_utils::SignalValue::missing());
-                    
                     // Parse current format for proper display
                     let current_format_enum = match format_state.as_str() {
                         "ASCII" => shared::VarFormat::ASCII,
@@ -424,9 +410,17 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
                         _ => shared::VarFormat::Hexadecimal,
                     };
                     
-                    // Use full display text - CSS ellipsis will handle truncation dynamically
-                    let display_text = current_signal_value.get_full_display_with_format(&current_format_enum);
+                    // ✅ NEW: Convert string value back to format_utils::SignalValue for formatting
+                    let current_signal_value = if current_value == "N/A" {
+                        crate::format_utils::SignalValue::missing()
+                    } else if current_value == "Loading..." {
+                        crate::format_utils::SignalValue::loading()
+                    } else {
+                        crate::format_utils::SignalValue::from_data(current_value.clone())
+                    };
+                    
                     let full_display_text = current_signal_value.get_full_display_with_format(&current_format_enum);
+                    let display_text = current_signal_value.get_truncated_display_with_format(&current_format_enum, 30);
                     
                     // Generate dropdown options with formatted values
                     let dropdown_options = crate::format_utils::generate_dropdown_options(&current_signal_value, &signal_type);
@@ -688,7 +682,7 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
                         })
                 }
             }
-        )
+        })
 }
 
 /// Update the format for a selected variable and trigger config save + query refresh
@@ -717,7 +711,7 @@ fn update_variable_format(unique_id: &str, new_format: shared::VarFormat) {
 }
 
 /// Compute signal value from cached transitions at a specific time
-fn compute_value_from_cached_transitions(
+pub fn compute_value_from_cached_transitions(
     file_path: &str,
     scope_path: &str, 
     variable_name: &str,
@@ -819,10 +813,12 @@ pub fn query_signal_values_at_time(time_seconds: f64) {
     let selected_vars = SELECTED_VARIABLES.lock_ref();
     
     if selected_vars.is_empty() {
+        zoon::println!("🔍 SLOW PATH: No selected variables to query");
         return;
     }
     
-    zoon::println!("CACHE: Slow path query - {} variables at time {:.6}", selected_vars.len(), time_seconds);
+    zoon::println!("🔍 SLOW PATH: Querying {} variables at time {:.6}", selected_vars.len(), time_seconds);
+    zoon::println!("🔍 SLOW PATH: This should populate SIGNAL_VALUES with actual data or Missing values");
     
     // Prevent queries during startup until files are properly loaded
     let tracked_files = crate::state::TRACKED_FILES.lock_ref();
@@ -903,6 +899,25 @@ pub fn query_signal_values_at_time(time_seconds: f64) {
         update_signal_values_in_ui(&cached_results);
     }
     
+    // Set Loading states for variables that need backend queries
+    if !backend_queries_by_file.is_empty() {
+        let mut loading_values = crate::state::SIGNAL_VALUES.get_cloned();
+        let mut loading_updates = false;
+        
+        for (file_path, queries) in &backend_queries_by_file {
+            for query in queries {
+                let unique_id = format!("{}|{}|{}", file_path, query.scope_path, query.variable_name);
+                loading_values.insert(unique_id, crate::format_utils::SignalValue::loading());
+                loading_updates = true;
+            }
+        }
+        
+        // Update UI immediately with Loading states
+        if loading_updates {
+            crate::state::SIGNAL_VALUES.set(loading_values);
+        }
+    }
+    
     // Send backend queries only for uncached variables
     for (file_path, queries) in backend_queries_by_file {
         Task::start(async move {
@@ -973,7 +988,7 @@ pub fn trigger_signal_value_queries() {
         }
         
         let var_count = selected_vars.len();
-        zoon::println!("CACHE: Fast path - checking {} variables in cache (cursor at {:.6})", var_count, cursor_pos);
+        zoon::println!("CACHE: Fast path - checking {} variables in cache (cursor at {:.6}, range {:.6}-{:.6})", var_count, cursor_pos, start, end);
         
         // Collect new values from cached transition data
         let mut new_values = crate::state::SIGNAL_VALUES.get_cloned();
@@ -982,8 +997,36 @@ pub fn trigger_signal_value_queries() {
         let mut cache_misses = 0;
         
         let transitions_cache = crate::waveform_canvas::SIGNAL_TRANSITIONS_CACHE.lock_ref();
+        zoon::println!("CACHE: Cache contains {} variables", transitions_cache.len());
+        
+        // If cache is empty, set Loading states and fall back to slow path immediately
+        if transitions_cache.is_empty() {
+            zoon::println!("🔍 CACHE: Cache is empty, setting Loading states and falling back to slow path");
+            zoon::println!("🔍 CACHE: Timeline shows correct values but cache is empty - this indicates a data source mismatch issue");
+            drop(transitions_cache);
+            
+            // Set Loading states for all selected variables before slow path
+            let mut loading_values = crate::state::SIGNAL_VALUES.get_cloned();
+            for selected_var in selected_vars.iter() {
+                loading_values.insert(selected_var.unique_id.clone(), crate::format_utils::SignalValue::loading());
+            }
+            crate::state::SIGNAL_VALUES.set(loading_values);
+            
+            query_signal_values_at_time(cursor_pos);
+            return;
+        }
         
         for selected_var in selected_vars.iter() {
+            zoon::println!("CACHE: Looking for variable '{}'", selected_var.unique_id);
+            // First check if cursor is within this variable's file time range (same as slow path)
+            if !is_cursor_within_variable_time_range(&selected_var.unique_id, cursor_pos) {
+                // Cursor is beyond this variable's file time range - show N/A (same as slow path)
+                new_values.insert(selected_var.unique_id.clone(), crate::format_utils::SignalValue::missing());
+                any_updated = true;
+                cache_hits += 1; // Count as cache hit since we avoided server query
+                continue;
+            }
+            
             if let Some(signal_transitions) = transitions_cache.get(&selected_var.unique_id) {
                 // Find the most recent transition at or before the given time
                 let mut found = false;
@@ -1272,28 +1315,31 @@ pub fn files_panel() -> impl Element {
                             .s(Height::fill())
                             .s(Width::growable())
                             .child_signal(
-                                TRACKED_FILES.signal_vec_cloned()
-                                    .to_signal_map(|tracked_files: &[TrackedFile]| {
-                                        let tree_data = convert_tracked_files_to_tree_data(&tracked_files);
+                                // Directly compute tree data from TRACKED_FILES without intermediate SMART_LABELS static
+                                TRACKED_FILES.signal_vec_cloned().to_signal_cloned().map(|tracked_files| {
+                                    if tracked_files.is_empty() {
+                                        empty_state_hint("Click 'Load Files' to add waveform files.")
+                                            .unify()
+                                    } else {
+                                        // Compute smart labels on-demand to avoid over-rendering
+                                        let paths: Vec<String> = tracked_files.iter().map(|f| f.path.clone()).collect();
+                                        let smart_labels = shared::generate_smart_labels(&paths);
+                                        let tree_data = convert_tracked_files_to_tree_data(&tracked_files, &smart_labels);
                                         
-                                        if tree_data.is_empty() {
-                                            empty_state_hint("Click 'Load Files' to add waveform files.")
-                                                .unify()
-                                        } else {
-                                            tree_view()
-                                                .data(tree_data)
-                                                .size(TreeViewSize::Medium)
-                                                .variant(TreeViewVariant::Basic)
-                                                .show_icons(true)
-                                                .show_checkboxes(true)
-                                                .show_checkboxes_on_scopes_only(true)
-                                                .single_scope_selection(true)
-                                                .external_expanded(EXPANDED_SCOPES.clone())
-                                                .external_selected(TREE_SELECTED_ITEMS.clone())
-                                                .build()
-                                                .unify()
-                                        }
-                                    })
+                                        tree_view()
+                                            .data(tree_data)
+                                            .size(TreeViewSize::Medium)
+                                            .variant(TreeViewVariant::Basic)
+                                            .show_icons(true)
+                                            .show_checkboxes(true)
+                                            .show_checkboxes_on_scopes_only(true)
+                                            .single_scope_selection(true)
+                                            .external_expanded(EXPANDED_SCOPES_FOR_TREEVIEW.clone())
+                                            .external_selected(TREE_SELECTED_ITEMS.clone())
+                                            .build()
+                                            .unify()
+                                    }
+                                })
                             )
                     )
             )
@@ -1463,8 +1509,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                                         })
                                                                         .child_signal({
                                                                             let selected_var = selected_var.clone();
-                                                                            use crate::state::FILE_LOADING_TRIGGER;
-                                                                            FILE_LOADING_TRIGGER.signal().map(move |_trigger| {
+                                                                            TRACKED_FILES.signal_vec_cloned().to_signal_cloned().map(move |_tracked_files| {
                                                                                 get_signal_type_for_selected_variable(&selected_var)
                                                                             })
                                                                         })
@@ -1472,10 +1517,9 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                                 .update_raw_el({
                                                                     let selected_var = selected_var.clone();
                                                                     move |raw_el| {
-                                                                        use crate::state::FILE_LOADING_TRIGGER;
-                                                                        let title_signal = FILE_LOADING_TRIGGER.signal().map({
+                                                                        let title_signal = TRACKED_FILES.signal_vec_cloned().to_signal_cloned().map({
                                                                             let selected_var = selected_var.clone();
-                                                                            move |_trigger| {
+                                                                            move |_tracked_files| {
                                                                                 let signal_type = get_signal_type_for_selected_variable(&selected_var);
                                                                                 format!("{} - {} - {}", 
                                                                                     selected_var.file_path().unwrap_or_default(), 
@@ -2000,7 +2044,8 @@ fn simple_variables_content() -> impl Element {
                 .child_signal(
                     map_ref! {
                         let selected_scope_id = SELECTED_SCOPE_ID.signal_ref(|id| id.clone()),
-                        let search_filter = VARIABLES_SEARCH_FILTER.signal_cloned() =>
+                        let search_filter = VARIABLES_SEARCH_FILTER.signal_cloned(),
+                        let _tracked_files = TRACKED_FILES.signal_vec_cloned().to_signal_cloned() =>
                         {
                             if let Some(scope_id) = selected_scope_id {
                                 let variables = get_variables_from_tracked_files(&scope_id);
@@ -2084,13 +2129,17 @@ fn get_file_timeline_info(file_path: &str, _waveform_file: &shared::WaveformFile
     }
 }
 
-fn convert_tracked_files_to_tree_data(tracked_files: &[TrackedFile]) -> Vec<TreeViewItemData> {
+fn convert_tracked_files_to_tree_data(tracked_files: &[TrackedFile], smart_labels: &HashMap<String, String>) -> Vec<TreeViewItemData> {
     // Sort files: primary by filename, secondary by prefix for better organization
     let mut file_refs: Vec<&TrackedFile> = tracked_files.iter().collect();
     file_refs.sort_by(|a, b| {
+        // Get smart labels from the derived signal map
+        let a_label = smart_labels.get(&a.path).unwrap_or(&a.path);
+        let b_label = smart_labels.get(&b.path).unwrap_or(&b.path);
+        
         // Extract filename (part after last slash) and prefix (part before last slash)
-        let (a_prefix, a_filename) = parse_smart_label_for_sorting(&a.smart_label);
-        let (b_prefix, b_filename) = parse_smart_label_for_sorting(&b.smart_label);
+        let (a_prefix, a_filename) = parse_smart_label_for_sorting(a_label);
+        let (b_prefix, b_filename) = parse_smart_label_for_sorting(b_label);
         
         // Primary sort: filename (case-insensitive)
         let filename_cmp = a_filename.to_lowercase().cmp(&b_filename.to_lowercase());
@@ -2112,7 +2161,8 @@ fn convert_tracked_files_to_tree_data(tracked_files: &[TrackedFile]) -> Vec<Tree
                 
                 // Create enhanced label with timeline information
                 let timeline_info = get_file_timeline_info(&tracked_file.path, waveform_file);
-                let enhanced_label = format!("{}{}", tracked_file.smart_label, timeline_info);
+                let smart_label = smart_labels.get(&tracked_file.path).unwrap_or(&tracked_file.path);
+                let enhanced_label = format!("{}{}", smart_label, timeline_info);
                 
                 TreeViewItemData::new(tracked_file.id.clone(), enhanced_label)
                     .item_type(TreeViewItemType::File)
@@ -2130,7 +2180,8 @@ fn convert_tracked_files_to_tree_data(tracked_files: &[TrackedFile]) -> Vec<Tree
                     shared::LoadingStatus::Error(_) => "Error",
                 };
                 
-                TreeViewItemData::new(tracked_file.id.clone(), format!("{} ({})", tracked_file.smart_label, status_text))
+                let smart_label = smart_labels.get(&tracked_file.path).unwrap_or(&tracked_file.path);
+                TreeViewItemData::new(tracked_file.id.clone(), format!("{} ({})", smart_label, status_text))
                     .item_type(TreeViewItemType::File)
                     .tooltip(tracked_file.path.clone())
                     .disabled(true) // Disable interaction while loading
@@ -2140,7 +2191,8 @@ fn convert_tracked_files_to_tree_data(tracked_files: &[TrackedFile]) -> Vec<Tree
                 // File failed to load - show with error styling
                 let error_message = error.user_friendly_message();
                 
-                TreeViewItemData::new(tracked_file.id.clone(), tracked_file.smart_label.clone())
+                let smart_label = smart_labels.get(&tracked_file.path).unwrap_or(&tracked_file.path);
+                TreeViewItemData::new(tracked_file.id.clone(), smart_label.clone())
                     .item_type(TreeViewItemType::FileError)
                     .icon(error.icon_name())
                     .tooltip(format!("{}\nError: {}", tracked_file.path, error_message))
@@ -2155,7 +2207,8 @@ fn convert_tracked_files_to_tree_data(tracked_files: &[TrackedFile]) -> Vec<Tree
             }
             shared::FileState::Missing(path) => {
                 // File no longer exists - show with missing indicator
-                TreeViewItemData::new(tracked_file.id.clone(), tracked_file.smart_label.clone())
+                let smart_label = smart_labels.get(&tracked_file.path).unwrap_or(&tracked_file.path);
+                TreeViewItemData::new(tracked_file.id.clone(), smart_label.clone())
                     .item_type(TreeViewItemType::FileError)
                     .icon("file")
                     .tooltip(format!("{}\nFile not found", path))
@@ -2170,7 +2223,8 @@ fn convert_tracked_files_to_tree_data(tracked_files: &[TrackedFile]) -> Vec<Tree
             }
             shared::FileState::Unsupported(reason) => {
                 // Unsupported file format - show with unsupported indicator
-                TreeViewItemData::new(tracked_file.id.clone(), tracked_file.smart_label.clone())
+                let smart_label = smart_labels.get(&tracked_file.path).unwrap_or(&tracked_file.path);
+                TreeViewItemData::new(tracked_file.id.clone(), smart_label.clone())
                     .item_type(TreeViewItemType::FileError)
                     .icon("circle-help")
                     .tooltip(format!("{}\nUnsupported: {}", tracked_file.path, reason))
@@ -2197,12 +2251,13 @@ fn cleanup_file_related_state(file_id: &str) {
     if let Some(selected_scope) = SELECTED_SCOPE_ID.get_cloned() {
         // New format: {full_path}|{scope} - check if scope belongs to this file
         if selected_scope == file_path || selected_scope.starts_with(&format!("{}|", file_path)) {
-            SELECTED_SCOPE_ID.set(None);
+            SELECTED_SCOPE_ID.set_neq(None);
         }
     }
     
     // Clear expanded scopes for this file
     // New scope ID format: {full_path}|{scope_full_name} or just {full_path}
+    zoon::println!("🗑️ [DEBUG] Removing expanded scopes for file: {}", file_path);
     EXPANDED_SCOPES.lock_mut().retain(|scope| {
         // Keep scopes that don't belong to this file
         scope != &file_path && !scope.starts_with(&format!("{}|", file_path))
@@ -2637,7 +2692,8 @@ fn clear_all_files() {
     FILE_PATHS.lock_mut().clear();
     
     // Clear any remaining scope/tree selections
-    SELECTED_SCOPE_ID.set(None);
+    SELECTED_SCOPE_ID.set_neq(None);
+    zoon::println!("🧹 [DEBUG] Clearing all expanded scopes");
     EXPANDED_SCOPES.lock_mut().clear();
     TREE_SELECTED_ITEMS.lock_mut().clear();
     

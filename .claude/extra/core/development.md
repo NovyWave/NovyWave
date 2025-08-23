@@ -23,6 +23,123 @@ When making changes to files, first understand the file's code conventions. Mimi
 5. NEVER rename types with aliases (e.g., `Signal as DataSignal`) - move code directly
 6. Always preserve exact functionality during moves
 
+## State Management Best Practices
+
+### When to Use Actor Model vs Direct Mutations
+
+**Use Actor Model for:**
+- Shared state accessed by multiple components
+- State that triggers reactive updates (signals)
+- Complex state with interdependencies
+- Systems prone to race conditions or recursive locks
+- File/resource management systems
+- User interaction state (selections, filters, etc.)
+
+**Use Direct Mutations for:**
+- Simple local component state
+- Read-only data or constants
+- State that doesn't trigger signals
+- Performance-critical hot paths (after measuring)
+
+### Actor Model Implementation Checklist
+
+**✅ Required Components:**
+1. **Message enum** defining all possible state mutations
+2. **Single message processor** function handling all mutations sequentially
+3. **Message queue** with proper event loop yielding
+4. **Public API functions** that send messages instead of direct mutations
+5. **Proper signal handlers** using `for_each` with async closures
+
+**❌ Common Mistakes:**
+- Multiple concurrent processors for same state
+- Using `Task::start` in processing loops (creates races)
+- Bypassing actor with direct state mutations
+- Forgetting `Task::next_macro_tick().await` between messages
+- Using `for_each_sync` in signal handlers that send messages
+
+### Signal Handler Patterns
+
+**✅ Correct: Async Signal Handlers**
+```rust
+// Use for_each with async closure - naturally breaks sync chains
+COLLECTION.signal_vec_cloned().for_each(move |data| async move {
+    // Runs after current execution completes, locks are dropped
+    send_state_message(Message::ProcessData { data });
+}).await;
+```
+
+**❌ Incorrect: Synchronous Handlers**
+```rust
+// DON'T: for_each_sync can cause recursive locks
+COLLECTION.signal_vec_cloned().for_each_sync(move |data| {
+    // Runs immediately while locks may still be held
+    send_state_message(Message::ProcessData { data }); // POTENTIAL PANIC!
+});
+```
+
+### Message Processing Patterns
+
+**✅ Correct: Sequential with Yielding**
+```rust
+for message in messages {
+    Task::next_macro_tick().await;  // ESSENTIAL: Yield to event loop
+    process_message(message).await;  // Sequential processing
+}
+```
+
+**❌ Incorrect: Concurrent Processing**
+```rust
+for message in messages {
+    Task::start(async move {
+        process_message(message).await; // All run concurrently - RACES!
+    });
+}
+```
+
+### Debugging State Issues
+
+**Recursive Lock Symptoms:**
+```
+RuntimeError: unreachable
+at std::sys::sync::rwlock::no_threads::RwLock::write
+```
+
+**Immediate Actions:**
+1. Check for `for_each_sync` handlers that send messages
+2. Look for concurrent `Task::start` in message processing loops
+3. Verify `Task::next_macro_tick().await` exists between operations
+4. Ensure single message processor, not multiple concurrent ones
+
+**Long-term Solutions:**
+1. Implement proper Actor Model architecture
+2. Use async signal handlers consistently
+3. Add event loop yielding to all sequential processing
+4. Consider nested Mutables for frequently updated individual items
+
+### Integration with NovyWave Patterns
+
+**File State Management:**
+```rust
+// All file operations go through actor
+pub fn add_file(path: String) {
+    send_file_message(FileMessage::Add { path, state: FileState::Loading });
+}
+
+pub fn update_file_state(id: String, state: FileState) {
+    send_file_message(FileMessage::UpdateState { id, state });
+}
+```
+
+**Variable Selection Management:**
+```rust
+// Variable changes trigger through actor model
+pub fn add_selected_variable(variable: Signal) {
+    send_variable_message(VariableMessage::Add { variable });
+}
+```
+
+This eliminates recursive locks while maintaining reactive behavior and predictable state mutations.
+
 ## Mandatory Clarification Protocol
 
 **CRITICAL: Always ask clarifying questions before starting complex tasks.**
@@ -109,6 +226,126 @@ mcp__browsermcp__browser_screenshot  # Full page or element-specific screenshots
 1. **Compilation Verification**: Ensure code builds without errors
 2. **Visual Verification**: Use browser MCP to test UI changes
 3. **Functional Verification**: Test actual behavior matches requirements
+
+## Reactive Code Development & Review
+
+### Reactive Code Review Checklist
+
+**Before Writing Reactive Code:**
+- [ ] Identify all signals that should trigger updates
+- [ ] Check for potential circular dependencies (A→B→A)
+- [ ] Plan initialization order (config load → state setup → UI render)
+- [ ] Consider state preservation during updates
+
+**Signal Chain Design:**
+- [ ] Use `map_ref!` for combining multiple signals
+- [ ] Add `_tracked_files` pattern for file loading dependencies
+- [ ] Convert `SignalVec` with `.to_signal_cloned()` before use in `map_ref!`
+- [ ] Use `.into_element()` for type unification in conditional signals
+
+**Common Pitfall Prevention:**
+- [ ] Derived signals don't modify their source data
+- [ ] Use `saturating_sub()` instead of `-` for count calculations  
+- [ ] Dynamic UI elements use `label_signal` or `child_signal` patterns
+- [ ] One-shot initialization preserves existing states
+- [ ] Compare values before updating (`if current != new`)
+
+### Step-by-Step Reactive Debugging
+
+**1. Identify the Issue Type:**
+```bash
+# Check console for infinite loop patterns
+grep -i "rendering\|computing\|processing" console.log | wc -l
+# If >1000 lines, likely infinite loop
+```
+
+**2. Trace Signal Dependencies:**
+```rust
+// Add temporary debug logging
+zoon::println!("🔍 Signal {} triggered", signal_name);
+```
+
+**3. Check for Common Issues:**
+- Missing signal dependencies (UI doesn't update)
+- Circular signal chains (infinite loops)  
+- Bidirectional reactive flows (config ↔ state)
+- Integer overflow in calculations
+- Signal type mismatches (`Clone` errors)
+
+**4. Apply Systematic Fixes:**
+- Add missing dependencies to signal chains
+- Break circular dependencies with one-shot patterns
+- Use state preservation during updates
+- Convert signal types properly
+- Test incrementally after each fix
+
+### Over-Rendering Recognition
+**Symptoms:** 30+ identical render logs in <300ms, UI flickering, browser lag
+**Common pattern:** `TRACKED_FILES → SMART_LABELS → child_signal(map_ref!)`
+**Fix approach:** Remove intermediate signals, direct computation, add signal deduplication
+
+### Reactive Antipatterns to Avoid
+
+**❌ Circular Signal Dependencies:**
+```rust
+// Bad: Derived signal modifies its source
+SMART_LABELS.signal().for_each_sync(|labels| {
+    TRACKED_FILES.lock_mut().update_labels(labels); // Triggers SMART_LABELS again!
+});
+```
+
+**❌ Missing Signal Dependencies:**
+```rust  
+// Bad: Variables panel won't update when files load
+map_ref! {
+    let scope_id = SELECTED_SCOPE_ID.signal_ref(|id| id.clone()) =>
+    get_variables_from_files(&scope_id) // Missing file loading dependency
+}
+```
+
+**❌ Static State in Dynamic UI:**
+```rust
+// Bad: Checkbox always unchecked regardless of selection
+CheckboxBuilder::new().checked(false)
+```
+
+**❌ Bidirectional Reactive Flow:**
+```rust
+// Bad: Config and state both trigger each other
+config_changes.for_each_sync(|config| update_state(config));
+state_changes.for_each_sync(|state| update_config(state)); // Creates loop!
+```
+
+### Reactive Testing Patterns
+
+**Manual Signal Testing:**
+```rust
+#[cfg(debug_assertions)]
+static SIGNAL_FIRE_COUNT: Lazy<Mutable<u32>> = Lazy::new(|| Mutable::new(0));
+
+// In signal chain:
+let count = SIGNAL_FIRE_COUNT.get() + 1;
+SIGNAL_FIRE_COUNT.set(count);
+if count > 100 {
+    zoon::println!("⚠️ POTENTIAL INFINITE LOOP: {} fires", count);
+}
+```
+
+**Integration Testing:**
+```rust
+// Test initialization doesn't cause loops
+async fn test_config_load_stability() {
+    initialize_from_config().await;
+    
+    // Wait for signals to stabilize
+    Timer::sleep(1000).await;
+    
+    // Check no excessive signal firing occurred
+    assert!(SIGNAL_FIRE_COUNT.get() < 50);
+}
+```
+
+**See `.claude/extra/technical/reactive-patterns.md` for comprehensive patterns and examples.**
 
 ## Task Management
 

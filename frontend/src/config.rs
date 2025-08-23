@@ -7,6 +7,9 @@ use shared::UpMsg;
 pub use shared::{Theme, DockMode}; // Re-export for frontend usage
 use crate::CONFIG_INITIALIZATION_COMPLETE;
 
+// Reactive triggers module
+pub mod triggers;
+
 // Timeline validation constants
 const MIN_VALID_RANGE: f32 = 1e-6;       // 1 microsecond minimum range
 const SAFE_FALLBACK_START: f32 = 0.0;    // Safe fallback start time
@@ -659,7 +662,7 @@ fn store_config_on_any_change() {
     // Timeline cursor position changes - TRUE DEBOUNCING with droppable tasks
     let timeline_cursor_position_signal = crate::state::TIMELINE_CURSOR_POSITION.signal();
     Task::start(async move {
-        let debounce_task: Mutable<Option<TaskHandle<()>>> = Mutable::new(None);
+        let debounce_task: Mutable<Option<TaskHandle>> = Mutable::new(None);
         
         timeline_cursor_position_signal
             .dedupe() // Skip duplicate values  
@@ -939,35 +942,8 @@ pub fn apply_config(config: shared::AppConfig) {
 
     config_store().load_from_serializable(serializable_config);
     
-    // Manual sync of expanded_scopes from config to signal (Vec<String> to HashSet<String>)
-    sync_expanded_scopes_from_config();
-    
-    // Manual sync of load_files_expanded_directories from config to signal (Vec<String> to HashSet<String>)
-    sync_load_files_expanded_directories_from_config();
-    
-    // Manual sync of opened_files from config to legacy globals
-    sync_opened_files_from_config();
-    
-    // Manual sync of selected variables from config to global state
-    sync_selected_variables_from_config();
-    
-    // Manual sync of panel dimensions from config to global state 
-    sync_panel_dimensions_from_config();
-    
-    // Manual sync of column widths from config to global state
-    sync_column_widths_from_config();
-    
-    // Manual sync of file picker current directory from config to legacy globals
-    sync_file_picker_current_directory_from_config();
-    
-    // Manual sync of scroll position from config to legacy globals
-    sync_load_files_scroll_position_from_config();
-    
-    // Manual sync of timeline cursor position from config to legacy globals
-    sync_timeline_cursor_position_from_config();
-    
-    // Manual sync of timeline zoom state from config to global state
-    sync_timeline_zoom_state_from_config();
+    // One-shot config initialization - runs once after config loads
+    triggers::setup_one_time_config_sync();
     
     // Set config loaded flag
     CONFIG_LOADED.set_neq(true);
@@ -992,488 +968,252 @@ pub fn current_toast_dismiss_ms() -> u64 {
     config_store().ui.lock_ref().toast_dismiss_ms.get()
 }
 
-// Manual sync function to convert expanded_scopes from Vec<String> to HashSet<String>
-fn sync_expanded_scopes_from_config() {
-    use crate::state::EXPANDED_SCOPES;
-    
-    let expanded_vec = config_store().workspace.lock_ref().expanded_scopes.lock_ref().to_vec();
-    
-    // Clear existing and insert all items from config
-    let mut expanded_scopes = EXPANDED_SCOPES.lock_mut();
-    expanded_scopes.clear();
-    for scope_id in expanded_vec {
-        // Only add "scope_" prefix for scope entries (containing |), not file entries
-        // TreeView adds this prefix in convert_scope_to_tree_data() for scope disambiguation
-        if scope_id.contains('|') {
-            let tree_scope_id = format!("scope_{}", scope_id);
-            expanded_scopes.insert(tree_scope_id);
-        } else {
-            // File entries don't get the prefix
-            expanded_scopes.insert(scope_id);
-        }
-    }
-}
+// populate_globals_from_config() function removed - replaced by reactive triggers
+// All global state is now synced automatically through triggers::setup_reactive_config_system()
 
-// Manual sync function to convert load_files_expanded_directories from Vec<String> to IndexSet<String>
-fn sync_load_files_expanded_directories_from_config() {
-    use crate::state::FILE_PICKER_EXPANDED;
-    use indexmap::IndexSet;
-    
-    let expanded_vec = config_store().workspace.lock_ref().load_files_expanded_directories.lock_ref().to_vec();
-    
-    // In WASM, trust the backend-validated directories (no filesystem access)
-    let new_expanded_set: IndexSet<String> = expanded_vec.into_iter().collect();
-    
-    
-    // Apply the complete set atomically to prevent reactive race conditions
-    *FILE_PICKER_EXPANDED.lock_mut() = new_expanded_set;
-}
+// =============================================================================
+// SIGNALS - Helper functions for reactive config values
+// =============================================================================
 
-// Enhanced sync function to restore opened_files from config using TRACKED_FILES system
-fn sync_opened_files_from_config() {
-    use crate::state::{init_tracked_files_from_config, FILE_PATHS};
-    use crate::platform::{Platform, CurrentPlatform};
-    
-    let opened_files = config_store().session.lock_ref().opened_files.lock_ref().to_vec();
-    
-    // Initialize TRACKED_FILES system with config file paths
-    init_tracked_files_from_config(opened_files.clone());
-    
-    // Also maintain legacy FILE_PATHS for backward compatibility during transition
-    FILE_PATHS.lock_mut().clear();
-    
-    // Restore each file path and reload the file
-    for file_path in opened_files {
-        // Generate file ID and store in FILE_PATHS (same pattern as file loading)
-        let file_id = shared::generate_file_id(&file_path);
-        FILE_PATHS.lock_mut().insert(file_id, file_path.clone());
-        
-        // Add to TRACKED_FILES system with loading state
-        crate::state::add_tracked_file(file_path.clone(), shared::FileState::Loading(shared::LoadingStatus::Starting));
-        
-        // Reload the file
-        Task::start(async move {
-            if let Err(e) = CurrentPlatform::send_message(shared::UpMsg::LoadWaveformFile(file_path)).await {
-                zoon::println!("ERROR: Failed to reload file via platform: {}", e);
-            }
-        });
-    }
-}
-
-// Manual sync function to restore file picker current directory from config 
-fn sync_file_picker_current_directory_from_config() {
-    use crate::state::CURRENT_DIRECTORY;
-    
-    let current_dir = config_store().session.lock_ref().file_picker.lock_ref().current_directory.get_cloned();
-    
-    // Restore current directory if it exists in config
-    if let Some(directory) = current_dir {
-        // Validate directory exists before restoring
-        if std::path::Path::new(&directory).is_dir() {
-            CURRENT_DIRECTORY.set_neq(directory);
-        } else {
-                // Clear invalid directory from config
-            config_store().session.lock_ref().file_picker.lock_ref().current_directory.set_neq(None);
-            if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
-                save_config_to_backend();
-            }
-        }
-    }
-}
-
-// Manual sync function to restore scroll position from config to legacy globals
-fn sync_load_files_scroll_position_from_config() {
-    use crate::state::LOAD_FILES_SCROLL_POSITION;
-    
-    let saved_scroll_position = config_store().session.lock_ref().file_picker.lock_ref().scroll_position.get();
-    
-    // Restore the scroll position to both persistent globals to prevent viewport lazy initialization with 0
-    LOAD_FILES_SCROLL_POSITION.set_neq(saved_scroll_position);
-    crate::LOAD_FILES_VIEWPORT_Y.set_neq(saved_scroll_position);
-}
-
-// Manual sync function to restore selected variables from config to global state
-fn sync_selected_variables_from_config() {
-    use crate::state::init_selected_variables_from_config;
-    
-    let selected_vars = config_store().workspace.lock_ref().selected_variables.lock_ref().to_vec();
-    
-    // Initialize selected variables with validation
-    init_selected_variables_from_config(selected_vars);
-}
-
-// Manual sync function to restore panel dimensions from config to global state
-fn sync_panel_dimensions_from_config() {
-    use crate::state::{FILES_PANEL_WIDTH, FILES_PANEL_HEIGHT};
-    
-    // Get current dock mode and corresponding panel dimensions
-    let dock_mode = config_store().workspace.lock_ref().dock_mode.get_cloned();
-    let workspace_ref = config_store().workspace.lock_ref();
-    let layouts = workspace_ref.panel_layouts.lock_ref();
-    
-    let (files_width, files_height) = match dock_mode {
-        DockMode::Bottom => {
-            let dims = layouts.docked_to_bottom.lock_ref();
-            (dims.files_panel_width.get(), dims.files_panel_height.get())
-        }
-        DockMode::Right => {
-            let dims = layouts.docked_to_right.lock_ref();
-            (dims.files_panel_width.get(), dims.files_panel_height.get())
-        }
-    };
-    
-    // Restore panel dimensions
-    crate::debug_utils::debug_conditional(&format!("Syncing panel dimensions - width: {} -> {}, height: {} -> {}", FILES_PANEL_WIDTH.get(), files_width as u32, FILES_PANEL_HEIGHT.get(), files_height as u32));
-    FILES_PANEL_WIDTH.set_neq(files_width as u32);
-    FILES_PANEL_HEIGHT.set_neq(files_height as u32);
-}
-
-// Manual sync function to restore column widths from config to global state
-fn sync_column_widths_from_config() {
-    use crate::state::{VARIABLES_NAME_COLUMN_WIDTH, VARIABLES_VALUE_COLUMN_WIDTH};
-    
-    // Get current dock mode and corresponding panel dimensions
-    let dock_mode = config_store().workspace.lock_ref().dock_mode.get_cloned();
-    let workspace_ref = config_store().workspace.lock_ref();
-    let layouts = workspace_ref.panel_layouts.lock_ref();
-    
-    let (name_width, value_width) = match dock_mode {
-        DockMode::Bottom => {
-            let dims = layouts.docked_to_bottom.lock_ref();
-            (dims.variables_name_column_width.get(), dims.variables_value_column_width.get())
-        }
-        DockMode::Right => {
-            let dims = layouts.docked_to_right.lock_ref();
-            (dims.variables_name_column_width.get(), dims.variables_value_column_width.get())
-        }
-    };
-    
-    // Restore column widths
-    VARIABLES_NAME_COLUMN_WIDTH.set_neq(name_width as u32);
-    VARIABLES_VALUE_COLUMN_WIDTH.set_neq(value_width as u32);
-}
-
-fn sync_timeline_cursor_position_from_config() {
-    let cursor_position = config_store().workspace.lock_ref().timeline_cursor_position.get();
-    
-    // Validate cursor position is non-negative (basic sanity check)
-    let validated_position = cursor_position.max(0.0);
-    
-    crate::state::TIMELINE_CURSOR_POSITION.set_neq(validated_position);
-    
-    // Mark that cursor position was set during startup (before files may be loaded)
-    if !crate::state::CONFIG_INITIALIZATION_COMPLETE.get() {
-        crate::state::STARTUP_CURSOR_POSITION_SET.set_neq(true);
-    }
-}
-
-fn sync_timeline_zoom_state_from_config() {
-    let workspace = config_store().workspace.lock_ref();
-    
-    // Sync zoom level with validation (1.0 = normal, max 1B for extreme zoom)
-    let zoom_level = workspace.timeline_zoom_level.get().max(1.0).min(1000000000.0);
-    crate::state::TIMELINE_ZOOM_LEVEL.set_neq(zoom_level);
-    
-    // Sync visible range
-    let range_start = workspace.timeline_visible_range_start.get();
-    let range_end = workspace.timeline_visible_range_end.get();
-    
-    // Basic validation - ensure end > start
-    if range_end > range_start {
-        crate::state::TIMELINE_VISIBLE_RANGE_START.set_neq(range_start);
-        crate::state::TIMELINE_VISIBLE_RANGE_END.set_neq(range_end);
-    } else {
-        // Use safe defaults if invalid range
-        crate::state::TIMELINE_VISIBLE_RANGE_START.set_neq(0.0);
-        crate::state::TIMELINE_VISIBLE_RANGE_END.set_neq(100.0);
-    }
-}
-
+/// Get dock mode as a signal for reactive layouts
 pub fn current_dock_mode() -> impl Signal<Item = DockMode> {
     config_store().workspace.signal_ref(|ws| ws.dock_mode.signal_cloned()).flatten()
 }
 
-#[allow(dead_code)]
+/// Get whether docked to bottom as a signal
 pub fn is_docked_to_bottom() -> impl Signal<Item = bool> {
     current_dock_mode().map(|mode| matches!(mode, DockMode::Bottom))
 }
 
-pub fn panel_dimensions_signal() -> impl Signal<Item = PanelDimensions> {
-    map_ref! {
-        let dock_mode = current_dock_mode(),
-        let layouts = config_store().workspace.signal_ref(|ws| ws.panel_layouts.signal_cloned()).flatten() =>
-        match dock_mode {
-            DockMode::Bottom => layouts.docked_to_bottom.get_cloned(),
-            DockMode::Right => layouts.docked_to_right.get_cloned(),
-        }
-    }
-}
 
-// =============================================================================
-// STATE SYNC HELPERS - Bridge between ConfigStore and state.rs globals  
-// =============================================================================
 
-// Create tasks that sync config changes to old state.rs globals
-pub fn sync_config_to_globals() {
-    use crate::state::*;
 
-    // Sync dock mode
-    Task::start(async {
-        current_dock_mode().for_each_sync(|dock_mode| {
-            IS_DOCKED_TO_BOTTOM.set_neq(matches!(dock_mode, DockMode::Bottom));
-        }).await
-    });
 
-    // Sync panel dimensions based on current dock mode
-    Task::start(async {
-        panel_dimensions_signal().for_each_sync(|dimensions| {
-            FILES_PANEL_WIDTH.set_neq(dimensions.files_panel_width.get() as u32);
-            FILES_PANEL_HEIGHT.set_neq(dimensions.files_panel_height.get() as u32);
-            VARIABLES_NAME_COLUMN_WIDTH.set_neq(dimensions.variables_name_column_width.get() as u32);
-            VARIABLES_VALUE_COLUMN_WIDTH.set_neq(dimensions.variables_value_column_width.get() as u32);
-        }).await
-    });
 
-    // Sync selected scope
-    Task::start(async {
-        config_store().workspace.signal_ref(|ws| ws.selected_scope_id.signal_cloned()).flatten()
-            .for_each_sync(|scope_id| {
-                SELECTED_SCOPE_ID.set_neq(scope_id);
-            }).await
-    });
 
-    // Sync expanded scopes (convert between Vec and HashSet)  
-    // Note: Manual sync is used since MutableVec signal handling is complex
 
-    // Sync variables search filter
-    Task::start(async {
-        config_store().session.signal_ref(|s| s.variables_search_filter.signal_cloned()).flatten()
-            .for_each_sync(|filter| {
-                VARIABLES_SEARCH_FILTER.set_neq(filter);
-            }).await
-    });
 
-    // Sync load files scroll position
-    Task::start(async {
-        config_store().session.signal_ref(|s| s.file_picker.signal_ref(|fp| fp.scroll_position.signal()).flatten()).flatten()
-            .for_each_sync(|scroll_pos| {
-                // Only sync during runtime, not during initialization
-                if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
-                    LOAD_FILES_SCROLL_POSITION.set_neq(scroll_pos);
-                }
-            }).await
-    });
 
-    // Sync dialog states
-    Task::start(async {
-        config_store().dialogs.signal_ref(|d| d.show_file_dialog.signal()).flatten()
-            .for_each_sync(|show| {
-                SHOW_FILE_DIALOG.set_neq(show);
-            }).await
-    });
 
-    Task::start(async {
-        config_store().dialogs.signal_ref(|d| d.file_paths_input.signal_cloned()).flatten()
-            .for_each_sync(|input| {
-                FILE_PATHS_INPUT.set_neq(input);
-            }).await
-    });
-}
 
 // =============================================================================
 // REVERSE SYNC - Update ConfigStore when state.rs globals change
 // =============================================================================
 
-pub fn sync_globals_to_config() {
+/// Set up reactive config persistence - observes global state and automatically saves config
+pub fn setup_reactive_config_persistence() {
     use crate::state::*;
 
-    // Sync panel dimensions back to config when UI updates them
+    // Initialize derived signals first
+    crate::state::init_config_derived_signals();
+
+    // Observe OPENED_FILES_FOR_CONFIG and update config store
     Task::start(async {
-        FILES_PANEL_WIDTH.signal().for_each_sync(|width| {
-                    let dock_mode = config_store().workspace.lock_ref().dock_mode.get_cloned();
-            let workspace_ref = config_store().workspace.lock_ref();
-            let layouts = workspace_ref.panel_layouts.lock_ref();
-            
-            match dock_mode {
-                DockMode::Bottom => {
-                                layouts.docked_to_bottom.lock_ref().files_panel_width.set_neq(width as f32);
-                }
-                DockMode::Right => {
-                                layouts.docked_to_right.lock_ref().files_panel_width.set_neq(width as f32);
-                }
+        OPENED_FILES_FOR_CONFIG.signal_cloned().for_each(|file_paths| async move {
+            if CONFIG_INITIALIZATION_COMPLETE.get() {
+                config_store().session.lock_mut().opened_files.lock_mut().replace_cloned(file_paths);
+                save_config_to_backend();
             }
         }).await
     });
 
+    // Observe EXPANDED_SCOPES_FOR_CONFIG and update config store
     Task::start(async {
-        FILES_PANEL_HEIGHT.signal().for_each_sync(|height| {
-            let dock_mode = config_store().workspace.lock_ref().dock_mode.get_cloned();
-            let workspace_ref = config_store().workspace.lock_ref();
-            let layouts = workspace_ref.panel_layouts.lock_ref();
-            
-            match dock_mode {
-                DockMode::Bottom => {
-                    layouts.docked_to_bottom.lock_ref().files_panel_height.set_neq(height as f32);
-                }
-                DockMode::Right => {
-                    layouts.docked_to_right.lock_ref().files_panel_height.set_neq(height as f32);
-                }
+        EXPANDED_SCOPES_FOR_CONFIG.signal_cloned().for_each(|expanded_scopes| async move {
+            if CONFIG_INITIALIZATION_COMPLETE.get() {
+                config_store().workspace.lock_mut().expanded_scopes.lock_mut().replace_cloned(expanded_scopes);
+                save_config_to_backend();
             }
         }).await
     });
 
-    // Sync column widths back to config when user drags dividers
+    // Observe LOAD_FILES_EXPANDED_DIRECTORIES_FOR_CONFIG and update config store
     Task::start(async {
-        VARIABLES_NAME_COLUMN_WIDTH.signal().for_each_sync(|width| {
-            let dock_mode = config_store().workspace.lock_ref().dock_mode.get_cloned();
-            let workspace_ref = config_store().workspace.lock_ref();
-            let layouts = workspace_ref.panel_layouts.lock_ref();
-            
-            match dock_mode {
-                DockMode::Bottom => {
-                    layouts.docked_to_bottom.lock_ref().variables_name_column_width.set_neq(width as f32);
-                }
-                DockMode::Right => {
-                    layouts.docked_to_right.lock_ref().variables_name_column_width.set_neq(width as f32);
-                }
+        LOAD_FILES_EXPANDED_DIRECTORIES_FOR_CONFIG.signal_cloned().for_each(|expanded_dirs| async move {
+            if CONFIG_INITIALIZATION_COMPLETE.get() {
+                config_store().workspace.lock_mut().load_files_expanded_directories.lock_mut().replace_cloned(expanded_dirs);
+                save_config_to_backend();
             }
         }).await
     });
 
+    // Observe SELECTED_VARIABLES_FOR_CONFIG and update config store
     Task::start(async {
-        VARIABLES_VALUE_COLUMN_WIDTH.signal().for_each_sync(|width| {
-            let dock_mode = config_store().workspace.lock_ref().dock_mode.get_cloned();
-            let workspace_ref = config_store().workspace.lock_ref();
-            let layouts = workspace_ref.panel_layouts.lock_ref();
-            
-            match dock_mode {
-                DockMode::Bottom => {
-                    layouts.docked_to_bottom.lock_ref().variables_value_column_width.set_neq(width as f32);
-                }
-                DockMode::Right => {
-                    layouts.docked_to_right.lock_ref().variables_value_column_width.set_neq(width as f32);
-                }
+        SELECTED_VARIABLES_FOR_CONFIG.signal_cloned().for_each(|selected_vars| async move {
+            if CONFIG_INITIALIZATION_COMPLETE.get() {
+                config_store().workspace.lock_mut().selected_variables.lock_mut().replace_cloned(selected_vars);
+                save_config_to_backend();
             }
         }).await
     });
 
-    // Sync expanded scopes back to config (convert HashSet to Vec)
+    // Observe DOCK_MODE_FOR_CONFIG and update config store
     Task::start(async {
-        EXPANDED_SCOPES.signal_ref(|expanded_set| {
-            expanded_set.clone()
-        }).for_each_sync(|expanded_set| {
-            // Strip TreeView "scope_" prefixes before storing to config
-            let expanded_vec: Vec<String> = expanded_set.into_iter()
-                .map(|scope_id| {
-                    if scope_id.starts_with("scope_") {
-                        scope_id.strip_prefix("scope_").unwrap_or(&scope_id).to_string()
-                    } else {
-                        scope_id
-                    }
-                })
-                .collect();
-            config_store().workspace.lock_ref().expanded_scopes.lock_mut().replace_cloned(expanded_vec);
-            // Manually trigger config save since MutableVec reactive signals are complex
-            if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
+        DOCK_MODE_FOR_CONFIG.signal_cloned().for_each(|dock_mode| async move {
+            if CONFIG_INITIALIZATION_COMPLETE.get() {
+                config_store().workspace.lock_mut().dock_mode.set_neq(dock_mode);
                 save_config_to_backend();
-            } else {
-                }
+            }
         }).await
     });
 
-    // Sync load files expanded directories back to config (convert IndexSet to Vec)
+    // Observe SELECTED_SCOPE_ID and update config store
     Task::start(async {
-        FILE_PICKER_EXPANDED.signal_ref(|expanded_set| {
-            expanded_set.clone()
-        }).for_each_sync(|expanded_set| {
-            // Only save if initialization is complete to prevent race conditions
-            if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
-                let expanded_vec: Vec<String> = expanded_set.into_iter().collect();
-                    config_store().workspace.lock_ref().load_files_expanded_directories.lock_mut().replace_cloned(expanded_vec);
-                // Manually trigger config save since MutableVec reactive signals are complex
+        SELECTED_SCOPE_ID.signal_cloned().for_each(|scope_id| async move {
+            if CONFIG_INITIALIZATION_COMPLETE.get() {
+                config_store().workspace.lock_mut().selected_scope_id.set_neq(scope_id);
                 save_config_to_backend();
-            } else {
-                }
+            }
         }).await
     });
 
-    // Sync selected scope back to config
+    // Observe VARIABLES_SEARCH_FILTER and update config store
     Task::start(async {
-        SELECTED_SCOPE_ID.signal_cloned().for_each_sync(|scope_id| {
-            config_store().workspace.lock_mut().selected_scope_id.set_neq(scope_id);
-            // Manually trigger config save for scope selection changes
-            if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
-                save_config_to_backend();
-            } else {
-                }
-        }).await
-    });
-
-    // Sync file picker current directory back to config
-    Task::start(async {
-        CURRENT_DIRECTORY.signal_cloned().for_each_sync(|current_dir| {
-            // Only save non-empty directories
-            let dir_to_save = if current_dir.is_empty() { None } else { Some(current_dir) };
-            config_store().session.lock_ref().file_picker.lock_ref().current_directory.set_neq(dir_to_save);
-            // Manually trigger config save for current directory changes
-            if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
-                save_config_to_backend();
-            } else {
-                }
-        }).await
-    });
-
-    // Sync variables search filter back to config
-    Task::start(async {
-        VARIABLES_SEARCH_FILTER.signal_cloned().for_each_sync(|filter| {
-            // Only save if initialization is complete to prevent race conditions
-            if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
+        VARIABLES_SEARCH_FILTER.signal_cloned().for_each(|filter| async move {
+            if CONFIG_INITIALIZATION_COMPLETE.get() {
                 config_store().session.lock_mut().variables_search_filter.set_neq(filter);
-                // Manually trigger config save for search filter changes
                 save_config_to_backend();
-            } else {
             }
         }).await
     });
 
-    // Sync load files scroll position back to config
+    // Observe CURRENT_DIRECTORY and update config store
     Task::start(async {
-        LOAD_FILES_SCROLL_POSITION.signal().for_each_sync(|scroll_pos| {
-            // Only save if initialization is complete to prevent race conditions
-            if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
-                    // Validate scroll position is within bounds [0, 10000]
-                let validated_pos = scroll_pos.max(0).min(10000);
-                config_store().session.lock_ref().file_picker.lock_ref().scroll_position.set_neq(validated_pos);
-                // Manually trigger config save for scroll position changes
+        CURRENT_DIRECTORY.signal_cloned().for_each(|current_dir| async move {
+            if CONFIG_INITIALIZATION_COMPLETE.get() {
+                let dir_to_save = if current_dir.is_empty() { None } else { Some(current_dir) };
+                config_store().session.lock_ref().file_picker.lock_ref().current_directory.set_neq(dir_to_save);
                 save_config_to_backend();
-            } else {
+            }
+        }).await
+    });
+
+    // Observe LOAD_FILES_SCROLL_POSITION and update config store
+    Task::start(async {
+        LOAD_FILES_SCROLL_POSITION.signal().for_each(|scroll_pos| async move {
+            if CONFIG_INITIALIZATION_COMPLETE.get() {
+                config_store().session.lock_ref().file_picker.lock_ref().scroll_position.set_neq(scroll_pos);
+                save_config_to_backend();
+            }
+        }).await
+    });
+
+    // Observe timeline state and update config store
+    Task::start(async {
+        TIMELINE_CURSOR_POSITION.signal().for_each(|cursor_pos| async move {
+            if CONFIG_INITIALIZATION_COMPLETE.get() {
+                config_store().workspace.lock_mut().timeline_cursor_position.set_neq(cursor_pos);
+                save_config_to_backend();
+            }
+        }).await
+    });
+
+    Task::start(async {
+        TIMELINE_ZOOM_LEVEL.signal().for_each(|zoom_level| async move {
+            if CONFIG_INITIALIZATION_COMPLETE.get() {
+                config_store().workspace.lock_mut().timeline_zoom_level.set_neq(zoom_level);
+                save_config_to_backend();
+            }
+        }).await
+    });
+
+    Task::start(async {
+        TIMELINE_VISIBLE_RANGE_START.signal().for_each(|start| async move {
+            if CONFIG_INITIALIZATION_COMPLETE.get() {
+                config_store().workspace.lock_mut().timeline_visible_range_start.set_neq(start);
+                save_config_to_backend();
+            }
+        }).await
+    });
+
+    Task::start(async {
+        TIMELINE_VISIBLE_RANGE_END.signal().for_each(|end| async move {
+            if CONFIG_INITIALIZATION_COMPLETE.get() {
+                config_store().workspace.lock_mut().timeline_visible_range_end.set_neq(end);
+                save_config_to_backend();
+            }
+        }).await
+    });
+
+    // Observe panel dimensions back to config when UI updates them  
+    Task::start(async {
+        FILES_PANEL_WIDTH.signal().for_each(|width| async move {
+            if CONFIG_INITIALIZATION_COMPLETE.get() {
+                let dock_mode = config_store().workspace.lock_ref().dock_mode.get_cloned();
+                let workspace_ref = config_store().workspace.lock_ref();
+                let layouts = workspace_ref.panel_layouts.lock_ref();
+                
+                match dock_mode {
+                    DockMode::Bottom => {
+                        layouts.docked_to_bottom.lock_ref().files_panel_width.set_neq(width as f32);
+                    }
+                    DockMode::Right => {
+                        layouts.docked_to_right.lock_ref().files_panel_width.set_neq(width as f32);
+                    }
                 }
+                save_config_to_backend();
+            }
         }).await
     });
 
-    // Sync viewport scroll changes back to persistent scroll position
     Task::start(async {
-        LOAD_FILES_VIEWPORT_Y.signal().for_each_sync(|viewport_y| {
-                // Only sync during runtime, not during initialization
-            if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
-                // Update the persistent scroll position when user scrolls the viewport
-                // This ensures manual scrolling is also saved
-                LOAD_FILES_SCROLL_POSITION.set_neq(viewport_y);
-            } else {
+        FILES_PANEL_HEIGHT.signal().for_each(|height| async move {
+            if CONFIG_INITIALIZATION_COMPLETE.get() {
+                let dock_mode = config_store().workspace.lock_ref().dock_mode.get_cloned();
+                let workspace_ref = config_store().workspace.lock_ref();
+                let layouts = workspace_ref.panel_layouts.lock_ref();
+                
+                match dock_mode {
+                    DockMode::Bottom => {
+                        layouts.docked_to_bottom.lock_ref().files_panel_height.set_neq(height as f32);
+                    }
+                    DockMode::Right => {
+                        layouts.docked_to_right.lock_ref().files_panel_height.set_neq(height as f32);
+                    }
                 }
+                save_config_to_backend();
+            }
         }).await
     });
 
-    // Sync dialog states back to config
+    // Observe column widths and update config when user drags dividers
     Task::start(async {
-        SHOW_FILE_DIALOG.signal().for_each_sync(|show| {
-            config_store().dialogs.lock_mut().show_file_dialog.set_neq(show);
+        VARIABLES_NAME_COLUMN_WIDTH.signal().for_each(|width| async move {
+            if CONFIG_INITIALIZATION_COMPLETE.get() {
+                let dock_mode = config_store().workspace.lock_ref().dock_mode.get_cloned();
+                let workspace_ref = config_store().workspace.lock_ref();
+                let layouts = workspace_ref.panel_layouts.lock_ref();
+                
+                match dock_mode {
+                    DockMode::Bottom => {
+                        layouts.docked_to_bottom.lock_ref().variables_name_column_width.set_neq(width as f32);
+                    }
+                    DockMode::Right => {
+                        layouts.docked_to_right.lock_ref().variables_name_column_width.set_neq(width as f32);
+                    }
+                }
+                save_config_to_backend();
+            }
         }).await
     });
 
     Task::start(async {
-        FILE_PATHS_INPUT.signal_cloned().for_each_sync(|input| {
-            config_store().dialogs.lock_mut().file_paths_input.set_neq(input);
+        VARIABLES_VALUE_COLUMN_WIDTH.signal().for_each(|width| async move {
+            if CONFIG_INITIALIZATION_COMPLETE.get() {
+                let dock_mode = config_store().workspace.lock_ref().dock_mode.get_cloned();
+                let workspace_ref = config_store().workspace.lock_ref();
+                let layouts = workspace_ref.panel_layouts.lock_ref();
+                
+                match dock_mode {
+                    DockMode::Bottom => {
+                        layouts.docked_to_bottom.lock_ref().variables_value_column_width.set_neq(width as f32);
+                    }
+                    DockMode::Right => {
+                        layouts.docked_to_right.lock_ref().variables_value_column_width.set_neq(width as f32);
+                    }
+                }
+                save_config_to_backend();
+            }
         }).await
     });
 }

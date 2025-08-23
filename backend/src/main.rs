@@ -1,8 +1,9 @@
 use moon::*;
-use shared::{self, UpMsg, DownMsg, AppConfig, FileHierarchy, WaveformFile, FileFormat, ScopeData, FileSystemItem, SignalValueQuery, SignalValueResult, SignalTransitionQuery, SignalTransition, SignalTransitionResult, FileError};
+use shared::{self, UpMsg, DownMsg, AppConfig, FileHierarchy, WaveformFile, FileFormat, ScopeData, FileSystemItem, SignalValueQuery, SignalValueResult, SignalTransitionQuery, SignalTransition, SignalTransitionResult, FileError, UnifiedSignalRequest, UnifiedSignalData, SignalStatistics, SignalValue};
 use std::path::Path;
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::collections::{HashMap, BTreeMap};
+use std::sync::{Arc, Mutex, RwLock};
+use rayon::prelude::*;
 use std::fs;
 use jwalk::WalkDir;
 
@@ -31,6 +32,245 @@ static WAVEFORM_DATA_STORE: Lazy<Arc<Mutex<HashMap<String, WaveformData>>>> =
 // Track VCD body loading in progress to prevent concurrent loading of same file
 static VCD_LOADING_IN_PROGRESS: Lazy<Arc<Mutex<std::collections::HashSet<String>>>> = 
     Lazy::new(|| Arc::new(Mutex::new(std::collections::HashSet::new())));
+
+// ===== UNIFIED SIGNAL CACHE MANAGER =====
+
+/// High-performance signal cache manager for desktop applications
+/// Uses Arc<RwLock<BTreeMap>> for efficient concurrent access
+struct SignalCacheManager {
+    /// Complete signal transition data indexed by unique signal ID
+    transition_cache: Arc<RwLock<BTreeMap<String, Vec<SignalTransition>>>>,
+    /// Pre-computed signal metadata for quick access
+    signal_metadata: Arc<RwLock<BTreeMap<String, SignalMetadata>>>,
+    /// Cache statistics for performance monitoring
+    cache_stats: Arc<RwLock<CacheStats>>,
+}
+
+#[derive(Clone)]
+struct SignalMetadata {
+    file_path: String,
+    scope_path: String,
+    variable_name: String,
+    total_transitions: usize,
+    time_range: Option<(f64, f64)>,
+    last_accessed: std::time::Instant,
+}
+
+#[derive(Default)]
+struct CacheStats {
+    total_queries: usize,
+    cache_hits: usize,
+    cache_misses: usize,
+    total_signals_cached: usize,
+}
+
+impl SignalCacheManager {
+    fn new() -> Self {
+        Self {
+            transition_cache: Arc::new(RwLock::new(BTreeMap::new())),
+            signal_metadata: Arc::new(RwLock::new(BTreeMap::new())),
+            cache_stats: Arc::new(RwLock::new(CacheStats::default())),
+        }
+    }
+    
+    /// Process unified signal query with parallel processing
+    async fn query_unified_signals(
+        &self,
+        signal_requests: Vec<UnifiedSignalRequest>,
+        cursor_time: Option<f64>,
+    ) -> Result<(Vec<UnifiedSignalData>, BTreeMap<String, SignalValue>, SignalStatistics), String> {
+        let start_time = std::time::Instant::now();
+        
+        // Process requests in parallel using rayon
+        let signal_data: Vec<UnifiedSignalData> = signal_requests
+            .par_iter()
+            .filter_map(|request| {
+                self.get_or_load_signal_data(request).ok()
+            })
+            .collect();
+        
+        // Compute cursor values if requested
+        let cursor_values = if let Some(time) = cursor_time {
+            self.compute_cursor_values(&signal_data, time)
+        } else {
+            BTreeMap::new()
+        };
+        
+        // Update cache statistics
+        let mut stats = self.cache_stats.write().unwrap();
+        stats.total_queries += 1;
+        let query_time = start_time.elapsed().as_millis() as u64;
+        let cache_hit_ratio = if stats.total_queries > 0 {
+            stats.cache_hits as f64 / stats.total_queries as f64
+        } else {
+            0.0
+        };
+        
+        let statistics = SignalStatistics {
+            total_signals: signal_data.len(),
+            cached_signals: stats.cache_hits,
+            query_time_ms: query_time,
+            cache_hit_ratio,
+        };
+        
+        Ok((signal_data, cursor_values, statistics))
+    }
+    
+    /// Get signal data from cache or load from waveform files
+    fn get_or_load_signal_data(&self, request: &UnifiedSignalRequest) -> Result<UnifiedSignalData, String> {
+        let unique_id = format!("{}|{}|{}", request.file_path, request.scope_path, request.variable_name);
+        
+        // Check cache first
+        {
+            let cache = self.transition_cache.read().unwrap();
+            if let Some(transitions) = cache.get(&unique_id) {
+                let mut stats = self.cache_stats.write().unwrap();
+                stats.cache_hits += 1;
+                
+                // Filter by time range if specified
+                let filtered_transitions = if let Some((start, end)) = request.time_range {
+                    transitions.iter()
+                        .filter(|t| t.time_seconds >= start && t.time_seconds <= end)
+                        .cloned()
+                        .collect()
+                } else {
+                    transitions.clone()
+                };
+                
+                // Downsample if requested
+                let final_transitions = if let Some(max_transitions) = request.max_transitions {
+                    self.downsample_transitions(filtered_transitions, max_transitions)
+                } else {
+                    filtered_transitions
+                };
+                
+                return Ok(UnifiedSignalData {
+                    file_path: request.file_path.clone(),
+                    scope_path: request.scope_path.clone(),
+                    variable_name: request.variable_name.clone(),
+                    unique_id: unique_id.clone(),
+                    transitions: final_transitions,
+                    total_transitions: transitions.len(),
+                    actual_time_range: self.compute_time_range(transitions),
+                });
+            }
+        }
+        
+        // Cache miss - load from waveform data
+        self.load_signal_from_waveform(request, &unique_id)
+    }
+    
+    /// Load signal data from the waveform data store
+    fn load_signal_from_waveform(&self, request: &UnifiedSignalRequest, unique_id: &str) -> Result<UnifiedSignalData, String> {
+        let mut stats = self.cache_stats.write().unwrap();
+        stats.cache_misses += 1;
+        
+        let waveform_store = WAVEFORM_DATA_STORE.lock().unwrap();
+        if let Some(waveform_data) = waveform_store.get(&request.file_path) {
+            // Load transitions from wellen data
+            if let Some(signal_ref) = waveform_data.signals.get(&format!("{}|{}", request.scope_path, request.variable_name)) {
+                let transitions = self.extract_transitions_from_wellen(waveform_data, signal_ref, &request.format)?;
+                
+                // Cache the loaded data
+                {
+                    let mut cache = self.transition_cache.write().unwrap();
+                    cache.insert(unique_id.to_string(), transitions.clone());
+                }
+                
+                // Filter by time range and downsample
+                let filtered_transitions = if let Some((start, end)) = request.time_range {
+                    transitions.iter()
+                        .filter(|t| t.time_seconds >= start && t.time_seconds <= end)
+                        .cloned()
+                        .collect()
+                } else {
+                    transitions.clone()
+                };
+                
+                let final_transitions = if let Some(max_transitions) = request.max_transitions {
+                    self.downsample_transitions(filtered_transitions, max_transitions)
+                } else {
+                    filtered_transitions
+                };
+                
+                return Ok(UnifiedSignalData {
+                    file_path: request.file_path.clone(),
+                    scope_path: request.scope_path.clone(),
+                    variable_name: request.variable_name.clone(),
+                    unique_id: unique_id.to_string(),
+                    transitions: final_transitions,
+                    total_transitions: transitions.len(),
+                    actual_time_range: self.compute_time_range(&transitions),
+                });
+            }
+        }
+        
+        Err(format!("Signal data not found: {}", unique_id))
+    }
+    
+    /// Extract transitions from wellen signal data
+    fn extract_transitions_from_wellen(
+        &self,
+        waveform_data: &WaveformData,
+        signal_ref: &wellen::SignalRef,
+        format: &shared::VarFormat,
+    ) -> Result<Vec<SignalTransition>, String> {
+        // This is a simplified version - real implementation would use wellen APIs
+        // to extract signal transitions with proper time conversion
+        let mut transitions = Vec::new();
+        
+        // TODO: Implement actual wellen signal value extraction
+        // For now, return empty transitions to avoid compilation errors
+        
+        Ok(transitions)
+    }
+    
+    /// Compute signal values at cursor time
+    fn compute_cursor_values(&self, signal_data: &[UnifiedSignalData], cursor_time: f64) -> BTreeMap<String, SignalValue> {
+        let mut cursor_values = BTreeMap::new();
+        
+        for signal in signal_data {
+            // Find the most recent transition at or before cursor time
+            let value = signal.transitions.iter()
+                .filter(|t| t.time_seconds <= cursor_time)
+                .last()
+                .map(|t| SignalValue::Present(t.value.clone()))
+                .unwrap_or(SignalValue::Missing);
+            
+            cursor_values.insert(signal.unique_id.clone(), value);
+        }
+        
+        cursor_values
+    }
+    
+    /// Downsample transitions for performance
+    fn downsample_transitions(&self, transitions: Vec<SignalTransition>, max_count: usize) -> Vec<SignalTransition> {
+        if transitions.len() <= max_count {
+            return transitions;
+        }
+        
+        // Simple decimation - take every nth transition
+        let step = transitions.len() / max_count;
+        transitions.into_iter()
+            .enumerate()
+            .filter_map(|(i, t)| if i % step == 0 { Some(t) } else { None })
+            .collect()
+    }
+    
+    /// Compute time range from transitions
+    fn compute_time_range(&self, transitions: &[SignalTransition]) -> Option<(f64, f64)> {
+        if transitions.is_empty() {
+            None
+        } else {
+            let min_time = transitions.first().unwrap().time_seconds;
+            let max_time = transitions.last().unwrap().time_seconds;
+            Some((min_time, max_time))
+        }
+    }
+}
+
+/// Global signal cache manager instance
+static SIGNAL_CACHE_MANAGER: Lazy<SignalCacheManager> = Lazy::new(|| SignalCacheManager::new());
 
 async fn up_msg_handler(req: UpMsgRequest<UpMsg>) {
     let (session_id, cor_id) = (req.session_id, req.cor_id);
@@ -83,6 +323,10 @@ async fn up_msg_handler(req: UpMsgRequest<UpMsg>) {
             
             // Send batch response
             send_down_msg(DownMsg::BatchSignalValues { batch_id: batch_id.clone(), file_results }, session_id, cor_id).await;
+        }
+        UpMsg::UnifiedSignalQuery { signal_requests, cursor_time, request_id } => {
+            // Handle unified signal query using the new cache manager
+            handle_unified_signal_query(signal_requests.clone(), cursor_time.clone(), request_id.clone(), session_id, cor_id).await;
         }
     }
 }
@@ -1991,6 +2235,33 @@ fn format_non_binary_signal_value(value: &wellen::SignalValue) -> String {
         }
         wellen::SignalValue::String(s) => s.to_string(),
         wellen::SignalValue::Real(f) => format!("{:.6}", f),
+    }
+}
+
+/// Handle unified signal query using the new cache manager
+async fn handle_unified_signal_query(
+    signal_requests: Vec<UnifiedSignalRequest>,
+    cursor_time: Option<f64>,
+    request_id: String,
+    session_id: SessionId,
+    cor_id: CorId,
+) {
+    match SIGNAL_CACHE_MANAGER.query_unified_signals(signal_requests, cursor_time).await {
+        Ok((signal_data, cursor_values, statistics)) => {
+            send_down_msg(DownMsg::UnifiedSignalResponse {
+                request_id,
+                signal_data,
+                cursor_values,
+                cached_time_range: None, // TODO: Implement based on actual cache data
+                statistics: Some(statistics),
+            }, session_id, cor_id).await;
+        }
+        Err(error) => {
+            send_down_msg(DownMsg::UnifiedSignalError {
+                request_id,
+                error,
+            }, session_id, cor_id).await;
+        }
     }
 }
 

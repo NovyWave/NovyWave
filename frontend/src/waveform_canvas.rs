@@ -2,9 +2,9 @@ use zoon::*;
 use fast2d;
 use crate::state::{SELECTED_VARIABLES, LOADED_FILES, TIMELINE_CURSOR_POSITION, CANVAS_WIDTH, CANVAS_HEIGHT, 
     IS_ZOOMING_IN, IS_ZOOMING_OUT, IS_PANNING_LEFT, IS_PANNING_RIGHT, IS_CURSOR_MOVING_LEFT, IS_CURSOR_MOVING_RIGHT,
-    MOUSE_X_POSITION, MOUSE_TIME_POSITION, ZOOM_CENTER_POSITION, TIMELINE_ZOOM_LEVEL, TIMELINE_VISIBLE_RANGE_START, TIMELINE_VISIBLE_RANGE_END};
+    MOUSE_X_POSITION, MOUSE_TIME_POSITION, ZOOM_CENTER_POSITION, TIMELINE_ZOOM_LEVEL, TIMELINE_VISIBLE_RANGE_START, TIMELINE_VISIBLE_RANGE_END, IS_LOADING};
 use crate::platform::{Platform, CurrentPlatform};
-use crate::config::current_theme;
+use crate::config::{current_theme, CONFIG_LOADED};
 use shared::{SelectedVariable, UpMsg, SignalTransitionQuery, SignalTransition};
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -38,33 +38,45 @@ static HAS_PENDING_REQUEST: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(fals
 // Note: Old complex deduplication system removed - now using simple throttling + batching
 
 // Animation request throttling - prevent flooding during smooth operations
+#[allow(dead_code)]  // Experimental performance optimization system - may be used in future
 static LAST_ANIMATION_REQUEST: Lazy<Mutable<f64>> = Lazy::new(|| Mutable::new(0.0));
+#[allow(dead_code)]  // Experimental performance optimization system - may be used in future
 const ANIMATION_REQUEST_INTERVAL_MS: f64 = 100.0; // Max 10 requests/second during animations
 
 // Cursor movement throttling - more aggressive for Q/E operations
+#[allow(dead_code)]  // Experimental performance optimization system - may be used in future
 static LAST_CURSOR_REQUEST: Lazy<Mutable<f64>> = Lazy::new(|| Mutable::new(0.0));
+#[allow(dead_code)]  // Experimental performance optimization system - may be used in future
 const CURSOR_REQUEST_INTERVAL_MS: f64 = 500.0; // Max 2 requests/second during cursor movement
 
 // Request cancellation system - prevent accumulation of obsolete requests
+#[allow(dead_code)]  // Experimental performance optimization system - may be used in future
 static ACTIVE_REQUEST_ID: Lazy<Mutable<Option<u64>>> = Lazy::new(|| Mutable::new(None));
+#[allow(dead_code)]  // Experimental performance optimization system - may be used in future
 static REQUEST_ID_COUNTER: Lazy<Mutable<u64>> = Lazy::new(|| Mutable::new(0));
 
 // Smart animation-aware request skipping for cursor movement
+#[allow(dead_code)]  // Experimental performance optimization system - may be used in future
 static CURSOR_MOVEMENT_START: Lazy<Mutable<Option<f64>>> = Lazy::new(|| Mutable::new(None));
-static LAST_CURSOR_REQUEST_TIME: Lazy<Mutable<f64>> = Lazy::new(|| Mutable::new(0.0));
+#[allow(dead_code)]  // Experimental performance optimization system - may be used in future
 const CURSOR_MOVEMENT_SETTLE_MS: f64 = 200.0; // Wait for cursor to settle before requesting
 
 // Request rate monitoring for debugging
+#[allow(dead_code)]  // Experimental performance optimization system - may be used in future
 static REQUEST_COUNT: Lazy<Mutable<u32>> = Lazy::new(|| Mutable::new(0));
+#[allow(dead_code)]  // Experimental performance optimization system - may be used in future
 static REQUEST_RATE_WINDOW_START: Lazy<Mutable<f64>> = Lazy::new(|| Mutable::new(get_timestamp_ms()));
+#[allow(dead_code)]  // Experimental performance optimization system - may be used in future
 const REQUEST_RATE_WINDOW_MS: f64 = 1000.0; // 1 second window
 
 /// Get current timestamp in milliseconds (WASM-safe)
+#[allow(dead_code)]  // Experimental performance optimization system - may be used in future
 fn get_timestamp_ms() -> f64 {
     js_sys::Date::now()
 }
 
 /// Generate unique request ID for cancellation tracking
+#[allow(dead_code)]  // Experimental performance optimization system - may be used in future
 fn generate_request_id() -> u64 {
     let current = REQUEST_ID_COUNTER.get();
     REQUEST_ID_COUNTER.set(current + 1);
@@ -72,6 +84,7 @@ fn generate_request_id() -> u64 {
 }
 
 /// Cancel previous request and prepare for new one
+#[allow(dead_code)]  // Experimental performance optimization system - may be used in future
 fn prepare_cancellable_request() -> u64 {
     // Cancel any active request
     if let Some(prev_id) = ACTIVE_REQUEST_ID.get() {
@@ -87,6 +100,7 @@ fn prepare_cancellable_request() -> u64 {
 }
 
 /// Smart cursor movement handling - skip requests during continuous movement
+#[allow(dead_code)]  // Experimental performance optimization system - may be used in future
 fn should_skip_cursor_request() -> bool {
     let now = get_timestamp_ms();
     
@@ -128,6 +142,7 @@ fn should_skip_cursor_request() -> bool {
 }
 
 /// Schedule a delayed request that fires when cursor movement settles
+#[allow(dead_code)]  // Experimental performance optimization system - may be used in future
 fn schedule_cursor_settle_request() {
     Task::start(async move {
         // Wait for movement to settle
@@ -146,6 +161,7 @@ fn schedule_cursor_settle_request() {
 }
 
 /// Track request rate for debugging and monitoring
+#[allow(dead_code)]  // Experimental performance optimization system - may be used in future
 fn track_request_rate() {
     let current_count = REQUEST_COUNT.get();
     REQUEST_COUNT.set(current_count + 1);
@@ -167,6 +183,7 @@ fn track_request_rate() {
 }
 
 /// Check if we should throttle requests during animations to prevent flooding
+#[allow(dead_code)]  // Experimental performance optimization system - may be used in future
 fn should_throttle_request() -> bool {
     let now = get_timestamp_ms();
     
@@ -225,95 +242,41 @@ fn request_transitions_for_all_variables(time_range: Option<(f32, f32)>) {
         return;
     }
     
-    // Skip if we already have a pending request to prevent overlapping
-    if HAS_PENDING_REQUEST.get() {
-        zoon::println!("🚫 SKIPPING REQUESTS: Already have pending request");
-        return;
-    }
-    
-    // Group variables by file path to enable batching
-    let mut queries_by_file: HashMap<String, Vec<SignalTransitionQuery>> = HashMap::new();
-    
-    for unique_id in variables_to_request {
-        // Parse unique_id: "/path/file.ext|scope|variable"
-        let parts: Vec<&str> = unique_id.split('|').collect();
-        if parts.len() >= 3 {
-            let file_path = parts[0].to_string();
-            let scope_path = parts[1].to_string();
-            let variable_name = parts[2].to_string();
-            
-            // Create query for this variable
-            let query = SignalTransitionQuery {
-                scope_path,
-                variable_name,
-            };
-            
-            // Group queries by file path
-            queries_by_file
-                .entry(file_path)
-                .or_insert_with(Vec::new)
-                .push(query);
-        }
-    }
-    
-    // Check if we should throttle during animations
-    if should_throttle_request() {
-        zoon::println!("🚦 SKIPPING REQUESTS: Throttled during animation");
-        return;
-    }
-    
-    // Smart cursor movement handling - skip requests during rapid Q/E sequences
-    if should_skip_cursor_request() {
-        return;
-    }
-    
-    // Cancel any previous request and get new ID
-    let request_id = prepare_cancellable_request();
-    
-    // Send ONE batched request per file (instead of N individual requests)
-    for (file_path, signal_queries) in queries_by_file {
-        let batch_size = signal_queries.len();
-        zoon::println!("📦 BATCHED REQUEST: {} variables in 1 request for file {}", batch_size, file_path);
-        
-        // Track request rate for monitoring
-        track_request_rate();
-        
-        // Get file time range for this specific file
-        let (file_min, file_max) = {
-            let loaded_files = LOADED_FILES.lock_ref();
-            if let Some(loaded_file) = loaded_files.iter().find(|f| f.id == file_path || file_path.ends_with(&f.filename)) {
-                (
-                    loaded_file.min_time.unwrap_or(0.0) as f64,
-                    loaded_file.max_time.unwrap_or(1000.0) as f64
-                )
+    // NEW: Use unified SignalDataService instead of old query system
+    let signal_requests: Vec<crate::signal_data_service::SignalRequest> = variables_to_request
+        .into_iter()
+        .filter_map(|unique_id| {
+            // Parse unique_id: "/path/file.ext|scope|variable"
+            let parts: Vec<&str> = unique_id.split('|').collect();
+            if parts.len() >= 3 {
+                Some(crate::signal_data_service::SignalRequest {
+                    file_path: parts[0].to_string(),
+                    scope_path: parts[1].to_string(),
+                    variable_name: parts[2].to_string(),
+                    time_range: Some((min_time as f64, max_time as f64)),
+                    max_transitions: Some(10000), // Match timeline needs
+                    format: shared::VarFormat::Hexadecimal, // Default for timeline
+                })
             } else {
-                // Don't make request if file isn't loaded yet
-                crate::debug_utils::debug_conditional(&format!("FILE NOT LOADED YET - cannot request transitions for {}", file_path));
-                continue;
+                None
             }
-        };
-        
-        // Create batched message with ALL queries for this file
-        let message = UpMsg::QuerySignalTransitions {
-            file_path,
-            signal_queries, // Multiple queries in one request!
-            time_range: (file_min, file_max),
-        };
-        
-        // Send the batched request
-        Task::start(async move {
-            if let Err(e) = CurrentPlatform::send_message(message).await {
-                zoon::println!("ERROR: Failed to query signal transitions via platform: {}", e);
-            }
-        });
+        })
+        .collect();
+    
+    if signal_requests.is_empty() {
+        return;
     }
     
-    // Set pending flag and clear it after a reasonable timeout
-    HAS_PENDING_REQUEST.set(true);
-    Task::start(async move {
-        Timer::sleep(500).await; // 500ms timeout for batch requests
-        HAS_PENDING_REQUEST.set(false);
-    });
+    // Request data through unified service instead of old system
+    let cursor_time = Some(crate::state::TIMELINE_CURSOR_POSITION.get());
+    let request_count = signal_requests.len();
+    crate::signal_data_service::SignalDataService::request_signal_data(
+        signal_requests, 
+        cursor_time, 
+        true // high priority for timeline
+    );
+    
+    zoon::println!("🔄 TIMELINE: Requested transitions for {} variables via unified service", request_count);
 }
 
 /// Clear transition request tracking for removed variables (simplified)
@@ -866,14 +829,17 @@ async fn create_canvas_element() -> impl Element {
     Task::start(async move {
         SELECTED_VARIABLES.signal_vec_cloned().for_each(move |_| {
             async move {
-                
                 // Calculate new range from selected variables 
                 if let Some((min_time, max_time)) = get_current_timeline_range() {
                     TIMELINE_VISIBLE_RANGE_START.set_neq(min_time);
                     TIMELINE_VISIBLE_RANGE_END.set_neq(max_time);
                     
-                    // OPTIMIZED: Only request transition data for NEW variables (prevents O(N²) flood)
-                    request_transitions_for_new_variables_only(Some((min_time, max_time)));
+                    // DEDUPLICATION: Only request transitions if main.rs handler won't handle it
+                    // main.rs handler has condition: CONFIG_LOADED.get() && !IS_LOADING.get()
+                    // So this handler should request ONLY when that condition is false
+                    if !CONFIG_LOADED.get() || IS_LOADING.get() {
+                        request_transitions_for_new_variables_only(Some((min_time, max_time)));
+                    }
                     
                     trigger_canvas_redraw();
                 } else {

@@ -1,7 +1,152 @@
 use zoon::*;
 use std::collections::HashMap;
 use indexmap::{IndexMap, IndexSet};
-use shared::{WaveformFile, LoadingFile, FileSystemItem, TrackedFile, FileState, create_tracked_file, update_smart_labels};
+use shared::{WaveformFile, LoadingFile, FileSystemItem, TrackedFile, FileState, create_tracked_file};
+// Using simpler queue approach with MutableVec
+
+// ===== FILE UPDATE MESSAGE QUEUE SYSTEM =====
+
+#[derive(Debug, Clone)]
+pub enum FileUpdateMessage {
+    Add { tracked_file: TrackedFile },
+    Update { file_id: String, new_state: FileState },
+    Remove { file_id: String },
+    UpdateSmartLabel { file_id: String, smart_label: String },
+}
+
+// Message queue system to prevent recursive locking
+static FILE_UPDATE_QUEUE: Lazy<Mutable<Vec<FileUpdateMessage>>> = Lazy::new(|| {
+    let queue = Mutable::new(Vec::new());
+    
+    // Start the processing task immediately when queue is first accessed
+    start_queue_processor(&queue);
+    
+    queue
+});
+
+static QUEUE_PROCESSOR_RUNNING: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
+
+fn start_queue_processor(queue: &Mutable<Vec<FileUpdateMessage>>) {
+    let queue_clone = queue.clone();
+    Task::start(async move {
+        // Ensure only one processor runs
+        if QUEUE_PROCESSOR_RUNNING.replace(true) {
+            return; // Another processor is already running
+        }
+        
+        loop {
+            // Wait for messages
+            let messages = {
+                let mut queue_lock = queue_clone.lock_mut();
+                if queue_lock.is_empty() {
+                    drop(queue_lock);
+                    Timer::sleep(10).await; // Small delay to prevent busy waiting
+                    continue;
+                }
+                
+                // Take all messages and clear the queue
+                std::mem::take(&mut *queue_lock)
+            };
+            
+            // Process each message sequentially with proper event loop yielding
+            for message in messages {
+                // CRITICAL: Yield to the event loop between messages to ensure:
+                // 1. Previous locks are fully dropped
+                // 2. Signal handlers complete execution  
+                // 3. DOM updates are processed
+                // This prevents recursive mutex locks by allowing the JavaScript event loop
+                // to run between operations, ensuring signals fire after locks are released
+                Task::next_macro_tick().await;
+                
+                // Process the message sequentially (not concurrently!)
+                process_file_update_message_sync(message).await;
+            }
+        }
+    });
+}
+
+/// Process file update messages synchronously - the ONLY place that locks TRACKED_FILES for writing
+async fn process_file_update_message_sync(message: FileUpdateMessage) {
+    match message {
+        FileUpdateMessage::Add { tracked_file } => {
+            // Check if file already exists and replace if it does
+            let existing_index = {
+                let files = TRACKED_FILES.lock_ref();
+                files.iter().position(|f| f.id == tracked_file.id)
+            };
+            
+            if let Some(index) = existing_index {
+                // Update existing file
+                TRACKED_FILES.lock_mut().set_cloned(index, tracked_file);
+            } else {
+                // Add new file
+                TRACKED_FILES.lock_mut().push_cloned(tracked_file);
+            }
+            
+            // Update the file IDs cache
+            update_tracked_file_ids_cache();
+        },
+        
+        FileUpdateMessage::Update { file_id, new_state } => {
+            // Find and update the file state
+            let file_index = {
+                let tracked_files = TRACKED_FILES.lock_ref();
+                tracked_files.iter().position(|f| f.id == file_id)
+            };
+            
+            if let Some(index) = file_index {
+                let mut tracked_files = TRACKED_FILES.lock_mut();
+                if let Some(mut file) = tracked_files.get(index).cloned() {
+                    file.state = new_state;
+                    tracked_files.set_cloned(index, file);
+                }
+            }
+            
+            // Update the file IDs cache
+            update_tracked_file_ids_cache();
+        },
+        
+        FileUpdateMessage::Remove { file_id } => {
+            TRACKED_FILES.lock_mut().retain(|f| f.id != file_id);
+            
+            // Update the file IDs cache
+            update_tracked_file_ids_cache();
+        },
+        
+        FileUpdateMessage::UpdateSmartLabel { file_id, smart_label } => {
+            // Find and update the smart label for the specific file
+            let file_index = {
+                let tracked_files = TRACKED_FILES.lock_ref();
+                tracked_files.iter().position(|f| f.id == file_id)
+            };
+            
+            if let Some(index) = file_index {
+                let mut tracked_files = TRACKED_FILES.lock_mut();
+                if let Some(mut file) = tracked_files.get(index).cloned() {
+                    file.smart_label = smart_label;
+                    tracked_files.set_cloned(index, file);
+                }
+            }
+        },
+    }
+}
+
+/// Update the cached file IDs to prevent recursive locking in signal handlers
+fn update_tracked_file_ids_cache() {
+    let tracked_files = TRACKED_FILES.lock_ref();
+    let file_ids: IndexSet<String> = tracked_files.iter().map(|f| f.id.clone()).collect();
+    TRACKED_FILE_IDS.set_neq(file_ids);
+}
+
+/// Queue a message for processing (non-recursive)
+fn queue_file_update_message(message: FileUpdateMessage) {
+    FILE_UPDATE_QUEUE.lock_mut().push(message);
+}
+
+/// Send a message to the file update processor
+pub fn send_file_update_message(message: FileUpdateMessage) {
+    queue_file_update_message(message);
+}
 
 // Panel resizing state
 pub static FILES_PANEL_WIDTH: Lazy<Mutable<u32>> = Lazy::new(|| 470.into());
@@ -61,8 +206,6 @@ pub static VARIABLES_SEARCH_FILTER: Lazy<Mutable<String>> = lazy::default();
 // Input focus tracking for keyboard control prevention
 pub static VARIABLES_SEARCH_INPUT_FOCUSED: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
 
-// File loading trigger signal for reactive type updates
-pub static FILE_LOADING_TRIGGER: Lazy<Mutable<u32>> = lazy::default();
 
 // Dock state management - DEFAULT TO DOCKED MODE  
 pub static IS_DOCKED_TO_BOTTOM: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(true));
@@ -94,9 +237,13 @@ pub static CONFIG_INITIALIZATION_COMPLETE: Lazy<Mutable<bool>> = lazy::default()
 // Hierarchical file tree storage - maps directory path to its contents
 pub static FILE_TREE_CACHE: Lazy<Mutable<HashMap<String, Vec<FileSystemItem>>>> = lazy::default();
 
-// Enhanced file tracking system - replaces LOADED_FILES, LOADING_FILES, and FILE_PATHS
+// Enhanced file tracking system - replaces LOADED_FILES, LOADING_FILES, and FILE_PATHS  
 pub static TRACKED_FILES: Lazy<MutableVec<TrackedFile>> = lazy::default();
 pub static IS_LOADING: Lazy<Mutable<bool>> = lazy::default();
+
+// Cache of tracked file IDs - prevents recursive locking in signal handlers
+pub static TRACKED_FILE_IDS: Lazy<Mutable<IndexSet<String>>> = lazy::default();
+
 
 // Legacy support during transition - will be removed later
 pub static LOADING_FILES: Lazy<MutableVec<LoadingFile>> = lazy::default();
@@ -266,48 +413,25 @@ pub static TOAST_NOTIFICATIONS: Lazy<MutableVec<ErrorAlert>> = lazy::default();
 pub fn add_tracked_file(file_path: String, initial_state: FileState) {
     let tracked_file = create_tracked_file(file_path, initial_state);
     
-    // Check if file already exists and replace if it does
-    let existing_index = TRACKED_FILES.lock_ref()
-        .iter()
-        .position(|f| f.id == tracked_file.id);
-    
-    if let Some(index) = existing_index {
-        TRACKED_FILES.lock_mut().set_cloned(index, tracked_file);
-    } else {
-        TRACKED_FILES.lock_mut().push_cloned(tracked_file);
-    }
-    
-    // Update smart labels for all files
-    refresh_smart_labels();
+    // Use message queue to prevent recursive locking
+    send_file_update_message(FileUpdateMessage::Add { tracked_file });
 }
 
 /// Update the state of an existing tracked file
 pub fn update_tracked_file_state(file_id: &str, new_state: FileState) {
-    let mut tracked_files = TRACKED_FILES.lock_mut();
-    
-    // Find the index and update the file state
-    if let Some(index) = tracked_files.iter().position(|f| f.id == file_id) {
-        if let Some(file_ref) = tracked_files.iter().nth(index) {
-            let mut file = file_ref.clone();
-            file.state = new_state;
-            tracked_files.set_cloned(index, file);
-        }
-    } else {
-        // File ID not found in tracked files - may have been removed
-    }
-    drop(tracked_files); // Release lock before calling refresh_smart_labels
-    
-    // Refresh smart labels whenever file state changes
-    refresh_smart_labels();
-    
-    // Trigger reactive type updates when files are loaded
-    FILE_LOADING_TRIGGER.update(|count| count + 1);
+    // Use message queue to prevent recursive locking
+    send_file_update_message(FileUpdateMessage::Update {
+        file_id: file_id.to_string(),
+        new_state,
+    });
 }
 
 /// Remove a tracked file by ID
 pub fn remove_tracked_file(file_id: &str) {
-    TRACKED_FILES.lock_mut().retain(|f| f.id != file_id);
-    refresh_smart_labels();
+    // Use message queue to prevent recursive locking
+    send_file_update_message(FileUpdateMessage::Remove {
+        file_id: file_id.to_string(),
+    });
 }
 
 
@@ -320,26 +444,13 @@ pub fn get_all_tracked_file_paths() -> Vec<String> {
         .collect()
 }
 
-/// Refresh smart labels for all tracked files
-pub fn refresh_smart_labels() {
-    let mut tracked_files = TRACKED_FILES.lock_mut();
-    let mut files_vec: Vec<TrackedFile> = tracked_files.iter().cloned().collect();
-    
-    // Generate smart labels using the shared algorithm
-    update_smart_labels(&mut files_vec);
-    
-    // Update the MutableVec with the new smart labels
-    for (index, updated_file) in files_vec.iter().enumerate() {
-        if index < tracked_files.len() {
-            tracked_files.set_cloned(index, updated_file.clone());
-        }
-    }
-}
 
 /// Initialize tracked files from config file paths (for session restoration)
 pub fn init_tracked_files_from_config(file_paths: Vec<String>) {
+    // Clear existing files first
     TRACKED_FILES.lock_mut().clear();
     
+    // Add each file through the message queue
     for path in file_paths {
         add_tracked_file(path, FileState::Loading(shared::LoadingStatus::Starting));
     }
@@ -381,7 +492,8 @@ pub fn add_selected_variable(variable: shared::Signal, file_id: &str, scope_id: 
         index.insert(selected_var.unique_id.clone());
         SELECTED_VARIABLES.lock_mut().push_cloned(selected_var.clone());
         
-        // Trigger signal value queries for the newly added variable
+        // Trigger signal value queries for the newly added variable  
+        zoon::println!("🚀 add_selected_variable: Triggering signal value queries for {}", selected_var.unique_id);
         crate::views::trigger_signal_value_queries();
         
         // Trigger config save
@@ -522,4 +634,177 @@ fn scope_exists_in_file(scopes: &[shared::ScopeData], target_scope_id: &str) -> 
         }
     }
     false
+}
+
+// =============================================================================
+// DERIVED SIGNALS FOR CONFIG - Single Source of Truth for Config Serialization
+// =============================================================================
+
+/// Derived signal that automatically converts TRACKED_FILES to Vec<String> for config storage
+pub static OPENED_FILES_FOR_CONFIG: Lazy<Mutable<Vec<String>>> = Lazy::new(|| {
+    let derived = Mutable::new(Vec::new());
+    
+    // Initialize the derived signal with current TRACKED_FILES
+    let derived_clone = derived.clone();
+    Task::start(async move {
+        TRACKED_FILES.signal_vec_cloned()
+            .to_signal_cloned()
+            .for_each(move |files| {
+                let derived = derived_clone.clone();
+                async move {
+                    let file_paths: Vec<String> = files.iter().map(|f| f.path.clone()).collect();
+                    derived.set_neq(file_paths);
+                }
+            })
+            .await;
+    });
+    
+    derived
+});
+
+/// Derived signal that converts EXPANDED_SCOPES (IndexSet) to Vec<String> for config storage
+/// Uses CONFIG_INITIALIZATION_COMPLETE guard and deduplication to prevent circular loops and flickering
+pub static EXPANDED_SCOPES_FOR_CONFIG: Lazy<Mutable<Vec<String>>> = Lazy::new(|| {
+    let derived = Mutable::new(Vec::new());
+    
+    // Initialize the derived signal with current EXPANDED_SCOPES
+    let derived_clone = derived.clone();
+    Task::start(async move {
+        EXPANDED_SCOPES.signal_ref(|expanded_set| expanded_set.clone())
+            .for_each(move |expanded_set| {
+                let derived = derived_clone.clone();
+                async move {
+                    // GUARD: Only process changes after initial config load is complete
+                    // This prevents circular loops and flickering during config initialization
+                    if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
+                        // Strip TreeView "scope_" prefixes before storing to config
+                        let expanded_vec: Vec<String> = expanded_set.into_iter()
+                            .map(|scope_id| {
+                                if scope_id.starts_with("scope_") {
+                                    scope_id.strip_prefix("scope_").unwrap_or(&scope_id).to_string()
+                                } else {
+                                    scope_id
+                                }
+                            })
+                            .collect();
+                        
+                        derived.set_neq(expanded_vec);
+                    }
+                }
+            })
+            .await;
+    });
+    
+    derived
+});
+
+/// Derived signal that converts FILE_PICKER_EXPANDED (IndexSet) to Vec<String> for config storage
+/// Uses CONFIG_INITIALIZATION_COMPLETE guard and debouncing to prevent circular loops
+pub static LOAD_FILES_EXPANDED_DIRECTORIES_FOR_CONFIG: Lazy<Mutable<Vec<String>>> = Lazy::new(|| {
+    let derived = Mutable::new(Vec::new());
+    
+    // Initialize the derived signal with current FILE_PICKER_EXPANDED
+    let derived_clone = derived.clone();
+    Task::start(async move {
+        FILE_PICKER_EXPANDED.signal_ref(|expanded_set| expanded_set.clone())
+            // Note: Guard flag prevents circular triggers more effectively than dedupe
+            .for_each(move |expanded_set| {
+                let derived = derived_clone.clone();
+                async move {
+                    // GUARD: Only process changes after initial config load is complete
+                    // This prevents circular loops during config initialization
+                    if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
+                        let expanded_vec: Vec<String> = expanded_set.into_iter().collect();
+                        derived.set_neq(expanded_vec);
+                    }
+                }
+            })
+            .await;
+    });
+    
+    derived
+});
+
+/// Derived signal that converts SELECTED_VARIABLES to Vec<SelectedVariable> for config storage
+/// Uses CONFIG_INITIALIZATION_COMPLETE guard and debouncing to prevent circular loops
+pub static SELECTED_VARIABLES_FOR_CONFIG: Lazy<Mutable<Vec<shared::SelectedVariable>>> = Lazy::new(|| {
+    let derived = Mutable::new(Vec::new());
+    
+    // Initialize the derived signal with current SELECTED_VARIABLES
+    let derived_clone = derived.clone();
+    Task::start(async move {
+        SELECTED_VARIABLES.signal_vec_cloned()
+            .to_signal_cloned()
+            // Note: Guard flag prevents circular triggers more effectively than dedupe
+            .for_each(move |variables| {
+                let derived = derived_clone.clone();
+                async move {
+                    // GUARD: Only process changes after initial config load is complete
+                    // This prevents circular loops during config initialization
+                    if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
+                        derived.set_neq(variables);
+                    }
+                }
+            })
+            .await;
+    });
+    
+    derived
+});
+
+/// Derived signal for dock mode based on IS_DOCKED_TO_BOTTOM
+pub static DOCK_MODE_FOR_CONFIG: Lazy<Mutable<shared::DockMode>> = Lazy::new(|| {
+    let derived = Mutable::new(shared::DockMode::Bottom);
+    
+    let derived_clone = derived.clone();
+    Task::start(async move {
+        IS_DOCKED_TO_BOTTOM.signal()
+            .for_each(move |is_docked_to_bottom| {
+                let derived = derived_clone.clone();
+                async move {
+                    let dock_mode = if is_docked_to_bottom {
+                        shared::DockMode::Bottom
+                    } else {
+                        shared::DockMode::Right
+                    };
+                    derived.set_neq(dock_mode);
+                }
+            })
+            .await;
+    });
+    
+    derived
+});
+
+/// Deduplicated EXPANDED_SCOPES signal specifically for TreeView to prevent unnecessary re-renders
+pub static EXPANDED_SCOPES_FOR_TREEVIEW: Lazy<Mutable<IndexSet<String>>> = Lazy::new(|| {
+    let derived = Mutable::new(IndexSet::new());
+    
+    // CRITICAL FIX: Immediate sync on initialization - get current value first
+    // This ensures TreeView gets config-loaded expansion state immediately
+    let current_expanded = EXPANDED_SCOPES.get_cloned();
+    derived.set_neq(current_expanded);
+    
+    // Also track future changes with deduplication
+    let derived_clone = derived.clone();
+    Task::start(async move {
+        EXPANDED_SCOPES.signal_ref(|expanded_set| expanded_set.clone())
+            .for_each_sync(move |expanded_set| {
+                // set_neq provides automatic deduplication - only signals if value actually changed
+                derived_clone.set_neq(expanded_set);
+            });
+    });
+    
+    derived
+});
+
+/// Initialize all derived signals for config system
+pub fn init_config_derived_signals() {
+    // Force initialization of all derived signals
+    let _ = &*OPENED_FILES_FOR_CONFIG;
+    let _ = &*EXPANDED_SCOPES_FOR_CONFIG;
+    let _ = &*EXPANDED_SCOPES_FOR_TREEVIEW;
+    let _ = &*LOAD_FILES_EXPANDED_DIRECTORIES_FOR_CONFIG;
+    let _ = &*SELECTED_VARIABLES_FOR_CONFIG;
+    let _ = &*DOCK_MODE_FOR_CONFIG;
 }

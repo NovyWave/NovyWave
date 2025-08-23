@@ -512,6 +512,7 @@ dependencies = [
  "jwalk",
  "memmap2",
  "moon",
+ "rayon",
  "serde",
  "shared",
  "tokio",

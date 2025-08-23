@@ -235,6 +235,7 @@ impl TreeViewBuilder {
 
     pub fn build(self) -> impl Element {
         // Use external state if provided, otherwise create internal state
+        let external_expanded_ref = self.external_expanded.clone();
         let expanded_items = if let Some(external) = self.external_expanded {
             external
         } else {
@@ -243,50 +244,12 @@ impl TreeViewBuilder {
 
         let selected_items = if let Some(external) = self.external_selected {
             external
-        } else if let Some(external_vec) = self.external_selected_vec {
-            // Create a bridge that syncs bidirectionally between MutableVec and HashSet
-            let bridge_indexset = Mutable::new(IndexSet::new());
-            
-            // Initialize from current MutableVec content
-            {
-                let current_items: IndexSet<String> = external_vec.lock_ref().iter().cloned().collect();
-                bridge_indexset.set(current_items);
-            }
-            
-            // Sync changes from MutableVec to HashSet
-            let sync_vec_to_indexset = external_vec.clone();
-            let sync_indexset_to_update = bridge_indexset.clone();
-            Task::start(async move {
-                sync_vec_to_indexset.signal_vec_cloned().to_signal_map(|vec| vec.iter().cloned().collect::<IndexSet<String>>()).for_each_sync(move |new_set| {
-                    let current_indexset = sync_indexset_to_update.get_cloned();
-                    
-                    // Only update if different to avoid infinite loops
-                    if current_indexset != new_set {
-                        sync_indexset_to_update.set_neq(new_set);
-                    }
-                }).await;
-            });
-            
-            // Sync changes from HashSet back to MutableVec
-            let sync_vec_back = external_vec.clone();
-            let sync_indexset_back = bridge_indexset.clone();
-            Task::start(async move {
-                sync_indexset_back.signal_ref(|set| set.clone()).for_each_sync(move |new_set| {
-                    let mut vec_lock = sync_vec_back.lock_mut();
-                    let current_vec_items: IndexSet<String> = vec_lock.iter().cloned().collect();
-                    
-                    // Only update if different to avoid infinite loops
-                    if current_vec_items != new_set {
-                        vec_lock.clear();
-                        vec_lock.extend(new_set.iter().cloned());
-                    }
-                }).await;
-            });
-            
-            bridge_indexset
         } else {
             Mutable::new(IndexSet::from_iter(self.default_selected.clone()))
         };
+        
+        // Store external_vec reference separately for direct handling
+        let external_selected_vec = self.external_selected_vec;
 
         let focused_item = Mutable::new(None::<String>);
 
@@ -308,38 +271,32 @@ impl TreeViewBuilder {
                     .style("min-width", "fit-content")
             })
             .s(Gap::new().y(SPACING_2))
-            .items_signal_vec(
-                always(data.clone()).map({
+            .items(
+                data.into_iter().map({
                     let expanded_items = expanded_items.clone();
                     let selected_items = selected_items.clone();
                     let focused_item = focused_item.clone();
-                    move |items| {
-                        let expanded_items = expanded_items.clone();
-                        let selected_items = selected_items.clone();
-                        let focused_item = focused_item.clone();
-                        items.into_iter().map({
-                            let expanded_items = expanded_items.clone();
-                            let selected_items = selected_items.clone();
-                            let focused_item = focused_item.clone();
-                            move |item| {
-                                render_tree_item(
-                                    item,
-                                    0,
-                                    size,
-                                    variant,
-                                    show_icons,
-                                    show_checkboxes,
-                                    show_checkboxes_on_scopes_only,
-                                    single_scope_selection,
-                                    disabled,
-                                    expanded_items.clone(),
-                                    selected_items.clone(),
-                                    focused_item.clone(),
-                                ).unify()
-                            }
-                        }).collect::<Vec<_>>()
+                    let external_expanded_ref = external_expanded_ref.clone();
+                    let external_selected_vec = external_selected_vec.clone();
+                    move |item| {
+                        render_tree_item(
+                            item,
+                            0,
+                            size,
+                            variant,
+                            show_icons,
+                            show_checkboxes,
+                            show_checkboxes_on_scopes_only,
+                            single_scope_selection,
+                            disabled,
+                            expanded_items.clone(),
+                            selected_items.clone(),
+                            focused_item.clone(),
+                            external_expanded_ref.clone(),
+                            external_selected_vec.clone(),
+                        ).unify()
                     }
-                }).to_signal_vec()
+                }).collect::<Vec<_>>()
             );
 
         // Apply variant-specific styling
@@ -384,6 +341,93 @@ impl TreeViewBuilder {
     }
 }
 
+// Helper function for stable selection state mutations - works with both IndexSet and MutableVec
+fn handle_selection_change(
+    item_id: &str,
+    selected_items: &Mutable<IndexSet<String>>,
+    single_scope_selection: bool,
+) {
+    let mut selected = selected_items.lock_mut();
+    let was_selected = selected.contains(item_id);
+    
+    // Handle scope selection logic
+    if item_id.starts_with("scope_") {
+        // Special handling for scopes when single_scope_selection is enabled
+        if single_scope_selection {
+            if was_selected {
+                // Deselect this scope
+                selected.shift_remove(item_id);
+            } else {
+                // Clear all other scope selections and select this one (radio button behavior)
+                let old_scope_count = selected.iter().filter(|id| id.starts_with("scope_")).count();
+                selected.retain(|id| !id.starts_with("scope_"));
+                selected.insert(item_id.to_string());
+            }
+        } else {
+            // Regular multi-select behavior for scopes
+            if was_selected {
+                selected.shift_remove(item_id);
+            } else {
+                selected.insert(item_id.to_string());
+            }
+        }
+    } else {
+        // Regular checkbox behavior for non-scope items
+        if was_selected {
+            selected.shift_remove(item_id);
+        } else {
+            selected.insert(item_id.to_string());
+        }
+    }
+    
+}
+
+// Helper function for MutableVec selection changes
+fn handle_selection_change_vec(
+    item_id: &str,
+    selected_items_vec: &MutableVec<String>,
+    single_scope_selection: bool,
+) {
+    let mut selected = selected_items_vec.lock_mut();
+    let was_selected = selected.iter().position(|id| id == item_id).is_some();
+    
+    // Handle scope selection logic
+    if item_id.starts_with("scope_") {
+        // Special handling for scopes when single_scope_selection is enabled
+        if single_scope_selection {
+            if let Some(pos) = selected.iter().position(|id| id == item_id) {
+                // Deselect this scope
+                selected.remove(pos);
+            } else {
+                // Clear all other scope selections and select this one (radio button behavior)
+                let old_count = selected.len();
+                selected.retain(|id| !id.starts_with("scope_"));
+                selected.push_cloned(item_id.to_string());
+            }
+        } else {
+            // Regular multi-select behavior for scopes
+            if let Some(pos) = selected.iter().position(|id| id == item_id) {
+                selected.remove(pos);
+            } else {
+                selected.push_cloned(item_id.to_string());
+            }
+        }
+    } else {
+        // Regular checkbox behavior for non-scope items
+        if let Some(pos) = selected.iter().position(|id| id == item_id) {
+            selected.remove(pos);
+        } else {
+            selected.push_cloned(item_id.to_string());
+        }
+    }
+    
+}
+
+// Helper function to check if item is selected in MutableVec
+fn is_item_selected_in_vec(item_id: &str, selected_vec: &MutableVec<String>) -> bool {
+    selected_vec.lock_ref().iter().any(|id| id == item_id)
+}
+
 // Render individual tree item with full functionality
 fn render_tree_item(
     item: TreeViewItemData,
@@ -398,10 +442,13 @@ fn render_tree_item(
     expanded_items: Mutable<IndexSet<String>>,
     selected_items: Mutable<IndexSet<String>>,
     focused_item: Mutable<Option<String>>,
+    external_expanded: Option<Mutable<IndexSet<String>>>,
+    external_selected_vec: Option<MutableVec<String>>,
 ) -> impl Element {
     let item_id = item.id.clone();
     let has_children = item.has_children();
     let is_disabled = tree_disabled || item.is_disabled();
+    
     
     // Clone values needed for closures before moving
     let item_id_for_remove = item_id.clone();
@@ -425,12 +472,10 @@ fn render_tree_item(
         TreeViewSize::Large => (28, FONT_SIZE_14, SPACING_2, 20),
     };
 
-    // Create the tree item row with compact structure - wrapped in Button for click handling
-    let item_row = Button::new()
+    // Create the tree item row with compact structure - using El to avoid nested buttons
+    let item_row = El::new()
         .s(Height::exact(min_height))
         .s(Width::fill())
-        .s(Background::new().color("transparent"))
-        .s(Borders::new())
         .s(Cursor::new(if is_disabled {
             CursorIcon::NotAllowed
         } else {
@@ -453,11 +498,11 @@ fn render_tree_item(
                 hovered.set(is_hovered);
             }
         })
-        .label(
+        .child(
             Row::new()
                 .s(Height::exact(min_height))
                 .s(Width::fill())
-                .s(Gap::new().x(SPACING_4))
+                .s(Gap::new().x(SPACING_2))
                 .s(Align::new().center_y())
         // Indentation spacer
         .item(
@@ -481,46 +526,54 @@ fn render_tree_item(
                     } else {
                         CursorIcon::Pointer
                     }))
-                    .label_signal(
-                        expanded_items.signal_ref({
-                            let item_id = item_id.clone();
-                            move |expanded| {
-                                if expanded.contains(&item_id) {
-                                    IconBuilder::new(IconName::ChevronDown)
-                                        .size(IconSize::Small)
-                                        .color(if is_disabled {
-                                            IconColor::Muted
-                                        } else {
-                                            IconColor::Secondary
-                                        })
-                                        .build()
+                    .label_signal({
+                        let item_id = item_id.clone();
+                        let external_expanded = external_expanded.clone();
+                        let expanded_items = expanded_items.clone();
+                        
+                        if let Some(external) = external_expanded {
+                            external.signal_ref(move |expanded_set| expanded_set.contains(&item_id)).boxed()
+                        } else {
+                            expanded_items.signal_ref(move |expanded_set| expanded_set.contains(&item_id)).boxed()
+                        }.map(move |is_expanded| {
+                            IconBuilder::new(if is_expanded { IconName::ChevronDown } else { IconName::ChevronRight })
+                                .size(IconSize::Small)
+                                .color(if is_disabled {
+                                    IconColor::Muted
                                 } else {
-                                    IconBuilder::new(IconName::ChevronRight)
-                                        .size(IconSize::Small)
-                                        .color(if is_disabled {
-                                            IconColor::Muted
-                                        } else {
-                                            IconColor::Secondary
-                                        })
-                                        .build()
-                                }
-                            }
+                                    IconColor::Secondary
+                                })
+                                .build()
                         })
-                    )
+                    })
                     .on_press_event({
                         let item_id = item_id.clone();
                         let expanded_items = expanded_items.clone();
+                        let external_expanded = external_expanded.clone();
                         move |event| {
                             // Prevent event from bubbling up to the row's click handler
                             event.pass_to_parent(false);
 
                             if !is_disabled {
-                                let mut expanded = expanded_items.lock_mut();
-                                if expanded.contains(&item_id) {
-                                    expanded.shift_remove(&item_id);
+                                // Use external expansion state if provided, otherwise use internal state
+                                if let Some(external) = &external_expanded {
+                                    let mut expanded = external.lock_mut();
+                                    let was_expanded = expanded.contains(&item_id);
+                                    if was_expanded {
+                                        expanded.shift_remove(&item_id);
+                                    } else {
+                                        expanded.insert(item_id.clone());
+                                    }
                                 } else {
-                                    expanded.insert(item_id.clone());
+                                    let mut expanded = expanded_items.lock_mut();
+                                    let was_expanded = expanded.contains(&item_id);
+                                    if was_expanded {
+                                        expanded.shift_remove(&item_id);
+                                    } else {
+                                        expanded.insert(item_id.clone());
+                                    }
                                 }
+                            } else {
                             }
                         }
                     })
@@ -532,113 +585,88 @@ fn render_tree_item(
                     .unify()
             }
         )
-        // Checkbox (if enabled) - conditionally based on item type
-        .item_signal(
-            selected_items.signal_ref({
-                let item_id = item_id.clone();
-                move |selected| selected.contains(&item_id)
-            }).map({
-                let item_id = item_id.clone();
-                let selected_items = selected_items.clone();
-                move |is_selected| {
-                    // Show checkboxes based on user requirements:
-                let should_show_checkbox = show_checkboxes && !is_disabled && 
-                    if show_checkboxes_on_scopes_only {
-                        // Show checkboxes on scopes and variables, but NOT on waveform files
-                        // Waveform files have is_waveform_file = true OR item_type = File
-                        !item.is_waveform_file.unwrap_or(false) && 
-                        !matches!(item.item_type, Some(TreeViewItemType::File | TreeViewItemType::FileError))
-                    } else {
-                        // Original logic for backwards compatibility
-                        if item_id.starts_with("scope_") {
-                            // Scopes: YES checkboxes (e.g., "scope_simple_tb")
-                            true
-                        } else if matches!(item.item_type, Some(TreeViewItemType::Folder)) {
-                            // Folders: NO checkboxes for scopes (they're handled above), but could be file picker dirs
-                            false
-                        } else if matches!(item.item_type, Some(TreeViewItemType::File)) {
-                            // Files: different logic based on context
-                            if item_id.starts_with("file_") && !item_id.starts_with("scope_") {
-                                // Top-level waveform files: NO checkboxes (e.g., "file_71a2908980aee1d")
-                                false
-                            } else if item_id.starts_with("/") {
-                                // File picker paths: use proper is_waveform_file field instead of extension checking
-                                item.is_waveform_file.unwrap_or(false)
-                            } else {
-                                // Signals in Files & Scopes: YES checkboxes (e.g., "A", "B")
-                                true
-                            }
-                        } else {
-                            // Other types: NO checkboxes
-                            false
-                        }
-                    };
-                
-                if should_show_checkbox {
-                    Some(
-                        // Use proper button with event handling to prevent bubbling
-                        Button::new()
-                            .s(Width::exact(20))
-                            .s(Height::exact(20))
-                            .s(Padding::all(0))
-                            .s(Background::new().color("transparent"))
-                            .s(Borders::new())
-                            .s(Align::new().center_y())
-                            .s(Cursor::new(CursorIcon::Pointer))
-                            .label(
-                                CheckboxBuilder::new()
-                                    .size(CheckboxSize::Small)
-                                    .checked(is_selected)
-                                    .build()
-                            )
-                            .on_press_event({
-                                let item_id = item_id.clone();
-                                let selected_items = selected_items.clone();
-                                move |event| {
-                                    // Prevent event from bubbling up to the row's click handler
-                                    event.pass_to_parent(false);
-
-                                    if !is_disabled {
-                                        let mut selected = selected_items.lock_mut();
-                                        
-                                        // Handle scope selection logic for checkbox clicks
-                                        if item_id.starts_with("scope_") {
-                                            // Special handling for scopes when single_scope_selection is enabled
-                                            if single_scope_selection {
-                                                if selected.contains(&item_id) {
-                                                    // Deselect this scope
-                                                    selected.shift_remove(&item_id);
-                                                } else {
-                                                    // Clear all other scope selections and select this one (radio button behavior)
-                                                    selected.retain(|id| !id.starts_with("scope_"));
-                                                    selected.insert(item_id.clone());
-                                                }
-                                            } else {
-                                                // Regular multi-select behavior for scopes
-                                                if selected.contains(&item_id) {
-                                                    selected.shift_remove(&item_id);
-                                                } else {
-                                                    selected.insert(item_id.clone());
-                                                }
-                                            }
-                                        } else {
-                                            // Regular checkbox behavior for non-scope items
-                                            if selected.contains(&item_id) {
-                                                selected.shift_remove(&item_id);
-                                            } else {
-                                                selected.insert(item_id.clone());
-                                            }
-                                        }
-                                    }
-                                }
-                            })
-                            .unify()
-                    )
+        // Checkbox (if enabled) - stable element to prevent recreation
+        .item({
+            // Determine if checkbox should be shown (static decision)
+            let should_show_checkbox = show_checkboxes && !is_disabled && 
+                if show_checkboxes_on_scopes_only {
+                    // Show checkboxes on scopes and variables, but NOT on waveform files
+                    // Waveform files have is_waveform_file = true OR item_type = File
+                    !item.is_waveform_file.unwrap_or(false) && 
+                    !matches!(item.item_type, Some(TreeViewItemType::File | TreeViewItemType::FileError))
                 } else {
-                    None
-                }
+                    // Original logic for backwards compatibility
+                    if item_id.starts_with("scope_") {
+                        // Scopes: YES checkboxes (e.g., "scope_simple_tb")
+                        true
+                    } else if matches!(item.item_type, Some(TreeViewItemType::Folder)) {
+                        // Folders: NO checkboxes for scopes (they're handled above), but could be file picker dirs
+                        false
+                    } else if matches!(item.item_type, Some(TreeViewItemType::File)) {
+                        // Files: different logic based on context
+                        if item_id.starts_with("file_") && !item_id.starts_with("scope_") {
+                            // Top-level waveform files: NO checkboxes (e.g., "file_71a2908980aee1d")
+                            false
+                        } else if item_id.starts_with("/") {
+                            // File picker paths: use proper is_waveform_file field instead of extension checking
+                            item.is_waveform_file.unwrap_or(false)
+                        } else {
+                            // Signals in Files & Scopes: YES checkboxes (e.g., "A", "B")
+                            true
+                        }
+                    } else {
+                        // Other types: NO checkboxes
+                        false
+                    }
+                };
+            
+            if should_show_checkbox {
+                // Create stable checkbox button that only updates visual state, not structure
+                Button::new()
+                    .s(Width::exact(20))
+                    .s(Height::exact(20))
+                    .s(Padding::all(0))
+                    .s(Background::new().color("transparent"))
+                    .s(Borders::new())
+                    .s(Align::new().center_y())
+                    .s(Cursor::new(CursorIcon::Pointer))
+                    .label_signal(selected_items.signal_ref({
+                        let item_id = item_id.clone();
+                        move |selected| {
+                            CheckboxBuilder::new()
+                                .size(CheckboxSize::Small)
+                                .checked(selected.contains(&item_id))
+                                .build()
+                        }
+                    }))
+                    .on_press_event({
+                        let item_id = item_id.clone();
+                        let selected_items = selected_items.clone();
+                        let external_selected_vec = external_selected_vec.clone();
+                        move |event| {
+                            // Prevent event from bubbling up to the row's click handler
+                            event.pass_to_parent(false);
+
+                            if !is_disabled {
+                                // Use appropriate handler based on state type
+                                if let Some(ref vec_state) = external_selected_vec {
+                                    handle_selection_change_vec(&item_id, vec_state, single_scope_selection);
+                                } else {
+                                    handle_selection_change(&item_id, &selected_items, single_scope_selection);
+                                }
+                            } else {
+                            }
+                        }
+                    })
+                    .unify()
+            } else {
+                // Empty spacer when no checkbox
+                El::new()
+                    .s(Width::exact(0))
+                    .s(Height::exact(20))
+                    .unify()
             }
-        }))
+        })
         // Icon (if enabled)
         .item_signal(always(show_icons).map({
             let item = item.clone();
@@ -734,10 +762,10 @@ fn render_tree_item(
                 .label(
                     Row::new()
                         .s(Align::new().center_y())
-                        .s(Gap::new().x(SPACING_2))
+                        .s(Gap::new().x(SPACING_0))
                         .item(
                             El::new()
-                                .s(Padding::new().x(SPACING_4))
+                                .s(Padding::new().x(SPACING_2))
                                 .child({
                                     // Apply inline smart label styling if label contains '/' or timeline info
                                     if item.label.contains('/') {
@@ -884,102 +912,73 @@ fn render_tree_item(
                     let item_id = item_id.clone();
                     let focused_item = focused_item.clone();
                     let selected_items = selected_items.clone();
+                    let external_selected_vec = external_selected_vec.clone();
                     move |event| {
+                        
                         if !is_disabled {
                             // Always set focus when clicking a label
                             focused_item.set(Some(item_id.clone()));
 
                             // Handle selection logic for scope items (regardless of children) or leaf items with checkboxes
                             // and prevent bubbling only in that case
-                            if show_checkboxes && (item_id.starts_with("scope_") || !has_children) {
+                            let should_handle_selection = show_checkboxes && (item_id.starts_with("scope_") || !has_children);
+                            
+                            if should_handle_selection {
                                 // Prevent event from bubbling up for selection handling
                                 event.pass_to_parent(false);
-                                // Leaf items with checkboxes: handle selection (same logic as checkbox)
-                                let mut selected = selected_items.lock_mut();
                                 
-                                // Handle scope selection logic for label clicks on leaf items
-                                if item_id.starts_with("scope_") {
-                                    // Special handling for scopes when single_scope_selection is enabled
-                                    if single_scope_selection {
-                                        if selected.contains(&item_id) {
-                                            // Deselect this scope
-                                            selected.shift_remove(&item_id);
-                                        } else {
-                                            // Clear all other scope selections and select this one (radio button behavior)
-                                            selected.retain(|id| !id.starts_with("scope_"));
-                                            selected.insert(item_id.clone());
-                                        }
-                                    } else {
-                                        // Regular multi-select behavior for scopes
-                                        if selected.contains(&item_id) {
-                                            selected.shift_remove(&item_id);
-                                        } else {
-                                            selected.insert(item_id.clone());
-                                        }
-                                    }
+                                // Use appropriate handler based on state type
+                                if let Some(ref vec_state) = external_selected_vec {
+                                    handle_selection_change_vec(&item_id, vec_state, single_scope_selection);
                                 } else {
-                                    // Regular checkbox behavior for non-scope leaf items
-                                    if selected.contains(&item_id) {
-                                        selected.shift_remove(&item_id);
-                                    } else {
-                                        selected.insert(item_id.clone());
-                                    }
+                                    handle_selection_change(&item_id, &selected_items, single_scope_selection);
                                 }
+                            } else {
                             }
+                        } else {
                         }
                     }
                 })
                 .unify()
         ) // Close Row::new()
         ) // Close .label()
-        // Click handler for entire row (excluding checkbox)
-        .on_press_event({
+        // Click handler for entire row (excluding other interactive elements)
+        .on_click({
             let item_id = item_id.clone();
             let focused_item = focused_item.clone();
             let expanded_items = expanded_items.clone();
-            move |_event| {
+            let external_expanded = external_expanded.clone();
+            move || {
+                
                 if !is_disabled && has_children {
                     // Set focus when clicking row
                     focused_item.set(Some(item_id.clone()));
                     
                     // Handle expansion/collapse for items with children
-                    let mut expanded = expanded_items.lock_mut();
-                    if expanded.contains(&item_id) {
-                        expanded.shift_remove(&item_id);
+                    // Use external expansion state if provided, otherwise use internal state
+                    if let Some(external) = &external_expanded {
+                        let mut expanded = external.lock_mut();
+                        let was_expanded = expanded.contains(&item_id);
+                        if was_expanded {
+                            expanded.shift_remove(&item_id);
+                        } else {
+                            expanded.insert(item_id.clone());
+                        }
                     } else {
-                        expanded.insert(item_id.clone());
+                        let mut expanded = expanded_items.lock_mut();
+                        let was_expanded = expanded.contains(&item_id);
+                        if was_expanded {
+                            expanded.shift_remove(&item_id);
+                        } else {
+                            expanded.insert(item_id.clone());
+                        }
                     }
+                } else {
                 }
             }
         })
-        // Background and interaction styling
-        .s(Background::new().color_signal(
-            map_ref! {
-                let theme = theme(),
-                let is_selected = selected_items.signal_ref({
-                    let item_id = item_id.clone();
-                    move |selected| selected.contains(&item_id)
-                }),
-                let is_focused = focused_item.signal_ref({
-                    let item_id = item_id.clone();
-                    move |focused| focused.as_ref() == Some(&item_id)
-                }) =>
-                // Only show selection background when checkboxes are enabled
-                if show_checkboxes && *is_selected {
-                    match *theme {
-                        Theme::Light => "oklch(92% 0.045 255)", // neutral_3 light - much more subtle
-                        Theme::Dark => "oklch(30% 0.045 255)", // neutral_3 dark - much more subtle
-                    }
-                } else if *is_focused {
-                    match *theme {
-                        Theme::Light => "oklch(97% 0.025 255)", // neutral_2 light - subtle
-                        Theme::Dark => "oklch(25% 0.045 255)", // neutral_3 dark - more visible
-                    }
-                } else {
-                    "transparent"
-                }
-            }
-        ))
+        // Static background for now - eliminate ALL signals causing render loops
+        .s(Background::new().color("transparent"))
         // Focus ring (simplified for now)
         .s(Outline::inner().width(0).color("transparent"))
         // ARIA attributes - reactive to actual state
@@ -1003,79 +1002,82 @@ fn render_tree_item(
             el
         });
 
-    // Create children container if item has children and is expanded
-    let children_container = if has_children {
-        Some(
-            Column::new()
-                .s(Width::growable())
-                .items_signal_vec(
-                    expanded_items.signal_ref({
-                        let item_id = item_id.clone();
-                        let item = item.clone();
-                        move |expanded| {
-                            if expanded.contains(&item_id) {
-                                if let Some(children) = &item.children {
-                                    children.clone()
+    // Check if this item is expanded and create children accordingly
+    let is_expanded = if let Some(external) = &external_expanded {
+        external.lock_ref().contains(&item_id)
+    } else {
+        expanded_items.lock_ref().contains(&item_id)
+    };
+    
+    // Create the base column with the item row
+    let mut column = Column::new()
+        .s(Width::growable())
+        .item(item_row);
+    
+    // Add children using item_signal for reactivity
+    if has_children {
+        column = column.item_signal({
+            let item_id = item_id.clone();
+            let item_children = item.children.clone();
+            let expanded_items = expanded_items.clone();
+            let external_expanded = external_expanded.clone();
+            
+            // Create signal based on expansion source
+            let expansion_signal = if let Some(external) = external_expanded.clone() {
+                external.signal_ref(move |expanded_set| expanded_set.contains(&item_id)).boxed()
+            } else {
+                expanded_items.signal_ref(move |expanded_set| expanded_set.contains(&item_id)).boxed()
+            };
+            
+            expansion_signal.map(move |is_expanded| {
+                if is_expanded {
+                    Some(
+                        Column::new()
+                            .s(Width::growable())
+                            .items(
+                                if let Some(children) = &item_children {
+                                    children.iter().map({
+                                        let expanded_items = expanded_items.clone();
+                                        let selected_items = selected_items.clone();
+                                        let focused_item = focused_item.clone();
+                                        let external_expanded = external_expanded.clone();
+                                        let external_selected_vec = external_selected_vec.clone();
+                                        move |child| {
+                                            render_tree_item(
+                                                child.clone(),
+                                                level + 1,
+                                                size,
+                                                variant,
+                                                show_icons,
+                                                show_checkboxes,
+                                                show_checkboxes_on_scopes_only,
+                                                single_scope_selection,
+                                                tree_disabled,
+                                                expanded_items.clone(),
+                                                selected_items.clone(),
+                                                focused_item.clone(),
+                                                external_expanded.clone(),
+                                                external_selected_vec.clone(),
+                                            ).unify()
+                                        }
+                                    }).collect::<Vec<_>>()
                                 } else {
                                     Vec::new()
                                 }
-                            } else {
-                                Vec::new()
-                            }
-                        }
-                    }).map({
-                        let expanded_items = expanded_items.clone();
-                        let selected_items = selected_items.clone();
-                        let focused_item = focused_item.clone();
-                        move |children| {
-                            let expanded_items = expanded_items.clone();
-                            let selected_items = selected_items.clone();
-                            let focused_item = focused_item.clone();
-                            children.into_iter().map({
-                                let expanded_items = expanded_items.clone();
-                                let selected_items = selected_items.clone();
-                                let focused_item = focused_item.clone();
-                                move |child| {
-                                    render_tree_item(
-                                        child,
-                                        level + 1,
-                                        size,
-                                        variant,
-                                        show_icons,
-                                        show_checkboxes,
-                                        show_checkboxes_on_scopes_only,
-                                        single_scope_selection,
-                                        tree_disabled,
-                                        expanded_items.clone(),
-                                        selected_items.clone(),
-                                        focused_item.clone(),
-                                    ).unify()
-                                }
-                            }).collect::<Vec<_>>()
-                        }
-                    }).to_signal_vec()
-                )
-                .update_raw_el(|raw_el| {
-                    raw_el.attr("role", "group")
-                })
-        )
-    } else {
-        None
-    };
-
-    // Combine item row and children
-    if let Some(children) = children_container {
-        Column::new()
-            .s(Width::growable())
-            .item(item_row)
-            .item(children)
-            .unify()
-    } else {
-        Column::new()
-            .s(Width::growable())
-            .item(item_row)
-            .unify()
+                            )
+                            .update_raw_el(|raw_el| {
+                                raw_el.attr("role", "group")
+                            })
+                            .into_element()
+                    )
+                } else {
+                    None
+                }
+            })
+        });
     }
+    
+    column
 }
 
 // Helper function to convert string to IconName

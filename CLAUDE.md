@@ -11,6 +11,7 @@ Core guidance for Claude Code when working with NovyWave.
 
 <!-- Technical Reference -->
 @.claude/extra/technical/reference.md
+@.claude/extra/technical/performance-debugging.md
 
 ## Command Execution Protocol
 

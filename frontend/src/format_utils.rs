@@ -78,7 +78,7 @@ impl SignalValue {
                 formatted_values.get(format).cloned().unwrap_or_else(|| "(error)".to_string())
             }
             Self::Missing => "N/A".to_string(),
-            Self::Loading => "(Loading)".to_string(),
+            Self::Loading => "Loading...".to_string(),
         }
     }
 
@@ -173,7 +173,7 @@ pub fn generate_dropdown_options_with_truncation(
                 let truncated = signal_value.get_truncated_display_with_format(format, max_value_chars);
                 (truncated, full)
             } else {
-                let text = format!("({}) {}", "Loading", format.as_static_str());
+                let text = format!("Loading... {}", format.as_static_str());
                 (text.clone(), text)
             };
 

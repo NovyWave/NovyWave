@@ -14,3 +14,4 @@ dirs = "5.0"
 tokio = { version = "1.0", features = ["full"] }
 jwalk = "0.8"
 memmap2 = "0.9"
+rayon = "1.8"

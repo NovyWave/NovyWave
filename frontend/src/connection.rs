@@ -227,46 +227,60 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 crate::FILE_PICKER_ERROR.set_neq(None);
             }
             DownMsg::SignalValues { file_path, results } => {
-                // Process signal values from backend
-                let mut new_values = crate::state::SIGNAL_VALUES.get_cloned();
-                let mut any_changed = false;
+                // DEPRECATED: Legacy signal values handler - should be migrated to UnifiedSignalResponse
+                // This handler exists for backward compatibility during the migration to SignalDataService
+                zoon::println!("⚠️ LEGACY: Received old DownMsg::SignalValues for {} - should use UnifiedSignalResponse", file_path);
+                
+                // Convert old format to cursor values for SignalDataService compatibility
+                let mut cursor_values = std::collections::BTreeMap::new();
                 
                 for result in results {
-                    // Create unique_id in the same format as SelectedVariable: file_path|scope_path|variable_name
-                    let unique_id = format!("{}|{}|{}", 
-                        file_path,
-                        result.scope_path,
-                        result.variable_name
-                    );
+                    let unique_id = format!("{}|{}|{}", file_path, result.scope_path, result.variable_name);
                     
                     // Check if cursor time is within this variable's file time range
                     let cursor_time = TIMELINE_CURSOR_POSITION.get();
                     let within_time_range = is_cursor_within_variable_time_range(&unique_id, cursor_time);
                     
-                    // Handle missing data properly - use SignalValue::missing() for None values
-                    // OR if cursor is beyond variable's time range
+                    // Convert to SignalDataService format (shared::SignalValue, not format_utils::SignalValue)
                     let signal_value = if within_time_range {
                         if let Some(raw_binary) = result.raw_value {
-                            crate::format_utils::SignalValue::from_data(raw_binary)
+                            shared::SignalValue::Present(raw_binary)
                         } else {
-                            crate::format_utils::SignalValue::missing()
+                            shared::SignalValue::Missing
                         }
                     } else {
-                        crate::format_utils::SignalValue::missing()  // Beyond time range
+                        shared::SignalValue::Missing
                     };
                     
-                    new_values.insert(unique_id, signal_value);
-                    any_changed = true;
+                    cursor_values.insert(unique_id, signal_value);
                 }
                 
-                // Trigger signal by replacing the entire HashMap if any values changed
-                if any_changed {
-                    crate::state::SIGNAL_VALUES.set(new_values);
+                // Delegate to SignalDataService for consistent handling
+                // TODO: Remove this legacy handler once all queries use UnifiedSignalRequest
+                if !cursor_values.is_empty() {
+                    // Simulate unified response format for SignalDataService
+                    let fake_request_id = format!("legacy-{}-{}", file_path, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis());
+                    let statistics = shared::SignalStatistics {
+                        total_signals: cursor_values.len(),
+                        cached_signals: 0, // Legacy queries are not cached
+                        query_time_ms: 0,
+                        cache_hit_ratio: 0.0, // No cache hits for legacy queries
+                    };
+                    crate::signal_data_service::SignalDataService::handle_unified_response(
+                        fake_request_id.to_string(), 
+                        Vec::new(), // No signal data in legacy format
+                        cursor_values, 
+                        Some(statistics)
+                    );
                 }
             }
-            DownMsg::SignalValuesError { file_path: _, error: _ } => {
-                // Show error alert for signal value query failure  
-                // Signal value query error logged to console
+            DownMsg::SignalValuesError { file_path, error } => {
+                // DEPRECATED: Legacy signal values error handler - should be migrated to UnifiedSignalError
+                zoon::println!("⚠️ LEGACY: Received old DownMsg::SignalValuesError for {} - should use UnifiedSignalError", file_path);
+                
+                // Delegate to SignalDataService for consistent error handling
+                let fake_request_id = format!("legacy-error-{}-{}", file_path, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis());
+                crate::signal_data_service::SignalDataService::handle_unified_error(fake_request_id.to_string(), error);
             }
             DownMsg::SignalTransitions { file_path, results } => {
                 crate::debug_utils::debug_signal_transitions(&format!("Received {} transitions for {}", results.len(), file_path));
@@ -320,6 +334,14 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                         signal_values.insert(unique_id, signal_value);
                     }
                 }
+            }
+            DownMsg::UnifiedSignalResponse { request_id, signal_data, cursor_values, statistics, cached_time_range: _ } => {
+                // Handle unified signal response through the signal data service
+                crate::signal_data_service::SignalDataService::handle_unified_response(request_id, signal_data, cursor_values, statistics);
+            }
+            DownMsg::UnifiedSignalError { request_id, error } => {
+                // Handle unified signal error through the signal data service
+                crate::signal_data_service::SignalDataService::handle_unified_error(request_id, error);
             }
         }
     })
@@ -404,7 +426,7 @@ fn handle_down_msg(down_msg: DownMsg) {
         DownMsg::FileLoaded { file_id, hierarchy } => {
             if let Some(loaded_file) = hierarchy.files.first() {
                 crate::state::update_tracked_file_state(&file_id, shared::FileState::Loaded(loaded_file.clone()));
-                restore_scope_selection_for_file(loaded_file);
+                // Note: scope restoration handled by first FileLoaded handler to prevent duplicates
             }
             
             for file in hierarchy.files {
@@ -521,15 +543,14 @@ fn handle_down_msg(down_msg: DownMsg) {
             crate::FILE_PICKER_ERROR.set_neq(None);
         }
         DownMsg::SignalValues { file_path, results } => {
-            let mut new_values = crate::state::SIGNAL_VALUES.get_cloned();
-            let mut any_changed = false;
+            // DEPRECATED: Legacy signal values handler in handle_down_msg - should be migrated to UnifiedSignalResponse
+            zoon::println!("⚠️ LEGACY: handle_down_msg received old DownMsg::SignalValues for {} - should use UnifiedSignalResponse", file_path);
+            
+            // Convert old format to cursor values for SignalDataService compatibility
+            let mut cursor_values = std::collections::BTreeMap::new();
             
             for result in results {
-                let unique_id = format!("{}|{}|{}", 
-                    file_path,
-                    result.scope_path,
-                    result.variable_name
-                );
+                let unique_id = format!("{}|{}|{}", file_path, result.scope_path, result.variable_name);
                 
                 // Check if cursor time is within this variable's file time range
                 let cursor_time = TIMELINE_CURSOR_POSITION.get();
@@ -537,25 +558,41 @@ fn handle_down_msg(down_msg: DownMsg) {
                 
                 let signal_value = if within_time_range {
                     if let Some(raw_binary) = result.raw_value {
-                        crate::format_utils::SignalValue::from_data(raw_binary)
+                        shared::SignalValue::Present(raw_binary)
                     } else {
-                        crate::format_utils::SignalValue::missing()
+                        shared::SignalValue::Missing
                     }
                 } else {
-                    crate::format_utils::SignalValue::missing()  // Beyond time range
+                    shared::SignalValue::Missing
                 };
                 
-                new_values.insert(unique_id, signal_value);
-                any_changed = true;
+                cursor_values.insert(unique_id, signal_value);
             }
             
-            // Trigger signal by replacing the entire HashMap if any values changed
-            if any_changed {
-                crate::state::SIGNAL_VALUES.set(new_values);
+            // Delegate to SignalDataService for consistent handling
+            if !cursor_values.is_empty() {
+                let fake_request_id = format!("legacy-handle-{}-{}", file_path, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis());
+                let statistics = shared::SignalStatistics {
+                    total_signals: cursor_values.len(),
+                    cached_signals: 0,
+                    query_time_ms: 0,
+                    cache_hit_ratio: 0.0,
+                };
+                crate::signal_data_service::SignalDataService::handle_unified_response(
+                    fake_request_id.to_string(), 
+                    Vec::new(),
+                    cursor_values, 
+                    Some(statistics)
+                );
             }
         }
-        DownMsg::SignalValuesError { file_path: _, error: _ } => {
-            // Signal value query error
+        DownMsg::SignalValuesError { file_path, error } => {
+            // DEPRECATED: Legacy signal values error handler in handle_down_msg - should be migrated to UnifiedSignalError
+            zoon::println!("⚠️ LEGACY: handle_down_msg received old DownMsg::SignalValuesError for {} - should use UnifiedSignalError", file_path);
+            
+            // Delegate to SignalDataService for consistent error handling
+            let fake_request_id = format!("legacy-handle-error-{}-{}", file_path, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis());
+            crate::signal_data_service::SignalDataService::handle_unified_error(fake_request_id.to_string(), error);
         }
         DownMsg::SignalTransitions { file_path, results } => {
             crate::debug_utils::debug_signal_transitions(&format!("SECOND HANDLER - Received {} transitions for {}", results.len(), file_path));
@@ -615,6 +652,14 @@ fn handle_down_msg(down_msg: DownMsg) {
                     crate::state::SIGNAL_VALUES.set(new_values);
                 }
             }
+        }
+        DownMsg::UnifiedSignalResponse { request_id, signal_data, cursor_values, statistics, cached_time_range: _ } => {
+            // Handle unified signal response through the signal data service
+            crate::signal_data_service::SignalDataService::handle_unified_response(request_id, signal_data, cursor_values, statistics);
+        }
+        DownMsg::UnifiedSignalError { request_id, error } => {
+            // Handle unified signal error through the signal data service
+            crate::signal_data_service::SignalDataService::handle_unified_error(request_id, error);
         }
     }
 }

@@ -1,5 +1,5 @@
 use serde::{Serialize, Deserialize, Deserializer};
-use std::collections::HashMap;
+use std::collections::{HashMap, BTreeMap};
 use std::str::FromStr;
 use convert_base;
 
@@ -25,6 +25,12 @@ pub enum UpMsg {
         file_path: String,
         signal_queries: Vec<SignalTransitionQuery>,
         time_range: (f64, f64),
+    },
+    /// Unified signal data query - serves both timeline and cursor value needs
+    UnifiedSignalQuery {
+        signal_requests: Vec<UnifiedSignalRequest>,
+        cursor_time: Option<f64>,
+        request_id: String, // For deduplication and tracking
     },
 }
 
@@ -58,6 +64,18 @@ pub enum DownMsg {
     },
     SignalTransitionsError {
         file_path: String,
+        error: String,
+    },
+    /// Unified signal data response with all requested information
+    UnifiedSignalResponse {
+        request_id: String,
+        signal_data: Vec<UnifiedSignalData>,
+        cursor_values: BTreeMap<String, SignalValue>,
+        cached_time_range: Option<(f64, f64)>, // What's available in backend cache
+        statistics: Option<SignalStatistics>,
+    },
+    UnifiedSignalError {
+        request_id: String,
         error: String,
     },
 }
@@ -203,6 +221,40 @@ pub struct SignalTransitionResult {
 pub struct SignalTransition {
     pub time_seconds: f64,
     pub value: String,
+}
+
+// ===== UNIFIED SIGNAL QUERY TYPES =====
+
+/// Single request for signal data that can include both transitions and cursor values
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct UnifiedSignalRequest {
+    pub file_path: String,
+    pub scope_path: String,
+    pub variable_name: String,
+    pub time_range: Option<(f64, f64)>, // None = all available data
+    pub max_transitions: Option<usize>, // For downsampling large datasets
+    pub format: VarFormat,
+}
+
+/// Response containing all requested signal data
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct UnifiedSignalData {
+    pub file_path: String,
+    pub scope_path: String,
+    pub variable_name: String,
+    pub unique_id: String, // Computed unique identifier
+    pub transitions: Vec<SignalTransition>,
+    pub total_transitions: usize, // Before any downsampling
+    pub actual_time_range: Option<(f64, f64)>, // Actual data boundaries
+}
+
+/// Statistics about signals for performance optimization
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Copy)]
+pub struct SignalStatistics {
+    pub total_signals: usize,
+    pub cached_signals: usize,
+    pub query_time_ms: u64,
+    pub cache_hit_ratio: f64,
 }
 
 // ===== FILESYSTEM TYPES =====
@@ -450,8 +502,10 @@ impl VarFormat {
                     let group = &binary_value[offset..offset + 8];
                     match u8::from_str_radix(group, 2) {
                         Ok(byte_value) => {
-                            // Check if it's printable ASCII (32-126, plus some common ones like newline)
-                            if byte_value.is_ascii() && (byte_value.is_ascii_graphic() || byte_value.is_ascii_whitespace()) {
+                            // Handle NULL bytes (0x00) specially - keep them for now, we'll trim later
+                            if byte_value == 0x00 {
+                                ascii_bytes.push(0x00);
+                            } else if byte_value.is_ascii() && (byte_value.is_ascii_graphic() || byte_value.is_ascii_whitespace()) {
                                 ascii_bytes.push(byte_value);
                             } else {
                                 // Non-printable or control character - replace with '?'
@@ -462,6 +516,18 @@ impl VarFormat {
                             // Invalid binary group - replace with '?' 
                             ascii_bytes.push(b'?');
                         }
+                    }
+                }
+                
+                // Strip trailing NULL bytes for cleaner display
+                while let Some(&0x00) = ascii_bytes.last() {
+                    ascii_bytes.pop();
+                }
+                
+                // Now replace any remaining NULL bytes with '?' (embedded nulls)
+                for byte in ascii_bytes.iter_mut() {
+                    if *byte == 0x00 {
+                        *byte = b'?';
                     }
                 }
                 
@@ -1412,21 +1478,10 @@ pub fn create_tracked_file(file_path: String, state: FileState) -> TrackedFile {
         path: file_path,
         filename: filename.clone(),
         state,
-        smart_label: filename, // Will be updated by smart labeling system
+        smart_label: String::new(), // Unused - smart labels computed by derived signal
     }
 }
 
-/// Update smart labels for a collection of tracked files
-pub fn update_smart_labels(tracked_files: &mut [TrackedFile]) {
-    let paths: Vec<String> = tracked_files.iter().map(|f| f.path.clone()).collect();
-    let smart_labels = generate_smart_labels(&paths);
-    
-    for tracked_file in tracked_files.iter_mut() {
-        if let Some(smart_label) = smart_labels.get(&tracked_file.path) {
-            tracked_file.smart_label = smart_label.clone();
-        }
-    }
-}
 
 // ===== FILESYSTEM UTILITIES =====
 

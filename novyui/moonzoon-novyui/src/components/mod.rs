@@ -17,6 +17,7 @@ pub mod accordion;
 pub mod select;
 pub mod alert;
 pub mod treeview;
+pub mod reactive_tree_view;
 pub mod fileinput;
 pub mod pattern;
 
@@ -44,5 +45,6 @@ pub use accordion::*;
 pub use select::*;
 pub use alert::*;
 pub use treeview::*;
+pub use reactive_tree_view::*;
 pub use fileinput::*;
 pub use pattern::*;
