@@ -1,5 +1,6 @@
 use zoon::*;
-use crate::components::icon::{Icon, IconName};
+// Temporarily comment out icon integration until compilation works
+// use crate::components::icon::{Icon, IconName};
 use super::{TreeItem, TreeItemData, TreeViewContext};
 
 /// Flexible tree item renderer that can adapt to different contexts
@@ -82,10 +83,9 @@ impl<T> TreeItemRendererBuilder<T> {
 
 /// Builder for individual tree item visual representation
 /// Provides fluent API for configuring tree item appearance
-#[derive(Debug, Clone)]
 pub struct TreeItemBuilder {
     label: String,
-    icon: Option<IconName>,
+    icon: Option<String>, // Simplified to string for now
     tooltip: Option<String>,
     expandable: bool,
     expanded: bool,
@@ -127,7 +127,7 @@ impl TreeItemBuilder {
     }
     
     /// Set the icon
-    pub fn icon(mut self, icon: IconName) -> Self {
+    pub fn icon(mut self, icon: String) -> Self {
         self.icon = Some(icon);
         self
     }
@@ -210,13 +210,87 @@ impl TreeItemBuilder {
         self
     }
     
+    // Getter methods for private fields
+    pub fn get_label(&self) -> &str {
+        &self.label
+    }
+    
+    pub fn get_icon(&self) -> &Option<String> {
+        &self.icon
+    }
+    
+    pub fn get_tooltip(&self) -> &Option<String> {
+        &self.tooltip
+    }
+    
+    pub fn is_expandable(&self) -> bool {
+        self.expandable
+    }
+    
+    pub fn is_expanded(&self) -> bool {
+        self.expanded
+    }
+    
+    pub fn is_selectable(&self) -> bool {
+        self.selectable
+    }
+    
+    pub fn is_selected(&self) -> bool {
+        self.selected
+    }
+    
+    pub fn is_disabled(&self) -> bool {
+        self.disabled
+    }
+    
+    pub fn has_error(&self) -> bool {
+        self.error
+    }
+    
+    pub fn is_loading(&self) -> bool {
+        self.loading
+    }
+    
     /// Convert to Zoon Element for rendering
     pub fn build(self) -> impl Element {
-        // Main container
+        // Build all components first
+        let chevron = if self.expandable {
+            let chevron_text = if self.expanded { "▼" } else { "▶" };
+            El::new()
+                .s(Width::exact(16))
+                .s(Font::new().size(12))
+                .child(Text::new(chevron_text))
+                .into_element()
+        } else {
+            El::new().s(Width::exact(16)).child(Text::new("")).into_element()
+        };
+        
+        let icon_element = if let Some(icon) = &self.icon {
+            El::new()
+                .s(Width::exact(16))
+                .s(Font::new().size(12))
+                .child(Text::new(icon))
+                .into_element()
+        } else {
+            El::new().s(Width::exact(0)).child(Text::new("")).into_element()
+        };
+        
+        let label_element = {
+            let mut label_el = El::new().child(Text::new(&self.label));
+            if self.disabled {
+                label_el = label_el.update_raw_el(|el| el.class("disabled-text"));
+            }
+            label_el.into_element()
+        };
+        
+        // Create container with all items at once
         let mut container = Row::new()
             .s(Gap::new().x(8))
             .s(Align::new().center_y())
-            .s(Padding::new().x(8).y(4));
+            .s(Padding::new().x(8).y(4))
+            .item(chevron)
+            .item(icon_element)
+            .item(label_element);
             
         // Apply custom classes
         for class in self.custom_classes {
@@ -237,65 +311,26 @@ impl TreeItemBuilder {
             container = container.update_raw_el(|el| el.class("loading"));
         }
         
-        // Expansion chevron (if expandable)
-        if self.expandable {
-            let chevron_icon = if self.expanded { 
-                IconName::ChevronDown 
-            } else { 
-                IconName::ChevronRight 
-            };
-            
-            container = container.item(
-                Icon::new()
-                    .icon_name(chevron_icon)
-                    .size(16)
-                    .on_click(move || {
-                        if let Some(ref on_expand) = self.on_expand {
-                            on_expand();
-                        }
-                    })
-            );
-        } else {
-            // Spacer for alignment when no chevron
-            container = container.item(El::new().s(Width::exact(16)));
-        }
-        
-        // Main icon
-        if let Some(icon) = self.icon {
-            let mut icon_el = Icon::new()
-                .icon_name(icon)
-                .size(16);
-                
-            if self.loading {
-                // TODO: Add loading animation class
-                icon_el = icon_el.update_raw_el(|el| el.class("loading-spin"));
-            }
-            
-            container = container.item(icon_el);
-        }
-        
-        // Label text
-        let mut label_el = El::new().child(Text::new().content(&self.label));
-        
-        if self.disabled {
-            label_el = label_el.update_raw_el(|el| el.class("disabled-text"));
-        }
-        
-        container = container.item(label_el);
-        
         // Apply click handler if selectable
         if self.selectable && !self.disabled {
+            // Combine both handlers into single click handler
             if let Some(on_click) = self.on_click {
-                container = container.on_click(move |_| on_click());
-            }
-            if let Some(on_select) = self.on_select {
-                container = container.on_click(move |_| on_select());
+                if let Some(on_select) = self.on_select {
+                    container = container.on_click(move || {
+                        on_click();
+                        on_select();
+                    });
+                } else {
+                    container = container.on_click(move || on_click());
+                }
+            } else if let Some(on_select) = self.on_select {
+                container = container.on_click(move || on_select());
             }
         }
         
         // Apply tooltip
         if let Some(tooltip) = self.tooltip {
-            container = container.update_raw_el(move |el| el.attribute("title", &tooltip));
+            container = container.update_raw_el(move |el| el.attr("title", &tooltip));
         }
         
         container
@@ -326,14 +361,14 @@ mod tests {
     fn tree_item_builder_chaining() {
         let builder = TreeItemBuilder::new()
             .label("Test Item")
-            .icon(IconName::File)
+            .icon("📄".to_string())
             .tooltip("Test tooltip")
             .expandable(true)
             .expanded(false)
             .selectable(true);
             
         assert_eq!(builder.label, "Test Item");
-        assert_eq!(builder.icon, Some(IconName::File));
+        assert_eq!(builder.icon, Some("📄".to_string()));
         assert_eq!(builder.tooltip, Some("Test tooltip".to_string()));
         assert!(builder.expandable);
         assert!(!builder.expanded);

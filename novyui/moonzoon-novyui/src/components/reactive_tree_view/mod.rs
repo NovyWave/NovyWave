@@ -16,10 +16,13 @@ mod item_renderer;
 pub use builder::ReactiveTreeViewBuilder;
 pub use component::ReactiveTreeView;
 pub use context::{TreeViewContext, SelectionMode};
-pub use data_source::{DataSource, TreeItem};
+pub use data_source::{DataSource, TreeItem, TreeItemData};
+pub use differ::TreeChange;
 pub use item_renderer::{TreeItemRenderer, TreeItemBuilder};
 
 // Re-export for builder pattern entry point
-pub fn reactive_tree_view() -> ReactiveTreeViewBuilder {
+pub fn reactive_tree_view<T>() -> ReactiveTreeViewBuilder<T> 
+where T: Clone + 'static
+{
     ReactiveTreeViewBuilder::new()
 }

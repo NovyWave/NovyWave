@@ -45,6 +45,7 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
         // DownMsg logging disabled - causes CLI overflow with large files
         match down_msg {
             DownMsg::ParsingStarted { file_id, filename } => {
+                zoon::println!("📥 [BACKEND RESPONSE] ParsingStarted: file_id='{}', filename='{}'", file_id, filename);
                 // Update TRACKED_FILES with parsing started status
                 crate::state::update_tracked_file_state(&file_id, shared::FileState::Loading(shared::LoadingStatus::Parsing));
                 
@@ -71,6 +72,7 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 LOADING_FILES.lock_mut().replace_cloned(updated_files);
             }
             DownMsg::FileLoaded { file_id, hierarchy } => {
+                zoon::println!("📥 [BACKEND RESPONSE] FileLoaded: file_id='{}', files_count={}", file_id, hierarchy.files.len());
                 // Update TRACKED_FILES with loaded waveform file
                 if let Some(loaded_file) = hierarchy.files.first() {
                     crate::state::update_tracked_file_state(&file_id, shared::FileState::Loaded(loaded_file.clone()));

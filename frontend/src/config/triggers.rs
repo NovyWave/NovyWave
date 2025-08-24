@@ -34,22 +34,41 @@ fn sync_file_management_from_config() {
     // Handle TRACKED_FILES with state preservation
     if !file_paths.is_empty() {
         let current_files = TRACKED_FILES.lock_ref().to_vec();
+        
+        // ✅ OPTIMIZED: Compute smart labels for all files first to avoid empty labels
+        let smart_labels = shared::generate_smart_labels(&file_paths);
+        zoon::println!("📋 [CONFIG SMART_LABELS] Computed smart labels for {} files: {:?}", file_paths.len(), smart_labels);
+        
         let mut new_tracked_files = Vec::new();
         
         for file_path in file_paths {
             // Check if file already exists and preserve its state
             if let Some(existing_file) = current_files.iter().find(|f| f.path == file_path) {
-                // Preserve existing file state (Loaded/Parsing/etc)
-                new_tracked_files.push(existing_file.clone());
+                // Preserve existing file state (Loaded/Parsing/etc) but update smart label
+                let mut updated_file = existing_file.clone();
+                if updated_file.smart_label.is_empty() {
+                    updated_file.smart_label = smart_labels.get(&file_path)
+                        .unwrap_or(&updated_file.filename)
+                        .clone();
+                }
+                new_tracked_files.push(updated_file);
             } else {
-                // Only create new files with Starting status
-                let new_file = create_tracked_file(file_path.clone(), FileState::Loading(shared::LoadingStatus::Starting));
+                // Create new file with Starting status and computed smart label
+                // ✅ CRITICAL FIX: Use file path as ID to match backend expectations
+                let mut new_file = create_tracked_file(file_path.clone(), FileState::Loading(shared::LoadingStatus::Starting));
+                new_file.id = file_path.clone(); // Backend uses file path as ID
+                new_file.smart_label = smart_labels.get(&file_path)
+                    .unwrap_or(&new_file.filename)
+                    .clone();
+                zoon::println!("📁 [CONFIG DEBUG] Creating new file: id='{}', path='{}', smart_label='{}'", 
+                    new_file.id, new_file.path, new_file.smart_label);
                 new_tracked_files.push(new_file);
                 
                 // Send backend loading message for new files only
                 Task::start({
                     let path = file_path.clone();
                     async move {
+                        zoon::println!("📤 [CONFIG BACKEND] Sending LoadWaveformFile for: {}", path);
                         let _ = CurrentPlatform::send_message(UpMsg::LoadWaveformFile(path)).await;
                     }
                 });
@@ -61,7 +80,10 @@ fn sync_file_management_from_config() {
         let new_paths: Vec<String> = new_tracked_files.iter().map(|f| f.path.clone()).collect();
         
         if current_paths != new_paths {
+            zoon::println!("🔄 [TRACKED_FILES DEBUG] Config restore: replacing {} files with {} files", current_paths.len(), new_paths.len());
             TRACKED_FILES.lock_mut().replace_cloned(new_tracked_files);
+        } else {
+            zoon::println!("⏹️ [TRACKED_FILES DEBUG] Config restore: no change needed ({} files)", current_paths.len());
         }
     }
     

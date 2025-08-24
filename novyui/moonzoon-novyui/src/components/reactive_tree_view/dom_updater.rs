@@ -170,7 +170,7 @@ impl DomUpdater {
     fn create_item_element(&self, item: &TreeItem) -> HtmlElement {
         // For now, create a basic structure
         // This will be replaced with proper TreeItemBuilder integration
-        let item_builder = TreeItemBuilder::new()
+        let _item_builder = TreeItemBuilder::new()
             .label(&item.label)
             .expandable(item.expandable)
             .expanded(item.expanded)

@@ -1310,21 +1310,61 @@ pub fn files_panel() -> impl Element {
                     .s(Padding::new().top(4).right(4))
                     .s(Height::fill())
                     .s(Width::growable())
+                    // TODO: Uncomment when ready to continue ReactiveTreeView development
+                    // See docs/reactive_treeview.md for implementation details
+                    // .item(
+                    //     // 🧪 ReactiveTreeView Test Area
+                    //     El::new()
+                    //         .s(Height::exact(200))
+                    //         .s(Width::growable())
+                    //         .s(Borders::all(Border::new().width(1).color("#4a90e2")))
+                    //         .s(Padding::all(8))
+                    //         .child(
+                    //             Column::new()
+                    //                 .s(Width::fill())
+                    //                 .s(Height::fill())
+                    //                 .item(
+                    //                     El::new()
+                    //                         .s(Font::new().size(12).weight(FontWeight::Bold).color("#4a90e2"))
+                    //                         .child(Text::new("🧪 ReactiveTreeView (New)"))
+                    //                 )
+                    //                 .item(
+                    //                     crate::reactive_tree_test::create_debug_info()
+                    //                 )
+                    //                 .item(
+                    //                     El::new()
+                    //                         .s(Height::fill())
+                    //                         .s(Width::fill())
+                    //                         .child(
+                    //                             crate::reactive_tree_test::create_test_reactive_tree_view()
+                    //                         )
+                    //                 )
+                    //         )
+                    // )
                     .item(
+                        // Original TreeView for comparison
                         El::new()
                             .s(Height::fill())
                             .s(Width::growable())
-                            .child_signal(
-                                // Directly compute tree data from TRACKED_FILES without intermediate SMART_LABELS static
-                                TRACKED_FILES.signal_vec_cloned().to_signal_cloned().map(|tracked_files| {
+                            .child(
+                                Column::new()
+                                    .s(Width::fill())
+                                    .s(Height::fill())
+                                    .item(
+                                        El::new()
+                                            .s(Height::fill())
+                                            .s(Width::fill())
+                                            .child_signal(
+                                                // ✅ FIXED: Use signal that updates on both file add/remove AND state changes
+                                                // This ensures files don't get stuck at "Starting..." when backend responds
+                                                crate::state::treeview_tracked_files_signal().map(|tracked_files| {
+                                                    zoon::println!("🌳 [Optimized TreeView] RENDERING with {} files", tracked_files.len());
                                     if tracked_files.is_empty() {
                                         empty_state_hint("Click 'Load Files' to add waveform files.")
                                             .unify()
                                     } else {
-                                        // Compute smart labels on-demand to avoid over-rendering
-                                        let paths: Vec<String> = tracked_files.iter().map(|f| f.path.clone()).collect();
-                                        let smart_labels = shared::generate_smart_labels(&paths);
-                                        let tree_data = convert_tracked_files_to_tree_data(&tracked_files, &smart_labels);
+                                        // Use cached smart labels from TrackedFile objects to avoid recomputation
+                                        let tree_data = convert_tracked_files_to_tree_data_optimized(&tracked_files);
                                         
                                         tree_view()
                                             .data(tree_data)
@@ -1334,12 +1374,14 @@ pub fn files_panel() -> impl Element {
                                             .show_checkboxes(true)
                                             .show_checkboxes_on_scopes_only(true)
                                             .single_scope_selection(true)
-                                            .external_expanded(EXPANDED_SCOPES_FOR_TREEVIEW.clone())
+                                            .external_expanded(EXPANDED_SCOPES.clone())
                                             .external_selected(TREE_SELECTED_ITEMS.clone())
                                             .build()
                                             .unify()
                                     }
                                 })
+                            )
+                                    )
                             )
                     )
             )
@@ -1367,7 +1409,8 @@ pub fn variables_panel() -> impl Element {
                             .child_signal(
                                 map_ref! {
                                     let selected_scope_id = SELECTED_SCOPE_ID.signal_ref(|id| id.clone()),
-                                    let search_filter = VARIABLES_SEARCH_FILTER.signal_cloned() =>
+                                    let search_filter = VARIABLES_SEARCH_FILTER.signal_cloned(),
+                                    let _loaded_files_count = crate::state::loaded_files_count_signal() =>
                                     {
                                         if let Some(scope_id) = selected_scope_id {
                                             let variables = get_variables_from_tracked_files(&scope_id);
@@ -1509,7 +1552,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                                         })
                                                                         .child_signal({
                                                                             let selected_var = selected_var.clone();
-                                                                            TRACKED_FILES.signal_vec_cloned().to_signal_cloned().map(move |_tracked_files| {
+                                                                            crate::state::TRACKED_FILES.signal_vec_cloned().to_signal_cloned().map(move |_files| {
                                                                                 get_signal_type_for_selected_variable(&selected_var)
                                                                             })
                                                                         })
@@ -1517,9 +1560,9 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                                 .update_raw_el({
                                                                     let selected_var = selected_var.clone();
                                                                     move |raw_el| {
-                                                                        let title_signal = TRACKED_FILES.signal_vec_cloned().to_signal_cloned().map({
+                                                                        let title_signal = crate::state::tracked_files_count_signal().map({
                                                                             let selected_var = selected_var.clone();
-                                                                            move |_tracked_files| {
+                                                                            move |_count| {
                                                                                 let signal_type = get_signal_type_for_selected_variable(&selected_var);
                                                                                 format!("{} - {} - {}", 
                                                                                     selected_var.file_path().unwrap_or_default(), 
@@ -2045,7 +2088,7 @@ fn simple_variables_content() -> impl Element {
                     map_ref! {
                         let selected_scope_id = SELECTED_SCOPE_ID.signal_ref(|id| id.clone()),
                         let search_filter = VARIABLES_SEARCH_FILTER.signal_cloned(),
-                        let _tracked_files = TRACKED_FILES.signal_vec_cloned().to_signal_cloned() =>
+                        let _loaded_files_count = crate::state::loaded_files_count_signal() =>
                         {
                             if let Some(scope_id) = selected_scope_id {
                                 let variables = get_variables_from_tracked_files(&scope_id);
@@ -2130,6 +2173,7 @@ fn get_file_timeline_info(file_path: &str, _waveform_file: &shared::WaveformFile
 }
 
 fn convert_tracked_files_to_tree_data(tracked_files: &[TrackedFile], smart_labels: &HashMap<String, String>) -> Vec<TreeViewItemData> {
+    zoon::println!("🔄 [Original TreeView] Converting {} files to tree data", tracked_files.len());
     // Sort files: primary by filename, secondary by prefix for better organization
     let mut file_refs: Vec<&TrackedFile> = tracked_files.iter().collect();
     file_refs.sort_by(|a, b| {
@@ -2237,6 +2281,104 @@ fn convert_tracked_files_to_tree_data(tracked_files: &[TrackedFile], smart_label
     }).collect()
 }
 
+/// ✅ OPTIMIZED: Convert tracked files to tree data using cached smart labels
+/// This eliminates smart label recomputation on every render, fixing the over-rendering issue
+fn convert_tracked_files_to_tree_data_optimized(tracked_files: &[TrackedFile]) -> Vec<TreeViewItemData> {
+    zoon::println!("🌳 [Optimized TreeView] Converting {} files to tree data using cached labels", tracked_files.len());
+    
+    // Sort files: primary by cached smart label for consistent ordering
+    let mut file_refs: Vec<&TrackedFile> = tracked_files.iter().collect();
+    file_refs.sort_by(|a, b| {
+        // Extract filename from smart label for sorting
+        let (a_prefix, a_filename) = parse_smart_label_for_sorting(&a.smart_label);
+        let (b_prefix, b_filename) = parse_smart_label_for_sorting(&b.smart_label);
+        
+        // Primary sort: filename (case-insensitive)
+        let filename_cmp = a_filename.to_lowercase().cmp(&b_filename.to_lowercase());
+        if filename_cmp != std::cmp::Ordering::Equal {
+            return filename_cmp;
+        }
+        
+        // Secondary sort: prefix (case-insensitive) 
+        a_prefix.to_lowercase().cmp(&b_prefix.to_lowercase())
+    });
+    
+    file_refs.iter().map(|tracked_file| {
+        match &tracked_file.state {
+            shared::FileState::Loaded(waveform_file) => {
+                // Successfully loaded file - show with scopes and timeline info
+                let children = waveform_file.scopes.iter().map(|scope| {
+                    convert_scope_to_tree_data(scope)
+                }).collect();
+                
+                // Use cached smart label and add timeline information
+                let timeline_info = get_file_timeline_info(&tracked_file.path, waveform_file);
+                let enhanced_label = format!("{}{}", tracked_file.smart_label, timeline_info);
+                
+                TreeViewItemData::new(tracked_file.id.clone(), enhanced_label)
+                    .item_type(TreeViewItemType::File)
+                    .tooltip(tracked_file.path.clone())
+                    .with_children(children)
+                    .on_remove(create_enhanced_file_remove_handler(tracked_file.id.clone()))
+            }
+            shared::FileState::Loading(status) => {
+                // File currently loading - show with loading indicator
+                let status_text = match status {
+                    shared::LoadingStatus::Starting => "Starting...",
+                    shared::LoadingStatus::Parsing => "Parsing...",
+                    shared::LoadingStatus::Completed => "Completed", 
+                    shared::LoadingStatus::Error(_) => "Error",
+                };
+                
+                TreeViewItemData::new(tracked_file.id.clone(), format!("{} ({})", tracked_file.smart_label, status_text))
+                    .item_type(TreeViewItemType::File)
+                    .tooltip(tracked_file.path.clone())
+                    .disabled(true)
+                    .on_remove(create_enhanced_file_remove_handler(tracked_file.id.clone()))
+            }
+            shared::FileState::Failed(error) => {
+                // File failed to load - show with error styling
+                let error_message = error.user_friendly_message();
+                
+                TreeViewItemData::new(tracked_file.id.clone(), tracked_file.smart_label.clone())
+                    .item_type(TreeViewItemType::FileError)
+                    .icon(error.icon_name())
+                    .tooltip(format!("{}\nError: {}", tracked_file.path, error_message))
+                    .error_message(error_message.clone())
+                    .with_children(vec![
+                        TreeViewItemData::new(format!("{}_error_detail", tracked_file.id), error_message)
+                            .item_type(TreeViewItemType::Default)
+                            .disabled(true)
+                    ])
+                    .on_remove(create_enhanced_file_remove_handler(tracked_file.id.clone()))
+            }
+            shared::FileState::Missing(path) => {
+                // File no longer exists - show with missing indicator
+                TreeViewItemData::new(tracked_file.id.clone(), tracked_file.smart_label.clone())
+                    .item_type(TreeViewItemType::FileError)
+                    .icon("file")
+                    .tooltip(format!("{}\nFile not found", path))
+                    .error_message("File not found".to_string())
+                    .with_children(vec![
+                        TreeViewItemData::new(format!("{}_missing_detail", tracked_file.id), "File no longer exists")
+                            .item_type(TreeViewItemType::Default)
+                            .disabled(true)
+                    ])
+                    .on_remove(create_enhanced_file_remove_handler(tracked_file.id.clone()))
+            }
+            shared::FileState::Unsupported(reason) => {
+                // Unsupported file format - show with unsupported indicator
+                TreeViewItemData::new(tracked_file.id.clone(), tracked_file.smart_label.clone())
+                    .item_type(TreeViewItemType::FileError)
+                    .icon("circle-help")
+                    .tooltip(format!("{}\nUnsupported: {}", tracked_file.path, reason))
+                    .error_message(format!("Unsupported: {}", reason))
+                    .disabled(true)
+                    .on_remove(create_enhanced_file_remove_handler(tracked_file.id.clone()))
+            }
+        }
+    }).collect()
+}
 
 // Helper function to clean up all file-related state when a file is removed
 fn cleanup_file_related_state(file_id: &str) {

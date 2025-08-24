@@ -4,7 +4,7 @@ use std::hash::Hash;
 
 /// Generic tree item that can represent different data types
 /// Used internally for unified handling across contexts
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TreeItem {
     /// Unique identifier for this item (used for diffing)
     pub key: String,
@@ -33,7 +33,7 @@ pub struct TreeItem {
 }
 
 /// Context-specific data that can be attached to tree items
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TreeItemData {
     /// Files & Scopes context data
     FileScope {
@@ -64,7 +64,7 @@ impl Default for TreeItemData {
 /// Allows ReactiveTreeView to work with different signal types
 pub enum DataSource<T> {
     /// Signal vector for reactive collections (e.g., TrackedFiles)
-    SignalVec(SignalVec<T>),
+    SignalVec(Box<dyn SignalVec<Item = T> + Unpin>),
     
     /// Single signal with collection data (e.g., FILE_TREE_CACHE)
     Signal(Box<dyn Signal<Item = Vec<T>> + Unpin>),
@@ -75,8 +75,10 @@ pub enum DataSource<T> {
 
 impl<T> DataSource<T> {
     /// Create from a SignalVec (most common for reactive collections)
-    pub fn from_signal_vec(signal_vec: SignalVec<T>) -> Self {
-        DataSource::SignalVec(signal_vec)
+    pub fn from_signal_vec<S>(signal_vec: S) -> Self 
+    where S: SignalVec<Item = T> + Unpin + 'static
+    {
+        DataSource::SignalVec(Box::new(signal_vec))
     }
     
     /// Create from a Signal<Vec<T>> (common for cached collections)

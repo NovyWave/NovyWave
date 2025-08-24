@@ -25,9 +25,7 @@ pub struct ReactiveTreeViewBuilder<T> {
     phantom: PhantomData<T>,
 }
 
-impl<T> ReactiveTreeViewBuilder<T> 
-where T: 'static
-{
+impl<T: 'static + Clone> ReactiveTreeViewBuilder<T> {
     pub fn new() -> Self {
         Self {
             context: None,
@@ -154,7 +152,7 @@ pub struct ReactiveTreeViewConfig {
 
 // Convenience functions for common configurations
 
-impl<T> ReactiveTreeViewBuilder<T> {
+impl<T: 'static + Clone> ReactiveTreeViewBuilder<T> {
     /// Configure for Files & Scopes panel usage
     pub fn for_files_and_scopes(self) -> Self {
         self.context(TreeViewContext::FilesAndScopes)
@@ -173,7 +171,7 @@ impl<T> ReactiveTreeViewBuilder<T> {
     }
 }
 
-impl<T> Default for ReactiveTreeViewBuilder<T> {
+impl<T: 'static + Clone> Default for ReactiveTreeViewBuilder<T> {
     fn default() -> Self {
         Self::new()
     }

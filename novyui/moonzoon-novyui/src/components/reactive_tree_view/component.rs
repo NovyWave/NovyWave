@@ -1,4 +1,6 @@
 use zoon::*;
+use zoon::column::EmptyFlagNotSet;
+use zoon::RawHtmlEl;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use web_sys::HtmlElement;
@@ -66,20 +68,20 @@ where T: Clone + 'static
                 let parent_key = self.item_renderer.get_parent_key(item, self.context);
                 let tree_item_builder = self.item_renderer.render(item, self.context);
                 
-                // Convert TreeItemBuilder to TreeItem
+                // Convert TreeItemBuilder to TreeItem using getter methods
                 TreeItem {
                     key,
                     parent_key,
-                    label: tree_item_builder.label.clone(),
-                    icon: tree_item_builder.icon.map(|i| format!("{:?}", i)), // Convert IconName to string
-                    tooltip: tree_item_builder.tooltip.clone(),
-                    expandable: tree_item_builder.expandable,
-                    expanded: self.external_expanded_state.lock_ref().contains(&tree_item_builder.label),
-                    selectable: tree_item_builder.selectable,
-                    selected: self.external_selected_state.lock_ref().contains(&tree_item_builder.label),
-                    disabled: tree_item_builder.disabled,
-                    error: tree_item_builder.error,
-                    loading: tree_item_builder.loading,
+                    label: tree_item_builder.get_label().to_string(),
+                    icon: tree_item_builder.get_icon().clone(),
+                    tooltip: tree_item_builder.get_tooltip().clone(),
+                    expandable: tree_item_builder.is_expandable(),
+                    expanded: self.external_expanded_state.lock_ref().contains(&tree_item_builder.get_label().to_string()),
+                    selectable: tree_item_builder.is_selectable(),
+                    selected: self.external_selected_state.lock_ref().contains(&tree_item_builder.get_label().to_string()),
+                    disabled: tree_item_builder.is_disabled(),
+                    error: tree_item_builder.has_error(),
+                    loading: tree_item_builder.is_loading(),
                     custom_data: super::TreeItemData::Generic(HashMap::new()), // TODO: Extract from builder
                 }
             })
@@ -156,14 +158,16 @@ where T: Clone + 'static
     }
     
     /// Create empty state element when no items
-    fn create_empty_state(&self) -> impl Element {
+    fn create_empty_state(&self) -> Column<EmptyFlagNotSet, RawHtmlEl> {
         Column::new()
             .s(Align::center())
-            .s(Padding::new().all(32))
+            .s(Padding::new().x(32).y(32))
             .item(
-                Text::new()
-                    .content(self.config.empty_state_message.as_deref().unwrap_or("No items"))
-                    .s(Font::new().size(14).color(Color::gray_6()))
+                El::new()
+                    .s(Font::new().size(14))
+                    .child(
+                        Text::new(self.config.empty_state_message.as_deref().unwrap_or("No items"))
+                    )
             )
     }
     
@@ -174,17 +178,17 @@ where T: Clone + 'static
         Column::new()
             .s(Width::fill())
             .s(Height::fill())
-            .child_signal(items.map(move |tree_items| {
+            .item_signal(items.map(move |tree_items| {
                 if tree_items.is_empty() {
-                    self.create_empty_state().into_element()
+                    self.create_empty_state()
                 } else {
-                    self.render_tree_items(tree_items).into_element()
+                    self.render_tree_items(tree_items)
                 }
             }))
     }
     
     /// Render tree items as nested structure
-    fn render_tree_items(&self, items: Vec<TreeItem>) -> impl Element {
+    fn render_tree_items(&self, items: Vec<TreeItem>) -> Column<EmptyFlagNotSet, RawHtmlEl> {
         let (root_items, children_map) = self.differ.build_hierarchy(&items);
         
         Column::new()
@@ -203,13 +207,39 @@ where T: Clone + 'static
     ) -> impl Element {
         let indent_size = depth * 16; // 16px per level
         
-        let mut container = Column::new().s(Width::fill());
+        // Build all row items first
+        let chevron_element = if item.expandable {
+            let chevron = if item.expanded { "▼" } else { "▶" };
+            El::new()
+                .s(Width::exact(16))
+                .s(Font::new().size(12))
+                .child(Text::new(chevron))
+        } else {
+            // Spacer for alignment
+            El::new().s(Width::exact(16)).child(Text::new(""))
+        };
         
-        // Main item row
+        let icon_element = if let Some(_icon) = &item.icon {
+            // TODO: Render actual icon based on IconName
+            El::new()
+                .s(Width::exact(16))
+                .child(Text::new("📄")) // Placeholder icon
+        } else {
+            El::new().s(Width::exact(16)).child(Text::new(""))
+        };
+        
+        let label_element = El::new()
+            .s(Font::new().size(14))
+            .child(Text::new(&item.label));
+        
+        // Create item row with all items at once
         let mut item_row = Row::new()
             .s(Gap::new().x(8))
             .s(Align::new().center_y())
-            .s(Padding::new().left(indent_size).y(4));
+            .s(Padding::new().left(indent_size as u32).y(4))
+            .item(chevron_element)
+            .item(icon_element)
+            .item(label_element);
             
         // Apply item state classes
         if item.selected {
@@ -225,75 +255,51 @@ where T: Clone + 'static
             item_row = item_row.update_raw_el(|el| el.class("loading"));
         }
         
-        // Expansion chevron
-        if item.expandable {
-            let chevron = if item.expanded { "▼" } else { "▶" };
-            item_row = item_row.item(
-                Text::new()
-                    .content(chevron)
-                    .s(Width::exact(16))
-                    .s(Font::new().size(12))
-            );
-        } else {
-            // Spacer for alignment
-            item_row = item_row.item(El::new().s(Width::exact(16)));
-        }
+        // Build all container items first  
+        let mut column_items = vec![item_row.into_element()];
         
-        // Icon (if present)
-        if let Some(_icon) = &item.icon {
-            // TODO: Render actual icon based on IconName
-            item_row = item_row.item(
-                Text::new()
-                    .content("📄") // Placeholder icon
-                    .s(Width::exact(16))
-            );
-        }
-        
-        // Label
-        item_row = item_row.item(
-            Text::new()
-                .content(&item.label)
-                .s(Font::new().size(14))
-        );
-        
-        container = container.item(item_row);
-        
-        // Children (if expanded)
+        // Add children (if expanded)
         if item.expanded {
             if let Some(children) = children_map.get(&item.key) {
                 for child in children {
-                    container = container.item(
-                        self.render_tree_item(child, children_map, depth + 1)
+                    column_items.push(
+                        self.render_tree_item(child, children_map, depth + 1).into_element()
                     );
                 }
             }
         }
         
-        container
+        // Create column with first item, then add others
+        let mut container = Column::new().s(Width::fill()).item(column_items.remove(0));
+        for item_element in column_items {
+            container = container.item(item_element);
+        }
+        
+        El::new().child(container)
     }
 }
 
-impl<T> Element for ReactiveTreeView<T> 
+impl<T> ReactiveTreeView<T> 
 where T: Clone + 'static
 {
-    fn into_raw_element(self) -> RawElement {
-        // Create main container
-        let mut container = Column::new()
-            .s(Width::fill())
-            .s(Height::fill());
-            
-        // Apply custom styles
-        for style_class in &self.config.custom_styles {
-            container = container.update_raw_el(|el| el.class(style_class));
-        }
-        
-        // Add tree content
-        container = container.child(self.create_tree_element());
-        
-        // Set up signal handlers
+    /// Build the TreeView as an Element that can be used in the UI
+    pub fn build(self) -> impl Element {
+        // Set up signal handlers first
         self.setup_signal_handlers();
         
-        container.into_raw_element()
+        // Create main container with tree content
+        let container = Column::new()
+            .s(Width::fill())
+            .s(Height::fill())
+            .item(self.create_tree_element());
+            
+        // Apply custom styles after adding item
+        let mut styled_container = container;
+        for style_class in &self.config.custom_styles {
+            styled_container = styled_container.update_raw_el(|el| el.class(style_class));
+        }
+        
+        styled_container
     }
 }
 

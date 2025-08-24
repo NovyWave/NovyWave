@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use super::{TreeItem, TreeViewContext};
+use super::{TreeItem, TreeItemData, TreeViewContext};
 
 /// Represents a change that needs to be applied to the DOM
 #[derive(Debug, Clone, PartialEq)]
@@ -138,8 +138,7 @@ impl TreeDiffer {
     }
     
     /// Check if custom data differs in ways that affect rendering
-    fn custom_data_differs(&self, old: &super::TreeItemData, new: &super::TreeItemData) -> bool {
-        use super::TreeItemData;
+    fn custom_data_differs(&self, old: &TreeItemData, new: &TreeItemData) -> bool {
         
         match (old, new) {
             (TreeItemData::FileScope { file_state: old_state, .. }, 
@@ -183,9 +182,9 @@ impl TreeDiffer {
     
     /// Create hierarchical tree structure from flat item list
     /// Returns (root_items, children_map)
-    pub fn build_hierarchy(&self, items: &[TreeItem]) -> (Vec<&TreeItem>, HashMap<String, Vec<&TreeItem>>) {
+    pub fn build_hierarchy<'a>(&self, items: &'a [TreeItem]) -> (Vec<&'a TreeItem>, HashMap<String, Vec<&'a TreeItem>>) {
         let mut root_items = Vec::new();
-        let mut children_map: HashMap<String, Vec<&TreeItem>> = HashMap::new();
+        let mut children_map: HashMap<String, Vec<&'a TreeItem>> = HashMap::new();
         
         for item in items {
             if let Some(parent_key) = &item.parent_key {

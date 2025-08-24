@@ -17,6 +17,8 @@ mod format_utils;
 
 mod waveform_canvas;
 
+mod reactive_tree_test;
+
 mod connection;
 use connection::*;
 

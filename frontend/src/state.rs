@@ -4,6 +4,68 @@ use indexmap::{IndexMap, IndexSet};
 use shared::{WaveformFile, LoadingFile, FileSystemItem, TrackedFile, FileState, create_tracked_file};
 // Using simpler queue approach with MutableVec
 
+// ===== STABLE SIGNAL HELPERS =====
+
+/// ✅ EFFICIENT: Count-only signal for file counts in titles and UI
+/// Tracks only the count of tracked files, not the full file list
+pub fn tracked_files_count_signal() -> impl Signal<Item = usize> {
+    TRACKED_FILES.signal_vec_cloned().len().dedupe()
+}
+
+/// ✅ NEW: Signal that tracks count of files that are actually LOADED with data
+/// This is what Variables panel should use - only fires when files have scopes loaded
+pub fn loaded_files_count_signal() -> impl Signal<Item = usize> {
+    TRACKED_FILES.signal_vec_cloned().to_signal_cloned()
+        .map(|files| {
+            files.iter()
+                .filter(|file| matches!(file.state, shared::FileState::Loaded(_)))
+                .count()
+        })
+        .dedupe()
+}
+
+/// ✅ EFFICIENT: SignalVec for reactive collections - use with items_signal_vec
+/// This is the CORRECT pattern for TreeView and other collection UI components
+pub fn stable_tracked_files_signal_vec() -> impl SignalVec<Item = TrackedFile> {
+    TRACKED_FILES.signal_vec_cloned()
+}
+
+/// ✅ CORRECT ARCHITECTURE: Use items_signal_vec pattern instead of signal conversion
+/// The TreeView should use TRACKED_FILES.signal_vec_cloned() directly with items_signal_vec
+/// This avoids the signal_vec → signal conversion antipattern entirely
+pub fn treeview_tracked_files_signal_vec() -> impl SignalVec<Item = TrackedFile> {
+    TRACKED_FILES.signal_vec_cloned()
+}
+
+/// ✅ FIXED: Returns Vec<TrackedFile> signal for TreeView rendering
+pub fn treeview_tracked_files_signal() -> impl Signal<Item = Vec<TrackedFile>> {
+    TRACKED_FILES.signal_vec_cloned().to_signal_cloned()
+        .map(|files| {
+            zoon::println!("🌳 [FIXED TreeView] Rendering {} files", files.len());
+            files
+        })
+}
+
+/// ✅ DEPRECATED: Use treeview_tracked_files_signal() instead
+/// This was causing issues because it didn't trigger on file state changes
+#[deprecated(note = "Use treeview_tracked_files_signal() for TreeView updates")]
+pub fn batched_tracked_files_signal() -> impl Signal<Item = Vec<TrackedFile>> {
+    OPENED_FILES_FOR_CONFIG.signal_ref(|_| {
+        TRACKED_FILES.lock_ref().to_vec()
+    })
+}
+
+/// ❌ DEPRECATED: DO NOT USE - Known antipattern causing 20+ renders
+/// This function causes severe over-rendering. Use alternatives above instead:
+/// - For counts: tracked_files_count_signal()  
+/// - For collections: stable_tracked_files_signal_vec() with items_signal_vec
+/// - For occasional full updates: batched_tracked_files_signal()
+#[deprecated(note = "Use tracked_files_count_signal() or stable_tracked_files_signal_vec() instead")]
+pub fn stable_tracked_files_signal() -> impl Signal<Item = Vec<TrackedFile>> {
+    // Keep this temporarily to avoid compilation errors during migration
+    TRACKED_FILES.signal_vec_cloned().to_signal_cloned()
+}
+
 // ===== FILE UPDATE MESSAGE QUEUE SYSTEM =====
 
 #[derive(Debug, Clone)]
@@ -75,12 +137,31 @@ async fn process_file_update_message_sync(message: FileUpdateMessage) {
                 files.iter().position(|f| f.id == tracked_file.id)
             };
             
+            // ✅ OPTIMIZED: Compute smart label when adding individual files
+            let mut tracked_file_with_smart_label = tracked_file.clone();
+            if tracked_file_with_smart_label.smart_label.is_empty() {
+                // Get all current file paths for smart label computation
+                let current_paths: Vec<String> = {
+                    let files = TRACKED_FILES.lock_ref();
+                    let mut paths: Vec<String> = files.iter().map(|f| f.path.clone()).collect();
+                    paths.push(tracked_file.path.clone());
+                    paths
+                };
+                
+                let smart_labels = shared::generate_smart_labels(&current_paths);
+                tracked_file_with_smart_label.smart_label = smart_labels.get(&tracked_file.path)
+                    .unwrap_or(&tracked_file.filename)
+                    .clone();
+            }
+            
             if let Some(index) = existing_index {
                 // Update existing file
-                TRACKED_FILES.lock_mut().set_cloned(index, tracked_file);
+                zoon::println!("🔄 [TRACKED_FILES DEBUG] Updating file at index {} to {}", index, tracked_file_with_smart_label.path);
+                TRACKED_FILES.lock_mut().set_cloned(index, tracked_file_with_smart_label);
             } else {
                 // Add new file
-                TRACKED_FILES.lock_mut().push_cloned(tracked_file);
+                zoon::println!("➕ [TRACKED_FILES DEBUG] Adding new file: {}", tracked_file_with_smart_label.path);
+                TRACKED_FILES.lock_mut().push_cloned(tracked_file_with_smart_label);
             }
             
             // Update the file IDs cache
@@ -91,7 +172,13 @@ async fn process_file_update_message_sync(message: FileUpdateMessage) {
             // Find and update the file state
             let file_index = {
                 let tracked_files = TRACKED_FILES.lock_ref();
-                tracked_files.iter().position(|f| f.id == file_id)
+                let index = tracked_files.iter().position(|f| f.id == file_id);
+                if index.is_none() {
+                    zoon::println!("⚠️ [UPDATE_FILE_STATE] File ID not found: '{}'. Available IDs: {:?}", 
+                        file_id, 
+                        tracked_files.iter().map(|f| f.id.clone()).collect::<Vec<String>>());
+                }
+                index
             };
             
             if let Some(index) = file_index {
@@ -100,13 +187,17 @@ async fn process_file_update_message_sync(message: FileUpdateMessage) {
                     file.state = new_state;
                     tracked_files.set_cloned(index, file);
                 }
+                // Drop the lock before triggering signal
             }
+            
+            // Note: TreeView updates automatically via treeview_tracked_files_signal() when needed
             
             // Update the file IDs cache
             update_tracked_file_ids_cache();
         },
         
         FileUpdateMessage::Remove { file_id } => {
+            zoon::println!("🗑️ [TRACKED_FILES DEBUG] Removing file with id: {}", file_id);
             TRACKED_FILES.lock_mut().retain(|f| f.id != file_id);
             
             // Update the file IDs cache
@@ -123,6 +214,7 @@ async fn process_file_update_message_sync(message: FileUpdateMessage) {
             if let Some(index) = file_index {
                 let mut tracked_files = TRACKED_FILES.lock_mut();
                 if let Some(mut file) = tracked_files.get(index).cloned() {
+                    zoon::println!("🏷️ [TRACKED_FILES DEBUG] Updating smart label for file {} to '{}'", file.path, smart_label);
                     file.smart_label = smart_label;
                     tracked_files.set_cloned(index, file);
                 }
@@ -136,6 +228,8 @@ fn update_tracked_file_ids_cache() {
     let tracked_files = TRACKED_FILES.lock_ref();
     let file_ids: IndexSet<String> = tracked_files.iter().map(|f| f.id.clone()).collect();
     TRACKED_FILE_IDS.set_neq(file_ids);
+    
+    // Removed broken trigger system that was causing over-rendering
 }
 
 /// Queue a message for processing (non-recursive)
@@ -244,6 +338,8 @@ pub static IS_LOADING: Lazy<Mutable<bool>> = lazy::default();
 // Cache of tracked file IDs - prevents recursive locking in signal handlers
 pub static TRACKED_FILE_IDS: Lazy<Mutable<IndexSet<String>>> = lazy::default();
 
+// Trigger for file state changes (Loading→Loaded, etc.) to update TreeView
+pub static FILE_STATE_CHANGE_TRIGGER: Lazy<Mutable<u32>> = Lazy::new(|| Mutable::new(0));
 
 // Legacy support during transition - will be removed later
 pub static LOADING_FILES: Lazy<MutableVec<LoadingFile>> = lazy::default();
@@ -445,14 +541,64 @@ pub fn get_all_tracked_file_paths() -> Vec<String> {
 }
 
 
-/// Initialize tracked files from config file paths (for session restoration)
+/// Initialize tracked files from config file paths (for session restoration)  
 pub fn init_tracked_files_from_config(file_paths: Vec<String>) {
     // Clear existing files first
+    zoon::println!("🧹 [TRACKED_FILES DEBUG] Clearing all tracked files");
     TRACKED_FILES.lock_mut().clear();
     
-    // Add each file through the message queue
-    for path in file_paths {
-        add_tracked_file(path, FileState::Loading(shared::LoadingStatus::Starting));
+    // BATCH APPROACH: Add all files at once to prevent signal cascade
+    if !file_paths.is_empty() {
+        zoon::println!("📦 [TRACKED_FILES DEBUG] BATCH adding {} files to prevent signal cascade", file_paths.len());
+        
+        // ✅ OPTIMIZED: Compute smart labels once during batch initialization
+        // This prevents repeated smart label computation during TreeView rendering
+        let smart_labels = shared::generate_smart_labels(&file_paths);
+        zoon::println!("📋 [SMART_LABELS DEBUG] Computed smart labels for {} files: {:?}", file_paths.len(), smart_labels);
+        
+        let tracked_files: Vec<TrackedFile> = file_paths.into_iter()
+            .enumerate()
+            .map(|(_index, path)| {
+                // Extract filename from path manually
+                let filename = path.split('/').last()
+                    .or_else(|| path.split('\\').last())
+                    .unwrap_or(&path)
+                    .to_string();
+                
+                // Use pre-computed smart label to avoid recomputation later    
+                let smart_label = smart_labels.get(&path).unwrap_or(&filename).clone();
+                    
+                TrackedFile {
+                    id: path.clone(), // ✅ CRITICAL FIX: Use file path as ID to match backend expectations
+                    path: path.clone(),
+                    filename: filename.clone(),
+                    smart_label, // Pre-computed smart label cached in TrackedFile
+                    state: FileState::Loading(shared::LoadingStatus::Starting),
+                }
+            })
+            .collect();
+            
+        // Single TRACKED_FILES update - add all files at once
+        {
+            let mut locked_files = TRACKED_FILES.lock_mut();
+            for tracked_file in tracked_files.iter() {
+                zoon::println!("📁 [TRACKED_FILES DEBUG] Adding file: path='{}', filename='{}', smart_label='{}'", 
+                    tracked_file.path, tracked_file.filename, tracked_file.smart_label);
+                locked_files.push_cloned(tracked_file.clone());
+            }
+        }
+        
+        // Now trigger backend loading for each file (but don't modify TRACKED_FILES again)
+        zoon::println!("🚀 [BACKEND DEBUG] Triggering backend loading for {} files", tracked_files.len());
+        for tracked_file in tracked_files {
+            Task::start({
+                let path = tracked_file.path.clone();
+                async move {
+                    zoon::println!("📤 [BACKEND DEBUG] Sending LoadWaveformFile message for: {}", path);
+                    crate::connection::send_up_msg(shared::UpMsg::LoadWaveformFile(path));
+                }
+            });
+        }
     }
 }
 
@@ -648,10 +794,12 @@ pub static OPENED_FILES_FOR_CONFIG: Lazy<Mutable<Vec<String>>> = Lazy::new(|| {
     let derived_clone = derived.clone();
     Task::start(async move {
         TRACKED_FILES.signal_vec_cloned()
-            .to_signal_cloned()
-            .for_each(move |files| {
+            .len()
+            .dedupe()
+            .for_each(move |_| {
                 let derived = derived_clone.clone();
                 async move {
+                    let files: Vec<TrackedFile> = TRACKED_FILES.lock_ref().to_vec();
                     let file_paths: Vec<String> = files.iter().map(|f| f.path.clone()).collect();
                     derived.set_neq(file_paths);
                 }
@@ -807,4 +955,12 @@ pub fn init_config_derived_signals() {
     let _ = &*LOAD_FILES_EXPANDED_DIRECTORIES_FOR_CONFIG;
     let _ = &*SELECTED_VARIABLES_FOR_CONFIG;
     let _ = &*DOCK_MODE_FOR_CONFIG;
+}
+
+/// Immediate file state change trigger - triggers TreeView update immediately
+fn debounce_file_state_change_trigger() {
+    // Trigger the actual TreeView update immediately (no debouncing to avoid WASM timer issues)
+    let current = FILE_STATE_CHANGE_TRIGGER.get();
+    FILE_STATE_CHANGE_TRIGGER.set_neq(current.wrapping_add(1));
+    zoon::println!("🌳 [IMMEDIATE] TreeView update triggered after file state change");
 }
