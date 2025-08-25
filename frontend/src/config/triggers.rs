@@ -1,7 +1,7 @@
 use crate::config::config_store;
 use crate::state::*;
 use crate::platform::{Platform, CurrentPlatform};
-use shared::{UpMsg, DockMode, TrackedFile, FileState, create_tracked_file};
+use shared::{UpMsg, DockMode, FileState, create_tracked_file};
 use indexmap::IndexSet;
 use zoon::{Task, *};
 
@@ -37,7 +37,6 @@ fn sync_file_management_from_config() {
         
         // ✅ OPTIMIZED: Compute smart labels for all files first to avoid empty labels
         let smart_labels = shared::generate_smart_labels(&file_paths);
-        zoon::println!("📋 [CONFIG SMART_LABELS] Computed smart labels for {} files: {:?}", file_paths.len(), smart_labels);
         
         let mut new_tracked_files = Vec::new();
         
@@ -60,15 +59,12 @@ fn sync_file_management_from_config() {
                 new_file.smart_label = smart_labels.get(&file_path)
                     .unwrap_or(&new_file.filename)
                     .clone();
-                zoon::println!("📁 [CONFIG DEBUG] Creating new file: id='{}', path='{}', smart_label='{}'", 
-                    new_file.id, new_file.path, new_file.smart_label);
                 new_tracked_files.push(new_file);
                 
                 // Send backend loading message for new files only
                 Task::start({
                     let path = file_path.clone();
                     async move {
-                        zoon::println!("📤 [CONFIG BACKEND] Sending LoadWaveformFile for: {}", path);
                         let _ = CurrentPlatform::send_message(UpMsg::LoadWaveformFile(path)).await;
                     }
                 });
@@ -80,10 +76,8 @@ fn sync_file_management_from_config() {
         let new_paths: Vec<String> = new_tracked_files.iter().map(|f| f.path.clone()).collect();
         
         if current_paths != new_paths {
-            zoon::println!("🔄 [TRACKED_FILES DEBUG] Config restore: replacing {} files with {} files", current_paths.len(), new_paths.len());
             TRACKED_FILES.lock_mut().replace_cloned(new_tracked_files);
         } else {
-            zoon::println!("⏹️ [TRACKED_FILES DEBUG] Config restore: no change needed ({} files)", current_paths.len());
         }
     }
     

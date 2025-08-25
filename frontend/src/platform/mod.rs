@@ -3,18 +3,12 @@
 //! Provides unified interface for communication between frontend and backend
 //! across different deployment modes (web vs desktop).
 
-use shared::{UpMsg, DownMsg};
+use shared::UpMsg;
 
 /// Platform abstraction trait for frontend-backend communication
 pub trait Platform {
-    /// Check if the platform is available in current environment
-    fn is_available() -> bool;
-    
     /// Send a message to the backend
     async fn send_message(msg: UpMsg) -> Result<(), String>;
-    
-    /// Initialize message handler for receiving backend messages
-    fn init_message_handler(handler: fn(DownMsg));
 }
 
 // Conditional compilation based on NOVYWAVE_PLATFORM

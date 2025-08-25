@@ -4,7 +4,6 @@ use moonzoon_novyui::tokens::color::{neutral_2, neutral_8, neutral_11, primary_3
 use wasm_bindgen::JsCast;
 
 use crate::types::{VariableWithContext, filter_variables_with_context};
-// use crate::debug_utils::{debug_throttled, debug_critical}; // Unused - kept for future debugging
 
 fn empty_state_hint(text: &str) -> impl Element {
     El::new()

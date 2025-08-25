@@ -86,10 +86,3 @@ pub fn debug_cache_miss(message: &str) {
     }
 }
 
-/// Enable cache miss debugging at runtime (for development)
-/// Call this function to see cache miss logs without recompiling
-#[allow(dead_code)]
-pub fn enable_cache_miss_debug() {
-    // Note: To enable cache miss logs, set DEBUG_CACHE_MISS = true above and recompile
-    zoon::println!("[DEBUG] To enable cache miss logs, set DEBUG_CACHE_MISS = true in debug_utils.rs");
-}

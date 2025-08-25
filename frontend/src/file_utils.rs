@@ -1,5 +1,5 @@
-use crate::{FILE_PATHS_INPUT, SHOW_FILE_DIALOG, IS_LOADING, LOAD_FILES_VIEWPORT_Y, config::config_store};
-use shared::{UpMsg, generate_file_id, FileState};
+use crate::{FILE_PATHS_INPUT, SHOW_FILE_DIALOG, LOAD_FILES_VIEWPORT_Y, config::config_store};
+use shared::UpMsg;
 use zoon::{Task, Timer};
 
 
@@ -57,41 +57,3 @@ pub fn show_file_paths_dialog() {
     });
 }
 
-#[allow(dead_code)]
-pub fn process_file_paths() {
-    let input = FILE_PATHS_INPUT.get_cloned();
-    let paths: Vec<String> = input
-        .split(',')
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
-    
-    
-    if !paths.is_empty() {
-        IS_LOADING.set(true);
-    }
-    
-    // CRITICAL: Validate files BEFORE sending to backend
-    // This prevents non-existent files from being misclassified as UnsupportedFormat
-    // and avoids wasting backend resources on invalid files
-    for path in paths {
-        Task::start({
-            let path = path.clone();
-            async move {
-                // Let backend handle all validation - no frontend heuristics
-                crate::state::add_tracked_file(path.clone(), FileState::Loading(shared::LoadingStatus::Starting));
-                
-                // Also maintain legacy FILE_PATHS for backward compatibility during transition
-                let file_id = generate_file_id(&path);
-                crate::FILE_PATHS.lock_mut().insert(file_id, path.clone());
-                
-                Task::start(async move {
-                    use crate::platform::{Platform, CurrentPlatform};
-                    let _ = CurrentPlatform::send_message(UpMsg::LoadWaveformFile(path)).await;
-                });
-            }
-        });
-    }
-    
-    SHOW_FILE_DIALOG.set(false);
-}

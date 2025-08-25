@@ -8,7 +8,6 @@ mod virtual_list;
 mod debug_utils;
 
 mod clipboard;
-// use debug_utils::{debug_throttled, debug_critical}; // Unused - kept for future debugging
 
 mod file_utils;
 use file_utils::*;
@@ -17,7 +16,6 @@ mod format_utils;
 
 mod waveform_canvas;
 
-mod reactive_tree_test;
 
 mod connection;
 use connection::*;
@@ -55,34 +53,26 @@ use error_ui::*;
 fn init_timeline_signal_handlers() {
     // Enhanced timeline cursor signal handler that directly calls SignalDataService
     // This extends the existing cursor handling with direct service integration
-    zoon::println!("🚀 Initializing enhanced timeline cursor signal handler");
     
     Task::start(async {
         // Track last cursor position and request time to avoid duplicate requests
         let last_position = Mutable::new(0.0);
         let last_request_time = Mutable::new(0.0);
         
-        zoon::println!("🔗 Timeline cursor signal handler: Starting signal monitoring");
         
         // Monitor timeline cursor position changes with intelligent debouncing
         crate::state::TIMELINE_CURSOR_POSITION.signal().for_each_sync(move |cursor_pos| {
             let last_position_clone = last_position.clone();
             let last_request_time_clone = last_request_time.clone();
             
-            // Always log signal fires for debugging (shows all cursor position signals)
             let old_pos = last_position_clone.get();
             let position_delta = (cursor_pos - old_pos).abs();
-            zoon::println!("📍 Timeline cursor signal: {:.6} (prev: {:.6}, Δ: {:.6})", cursor_pos, old_pos, position_delta);
             
             // Skip if position hasn't changed significantly (avoid noise)
             if position_delta < 0.0000001 { // Ultra-low threshold for microsecond-level changes (0.1μs)
-                zoon::println!("⏭️ Timeline cursor signal: Delta too small, skipping");
                 return;
             }
             
-            // Debug: Always log position changes to verify handler is running
-            zoon::println!("🔍 Timeline cursor signal handler: Position change detected {:.6} -> {:.6} (Δ: {:.6})", 
-                         last_position_clone.get(), cursor_pos, position_delta);
             
             // Skip during active cursor movement to prevent excessive requests
             let is_moving = crate::state::IS_CURSOR_MOVING_LEFT.get() || crate::state::IS_CURSOR_MOVING_RIGHT.get();
@@ -94,7 +84,6 @@ fn init_timeline_signal_handlers() {
                 
                 // Only proceed if enough time has passed (300ms debounce)
                 if time_since_last >= 300.0 {
-                    zoon::println!("🚀 Timeline cursor signal handler: Position changed to {:.6}, triggering SignalDataService", cursor_pos);
                     
                     // Get current selected variables for direct service call
                     let selected_vars = crate::state::SELECTED_VARIABLES.lock_ref();
@@ -107,7 +96,6 @@ fn init_timeline_signal_handlers() {
                                 // Parse unique_id: "/path/file.ext|scope|variable"
                                 let parts: Vec<&str> = var.unique_id.split('|').collect();
                                 if parts.len() != 3 {
-                                    zoon::println!("⚠️ Timeline cursor signal handler: Invalid unique_id format: {}", var.unique_id);
                                     return None;
                                 }
                                 
@@ -123,8 +111,6 @@ fn init_timeline_signal_handlers() {
                             .collect();
                         
                         if !signal_requests.is_empty() {
-                            zoon::println!("📡 Timeline cursor signal handler: Requesting signal data for {} variables at time {:.6}", 
-                                         signal_requests.len(), cursor_pos);
                             
                             // Direct call to SignalDataService
                             crate::signal_data_service::SignalDataService::request_signal_data(
@@ -136,16 +122,12 @@ fn init_timeline_signal_handlers() {
                             // Update last request time
                             last_request_time_clone.set(current_time);
                         } else {
-                            zoon::println!("⚠️ Timeline cursor signal handler: No valid signal requests generated");
                         }
                     } else {
-                        zoon::println!("⚠️ Timeline cursor signal handler: No selected variables, skipping request");
                     }
                 } else {
-                    zoon::println!("⏱️ Timeline cursor signal handler: Request debounced ({:.0}ms since last)", time_since_last);
                 }
             } else {
-                zoon::println!("🏃 Timeline cursor signal handler: Cursor moving, skipping request");
             }
             
             // Always update last position
@@ -157,7 +139,6 @@ fn init_timeline_signal_handlers() {
 /// Initialize reactive handlers that bridge SELECTED_VARIABLES state to SignalDataService
 /// This ensures that when variables are added/removed, SignalDataService is automatically updated
 fn init_selected_variables_signal_service_bridge() {
-    zoon::println!("🔗 Initializing SELECTED_VARIABLES -> SignalDataService bridge");
     
     Task::start(async {
         // Track previous state to detect additions and removals
@@ -169,7 +150,6 @@ fn init_selected_variables_signal_service_bridge() {
             async move {
                 // Only process changes after config initialization is complete
                 if !CONFIG_LOADED.get() || IS_LOADING.get() {
-                    zoon::println!("⏸️ SELECTED_VARIABLES bridge: Skipping (config loading or files loading)");
                     return;
                 }
                 
@@ -177,12 +157,9 @@ fn init_selected_variables_signal_service_bridge() {
                 let previous_state = previous_vars.get_cloned();
                 let previous_count = previous_state.len();
                 
-                zoon::println!("🔄 SELECTED_VARIABLES bridge: Change detected - {} -> {} variables", 
-                             previous_count, current_count);
                 
                 if current_count == 0 && previous_count > 0 {
                     // All variables were removed - clean up SignalDataService cache
-                    zoon::println!("🧹 SELECTED_VARIABLES bridge: All variables removed, clearing SignalDataService cache");
                     crate::signal_data_service::SignalDataService::clear_all_caches();
                 } else if current_count > 0 {
                     // Identify removed variables for targeted cleanup
@@ -209,8 +186,6 @@ fn init_selected_variables_signal_service_bridge() {
                         .collect();
                     
                     if !removed_ids.is_empty() {
-                        zoon::println!("🧹 SELECTED_VARIABLES bridge: {} variables removed, cleaning up: {:?}", 
-                                     removed_ids.len(), removed_ids);
                         crate::signal_data_service::SignalDataService::cleanup_variables(&removed_ids);
                     }
                     
@@ -225,7 +200,6 @@ fn init_selected_variables_signal_service_bridge() {
                                 // Parse unique_id: "/path/file.ext|scope|variable"
                                 let parts: Vec<&str> = var.unique_id.split('|').collect();
                                 if parts.len() != 3 {
-                                    zoon::println!("⚠️ SELECTED_VARIABLES bridge: Invalid unique_id format: {}", var.unique_id);
                                     return None;
                                 }
                                 
@@ -242,8 +216,6 @@ fn init_selected_variables_signal_service_bridge() {
                         
                         if !signal_requests.is_empty() {
                             if !added_ids.is_empty() {
-                                zoon::println!("📡 SELECTED_VARIABLES bridge: {} new variables added, requesting data at time {:.6}", 
-                                             added_ids.len(), current_cursor);
                             }
                             
                             // Register variables with SignalDataService and immediately request their data
@@ -253,7 +225,6 @@ fn init_selected_variables_signal_service_bridge() {
                                 false // Normal priority for variable selection changes
                             );
                         } else {
-                            zoon::println!("⚠️ SELECTED_VARIABLES bridge: No valid signal requests generated from selected variables");
                         }
                     }
                 }
@@ -546,7 +517,6 @@ async fn wait_for_files_loaded(file_paths: &[String]) {
         
         check_count += 1;
         if check_count >= max_checks {
-            zoon::println!("⚠️  Timeout waiting for files to load - proceeding anyway");
             break;
         }
         

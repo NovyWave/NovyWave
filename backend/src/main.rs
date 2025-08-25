@@ -40,35 +40,22 @@ static VCD_LOADING_IN_PROGRESS: Lazy<Arc<Mutex<std::collections::HashSet<String>
 struct SignalCacheManager {
     /// Complete signal transition data indexed by unique signal ID
     transition_cache: Arc<RwLock<BTreeMap<String, Vec<SignalTransition>>>>,
-    /// Pre-computed signal metadata for quick access
-    signal_metadata: Arc<RwLock<BTreeMap<String, SignalMetadata>>>,
     /// Cache statistics for performance monitoring
     cache_stats: Arc<RwLock<CacheStats>>,
 }
 
-#[derive(Clone)]
-struct SignalMetadata {
-    file_path: String,
-    scope_path: String,
-    variable_name: String,
-    total_transitions: usize,
-    time_range: Option<(f64, f64)>,
-    last_accessed: std::time::Instant,
-}
 
 #[derive(Default)]
 struct CacheStats {
     total_queries: usize,
     cache_hits: usize,
     cache_misses: usize,
-    total_signals_cached: usize,
 }
 
 impl SignalCacheManager {
     fn new() -> Self {
         Self {
             transition_cache: Arc::new(RwLock::new(BTreeMap::new())),
-            signal_metadata: Arc::new(RwLock::new(BTreeMap::new())),
             cache_stats: Arc::new(RwLock::new(CacheStats::default())),
         }
     }
@@ -211,13 +198,13 @@ impl SignalCacheManager {
     /// Extract transitions from wellen signal data
     fn extract_transitions_from_wellen(
         &self,
-        waveform_data: &WaveformData,
-        signal_ref: &wellen::SignalRef,
-        format: &shared::VarFormat,
+        _waveform_data: &WaveformData,
+        _signal_ref: &wellen::SignalRef,
+        _format: &shared::VarFormat,
     ) -> Result<Vec<SignalTransition>, String> {
         // This is a simplified version - real implementation would use wellen APIs
         // to extract signal transitions with proper time conversion
-        let mut transitions = Vec::new();
+        let transitions = Vec::new();
         
         // TODO: Implement actual wellen signal value extraction
         // For now, return empty transitions to avoid compilation errors

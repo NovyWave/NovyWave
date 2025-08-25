@@ -158,7 +158,6 @@ fn expand_parent_scopes(scopes: &[ScopeData], target_scope_id: &str) {
         drop(expanded); // Trigger signals only once after batch operation
         
         if added_count > 0 {
-            zoon::println!("🌳 [DEBUG] expand_parent_scopes: batch expanded {} scopes for '{}'", added_count, target_scope_id);
         }
     }
     

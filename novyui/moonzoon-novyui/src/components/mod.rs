@@ -17,7 +17,7 @@ pub mod accordion;
 pub mod select;
 pub mod alert;
 pub mod treeview;
-// pub mod reactive_tree_view; // Complex lifetime issues remain
+// (disabled ReactiveTreeView) pub mod reactive_tree_view; // Complex lifetime issues remain
 pub mod fileinput;
 pub mod pattern;
 
@@ -45,6 +45,6 @@ pub use accordion::*;
 pub use select::*;
 pub use alert::*;
 pub use treeview::*;
-// pub use reactive_tree_view::*; // Complex lifetime issues remain
+// (disabled ReactiveTreeView) pub use reactive_tree_view::*; // Complex lifetime issues remain
 pub use fileinput::*;
 pub use pattern::*;

@@ -18,7 +18,6 @@ pub fn truncate_value(value: &str, max_chars: usize) -> String {
 pub enum SignalValue {
     /// Real signal data from waveform file
     Data {
-        raw_binary: String,
         formatted_values: HashMap<VarFormat, String>,
     },
     /// Missing data (cursor beyond time range, file not loaded, etc.)
@@ -31,7 +30,7 @@ impl SignalValue {
     /// Create from real signal data
     pub fn from_data(raw_binary: String) -> Self {
         let formatted_values = Self::generate_all_formats(&raw_binary);
-        Self::Data { raw_binary, formatted_values }
+        Self::Data { formatted_values }
     }
 
     /// Create missing data marker
@@ -39,11 +38,6 @@ impl SignalValue {
         Self::Missing
     }
 
-    /// Create loading state marker  
-    #[allow(dead_code)]
-    pub fn loading() -> Self {
-        Self::Loading
-    }
 
     /// Generate formatted values for all VarFormat types
     fn generate_all_formats(raw_binary: &str) -> HashMap<VarFormat, String> {
@@ -111,14 +105,6 @@ impl SignalValue {
         matches!(self, Self::Data { .. })
     }
 
-    /// Get raw binary if available
-    #[allow(dead_code)]
-    pub fn raw_binary(&self) -> Option<&str> {
-        match self {
-            Self::Data { raw_binary, .. } => Some(raw_binary),
-            _ => None,
-        }
-    }
 }
 
 /// Format options for dropdown - contains value and disabled state
@@ -212,12 +198,10 @@ mod tests {
         // Test real "N/A" data
         let real_na = SignalValue::from_data("N/A".to_string());
         assert!(real_na.is_data());
-        assert_eq!(real_na.raw_binary(), Some("N/A"));
         
         // Test missing data
         let missing = SignalValue::missing();
         assert!(!missing.is_data());
-        assert_eq!(missing.raw_binary(), None);
         assert_eq!(missing.get_formatted(&VarFormat::Binary), "N/A");
         assert_eq!(missing.get_formatted(&VarFormat::Hexadecimal), "N/A");
     }

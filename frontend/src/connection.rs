@@ -6,7 +6,6 @@ use crate::state::ErrorAlert;
 use crate::utils::restore_scope_selection_for_file;
 use crate::views::is_cursor_within_variable_time_range;
 use crate::state::TIMELINE_CURSOR_POSITION;
-use crate::platform::{Platform, CurrentPlatform};
 use shared::{UpMsg, DownMsg};
 use shared::{LoadingFile, LoadingStatus};
 use wasm_bindgen::JsValue;
@@ -45,7 +44,6 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
         // DownMsg logging disabled - causes CLI overflow with large files
         match down_msg {
             DownMsg::ParsingStarted { file_id, filename } => {
-                zoon::println!("📥 [BACKEND RESPONSE] ParsingStarted: file_id='{}', filename='{}'", file_id, filename);
                 // Update TRACKED_FILES with parsing started status
                 crate::state::update_tracked_file_state(&file_id, shared::FileState::Loading(shared::LoadingStatus::Parsing));
                 
@@ -72,7 +70,6 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 LOADING_FILES.lock_mut().replace_cloned(updated_files);
             }
             DownMsg::FileLoaded { file_id, hierarchy } => {
-                zoon::println!("📥 [BACKEND RESPONSE] FileLoaded: file_id='{}', files_count={}", file_id, hierarchy.files.len());
                 // Update TRACKED_FILES with loaded waveform file
                 if let Some(loaded_file) = hierarchy.files.first() {
                     crate::state::update_tracked_file_state(&file_id, shared::FileState::Loaded(loaded_file.clone()));
@@ -231,7 +228,6 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
             DownMsg::SignalValues { file_path, results } => {
                 // DEPRECATED: Legacy signal values handler - should be migrated to UnifiedSignalResponse
                 // This handler exists for backward compatibility during the migration to SignalDataService
-                zoon::println!("⚠️ LEGACY: Received old DownMsg::SignalValues for {} - should use UnifiedSignalResponse", file_path);
                 
                 // Convert old format to cursor values for SignalDataService compatibility
                 let mut cursor_values = std::collections::BTreeMap::new();
@@ -278,7 +274,6 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
             }
             DownMsg::SignalValuesError { file_path, error } => {
                 // DEPRECATED: Legacy signal values error handler - should be migrated to UnifiedSignalError
-                zoon::println!("⚠️ LEGACY: Received old DownMsg::SignalValuesError for {} - should use UnifiedSignalError", file_path);
                 
                 // Delegate to SignalDataService for consistent error handling
                 let fake_request_id = format!("legacy-error-{}-{}", file_path, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis());
@@ -376,293 +371,18 @@ pub fn init_connection() {
     crate::debug_utils::debug_conditional("Connection init starting");
     
     // Initialize platform-specific connection handling
-    if CurrentPlatform::is_available() {
-        crate::debug_utils::debug_conditional("Platform available, initializing message handler");
-        
-        // Initialize the DownMsg handler with our existing message processing logic
-        let handler = |down_msg: DownMsg| {
-            // Use the same DownMsg processing logic as the CONNECTION static
-            // This ensures consistent behavior across platforms
-            handle_down_msg(down_msg);
-        };
-        
-        CurrentPlatform::init_message_handler(handler);
-        
-        // In web mode, we still need to initialize the MoonZoon CONNECTION
-        #[cfg(NOVYWAVE_PLATFORM = "WEB")]
-        {
-            CONNECTION.init_lazy();
-        }
-    } else {
-        crate::debug_utils::debug_conditional("Platform not available");
+    // Platform-specific initialization would go here if needed
+    #[cfg(NOVYWAVE_PLATFORM = "TAURI")]
+    {
+        crate::debug_utils::debug_conditional("Tauri platform integration not yet implemented");
+    }
+    
+    // For web mode, CONNECTION static already handles messages - no additional setup needed
+    #[cfg(NOVYWAVE_PLATFORM = "WEB")]
+    {
+        crate::debug_utils::debug_conditional("Web mode: using CONNECTION static for message handling");
+        // CONNECTION is automatically initialized when first accessed
     }
 }
 
-// Extract the DownMsg handling logic for reuse by platform abstraction
-fn handle_down_msg(down_msg: DownMsg) {
-    // This is the same logic from the CONNECTION static closure
-    match down_msg {
-        DownMsg::ParsingStarted { file_id, filename } => {
-            crate::state::update_tracked_file_state(&file_id, shared::FileState::Loading(shared::LoadingStatus::Parsing));
-            
-            let loading_file = LoadingFile {
-                file_id: file_id.clone(),
-                filename: filename.clone(),
-                progress: 0.0,
-                status: LoadingStatus::Starting,
-            };
-            
-            LOADING_FILES.lock_mut().push_cloned(loading_file);
-        }
-        DownMsg::ParsingProgress { file_id, progress } => {
-            let current_files: Vec<LoadingFile> = LOADING_FILES.lock_ref().iter().cloned().collect();
-            let updated_files: Vec<LoadingFile> = current_files.into_iter().map(|mut file| {
-                if file.file_id == file_id {
-                    file.progress = progress;
-                    file.status = LoadingStatus::Parsing;
-                }
-                file
-            }).collect();
-            LOADING_FILES.lock_mut().replace_cloned(updated_files);
-        }
-        DownMsg::FileLoaded { file_id, hierarchy } => {
-            if let Some(loaded_file) = hierarchy.files.first() {
-                crate::state::update_tracked_file_state(&file_id, shared::FileState::Loaded(loaded_file.clone()));
-                // Note: scope restoration handled by first FileLoaded handler to prevent duplicates
-            }
-            
-            for file in hierarchy.files {
-                LOADED_FILES.lock_mut().push_cloned(file.clone());
-            }
-            
-            let current_files: Vec<LoadingFile> = LOADING_FILES.lock_ref().iter().cloned().collect();
-            let updated_files: Vec<LoadingFile> = current_files.into_iter().map(|mut file| {
-                if file.file_id == file_id {
-                    file.progress = 1.0;
-                    file.status = LoadingStatus::Completed;
-                }
-                file
-            }).collect();
-            LOADING_FILES.lock_mut().replace_cloned(updated_files);
-            
-            check_loading_complete();
-            
-            if CONFIG_LOADED.get() {
-                config::save_file_list();
-            }
-        }
-        DownMsg::ParsingError { file_id, error } => {
-            let file_error = shared::FileError::ParseError { 
-                source: error.clone(),
-                context: format!("Parsing file with ID: {}", file_id),
-            };
-            crate::state::update_tracked_file_state(&file_id, shared::FileState::Failed(file_error));
-            
-            let filename = {
-                let tracked_files = crate::state::TRACKED_FILES.lock_ref();
-                tracked_files.iter()
-                    .find(|file| file.id == file_id)
-                    .map(|file| file.filename.clone())
-                    .unwrap_or_else(|| {
-                        let current_files: Vec<LoadingFile> = LOADING_FILES.lock_ref().iter().cloned().collect();
-                        current_files.iter()
-                            .find(|file| file.file_id == file_id)
-                            .map(|file| file.filename.clone())
-                            .unwrap_or_else(|| "Unknown file".to_string())
-                    })
-            };
-            
-            let error_alert = ErrorAlert::new_file_parsing_error(
-                file_id.clone(),
-                filename,
-                error.clone()
-            );
-            add_error_alert(error_alert);
-            
-            let current_files: Vec<LoadingFile> = LOADING_FILES.lock_ref().iter().cloned().collect();
-            let updated_files: Vec<LoadingFile> = current_files.into_iter().map(|mut file| {
-                if file.file_id == file_id {
-                    file.status = LoadingStatus::Error(error.clone());
-                }
-                file
-            }).collect();
-            LOADING_FILES.lock_mut().replace_cloned(updated_files);
-            
-            check_loading_complete();
-        }
-        DownMsg::DirectoryContents { path, items } => {
-            crate::FILE_TREE_CACHE.lock_mut().insert(path.clone(), items.clone());
-            
-            if path.contains("/home/") || path.starts_with("/Users/") {
-                let mut expanded = crate::FILE_PICKER_EXPANDED.lock_mut();
-                expanded.insert(path.clone());
-                
-                let mut parent_path = std::path::Path::new(&path);
-                while let Some(parent) = parent_path.parent() {
-                    let parent_str = parent.to_string_lossy().to_string();
-                    if parent_str == "" || parent_str == "/" {
-                        break;
-                    }
-                    expanded.insert(parent_str);
-                    parent_path = parent;
-                }
-            }
-            
-            crate::FILE_PICKER_ERROR.set_neq(None);
-            crate::FILE_PICKER_ERROR_CACHE.lock_mut().remove(&path);
-        }
-        DownMsg::DirectoryError { path, error } => {
-            let error_alert = ErrorAlert::new_directory_error(path.clone(), error.clone());
-            add_error_alert(error_alert);
-            
-            crate::FILE_PICKER_ERROR_CACHE.lock_mut().insert(path.clone(), error);
-            crate::FILE_PICKER_ERROR.set_neq(None);
-        }
-        DownMsg::ConfigLoaded(config) => {
-            crate::config::apply_config(config);
-        }
-        DownMsg::ConfigSaved => {
-            // Config saved successfully
-        }
-        DownMsg::ConfigError(_error) => {
-            // Config error
-        }
-        DownMsg::BatchDirectoryContents { results } => {
-            for (path, result) in results {
-                match result {
-                    Ok(items) => {
-                        crate::FILE_TREE_CACHE.lock_mut().insert(path.clone(), items);
-                        crate::FILE_PICKER_ERROR_CACHE.lock_mut().remove(&path);
-                    }
-                    Err(error) => {
-                        let error_alert = crate::state::ErrorAlert::new_directory_error(path.clone(), error.clone());
-                        crate::error_display::add_error_alert(error_alert);
-                        crate::FILE_PICKER_ERROR_CACHE.lock_mut().insert(path.clone(), error);
-                    }
-                }
-            }
-            
-            crate::FILE_PICKER_ERROR.set_neq(None);
-        }
-        DownMsg::SignalValues { file_path, results } => {
-            // DEPRECATED: Legacy signal values handler in handle_down_msg - should be migrated to UnifiedSignalResponse
-            zoon::println!("⚠️ LEGACY: handle_down_msg received old DownMsg::SignalValues for {} - should use UnifiedSignalResponse", file_path);
-            
-            // Convert old format to cursor values for SignalDataService compatibility
-            let mut cursor_values = std::collections::BTreeMap::new();
-            
-            for result in results {
-                let unique_id = format!("{}|{}|{}", file_path, result.scope_path, result.variable_name);
-                
-                // Check if cursor time is within this variable's file time range
-                let cursor_time = TIMELINE_CURSOR_POSITION.get();
-                let within_time_range = is_cursor_within_variable_time_range(&unique_id, cursor_time);
-                
-                let signal_value = if within_time_range {
-                    if let Some(raw_binary) = result.raw_value {
-                        shared::SignalValue::Present(raw_binary)
-                    } else {
-                        shared::SignalValue::Missing
-                    }
-                } else {
-                    shared::SignalValue::Missing
-                };
-                
-                cursor_values.insert(unique_id, signal_value);
-            }
-            
-            // Delegate to SignalDataService for consistent handling
-            if !cursor_values.is_empty() {
-                let fake_request_id = format!("legacy-handle-{}-{}", file_path, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis());
-                let statistics = shared::SignalStatistics {
-                    total_signals: cursor_values.len(),
-                    cached_signals: 0,
-                    query_time_ms: 0,
-                    cache_hit_ratio: 0.0,
-                };
-                crate::signal_data_service::SignalDataService::handle_unified_response(
-                    fake_request_id.to_string(), 
-                    Vec::new(),
-                    cursor_values, 
-                    Some(statistics)
-                );
-            }
-        }
-        DownMsg::SignalValuesError { file_path, error } => {
-            // DEPRECATED: Legacy signal values error handler in handle_down_msg - should be migrated to UnifiedSignalError
-            zoon::println!("⚠️ LEGACY: handle_down_msg received old DownMsg::SignalValuesError for {} - should use UnifiedSignalError", file_path);
-            
-            // Delegate to SignalDataService for consistent error handling
-            let fake_request_id = format!("legacy-handle-error-{}-{}", file_path, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis());
-            crate::signal_data_service::SignalDataService::handle_unified_error(fake_request_id.to_string(), error);
-        }
-        DownMsg::SignalTransitions { file_path, results } => {
-            crate::debug_utils::debug_signal_transitions(&format!("SECOND HANDLER - Received {} transitions for {}", results.len(), file_path));
-            
-            // Process signal transitions from backend - UPDATE CACHE
-            for result in results {
-                let cache_key = format!("{}|{}|{}", file_path, result.scope_path, result.variable_name);
-                
-                // zoon::println!("=== SECOND HANDLER - INSERTING TO CACHE: {} with {} transitions ===", cache_key, result.transitions.len());
-                
-                // Store backend data in cache
-                crate::waveform_canvas::SIGNAL_TRANSITIONS_CACHE.lock_mut()
-                    .insert(cache_key.clone(), result.transitions);
-                
-                // Don't clear processed cache - data hasn't changed, just updated
-                // Processed cache will remain valid for existing time ranges
-            }
-            
-            crate::waveform_canvas::trigger_canvas_redraw();
-        }
-        DownMsg::SignalTransitionsError { file_path: _, error: _ } => {
-            // Signal transitions error - no cleanup needed without deduplication
-        }
-        DownMsg::BatchSignalValues { batch_id: _, file_results } => {
-            // Process batch signal values from backend
-            for file_result in file_results {
-                let mut new_values = crate::state::SIGNAL_VALUES.get_cloned();
-                let mut any_changed = false;
-                
-                for result in file_result.results {
-                    let unique_id = format!("{}|{}|{}", 
-                        file_result.file_path,
-                        result.scope_path,
-                        result.variable_name
-                    );
-                    
-                    // Check if cursor time is within this variable's file time range
-                    let cursor_time = TIMELINE_CURSOR_POSITION.get();
-                    let within_time_range = is_cursor_within_variable_time_range(&unique_id, cursor_time);
-                    
-                    let signal_value = if within_time_range {
-                        if let Some(raw_binary) = result.raw_value {
-                            crate::format_utils::SignalValue::from_data(raw_binary)
-                        } else {
-                            crate::format_utils::SignalValue::missing()
-                        }
-                    } else {
-                        crate::format_utils::SignalValue::missing()  // Beyond time range
-                    };
-                    
-                    new_values.insert(unique_id, signal_value);
-                    any_changed = true;
-                }
-                
-                // Trigger signal by replacing the entire HashMap if any values changed
-                if any_changed {
-                    crate::state::SIGNAL_VALUES.set(new_values);
-                }
-            }
-        }
-        DownMsg::UnifiedSignalResponse { request_id, signal_data, cursor_values, statistics, cached_time_range: _ } => {
-            // Handle unified signal response through the signal data service
-            crate::signal_data_service::SignalDataService::handle_unified_response(request_id, signal_data, cursor_values, statistics);
-        }
-        DownMsg::UnifiedSignalError { request_id, error } => {
-            // Handle unified signal error through the signal data service
-            crate::signal_data_service::SignalDataService::handle_unified_error(request_id, error);
-        }
-    }
-}
 

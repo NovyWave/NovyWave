@@ -348,24 +348,23 @@ fn handle_selection_change(
     single_scope_selection: bool,
 ) {
     let mut selected = selected_items.lock_mut();
-    let was_selected = selected.contains(item_id);
+    let is_selected = selected.contains(item_id);
     
     // Handle scope selection logic
     if item_id.starts_with("scope_") {
         // Special handling for scopes when single_scope_selection is enabled
         if single_scope_selection {
-            if was_selected {
+            if is_selected {
                 // Deselect this scope
                 selected.shift_remove(item_id);
             } else {
                 // Clear all other scope selections and select this one (radio button behavior)
-                let old_scope_count = selected.iter().filter(|id| id.starts_with("scope_")).count();
                 selected.retain(|id| !id.starts_with("scope_"));
                 selected.insert(item_id.to_string());
             }
         } else {
             // Regular multi-select behavior for scopes
-            if was_selected {
+            if is_selected {
                 selected.shift_remove(item_id);
             } else {
                 selected.insert(item_id.to_string());
@@ -373,7 +372,7 @@ fn handle_selection_change(
         }
     } else {
         // Regular checkbox behavior for non-scope items
-        if was_selected {
+        if is_selected {
             selected.shift_remove(item_id);
         } else {
             selected.insert(item_id.to_string());
@@ -389,7 +388,6 @@ fn handle_selection_change_vec(
     single_scope_selection: bool,
 ) {
     let mut selected = selected_items_vec.lock_mut();
-    let was_selected = selected.iter().position(|id| id == item_id).is_some();
     
     // Handle scope selection logic
     if item_id.starts_with("scope_") {
@@ -400,7 +398,6 @@ fn handle_selection_change_vec(
                 selected.remove(pos);
             } else {
                 // Clear all other scope selections and select this one (radio button behavior)
-                let old_count = selected.len();
                 selected.retain(|id| !id.starts_with("scope_"));
                 selected.push_cloned(item_id.to_string());
             }
@@ -423,10 +420,6 @@ fn handle_selection_change_vec(
     
 }
 
-// Helper function to check if item is selected in MutableVec
-fn is_item_selected_in_vec(item_id: &str, selected_vec: &MutableVec<String>) -> bool {
-    selected_vec.lock_ref().iter().any(|id| id == item_id)
-}
 
 // Render individual tree item with full functionality
 fn render_tree_item(
@@ -1002,12 +995,6 @@ fn render_tree_item(
             el
         });
 
-    // Check if this item is expanded and create children accordingly
-    let is_expanded = if let Some(external) = &external_expanded {
-        external.lock_ref().contains(&item_id)
-    } else {
-        expanded_items.lock_ref().contains(&item_id)
-    };
     
     // Create the base column with the item row
     let mut column = Column::new()

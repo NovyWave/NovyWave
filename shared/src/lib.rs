@@ -280,7 +280,7 @@ pub struct LoadingFile {
     pub status: LoadingStatus,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum LoadingStatus {
     Starting,
     Parsing,
@@ -293,7 +293,7 @@ pub struct FileHierarchy {
     pub files: Vec<WaveformFile>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct WaveformFile {
     pub id: String,
     pub filename: String,
@@ -303,13 +303,13 @@ pub struct WaveformFile {
     pub max_time: Option<f64>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum FileFormat {
     VCD,
     FST,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ScopeData {
     pub id: String,
     pub name: String,
@@ -644,7 +644,7 @@ impl VarFormat {
 
 // ===== ENHANCED FILE STATE TYPES =====
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum FileError {
     /// Wellen parsing error with context
     ParseError { 
@@ -764,7 +764,7 @@ impl FileError {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum FileState {
     Loading(LoadingStatus),
     Loaded(WaveformFile),
@@ -773,7 +773,7 @@ pub enum FileState {
     Unsupported(String), // file path + reason
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct TrackedFile {
     pub id: String,
     pub path: String,

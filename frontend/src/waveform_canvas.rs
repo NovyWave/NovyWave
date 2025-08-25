@@ -87,15 +87,14 @@ fn generate_request_id() -> u64 {
 #[allow(dead_code)]  // Experimental performance optimization system - may be used in future
 fn prepare_cancellable_request() -> u64 {
     // Cancel any active request
-    if let Some(prev_id) = ACTIVE_REQUEST_ID.get() {
-        zoon::println!("🚫 CANCELLING previous request ID: {}", prev_id);
+    if let Some(_prev_id) = ACTIVE_REQUEST_ID.get() {
+        // Cancel request (logging removed)
     }
     
     // Generate new request ID
     let request_id = generate_request_id();
     ACTIVE_REQUEST_ID.set(Some(request_id));
     
-    zoon::println!("🆔 NEW REQUEST ID: {}", request_id);
     request_id
 }
 
@@ -111,14 +110,12 @@ fn should_skip_cursor_request() -> bool {
         // Mark start of movement sequence if not already marked
         if CURSOR_MOVEMENT_START.get().is_none() {
             CURSOR_MOVEMENT_START.set(Some(now));
-            zoon::println!("🏃 CURSOR MOVEMENT STARTED");
             
             // Schedule a delayed request for when movement settles
             schedule_cursor_settle_request();
         }
         
         // Always skip requests during active movement
-        zoon::println!("⏭️ SKIPPING REQUEST: Cursor still moving");
         return true;
     }
     
@@ -128,14 +125,11 @@ fn should_skip_cursor_request() -> bool {
         
         // Check if enough time has passed since movement stopped
         if movement_duration < CURSOR_MOVEMENT_SETTLE_MS {
-            zoon::println!("⏳ CURSOR SETTLING: Waiting {}ms more", 
-                          CURSOR_MOVEMENT_SETTLE_MS - movement_duration);
             return true;
         }
         
         // Movement has settled, clear the start time
         CURSOR_MOVEMENT_START.set(None);
-        zoon::println!("✅ CURSOR SETTLED: Allowing request after {}ms", movement_duration);
     }
     
     false
@@ -150,12 +144,10 @@ fn schedule_cursor_settle_request() {
         
         // Check if cursor is still idle
         if !IS_CURSOR_MOVING_LEFT.get() && !IS_CURSOR_MOVING_RIGHT.get() {
-            zoon::println!("⏰ SCHEDULED REQUEST: Cursor movement settled, requesting data");
             if let Some(range) = get_current_timeline_range() {
                 request_transitions_for_all_variables(Some(range));
             }
         } else {
-            zoon::println!("⏰ SCHEDULED REQUEST SKIPPED: Cursor still moving");
         }
     });
 }
@@ -173,9 +165,7 @@ fn track_request_rate() {
     if now - window_start >= REQUEST_RATE_WINDOW_MS {
         let rate = REQUEST_COUNT.get();
         if rate > 30 {
-            zoon::println!("⚠️ HIGH REQUEST RATE: {} requests/second", rate);
         } else if rate > 0 {
-            zoon::println!("📊 Request rate: {} requests/second", rate);
         }
         REQUEST_COUNT.set(0);
         REQUEST_RATE_WINDOW_START.set(now);
@@ -193,8 +183,6 @@ fn should_throttle_request() -> bool {
             return true; // Skip - cursor movement throttled more aggressively
         }
         LAST_CURSOR_REQUEST.set(now);
-        zoon::println!("🐌 CURSOR THROTTLED: Allowing request during cursor movement ({}ms since last)", 
-                      now - LAST_CURSOR_REQUEST.get());
         return false;
     }
     
@@ -205,8 +193,6 @@ fn should_throttle_request() -> bool {
             return true; // Skip this request - too soon
         }
         LAST_ANIMATION_REQUEST.set(now);
-        zoon::println!("🚦 ZOOM/PAN THROTTLED: Allowing request during animation ({}ms since last)", 
-                      now - LAST_ANIMATION_REQUEST.get());
     }
     
     false
@@ -269,14 +255,13 @@ fn request_transitions_for_all_variables(time_range: Option<(f32, f32)>) {
     
     // Request data through unified service instead of old system
     let cursor_time = Some(crate::state::TIMELINE_CURSOR_POSITION.get());
-    let request_count = signal_requests.len();
+    let _request_count = signal_requests.len(); // logging removed
     crate::signal_data_service::SignalDataService::request_signal_data(
         signal_requests, 
         cursor_time, 
         true // high priority for timeline
     );
     
-    zoon::println!("🔄 TIMELINE: Requested transitions for {} variables via unified service", request_count);
 }
 
 /// Clear transition request tracking for removed variables (simplified)
@@ -292,29 +277,7 @@ pub fn clear_all_transition_tracking() {
     crate::debug_utils::debug_conditional("Cleared all transition tracking (simplified)");
 }
 
-/// Force clear all active request timestamps (simplified)
-#[allow(dead_code)]
-pub fn clear_active_requests() {
-    HAS_PENDING_REQUEST.set(false);
-    crate::debug_utils::debug_conditional("Cleared active requests (simplified)");
-}
 
-/// Get debug information about request deduplication state (simplified)
-#[allow(dead_code)]
-pub fn get_request_deduplication_info() -> (usize, usize) {
-    let pending = if HAS_PENDING_REQUEST.get() { 1 } else { 0 };
-    crate::debug_utils::debug_request_deduplication(&format!("Request state (simplified): {} pending", pending));
-    (pending, 0)
-}
-
-/// Batch add multiple variables without triggering O(N²) requests (simplified)
-/// This is useful for config restore or bulk operations
-pub fn batch_request_transitions_for_variables(_variables: &[shared::SelectedVariable], time_range: Option<(f32, f32)>) {
-    // Simplified: just call our optimized batched request function
-    // It already handles batching and throttling properly
-    crate::debug_utils::debug_conditional("Batch request: delegating to optimized batched function");
-    request_transitions_for_all_variables(time_range);
-}
 
 
 
@@ -1834,22 +1797,6 @@ pub fn stop_smooth_cursor_right() {
 
 // Removed old detect_time_unit_minimum - replaced with calculate_time_step() for hybrid cursor movement
 
-// Legacy zoom functions for button compatibility
-pub fn zoom_in() {
-    let current_zoom = TIMELINE_ZOOM_LEVEL.get();
-    let new_zoom = (current_zoom * 1.5).min(1000000000.0);
-    if new_zoom != current_zoom {
-        update_zoom_with_mouse_center(new_zoom);
-    }
-}
-
-pub fn zoom_out() {
-    let current_zoom = TIMELINE_ZOOM_LEVEL.get();
-    let new_zoom = (current_zoom / 1.5).max(1.0);
-    if new_zoom != current_zoom {
-        update_zoom_with_mouse_center(new_zoom);
-    }
-}
 
 
 // Bulletproof mouse-centered zoom function with comprehensive validation
@@ -1986,8 +1933,7 @@ fn get_full_file_range() -> (f32, f32) {
         let buffer = time_range * 0.2; // 20% buffer
         let expanded_min = (min_time - buffer).max(0.0); // Don't go below 0
         let expanded_max = max_time + buffer;
-        zoon::println!("CACHE: Expanding visible range from [{:.6}, {:.6}] to [{:.6}, {:.6}] (+{:.6}s buffer)", 
-                      min_time, max_time, expanded_min, expanded_max, buffer);
+ 
         (expanded_min, expanded_max)
     } else {
         (SAFE_FALLBACK_START, SAFE_FALLBACK_END)

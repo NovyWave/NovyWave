@@ -835,12 +835,6 @@ pub fn save_panel_layout() {
     }
 }
 
-#[allow(dead_code)]
-pub fn save_current_config() {
-    if CONFIG_INITIALIZATION_COMPLETE.get() {
-        save_config_to_backend();
-    }
-}
 
 pub fn save_file_list() {
     // Enhanced approach: use TRACKED_FILES system instead of legacy FILE_PATHS
@@ -975,15 +969,6 @@ pub fn current_toast_dismiss_ms() -> u64 {
 // SIGNALS - Helper functions for reactive config values
 // =============================================================================
 
-/// Get dock mode as a signal for reactive layouts
-pub fn current_dock_mode() -> impl Signal<Item = DockMode> {
-    config_store().workspace.signal_ref(|ws| ws.dock_mode.signal_cloned()).flatten()
-}
-
-/// Get whether docked to bottom as a signal
-pub fn is_docked_to_bottom() -> impl Signal<Item = bool> {
-    current_dock_mode().map(|mode| matches!(mode, DockMode::Bottom))
-}
 
 
 

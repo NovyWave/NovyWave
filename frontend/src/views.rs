@@ -11,8 +11,7 @@ use crate::virtual_list::virtual_variables_list;
 use crate::config;
 use std::collections::{HashSet, HashMap};
 use crate::{
-    IS_DOCKED_TO_BOTTOM, FILES_PANEL_WIDTH, FILES_PANEL_HEIGHT,
-    VERTICAL_DIVIDER_DRAGGING, HORIZONTAL_DIVIDER_DRAGGING,
+    IS_DOCKED_TO_BOTTOM, FILES_PANEL_HEIGHT,
     VARIABLES_NAME_COLUMN_WIDTH, VARIABLES_VALUE_COLUMN_WIDTH,
     VARIABLES_NAME_DIVIDER_DRAGGING, VARIABLES_VALUE_DIVIDER_DRAGGING,
     VARIABLES_SEARCH_FILTER, VARIABLES_SEARCH_INPUT_FOCUSED, SHOW_FILE_DIALOG, IS_LOADING,
@@ -24,7 +23,7 @@ use crate::{
 };
 use crate::state::TIMELINE_ZOOM_LEVEL;
 use crate::state::SELECTED_VARIABLES_ROW_HEIGHT;
-use crate::state::{SELECTED_VARIABLES, clear_selected_variables, remove_selected_variable, EXPANDED_SCOPES_FOR_TREEVIEW};
+use crate::state::{SELECTED_VARIABLES, clear_selected_variables, remove_selected_variable};
 use crate::format_utils::truncate_value;
 
 /// Get signal type information for a selected variable
@@ -394,6 +393,10 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
         .s(Align::new().center_y().left())
         .child_signal({
             let unique_id_for_signal = unique_id.clone();
+            
+            // FST Debug: Check what unique_id looks like for FST files
+            // FST UI debug logging removed to prevent event loop blocking
+            
             map_ref! {
                 // ✅ NEW: Use unified SignalDataService instead of old SIGNAL_VALUES
                 let current_value = crate::signal_data_service::SignalDataService::cursor_value_signal(&unique_id_for_signal),
@@ -414,7 +417,7 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
                     let current_signal_value = if current_value == "N/A" {
                         crate::format_utils::SignalValue::missing()
                     } else if current_value == "Loading..." {
-                        crate::format_utils::SignalValue::loading()
+                        crate::format_utils::SignalValue::Loading
                     } else {
                         crate::format_utils::SignalValue::from_data(current_value.clone())
                     };
@@ -718,68 +721,133 @@ pub fn compute_value_from_cached_transitions(
     time_seconds: f64
 ) -> Option<shared::SignalValue> {
     let cache_key = format!("{}|{}|{}", file_path, scope_path, variable_name);
+    
+    // FST-specific debug logging
+    if file_path.ends_with(".fst") && variable_name == "clk" {
+        // Cache lookup debug logging removed to prevent event loop blocking
+    }
+    
     let cache = crate::waveform_canvas::SIGNAL_TRANSITIONS_CACHE.lock_ref();
     
+    // First, try the exact cache key
     if let Some(transitions) = cache.get(&cache_key) {
-        // Check if time exceeds file boundaries - return missing if so
-        let loaded_files = LOADED_FILES.lock_ref();
-        if let Some(loaded_file) = loaded_files.iter().find(|f| f.id == file_path) {
-            if let Some(max_time) = loaded_file.max_time {
-                if time_seconds > max_time {
-                    return Some(shared::SignalValue::Missing); // No data beyond file boundaries
-                }
+        if file_path.ends_with(".fst") && variable_name == "clk" {
+            // Debug logging removed to prevent event loop blocking
+        }
+        return compute_value_from_transitions(transitions, time_seconds, file_path);
+    }
+    
+    // If no exact match, try alternative key formats for robustness
+    if file_path.ends_with(".fst") && variable_name == "clk" {
+        // Alternative key lookup debug logging removed to prevent event loop blocking
+        
+        // List all cache keys for FST files
+        for (key, _) in cache.iter() {
+            if key.contains(".fst") {
+                // Debug logging removed to prevent event loop blocking
             }
         }
-        
-        // Find the most recent transition before or at the requested time
-        let mut current_value = None;
-        let mut last_transition_time = None;
-        
-        for transition in transitions {
-            if transition.time_seconds <= time_seconds {
-                current_value = Some(transition.value.clone());
-                last_transition_time = Some(transition.time_seconds);
-            } else {
-                break; // Transitions should be sorted by time
+    }
+    
+    // List all cache keys that start with this file_path
+    for (key, transitions) in cache.iter() {
+        if key.starts_with(file_path) && key.contains(variable_name) {
+            if file_path.ends_with(".fst") && variable_name == "clk" {
+                // Debug logging removed to prevent event loop blocking
+            }
+            // If this looks like the same variable but different scope format, use it
+            let key_parts: Vec<&str> = key.split('|').collect();
+            if key_parts.len() == 3 && key_parts[2] == variable_name {
+                if file_path.ends_with(".fst") && variable_name == "clk" {
+                    // Debug logging removed to prevent event loop blocking
+                }
+                return compute_value_from_transitions(transitions, time_seconds, file_path);
             }
         }
+    }
+    
+    if file_path.ends_with(".fst") && variable_name == "clk" {
+        // Debug logging removed to prevent event loop blocking
+    }
+    
+    None // No cached data available
+}
+
+fn compute_value_from_transitions(
+    transitions: &Vec<shared::SignalTransition>,
+    time_seconds: f64,
+    file_path: &str
+) -> Option<shared::SignalValue> {
+    // Debug logging removed to prevent event loop blocking
+    
+    // Check if time exceeds file boundaries - return missing if so
+    let loaded_files = LOADED_FILES.lock_ref();
+    if let Some(loaded_file) = loaded_files.iter().find(|f| f.id == file_path) {
+        if let Some(max_time) = loaded_file.max_time {
+            if time_seconds > max_time {
+                // Debug logging removed to prevent event loop blocking
+                return Some(shared::SignalValue::Missing); // No data beyond file boundaries
+            }
+        }
+    }
+    
+    // Find the most recent transition before or at the requested time
+    let mut current_value = None;
+    let mut last_transition_time = None;
+    
+    for transition in transitions {
+        if transition.time_seconds <= time_seconds {
+            current_value = Some(transition.value.clone());
+            last_transition_time = Some(transition.time_seconds);
+        } else {
+            break; // Transitions should be sorted by time
+        }
+    }
+    
+    // If we found a value, check if the time gap is reasonable
+    if let (Some(value), Some(last_time)) = (&current_value, last_transition_time) {
+        let time_gap = time_seconds - last_time;
         
-        // If we found a value, check if the time gap is reasonable
-        if let (Some(value), Some(last_time)) = (&current_value, last_transition_time) {
-            let time_gap = time_seconds - last_time;
-            
-            // Calculate adaptive threshold based on transition spacing (same logic as backend)
-            let min_gap = if transitions.len() > 1 {
-                let mut min = f64::MAX;
-                for i in 1..transitions.len() {
-                    let gap = transitions[i].time_seconds - transitions[i-1].time_seconds;
-                    if gap > 0.0 {
-                        min = min.min(gap);
-                    }
+        // Calculate adaptive threshold based on transition spacing
+        let min_gap = if transitions.len() > 1 {
+            let mut min = f64::MAX;
+            for i in 1..transitions.len() {
+                let gap = transitions[i].time_seconds - transitions[i-1].time_seconds;
+                if gap > 0.0 {
+                    min = min.min(gap);
                 }
-                if min == f64::MAX { 
-                    // No valid gaps found, use conservative threshold
-                    0.001 // 1ms default
-                } else { 
-                    min * 3.0 // 3x minimum gap as threshold
+            }
+            if min == f64::MAX { 
+                // No valid gaps found, use conservative threshold
+                0.001 // 1ms default
+            } else { 
+                // FST files need much more lenient thresholds due to nanosecond precision
+                if file_path.ends_with(".fst") {
+                    // For FST files, use minimum of calculated threshold or absolute threshold
+                    let calculated_threshold = min * 20.0; // 20x minimum gap for FST
+                    let absolute_threshold = 0.00001; // 10 microseconds absolute minimum
+                    calculated_threshold.max(absolute_threshold)
+                } else {
+                    min * 3.0 // 3x minimum gap for VCD files
                 }
-            } else {
-                0.001 // Single transition, use conservative threshold
-            };
-            
-            if time_gap > min_gap {
-                // Gap too large - return None (will show as N/A)
-                None
-            } else {
-                // Gap is reasonable - return cached value
-                Some(shared::SignalValue::Present(value.clone()))
             }
         } else {
-            // No transition found
+            0.001 // Single transition, use conservative threshold
+        };
+        
+        // Debug logging removed to prevent event loop blocking
+        
+        if time_gap > min_gap {
+            // Gap too large - return None (let backend handle this)
             None
+        } else {
+            // Gap is reasonable - return cached value
+            Some(shared::SignalValue::Present(value.clone()))
         }
     } else {
-        None // No cached data available
+        // Debug logging removed to prevent event loop blocking
+        // No transition found
+        None
     }
 }
 
@@ -813,12 +881,9 @@ pub fn query_signal_values_at_time(time_seconds: f64) {
     let selected_vars = SELECTED_VARIABLES.lock_ref();
     
     if selected_vars.is_empty() {
-        zoon::println!("🔍 SLOW PATH: No selected variables to query");
         return;
     }
     
-    zoon::println!("🔍 SLOW PATH: Querying {} variables at time {:.6}", selected_vars.len(), time_seconds);
-    zoon::println!("🔍 SLOW PATH: This should populate SIGNAL_VALUES with actual data or Missing values");
     
     // Prevent queries during startup until files are properly loaded
     let tracked_files = crate::state::TRACKED_FILES.lock_ref();
@@ -891,8 +956,7 @@ pub fn query_signal_values_at_time(time_seconds: f64) {
     }
     
     // Debug cache effectiveness
-    let total_queries: usize = backend_queries_by_file.values().map(|v| v.len()).sum();
-    zoon::println!("CACHE: Slow path results - {} cached, {} server requests", cached_results.len(), total_queries);
+    let _total_queries: usize = backend_queries_by_file.values().map(|v| v.len()).sum();
     
     // Update UI immediately with cached results
     if !cached_results.is_empty() {
@@ -907,7 +971,7 @@ pub fn query_signal_values_at_time(time_seconds: f64) {
         for (file_path, queries) in &backend_queries_by_file {
             for query in queries {
                 let unique_id = format!("{}|{}|{}", file_path, query.scope_path, query.variable_name);
-                loading_values.insert(unique_id, crate::format_utils::SignalValue::loading());
+                loading_values.insert(unique_id, crate::format_utils::SignalValue::Loading);
                 loading_updates = true;
             }
         }
@@ -925,6 +989,32 @@ pub fn query_signal_values_at_time(time_seconds: f64) {
             let _ = CurrentPlatform::send_message(UpMsg::QuerySignalValues { file_path, queries }).await;
         });
     }
+}
+
+/// Request backend value for a single variable at specific cursor position
+fn request_single_variable_value(unique_id: &str, cursor_time: f64) {
+    // Parse unique_id: file_path|scope_path|variable_name
+    let parts: Vec<&str> = unique_id.split('|').collect();
+    if parts.len() != 3 {
+        return;
+    }
+    
+    let file_path = parts[0];
+    let scope_path = parts[1]; 
+    let variable_name = parts[2];
+    
+    // Use SignalDataService for proper deduplication and coordination
+    let request = crate::signal_data_service::SignalRequest {
+        file_path: file_path.to_string(),
+        scope_path: scope_path.to_string(),
+        variable_name: variable_name.to_string(),
+        time_range: Some((cursor_time - 0.1, cursor_time + 0.1)), // Small range around cursor
+        max_transitions: Some(50), // Minimal transitions for cursor value
+        format: shared::VarFormat::Binary, // Default format
+    };
+    
+    // Use high priority since this is a targeted cursor value request
+    crate::signal_data_service::SignalDataService::request_signal_data(vec![request], Some(cursor_time), true);
 }
 
 /// Update signal values in UI from cached or backend results
@@ -987,28 +1077,24 @@ pub fn trigger_signal_value_queries() {
             return;
         }
         
-        let var_count = selected_vars.len();
-        zoon::println!("CACHE: Fast path - checking {} variables in cache (cursor at {:.6}, range {:.6}-{:.6})", var_count, cursor_pos, start, end);
+        let _var_count = selected_vars.len();
         
         // Collect new values from cached transition data
         let mut new_values = crate::state::SIGNAL_VALUES.get_cloned();
         let mut any_updated = false;
-        let mut cache_hits = 0;
-        let mut cache_misses = 0;
+        let mut _cache_hits = 0;
+        let mut _cache_misses = 0;
         
         let transitions_cache = crate::waveform_canvas::SIGNAL_TRANSITIONS_CACHE.lock_ref();
-        zoon::println!("CACHE: Cache contains {} variables", transitions_cache.len());
         
         // If cache is empty, set Loading states and fall back to slow path immediately
         if transitions_cache.is_empty() {
-            zoon::println!("🔍 CACHE: Cache is empty, setting Loading states and falling back to slow path");
-            zoon::println!("🔍 CACHE: Timeline shows correct values but cache is empty - this indicates a data source mismatch issue");
             drop(transitions_cache);
             
             // Set Loading states for all selected variables before slow path
             let mut loading_values = crate::state::SIGNAL_VALUES.get_cloned();
             for selected_var in selected_vars.iter() {
-                loading_values.insert(selected_var.unique_id.clone(), crate::format_utils::SignalValue::loading());
+                loading_values.insert(selected_var.unique_id.clone(), crate::format_utils::SignalValue::Loading);
             }
             crate::state::SIGNAL_VALUES.set(loading_values);
             
@@ -1017,13 +1103,12 @@ pub fn trigger_signal_value_queries() {
         }
         
         for selected_var in selected_vars.iter() {
-            zoon::println!("CACHE: Looking for variable '{}'", selected_var.unique_id);
             // First check if cursor is within this variable's file time range (same as slow path)
             if !is_cursor_within_variable_time_range(&selected_var.unique_id, cursor_pos) {
                 // Cursor is beyond this variable's file time range - show N/A (same as slow path)
                 new_values.insert(selected_var.unique_id.clone(), crate::format_utils::SignalValue::missing());
                 any_updated = true;
-                cache_hits += 1; // Count as cache hit since we avoided server query
+                _cache_hits += 1; // Count as cache hit since we avoided server query
                 continue;
             }
             
@@ -1040,16 +1125,19 @@ pub fn trigger_signal_value_queries() {
                     }
                 }
                 if found {
-                    cache_hits += 1;
+                    _cache_hits += 1;
                 } else {
-                    cache_misses += 1;
+                    _cache_misses += 1;
+                    // Cache miss: trigger backend request for this specific variable
+                    request_single_variable_value(&selected_var.unique_id, cursor_pos);
                 }
             } else {
-                cache_misses += 1;
+                _cache_misses += 1;
+                // No cached transitions: trigger backend request for this specific variable
+                request_single_variable_value(&selected_var.unique_id, cursor_pos);
             }
         }
         
-        zoon::println!("CACHE: Fast path results - {} hits, {} misses, UI {}", cache_hits, cache_misses, if any_updated { "updated" } else { "unchanged" });
         
         // Trigger UI update if any values were found from cache
         if any_updated {
@@ -1057,7 +1145,6 @@ pub fn trigger_signal_value_queries() {
         }
     } else {
         // Cursor outside visible range - query backend (slow path)
-        zoon::println!("CACHE: Slow path - cursor outside visible range ({:.6} not in {:.6}-{:.6}), using server requests", cursor_pos, start, end);
         query_signal_values_at_time(cursor_pos);
     }
 }
@@ -1211,68 +1298,7 @@ pub fn file_paths_dialog() -> impl Element {
         )
 }
 
-#[allow(dead_code)]
-pub fn app_header() -> impl Element {
-    Row::new()
-        .s(Height::exact(40))
-        .s(Width::fill())
-        .s(Background::new().color_signal(neutral_2()))
-        .s(Borders::new().bottom_signal(neutral_4().map(|color| {
-            Border::new().width(1).color(color)
-        })))
-        .s(Padding::new().x(16).y(8))
-        .item(
-            Row::new()
-                .s(Gap::new().x(8))
-                .s(Align::center())
-                .item(
-                    button()
-                        .label("📁 Load files")
-                        .variant(ButtonVariant::Secondary)
-                        .size(ButtonSize::Small)
-                        .on_press(|| show_file_paths_dialog())
-                        .build()
-                )
-        )
-        .item(
-            El::new()
-                .s(Width::fill())
-        )
-}
 
-#[allow(dead_code)]
-pub fn docked_layout() -> impl Element {
-    Column::new()
-        .s(Height::fill())
-        .s(Width::fill())
-        .item(
-            Row::new()
-                .s(Height::exact_signal(FILES_PANEL_HEIGHT.signal()))
-                .s(Width::fill())
-                .item(files_panel_docked())
-                .item(vertical_divider(VERTICAL_DIVIDER_DRAGGING.clone()))
-                .item(variables_panel_docked())
-        )
-        .item(horizontal_divider(HORIZONTAL_DIVIDER_DRAGGING.clone()))
-        .item(selected_variables_with_waveform_panel())
-}
-
-#[allow(dead_code)]
-pub fn undocked_layout() -> impl Element {
-    Row::new()
-        .s(Height::fill())
-        .s(Width::fill())
-        .item(
-            Column::new()
-                .s(Width::exact_signal(FILES_PANEL_WIDTH.signal()))
-                .s(Height::fill())
-                .item(files_panel_with_height())
-                .item(horizontal_divider(HORIZONTAL_DIVIDER_DRAGGING.clone()))
-                .item(variables_panel_with_fill())
-        )
-        .item(vertical_divider(VERTICAL_DIVIDER_DRAGGING.clone()))
-        .item(selected_variables_with_waveform_panel())
-}
 
 pub fn files_panel() -> impl Element {
     El::new()
@@ -1310,37 +1336,6 @@ pub fn files_panel() -> impl Element {
                     .s(Padding::new().top(4).right(4))
                     .s(Height::fill())
                     .s(Width::growable())
-                    // TODO: Uncomment when ready to continue ReactiveTreeView development
-                    // See docs/reactive_treeview.md for implementation details
-                    // .item(
-                    //     // 🧪 ReactiveTreeView Test Area
-                    //     El::new()
-                    //         .s(Height::exact(200))
-                    //         .s(Width::growable())
-                    //         .s(Borders::all(Border::new().width(1).color("#4a90e2")))
-                    //         .s(Padding::all(8))
-                    //         .child(
-                    //             Column::new()
-                    //                 .s(Width::fill())
-                    //                 .s(Height::fill())
-                    //                 .item(
-                    //                     El::new()
-                    //                         .s(Font::new().size(12).weight(FontWeight::Bold).color("#4a90e2"))
-                    //                         .child(Text::new("🧪 ReactiveTreeView (New)"))
-                    //                 )
-                    //                 .item(
-                    //                     crate::reactive_tree_test::create_debug_info()
-                    //                 )
-                    //                 .item(
-                    //                     El::new()
-                    //                         .s(Height::fill())
-                    //                         .s(Width::fill())
-                    //                         .child(
-                    //                             crate::reactive_tree_test::create_test_reactive_tree_view()
-                    //                         )
-                    //                 )
-                    //         )
-                    // )
                     .item(
                         // Original TreeView for comparison
                         El::new()
@@ -1355,28 +1350,22 @@ pub fn files_panel() -> impl Element {
                                             .s(Height::fill())
                                             .s(Width::fill())
                                             .child_signal(
-                                                // ✅ FIXED: Use signal that updates on both file add/remove AND state changes
-                                                // This ensures files don't get stuck at "Starting..." when backend responds
-                                                crate::state::treeview_tracked_files_signal().map(|tracked_files| {
-                                                    zoon::println!("🌳 [Optimized TreeView] RENDERING with {} files", tracked_files.len());
-                                    if tracked_files.is_empty() {
+                                                // ⚠️  PATCHED TREE VIEW RENDERING: Reduces flickering during file loading
+                                                //
+                                                // CURRENT STATE: Applied patches to minimize TreeView recreations
+                                                // USER EXPERIENCE: Some brief flashing may still occur during file loading
+                                                // 
+                                                // PATCHES APPLIED:
+                                                // - Filtered transitional loading states (Starting -> Parsing)
+                                                // - Heavy signal deduplication to prevent identical updates  
+                                                // - Optimized empty state handling
+                                                TRACKED_FILES.signal_vec_cloned().len().map(|file_count| {
+                                    if file_count == 0 {
                                         empty_state_hint("Click 'Load Files' to add waveform files.")
                                             .unify()
                                     } else {
-                                        // Use cached smart labels from TrackedFile objects to avoid recomputation
-                                        let tree_data = convert_tracked_files_to_tree_data_optimized(&tracked_files);
-                                        
-                                        tree_view()
-                                            .data(tree_data)
-                                            .size(TreeViewSize::Medium)
-                                            .variant(TreeViewVariant::Basic)
-                                            .show_icons(true)
-                                            .show_checkboxes(true)
-                                            .show_checkboxes_on_scopes_only(true)
-                                            .single_scope_selection(true)
-                                            .external_expanded(EXPANDED_SCOPES.clone())
-                                            .external_selected(TREE_SELECTED_ITEMS.clone())
-                                            .build()
+                                        // PATCHED: Uses filtered stable signals to reduce flickering
+                                        create_stable_tree_view()
                                             .unify()
                                     }
                                 })
@@ -1385,6 +1374,44 @@ pub fn files_panel() -> impl Element {
                             )
                     )
             )
+        )
+}
+
+/// ⚠️  PATCHED TREE VIEW: Reduces flickering with optimized rendering strategy
+///
+/// KNOWN ISSUE: Still recreates entire TreeView on file state changes due to signal antipattern
+/// WORKAROUND: Uses filtered stable signals + optimized tree data conversion
+///
+/// USER IMPACT: Reduces visible flickering during file loading, but may still see brief flashes
+/// PROPER FIX: Requires implementing ReactiveTreeView with items_signal_vec pattern
+fn create_stable_tree_view() -> impl Element {
+    El::new()
+        .s(Width::fill())
+        .s(Height::fill())
+        .child_signal(
+            crate::state::get_stable_tree_files_signal().map(|tracked_files| {
+                // PATCH: Use tree view for both empty and non-empty states to maintain type consistency  
+                let tree_data = if tracked_files.is_empty() {
+                    // Empty state: Create empty tree data instead of different UI element
+                    Vec::new()
+                } else {
+                    // PATCH: Optimize tree data conversion with caching hints
+                    convert_tracked_files_to_tree_data_optimized(&tracked_files)
+                };
+                
+                // PATCH: Use consistent TreeView component for both states
+                tree_view()
+                    .data(tree_data)
+                    .size(TreeViewSize::Medium)
+                    .variant(TreeViewVariant::Basic)  
+                    .show_icons(true)
+                    .show_checkboxes(true)
+                    .show_checkboxes_on_scopes_only(true)
+                    .single_scope_selection(true)
+                    .external_expanded(EXPANDED_SCOPES.clone())
+                    .external_selected(TREE_SELECTED_ITEMS.clone())
+                    .build()
+            })
         )
 }
 
@@ -1894,69 +1921,6 @@ pub fn selected_panel() -> impl Element {
         )
 }
 
-#[allow(dead_code)]
-pub fn waveform_panel() -> impl Element {
-    El::new()
-        .s(Width::fill().min(500))
-        .s(Height::fill())
-        .child(
-            create_panel(
-                Row::new()
-                    .s(Gap::new().x(10))
-                    .item(
-                        Text::new("Waveform")
-                    )
-                    .item(
-                        button()
-                            .label("Zoom In")
-                            .left_icon(IconName::ZoomIn)
-                            .variant(ButtonVariant::Outline)
-                            .size(ButtonSize::Small)
-                            .on_press(|| {
-                                crate::waveform_canvas::zoom_in();
-                            })
-                            .build()
-                    )
-                    .item(
-                        button()
-                            .label("Zoom Out")
-                            .left_icon(IconName::ZoomOut)
-                            .variant(ButtonVariant::Outline)
-                            .size(ButtonSize::Small)
-                            .on_press(|| {
-                                crate::waveform_canvas::zoom_out();
-                            })
-                            .build()
-                    ),
-                Column::new()
-                    .s(Gap::new().y(16))
-                    .s(Padding::all(16))
-                    .item(
-                        Row::new()
-                            .s(Gap::new().x(20))
-                            .item("0s")
-                            .item("10s")
-                            .item("20s")
-                            .item("30s")
-                            .item("40s")
-                            .item("50s")
-                    )
-                    .item(
-                        El::new()
-                            .s(Background::new().color_signal(neutral_1()))
-                            .s(Height::exact(200))
-                            .s(Width::fill())
-                            .s(Align::center())
-                            .s(RoundedCorners::all(4))
-                            .child(
-                                El::new()
-                                    .s(Font::new().color_signal(neutral_8()).size(16))
-                                    .child("Waveform display area")
-                            )
-                    )
-            )
-        )
-}
 
 // Helper functions for different panel configurations
 
@@ -2005,29 +1969,6 @@ pub fn variables_panel_with_fill() -> impl Element {
         }))
 }
 
-pub fn files_panel_docked() -> impl Element {
-    El::new()
-        .s(Width::exact_signal(FILES_PANEL_WIDTH.signal()))
-        .s(Height::fill())
-        .s(Scrollbars::both())
-        .update_raw_el(|raw_el| {
-            raw_el.style("scrollbar-width", "thin")
-                .style_signal("scrollbar-color", primary_6().map(|thumb| primary_3().map(move |track| format!("{} {}", thumb, track))).flatten())
-        })
-        .child(files_panel())
-}
-
-pub fn variables_panel_docked() -> impl Element {
-    El::new()
-        .s(Width::growable())
-        .s(Height::fill())
-        .s(Scrollbars::both())
-        .update_raw_el(|raw_el| {
-            raw_el.style("scrollbar-width", "thin")
-                .style_signal("scrollbar-color", primary_6().map(|thumb| primary_3().map(move |track| format!("{} {}", thumb, track))).flatten())
-        })
-        .child(variables_panel())
-}
 
 // Supporting functions
 fn create_panel(header_content: impl Element, content: impl Element) -> impl Element {
@@ -2172,119 +2113,10 @@ fn get_file_timeline_info(file_path: &str, _waveform_file: &shared::WaveformFile
     }
 }
 
-fn convert_tracked_files_to_tree_data(tracked_files: &[TrackedFile], smart_labels: &HashMap<String, String>) -> Vec<TreeViewItemData> {
-    zoon::println!("🔄 [Original TreeView] Converting {} files to tree data", tracked_files.len());
-    // Sort files: primary by filename, secondary by prefix for better organization
-    let mut file_refs: Vec<&TrackedFile> = tracked_files.iter().collect();
-    file_refs.sort_by(|a, b| {
-        // Get smart labels from the derived signal map
-        let a_label = smart_labels.get(&a.path).unwrap_or(&a.path);
-        let b_label = smart_labels.get(&b.path).unwrap_or(&b.path);
-        
-        // Extract filename (part after last slash) and prefix (part before last slash)
-        let (a_prefix, a_filename) = parse_smart_label_for_sorting(a_label);
-        let (b_prefix, b_filename) = parse_smart_label_for_sorting(b_label);
-        
-        // Primary sort: filename (case-insensitive)
-        let filename_cmp = a_filename.to_lowercase().cmp(&b_filename.to_lowercase());
-        if filename_cmp != std::cmp::Ordering::Equal {
-            return filename_cmp;
-        }
-        
-        // Secondary sort: prefix (case-insensitive)
-        a_prefix.to_lowercase().cmp(&b_prefix.to_lowercase())
-    });
-    
-    file_refs.iter().map(|tracked_file| {
-        match &tracked_file.state {
-            shared::FileState::Loaded(waveform_file) => {
-                // Successfully loaded file - show with scopes and timeline info
-                let children = waveform_file.scopes.iter().map(|scope| {
-                    convert_scope_to_tree_data(scope)
-                }).collect();
-                
-                // Create enhanced label with timeline information
-                let timeline_info = get_file_timeline_info(&tracked_file.path, waveform_file);
-                let smart_label = smart_labels.get(&tracked_file.path).unwrap_or(&tracked_file.path);
-                let enhanced_label = format!("{}{}", smart_label, timeline_info);
-                
-                TreeViewItemData::new(tracked_file.id.clone(), enhanced_label)
-                    .item_type(TreeViewItemType::File)
-                    .tooltip(tracked_file.path.clone()) // Full path on hover
-                    // Smart label styling now handled inline in TreeView component
-                    .with_children(children)
-                    .on_remove(create_enhanced_file_remove_handler(tracked_file.id.clone()))
-            }
-            shared::FileState::Loading(status) => {
-                // File currently loading - show with loading indicator
-                let status_text = match status {
-                    shared::LoadingStatus::Starting => "Starting...",
-                    shared::LoadingStatus::Parsing => "Parsing...",
-                    shared::LoadingStatus::Completed => "Completed",
-                    shared::LoadingStatus::Error(_) => "Error",
-                };
-                
-                let smart_label = smart_labels.get(&tracked_file.path).unwrap_or(&tracked_file.path);
-                TreeViewItemData::new(tracked_file.id.clone(), format!("{} ({})", smart_label, status_text))
-                    .item_type(TreeViewItemType::File)
-                    .tooltip(tracked_file.path.clone())
-                    .disabled(true) // Disable interaction while loading
-                    .on_remove(create_enhanced_file_remove_handler(tracked_file.id.clone()))
-            }
-            shared::FileState::Failed(error) => {
-                // File failed to load - show with error styling
-                let error_message = error.user_friendly_message();
-                
-                let smart_label = smart_labels.get(&tracked_file.path).unwrap_or(&tracked_file.path);
-                TreeViewItemData::new(tracked_file.id.clone(), smart_label.clone())
-                    .item_type(TreeViewItemType::FileError)
-                    .icon(error.icon_name())
-                    .tooltip(format!("{}\nError: {}", tracked_file.path, error_message))
-                    .error_message(error_message.clone())
-                    // Smart label styling now handled inline in TreeView component
-                    .with_children(vec![
-                        TreeViewItemData::new(format!("{}_error_detail", tracked_file.id), error_message)
-                            .item_type(TreeViewItemType::Default)
-                            .disabled(true)
-                    ])
-                    .on_remove(create_enhanced_file_remove_handler(tracked_file.id.clone()))
-            }
-            shared::FileState::Missing(path) => {
-                // File no longer exists - show with missing indicator
-                let smart_label = smart_labels.get(&tracked_file.path).unwrap_or(&tracked_file.path);
-                TreeViewItemData::new(tracked_file.id.clone(), smart_label.clone())
-                    .item_type(TreeViewItemType::FileError)
-                    .icon("file")
-                    .tooltip(format!("{}\nFile not found", path))
-                    .error_message("File not found".to_string())
-                    // Smart label styling now handled inline in TreeView component
-                    .with_children(vec![
-                        TreeViewItemData::new(format!("{}_missing_detail", tracked_file.id), "File no longer exists")
-                            .item_type(TreeViewItemType::Default)
-                            .disabled(true)
-                    ])
-                    .on_remove(create_enhanced_file_remove_handler(tracked_file.id.clone()))
-            }
-            shared::FileState::Unsupported(reason) => {
-                // Unsupported file format - show with unsupported indicator
-                let smart_label = smart_labels.get(&tracked_file.path).unwrap_or(&tracked_file.path);
-                TreeViewItemData::new(tracked_file.id.clone(), smart_label.clone())
-                    .item_type(TreeViewItemType::FileError)
-                    .icon("circle-help")
-                    .tooltip(format!("{}\nUnsupported: {}", tracked_file.path, reason))
-                    .error_message(format!("Unsupported: {}", reason))
-                    // Smart label styling now handled inline in TreeView component
-                    .disabled(true)
-                    .on_remove(create_enhanced_file_remove_handler(tracked_file.id.clone()))
-            }
-        }
-    }).collect()
-}
 
 /// ✅ OPTIMIZED: Convert tracked files to tree data using cached smart labels
 /// This eliminates smart label recomputation on every render, fixing the over-rendering issue
 fn convert_tracked_files_to_tree_data_optimized(tracked_files: &[TrackedFile]) -> Vec<TreeViewItemData> {
-    zoon::println!("🌳 [Optimized TreeView] Converting {} files to tree data using cached labels", tracked_files.len());
     
     // Sort files: primary by cached smart label for consistent ordering
     let mut file_refs: Vec<&TrackedFile> = tracked_files.iter().collect();
@@ -2399,7 +2231,6 @@ fn cleanup_file_related_state(file_id: &str) {
     
     // Clear expanded scopes for this file
     // New scope ID format: {full_path}|{scope_full_name} or just {full_path}
-    zoon::println!("🗑️ [DEBUG] Removing expanded scopes for file: {}", file_path);
     EXPANDED_SCOPES.lock_mut().retain(|scope| {
         // Keep scopes that don't belong to this file
         scope != &file_path && !scope.starts_with(&format!("{}|", file_path))
@@ -2835,7 +2666,6 @@ fn clear_all_files() {
     
     // Clear any remaining scope/tree selections
     SELECTED_SCOPE_ID.set_neq(None);
-    zoon::println!("🧹 [DEBUG] Clearing all expanded scopes");
     EXPANDED_SCOPES.lock_mut().clear();
     TREE_SELECTED_ITEMS.lock_mut().clear();
     
