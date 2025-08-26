@@ -35,7 +35,7 @@ fn counter_button(label: &str, step: i32) -> impl Element {
                 .width(2)
                 .color(color!("oklch(0.6 0.182 350.53 / .7")),
         ))
-        .on_hovered_change(move |is_hovered| hovered.set(is_hovered))
+        .on_hovered_change(move |is_hovered| hovered.setter.send(is_hovered))
         .label(label)
         .on_press(move || *COUNTER.lock_mut() += step)  // Direct mutation
 }
@@ -50,98 +50,40 @@ fn counter_button(label: &str, step: i32) -> impl Element {
 
 ## Actor+Relay Version
 
+There are two clean approaches to organizing Actor+Relay state:
+
+### Approach A: Global State (Simple)
+
 ```rust
 use zoon::*;
 
-// Event types - clear, typed interactions
-#[derive(Clone)]
-struct IncrementBy(i32);
-
-#[derive(Clone)] 
-struct DecrementBy(i32);
-
-#[derive(Clone)]
-struct Reset;
-
 /// Counter with proper encapsulation and event-driven updates
-#[derive(Clone, Debug)]
-struct CounterState {
+#[derive(Clone)]
+struct Counter {
     // State managed by Actor - controlled access only
-    value: Actor<i32>,
+    pub value: Actor<i32>,
     
-    // Event Relays - clear interaction points
-    increment: Relay<IncrementBy>,
-    decrement: Relay<DecrementBy>, 
-    reset: Relay<Reset>,
+    // Single relay for all changes - matches original pattern
+    pub change_by: Relay<i32>,
 }
 
-impl CounterState {
-    pub fn new(initial_value: i32) -> Self {
-        // Create Relays FIRST
-        let increment = Relay::new();
-        let decrement = Relay::new(); 
-        let reset = Relay::new();
+impl Default for Counter {
+    fn default() -> Self {
+        let (change_by, mut change_stream) = Relay::create_with_stream();
         
-        // Create Actor that responds to Relay events
-        let value = Actor::new(initial_value, clone!((increment, decrement, reset) async move |state| {
-            // Handle all counter events in one place
-            Task::start_droppable(clone!((state, increment, decrement, reset) async move {
-                // Increment events
-                increment.subscribe().for_each(clone!((state) async move |IncrementBy(amount)| {
-                    let current = state.get();
-                    state.set(current + amount);
-                })).await;
-            }));
-            
-            Task::start_droppable(clone!((state, decrement) async move {
-                // Decrement events  
-                decrement.subscribe().for_each(clone!((state) async move |DecrementBy(amount)| {
-                    let current = state.get();
-                    state.set(current - amount);
-                })).await;
-            }));
-            
-            Task::start_droppable(clone!((state, reset) async move {
-                // Reset events
-                reset.subscribe().for_each(clone!((state) async move |Reset| {
-                    state.set(0);
-                })).await;
-            }));
-        }));
+        // Simple Actor that responds to change events
+        let value = Actor::new(0, async move |state| {
+            while let Some(amount) = change_stream.next().await {
+                state.update(|value| value + amount);
+            }
+        });
         
-        CounterState {
-            value,
-            increment,
-            decrement,
-            reset,
-        }
-    }
-    
-    // Public API - only through events
-    pub fn increment_by(&self, amount: i32) -> Result<(), RelayError> {
-        self.increment.send(IncrementBy(amount))
-    }
-    
-    pub fn decrement_by(&self, amount: i32) -> Result<(), RelayError> {
-        self.decrement.send(DecrementBy(amount))
-    }
-    
-    pub fn reset(&self) -> Result<(), RelayError> {
-        self.reset.send(Reset)
-    }
-    
-    // Access to reactive state
-    pub fn value_signal(&self) -> impl Signal<Item = i32> {
-        self.value.signal()
-    }
-    
-    pub fn get_value(&self) -> i32 {
-        self.value.get()
+        Counter { value, change_by }
     }
 }
 
 // Global instance - but now properly encapsulated
-static COUNTER: Lazy<CounterState> = Lazy::new(|| CounterState::new(0));
+static COUNTER: Lazy<Counter> = lazy::default();
 
 fn main() {
     start_app("app", root);
@@ -152,102 +94,193 @@ fn root() -> impl Element {
         .s(Align::center())
         .s(Gap::new().x(15))
         .item(counter_button("-", -1))
-        .item_signal(COUNTER.value_signal())  // Clean reactive access
+        .item_signal(COUNTER.value.signal())  // Clean reactive access
         .item(counter_button("+", 1))
-        .item(reset_button())  // New functionality - easy to add!
 }
 
 fn counter_button(label: &str, step: i32) -> impl Element {
-    let (hovered, hovered_signal) = Mutable::new_and_signal(false);
+    let hovered = SimpleState::new(false);
     Button::new()
         .s(Width::exact(45))
         .s(RoundedCorners::all_max())
         .s(Background::new()
-            .color_signal(hovered_signal.map_bool(|| color!("#edc8f5"), || color!("#E1A3EE", 0.8))))
+            .color_signal(hovered.value.signal().map_bool(|| color!("#edc8f5"), || color!("#E1A3EE", 0.8))))
         .s(Borders::all(
             Border::new()
                 .width(2)
                 .color(color!("oklch(0.6 0.182 350.53 / .7")),
         ))
-        .on_hovered_change(move |is_hovered| hovered.set(is_hovered))
+        .on_hovered_change(move |is_hovered| hovered.setter.send(is_hovered))
         .label(label)
         .on_press(move || {
-            // Event-driven interaction - clear and traceable
-            if step > 0 {
-                COUNTER.increment_by(step);
-            } else {
-                COUNTER.decrement_by(-step);
-            }
+            // Direct global access - atomic operation
+            COUNTER.change_by.send(step);
         })
 }
 
-fn reset_button() -> impl Element {
-    Button::new()
-        .s(Width::exact(60))
-        .s(RoundedCorners::all_max())
-        .s(Background::new().color(color!("#ffcccc")))
-        .label("Reset")
-        .on_press(|| COUNTER.reset())  // New feature - easy to add!
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    
-    #[async_test]
-    async fn test_counter_increment() {
-        let counter = CounterState::new(5);
-        
-        counter.increment_by(3).unwrap();
-        // Wait for actor to process event
-        Timer::sleep(10).await;
-        
-        assert_eq!(counter.get_value(), 8);
-    }
-    
-    #[async_test] 
-    async fn test_counter_reset() {
-        let counter = CounterState::new(42);
-        
-        counter.reset().unwrap();
-        Timer::sleep(10).await;
-        
-        assert_eq!(counter.get_value(), 0);
-    }
-}
+// End of Approach A
 ```
 
-## Key Benefits of Actor+Relay Version
+### Approach B: Local State (Recommended - More Idiomatic)
 
-### 1. **🔒 Encapsulation**
-- State is owned by the Actor - only controlled mutations allowed
-- Public API clearly defines what operations are possible
-- No accidental direct state mutations
+```rust
+use zoon::*;
+
+/// Flattened app struct with counter state directly embedded
+#[derive(Clone)]
+struct CounterApp {
+    // State directly in app struct - no unnecessary wrapper
+    value: Actor<i32>,
+    change_by: Relay<i32>,
+}
+
+impl Default for CounterApp {
+    fn default() -> Self {
+        let (change_by, mut change_stream) = Relay::create_with_stream();
+        
+        // Simple Actor that responds to change events
+        let value = Actor::new(0, async move |state| {
+            while let Some(amount) = change_stream.next().await {
+                state.update(|value| value + amount);
+            }
+        });
+        
+        CounterApp { value, change_by }
+    }
+}
+
+impl CounterApp {
+    fn root(&self) -> impl Element {
+        Row::new()
+            .s(Align::center())
+            .s(Gap::new().x(15))
+            .item(self.counter_button("-", -1))
+            .item_signal(self.value.signal())
+            .item(self.counter_button("+", 1))
+    }
+    
+    fn counter_button(&self, label: &str, step: i32) -> impl Element {
+        let hovered = SimpleState::new(false);
+        
+        Button::new()
+            .s(Width::exact(45))
+            .s(RoundedCorners::all_max())
+            .s(Background::new()
+                .color_signal(hovered.value.signal().map_bool(|| color!("#edc8f5"), || color!("#E1A3EE", 0.8))))
+            .s(Borders::all(
+                Border::new()
+                    .width(2)
+                    .color(color!("oklch(0.6 0.182 350.53 / .7")),
+            ))
+            .on_hovered_change(move |is_hovered| hovered.setter.send(is_hovered))
+            .label(label)
+            .on_press({
+                let change_by = self.change_by.clone();
+                move || {
+                    change_by.send(step);
+                }
+            })
+    }
+}
+
+// Alternative main function for local approach
+fn main_with_local_state() {
+    start_app("app", || CounterApp::default().root());
+}
+
+// End of Approach B
+```
+
+## Two Approaches Compared
+
+### Approach A Benefits: **Global State (Simple)**
+
+**✅ When to Use:**
+- Single counter shared across entire app
+- Simple applications where globals are natural
+- When you want minimal ceremony
+
+**✅ Benefits:**
+- **Direct access**: `COUNTER.increment.send()` - no parameter passing
+- **Minimal code**: Fewest lines of code for simple use cases
+- **Atomic operations**: No get/send race conditions
+
+### Approach B Benefits: **Local State (Recommended - More Idiomatic)**
+
+**✅ When to Use (Default Choice):**
+- Self-contained components
+- Apps with multiple counter instances
+- When following idiomatic Rust patterns
+
+**✅ Benefits:**
+- **Better encapsulation**: State is locally scoped, not globally accessible
+- **More testable**: Each instance can be tested in isolation
+- **Idiomatic Rust**: Uses struct methods with `self` - feels natural
+- **Slightly more efficient**: No lazy static overhead
+- **Easier to reason about**: Clear ownership and lifetime semantics
+
+## Key Benefits of Both Approaches
+
+### 1. **🔒 Race-Condition Prevention**
+- Atomic operations: `increment.send()` and `decrement.send()` 
+- No get/send race conditions possible
+- State mutations are controlled and sequential
 
 ### 2. **📡 Event Traceability** 
-- All changes go through typed events: `IncrementBy`, `DecrementBy`, `Reset`
+- All changes go through explicit relay events
 - Easy to log, debug, and trace what happened
 - Clear audit trail of state changes
 
-### 3. **🧪 Testability**
-- Counter can be instantiated and tested in isolation
+### 3. **🧪 Easy Testing**
 - Events can be sent programmatically for testing
-- No global state pollution between tests
+- Direct state access for assertions
+- Local approach especially clean for unit tests
 
-### 4. **⚡ Extensibility**
-- Adding new features (like Reset button) is trivial
-- Just add new Relay and handler in Actor
-- No risk of breaking existing functionality
+### 4. **⚡ Simple & Atomic**
+- Single event per operation - no complex enums
+- Pure type usage - no conversions between i32/usize
+- Atomic operations prevent concurrency bugs
 
-### 5. **🎯 Type Safety**
-- Events are strongly typed - compile-time guarantees
-- No magic numbers or strings
-- IDE autocomplete and refactoring support
-
-### 6. **🔄 Reactive Patterns**
+### 5. **🔄 Reactive Integration**
 - UI reactively updates when state changes
-- Clear separation between events and state
+- Clean signal access: `counter.value.signal()`
 - Easy to add multiple views of the same state
+
+## Helper Patterns for Simple State
+
+For simple state that doesn't need complex event types, we can create a helper pattern:
+
+```rust
+/// Generic helper for simple Actor+Relay state
+struct SimpleState<T> {
+    pub value: Actor<T>,
+    pub setter: Relay<T>,
+}
+
+impl<T: Clone> SimpleState<T> {
+    pub fn new(initial: T) -> Self {
+        // Create Relay with pre-subscribed stream - eliminates clone! entirely
+        let (setter, mut setter_stream) = Relay::create_with_stream();
+        
+        let value = Actor::new(initial, async move |state| {
+            // Clean imperative style - stream moved directly into Actor
+            while let Some(new_value) = setter_stream.next().await {
+                // Use set_neq for efficiency - only updates if value actually changes
+                state.set_neq(new_value);
+            }
+        });
+        
+        SimpleState { value, setter }
+    }
+}
+
+// Note: We don't provide convenience methods like toggle() because they would
+// require separate get() + send() calls, creating potential race conditions.
+// For atomic operations, use the full Actor pattern with proper update semantics.
+// Simple usage: state.setter.send(new_value)
+```
+
+This imperative `while` loop pattern is more idiomatic Rust and makes it easier to handle multiple streams without excessive cloning.
 
 ## Advanced Features Made Possible
 
@@ -256,21 +289,68 @@ mod tests {
 
 // 1. Counter history/undo
 struct CounterWithHistory {
-    counter: CounterState,
+    counter: Counter,
     history: ActorVec<i32>,
 }
 
 // 2. Multiple counters
 struct CounterCollection {
-    counters: ActorVec<CounterState>,
+    counters: ActorVec<Counter>,
     add_counter: Relay,
 }
 
 // 3. Persistence
-impl CounterState {
+impl Counter {
     pub fn save_to_storage(&self) {
         // Save current value when it changes
         // Easy to add since we have event stream
+    }
+}
+```
+
+## Testing
+
+The Actor+Relay pattern makes testing straightforward since counters can be instantiated and tested in isolation:
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    #[async_test]
+    async fn test_counter_increment() {
+        let counter = Counter::default();
+        
+        counter.change_by.send(3);
+        // Wait for actor to process event
+        Timer::sleep(10).await;
+        
+        assert_eq!(counter.value.get(), 3);
+    }
+    
+    #[async_test] 
+    async fn test_counter_decrement() {
+        let counter = Counter::default();
+        
+        counter.change_by.send(-2);
+        Timer::sleep(10).await;
+        
+        assert_eq!(counter.value.get(), -2);
+    }
+    
+    #[async_test]
+    async fn test_simple_state_helper() {
+        let hover_state = SimpleState::new(false);
+        
+        // Test basic setter
+        hover_state.setter.send(true);
+        Timer::sleep(10).await;
+        assert_eq!(hover_state.value.get(), true);
+        
+        // Test changing value again
+        hover_state.setter.send(false);
+        Timer::sleep(10).await;
+        assert_eq!(hover_state.value.get(), false);
     }
 }
 ```
