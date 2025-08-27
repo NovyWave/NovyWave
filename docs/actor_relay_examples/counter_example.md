@@ -69,7 +69,7 @@ struct Counter {
 
 impl Default for Counter {
     fn default() -> Self {
-        let (change_by, mut change_stream) = Relay::create_with_stream();
+        let (change_by, mut change_stream) = relay();
         
         // Simple Actor that responds to change events
         let value = Actor::new(0, async move |state| {
@@ -136,7 +136,7 @@ struct CounterApp {
 
 impl Default for CounterApp {
     fn default() -> Self {
-        let (change_by, mut change_stream) = Relay::create_with_stream();
+        let (change_by, mut change_stream) = relay();
         
         // Simple Actor that responds to change events
         let value = Actor::new(0, async move |state| {
@@ -260,7 +260,7 @@ struct SimpleState<T> {
 impl<T: Clone> SimpleState<T> {
     pub fn new(initial: T) -> Self {
         // Create Relay with pre-subscribed stream - eliminates clone! entirely
-        let (setter, mut setter_stream) = Relay::create_with_stream();
+        let (setter, mut setter_stream) = relay();
         
         let value = Actor::new(initial, async move |state| {
             // Clean imperative style - stream moved directly into Actor
@@ -322,10 +322,9 @@ mod tests {
         let counter = Counter::default();
         
         counter.change_by.send(3);
-        // Wait for actor to process event
-        Timer::sleep(10).await;
         
-        assert_eq!(counter.value.get(), 3);
+        let final_value = counter.value.signal().to_stream().next().await.unwrap();
+        assert_eq!(final_value, 3);
     }
     
     #[async_test] 
@@ -333,9 +332,9 @@ mod tests {
         let counter = Counter::default();
         
         counter.change_by.send(-2);
-        Timer::sleep(10).await;
         
-        assert_eq!(counter.value.get(), -2);
+        let final_value = counter.value.signal().to_stream().next().await.unwrap();
+        assert_eq!(final_value, -2);
     }
     
     #[async_test]
@@ -344,13 +343,15 @@ mod tests {
         
         // Test basic setter
         hover_state.setter.send(true);
-        Timer::sleep(10).await;
-        assert_eq!(hover_state.value.get(), true);
+        
+        let final_value = hover_state.value.signal().to_stream().next().await.unwrap();
+        assert_eq!(final_value, true);
         
         // Test changing value again
         hover_state.setter.send(false);
-        Timer::sleep(10).await;
-        assert_eq!(hover_state.value.get(), false);
+        
+        let final_value = hover_state.value.signal().to_stream().next().await.unwrap();
+        assert_eq!(final_value, false);
     }
 }
 ```

@@ -41,7 +41,7 @@ pub struct SimpleState<T: Clone> {
 
 impl<T: Clone> SimpleState<T> {
     pub fn new(initial: T) -> Self {
-        let (setter, mut setter_stream) = Relay::create_with_stream();
+        let (setter, mut setter_stream) = relay();
         
         let value = Actor::new(initial, async move |state| {
             while let Some(new_value) = setter_stream.next().await {
@@ -327,7 +327,7 @@ pub struct SimpleState<T: Clone> {
 
 impl<T: Clone> SimpleState<T> {
     pub fn new(initial: T) -> Self {
-        let (setter, mut setter_stream) = Relay::create_with_stream();
+        let (setter, mut setter_stream) = relay();
         
         let value = Actor::new(initial, async move |state| {
             while let Some(new_value) = setter_stream.next().await {

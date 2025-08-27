@@ -146,8 +146,8 @@ struct GridDimensionControl {
 
 impl Default for GridDimensionControl {
     fn default() -> Self {
-        let (increment, mut increment_stream) = Relay::create_with_stream();
-        let (decrement, mut decrement_stream) = Relay::create_with_stream();
+        let (increment, mut increment_stream) = relay();
+        let (decrement, mut decrement_stream) = relay();
         let count = Actor::new(5, async move |state| {
             loop {
                 select! {
@@ -172,7 +172,7 @@ struct CounterGrid {
 
 impl Default for CounterGrid {
     fn default() -> Self {
-        let (change, mut change_stream) = Relay::create_with_stream();
+        let (change, mut change_stream) = relay();
         let values = ActorVec::new(vec![0; 25], async move |counters_vec| {
             join!(
                 // Handle counter changes
@@ -587,46 +587,42 @@ mod tests {
     // Test Approach A (Globals)
     #[async_test]
     async fn test_grid_resize_globals() {
-        Timer::sleep(10).await;
+        // Change to 3x3 using atomic operations (avoid multiple source locations)
+        for _ in 0..2 {
+            Task::start(async { COLUMNS.decrement.send(()); });
+        }
+        for _ in 0..2 {
+            Task::start(async { ROWS.decrement.send(()); });
+        }
         
-        // Change to 3x3 using pure usize atomic operations
-        COLUMNS.decrement.send(()); // 5 - 1 = 4
-        COLUMNS.decrement.send(()); // 4 - 1 = 3  
-        ROWS.decrement.send(());    // 5 - 1 = 4
-        ROWS.decrement.send(());    // 4 - 1 = 3
-        Timer::sleep(10).await;
-        
-        assert_eq!(COUNTERS.values.len_signal().await, 9);
+        let mut len_stream = COUNTERS.values.signal_vec_cloned().len().to_stream();
+        assert_eq!(len_stream.next().await.unwrap(), 9);
     }
     
     #[async_test]
     async fn test_counter_increment_globals() {
-        Timer::sleep(10).await;
-        
         // Increment counter at index 0 (top-left)
         COUNTERS.change.send((0, 3));
-        Timer::sleep(10).await;
         
-        let counters = COUNTERS.values.lock_ref();
-        assert_eq!(counters[0], 3);
+        let mut values_stream = COUNTERS.values.signal_vec_cloned().to_signal_cloned().to_stream();
+        let values = values_stream.next().await.unwrap();
+        assert_eq!(values[0], 3);
     }
     
     // Test Approach B (Struct with Methods)
     #[async_test]
     async fn test_counter_app_creation() {
         let app = CounterApp::default();
-        Timer::sleep(10).await;
         
         // Test atomic increment/decrement operations
         app.columns.increment.send(()); // 5 + 1 = 6
         app.rows.decrement.send(());     // 5 - 1 = 4 (min 1 enforced)
-        Timer::sleep(10).await;
         
         // Test counter change
         app.counters.change.send((0, 5));
-        Timer::sleep(10).await;
         
-        let values = app.counters.values.lock_ref();
+        let mut values_stream = app.counters.values.signal_vec_cloned().to_signal_cloned().to_stream();
+        let values = values_stream.next().await.unwrap();
         assert_eq!(values[0], 5);
     }
     

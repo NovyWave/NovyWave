@@ -161,7 +161,7 @@ pub struct SimpleState<T: Clone + Send + Sync + 'static> {
 
 impl<T: Clone + Send + Sync + 'static> SimpleState<T> {
     pub fn new(initial: T) -> Self {
-        let (setter, mut setter_stream) = Relay::create_with_stream();
+        let (setter, mut setter_stream) = relay();
         
         let value = Actor::new(initial, async move |state| {
             while let Some(new_value) = setter_stream.next().await {
@@ -298,30 +298,39 @@ where
     /// Check if there are active subscribers (internal use)
     pub(crate) fn has_subscribers(&self) -> bool;
     
-    /// Create a new Relay and immediately return a subscribed stream
-    /// MODERN PATTERN: Eliminates clone! macro boilerplate in Actor setup
-    /// 
-    /// # Example
-    /// ```rust
-    /// // Old complex pattern with clone! macro
-    /// let relay = Relay::new();
-    /// let actor = Actor::new(initial, clone!((relay) async move |state| {
-    ///     relay.subscribe().for_each(...).await;
-    /// }));
-    /// 
-    /// // New streamlined pattern
-    /// let (relay, stream) = Relay::create_with_stream();
-    /// let actor = Actor::new(initial, async move |state| {
-    ///     while let Some(event) = stream.next().await {
-    ///         // Process events with direct access
-    ///     }
-    /// });
-    /// ```
-    pub fn create_with_stream() -> (Self, impl Stream<Item = T>) {
-        let relay = Self::new();
-        let stream = relay.subscribe();
-        (relay, stream)
-    }
+}
+
+/// Creates a new Relay with an associated stream, following Rust's channel pattern.
+/// 
+/// This is the idiomatic way to create a Relay for use with Actors, eliminating
+/// clone! macro boilerplate and providing direct stream access.
+/// 
+/// # Example
+/// ```rust
+/// // Just like Rust channels:
+/// let (tx, rx) = channel();
+/// 
+/// // Actor+Relay pattern:
+/// let (increment, mut increment_stream) = relay();
+/// let (decrement, mut decrement_stream) = relay();
+/// 
+/// let counter = Actor::new(0, async move |state| {
+///     loop {
+///         select! {
+///             Some(()) = increment_stream.next() => {
+///                 state.update(|n| n + 1);
+///             }
+///             Some(()) = decrement_stream.next() => {
+///                 state.update(|n| n.saturating_sub(1));
+///             }
+///         }
+///     }
+/// });
+/// ```
+pub fn relay<T>() -> (Relay<T>, impl Stream<Item = T>) {
+    let relay = Relay::new();
+    let stream = relay.subscribe();
+    (relay, stream)
 }
 
 
@@ -482,7 +491,7 @@ let actor = Actor::new(initial_state, clone!((relay) async move |state| {
 **✅ New Imperative Pattern:**
 ```rust
 // Clean and simple with create_with_stream()
-let (relay, stream) = Relay::create_with_stream();
+let (relay, stream) = relay();
 let actor = Actor::new(initial_state, async move |state| {
     // Simple imperative loop - easier to debug and maintain
     while let Some(event) = stream.next().await {
@@ -518,7 +527,7 @@ struct SimpleState<T: Clone + Send + Sync + 'static> {
 
 impl<T: Clone + Send + Sync + 'static> SimpleState<T> {
     fn new(initial: T) -> Self {
-        let (setter, mut setter_stream) = Relay::create_with_stream();
+        let (setter, mut setter_stream) = relay();
         
         let value = Actor::new(initial, async move |state| {
             while let Some(new_value) = setter_stream.next().await {
@@ -568,9 +577,9 @@ struct MultiStreamProcessor {
 impl MultiStreamProcessor {
     pub fn new() -> Self {
         // Create all streams at once
-        let (data_events, data_stream) = Relay::create_with_stream();
-        let (config_events, config_stream) = Relay::create_with_stream();
-        let (timer_events, timer_stream) = Relay::create_with_stream();
+        let (data_events, data_stream) = relay();
+        let (config_events, config_stream) = relay();
+        let (timer_events, timer_stream) = relay();
         
         let results = ActorVec::new(vec![], async move |results_vec| {
             // Use join!() to process multiple streams concurrently
@@ -639,9 +648,9 @@ struct ModernFileManager {
 impl Default for ModernFileManager {
     fn default() -> Self {
         // Create streams for all events
-        let (add_file, add_stream) = Relay::create_with_stream();
-        let (remove_file, remove_stream) = Relay::create_with_stream();
-        let (file_selected, selection_stream) = Relay::create_with_stream();
+        let (add_file, add_stream) = relay();
+        let (remove_file, remove_stream) = relay();
+        let (file_selected, selection_stream) = relay();
         
         // Create main actor with imperative stream processing
         let files = ActorVec::new(vec![], async move |files_vec| {
@@ -718,7 +727,7 @@ impl ModernFileManager {
 
 **Measured Improvements from Pattern Adoption:**
 
-1. **Reduced Boilerplate**: ~60% less code using `create_with_stream()` vs clone! macros
+1. **Reduced Boilerplate**: ~60% less code using `relay()` vs clone! macros
 2. **Better Debugging**: Imperative while loops easier to step through than nested async closures  
 3. **Cleaner Error Handling**: Direct relay access eliminates Result<(), RelayError> propagation
 4. **Unified State Management**: SimpleState eliminates inconsistent Mutable usage patterns
@@ -728,7 +737,7 @@ impl ModernFileManager {
 
 **Step-by-Step Modernization:**
 
-1. **Replace clone! patterns** with `Relay::create_with_stream()`
+1. **Replace clone! patterns** with `relay()`
 2. **Convert .for_each() to while loops** for easier debugging
 3. **Introduce SimpleState** for all local UI state (dialog open/closed, filter text, etc.)
 4. **Use join!() for multi-stream** scenarios instead of multiple Task::start calls
@@ -757,10 +766,10 @@ struct AdvancedCounter {
 
 impl Default for AdvancedCounter {
     fn default() -> Self {
-        let (increment, mut increment_stream) = Relay::create_with_stream();
-        let (decrement, mut decrement_stream) = Relay::create_with_stream();
-        let (reset, mut reset_stream) = Relay::create_with_stream();
-        let (multiply, mut multiply_stream) = Relay::create_with_stream();
+        let (increment, mut increment_stream) = relay();
+        let (decrement, mut decrement_stream) = relay();
+        let (reset, mut reset_stream) = relay();
+        let (multiply, mut multiply_stream) = relay();
         
         // select! for coordinated multi-stream processing
         let value = Actor::new(0, async move |state| {
@@ -827,10 +836,10 @@ struct UserInterface {
 
 impl Default for UserInterface {
     fn default() -> Self {
-        let (save_clicked, mut save_stream) = Relay::create_with_stream();
-        let (load_clicked, mut load_stream) = Relay::create_with_stream();
-        let (exit_clicked, mut exit_stream) = Relay::create_with_stream();
-        let (help_clicked, mut help_stream) = Relay::create_with_stream();
+        let (save_clicked, mut save_stream) = relay();
+        let (load_clicked, mut load_stream) = relay();
+        let (exit_clicked, mut exit_stream) = relay();
+        let (help_clicked, mut help_stream) = relay();
         
         let mode = Actor::new(AppMode::Normal, async move |state| {
             loop {
@@ -1176,8 +1185,8 @@ struct Todo {
 impl Todo {
     pub fn new(id: Uuid, initial_text: String) -> Self {
         // Create relays with streams using modern pattern
-        let (clicked, mut clicked_stream) = Relay::create_with_stream();
-        let (text_changed, mut text_stream) = Relay::create_with_stream();
+        let (clicked, mut clicked_stream) = relay();
+        let (text_changed, mut text_stream) = relay();
         let delete_clicked = Relay::new();
         
         let completed = Actor::new(false, async move |state| {
@@ -1227,7 +1236,7 @@ struct TodoList {
 impl TodoList {
     pub fn new() -> Self {
         // Create relays with streams using modern pattern
-        let (add_clicked, mut add_stream) = Relay::create_with_stream();
+        let (add_clicked, mut add_stream) = relay();
         
         let todos = ActorVec::new(vec![], async move |todos_vec| {
             // Handle todo management here - business logic in the ActorVec
@@ -1269,7 +1278,7 @@ impl TrackedFile {
     pub fn new(id: String, path: PathBuf) -> Self {
         // Create relays with streams using modern pattern
         let remove_clicked = Relay::new();
-        let (reload_clicked, mut reload_stream) = Relay::create_with_stream();
+        let (reload_clicked, mut reload_stream) = relay();
         let state_changed = Relay::new();
         
         let path_clone = path.clone();
@@ -1306,7 +1315,7 @@ impl FileManager {
     pub fn new() -> Self {
         // Create relays with streams using modern pattern
         let add_file_clicked = Relay::new();
-        let (clear_all_clicked, mut clear_stream) = Relay::create_with_stream();
+        let (clear_all_clicked, mut clear_stream) = relay();
         
         let files = ActorVec::new(vec![], async move |files_vec| {
             // Collection business logic belongs HERE in the ActorVec
@@ -1422,10 +1431,10 @@ struct DataProcessor {
 impl DataProcessor {
     pub fn new(initial_config: ProcessingConfig) -> Self {
         // Create relays with streams - modern pattern avoids clone!
-        let (data_events, data_stream) = Relay::create_with_stream();
-        let (status_updates, status_stream) = Relay::create_with_stream();
-        let (results_ready, results_stream) = Relay::create_with_stream();
-        let (error_occurred, error_stream) = Relay::create_with_stream();
+        let (data_events, data_stream) = relay();
+        let (status_updates, status_stream) = relay();
+        let (results_ready, results_stream) = relay();
+        let (error_occurred, error_stream) = relay();
         
         // Create config Actor with its own stream handling
         let config = Actor::new(initial_config, async move |config_state| {
@@ -1642,7 +1651,7 @@ async fn example_usage() {
 - **Combined logic**: Processing uses current config state + incoming events
 
 **📡 Modern Multi-Stream Pattern:**
-- `Relay::create_with_stream()` eliminates clone! macro boilerplate
+- `relay()` eliminates clone! macro boilerplate
 - Imperative `while let Some(event) = stream.next().await` loops instead of functional `.for_each()`
 - Direct stream access without TaskHandle management complexity
 - Cleaner error handling with direct relay access
@@ -1770,7 +1779,7 @@ mod tests {
     
     #[async_test]
     async fn test_actor_processes_events_sequentially() {
-        let (relay, mut stream) = Relay::create_with_stream();
+        let (relay, mut stream) = relay();
         let results = Arc::new(Mutex::new(Vec::new()));
         
         let actor = Actor::new(0, {
@@ -1823,7 +1832,7 @@ mod tests {
     
     #[async_test]
     async fn test_actor_lifecycle() {
-        let (relay, mut stream) = Relay::create_with_stream();
+        let (relay, mut stream) = relay();
         let actor = Actor::new(42, async move |_state| {
             // Actor task - wait for events
             while let Some(_) = stream.next().await {
@@ -1949,7 +1958,7 @@ Based on practical experience refactoring examples from MoonZone patterns to Act
 
 ### Modern Pattern Improvements
 
-#### 1. **Relay::create_with_stream() vs clone! Macro**
+#### 1. **relay() vs clone! Macro**
 ```rust
 // ❌ Old complex pattern with clone! macro
 let relay = Relay::new();
@@ -1960,7 +1969,7 @@ let actor = Actor::new(initial, clone!((relay) async move |state| {
 }));
 
 // ✅ New streamlined pattern
-let (relay, stream) = Relay::create_with_stream();
+let (relay, stream) = relay();
 let actor = Actor::new(initial, async move |state| {
     while let Some(event) = stream.next().await {
         // Direct access, clear control flow
@@ -1984,7 +1993,7 @@ struct SimpleState<T: Clone + Send + Sync + 'static> {
 
 impl<T: Clone + Send + Sync + 'static> SimpleState<T> {
     fn new(initial: T) -> Self {
-        let (setter, mut setter_stream) = Relay::create_with_stream();
+        let (setter, mut setter_stream) = relay();
         
         let value = Actor::new(initial, async move |state| {
             while let Some(new_value) = setter_stream.next().await {
@@ -2069,8 +2078,8 @@ struct GridDimensionControl {
 
 impl Default for GridDimensionControl {
     fn default() -> Self {
-        let (increment, mut increment_stream) = Relay::create_with_stream();
-        let (decrement, mut decrement_stream) = Relay::create_with_stream();
+        let (increment, mut increment_stream) = relay();
+        let (decrement, mut decrement_stream) = relay();
         
         let count = Actor::new(5, async move |state| {
             loop {
@@ -2381,7 +2390,7 @@ static TIMELINE_POSITION: Lazy<Actor<f64>> = lazy::default();
 
 ### Critical Antipatterns to Avoid
 
-#### 1. **Using clone! Macro Instead of create_with_stream()**
+#### 1. **Using clone! Macro Instead of relay()**
 ```rust
 // ❌ DEPRECATED: Complex clone! pattern - harder to debug
 let relay = Relay::new();
@@ -2392,7 +2401,7 @@ Actor::new(initial, clone!((relay) async move |state| {
 }));
 
 // ✅ MODERN: Direct stream access - much cleaner
-let (relay, stream) = Relay::create_with_stream();
+let (relay, stream) = relay();
 Actor::new(initial, async move |state| {
     while let Some(event) = stream.next().await {
         // Simple imperative loop, direct access
@@ -2400,6 +2409,35 @@ Actor::new(initial, async move |state| {
 });
 ```
 **Critical**: Always use `create_with_stream()` for new code - it eliminates clone! macro complexity.
+
+#### 1.5. **Multiple relay.send() Calls from Same Source Location**
+
+**⚠️ CRITICAL CONSTRAINT**: A Relay can only be sent from ONE source location in your code.
+
+```rust
+// ❌ WRONG: Will panic with "multiple source" error
+fn test() {
+    relay.send(()); // First source location  
+    relay.send(()); // PANIC: Multiple source locations detected
+}
+
+// ✅ CORRECT: Different approaches for multiple sends
+// Option 1: Use Task::start for different call sites
+for _ in 0..3 {
+    Task::start(async { relay.send(()); });
+}
+
+// Option 2: Batch relay with count parameter
+batch_relay.send(3); // Send count instead of multiple individual sends
+
+// Option 3: futures::stream::select for multiple triggers (like chat example)
+let send_trigger_stream = futures::stream::select(
+    enter_pressed_stream,
+    send_button_clicked_stream
+);
+```
+
+**Why this rule exists**: Relay enforces single ownership to prevent conflicting event sources and maintain clear event traceability.
 
 #### 2. **Raw Mutable Instead of SimpleState**
 ```rust
@@ -2425,7 +2463,7 @@ Actor::new(0, |state| async move {
 });
 
 // ✅ CORRECT: Await subscription directly or use create_with_stream()
-let (relay, stream) = Relay::create_with_stream();
+let (relay, stream) = relay();
 Actor::new(0, async move |state| {
     while let Some(event) = stream.next().await {
         // Process events
@@ -2511,7 +2549,7 @@ counter.change_by.send(current + 1); // Send new value - RACE CONDITION!
 assert_eq!(counter.value.get(), 3); // .get() is NOT in Actor API
 
 // ✅ CORRECT: Atomic operations using state.update() inside Actor
-let (change_by, mut change_stream) = Relay::create_with_stream();
+let (change_by, mut change_stream) = relay();
 let value = Actor::new(0, async move |state| {
     while let Some(amount) = change_stream.next().await {
         // This is atomic - no race conditions possible
@@ -2520,8 +2558,8 @@ let value = Actor::new(0, async move |state| {
 });
 
 // ✅ CORRECT: Separate atomic operations for common patterns
-let (increment, mut increment_stream) = Relay::create_with_stream();
-let (decrement, mut decrement_stream) = Relay::create_with_stream();
+let (increment, mut increment_stream) = relay();
+let (decrement, mut decrement_stream) = relay();
 let value = Actor::new(0, async move |state| {
     loop {
         select! {
@@ -2555,8 +2593,8 @@ mod tests {
     async fn test_counter() {
         let counter = Counter::default();
         counter.increment.send(());
-        Timer::sleep(10).await; // Wait for processing
-        assert_eq!(counter.value.get(), 1); // Now .get() would work
+        let final_value = counter.value.signal().to_stream().next().await.unwrap();
+        assert_eq!(final_value, 1);
     }
 }
 ```
@@ -2723,9 +2761,9 @@ counters: ActorVec<Counter>,              // Context makes it obvious
 #### Stream Naming (Internal Implementation)
 ```rust
 // ✅ When using create_with_stream(), name streams consistently
-let (add_file_relay, mut add_file_stream) = Relay::create_with_stream();
-let (remove_file_relay, mut remove_file_stream) = Relay::create_with_stream();
-let (selection_changed_relay, mut selection_changed_stream) = Relay::create_with_stream();
+let (add_file_relay, mut add_file_stream) = relay();
+let (remove_file_relay, mut remove_file_stream) = relay();
+let (selection_changed_relay, mut selection_changed_stream) = relay();
 
 // ✅ External service streams: describe the source
 let (connection_adapter, mut incoming_message_stream) = ConnectionAdapter::new();
@@ -2767,7 +2805,7 @@ struct VariableId(String);
 
 #### Essential Testing Protocol (from Examples)
 
-All examples consistently use this pattern - **Timer::sleep() is MANDATORY** for Actor testing:
+All examples consistently use this pattern - **Signal-based reactive testing**:
 
 ```rust
 #[cfg(test)]
@@ -2782,7 +2820,7 @@ mod tests {
         counter.change_by.send(3);
         
         // ✅ CORRECT: Use signal.await to get value reactively
-        let final_value = counter.value.signal().next().await.unwrap();
+        let final_value = counter.value.signal().to_stream().next().await.unwrap();
         assert_eq!(final_value, 3);
     }
     
@@ -2796,7 +2834,7 @@ mod tests {
         counter.change_by.send(1);
         
         // ✅ CORRECT: Await signal - no Timer::sleep needed!
-        let final_value = counter.value.signal().next().await.unwrap();
+        let final_value = counter.value.signal().to_stream().next().await.unwrap();
         assert_eq!(final_value, 4);  // 0 + 5 - 2 + 1 = 4
     }
     
@@ -2810,7 +2848,7 @@ mod tests {
         }
         
         // ✅ CORRECT: Use signal reactively - no .get() needed
-        let final_count = control.count.signal().next().await.unwrap();
+        let final_count = control.count.signal().to_stream().next().await.unwrap();
         assert_eq!(final_count, 1);  // Should never go below 1
     }
 }
@@ -2855,7 +2893,7 @@ mod tests {
         app.increment.send(());
         
         // 3. Await signal reactively - no arbitrary timeouts
-        let result = app.value.signal().next().await.unwrap();
+        let result = app.value.signal().to_stream().next().await.unwrap();
         
         // 4. Assert final state
         assert_eq!(result, expected_value);
@@ -2866,10 +2904,27 @@ mod tests {
 #### Test Organization
 - **Separate tests into dedicated sections** for documentation clarity
 - **Use consistent initialization** (`Default::default()`)
-- **Always wait for async processing** with `Timer::sleep()`
+- **Always use signal-based testing** with `.signal().to_stream().next().await`
 - **Test both positive and negative cases** (increment/decrement)
 
 ### Migration Strategy
+
+#### Relay Creation - The Idiomatic Pattern
+
+The `relay()` function follows Rust's established channel creation pattern:
+
+```rust
+// Standard Rust channels
+let (tx, rx) = channel();
+
+// Actor+Relay pattern - identical ergonomics
+let (relay, stream) = relay();
+```
+
+This is the only way to create a Relay with its associated stream. The pattern is:
+- **Consistent**: Matches Rust's channel conventions
+- **Simple**: One clear way to do things
+- **Ergonomic**: Short, memorable function name
 
 #### Incremental Approach
 1. **Start with isolated components** (like Counter example)
@@ -3025,13 +3080,13 @@ COUNTER.value.signal()
 **✅ Reactive waiting - no arbitrary timeouts:**
 ```rust
 // GOOD: Wait exactly as long as needed
-let result = counter.value.signal().next().await.unwrap();
+let result = counter.value.signal().to_stream().next().await.unwrap();
 
 // GOOD: Natural batching with signal waiting
 counter.increment.send(());
 counter.increment.send(());  
 counter.decrement.send(());
-let result = counter.value.signal().next().await.unwrap();  // Waits for final result
+let result = counter.value.signal().to_stream().next().await.unwrap();  // Waits for final result
 ```
 
 **✅ Multiple assertions with signal streams:**
@@ -3057,7 +3112,7 @@ These patterns, observed consistently across the examples, provide the foundatio
 - **Local state by default**: Use struct methods with local state, global only when truly needed
 
 ### **Modern Implementation Patterns**  
-- **create_with_stream()**: Always use instead of clone! macro patterns for cleaner Actor initialization
+- **relay()**: Always use instead of clone! macro patterns for cleaner Actor initialization
 - **Imperative stream processing**: Use `while let Some(event) = stream.next().await` instead of `.for_each()` 
 - **SimpleState consistency**: Use Actor+Relay internally for all local UI state (button hover, dialog open/closed)
 - **Unified types**: Single type for similar operations (avoid ColumnControl vs RowControl duplication)
@@ -3078,6 +3133,8 @@ Multiple streams needed?
 
 ### **Testing Approach**
 - **Signal-based testing**: Use `actor.signal().to_stream().next().await` for assertions
+- **ActorVec testing**: Use `actor_vec.signal_vec_cloned().to_signal_cloned().to_stream().next().await` for vector assertions
+- **Single source location**: Relay can only be sent from ONE location - use Task::start loops or batch relays for multiple sends
 - **No timing dependencies**: Wait for actual signal changes, not arbitrary timeouts
 - **Reactive waiting**: Natural batching with signal stream testing
 
@@ -3097,7 +3154,7 @@ Multiple streams needed?
 
 ### **Migration Strategy**
 1. **Start with SimpleState**: Replace local Mutable usage first
-2. **Apply create_with_stream()**: Update Actor initialization patterns  
+2. **Apply relay()**: Update Actor initialization patterns  
 3. **Remove .get() calls**: Convert to signal-based access
 4. **Local state refactor**: Move from global to local state architecture
 5. **Testing conversion**: Signal-based testing throughout

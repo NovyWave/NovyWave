@@ -87,12 +87,12 @@ struct ChatApp {
 impl Default for ChatApp {
     fn default() -> Self {
         // Create all relays with streams
-        let (enter_pressed_relay, mut enter_pressed_stream) = Relay::create_with_stream();
-        let (send_button_clicked_relay, mut send_button_clicked_stream) = Relay::create_with_stream();
-        let (username_input_changed_relay, mut username_input_changed_stream) = Relay::create_with_stream();
-        let (message_input_changed_relay, mut message_input_changed_stream) = Relay::create_with_stream();
-        let (message_received_relay, mut message_received_stream) = Relay::create_with_stream();
-        let (message_sent_relay, mut message_sent_stream) = Relay::create_with_stream();
+        let (enter_pressed_relay, mut enter_pressed_stream) = relay();
+        let (send_button_clicked_relay, mut send_button_clicked_stream) = relay();
+        let (username_input_changed_relay, mut username_input_changed_stream) = relay();
+        let (message_input_changed_relay, mut message_input_changed_stream) = relay();
+        let (message_received_relay, mut message_received_stream) = relay();
+        let (message_sent_relay, mut message_sent_stream) = relay();
         
         // Create connection adapter (isolated from business logic) 
         let (connection, mut incoming_message_stream) = ConnectionAdapter::new();
@@ -409,7 +409,7 @@ struct SimpleState<T> {
 
 impl<T: Clone> SimpleState<T> {
     pub fn new(initial: T) -> Self {
-        let (setter, mut setter_stream) = Relay::create_with_stream();
+        let (setter, mut setter_stream) = relay();
         
         let value = Actor::new(initial, async move |state| {
             while let Some(new_value) = setter_stream.next().await {
@@ -536,12 +536,10 @@ mod tests {
         chat.test_set_username("User1");
         chat.test_set_message_text("Via Enter");
         chat.test_enter_key();
-        Timer::sleep(10).await; // Let processing complete
         
         // Test Send button path doesn't panic
         chat.test_set_message_text("Via Button");
         chat.test_send_button();
-        Timer::sleep(10).await; // Let processing complete
         
         // Both should work without "multiple source" errors
     }
