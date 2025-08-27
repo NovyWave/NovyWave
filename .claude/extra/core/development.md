@@ -381,6 +381,12 @@ It is critical that you mark todos as completed as soon as you are done with a t
 
 ## Git Workflows
 
+### Critical Git Commit Rules
+- **NEVER add Claude attribution lines to commits**:
+  - ❌ NO: `🤖 Generated with [Claude Code](https://claude.ai/code)`
+  - ❌ NO: `Co-Authored-By: Claude <noreply@anthropic.com>`
+  - These lines should NEVER appear in any git commit message
+  - This is a permanent rule - do not add under any circumstances
 
 ### Git Safety Rules
 - **CRITICAL: NEVER perform destructive git operations (reset, rebase, force push, branch deletion, stash drop) without explicit user confirmation**
