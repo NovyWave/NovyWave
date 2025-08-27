@@ -13,6 +13,7 @@ Core guidance for Claude Code when working with NovyWave.
 @.claude/extra/technical/reference.md
 @.claude/extra/technical/performance-debugging.md
 @.claude/extra/technical/reactive-antipatterns.md
+@.claude/extra/technical/lessons.md
 
 ## ReactiveTreeView & Signal Performance Lessons
 

@@ -13,6 +13,40 @@ When making changes to files, first understand the file's code conventions. Mimi
 
 - IMPORTANT: DO NOT ADD ***ANY*** COMMENTS unless asked
 
+### Modern Rust Formatting Syntax
+
+Use modern Rust formatting macros with inline expressions:
+
+**✅ Modern (Recommended):**
+```rust
+// Variables directly in format strings
+println!("{my_var}");
+zoon::println!("{value}");
+format!("{name} is {age} years old");
+
+// Debug formatting
+println!("{my_var:?}");
+zoon::println!("{data:?}");
+
+// Other format specifiers
+println!("{value:02}");        // Zero-padded
+println!("{value:.2}");        // Decimal places
+println!("{value:#x}");        // Hexadecimal
+```
+
+**❌ Verbose (Avoid):**
+```rust
+println!("{}", my_var);
+zoon::println!("{}", value);
+format!("{} is {} years old", name, age);
+```
+
+**Key Benefits:**
+- More readable and concise
+- Less error-prone (no argument position mismatches)
+- Consistent with modern Rust style
+- Works with `println!`, `format!`, `zoon::println!`, `eprintln!`, etc.
+
 ## Refactoring Rules
 
 **ATOMIC CODE MOVEMENT - NEVER BREAK COMPILATION:**
