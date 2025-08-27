@@ -2,6 +2,7 @@ use zoon::*;
 use std::collections::HashMap;
 use indexmap::{IndexMap, IndexSet};
 use shared::{WaveformFile, LoadingFile, FileSystemItem, TrackedFile, FileState, create_tracked_file};
+use crate::time_types::{TimeNs, Viewport, ZoomLevel, TimelineCache};
 // Using simpler queue approach with MutableVec
 
 // ===== STABLE SIGNAL HELPERS =====
@@ -230,16 +231,26 @@ pub static VARIABLES_VALUE_DIVIDER_DRAGGING: Lazy<Mutable<bool>> = lazy::default
 // Selected Variables panel row height
 pub const SELECTED_VARIABLES_ROW_HEIGHT: u32 = 30;
 
-// Timeline cursor position (in seconds)
-pub static TIMELINE_CURSOR_POSITION: Lazy<Mutable<f64>> = Lazy::new(|| Mutable::new(0.0));
+// Timeline cursor position (in nanoseconds since file start)
+pub static TIMELINE_CURSOR_NS: Lazy<Mutable<TimeNs>> = Lazy::new(|| Mutable::new(TimeNs::ZERO));
+
+// Timeline viewport (visible time range in nanoseconds)
+pub static TIMELINE_VIEWPORT: Lazy<Mutable<Viewport>> = Lazy::new(|| {
+    Mutable::new(Viewport::new(
+        TimeNs::ZERO,
+        TimeNs::from_seconds(100.0) // Default 100 second range
+    ))
+});
+
+// Timeline zoom level (as percentage: 100 = 1x, 200 = 2x, etc.)
+pub static TIMELINE_ZOOM_LEVEL: Lazy<Mutable<ZoomLevel>> = Lazy::new(|| Mutable::new(ZoomLevel::NORMAL));
+
+/// Unified timeline cache - replaces 4 separate cache systems
+/// Contains viewport data, cursor values, raw transitions, and request deduplication
+pub static UNIFIED_TIMELINE_CACHE: Lazy<Mutable<TimelineCache>> = Lazy::new(|| Mutable::new(TimelineCache::new()));
 
 // Track if cursor position was set during startup before files loaded
 pub static STARTUP_CURSOR_POSITION_SET: Lazy<Mutable<bool>> = lazy::default();
-
-// Timeline zoom state
-pub static TIMELINE_ZOOM_LEVEL: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(1.0)); // 1.0 = normal, 1B max for extreme zoom
-pub static TIMELINE_VISIBLE_RANGE_START: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(0.0)); // Visible time window start
-pub static TIMELINE_VISIBLE_RANGE_END: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(100.0)); // Visible time window end
 
 // Smooth zoom control
 pub static IS_ZOOMING_IN: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
@@ -258,10 +269,10 @@ pub static IS_SHIFT_PRESSED: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(fal
 
 // Mouse position tracking for zoom center
 pub static MOUSE_X_POSITION: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(0.0));
-pub static MOUSE_TIME_POSITION: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(0.0));
+pub static MOUSE_TIME_NS: Lazy<Mutable<TimeNs>> = Lazy::new(|| Mutable::new(TimeNs::ZERO));
 
-// Zoom center position (in seconds) - separate from mouse position for explicit control
-pub static ZOOM_CENTER_POSITION: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(0.0));
+// Zoom center position (in nanoseconds) - separate from mouse position for explicit control
+pub static ZOOM_CENTER_NS: Lazy<Mutable<TimeNs>> = Lazy::new(|| Mutable::new(TimeNs::ZERO));
 
 // Canvas dimensions for click calculations
 pub static CANVAS_WIDTH: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(800.0));

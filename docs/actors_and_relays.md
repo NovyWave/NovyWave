@@ -127,7 +127,7 @@ let count = Mutable::new(0);
 // CORRECT: All state managed through Actors
 let username = Actor::new("John", async move |state| {
     while let Some(new_name) = name_changes.next().await {
-        state.set(new_name);  // Controlled mutation point
+        state.set_neq(new_name);  // Controlled mutation point
     }
 });
 
@@ -147,30 +147,38 @@ let is_hovered = SimpleState::new(false);
 // This is still controlled - wraps Mutable with clean API
 ```
 
-#### Complete SimpleState Implementation (from Examples)
+#### Complete SimpleState Implementation (from Chat Example)
 
-Based on the counter and chat examples, here's the complete implementation that eliminates all raw Mutable usage:
+Based on the chat example, here's the correct implementation using Actor+Relay internally:
 
 ```rust
-/// Unified helper for all local UI state - consistent API, no race conditions
+/// Unified helper for local UI state - uses Actor+Relay architecture internally
 #[derive(Clone, Debug)]
-struct SimpleState<T: Clone> {
-    state: Mutable<T>,
+pub struct SimpleState<T: Clone + Send + Sync + 'static> {
+    pub value: Actor<T>,
+    pub setter: Relay<T>,
 }
 
-impl<T: Clone> SimpleState<T> {
+impl<T: Clone + Send + Sync + 'static> SimpleState<T> {
     pub fn new(initial: T) -> Self {
-        Self { state: Mutable::new(initial) }
+        let (setter, mut setter_stream) = Relay::create_with_stream();
+        
+        let value = Actor::new(initial, async move |state| {
+            while let Some(new_value) = setter_stream.next().await {
+                state.set_neq(new_value);
+            }
+        });
+        
+        SimpleState { value, setter }
     }
     
-    // No .get() method - maintain consistency with Actor pattern
-    // Use reactive signals for all access patterns
-    pub fn set(&self, value: T) { 
-        self.state.set_neq(value); // Only updates if value actually changed
+    // Convenient methods that delegate to Actor+Relay
+    pub fn set(&self, value: T) {
+        self.setter.send(value);
     }
     
-    pub fn signal(&self) -> impl Signal<Item = T> { 
-        self.state.signal() 
+    pub fn signal(&self) -> impl Signal<Item = T> {
+        self.value.signal()
     }
 }
 
@@ -196,25 +204,23 @@ impl Default for UIState {
 // Clean usage throughout components:
 fn dialog_button(ui_state: &UIState) -> impl Element {
     Button::new()
-        .label("Open Dialog")
+        .label_signal(ui_state.is_dialog_open.signal().map(|is_open| {
+            if is_open { "Close Dialog" } else { "Open Dialog" }
+        }))
         .on_press({
-            let dialog = ui_state.is_dialog_open.clone();
-            move || dialog.set(true)
+            let setter = ui_state.is_dialog_open.setter.clone();
+            move || setter.send(true)
         })
-        .child_signal(
-            ui_state.is_dialog_open.signal().map(|is_open| {
-                if is_open { "Close Dialog" } else { "Open Dialog" }
-            })
-        )
 }
 ```
 
 **Key Benefits:**
-- **Consistency**: Same API patterns as Actor (no `.get()` method)
-- **Efficiency**: `set_neq` only triggers signals when value actually changes  
+- **True Actor+Relay Architecture**: Uses Actor+Relay internally, no raw Mutable violations
+- **Consistent API**: Same patterns as full Actor usage (`.setter.send()` and `.value.signal()`)
+- **Efficiency**: Only triggers signals when value actually changes
 - **Type Safety**: Compile-time checking for all local UI state
-- **Controlled**: Eliminates scattered `Mutable::new()` calls throughout codebase
-- **Testable**: Can be instantiated and tested in isolation
+- **Traceability**: All mutations go through relay system like other Actors
+- **Testable**: Can be instantiated and tested in isolation using signal-based testing
 
 **Rule**: When in doubt, use an Actor. The architecture benefits (traceability, controlled mutations, no recursive locks) only exist when ALL state goes through Actors.
 
@@ -365,16 +371,9 @@ where
     /// Get reference signal
     pub fn signal_ref<U>(&self, f: impl Fn(&T) -> U) -> impl Signal<Item = U>;
     
-    /// Get current value (clones)
-    /// ⚠️  WARNING: This method enables race conditions! Consider removing from API.
-    /// Prefer atomic operations using state.update() inside the Actor instead.
-    /// See "Atomic Operation Patterns" section for safe alternatives.
-    #[deprecated = "Creates race conditions - use atomic operations via relays instead"]
-    pub fn get(&self) -> T;
-    
-    // RECOMMENDED: Instead of .get(), consider this API:
-    // #[cfg(test)]  // Only for testing
-    // pub fn get(&self) -> T;
+    // No .get() method - all state access must be through signals
+    // This prevents race conditions and maintains architectural consistency
+    // For testing, use signal-based assertions: signal().to_stream().next().await
 }
 
 ```
@@ -508,22 +507,31 @@ DIALOG_OPEN.set_neq(true);
 let text = FILTER_TEXT.get();
 ```
 
-**✅ New Pattern: SimpleState helper**
+**✅ New Pattern: SimpleState helper (Actor+Relay internally)**
 ```rust
-/// Unified helper for all local UI state
+/// Unified helper for local UI state - uses Actor+Relay internally
 #[derive(Clone, Debug)]
-struct SimpleState<T: Clone> {
-    state: Mutable<T>,
+struct SimpleState<T: Clone + Send + Sync + 'static> {
+    pub value: Actor<T>,
+    pub setter: Relay<T>,
 }
 
-impl<T: Clone> SimpleState<T> {
+impl<T: Clone + Send + Sync + 'static> SimpleState<T> {
     fn new(initial: T) -> Self {
-        Self { state: Mutable::new(initial) }
+        let (setter, mut setter_stream) = Relay::create_with_stream();
+        
+        let value = Actor::new(initial, async move |state| {
+            while let Some(new_value) = setter_stream.next().await {
+                state.set_neq(new_value);
+            }
+        });
+        
+        SimpleState { value, setter }
     }
     
-    // No .get() method - even for local UI state, prefer reactive signals
-    fn set(&self, value: T) { self.state.set_neq(value); }
-    fn signal(&self) -> impl Signal<Item = T> { self.state.signal() }
+    // Convenient methods that delegate to Actor+Relay
+    fn set(&self, value: T) { self.setter.send(value); }
+    fn signal(&self) -> impl Signal<Item = T> { self.value.signal() }
 }
 
 // Consistent usage throughout application
@@ -694,11 +702,10 @@ impl ModernFileManager {
     
     pub fn filtered_files_signal(&self) -> impl Signal<Item = Vec<TrackedFile>> {
         map_ref! {
-            let files = self.files.len_signal(),
+            let files = self.files.signal_vec().to_signal_cloned(),
             let filter = self.filter_text.signal() => {
-                // Implement filtering logic
-                let all_files: Vec<TrackedFile> = self.files.get(); // In real code, use proper API
-                all_files.into_iter()
+                // Implement filtering logic using reactive signals
+                files.into_iter()
                     .filter(|f| f.name.contains(&*filter))
                     .collect()
             }
@@ -766,7 +773,7 @@ impl Default for AdvancedCounter {
                         state.update(|value| value - 1);
                     }
                     Some(()) = reset_stream.next() => {
-                        state.set(0);  // Reset takes priority
+                        state.set_neq(0);  // Reset takes priority
                     }
                     Some(factor) = multiply_stream.next() => {
                         state.update(|value| value * factor);
@@ -780,10 +787,27 @@ impl Default for AdvancedCounter {
 }
 ```
 
-**When to use select!() vs join!():**
-- **select!()**: When streams need shared state access or coordinated handling
-- **join!()**: When streams are independent and can be processed concurrently
-- **while let**: When you have a single stream or simple sequential processing
+### Multi-Stream Pattern Decision Guide
+
+```
+Need multiple streams in Actor?
+├── Do streams share state or need coordination?
+│   ├── YES → Use select!() for coordinated processing
+│   │   ├── Different priorities? → Order select! arms by priority
+│   │   ├── Complex coordination? → Consider separate coordinatIng Actor
+│   │   └── Simple shared state? → Cache values between stream events
+│   └── NO → Can streams run independently?
+│       ├── YES → Use join!() for concurrent processing  
+│       ├── Same event type, multiple sources? → Use futures::stream::select()
+│       └── Sequential only? → Use while let with single stream
+└── Single stream only? → Use while let Some(event) = stream.next().await
+```
+
+**When to use each pattern:**
+- **select!()**: Shared state access, coordinated handling, event priorities
+- **join!()**: Independent processing, concurrent streams, no shared state  
+- **futures::stream::select()**: Same event type from multiple sources
+- **while let**: Single stream, simple sequential processing
 
 #### Discrete Event Pattern (Unit Relays)
 
@@ -812,27 +836,27 @@ impl Default for UserInterface {
             loop {
                 select! {
                     Some(()) = save_stream.next() => {
-                        state.set(AppMode::Saving);
+                        state.set_neq(AppMode::Saving);
                         // Perform save operation
                         perform_save().await;
-                        state.set(AppMode::Normal);
+                        state.set_neq(AppMode::Normal);
                     }
                     Some(()) = load_stream.next() => {
-                        state.set(AppMode::Loading);
+                        state.set_neq(AppMode::Loading);
                         // Perform load operation
                         perform_load().await;
-                        state.set(AppMode::Normal);
+                        state.set_neq(AppMode::Normal);
                     }
                     Some(()) = exit_stream.next() => {
-                        state.set(AppMode::Exiting);
+                        state.set_neq(AppMode::Exiting);
                         // Cleanup and exit
                         cleanup().await;
                     }
                     Some(()) = help_stream.next() => {
-                        state.set(AppMode::ShowingHelp);
+                        state.set_neq(AppMode::ShowingHelp);
                         // Show help dialog
                         Timer::sleep(3000).await;  // Auto-hide after 3s
-                        state.set(AppMode::Normal);
+                        state.set_neq(AppMode::Normal);
                     }
                 }
             }
@@ -1151,30 +1175,23 @@ struct Todo {
 
 impl Todo {
     pub fn new(id: Uuid, initial_text: String) -> Self {
-        // Create relays FIRST
-        let clicked = Relay::new();
-        let text_changed = Relay::new();  // Relay<String>
+        // Create relays with streams using modern pattern
+        let (clicked, mut clicked_stream) = Relay::create_with_stream();
+        let (text_changed, mut text_stream) = Relay::create_with_stream();
         let delete_clicked = Relay::new();
         
-        // Clone relays for use in Actor initialization
-        let clicked_relay = clicked.clone();
-        let text_changed_relay = text_changed.clone();
-        
         let completed = Actor::new(false, async move |state| {
-            let clicked_relay = clicked_relay.clone();
             // Handle toggle clicks - business logic belongs in the Actor
-            clicked_relay.subscribe().for_each(async |_| {
-                let current = state.get();
-                state.set(!current);  // This is the correct way to update
-            }).await;
+            while let Some(()) = clicked_stream.next().await {
+                state.update(|current| !current);  // Atomic operation, no .get() needed
+            }
         });
         
         let text = Actor::new(initial_text, async move |state| {
-            let text_changed_relay = text_changed_relay.clone();
             // Handle text changes - business logic in the Actor
-            text_changed_relay.subscribe().for_each(async |new_text| {
-                state.set(new_text);  // Correct way to update text
-            }).await;
+            while let Some(new_text) = text_stream.next().await {
+                state.set_neq(new_text);  // Only update if text actually changed
+            }
         });
         
         Todo { id, text, completed, clicked, text_changed, delete_clicked }
@@ -1209,19 +1226,15 @@ struct TodoList {
 
 impl TodoList {
     pub fn new() -> Self {
-        // Create relays FIRST
-        let add_clicked = Relay::new();
-        
-        // Clone relays for use in ActorVec initialization
-        let add_relay = add_clicked.clone();
+        // Create relays with streams using modern pattern
+        let (add_clicked, mut add_stream) = Relay::create_with_stream();
         
         let todos = ActorVec::new(vec![], async move |todos_vec| {
-            let add_relay = add_relay.clone();
             // Handle todo management here - business logic in the ActorVec
-            add_relay.subscribe().for_each(async |_| {
+            while let Some(()) = add_stream.next().await {
                 let new_todo = Todo::new(Uuid::new_v4(), "New todo".to_string());
                 todos_vec.lock_mut().push_cloned(new_todo);
-            }).await;
+            }
         });
         
         TodoList { todos, add_clicked }
@@ -1254,17 +1267,13 @@ struct TrackedFile {
 
 impl TrackedFile {
     pub fn new(id: String, path: PathBuf) -> Self {
-        // Create relays FIRST so they can be used in Actor initialization
+        // Create relays with streams using modern pattern
         let remove_clicked = Relay::new();
-        let reload_clicked = Relay::new(); 
+        let (reload_clicked, mut reload_stream) = Relay::create_with_stream();
         let state_changed = Relay::new();
         
-        // Clone relays for use in Actor initialization
-        let reload_relay = reload_clicked.clone();
         let path_clone = path.clone();
-        
         let state = Actor::new(FileState::Loading, async move |state_actor| {
-            let reload_relay = reload_relay.clone();
             let path = path_clone.clone();
             
             // Business logic: initial load
@@ -1272,11 +1281,11 @@ impl TrackedFile {
             // state_actor.set(match result { Ok(_) => FileState::Ready, Err(e) => FileState::Error(e) });
             
             // Handle reload events - business logic belongs HERE in the Actor
-            reload_relay.subscribe().for_each(async |_| {
-                state_actor.set(FileState::Loading);
+            while let Some(()) = reload_stream.next().await {
+                state_actor.set_neq(FileState::Loading);
                 // let result = load_file(&path).await;
-                // state_actor.set(match result { ... });
-            }).await;
+                // state_actor.set_neq(match result { Ok(_) => FileState::Ready, Err(e) => FileState::Error(e) });
+            }
         });
         
         TrackedFile { id, path, state, remove_clicked, reload_clicked, state_changed }
@@ -1295,20 +1304,16 @@ struct FileManager {
 
 impl FileManager {
     pub fn new() -> Self {
-        // Create relays FIRST
+        // Create relays with streams using modern pattern
         let add_file_clicked = Relay::new();
-        let clear_all_clicked = Relay::new();
-        
-        // Clone relays for use in ActorVec initialization
-        let clear_relay = clear_all_clicked.clone();
+        let (clear_all_clicked, mut clear_stream) = Relay::create_with_stream();
         
         let files = ActorVec::new(vec![], async move |files_vec| {
-            let clear_relay = clear_relay.clone();
             // Collection business logic belongs HERE in the ActorVec
-            clear_relay.subscribe().for_each(async |_| {
+            while let Some(()) = clear_stream.next().await {
                 // Clear all files logic
                 files_vec.lock_mut().clear();
-            }).await;
+            }
         });
         
         FileManager { files, add_file_clicked, clear_all_clicked }
@@ -1765,21 +1770,22 @@ mod tests {
     
     #[async_test]
     async fn test_actor_processes_events_sequentially() {
-        let relay = Relay::<u32>::new();
+        let (relay, mut stream) = Relay::create_with_stream();
         let results = Arc::new(Mutex::new(Vec::new()));
         
-        let actor = Actor::new(0, async |state| {
+        let actor = Actor::new(0, {
             let results = results.clone();
-            let relay = relay.clone();
-            
-            relay.subscribe().for_each(async |value| {
-                let results = results.clone();
-                let state = state.clone();
-                // Simulate processing
-                Timer::sleep(10).await;
-                state.set(state.get() + value);
-                results.lock().unwrap().push(state.get());
-            }).await
+            async move |state| {
+                while let Some(value) = stream.next().await {
+                    // Simulate processing
+                    Timer::sleep(10).await;
+                    state.update(|current| current + value);
+                    
+                    // Record result using signal-based access
+                    let current_value = state.signal().to_stream().next().await.unwrap();
+                    results.lock().unwrap().push(current_value);
+                }
+            }
         });
         
         // Emit events rapidly
@@ -1787,10 +1793,15 @@ mod tests {
             relay.send(i);
         }
         
-        // Wait for processing
-        Timer::sleep(100).await;
+        // Wait for all processing using signal-based approach
+        let mut value_stream = actor.signal().to_stream();
+        let mut final_value = 0;
+        for _ in 1..=5 {
+            final_value = value_stream.next().await.unwrap();
+        }
         
-        // Verify sequential processing
+        // Verify final result after all processing
+        assert_eq!(final_value, 15); // 1+2+3+4+5 = 15
         let results = results.lock().unwrap().clone();
         assert_eq!(results, vec![1, 3, 6, 10, 15]);
     }
@@ -1812,22 +1823,24 @@ mod tests {
     
     #[async_test]
     async fn test_actor_lifecycle() {
-        let actor = Actor::new(42, async |_state| {
-            // Actor task
-            loop {
-                Timer::sleep(1000).await;
+        let (relay, mut stream) = Relay::create_with_stream();
+        let actor = Actor::new(42, async move |_state| {
+            // Actor task - wait for events
+            while let Some(_) = stream.next().await {
+                // Process events
             }
         });
         
-        assert!(actor.is_running());
-        assert_eq!(actor.get(), 42);
+        // Test initial value using signal
+        let mut value_stream = actor.signal().to_stream();
+        assert_eq!(value_stream.next().await.unwrap(), 42);
         
-        // Stop actor
-        actor.stop();
-        
-        // Actor should be stopped
+        // Test actor can receive events
+        relay.send(());
         Timer::sleep(10).await;
-        // Note: is_running() would be false after stop
+        
+        // In real implementation, would have stop() method and is_running() check
+        // This shows signal-based testing approach instead of direct .get() access
     }
 }
 ```
@@ -1962,17 +1975,29 @@ let actor = Actor::new(initial, async move |state| {
 static DIALOG_OPEN: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
 static LOADING: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
 
-// ✅ Unified SimpleState pattern
+// ✅ Unified SimpleState pattern (Actor+Relay internally)
 #[derive(Clone, Debug)]
-struct SimpleState<T: Clone> {
-    state: Mutable<T>,
+struct SimpleState<T: Clone + Send + Sync + 'static> {
+    pub value: Actor<T>,
+    pub setter: Relay<T>,
 }
 
-impl<T: Clone> SimpleState<T> {
-    fn new(initial: T) -> Self { Self { state: Mutable::new(initial) } }
-    // No .get() method - consistent with Actor pattern
-    fn set(&self, value: T) { self.state.set_neq(value); }
-    fn signal(&self) -> impl Signal<Item = T> { self.state.signal() }
+impl<T: Clone + Send + Sync + 'static> SimpleState<T> {
+    fn new(initial: T) -> Self {
+        let (setter, mut setter_stream) = Relay::create_with_stream();
+        
+        let value = Actor::new(initial, async move |state| {
+            while let Some(new_value) = setter_stream.next().await {
+                state.set_neq(new_value);
+            }
+        });
+        
+        SimpleState { value, setter }
+    }
+    
+    // Convenient methods
+    fn set(&self, value: T) { self.setter.send(value); }
+    fn signal(&self) -> impl Signal<Item = T> { self.value.signal() }
 }
 
 struct DialogState {
@@ -2413,7 +2438,7 @@ Actor::new(0, async move |state| {
 ```rust
 // ❌ RACE CONDITION: Value can change between get() and set()
 let current = state.get();
-state.set(current + amount);
+state.set_neq(current + amount);
 
 // ✅ ATOMIC: Single operation, no races possible
 state.update(|value| value + amount);
@@ -3022,6 +3047,62 @@ assert_eq!(signal_stream.next().await.unwrap(), 2);
 ```
 
 These patterns, observed consistently across the examples, provide the foundation for high-performance Actor+Relay applications.
+
+## ✅ Consolidated Best Practices Summary
+
+### **Architecture Fundamentals**
+- **All state through Actors**: No raw `Mutable<T>` usage - use `SimpleState` helper for local UI state
+- **Signal-only state access**: No `.get()` methods - all state access through `.signal()` and signal-based testing
+- **Atomic operations**: Use `state.update()` for modifications, never get-modify-set patterns
+- **Local state by default**: Use struct methods with local state, global only when truly needed
+
+### **Modern Implementation Patterns**  
+- **create_with_stream()**: Always use instead of clone! macro patterns for cleaner Actor initialization
+- **Imperative stream processing**: Use `while let Some(event) = stream.next().await` instead of `.for_each()` 
+- **SimpleState consistency**: Use Actor+Relay internally for all local UI state (button hover, dialog open/closed)
+- **Unified types**: Single type for similar operations (avoid ColumnControl vs RowControl duplication)
+
+### **Multi-Stream Decision Guide**
+```
+Multiple streams needed?
+├── Shared state/coordination? → Use select!()
+├── Independent processing? → Use join!()
+├── Same event type, multiple sources? → Use futures::stream::select()
+└── Single stream? → Use while let
+```
+
+### **Error Handling Strategy**
+- **UI events**: Use `.send()` (auto-logged errors)
+- **Critical operations**: Use `.try_send()` (explicit error handling)
+- **Keep it simple**: Don't over-engineer - basic error states and retry patterns
+
+### **Testing Approach**
+- **Signal-based testing**: Use `actor.signal().to_stream().next().await` for assertions
+- **No timing dependencies**: Wait for actual signal changes, not arbitrary timeouts
+- **Reactive waiting**: Natural batching with signal stream testing
+
+### **Type Safety & Performance**
+- **Saturating arithmetic**: Always use `.saturating_add()`, `.saturating_sub().max(1)` for safe math
+- **Type unification**: Pure `usize` for counts, avoid unnecessary `i32`/`usize` conversions  
+- **Vec indices**: Use index-based operations for performance instead of string ID lookups
+- **Direct field access**: Make Actor/Relay fields public - they're inherently safe
+
+### **Anti-Patterns to Avoid**
+- ❌ Raw `Mutable<T>` usage anywhere in Actor+Relay code
+- ❌ clone! macro patterns - use `create_with_stream()` instead  
+- ❌ `.get()` method usage - signal-based access only
+- ❌ Complex *Manager/*Service patterns - keep business logic simple
+- ❌ Multiple Task::start calls - use `join!()` for coordination
+- ❌ Timer-based testing - use signal streams for deterministic tests
+
+### **Migration Strategy**
+1. **Start with SimpleState**: Replace local Mutable usage first
+2. **Apply create_with_stream()**: Update Actor initialization patterns  
+3. **Remove .get() calls**: Convert to signal-based access
+4. **Local state refactor**: Move from global to local state architecture
+5. **Testing conversion**: Signal-based testing throughout
+
+This architecture provides **traceability**, **controlled mutations**, **no recursive locks**, and **better testability** while maintaining Zoon's reactive programming model.
 
 ## Conclusion
 

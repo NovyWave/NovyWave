@@ -11,12 +11,12 @@ use crate::CONFIG_INITIALIZATION_COMPLETE;
 pub mod triggers;
 
 // Timeline validation constants
-const MIN_VALID_RANGE: f32 = 1e-6;       // 1 microsecond minimum range
-const SAFE_FALLBACK_START: f32 = 0.0;    // Safe fallback start time
-const SAFE_FALLBACK_END: f32 = 100.0;    // Safe fallback end time
+const MIN_VALID_RANGE: f64 = 1e-6;       // 1 microsecond minimum range
+const SAFE_FALLBACK_START: f64 = 0.0;    // Safe fallback start time
+const SAFE_FALLBACK_END: f64 = 100.0;    // Safe fallback end time
 
 /// Validate timeline values from config to prevent NaN propagation
-fn validate_timeline_values(cursor: f64, zoom: f32, start: f32, end: f32) -> (f64, f32, f32, f32) {
+fn validate_timeline_values(cursor: f64, zoom: f32, start: f64, end: f64) -> (f64, f32, f64, f64) {
     // Validate cursor position
     let safe_cursor = if cursor.is_finite() && cursor >= 0.0 { cursor } else { 50.0 };
     
@@ -113,8 +113,8 @@ pub struct WorkspaceSection {
     pub selected_variables: MutableVec<shared::SelectedVariable>,
     pub timeline_cursor_position: Mutable<f64>,
     pub timeline_zoom_level: Mutable<f32>,
-    pub timeline_visible_range_start: Mutable<f32>,
-    pub timeline_visible_range_end: Mutable<f32>,
+    pub timeline_visible_range_start: Mutable<f64>,
+    pub timeline_visible_range_end: Mutable<f64>,
 }
 
 // DockMode enum now imported from shared crate for type safety
@@ -327,8 +327,8 @@ pub struct SerializableWorkspaceSection {
     pub selected_variables: Vec<shared::SelectedVariable>,
     pub timeline_cursor_position: f64,
     pub timeline_zoom_level: f32,
-    pub timeline_visible_range_start: f32,
-    pub timeline_visible_range_end: f32,
+    pub timeline_visible_range_start: f64,
+    pub timeline_visible_range_end: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -660,7 +660,7 @@ fn store_config_on_any_change() {
     });
     
     // Timeline cursor position changes - TRUE DEBOUNCING with droppable tasks
-    let timeline_cursor_position_signal = crate::state::TIMELINE_CURSOR_POSITION.signal();
+    let timeline_cursor_position_signal = crate::state::TIMELINE_CURSOR_NS.signal();
     Task::start(async move {
         let debounce_task: Mutable<Option<TaskHandle>> = Mutable::new(None);
         
@@ -692,9 +692,6 @@ fn store_config_on_any_change() {
     // Range changes are too frequent during smooth operations and don't need immediate persistence
     // They will be saved when other config changes occur (cursor position, zoom, etc.)
     
-    // COMMENTED OUT - These signals were causing the backend flooding:
-    // let timeline_visible_range_start_signal = crate::state::TIMELINE_VISIBLE_RANGE_START.signal();
-    // let timeline_visible_range_end_signal = crate::state::TIMELINE_VISIBLE_RANGE_END.signal();
 }
 
 /// Backend-compatible panel dimensions with only the 2 fields that exist in shared schema
@@ -776,15 +773,17 @@ fn save_config_immediately() {
             variables_search_filter: serializable_config.session.variables_search_filter,
             selected_variables: serializable_config.workspace.selected_variables,
             timeline_cursor_position: {
-                let pos = crate::state::TIMELINE_CURSOR_POSITION.get();
+                let cursor_ns = crate::state::TIMELINE_CURSOR_NS.get();
+                let pos = cursor_ns.to_seconds();
                 if pos.is_finite() && pos >= 0.0 { pos } else { 10.0 } // Default to 10.0s if invalid
             },
             timeline_zoom_level: {
                 let zoom = crate::state::TIMELINE_ZOOM_LEVEL.get();
-                if zoom.is_finite() && zoom >= 1.0 { zoom } else { 1.0 } // Default to 1.0 if invalid
+                zoom.factor() // Convert ZoomLevel to f32 for config storage
             },
             timeline_visible_range_start: {
-                let start = crate::state::TIMELINE_VISIBLE_RANGE_START.get();
+                let viewport = crate::state::TIMELINE_VIEWPORT.get();
+                let start = viewport.start.to_seconds();
                 if start.is_finite() && start >= 0.0 {
                     Some(start)
                 } else {
@@ -792,7 +791,8 @@ fn save_config_immediately() {
                 }
             },
             timeline_visible_range_end: {
-                let end = crate::state::TIMELINE_VISIBLE_RANGE_END.get();
+                let viewport = crate::state::TIMELINE_VIEWPORT.get();
+                let end = viewport.end.to_seconds();
                 if end.is_finite() && end > 0.0 {
                     Some(end)
                 } else {
@@ -1085,8 +1085,9 @@ pub fn setup_reactive_config_persistence() {
 
     // Observe timeline state and update config store
     Task::start(async {
-        TIMELINE_CURSOR_POSITION.signal().for_each(|cursor_pos| async move {
+        TIMELINE_CURSOR_NS.signal().for_each(|cursor_ns| async move {
             if CONFIG_INITIALIZATION_COMPLETE.get() {
+                let cursor_pos = cursor_ns.to_seconds();
                 config_store().workspace.lock_mut().timeline_cursor_position.set_neq(cursor_pos);
                 save_config_to_backend();
             }
@@ -1096,24 +1097,18 @@ pub fn setup_reactive_config_persistence() {
     Task::start(async {
         TIMELINE_ZOOM_LEVEL.signal().for_each(|zoom_level| async move {
             if CONFIG_INITIALIZATION_COMPLETE.get() {
-                config_store().workspace.lock_mut().timeline_zoom_level.set_neq(zoom_level);
+                config_store().workspace.lock_mut().timeline_zoom_level.set_neq(zoom_level.factor());
                 save_config_to_backend();
             }
         }).await
     });
 
     Task::start(async {
-        TIMELINE_VISIBLE_RANGE_START.signal().for_each(|start| async move {
+        TIMELINE_VIEWPORT.signal().for_each(|viewport| async move {
             if CONFIG_INITIALIZATION_COMPLETE.get() {
+                let start = viewport.start.to_seconds();
+                let end = viewport.end.to_seconds();
                 config_store().workspace.lock_mut().timeline_visible_range_start.set_neq(start);
-                save_config_to_backend();
-            }
-        }).await
-    });
-
-    Task::start(async {
-        TIMELINE_VISIBLE_RANGE_END.signal().for_each(|end| async move {
-            if CONFIG_INITIALIZATION_COMPLETE.get() {
                 config_store().workspace.lock_mut().timeline_visible_range_end.set_neq(end);
                 save_config_to_backend();
             }

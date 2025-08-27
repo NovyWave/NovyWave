@@ -1063,9 +1063,9 @@ pub struct WorkspaceSection {
     #[serde(default = "default_timeline_zoom_level")]
     pub timeline_zoom_level: f32,
     #[serde(default)]
-    pub timeline_visible_range_start: Option<f32>,
+    pub timeline_visible_range_start: Option<f64>,
     #[serde(default)]
-    pub timeline_visible_range_end: Option<f32>,
+    pub timeline_visible_range_end: Option<f64>,
 }
 
 impl Default for WorkspaceSection {

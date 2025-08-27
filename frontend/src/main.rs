@@ -26,6 +26,9 @@ mod config;
 use config::{CONFIG_LOADED, config_store, create_config_triggers, sync_theme_to_novyui};
 
 mod types;
+
+mod time_types;
+
 use shared::{UpMsg};
 
 mod views;
@@ -38,6 +41,9 @@ pub use state::CONFIG_INITIALIZATION_COMPLETE;
 
 mod signal_data_service;
 use signal_data_service::*;
+
+mod unified_timeline_service;
+use unified_timeline_service::*;
 
 mod utils;
 use utils::*;
@@ -61,7 +67,8 @@ fn init_timeline_signal_handlers() {
         
         
         // Monitor timeline cursor position changes with intelligent debouncing
-        crate::state::TIMELINE_CURSOR_POSITION.signal().for_each_sync(move |cursor_pos| {
+        crate::state::TIMELINE_CURSOR_NS.signal().for_each_sync(move |cursor_ns| {
+            let cursor_pos = cursor_ns.to_seconds();
             let last_position_clone = last_position.clone();
             let last_request_time_clone = last_request_time.clone();
             
@@ -191,7 +198,7 @@ fn init_selected_variables_signal_service_bridge() {
                     
                     if !added_ids.is_empty() || (!removed_ids.is_empty() && current_count > 0) {
                         // Variables were added OR some removed but others remain - request data for current variables
-                        let current_cursor = TIMELINE_CURSOR_POSITION.get();
+                        let current_cursor = TIMELINE_CURSOR_NS.get().to_seconds();
                         
                         // Create signal requests for all currently selected variables  
                         let signal_requests: Vec<crate::signal_data_service::SignalRequest> = current_vars
@@ -262,6 +269,9 @@ pub fn main() {
         
         // Initialize unified signal data service
         initialize_signal_data_service();
+        
+        // Initialize NEW unified timeline service with integer time architecture
+        initialize_unified_timeline_service();
         
         init_connection();
         
@@ -347,7 +357,8 @@ pub fn main() {
         Task::start(async {
             let last_position = Mutable::new(0.0);
             
-            crate::state::TIMELINE_CURSOR_POSITION.signal().for_each_sync(move |cursor_pos| {
+            crate::state::TIMELINE_CURSOR_NS.signal().for_each_sync(move |cursor_ns| {
+                let cursor_pos = cursor_ns.to_seconds();
                 let is_moving = crate::state::IS_CURSOR_MOVING_LEFT.get() || crate::state::IS_CURSOR_MOVING_RIGHT.get();
                 
                 // Only query for direct position changes (not during Q/E movement)
@@ -366,9 +377,9 @@ pub fn main() {
 
 /// Check if cursor is within the currently visible timeline range
 pub fn is_cursor_in_visible_range(cursor_time: f64) -> bool {
-    let start = crate::state::TIMELINE_VISIBLE_RANGE_START.get() as f64;
-    let end = crate::state::TIMELINE_VISIBLE_RANGE_END.get() as f64;
-    cursor_time >= start && cursor_time <= end
+    let viewport = crate::state::TIMELINE_VIEWPORT.get();
+    let cursor_ns = crate::time_types::TimeNs::from_seconds(cursor_time);
+    viewport.contains(cursor_ns)
 }
 
 

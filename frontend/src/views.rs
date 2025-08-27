@@ -398,8 +398,8 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
             // FST UI debug logging removed to prevent event loop blocking
             
             map_ref! {
-                // ✅ NEW: Use unified SignalDataService instead of old SIGNAL_VALUES
-                let current_value = crate::signal_data_service::SignalDataService::cursor_value_signal(&unique_id_for_signal),
+                // ✅ NEWEST: Use unified timeline service with integer time precision
+                let current_value = crate::unified_timeline_service::UnifiedTimelineService::cursor_value_signal(&unique_id_for_signal),
                 let format_state = selected_format.signal_cloned() => {
                     // Parse current format for proper display
                     let current_format_enum = match format_state.as_str() {
@@ -1064,11 +1064,13 @@ pub fn trigger_signal_value_queries() {
     }
     
     // Query at current timeline cursor position with range check
-    let cursor_pos = crate::state::TIMELINE_CURSOR_POSITION.get();
+    let cursor_ns = crate::state::TIMELINE_CURSOR_NS.get();
+    let cursor_pos = cursor_ns.to_seconds();
     
     // Check if cursor is within visible timeline range
-    let start = crate::state::TIMELINE_VISIBLE_RANGE_START.get() as f64;
-    let end = crate::state::TIMELINE_VISIBLE_RANGE_END.get() as f64;
+    let viewport = crate::state::TIMELINE_VIEWPORT.get();
+    let start = viewport.start.to_seconds();
+    let end = viewport.end.to_seconds();
     
     if cursor_pos >= start && cursor_pos <= end {
         // Cursor in visible range - use cached transition data (fast path)
@@ -1632,23 +1634,8 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                                             .child(
                                                                                 Text::with_signal(
                                                                                     TIMELINE_ZOOM_LEVEL.signal().map(|zoom| {
-                                                                                        fn format_zoom_value(value: f32, suffix: &str) -> String {
-                                                                                            if value.fract() == 0.0 {
-                                                                                                format!("{}{}×", value as i32, suffix)
-                                                                                            } else {
-                                                                                                format!("{:.1}{}×", value, suffix)
-                                                                                            }
-                                                                                        }
-                                                                                        
-                                                                                        if zoom < 1000.0 {
-                                                                                            format_zoom_value(zoom, "")
-                                                                                        } else if zoom < 1000000.0 {
-                                                                                            format_zoom_value(zoom / 1000.0, "k")
-                                                                                        } else if zoom < 1000000000.0 {
-                                                                                            format_zoom_value(zoom / 1000000.0, "M")
-                                                                                        } else {
-                                                                                            format_zoom_value(zoom / 1000000000.0, "B")
-                                                                                        }
+                                                                                        // Use ZoomLevel's built-in Display formatting
+                                                                                        format!("{}", zoom)
                                                                                     })
                                                                                 )
                                                                             )
@@ -1764,7 +1751,8 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                                             .s(Font::new().color_signal(neutral_11()).center())
                                                                             .child(
                                                                                 Text::with_signal(
-                                                                                    crate::state::TIMELINE_CURSOR_POSITION.signal().map(|cursor_pos| {
+                                                                                    crate::state::TIMELINE_CURSOR_NS.signal().map(|cursor_ns| {
+                                                                                        let cursor_pos = cursor_ns.to_seconds();
                                                                                         // Use proper time formatting with appropriate units instead of rounding to seconds
                                                                                         if !cursor_pos.is_finite() || cursor_pos < 0.0 {
                                                                                             "0s".to_string()

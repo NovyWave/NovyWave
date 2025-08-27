@@ -139,9 +139,10 @@ impl SignalDataService {
         
         // Create a combined signal that reacts to cursor position AND both cache changes
         map_ref! {
-            let cursor_pos = crate::state::TIMELINE_CURSOR_POSITION.signal(),
+            let cursor_ns = crate::state::TIMELINE_CURSOR_NS.signal(),
             let _cursor_values_signal = CURSOR_VALUES.signal_vec_cloned().to_signal_cloned().map(|_| ()),
             let _timeline_cache_signal = crate::waveform_canvas::SIGNAL_TRANSITIONS_CACHE.signal_ref(|_| ()) => {
+                let cursor_pos = cursor_ns.to_seconds();
                 // Parse signal_id: "/path/file.ext|scope|variable"
                 let parts: Vec<&str> = signal_id_cloned.split('|').collect();
                 if parts.len() != 3 {
@@ -167,7 +168,7 @@ impl SignalDataService {
                     } else {
                         // PRIORITY 2: Check timeline cache (interpolated values) as fallback
                         if let Some(cached_value) = crate::views::compute_value_from_cached_transitions(
-                            file_path, scope_path, variable_name, *cursor_pos
+                            file_path, scope_path, variable_name, cursor_pos
                         ) {
                             match cached_value {
                                 shared::SignalValue::Present(data) => data,

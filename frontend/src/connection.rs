@@ -5,7 +5,7 @@ use crate::error_display::add_error_alert;
 use crate::state::ErrorAlert;
 use crate::utils::restore_scope_selection_for_file;
 use crate::views::is_cursor_within_variable_time_range;
-use crate::state::TIMELINE_CURSOR_POSITION;
+use crate::state::TIMELINE_CURSOR_NS;
 use shared::{UpMsg, DownMsg};
 use shared::{LoadingFile, LoadingStatus};
 use wasm_bindgen::JsValue;
@@ -236,7 +236,7 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                     let unique_id = format!("{}|{}|{}", file_path, result.scope_path, result.variable_name);
                     
                     // Check if cursor time is within this variable's file time range
-                    let cursor_time = TIMELINE_CURSOR_POSITION.get();
+                    let cursor_time = TIMELINE_CURSOR_NS.get().to_seconds();
                     let within_time_range = is_cursor_within_variable_time_range(&unique_id, cursor_time);
                     
                     // Convert to SignalDataService format (shared::SignalValue, not format_utils::SignalValue)
@@ -316,7 +316,7 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                         );
                         
                         // Check if cursor time is within this variable's file time range
-                        let cursor_time = TIMELINE_CURSOR_POSITION.get();
+                        let cursor_time = TIMELINE_CURSOR_NS.get().to_seconds();
                         let within_time_range = is_cursor_within_variable_time_range(&unique_id, cursor_time);
                         
                         let signal_value = if within_time_range {
@@ -333,11 +333,23 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 }
             }
             DownMsg::UnifiedSignalResponse { request_id, signal_data, cursor_values, statistics, cached_time_range: _ } => {
-                // Handle unified signal response through the signal data service
-                crate::signal_data_service::SignalDataService::handle_unified_response(request_id, signal_data, cursor_values, statistics);
+                // Clone data for dual handling during transition period
+                let request_id_legacy = request_id.clone();
+                let signal_data_legacy = signal_data.clone();
+                let cursor_values_legacy = cursor_values.clone();
+                let statistics_legacy = statistics.clone();
+                
+                // Handle unified signal response through the NEW unified timeline service
+                crate::unified_timeline_service::UnifiedTimelineService::handle_unified_response(request_id, signal_data, cursor_values, statistics);
+                
+                // LEGACY: Also handle through old signal data service for compatibility during transition
+                crate::signal_data_service::SignalDataService::handle_unified_response(request_id_legacy, signal_data_legacy, cursor_values_legacy, statistics_legacy);
             }
             DownMsg::UnifiedSignalError { request_id, error } => {
-                // Handle unified signal error through the signal data service
+                // Handle unified signal error through the NEW unified timeline service
+                crate::unified_timeline_service::UnifiedTimelineService::handle_unified_error(request_id.clone(), error.clone());
+                
+                // LEGACY: Also handle through old signal data service for compatibility
                 crate::signal_data_service::SignalDataService::handle_unified_error(request_id, error);
             }
         }
