@@ -471,7 +471,7 @@ where
 
 ## Modern Actor+Relay Patterns
 
-Based on practical implementation experience, these patterns represent the most effective approaches discovered through refactoring real-world MoonZone code.
+Based on practical implementation experience, these patterns represent the most effective approaches discovered through refactoring real-world MoonZoon code.
 
 ### Core Pattern Evolution
 
@@ -1940,7 +1940,7 @@ ConnectionTracker::track_emission("file_list_item#123", "remove_file_relay");
 
 ## Refactoring Patterns & Antipatterns
 
-Based on practical experience refactoring examples from MoonZone patterns to Actor+Relay architecture, here are key insights and common pitfalls:
+Based on practical experience refactoring examples from MoonZoon patterns to Actor+Relay architecture, here are key insights and common pitfalls:
 
 ### Modern Pattern Improvements
 
@@ -2160,7 +2160,7 @@ impl Default for Counter {
 }
 static COUNTER: Lazy<Counter> = lazy::default();
 ```
-**Rule**: Use `Default` trait when initialization needs no parameters - mirrors MoonZone's `lazy::default()` pattern.
+**Rule**: Use `Default` trait when initialization needs no parameters - mirrors MoonZoon's `lazy::default()` pattern.
 
 #### 3. **Direct Field Access When Safe**
 ```rust
@@ -2582,7 +2582,7 @@ impl<T: Clone> SimpleState<T> {
 }
 ```
 
-#### Matching Original MoonZone Patterns
+#### Matching Original MoonZoon Patterns
 ```rust
 // Original: Atomic mutation
 *COUNTER.lock_mut() += step;
@@ -2920,7 +2920,7 @@ The most effective Actor+Relay implementations are often simpler than initial at
 3. **Unified State Management**: SimpleState provides consistency for local UI state, Actor for shared state
 4. **Multi-Stream Coordination**: `join!()` enables true concurrent stream processing vs independent Task::start calls
 
-Start simple, stay atomic, and let the architecture's benefits emerge naturally. Modern patterns make the transition from MoonZone's global state even cleaner and more maintainable.
+Start simple, stay atomic, and let the architecture's benefits emerge naturally. Modern patterns make the transition from MoonZoon's global state even cleaner and more maintainable.
 
 ## Performance Best Practices
 

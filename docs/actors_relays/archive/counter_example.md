@@ -4,7 +4,7 @@ This example shows how to transform a simple counter from traditional MoonZoon p
 
 > **📄 Related Documentation**: For global state patterns using Actor+Relay, see [`counter_example_global.md`](counter_example_global.md). This file focuses on the recommended local state approach.
 
-## Original MoonZone Counter
+## Original MoonZoon Counter
 
 ```rust
 use zoon::*;

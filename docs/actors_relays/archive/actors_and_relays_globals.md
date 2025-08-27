@@ -374,7 +374,7 @@ pub fn update_multiple_files_bad(updates: Vec<(String, FileState)>) {
 
 ## Conclusion
 
-Global Actor+Relay patterns serve as a bridge between traditional MoonZone global Mutables and idiomatic local state management. Use these patterns sparingly and only when local state becomes unwieldy.
+Global Actor+Relay patterns serve as a bridge between traditional MoonZoon global Mutables and idiomatic local state management. Use these patterns sparingly and only when local state becomes unwieldy.
 
 **Key principle**: Start with local state by default. Only use global patterns when you have genuine app-wide state that needs to be shared across unrelated components.
 

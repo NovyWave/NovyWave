@@ -72,7 +72,7 @@ let counter = Actor::new(0, async move |state| {
 
 ## Modern Actor+Relay Patterns
 
-Based on practical implementation experience, these patterns represent the most effective approaches discovered through refactoring real-world MoonZone code.
+Based on practical implementation experience, these patterns represent the most effective approaches discovered through refactoring real-world MoonZoon code.
 
 ### Core Pattern Evolution
 

@@ -1,6 +1,6 @@
 # Actor+Relay Refactoring Guide
 
-Comprehensive guide for refactoring from traditional MoonZone patterns to Actor+Relay architecture, including all hard-learned lessons and antipatterns to avoid.
+Comprehensive guide for refactoring from traditional MoonZoon patterns to Actor+Relay architecture, including all hard-learned lessons and antipatterns to avoid.
 
 ## Table of Contents
 

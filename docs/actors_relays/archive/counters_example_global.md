@@ -4,9 +4,9 @@
 
 This example shows how to transform a complex multi-counter application with dynamic grid sizing from traditional MoonZoon patterns to global Actor+Relay architecture using clean patterns. While functional, this approach is less idiomatic than local state patterns but may serve as a stepping stone during migration.
 
-## Original MoonZone Counters Problems Reference
+## Original MoonZoon Counters Problems Reference
 
-For reference on why the original MoonZone approach with global Store was problematic, see the "Original MoonZone Counters" section in `counters_example.md`.
+For reference on why the original MoonZoon approach with global Store was problematic, see the "Original MoonZoon Counters" section in `counters_example.md`.
 
 ## Global Actor+Relay Version (Clean Globals)
 
@@ -229,7 +229,7 @@ fn counter_widget(index: usize) -> impl Element {
 ### 🎯 Perfect for:
 Applications that naturally need global state (like NovyWave's file manager, timeline controls, etc.)
 
-### ✅ Benefits Over Original MoonZone:
+### ✅ Benefits Over Original MoonZoon:
 - **Clean Global Access**: `COLUMNS.increment.send(())` - no parameter passing needed
 - **Unified Types**: Single `GridDimensionControl` eliminates code duplication
 - **Race-Free Operations**: Atomic relay operations instead of get/set races
@@ -238,7 +238,7 @@ Applications that naturally need global state (like NovyWave's file manager, tim
 
 ## Key Race-Condition Prevention
 
-### ❌ Original MoonZone Pattern (Problematic):
+### ❌ Original MoonZoon Pattern (Problematic):
 ```rust
 // Race condition possible between read and write
 static STORE: Lazy<Store> = lazy::default();
@@ -343,7 +343,7 @@ mod tests {
 
 ## Migration Notes
 
-This global pattern serves as a bridge between traditional MoonZone globals and idiomatic Actor+Relay local state.
+This global pattern serves as a bridge between traditional MoonZoon globals and idiomatic Actor+Relay local state.
 
 ### When Global Patterns Are Appropriate:
 - **Complex shared state**: Grid dimensions that affect multiple UI components
@@ -357,4 +357,4 @@ This global pattern serves as a bridge between traditional MoonZone globals and 
 - **Hidden dependencies**: Components implicitly depend on global state
 - **Reduced reusability**: Components tied to specific global instances
 
-The key insight: **Global Actor+Relay eliminates the concurrency bugs and complex signal management of the original MoonZone approach while preserving convenient global access when it's genuinely needed.**
+The key insight: **Global Actor+Relay eliminates the concurrency bugs and complex signal management of the original MoonZoon approach while preserving convenient global access when it's genuinely needed.**

@@ -4,9 +4,9 @@
 
 This example shows how to transform a simple counter from traditional MoonZoon patterns to global Actor+Relay architecture. While functional, this approach is less idiomatic than local state patterns but may serve as a stepping stone during migration.
 
-## Original MoonZone Counter Problems Reference
+## Original MoonZoon Counter Problems Reference
 
-For reference on why the original MoonZone approach with global Mutables was problematic, see the "Original MoonZone Counter" section in `counter_example.md`.
+For reference on why the original MoonZoon approach with global Mutables was problematic, see the "Original MoonZoon Counter" section in `counter_example.md`.
 
 ## Global Actor+Relay Version
 
@@ -203,7 +203,7 @@ mod tests {
 
 ## Migration Notes
 
-This global pattern serves as a bridge between traditional MoonZone globals and idiomatic Actor+Relay local state. 
+This global pattern serves as a bridge between traditional MoonZoon globals and idiomatic Actor+Relay local state. 
 
 ### When to Use Global Patterns:
 - **Legacy migration**: Existing apps with extensive global state dependencies

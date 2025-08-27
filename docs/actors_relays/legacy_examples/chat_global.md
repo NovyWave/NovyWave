@@ -405,7 +405,7 @@ mod tests {
 
 ## Migration Notes
 
-This global pattern serves as a bridge between traditional MoonZone globals and idiomatic Actor+Relay local state. For new applications, prefer the local state patterns shown in `chat_example.md`.
+This global pattern serves as a bridge between traditional MoonZoon globals and idiomatic Actor+Relay local state. For new applications, prefer the local state patterns shown in `chat_example.md`.
 
 The key improvements over raw global Mutables:
 - **Encapsulation**: State changes only through defined relays

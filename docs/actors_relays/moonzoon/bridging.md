@@ -5,7 +5,7 @@ This document covers how to integrate Actor+Relay architecture with external API
 ## Table of Contents
 
 1. [ConnectionAdapter Pattern](#connectionadapter-pattern)
-2. [WebSocket Integration](#websocket-integration)
+2. [SSE + Fetch Integration](#sse--fetch-integration)
 3. [HTTP Client Bridging](#http-client-bridging)
 4. [Timer and Event System Integration](#timer-and-event-system-integration)
 5. [File System Access Bridging](#file-system-access-bridging)
@@ -122,16 +122,17 @@ impl Default for ChatService {
 }
 ```
 
-## WebSocket Integration
+## SSE + Fetch Integration
 
-### Raw WebSocket Bridge
+### Server-Sent Events + Fetch Bridge
 
 ```rust
-use web_sys::{WebSocket, MessageEvent, Event, CloseEvent};
+use web_sys::{EventSource, MessageEvent, Request, RequestInit, Response};
 use wasm_bindgen::{prelude::*, JsCast};
+use wasm_bindgen_futures::JsFuture;
 
 #[derive(Clone)]
-pub struct WebSocketAdapter {
+pub struct ServerConnection {
     pub messages: Relay<String>,
     pub send: Relay<String>,
     pub connection_state: Actor<ConnectionState>,

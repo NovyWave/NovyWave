@@ -1,10 +1,10 @@
 # Actor+Relay Example: Counters (Dynamic Collection)
 
-This example shows how to transform a complex multi-counter application with dynamic grid sizing from traditional MoonZone patterns to clean Actor+Relay architecture using simplified patterns.
+This example shows how to transform a complex multi-counter application with dynamic grid sizing from traditional MoonZoon patterns to clean Actor+Relay architecture using simplified patterns.
 
 > **📄 Related Documentation**: For global state patterns using Actor+Relay, see [`counters_example_global.md`](counters_example_global.md). This file focuses on the recommended local state approach.
 
-## Original MoonZone Counters
+## Original MoonZoon Counters
 
 ```rust
 use std::iter;
