@@ -9,7 +9,7 @@ This document covers the **core concepts and API design** for Actor+Relay archit
 - **[Testing Guide](actor_relay_testing_guide.md)** - Testing and debugging strategies  
 - **[External API Bridging](actors_and_relays_bridging.md)** - ConnectionAdapter and external service integration
 - **[Global State Patterns](actors_and_relays_globals.md)** - Global state approaches (bridge documentation)
-- **[Refactoring Guide](.claude/extra/technical/actor-relay-refactoring-guide.md)** - Step-by-step migration and antipatterns
+- **[Refactoring Guide](actor_relay_refactoring.md)** - Step-by-step migration and antipatterns
 
 ## Table of Contents
 1. [Motivation & Problem Analysis](#motivation--problem-analysis)
