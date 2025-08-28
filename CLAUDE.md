@@ -15,6 +15,63 @@ Core guidance for Claude Code when working with NovyWave.
 @.claude/extra/technical/reactive-antipatterns.md
 @.claude/extra/technical/lessons.md
 
+## Actor+Relay Architecture (MANDATORY)
+
+**CRITICAL: NovyWave uses Actor+Relay architecture - NO raw Mutables allowed**
+
+### Core Architectural Rules
+
+1. **NO RAW MUTABLES:** All state must use Actor+Relay or SimpleState
+   ```rust
+   // ❌ PROHIBITED: Raw global mutables
+   static TRACKED_FILES: Lazy<MutableVec<TrackedFile>> = lazy::default();
+   static DIALOG_OPEN: Lazy<Mutable<bool>> = lazy::default();
+   
+   // ✅ REQUIRED: Domain-driven Actors
+   struct TrackedFiles {
+       files: ActorVec<TrackedFile>,
+       file_dropped_relay: Relay<Vec<PathBuf>>,
+   }
+   
+   // ✅ REQUIRED: SimpleState for local UI
+   let dialog_open = SimpleState::new(false);
+   ```
+
+2. **Event-Source Relay Naming (MANDATORY):**
+   ```rust
+   // ✅ CORRECT: Describe what happened, not what to do
+   button_clicked_relay: Relay,              // User clicked button
+   file_loaded_relay: Relay<PathBuf>,        // File finished loading
+   input_changed_relay: Relay<String>,       // Input text changed
+   error_occurred_relay: Relay<String>,      // System error happened
+   
+   // ❌ PROHIBITED: Command-like naming
+   add_file: Relay<PathBuf>,                 // Sounds like command
+   remove_item: Relay<String>,               // Imperative style
+   set_theme: Relay<Theme>,                  // Action-oriented
+   ```
+
+3. **Domain-Driven Design (MANDATORY):**
+   ```rust
+   // ✅ REQUIRED: Model what it IS, not what it manages
+   struct TrackedFiles { ... }              // Collection of files
+   struct WaveformTimeline { ... }          // The timeline itself
+   struct SelectedVariables { ... }         // Selected variables
+   
+   // ❌ PROHIBITED: Enterprise abstractions
+   struct FileManager { ... }               // Artificial "manager"
+   struct TimelineService { ... }           // Unnecessary "service"
+   struct DataController { ... }            // Vague "controller"
+   ```
+
+### Migration Status: 74+ Mutables → Actor+Relay
+See `docs/actors_relays/novywave/migration_strategy.md` for complete migration plan.
+
+**Phase 1 Targets:**
+- TrackedFiles domain (13 mutables → 1 Actor+Relay struct)
+- SelectedVariables domain (8 mutables → 1 Actor+Relay struct) 
+- WaveformTimeline domain (25 mutables → 1 Actor+Relay struct)
+
 ## ReactiveTreeView & Signal Performance Lessons
 
 **CRITICAL: Review `.claude/extra/technical/reactive-antipatterns.md` for comprehensive signal stability patterns**

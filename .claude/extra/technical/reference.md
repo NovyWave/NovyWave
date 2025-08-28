@@ -35,10 +35,10 @@ El::new().s(Height::screen())  // Root
   .child(Column::new().s(Height::fill())  // ⚠️ Missing breaks chain
     .item(Row::new().s(Height::fill()).item(content)))
 
-// TreeView with external state
+// TreeView with external state (Actor+Relay pattern)
 TreeView::new()
-  .external_expanded_signal(EXPANDED_DIRS.signal())
-  .external_selected_vec_signal(SELECTED_ITEMS.signal_vec_cloned())
+  .external_expanded_signal(expanded_scopes().map(|scopes| scopes))
+  .external_selected_vec_signal(selected_variables().map(|vars| vars.iter().map(|v| v.unique_id.clone()).collect()))
   .single_scope_selection(true)
 ```
 
@@ -101,10 +101,10 @@ Task::start(current_theme().signal().for_each_sync(|_| {
 
 ### Fast2D Graphics Integration
 ```rust
-// Canvas with shared access + signal-based updates
+// Canvas with shared access + signal-based updates (Actor+Relay pattern)
 let canvas_wrapper = Rc::new(RefCell::new(canvas));
 let canvas_clone = canvas_wrapper.clone();
-Task::start(SELECTED_VARIABLES.signal_vec_cloned().for_each_sync(move |_| {
+Task::start(selected_variables().for_each_sync(move |_| {
     canvas_clone.borrow_mut().clear();
 }));
 
@@ -140,9 +140,12 @@ El::new().s(Height::exact_signal(count.map(|c| (c * 40) as f32)))
   .update_raw_el(|el| el.style("min-height", "0"))  // Allow shrinking
 ```
 
-### File System Architecture
+### File System Architecture (Legacy)
+
+**NOTE: This section describes legacy patterns. New code should use Actor+Relay TrackedFiles domain from the section above.**
+
 ```rust
-// Dual state: Legacy globals + ConfigStore with bidirectional sync
+// ❌ LEGACY: Dual state with manual synchronization
 static FILE_PATHS: Lazy<MutableVec<String>> = Lazy::new(MutableVec::new);
 static EXPANDED_SCOPES: Lazy<Mutable<HashSet<String>>> = Lazy::new(|| Mutable::new(HashSet::new()));
 
@@ -154,7 +157,7 @@ fn sync_globals_to_config() {
     });
 }
 
-// Smart labeling: VSCode-style disambiguation with parent directory for duplicates
+// ✅ STILL RELEVANT: Smart labeling algorithm (now used in TrackedFiles actor)
 fn create_smart_labels(files: &[TrackedFile]) -> Vec<String> {
     files.iter().map(|file| {
         let filename = file.path.file_name().unwrap_or_default();
@@ -166,6 +169,19 @@ fn create_smart_labels(files: &[TrackedFile]) -> Vec<String> {
         }
     }).collect()
 }
+```
+
+**Migration to Actor+Relay:**
+```rust
+// Replace legacy file management with:
+pub fn add_file(path: String) -> Relay<TrackedFile> { ... }
+pub fn remove_file(file_id: String) -> Relay<()> { ... }
+pub fn expand_scope(scope_id: String) -> Relay<()> { ... }
+
+// Replace signal access with:
+pub fn tracked_files() -> impl Signal<Item = Vec<TrackedFile>> { ... }
+pub fn expanded_scopes() -> impl Signal<Item = HashSet<String>> { ... }
+pub fn smart_labels() -> impl Signal<Item = Vec<String>> { ... }
 ```
 
 ## Signal Patterns & State Management
@@ -315,10 +331,14 @@ Stripe::new()
 TIMELINE_CURSOR_POSITION.signal().dedupe().for_each_sync(|pos| expensive_update(pos));
 if CONFIG_LOADED.get() { perform_config_operation(); }  // Prevent startup races
 
-// Collection patterns
+// ❌ LEGACY: Collection patterns (use Actor+Relay instead)
 static ITEMS: Lazy<MutableVec<SelectedVariable>> = Lazy::new(MutableVec::new);
 static EXPANDED: Lazy<Mutable<HashSet<String>>> = Lazy::new(|| Mutable::new(HashSet::new()));
 static SORTED: Lazy<MutableBTreeMap<String, Data>> = Lazy::new(MutableBTreeMap::new);  // Ordered reactive
+
+// ✅ MODERN: Use Actor+Relay domain signals instead
+selected_variables().map(|vars| render_variables(vars))
+expanded_scopes().map(|scopes| render_expanded_state(scopes))
 ```
 
 ## Debouncing & Task Management
@@ -393,7 +413,540 @@ pub fn get_current_timeline_range() -> Option<(f32, f32)> {
 }
 ```
 
-## Lock Management & Actor Model
+## Actor+Relay Architecture Reference
+
+### Core Implementation Patterns
+
+**MANDATORY EVENT-SOURCE RELAY NAMING**: Relay functions MUST be named after the event/action they represent, never after the domain they manage.
+
+```rust
+// ✅ CORRECT: Event-source naming
+pub fn add_file(path: String) -> Relay<TrackedFile> { ... }
+pub fn remove_file(file_id: String) -> Relay<()> { ... }
+pub fn expand_scope(scope_id: String) -> Relay<()> { ... }
+pub fn select_variables(variables: Vec<String>) -> Relay<()> { ... }
+
+// ❌ WRONG: Manager/Service/Controller naming (enterprise antipattern)
+pub fn file_manager() -> Relay<()> { ... }
+pub fn variable_service() -> Relay<()> { ... }
+pub fn scope_controller() -> Relay<()> { ... }
+```
+
+**Actor Creation Pattern:**
+```rust
+use actor_relay::{Actor, relay, SimpleState};
+
+#[derive(Default)]
+struct TrackedFiles {
+    files: Vec<TrackedFile>,
+    expanded_scopes: HashSet<String>,
+    smart_labels: Vec<String>,
+}
+
+impl Actor for TrackedFiles {
+    type Event = TrackedFilesEvent;
+    
+    fn apply(&mut self, event: Self::Event) -> Vec<TrackedFile> {
+        match event {
+            TrackedFilesEvent::AddFile { file } => {
+                self.files.push(file.clone());
+                self.update_smart_labels();
+                vec![file]
+            },
+            TrackedFilesEvent::RemoveFile { file_id } => {
+                self.files.retain(|f| f.id != file_id);
+                self.update_smart_labels();
+                vec![]
+            },
+            TrackedFilesEvent::ExpandScope { scope_id } => {
+                self.expanded_scopes.insert(scope_id);
+                vec![]
+            },
+        }
+    }
+}
+
+// Event enum with domain-specific operations
+#[derive(Clone, Debug)]
+enum TrackedFilesEvent {
+    AddFile { file: TrackedFile },
+    RemoveFile { file_id: String },
+    ExpandScope { scope_id: String },
+    UpdateSmartLabels,
+}
+```
+
+**Public Relay API Functions:**
+```rust
+// Event-source relay functions (public API)
+pub fn add_file(path: String) -> Relay<TrackedFile> {
+    relay(TrackedFilesEvent::AddFile { 
+        file: TrackedFile::from_path(path) 
+    })
+}
+
+pub fn remove_file(file_id: String) -> Relay<()> {
+    relay(TrackedFilesEvent::RemoveFile { file_id })
+}
+
+pub fn expand_scope(scope_id: String) -> Relay<()> {
+    relay(TrackedFilesEvent::ExpandScope { scope_id })
+}
+
+// Signal access (reactive reads)
+pub fn tracked_files() -> impl Signal<Item = Vec<TrackedFile>> {
+    TrackedFiles::signal().map(|state| state.files.clone())
+}
+
+pub fn expanded_scopes() -> impl Signal<Item = HashSet<String>> {
+    TrackedFiles::signal().map(|state| state.expanded_scopes.clone())
+}
+
+pub fn smart_labels() -> impl Signal<Item = Vec<String>> {
+    TrackedFiles::signal().map(|state| state.smart_labels.clone())
+}
+```
+
+### Domain Modeling Patterns
+
+**TrackedFiles Domain:**
+```rust
+#[derive(Default)]
+struct TrackedFiles {
+    files: Vec<TrackedFile>,
+    expanded_scopes: HashSet<String>,
+    smart_labels: Vec<String>,
+    loading_states: HashMap<String, LoadingStatus>,
+}
+
+impl TrackedFiles {
+    fn update_smart_labels(&mut self) {
+        self.smart_labels = create_smart_labels(&self.files);
+    }
+    
+    fn mark_file_loading(&mut self, file_id: &str) {
+        self.loading_states.insert(file_id.to_string(), LoadingStatus::Loading);
+    }
+    
+    fn mark_file_loaded(&mut self, file_id: &str, success: bool) {
+        let status = if success { LoadingStatus::Loaded } else { LoadingStatus::Failed };
+        self.loading_states.insert(file_id.to_string(), status);
+    }
+}
+
+// Event-source relay functions for file operations
+pub fn load_waveform_file(path: String) -> Relay<LoadingFile> {
+    relay(TrackedFilesEvent::LoadFile { path })
+}
+
+pub fn batch_add_files(paths: Vec<String>) -> Relay<Vec<TrackedFile>> {
+    relay(TrackedFilesEvent::BatchAdd { paths })
+}
+```
+
+**SelectedVariables Domain:**
+```rust
+#[derive(Default)]
+struct SelectedVariables {
+    variables: Vec<SelectedVariable>,
+    selection_order: Vec<String>,
+    filters: VariableFilters,
+}
+
+impl Actor for SelectedVariables {
+    type Event = SelectedVariablesEvent;
+    
+    fn apply(&mut self, event: Self::Event) -> Vec<SelectedVariable> {
+        match event {
+            SelectedVariablesEvent::AddVariable { variable } => {
+                if !self.variables.iter().any(|v| v.unique_id == variable.unique_id) {
+                    self.selection_order.push(variable.unique_id.clone());
+                    self.variables.push(variable.clone());
+                    vec![variable]
+                } else {
+                    vec![]
+                }
+            },
+            SelectedVariablesEvent::RemoveVariable { variable_id } => {
+                self.variables.retain(|v| v.unique_id != variable_id);
+                self.selection_order.retain(|id| id != &variable_id);
+                vec![]
+            },
+            SelectedVariablesEvent::ReorderVariables { new_order } => {
+                self.selection_order = new_order;
+                // Reorder variables vector to match
+                let mut reordered = Vec::new();
+                for id in &self.selection_order {
+                    if let Some(var) = self.variables.iter().find(|v| &v.unique_id == id) {
+                        reordered.push(var.clone());
+                    }
+                }
+                self.variables = reordered;
+                self.variables.clone()
+            },
+        }
+    }
+}
+
+// Event-source relay functions
+pub fn add_selected_variable(variable: SelectedVariable) -> Relay<SelectedVariable> {
+    relay(SelectedVariablesEvent::AddVariable { variable })
+}
+
+pub fn remove_selected_variable(variable_id: String) -> Relay<()> {
+    relay(SelectedVariablesEvent::RemoveVariable { variable_id })
+}
+
+pub fn reorder_selected_variables(new_order: Vec<String>) -> Relay<()> {
+    relay(SelectedVariablesEvent::ReorderVariables { new_order })
+}
+```
+
+**WaveformTimeline Domain:**
+```rust
+#[derive(Default)]
+struct WaveformTimeline {
+    cursor_position: f64,
+    visible_range: (f64, f64),
+    zoom_level: f64,
+    signal_transitions_cache: HashMap<String, Vec<SignalTransition>>,
+    cursor_values: HashMap<String, SignalValue>,
+}
+
+impl Actor for WaveformTimeline {
+    type Event = TimelineEvent;
+    
+    fn apply(&mut self, event: Self::Event) -> TimelineUpdate {
+        match event {
+            TimelineEvent::SetCursorPosition { time_seconds } => {
+                self.cursor_position = time_seconds;
+                self.update_cursor_values();
+                TimelineUpdate::CursorMoved { position: time_seconds }
+            },
+            TimelineEvent::SetVisibleRange { start, end } => {
+                self.visible_range = (start, end);
+                TimelineUpdate::RangeChanged { start, end }
+            },
+            TimelineEvent::CacheSignalTransitions { signal_id, transitions } => {
+                self.signal_transitions_cache.insert(signal_id, transitions);
+                self.update_cursor_values();
+                TimelineUpdate::CacheUpdated
+            },
+        }
+    }
+}
+
+// Event-source relay functions
+pub fn set_cursor_position(time_seconds: f64) -> Relay<TimelineUpdate> {
+    relay(TimelineEvent::SetCursorPosition { time_seconds })
+}
+
+pub fn zoom_to_range(start: f64, end: f64) -> Relay<TimelineUpdate> {
+    relay(TimelineEvent::SetVisibleRange { start, end })
+}
+
+pub fn cache_signal_data(signal_id: String, transitions: Vec<SignalTransition>) -> Relay<()> {
+    relay(TimelineEvent::CacheSignalTransitions { signal_id, transitions })
+}
+```
+
+### SimpleState Usage
+
+**Local UI State (Replacing Mutables):**
+```rust
+// ✅ CORRECT: SimpleState for local UI state
+#[derive(Default)]
+struct DialogState {
+    is_open: bool,
+    selected_filter: String,
+    search_text: String,
+}
+
+impl SimpleState for DialogState {}
+
+// Usage in components
+fn file_dialog() -> impl Element {
+    Column::new()
+        .item_signal(DialogState::signal().map(|state| {
+            if state.is_open {
+                dialog_content().into_element()
+            } else {
+                empty_element().into_element()
+            }
+        }))
+}
+
+// Event-source functions for UI state
+pub fn open_file_dialog() -> Relay<()> {
+    DialogState::update(|state| state.is_open = true)
+}
+
+pub fn close_file_dialog() -> Relay<()> {
+    DialogState::update(|state| state.is_open = false)
+}
+
+pub fn set_dialog_filter(filter: String) -> Relay<()> {
+    DialogState::update(|state| state.selected_filter = filter)
+}
+```
+
+**Panel Layout State:**
+```rust
+#[derive(Default)]
+struct PanelLayoutState {
+    dock_mode: DockMode,
+    right_panel_width: f32,
+    bottom_panel_height: f32,
+    is_files_panel_visible: bool,
+    is_variables_panel_visible: bool,
+}
+
+impl SimpleState for PanelLayoutState {}
+
+// Event-source functions for layout
+pub fn switch_dock_mode(mode: DockMode) -> Relay<()> {
+    PanelLayoutState::update(|state| state.dock_mode = mode)
+}
+
+pub fn resize_right_panel(width: f32) -> Relay<()> {
+    PanelLayoutState::update(|state| state.right_panel_width = width)
+}
+
+pub fn toggle_files_panel() -> Relay<()> {
+    PanelLayoutState::update(|state| state.is_files_panel_visible = !state.is_files_panel_visible)
+}
+```
+
+### Migration Patterns
+
+**From Global Mutables to Domain Actors:**
+```rust
+// ❌ OLD: Global mutable state
+static TRACKED_FILES: Lazy<MutableVec<TrackedFile>> = Lazy::new(MutableVec::new);
+static EXPANDED_SCOPES: Lazy<Mutable<HashSet<String>>> = Lazy::new(|| Mutable::new(HashSet::new()));
+static SMART_LABELS: Lazy<Mutable<Vec<String>>> = Lazy::new(|| Mutable::new(Vec::new()));
+
+// ✅ NEW: Domain Actor with cohesive state
+#[derive(Default)]
+struct TrackedFiles {
+    files: Vec<TrackedFile>,
+    expanded_scopes: HashSet<String>,
+    smart_labels: Vec<String>,
+}
+```
+
+**Migration Steps:**
+1. **Group related state** into domain actors
+2. **Convert .get()/.set() calls** to relay events
+3. **Replace signal access** with domain signals
+4. **Eliminate manual state synchronization** (Actor handles it)
+5. **Remove global statics** once migration is complete
+
+**Before/After Example:**
+```rust
+// ❌ OLD: Manual state management
+pub fn add_file(path: String) {
+    let file = TrackedFile::from_path(path);
+    TRACKED_FILES.lock_mut().push_cloned(file);
+    
+    // Manual synchronization required
+    let files = TRACKED_FILES.lock_ref().to_vec();
+    let labels = create_smart_labels(&files);
+    SMART_LABELS.set_neq(labels);
+}
+
+// ✅ NEW: Actor handles synchronization
+pub fn add_file(path: String) -> Relay<TrackedFile> {
+    relay(TrackedFilesEvent::AddFile { 
+        file: TrackedFile::from_path(path) 
+    })
+    // Smart labels automatically updated in Actor::apply
+}
+```
+
+### Testing Patterns
+
+**Signal-Based Testing (No .get() Methods):**
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    #[tokio::test]
+    async fn test_add_file_updates_smart_labels() {
+        // Setup
+        let initial_files = tracked_files().first().await;
+        assert_eq!(initial_files.len(), 0);
+        
+        // Action
+        add_file("test.vcd".to_string()).await;
+        
+        // Verify through signals
+        let files = tracked_files().first().await;
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "test.vcd");
+        
+        let labels = smart_labels().first().await;
+        assert_eq!(labels.len(), 1);
+        assert_eq!(labels[0], "test.vcd");
+    }
+    
+    #[tokio::test]
+    async fn test_batch_file_loading() {
+        let paths = vec!["file1.vcd".to_string(), "file2.vcd".to_string()];
+        
+        batch_add_files(paths.clone()).await;
+        
+        let files = tracked_files().first().await;
+        assert_eq!(files.len(), 2);
+        
+        // Test smart labeling with duplicates
+        add_file("subdir/file1.vcd".to_string()).await;
+        
+        let labels = smart_labels().first().await;
+        assert_eq!(labels.len(), 3);
+        // Should disambiguate: "file1.vcd", "file2.vcd", "subdir/file1.vcd"
+        assert!(labels.contains(&"subdir/file1.vcd".to_string()));
+    }
+    
+    #[tokio::test]
+    async fn test_timeline_cursor_updates() {
+        // Setup timeline data
+        let transitions = vec![
+            SignalTransition { time_seconds: 1.0, value: "0".to_string() },
+            SignalTransition { time_seconds: 2.0, value: "1".to_string() },
+        ];
+        cache_signal_data("signal1".to_string(), transitions).await;
+        
+        // Test cursor position
+        set_cursor_position(1.5).await;
+        
+        let cursor_pos = cursor_position().first().await;
+        assert_eq!(cursor_pos, 1.5);
+        
+        let values = cursor_values().first().await;
+        assert_eq!(values.get("signal1"), Some(&"0".to_string()));
+    }
+}
+```
+
+**Integration Testing:**
+```rust
+#[tokio::test]
+async fn test_file_loading_workflow() {
+    // Test complete workflow from file selection to variable display
+    
+    // 1. Load files
+    let paths = vec!["test1.vcd".to_string(), "test2.vcd".to_string()];
+    batch_add_files(paths).await;
+    
+    // 2. Expand scopes
+    expand_scope("scope1".to_string()).await;
+    
+    // 3. Select variables
+    let variable = SelectedVariable {
+        unique_id: "test1.vcd|scope1|signal1".to_string(),
+        file_path: "test1.vcd".to_string(),
+        scope_path: "scope1".to_string(),
+        variable_name: "signal1".to_string(),
+    };
+    add_selected_variable(variable).await;
+    
+    // 4. Verify integrated state
+    let files = tracked_files().first().await;
+    let scopes = expanded_scopes().first().await;
+    let variables = selected_variables().first().await;
+    
+    assert_eq!(files.len(), 2);
+    assert!(scopes.contains("scope1"));
+    assert_eq!(variables.len(), 1);
+    assert_eq!(variables[0].unique_id, "test1.vcd|scope1|signal1");
+}
+```
+
+### Troubleshooting Guide
+
+**Common Issues:**
+
+1. **Event-Source Naming Violations:**
+```rust
+// ❌ WRONG: Manager naming
+pub fn file_manager() -> Relay<()> { ... }
+
+// ✅ CORRECT: Event naming
+pub fn add_file(path: String) -> Relay<TrackedFile> { ... }
+```
+
+2. **Enterprise Pattern Violations:**
+```rust
+// ❌ WRONG: Service/Controller patterns
+struct FileService;
+struct VariableController;
+
+// ✅ CORRECT: Domain actors
+struct TrackedFiles;
+struct SelectedVariables;
+```
+
+3. **Missing Signal Dependencies:**
+```rust
+// ❌ WRONG: Static data in reactive context
+.child_signal(always(some_data).map(|data| render(data)))
+
+// ✅ CORRECT: Reactive signal chain
+.child_signal(tracked_files().map(|files| render_files(files)))
+```
+
+4. **Improper State Access:**
+```rust
+// ❌ WRONG: Direct state access (testing anti-pattern)
+assert_eq!(TrackedFiles::get().files.len(), 1);  // No .get() method
+
+// ✅ CORRECT: Signal-based access
+let files = tracked_files().first().await;
+assert_eq!(files.len(), 1);
+```
+
+5. **Mixed State Management:**
+```rust
+// ❌ WRONG: Mixing Mutables with Actors
+static OLD_FILES: Lazy<MutableVec<File>> = ...;  // Don't mix patterns
+
+// ✅ CORRECT: Pure Actor approach
+// All file state goes through TrackedFiles actor
+```
+
+### Performance Considerations
+
+**Event Emission Patterns:**
+- Actors automatically batch related updates
+- Only emit events when state actually changes
+- Derived computations (like smart labels) happen once per event
+- No manual synchronization between related state pieces
+
+**Signal Chain Optimization:**
+```rust
+// ✅ EFFICIENT: Direct actor signal
+tracked_files().map(|files| render_file_list(files))
+
+// ❌ INEFFICIENT: Multiple signal sources
+map_ref! {
+    let files = TRACKED_FILES.signal_vec_cloned().to_signal_cloned(),
+    let labels = SMART_LABELS.signal() => {
+        combine_files_and_labels(files, labels)  // Manual synchronization
+    }
+}
+```
+
+**Memory Management:**
+- Actors own their complete domain state
+- No circular references between domain actors
+- SimpleState for ephemeral UI state
+- Automatic cleanup when actors go out of scope
+
+## Lock Management & Actor Model (Legacy)
+
+**NOTE: This section describes the old Actor Model pattern. New code should use Actor+Relay architecture above.**
 
 ### Recursive Lock Prevention
 ```rust
@@ -411,7 +964,7 @@ COLLECTION.signal_vec_cloned().for_each(|data| async move {
 }).await;
 ```
 
-### Actor Model Implementation
+### Legacy Actor Implementation
 ```rust
 // Core principle: All state mutations through single sequential processor
 #[derive(Debug, Clone)]
@@ -441,7 +994,7 @@ Task::start(async {
 // Use for: Shared state, complex interdependencies, reactive updates
 ```
 
-### Mutable Patterns & Lock Rules
+### Legacy Mutable Patterns
 ```rust
 // Mutable types are Arc<RwLock<T>> internally - cheaply cloneable, never wrap in Arc again
 // Basic chains: Mutable<T> -> signal() -> map() -> for_each_sync()
@@ -474,12 +1027,12 @@ let updated_items = {
 ITEMS.lock_mut().replace_cloned(updated_items); // Signals fire safely
 ```
 
-### Critical Lock Rules
+### Critical Rules (Both Patterns)
 1. Never hold locks across await points
 2. Drop locks before triggering signals  
 3. Use async signal handlers over for_each_sync
-4. Prefer nested Mutables for frequent updates
-5. Use Actor Model for complex state mutations
+4. Prefer domain actors over global mutables (new code)
+5. Use event-source relay naming (new code)
 
 ## Dock Mode & Performance
 

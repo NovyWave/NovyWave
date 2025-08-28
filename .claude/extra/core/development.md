@@ -57,39 +57,184 @@ format!("{} is {} years old", name, age);
 5. NEVER rename types with aliases (e.g., `Signal as DataSignal`) - move code directly
 6. Always preserve exact functionality during moves
 
-## State Management Best Practices
+## State Management: Actor+Relay Architecture (MANDATORY)
 
-### When to Use Actor Model vs Direct Mutations
+### NO RAW MUTABLES RULE
 
-**Use Actor Model for:**
-- Shared state accessed by multiple components
-- State that triggers reactive updates (signals)
-- Complex state with interdependencies
-- Systems prone to race conditions or recursive locks
-- File/resource management systems
-- User interaction state (selections, filters, etc.)
+**CRITICAL: NovyWave uses Actor+Relay architecture exclusively**
 
-**Use Direct Mutations for:**
-- Simple local component state
-- Read-only data or constants
-- State that doesn't trigger signals
-- Performance-critical hot paths (after measuring)
+**❌ PROHIBITED PATTERNS:**
+```rust
+// NEVER use raw global mutables
+static TRACKED_FILES: Lazy<MutableVec<TrackedFile>> = lazy::default();
+static DIALOG_OPEN: Lazy<Mutable<bool>> = lazy::default();
+static THEME_STATE: Lazy<Mutable<Theme>> = lazy::default();
 
-### Actor Model Implementation Checklist
+// NEVER use raw local mutables in components
+let loading_state = Mutable::new(false);  // Use SimpleState instead
+```
 
-**✅ Required Components:**
-1. **Message enum** defining all possible state mutations
-2. **Single message processor** function handling all mutations sequentially
-3. **Message queue** with proper event loop yielding
-4. **Public API functions** that send messages instead of direct mutations
-5. **Proper signal handlers** using `for_each` with async closures
+**✅ REQUIRED PATTERNS:**
+```rust
+// Domain-driven Actor structs
+struct TrackedFiles {
+    files: ActorVec<TrackedFile>,
+    file_dropped_relay: Relay<Vec<PathBuf>>,
+    file_selected_relay: Relay<PathBuf>,
+}
 
-**❌ Common Mistakes:**
-- Multiple concurrent processors for same state
-- Using `Task::start` in processing loops (creates races)
-- Bypassing actor with direct state mutations
-- Forgetting `Task::next_macro_tick().await` between messages
-- Using `for_each_sync` in signal handlers that send messages
+// SimpleState for local UI state
+let dialog_open = SimpleState::new(false);
+let filter_text = SimpleState::new(String::new());
+```
+
+### Event-Source Relay Naming (MANDATORY)
+
+**✅ CORRECT: Event-source pattern `{source}_{event}_relay`**
+```rust
+// User interactions - what the user DID
+button_clicked_relay: Relay,
+input_changed_relay: Relay<String>,
+file_dropped_relay: Relay<Vec<PathBuf>>,
+menu_selected_relay: Relay<MenuOption>,
+
+// System events - what HAPPENED  
+file_loaded_relay: Relay<PathBuf>,
+parse_completed_relay: Relay<ParseResult>,
+error_occurred_relay: Relay<String>,
+timeout_reached_relay: Relay,
+
+// UI events - what the interface DID
+dialog_opened_relay: Relay,
+panel_resized_relay: Relay<(f32, f32)>,
+scroll_changed_relay: Relay<f32>,
+```
+
+**❌ PROHIBITED: Command-like/imperative naming**
+```rust
+add_file: Relay<PathBuf>,           // Sounds like command
+remove_item: Relay<String>,         // Imperative style  
+set_theme: Relay<Theme>,            // Action-oriented
+update_config: Relay<Config>,       // Command pattern
+clear_selection: Relay,             // Imperative verb
+```
+
+### Domain-Driven Design (MANDATORY)
+
+**✅ REQUIRED: Model what it IS**
+```rust
+struct TrackedFiles {              // Collection of tracked files
+    files: ActorVec<TrackedFile>,
+    file_dropped_relay: Relay<Vec<PathBuf>>,
+}
+
+struct WaveformTimeline {          // The timeline itself
+    cursor_position: Actor<f64>,
+    cursor_moved_relay: Relay<f64>,
+}
+
+struct SelectedVariables {         // Currently selected variables
+    variables: ActorVec<Variable>,
+    variable_clicked_relay: Relay<String>,
+}
+```
+
+**❌ PROHIBITED: Enterprise abstractions**
+```rust  
+struct FileManager { ... }        // Artificial "manager" layer
+struct TimelineService { ... }    // Unnecessary "service" abstraction
+struct DataController { ... }     // Vague "controller" pattern
+struct ConfigHandler { ... }      // Generic "handler" pattern
+```
+
+### Actor+Relay Implementation Pattern
+
+**Modern relay() Pattern (REQUIRED):**
+```rust
+// Use relay() function for clean stream access
+let (file_dropped_relay, file_dropped_stream) = relay();
+let (parse_completed_relay, parse_completed_stream) = relay();
+
+let files = ActorVec::new(vec![], async move |files_vec| {
+    loop {
+        select! {
+            Some(paths) = file_dropped_stream.next() => {
+                for path in paths {
+                    let tracked_file = TrackedFile::new(path);
+                    files_vec.lock_mut().push_cloned(tracked_file);
+                }
+            }
+            Some(result) = parse_completed_stream.next() => {
+                // Handle parse completion
+            }
+        }
+    }
+});
+```
+
+### SimpleState for Local UI State (REQUIRED)
+
+**Replace ALL local Mutables with SimpleState:**
+```rust
+// Panel component state
+struct PanelState {
+    width: SimpleState<f32>,
+    height: SimpleState<f32>,
+    is_collapsed: SimpleState<bool>,
+}
+
+// Dialog component state  
+struct DialogState {
+    is_open: SimpleState<bool>,
+    filter_text: SimpleState<String>,
+    selected_index: SimpleState<Option<usize>>,
+}
+
+impl Default for DialogState {
+    fn default() -> Self {
+        Self {
+            is_open: SimpleState::new(false),
+            filter_text: SimpleState::new(String::new()),
+            selected_index: SimpleState::new(None),
+        }
+    }
+}
+```
+
+### Actor+Relay Testing Pattern (REQUIRED)
+
+**Signal-Based Testing (NO .get() methods):**
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    #[async_test]
+    async fn test_file_tracking() {
+        let tracked_files = TrackedFiles::new();
+        
+        // Send event through relay
+        tracked_files.file_dropped_relay.send(vec![PathBuf::from("test.vcd")]);
+        
+        // Wait reactively for state change
+        let files = tracked_files.files.signal_vec_cloned()
+            .to_signal_cloned()
+            .to_stream()
+            .next().await.unwrap();
+            
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, PathBuf::from("test.vcd"));
+    }
+}
+```
+
+**Migration Validation Checklist:**
+- [ ] All global Mutables replaced with domain Actors
+- [ ] All local Mutables replaced with SimpleState
+- [ ] All relay names follow event-source pattern
+- [ ] No Manager/Service/Controller abstractions
+- [ ] Event emission replaces direct mutations
+- [ ] Signal-based testing throughout
 
 ### Signal Handler Patterns
 
@@ -150,29 +295,39 @@ at std::sys::sync::rwlock::no_threads::RwLock::write
 3. Add event loop yielding to all sequential processing
 4. Consider nested Mutables for frequently updated individual items
 
-### Integration with NovyWave Patterns
+### NovyWave Actor+Relay Patterns
 
-**File State Management:**
+**File State Management with Event-Source Relays:**
 ```rust
-// All file operations go through actor
-pub fn add_file(path: String) {
-    send_file_message(FileMessage::Add { path, state: FileState::Loading });
+// Event-based file operations
+struct TrackedFiles {
+    files: ActorVec<TrackedFile>,
+    file_dropped_relay: Relay<Vec<PathBuf>>,        // Files dropped on UI
+    file_selected_relay: Relay<PathBuf>,            // User clicked file
+    parse_completed_relay: Relay<(String, ParseResult)>, // Parser finished
 }
 
-pub fn update_file_state(id: String, state: FileState) {
-    send_file_message(FileMessage::UpdateState { id, state });
-}
+// Usage: Event emission, not function calls
+tracked_files.file_dropped_relay.send(vec![path]);
+tracked_files.parse_completed_relay.send((file_id, result));
 ```
 
-**Variable Selection Management:**
+**Variable Selection with Domain Modeling:**
 ```rust
-// Variable changes trigger through actor model
-pub fn add_selected_variable(variable: Signal) {
-    send_variable_message(VariableMessage::Add { variable });
+// Variables currently selected for display
+struct SelectedVariables {
+    variables: ActorVec<SelectedVariable>,
+    variable_clicked_relay: Relay<String>,          // User clicked variable
+    selection_cleared_relay: Relay,                 // Clear all clicked
+    scope_expanded_relay: Relay<String>,            // Scope expanded
 }
+
+// Usage: Direct event emission
+selected_variables.variable_clicked_relay.send(var_id);
+selected_variables.selection_cleared_relay.send(());
 ```
 
-This eliminates recursive locks while maintaining reactive behavior and predictable state mutations.
+This eliminates recursive locks while maintaining reactive behavior and complete state traceability.
 
 ## Mandatory Clarification Protocol
 

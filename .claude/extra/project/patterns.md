@@ -13,10 +13,12 @@ NovyWave - Professional waveform viewer for digital design verification and anal
 - **Backend:** Moon framework (browser mode only)
 - **Desktop:** Tauri v2 wrapper
 - **Graphics:** Fast2D rendering library
+- **State Management:** Actor+Relay architecture (mandatory)
 
 **Project Structure:**
 ```
 frontend/     - Rust/WASM frontend (shared)
+  reactive_actors/  - Actor+Relay state management module
 backend/      - MoonZoon backend (browser only)
 src-tauri/    - Tauri desktop wrapper
 shared/       - Shared types and utilities between frontend/backend
@@ -79,6 +81,316 @@ use shared::{LoadingFile, LoadingStatus, WaveformFile, Signal};
 ```
 
 **Do NOT duplicate types:** Always import from `shared` rather than defining duplicate types in frontend or backend.
+
+## Actor+Relay Architecture Patterns
+
+### MANDATORY State Management Rules
+
+**NO RAW MUTABLES:** All state must use Actor+Relay or SimpleState architecture.
+
+**❌ PROHIBITED:**
+```rust
+// Global mutables
+static TRACKED_FILES: Lazy<MutableVec<TrackedFile>> = lazy::default();
+static DIALOG_OPEN: Lazy<Mutable<bool>> = lazy::default();
+
+// Local mutables in components
+let loading_state = Mutable::new(false);
+```
+
+**✅ REQUIRED:**
+```rust
+// Domain-driven Actors
+struct TrackedFiles {
+    files: ActorVec<TrackedFile>,
+    file_dropped_relay: Relay<Vec<PathBuf>>,
+}
+
+// SimpleState for local UI
+let dialog_open = SimpleState::new(false);
+```
+
+### Event-Source Relay Naming (MANDATORY)
+
+**Pattern:** `{source}_{event}_relay`
+
+**✅ CORRECT:**
+```rust
+// User interactions
+button_clicked_relay: Relay,
+input_changed_relay: Relay<String>,
+file_dropped_relay: Relay<Vec<PathBuf>>,
+menu_selected_relay: Relay<MenuOption>,
+
+// System events
+file_loaded_relay: Relay<PathBuf>,
+parse_completed_relay: Relay<ParseResult>,
+error_occurred_relay: Relay<String>,
+timeout_reached_relay: Relay,
+
+// UI events
+dialog_opened_relay: Relay,
+panel_resized_relay: Relay<(f32, f32)>,
+scroll_changed_relay: Relay<f32>,
+```
+
+**❌ PROHIBITED:**
+```rust
+add_file: Relay<PathBuf>,       // Command-like
+remove_item: Relay<String>,     // Imperative  
+set_theme: Relay<Theme>,        // Action-oriented
+update_config: Relay<Config>,   // Command pattern
+```
+
+### Domain-Driven Design Patterns
+
+**✅ REQUIRED: Model domain concepts directly**
+```rust
+struct TrackedFiles {              // Collection of tracked files
+    files: ActorVec<TrackedFile>,
+    file_dropped_relay: Relay<Vec<PathBuf>>,
+    file_selected_relay: Relay<PathBuf>,
+    parse_completed_relay: Relay<(String, ParseResult)>,
+}
+
+struct WaveformTimeline {          // The timeline itself
+    cursor_position: Actor<f64>,
+    visible_range: Actor<(f64, f64)>,
+    cursor_moved_relay: Relay<f64>,
+    zoom_changed_relay: Relay<f32>,
+}
+
+struct SelectedVariables {         // Currently selected variables
+    variables: ActorVec<Variable>,
+    variable_clicked_relay: Relay<String>,
+    selection_cleared_relay: Relay,
+    scope_expanded_relay: Relay<String>,
+}
+```
+
+**❌ PROHIBITED: Enterprise abstractions**
+```rust
+struct FileManager { ... }        // Artificial "manager" layer
+struct TimelineService { ... }    // Unnecessary "service" abstraction
+struct DataController { ... }     // Vague "controller" pattern
+struct ConfigHandler { ... }      // Generic "handler" pattern
+```
+
+### NovyWave Domain Patterns
+
+**File Management Domain:**
+```rust
+use crate::reactive_actors::{Actor, ActorVec, Relay, relay};
+
+struct TrackedFiles {
+    files: ActorVec<TrackedFile>,
+    
+    // User interactions
+    file_dropped_relay: Relay<Vec<PathBuf>>,        // Files dropped on UI
+    file_selected_relay: Relay<PathBuf>,            // User clicked file
+    reload_requested_relay: Relay<String>,          // User clicked reload
+    
+    // System events
+    parse_completed_relay: Relay<(String, ParseResult)>,  // Parser finished
+    error_occurred_relay: Relay<(String, String)>,        // Parse error
+}
+
+impl TrackedFiles {
+    fn new() -> Self {
+        let (file_dropped_relay, file_dropped_stream) = relay();
+        let (parse_completed_relay, parse_completed_stream) = relay();
+        // ... other relays
+        
+        let files = ActorVec::new(vec![], async move |files_vec| {
+            loop {
+                select! {
+                    Some(paths) = file_dropped_stream.next() => {
+                        for path in paths {
+                            let tracked_file = TrackedFile::new(path);
+                            files_vec.lock_mut().push_cloned(tracked_file);
+                        }
+                    }
+                    Some((file_id, result)) = parse_completed_stream.next() => {
+                        // Update specific file with parse result
+                    }
+                }
+            }
+        });
+        
+        TrackedFiles {
+            files,
+            file_dropped_relay,
+            parse_completed_relay,
+            // ... other fields
+        }
+    }
+}
+```
+
+**Variable Selection Domain:**
+```rust
+struct SelectedVariables {
+    variables: ActorVec<SelectedVariable>,
+    
+    // User selection events
+    variable_clicked_relay: Relay<String>,          // Variable clicked in tree
+    variable_removed_relay: Relay<String>,          // Remove button clicked
+    scope_expanded_relay: Relay<String>,            // Scope chevron clicked
+    clear_selection_clicked_relay: Relay,           // Clear all clicked
+    
+    // System events
+    selection_restored_relay: Relay<Vec<String>>,   // Config loaded
+    filter_applied_relay: Relay<String>,            // Search filter
+}
+```
+
+**Timeline Domain:**
+```rust
+struct WaveformTimeline {
+    // State
+    cursor_position: Actor<f64>,              // Nanoseconds
+    visible_range: Actor<(f64, f64)>,        // (start_ns, end_ns)
+    zoom_level: Actor<f32>,                  // Zoom factor
+    
+    // User interactions
+    cursor_clicked_relay: Relay<f64>,         // User clicked timeline
+    mouse_moved_relay: Relay<(f32, f32)>,    // Mouse over canvas
+    zoom_changed_relay: Relay<f32>,          // Zoom wheel
+    pan_started_relay: Relay<(f32, f32)>,    // Drag started
+    
+    // Keyboard events
+    left_key_pressed_relay: Relay,           // Arrow navigation
+    right_key_pressed_relay: Relay,
+    zoom_in_pressed_relay: Relay,            // Keyboard zoom
+    zoom_out_pressed_relay: Relay,
+}
+```
+
+### SimpleState for Local UI Patterns
+
+**Replace all local Mutables with SimpleState:**
+```rust
+// Panel component
+struct PanelState {
+    width: SimpleState<f32>,
+    height: SimpleState<f32>,
+    is_collapsed: SimpleState<bool>,
+    is_hovered: SimpleState<bool>,
+}
+
+// Dialog component
+struct FileDialogState {
+    is_open: SimpleState<bool>,
+    filter_text: SimpleState<String>,
+    selected_files: SimpleState<Vec<PathBuf>>,
+    current_directory: SimpleState<PathBuf>,
+    error_message: SimpleState<Option<String>>,
+}
+
+// Search component
+struct SearchState {
+    filter_text: SimpleState<String>,
+    is_focused: SimpleState<bool>,
+    match_count: SimpleState<usize>,
+    selected_index: SimpleState<Option<usize>>,
+}
+
+impl Default for SearchState {
+    fn default() -> Self {
+        Self {
+            filter_text: SimpleState::new(String::new()),
+            is_focused: SimpleState::new(false),
+            match_count: SimpleState::new(0),
+            selected_index: SimpleState::new(None),
+        }
+    }
+}
+```
+
+### UI Integration Patterns
+
+**Event Emission in UI Components:**
+```rust
+// File drop area
+fn file_drop_zone(tracked_files: &TrackedFiles) -> impl Element {
+    El::new()
+        .s(Background::new().color(neutral_3()))
+        .on_drop({
+            let file_dropped_relay = tracked_files.file_dropped_relay.clone();
+            move |dropped_files| {
+                file_dropped_relay.send(dropped_files);
+            }
+        })
+        .child(Text::new("Drop waveform files here"))
+}
+
+// Variable tree item
+fn variable_item(
+    variable: &Variable, 
+    selected_variables: &SelectedVariables
+) -> impl Element {
+    Row::new()
+        .s(Padding::new().x(8).y(4))
+        .on_click({
+            let variable_clicked_relay = selected_variables.variable_clicked_relay.clone();
+            let var_id = variable.unique_id.clone();
+            move || variable_clicked_relay.send(var_id.clone())
+        })
+        .item(Text::new(&variable.name))
+        .item_signal(
+            selected_variables.variables.signal_vec_cloned()
+                .map(move |vars| {
+                    if vars.iter().any(|v| v.unique_id == variable.unique_id) {
+                        IconName::Check.into()
+                    } else {
+                        IconName::X.into()
+                    }
+                })
+        )
+}
+```
+
+### Module Structure
+
+**Frontend Module Organization:**
+```rust
+// frontend/src/reactive_actors/mod.rs
+pub mod relay;              // Relay<T> implementation
+pub mod actor;              // Actor<T> implementation  
+pub mod actor_vec;          // ActorVec<T> implementation
+pub mod actor_btree_map;    // ActorBTreeMap<K,V> implementation
+pub mod simple_state;       // SimpleState<T> implementation
+
+// Re-exports for easy importing
+pub use relay::Relay;
+pub use actor::Actor;
+pub use actor_vec::ActorVec;
+pub use actor_btree_map::ActorBTreeMap;
+pub use simple_state::SimpleState;
+
+// Core function for creating relays
+pub fn relay<T>() -> (Relay<T>, impl Stream<Item = T>) {
+    let relay = Relay::new();
+    let stream = relay.subscribe();
+    (relay, stream)
+}
+```
+
+**Usage in Components:**
+```rust
+use crate::reactive_actors::{Actor, ActorVec, Relay, SimpleState, relay};
+
+// Domain struct using Actor+Relay
+struct AppState {
+    tracked_files: TrackedFiles,
+    selected_variables: SelectedVariables,
+    waveform_timeline: WaveformTimeline,
+    
+    // Local UI state
+    search_state: SearchState,
+    dialog_state: DialogState,
+}
+```
 
 ## MoonZone Framework Configuration
 
