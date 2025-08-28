@@ -430,8 +430,8 @@ fn current_timestamp() -> u64 {
 
 ```rust
 fn interactive_button(label: &str, on_click: impl Fn() + 'static) -> impl Element {
-    let hover_state = SimpleState::new(false);
-    let pressed_state = SimpleState::new(false);
+    let hover_state = Atom::new(false);
+    let pressed_state = Atom::new(false);
     
     button()
         .label(label)

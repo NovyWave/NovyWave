@@ -5,7 +5,7 @@ This document provides complete migration examples for transforming NovyWave's 7
 ## Migration Summary
 
 **Current State**: 74+ global static Mutables scattered across the codebase  
-**Target State**: 5 domain-driven Actor+Relay structs + SimpleState for local UI
+**Target State**: 5 domain-driven Actor+Relay structs + Atom for local UI
 
 ### Domain Consolidation Strategy
 
@@ -16,7 +16,7 @@ This document provides complete migration examples for transforming NovyWave's 7
 | Timeline & Canvas (25+) | `TIMELINE_CURSOR_NS`, `CANVAS_WIDTH`, etc. | `WaveformTimeline` struct |
 | Signal Data Service (5) | `VIEWPORT_SIGNALS`, `CURSOR_VALUES`, etc. | `SignalDataCache` struct |
 | Configuration (6+) | `CONFIG_LOADED`, `SAVE_CONFIG_PENDING`, etc. | `UserConfiguration` struct |
-| UI Layout & Local (23+) | Panel dimensions, dialog states, etc. | SimpleState in components |
+| UI Layout & Local (23+) | Panel dimensions, dialog states, etc. | Atom in components |
 
 ## Phase 1: File Management Domain (13 → 1)
 
@@ -1079,11 +1079,11 @@ struct SaveRequestQueue {
 }
 ```
 
-## Phase 6: Local UI State Migration (SimpleState)
+## Phase 6: Local UI State Migration (Atom)
 
 ### Current Local UI Mutables
 ```rust
-// 23+ local UI mutables → SimpleState in components
+// 23+ local UI mutables → Atom in components
 static FILES_PANEL_WIDTH: Lazy<Mutable<f32>> = lazy::default();
 static FILES_PANEL_HEIGHT: Lazy<Mutable<f32>> = lazy::default();
 static VARIABLES_NAME_COLUMN_WIDTH: Lazy<Mutable<f32>> = lazy::default();
@@ -1095,67 +1095,67 @@ static VARIABLES_SEARCH_INPUT_FOCUSED: Lazy<Mutable<bool>> = lazy::default();
 // ... 15+ more local UI mutables
 ```
 
-### Target SimpleState Usage
+### Target Atom Usage
 ```rust
-use crate::reactive_actors::SimpleState;
+use crate::reactive_actors::Atom;
 
 // Panel component state
 struct FilesPanelState {
-    width: SimpleState<f32>,
-    height: SimpleState<f32>,
-    is_collapsed: SimpleState<bool>,
-    is_hovered: SimpleState<bool>,
-    resize_dragging: SimpleState<bool>,
+    width: Atom<f32>,
+    height: Atom<f32>,
+    is_collapsed: Atom<bool>,
+    is_hovered: Atom<bool>,
+    resize_dragging: Atom<bool>,
 }
 
 impl Default for FilesPanelState {
     fn default() -> Self {
         Self {
-            width: SimpleState::new(300.0),
-            height: SimpleState::new(400.0),
-            is_collapsed: SimpleState::new(false),
-            is_hovered: SimpleState::new(false),
-            resize_dragging: SimpleState::new(false),
+            width: Atom::new(300.0),
+            height: Atom::new(400.0),
+            is_collapsed: Atom::new(false),
+            is_hovered: Atom::new(false),
+            resize_dragging: Atom::new(false),
         }
     }
 }
 
 // Dialog component state
 struct FileDialogState {
-    is_open: SimpleState<bool>,
-    filter_text: SimpleState<String>,
-    selected_files: SimpleState<Vec<PathBuf>>,
-    current_directory: SimpleState<PathBuf>,
-    error_message: SimpleState<Option<String>>,
-    is_loading: SimpleState<bool>,
+    is_open: Atom<bool>,
+    filter_text: Atom<String>,
+    selected_files: Atom<Vec<PathBuf>>,
+    current_directory: Atom<PathBuf>,
+    error_message: Atom<Option<String>>,
+    is_loading: Atom<bool>,
 }
 
 // Search component state  
 struct SearchState {
-    filter_text: SimpleState<String>,
-    is_focused: SimpleState<bool>,
-    match_count: SimpleState<usize>,
-    selected_index: SimpleState<Option<usize>>,
-    search_history: SimpleState<Vec<String>>,
+    filter_text: Atom<String>,
+    is_focused: Atom<bool>,
+    match_count: Atom<usize>,
+    selected_index: Atom<Option<usize>>,
+    search_history: Atom<Vec<String>>,
 }
 
 // Variables panel state
 struct VariablesPanelState {
-    name_column_width: SimpleState<f32>,
-    value_column_width: SimpleState<f32>,
-    format_column_width: SimpleState<f32>,
+    name_column_width: Atom<f32>,
+    value_column_width: Atom<f32>,
+    format_column_width: Atom<f32>,
     search_state: SearchState,
-    selection_mode: SimpleState<SelectionMode>,
-    show_formats: SimpleState<bool>,
+    selection_mode: Atom<SelectionMode>,
+    show_formats: Atom<bool>,
 }
 
 // Timeline canvas state
 struct TimelineCanvasState {
-    is_hovered: SimpleState<bool>,
-    last_click_position: SimpleState<Option<(f32, f32)>>,
-    drag_state: SimpleState<Option<DragState>>,
-    context_menu_open: SimpleState<bool>,
-    context_menu_position: SimpleState<(f32, f32)>,
+    is_hovered: Atom<bool>,
+    last_click_position: Atom<Option<(f32, f32)>>,
+    drag_state: Atom<Option<DragState>>,
+    context_menu_open: Atom<bool>,
+    context_menu_position: Atom<(f32, f32)>,
 }
 ```
 
@@ -1325,7 +1325,7 @@ mod tests {
 }
 ```
 
-### SimpleState Testing
+### Atom Testing
 ```rust
 #[cfg(test)]
 mod ui_state_tests {
@@ -1370,7 +1370,7 @@ mod ui_state_tests {
 ## Migration Summary & Benefits
 
 ### Quantitative Improvements
-- **74+ global mutables → 5 domain structs + local SimpleState**
+- **74+ global mutables → 5 domain structs + local Atom**
 - **100% event-source relay naming compliance**
 - **Zero Manager/Service/Controller abstractions**
 - **Complete mutation traceability through event logs**
@@ -1381,7 +1381,7 @@ mod ui_state_tests {
 2. **Event-Source Traceability**: Every state change traceable to its source event
 3. **Reactive Consistency**: All state access through signals, no .get() methods
 4. **Testing Isolation**: Individual domain actors can be tested independently  
-5. **Clean Separation**: UI state (SimpleState) vs shared state (Actor+Relay) clearly distinguished
+5. **Clean Separation**: UI state (Atom) vs shared state (Actor+Relay) clearly distinguished
 
 ### Development Experience Improvements
 - **Self-Documenting Code**: Event names explain what happened

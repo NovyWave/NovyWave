@@ -7,7 +7,7 @@ A comprehensive guide to modern Actor+Relay patterns and migration strategies fo
 1. [Architecture Overview](#architecture-overview)
 2. [Modern Actor+Relay Patterns](#modern-actorrelay-patterns)
 3. [Migration Patterns](#migration-patterns)
-4. [SimpleState Helper](#simplestate-helper)
+4. [Atom Helper](#atom-helper)
 5. [Performance Best Practices](#performance-best-practices)
 6. [Event-Driven Architecture Patterns](#event-driven-architecture-patterns)
 
@@ -317,10 +317,10 @@ struct ModernFileManager {
     pub remove_file: Relay<String>,
     pub file_selected: Relay<String>,
     
-    // Local UI state using SimpleState
-    pub filter_text: SimpleState<String>,
-    pub is_loading: SimpleState<bool>,
-    pub selected_count: SimpleState<usize>,
+    // Local UI state using Atom
+    pub filter_text: Atom<String>,
+    pub is_loading: Atom<bool>,
+    pub selected_count: Atom<usize>,
 }
 
 impl Default for ModernFileManager {
@@ -364,10 +364,10 @@ impl Default for ModernFileManager {
             add_file,
             remove_file,
             file_selected,
-            // SimpleState for all local UI state
-            filter_text: SimpleState::new(String::new()),
-            is_loading: SimpleState::new(false),
-            selected_count: SimpleState::new(0),
+            // Atom for all local UI state
+            filter_text: Atom::new(String::new()),
+            is_loading: Atom::new(false),
+            selected_count: Atom::new(0),
         }
     }
 }
@@ -536,27 +536,27 @@ config.lock_mut().theme = Theme::Dark;
 config.lock_mut().dock_mode = DockMode::Bottom;
 ```
 
-## SimpleState Helper
+## Atom Helper
 
-### ONLY EXCEPTION: SimpleState Helper
-The `SimpleState` helper is acceptable for truly local UI state (button hover, dropdown open/closed) as it's still a controlled abstraction:
+### ONLY EXCEPTION: Atom Helper
+The `Atom` helper is acceptable for truly local UI state (button hover, dropdown open/closed) as it's still a controlled abstraction:
 
 ```rust
-// ACCEPTABLE: SimpleState helper for local UI only
-let is_hovered = SimpleState::new(false);
+// ACCEPTABLE: Atom helper for local UI only
+let is_hovered = Atom::new(false);
 ```
 
-### Complete SimpleState Implementation (Canonical Version)
+### Complete Atom Implementation (Canonical Version)
 
 ```rust
 /// Unified helper for local UI state - uses Actor+Relay architecture internally
 #[derive(Clone, Debug)]
-pub struct SimpleState<T: Clone + Send + Sync + 'static> {
+pub struct Atom<T: Clone + Send + Sync + 'static> {
     pub value: Actor<T>,
     pub setter: Relay<T>,
 }
 
-impl<T: Clone + Send + Sync + 'static> SimpleState<T> {
+impl<T: Clone + Send + Sync + 'static> Atom<T> {
     fn new(initial: T) -> Self {
         let (setter, mut setter_stream) = relay();
         
@@ -566,7 +566,7 @@ impl<T: Clone + Send + Sync + 'static> SimpleState<T> {
             }
         });
         
-        SimpleState { value, setter }
+        Atom { value, setter }
     }
     
     // Convenient methods that delegate to Actor+Relay
@@ -574,21 +574,21 @@ impl<T: Clone + Send + Sync + 'static> SimpleState<T> {
     fn signal(&self) -> impl Signal<Item = T> { self.value.signal() }
 }
 
-// Usage pattern: Replace all global Mutables with local SimpleState
+// Usage pattern: Replace all global Mutables with local Atom
 struct DialogState {
-    is_dialog_open: SimpleState<bool>,
-    filter_text: SimpleState<String>,
-    selected_index: SimpleState<Option<usize>>,
-    hover_state: SimpleState<bool>,
+    is_dialog_open: Atom<bool>,
+    filter_text: Atom<String>,
+    selected_index: Atom<Option<usize>>,
+    hover_state: Atom<bool>,
 }
 
 impl Default for DialogState {
     fn default() -> Self {
         Self {
-            is_dialog_open: SimpleState::new(false),
-            filter_text: SimpleState::new(String::new()),
-            selected_index: SimpleState::new(None),
-            hover_state: SimpleState::new(false),
+            is_dialog_open: Atom::new(false),
+            filter_text: Atom::new(String::new()),
+            selected_index: Atom::new(None),
+            hover_state: Atom::new(false),
         }
     }
 }
@@ -627,7 +627,7 @@ fn grid_index(row: usize, col: usize, columns: usize) -> usize {
 ```rust
 // BAD: String ID lookup - O(n) search performance
 struct CounterGrid {
-    values: ActorBTreeMap<String, i32>,  // String lookup overhead
+    values: ActorMap<String, i32>,  // String lookup overhead
     change: Relay<(String, i32)>,        // ID + amount
 }
 ```
@@ -757,7 +757,7 @@ assert_eq!(signal_stream.next().await.unwrap(), 2);
 1. **Reduced Boilerplate**: ~60% less code using `relay()` vs clone! macros
 2. **Better Debugging**: Imperative while loops easier to step through than nested async closures  
 3. **Cleaner Error Handling**: Direct relay access eliminates Result<(), RelayError> propagation
-4. **Unified State Management**: SimpleState eliminates inconsistent Mutable usage patterns
+4. **Unified State Management**: Atom eliminates inconsistent Mutable usage patterns
 5. **Concurrent Processing**: join!() pattern enables true multi-stream concurrency
 
 ### Migration Strategy
@@ -766,9 +766,9 @@ assert_eq!(signal_stream.next().await.unwrap(), 2);
 
 1. **Replace clone! patterns** with `relay()`
 2. **Convert .for_each() to while loops** for easier debugging
-3. **Introduce SimpleState** for all local UI state (dialog open/closed, filter text, etc.)
+3. **Introduce Atom** for all local UI state (dialog open/closed, filter text, etc.)
 4. **Use join!() for multi-stream** scenarios instead of multiple Task::start calls
-5. **Eliminate raw Mutable usage** in favor of either Actor (shared state) or SimpleState (local state)
+5. **Eliminate raw Mutable usage** in favor of either Actor (shared state) or Atom (local state)
 
 This approach provides the cleanest path forward for new Actor+Relay implementations and systematic modernization of existing code.
 

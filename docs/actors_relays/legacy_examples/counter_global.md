@@ -55,7 +55,7 @@ fn root() -> impl Element {
 }
 
 fn counter_button(label: &str, step: i32) -> impl Element {
-    let hovered = SimpleState::new(false);
+    let hovered = Atom::new(false);
     Button::new()
         .s(Width::exact(45))
         .s(RoundedCorners::all_max())
@@ -111,18 +111,18 @@ fn increment() {
 }
 ```
 
-## Global SimpleState Helper
+## Global Atom Helper
 
 For simple state that doesn't need complex event types, we can create a global helper pattern:
 
 ```rust
 /// Generic helper for simple Actor+Relay global state
-struct SimpleState<T> {
+struct Atom<T> {
     pub value: Actor<T>,
     pub setter: Relay<T>,
 }
 
-impl<T: Clone> SimpleState<T> {
+impl<T: Clone> Atom<T> {
     pub fn new(initial: T) -> Self {
         let (setter, mut setter_stream) = relay();
         
@@ -132,12 +132,12 @@ impl<T: Clone> SimpleState<T> {
             }
         });
         
-        SimpleState { value, setter }
+        Atom { value, setter }
     }
 }
 
 // Usage in global context:
-static HOVER_STATE: Lazy<SimpleState<bool>> = Lazy::new(|| SimpleState::new(false));
+static HOVER_STATE: Lazy<Atom<bool>> = Lazy::new(|| Atom::new(false));
 ```
 
 ## Advanced Global Features
@@ -189,8 +189,8 @@ mod tests {
     }
     
     #[async_test]
-    async fn test_global_simple_state_helper() {
-        let hover_state = SimpleState::new(false);
+    async fn test_global_atom_helper() {
+        let hover_state = Atom::new(false);
         
         // Test basic setter
         hover_state.setter.send(true);

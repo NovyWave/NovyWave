@@ -303,7 +303,7 @@ fn received_message(message: Message) -> impl Element {
     }
 
     fn send_button(&self) -> impl Element {
-        let hovered = SimpleState::new(false);
+        let hovered = Atom::new(false);
         Button::new()
             .s(Padding::all(10))
             .s(RoundedCorners::new().right(5))
@@ -398,18 +398,18 @@ impl ConnectionAdapter<UpMsg, DownMsg> {
 
 ## Helper Modules
 
-### SimpleState Helper
+### Atom Helper
 
 For simple state that doesn't need complex event types, we can create a helper pattern:
 
 ```rust
 /// Generic helper for simple Actor+Relay state
-struct SimpleState<T> {
+struct Atom<T> {
     pub value: Actor<T>,
     pub setter: Relay<T>,
 }
 
-impl<T: Clone> SimpleState<T> {
+impl<T: Clone> Atom<T> {
     pub fn new(initial: T) -> Self {
         let (setter, mut setter_stream) = relay();
         
@@ -419,7 +419,7 @@ impl<T: Clone> SimpleState<T> {
             }
         });
         
-        SimpleState { value, setter }
+        Atom { value, setter }
     }
 }
 ```
@@ -482,8 +482,8 @@ mod tests {
     use super::test_helpers::*;
     
     #[async_test]
-    async fn test_simple_state_through_signal() {
-        let state = SimpleState::new(false);
+    async fn test_atom_through_signal() {
+        let state = Atom::new(false);
         let mut signal_stream = state.value.signal().to_stream();
         
         // Test initial value
@@ -617,8 +617,8 @@ struct MultiRoomChat {
 ## Key Improvements in Updated Version
 
 ### 1. **📦 Modular Helper Types**
-- **Before**: SimpleState mixed in with business logic
-- **After**: Extracted SimpleState as reusable library/app helper
+- **Before**: Atom mixed in with business logic
+- **After**: Extracted Atom as reusable library/app helper
 - **Benefit**: Clear separation, reusable across applications
 
 ### 2. **📊 Proper Collection Management**

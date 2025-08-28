@@ -15,7 +15,7 @@ This document covers the **core concepts and API design** for Actor+Relay archit
 2. [Module Structure](#module-structure)
 3. [Architecture Overview](#architecture-overview)
 4. [API Design](#api-design)
-5. [SimpleState Helper](#simplestate-helper)
+5. [Atom Helper](#atom-helper)
 6. [Type Safety](#type-safety)
 
 ## Motivation & Problem Analysis
@@ -83,14 +83,14 @@ The Actor/Relay system is designed as a **standalone module** that can be:
 pub mod relay;
 pub mod actor;
 pub mod actor_vec;
-pub mod actor_btree_map;
+pub mod actor_map;
 pub mod testing;
 
 // Re-export main types
 pub use relay::Relay;
 pub use actor::Actor;
 pub use actor_vec::ActorVec;
-pub use actor_btree_map::ActorBTreeMap;
+pub use actor_map::ActorMap;
 
 // Testing utilities
 pub use testing::{MockRelay, TestActor, ActorTestHarness};
@@ -240,7 +240,7 @@ let items = ActorVec::new(vec![], async move |items_vec| {
 items.signal_vec_cloned()  // Emits VecDiff for efficient updates
 ```
 
-## SimpleState Helper
+## Atom Helper
 
 ### ⚠️ CRITICAL RULE: NO RAW MUTABLES ⚠️
 
@@ -277,28 +277,28 @@ let count = Actor::new(0, async move |state| {
 });
 ```
 
-### ONLY EXCEPTION: SimpleState Helper
-The `SimpleState` helper is acceptable for truly local UI state (button hover, dropdown open/closed) as it's still a controlled abstraction:
+### ONLY EXCEPTION: Atom Helper
+The `Atom` helper is acceptable for truly local UI state (button hover, dropdown open/closed) as it's still a controlled abstraction:
 
 ```rust
-// ACCEPTABLE: SimpleState helper for local UI only
-let is_hovered = SimpleState::new(false);
+// ACCEPTABLE: Atom helper for local UI only
+let is_hovered = Atom::new(false);
 // This is still controlled - wraps Mutable with clean API
 ```
 
-#### Complete SimpleState Implementation
+#### Complete Atom Implementation
 
 Based on practical usage, here's the correct implementation using Actor+Relay internally:
 
 ```rust
 /// Unified helper for local UI state - uses Actor+Relay architecture internally
 #[derive(Clone, Debug)]
-pub struct SimpleState<T: Clone + Send + Sync + 'static> {
+pub struct Atom<T: Clone + Send + Sync + 'static> {
     pub value: Actor<T>,
     pub setter: Relay<T>,
 }
 
-impl<T: Clone + Send + Sync + 'static> SimpleState<T> {
+impl<T: Clone + Send + Sync + 'static> Atom<T> {
     pub fn new(initial: T) -> Self {
         let (setter, mut setter_stream) = relay();
         
@@ -308,7 +308,7 @@ impl<T: Clone + Send + Sync + 'static> SimpleState<T> {
             }
         });
         
-        SimpleState { value, setter }
+        Atom { value, setter }
     }
     
     // Convenient methods that delegate to Actor+Relay
@@ -324,14 +324,14 @@ impl<T: Clone + Send + Sync + 'static> SimpleState<T> {
     // This prevents race conditions and maintains architectural consistency
 }
 
-impl<T: Default + Clone + Send + Sync + 'static> Default for SimpleState<T> {
+impl<T: Default + Clone + Send + Sync + 'static> Default for Atom<T> {
     fn default() -> Self {
         Self::new(T::default())
     }
 }
 ```
 
-**Why SimpleState is Acceptable:**
+**Why Atom is Acceptable:**
 - Uses Actor+Relay internally - maintains architectural principles
 - Provides convenient API for simple use cases
 - Still prevents race conditions (no `.get()` method)

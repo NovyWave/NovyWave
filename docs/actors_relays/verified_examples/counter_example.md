@@ -89,7 +89,7 @@ impl CounterApp {
     }
     
     fn counter_button(&self, label: &str, step: i32) -> impl Element {
-        let hovered = SimpleState::new(false);
+        let hovered = Atom::new(false);
         
         Button::new()
             .s(Width::exact(45))
@@ -151,12 +151,12 @@ For simple state that doesn't need complex event types, we can create a helper p
 
 ```rust
 /// Generic helper for simple Actor+Relay state
-struct SimpleState<T> {
+struct Atom<T> {
     pub value: Actor<T>,
     pub setter: Relay<T>,
 }
 
-impl<T: Clone> SimpleState<T> {
+impl<T: Clone> Atom<T> {
     pub fn new(initial: T) -> Self {
         // Create Relay with pre-subscribed stream - eliminates clone! entirely
         let (setter, mut setter_stream) = relay();
@@ -169,7 +169,7 @@ impl<T: Clone> SimpleState<T> {
             }
         });
         
-        SimpleState { value, setter }
+        Atom { value, setter }
     }
 }
 
@@ -237,8 +237,8 @@ mod tests {
     }
     
     #[async_test]
-    async fn test_simple_state_helper() {
-        let hover_state = SimpleState::new(false);
+    async fn test_atom_helper() {
+        let hover_state = Atom::new(false);
         
         // Test basic setter
         hover_state.setter.send(true);

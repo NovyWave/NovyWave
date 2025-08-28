@@ -434,7 +434,7 @@ pub fn scope_controller() -> Relay<()> { ... }
 
 **Actor Creation Pattern:**
 ```rust
-use actor_relay::{Actor, relay, SimpleState};
+use actor_relay::{Actor, relay, Atom};
 
 #[derive(Default)]
 struct TrackedFiles {
@@ -650,11 +650,11 @@ pub fn cache_signal_data(signal_id: String, transitions: Vec<SignalTransition>) 
 }
 ```
 
-### SimpleState Usage
+### Atom Usage
 
 **Local UI State (Replacing Mutables):**
 ```rust
-// ✅ CORRECT: SimpleState for local UI state
+// ✅ CORRECT: Atom for local UI state
 #[derive(Default)]
 struct DialogState {
     is_open: bool,
@@ -662,7 +662,7 @@ struct DialogState {
     search_text: String,
 }
 
-impl SimpleState for DialogState {}
+impl Atom for DialogState {}
 
 // Usage in components
 fn file_dialog() -> impl Element {
@@ -701,7 +701,7 @@ struct PanelLayoutState {
     is_variables_panel_visible: bool,
 }
 
-impl SimpleState for PanelLayoutState {}
+impl Atom for PanelLayoutState {}
 
 // Event-source functions for layout
 pub fn switch_dock_mode(mode: DockMode) -> Relay<()> {
@@ -941,7 +941,7 @@ map_ref! {
 **Memory Management:**
 - Actors own their complete domain state
 - No circular references between domain actors
-- SimpleState for ephemeral UI state
+- Atom for ephemeral UI state
 - Automatic cleanup when actors go out of scope
 
 ## Lock Management & Actor Model (Legacy)

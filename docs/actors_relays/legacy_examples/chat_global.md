@@ -247,7 +247,7 @@ fn new_message_input() -> impl Element {
 }
 
 fn send_button() -> impl Element {
-    let hovered = SimpleState::new(false);
+    let hovered = Atom::new(false);
     Button::new()
         .s(Padding::all(10))
         .s(RoundedCorners::new().right(5))
@@ -331,16 +331,16 @@ impl ConnectionAdapter<UpMsg, DownMsg> {
 }
 ```
 
-## Global SimpleState Helper
+## Global Atom Helper
 
 ```rust
 /// Generic helper for simple Actor+Relay state (global variant)
-struct SimpleState<T> {
+struct Atom<T> {
     pub value: Actor<T>,
     pub setter: Relay<T>,
 }
 
-impl<T: Clone> SimpleState<T> {
+impl<T: Clone> Atom<T> {
     pub fn new(initial: T) -> Self {
         let (setter, mut setter_stream) = relay();
         
@@ -350,7 +350,7 @@ impl<T: Clone> SimpleState<T> {
             }
         });
         
-        SimpleState { value, setter }
+        Atom { value, setter }
     }
 }
 ```

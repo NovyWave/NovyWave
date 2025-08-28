@@ -71,7 +71,7 @@ static DIALOG_OPEN: Lazy<Mutable<bool>> = lazy::default();
 static THEME_STATE: Lazy<Mutable<Theme>> = lazy::default();
 
 // NEVER use raw local mutables in components
-let loading_state = Mutable::new(false);  // Use SimpleState instead
+let loading_state = Mutable::new(false);  // Use Atom instead
 ```
 
 **✅ REQUIRED PATTERNS:**
@@ -83,9 +83,9 @@ struct TrackedFiles {
     file_selected_relay: Relay<PathBuf>,
 }
 
-// SimpleState for local UI state
-let dialog_open = SimpleState::new(false);
-let filter_text = SimpleState::new(String::new());
+// Atom for local UI state
+let dialog_open = Atom::new(false);
+let filter_text = Atom::new(String::new());
 ```
 
 ### Event-Source Relay Naming (MANDATORY)
@@ -172,30 +172,30 @@ let files = ActorVec::new(vec![], async move |files_vec| {
 });
 ```
 
-### SimpleState for Local UI State (REQUIRED)
+### Atom for Local UI State (REQUIRED)
 
-**Replace ALL local Mutables with SimpleState:**
+**Replace ALL local Mutables with Atom:**
 ```rust
 // Panel component state
 struct PanelState {
-    width: SimpleState<f32>,
-    height: SimpleState<f32>,
-    is_collapsed: SimpleState<bool>,
+    width: Atom<f32>,
+    height: Atom<f32>,
+    is_collapsed: Atom<bool>,
 }
 
 // Dialog component state  
 struct DialogState {
-    is_open: SimpleState<bool>,
-    filter_text: SimpleState<String>,
-    selected_index: SimpleState<Option<usize>>,
+    is_open: Atom<bool>,
+    filter_text: Atom<String>,
+    selected_index: Atom<Option<usize>>,
 }
 
 impl Default for DialogState {
     fn default() -> Self {
         Self {
-            is_open: SimpleState::new(false),
-            filter_text: SimpleState::new(String::new()),
-            selected_index: SimpleState::new(None),
+            is_open: Atom::new(false),
+            filter_text: Atom::new(String::new()),
+            selected_index: Atom::new(None),
         }
     }
 }
@@ -230,7 +230,7 @@ mod tests {
 
 **Migration Validation Checklist:**
 - [ ] All global Mutables replaced with domain Actors
-- [ ] All local Mutables replaced with SimpleState
+- [ ] All local Mutables replaced with Atom
 - [ ] All relay names follow event-source pattern
 - [ ] No Manager/Service/Controller abstractions
 - [ ] Event emission replaces direct mutations

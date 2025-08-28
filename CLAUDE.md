@@ -21,7 +21,7 @@ Core guidance for Claude Code when working with NovyWave.
 
 ### Core Architectural Rules
 
-1. **NO RAW MUTABLES:** All state must use Actor+Relay or SimpleState
+1. **NO RAW MUTABLES:** All state must use Actor+Relay or Atom
    ```rust
    // ❌ PROHIBITED: Raw global mutables
    static TRACKED_FILES: Lazy<MutableVec<TrackedFile>> = lazy::default();
@@ -33,8 +33,8 @@ Core guidance for Claude Code when working with NovyWave.
        file_dropped_relay: Relay<Vec<PathBuf>>,
    }
    
-   // ✅ REQUIRED: SimpleState for local UI
-   let dialog_open = SimpleState::new(false);
+   // ✅ REQUIRED: Atom for local UI
+   let dialog_open = Atom::new(false);
    ```
 
 2. **Event-Source Relay Naming (MANDATORY):**

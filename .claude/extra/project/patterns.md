@@ -86,7 +86,7 @@ use shared::{LoadingFile, LoadingStatus, WaveformFile, Signal};
 
 ### MANDATORY State Management Rules
 
-**NO RAW MUTABLES:** All state must use Actor+Relay or SimpleState architecture.
+**NO RAW MUTABLES:** All state must use Actor+Relay or Atom architecture.
 
 **❌ PROHIBITED:**
 ```rust
@@ -106,8 +106,8 @@ struct TrackedFiles {
     file_dropped_relay: Relay<Vec<PathBuf>>,
 }
 
-// SimpleState for local UI
-let dialog_open = SimpleState::new(false);
+// Atom for local UI
+let dialog_open = Atom::new(false);
 ```
 
 ### Event-Source Relay Naming (MANDATORY)
@@ -266,42 +266,42 @@ struct WaveformTimeline {
 }
 ```
 
-### SimpleState for Local UI Patterns
+### Atom for Local UI Patterns
 
-**Replace all local Mutables with SimpleState:**
+**Replace all local Mutables with Atom:**
 ```rust
 // Panel component
 struct PanelState {
-    width: SimpleState<f32>,
-    height: SimpleState<f32>,
-    is_collapsed: SimpleState<bool>,
-    is_hovered: SimpleState<bool>,
+    width: Atom<f32>,
+    height: Atom<f32>,
+    is_collapsed: Atom<bool>,
+    is_hovered: Atom<bool>,
 }
 
 // Dialog component
 struct FileDialogState {
-    is_open: SimpleState<bool>,
-    filter_text: SimpleState<String>,
-    selected_files: SimpleState<Vec<PathBuf>>,
-    current_directory: SimpleState<PathBuf>,
-    error_message: SimpleState<Option<String>>,
+    is_open: Atom<bool>,
+    filter_text: Atom<String>,
+    selected_files: Atom<Vec<PathBuf>>,
+    current_directory: Atom<PathBuf>,
+    error_message: Atom<Option<String>>,
 }
 
 // Search component
 struct SearchState {
-    filter_text: SimpleState<String>,
-    is_focused: SimpleState<bool>,
-    match_count: SimpleState<usize>,
-    selected_index: SimpleState<Option<usize>>,
+    filter_text: Atom<String>,
+    is_focused: Atom<bool>,
+    match_count: Atom<usize>,
+    selected_index: Atom<Option<usize>>,
 }
 
 impl Default for SearchState {
     fn default() -> Self {
         Self {
-            filter_text: SimpleState::new(String::new()),
-            is_focused: SimpleState::new(false),
-            match_count: SimpleState::new(0),
-            selected_index: SimpleState::new(None),
+            filter_text: Atom::new(String::new()),
+            is_focused: Atom::new(false),
+            match_count: Atom::new(0),
+            selected_index: Atom::new(None),
         }
     }
 }
@@ -358,15 +358,15 @@ fn variable_item(
 pub mod relay;              // Relay<T> implementation
 pub mod actor;              // Actor<T> implementation  
 pub mod actor_vec;          // ActorVec<T> implementation
-pub mod actor_btree_map;    // ActorBTreeMap<K,V> implementation
-pub mod simple_state;       // SimpleState<T> implementation
+pub mod actor_map;    // ActorMap<K,V> implementation
+pub mod atom;       // Atom<T> implementation
 
 // Re-exports for easy importing
 pub use relay::Relay;
 pub use actor::Actor;
 pub use actor_vec::ActorVec;
-pub use actor_btree_map::ActorBTreeMap;
-pub use simple_state::SimpleState;
+pub use actor_map::ActorMap;
+pub use atom::Atom;
 
 // Core function for creating relays
 pub fn relay<T>() -> (Relay<T>, impl Stream<Item = T>) {
@@ -378,7 +378,7 @@ pub fn relay<T>() -> (Relay<T>, impl Stream<Item = T>) {
 
 **Usage in Components:**
 ```rust
-use crate::reactive_actors::{Actor, ActorVec, Relay, SimpleState, relay};
+use crate::reactive_actors::{Actor, ActorVec, Relay, Atom, relay};
 
 // Domain struct using Actor+Relay
 struct AppState {

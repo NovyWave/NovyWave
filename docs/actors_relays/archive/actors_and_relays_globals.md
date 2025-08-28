@@ -196,8 +196,8 @@ Events can be sent programmatically for testing scenarios.
 
 ### Phase 1: Core Infrastructure (Week 1)
 - [ ] Implement Actor, Relay, ActorVec base types
-- [ ] Create SimpleState helper for basic local state
-- [ ] Convert critical UI components to use SimpleState
+- [ ] Create Atom helper for basic local state
+- [ ] Convert critical UI components to use Atom
 - [ ] Verify no existing functionality broken
 
 ### Phase 2: File Management Migration (Week 2)
@@ -213,7 +213,7 @@ Events can be sent programmatically for testing scenarios.
 - [ ] Convert config system to type-safe Actor
 
 ### Phase 4: UI State Cleanup (Week 5)
-- [ ] Replace remaining raw Mutables with SimpleState
+- [ ] Replace remaining raw Mutables with Atom
 - [ ] Convert dialog management to unified Actor system
 - [ ] Migrate viewport/scrolling state management
 - [ ] Performance testing and optimization
@@ -239,8 +239,8 @@ static HOVER_STATE: Lazy<Mutable<bool>> = lazy::default();
 
 // GOOD: Local state within component
 fn my_component() -> impl Element {
-    let dialog_state = SimpleState::new(false);
-    let hover_state = SimpleState::new(false);
+    let dialog_state = Atom::new(false);
+    let hover_state = Atom::new(false);
     // Use local state...
 }
 ```

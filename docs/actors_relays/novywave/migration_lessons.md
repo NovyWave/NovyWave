@@ -163,7 +163,7 @@ impl TimelineState {
 
 ### Phase 1: Core Infrastructure (Completed)
 - [x] Implement `Relay<T>` with futures::channel
-- [x] Implement `Actor<T>`, `ActorVec<T>`, `ActorBTreeMap<K,V>`
+- [x] Implement `Actor<T>`, `ActorVec<T>`, `ActorMap<K,V>`
 - [x] Add debug tracing and connection tracking
 - [x] Create unit tests for core functionality
 

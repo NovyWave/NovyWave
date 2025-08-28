@@ -18,7 +18,7 @@ Comprehensive guide for refactoring from traditional MoonZoon patterns to Actor+
 
 ### Phase 1: Core Infrastructure (Week 1)
 - [ ] Implement `Relay<T>` with futures::channel
-- [ ] Implement `Actor<T>`, `ActorVec<T>`, `ActorBTreeMap<K,V>`
+- [ ] Implement `Actor<T>`, `ActorVec<T>`, `ActorMap<K,V>`
 - [ ] Add debug tracing and connection tracking
 - [ ] Create unit tests for core functionality
 
@@ -44,7 +44,7 @@ Comprehensive guide for refactoring from traditional MoonZoon patterns to Actor+
 ## Refactoring Strategy
 
 ### Migration Priority Order
-1. **Start with SimpleState**: Replace local Mutable usage first
+1. **Start with Atom**: Replace local Mutable usage first
 2. **Apply relay()**: Update Actor initialization patterns  
 3. **Remove .get() calls**: Convert to signal-based access
 4. **Local state refactor**: Move from global to local state architecture
@@ -90,7 +90,7 @@ let actor = Actor::new(initial, async move |state| {
 
 **Benefits**: 60% less boilerplate, easier debugging, cleaner error handling
 
-### 2. SimpleState for Eliminating Mutable Usage
+### 2. Atom for Eliminating Mutable Usage
 
 **❌ Inconsistent Mutable usage throughout codebase**
 ```rust
@@ -98,15 +98,15 @@ static DIALOG_OPEN: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
 static LOADING: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
 ```
 
-**✅ Unified SimpleState pattern (Actor+Relay internally)**
+**✅ Unified Atom pattern (Actor+Relay internally)**
 ```rust
 #[derive(Clone, Debug)]
-struct SimpleState<T: Clone + Send + Sync + 'static> {
+struct Atom<T: Clone + Send + Sync + 'static> {
     pub value: Actor<T>,
     pub setter: Relay<T>,
 }
 
-impl<T: Clone + Send + Sync + 'static> SimpleState<T> {
+impl<T: Clone + Send + Sync + 'static> Atom<T> {
     fn new(initial: T) -> Self {
         let (setter, mut setter_stream) = relay();
         
@@ -116,7 +116,7 @@ impl<T: Clone + Send + Sync + 'static> SimpleState<T> {
             }
         });
         
-        SimpleState { value, setter }
+        Atom { value, setter }
     }
     
     // Convenient methods
@@ -125,8 +125,8 @@ impl<T: Clone + Send + Sync + 'static> SimpleState<T> {
 }
 
 struct DialogState {
-    is_open: SimpleState<bool>,
-    is_loading: SimpleState<bool>,
+    is_open: Atom<bool>,
+    is_loading: Atom<bool>,
 }
 ```
 
@@ -258,7 +258,7 @@ let send_trigger_stream = futures::stream::select(
 );
 ```
 
-### 3. Raw Mutable Instead of SimpleState
+### 3. Raw Mutable Instead of Atom
 
 **❌ INCONSISTENT: Raw Mutable scattered throughout**
 ```rust
@@ -266,11 +266,11 @@ static DIALOG_STATE: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
 static FILTER: Lazy<Mutable<String>> = lazy::default();
 ```
 
-**✅ UNIFIED: SimpleState for consistent local state management**
+**✅ UNIFIED: Atom for consistent local state management**
 ```rust
 struct UIState {
-    dialog_open: SimpleState<bool>,
-    filter_text: SimpleState<String>,
+    dialog_open: Atom<bool>,
+    filter_text: Atom<String>,
 }
 ```
 
@@ -348,7 +348,7 @@ struct CounterApp {
     // Flattened state - no unnecessary wrapper structs
     value: Actor<i32>,
     change_by: Relay<i32>,
-    ui_state: SimpleState<bool>,
+    ui_state: Atom<bool>,
 }
 
 impl CounterApp {
@@ -659,7 +659,7 @@ counters.change.send((index, -1));  // Decrement counter at index 5
 ```rust
 // BAD: String ID lookup - O(n) search performance
 struct CounterGrid {
-    values: ActorBTreeMap<String, i32>,  // String lookup overhead
+    values: ActorMap<String, i32>,  // String lookup overhead
     change: Relay<(String, i32)>,        // ID + amount
 }
 ```
@@ -886,7 +886,7 @@ Multiple streams needed?
 ## Best Practices Summary
 
 ### Architecture Fundamentals
-- **All state through Actors**: No raw `Mutable<T>` usage - use `SimpleState` helper for local UI state
+- **All state through Actors**: No raw `Mutable<T>` usage - use `Atom` helper for local UI state
 - **Signal-only state access**: No `.get()` methods - all state access through `.signal()` and signal-based testing
 - **Atomic operations**: Use `state.update()` for modifications, never get-modify-set patterns
 - **Local state by default**: Use struct methods with local state, global only when truly needed
@@ -894,7 +894,7 @@ Multiple streams needed?
 ### Modern Implementation Patterns  
 - **relay()**: Always use instead of clone! macro patterns for cleaner Actor initialization
 - **Imperative stream processing**: Use `while let Some(event) = stream.next().await` instead of `.for_each()` 
-- **SimpleState consistency**: Use Actor+Relay internally for all local UI state (button hover, dialog open/closed)
+- **Atom consistency**: Use Actor+Relay internally for all local UI state (button hover, dialog open/closed)
 - **Unified types**: Single type for similar operations (avoid ColumnControl vs RowControl duplication)
 
 ### Error Handling Strategy
@@ -951,7 +951,7 @@ The Actor/Relay architecture provides **traceability**, **controlled mutations**
 
 1. **Imperative > Functional**: `while let Some(event) = stream.next().await` is cleaner and more debuggable than nested `.for_each()` closures
 2. **Direct Stream Access**: `create_with_stream()` eliminates 60% of boilerplate compared to clone! macro patterns
-3. **Unified State Management**: SimpleState provides consistency for local UI state, Actor for shared state
+3. **Unified State Management**: Atom provides consistency for local UI state, Actor for shared state
 4. **Multi-Stream Coordination**: `join!()` enables true concurrent stream processing vs independent Task::start calls
 
 Start simple, stay atomic, and let the architecture's benefits emerge naturally. The migration can be done incrementally, with each migrated component becoming more testable and maintainable, providing immediate value even before the full migration is complete.

@@ -376,7 +376,7 @@ struct WaveformTimeline {
 struct SignalData {
     /// Core data collections
     viewport_signals: ActorVec<SignalTransition>,    // Visible signal data
-    cursor_values: ActorBTreeMap<String, String>,    // Current cursor values
+    cursor_values: ActorMap<String, String>,    // Current cursor values
     cache_statistics: Actor<CacheStats>,             // Performance metrics
     
     /// Data request events
@@ -393,30 +393,30 @@ struct SignalData {
 
 ### Phase 3: UI & Configuration Systems (Week 3)
 
-#### 3.1 Local UI State Migration (SimpleState Pattern)
+#### 3.1 Local UI State Migration (Atom Pattern)
 
-**Convert all local UI mutables to SimpleState:**
+**Convert all local UI mutables to Atom:**
 ```rust
 /// Panel dimensions - local to each panel component
 struct PanelState {
-    width: SimpleState<f32>,
-    height: SimpleState<f32>,
-    is_collapsed: SimpleState<bool>,
+    width: Atom<f32>,
+    height: Atom<f32>,
+    is_collapsed: Atom<bool>,
 }
 
 /// Dialog state - local to dialog component
 struct FileDialogState {
-    is_open: SimpleState<bool>,
-    filter_text: SimpleState<String>,
-    selected_files: SimpleState<Vec<PathBuf>>,
-    current_directory: SimpleState<PathBuf>,
+    is_open: Atom<bool>,
+    filter_text: Atom<String>,
+    selected_files: Atom<Vec<PathBuf>>,
+    current_directory: Atom<PathBuf>,
 }
 
 /// Search state - local to search component
 struct SearchState {
-    filter_text: SimpleState<String>,
-    is_focused: SimpleState<bool>,
-    match_count: SimpleState<usize>,
+    filter_text: Atom<String>,
+    is_focused: Atom<bool>,
+    match_count: Atom<usize>,
 }
 ```
 
@@ -529,7 +529,7 @@ f11_pressed_relay: Relay,                      // Fullscreen toggle
 2. **Day 4-5**: Create `SignalData` domain, migrate service mutables
 
 ### Week 3: UI & Configuration
-1. **Day 1-2**: Convert all local UI mutables to SimpleState
+1. **Day 1-2**: Convert all local UI mutables to Atom
 2. **Day 3-4**: Create `UserConfiguration` domain
 3. **Day 5**: Final integration, performance testing
 

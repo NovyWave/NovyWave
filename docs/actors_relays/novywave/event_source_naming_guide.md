@@ -245,12 +245,12 @@ struct WaveformTimeline {
 ### UI Panel/Dialog Domain
 
 ```rust
-// Panel state - using SimpleState for local UI
+// Panel state - using Atom for local UI
 struct FileDialogState {
-    is_open: SimpleState<bool>,
-    filter_text: SimpleState<String>,
-    selected_files: SimpleState<Vec<PathBuf>>,
-    current_directory: SimpleState<PathBuf>,
+    is_open: Atom<bool>,
+    filter_text: Atom<String>,
+    selected_files: Atom<Vec<PathBuf>>,
+    current_directory: Atom<PathBuf>,
     
     // ✅ Dialog-specific events (when using Actors)
     open_button_clicked_relay: Relay,              // User clicked Open button
@@ -267,9 +267,9 @@ struct FileDialogState {
 }
 
 struct PanelState {
-    width: SimpleState<f32>,
-    height: SimpleState<f32>,
-    is_collapsed: SimpleState<bool>,
+    width: Atom<f32>,
+    height: Atom<f32>,
+    is_collapsed: Atom<bool>,
     
     // ✅ Panel interaction events (when using Actors)
     resize_handle_dragged_relay: Relay<(f32, f32)>, // User dragged resize handle
