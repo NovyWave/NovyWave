@@ -225,60 +225,6 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 // Clear global error (batch operations successful)
                 crate::FILE_PICKER_ERROR.set_neq(None);
             }
-            DownMsg::SignalValues { file_path, results } => {
-                // DEPRECATED: Legacy signal values handler - should be migrated to UnifiedSignalResponse
-                // This handler exists for backward compatibility during the migration to SignalDataService
-                
-                // Convert old format to cursor values for SignalDataService compatibility
-                let mut cursor_values = std::collections::BTreeMap::new();
-                
-                for result in results {
-                    let unique_id = format!("{}|{}|{}", file_path, result.scope_path, result.variable_name);
-                    
-                    // Check if cursor time is within this variable's file time range
-                    let cursor_time = TIMELINE_CURSOR_NS.get().to_seconds();
-                    let within_time_range = is_cursor_within_variable_time_range(&unique_id, cursor_time);
-                    
-                    // Convert to SignalDataService format (shared::SignalValue, not format_utils::SignalValue)
-                    let signal_value = if within_time_range {
-                        if let Some(raw_binary) = result.raw_value {
-                            shared::SignalValue::Present(raw_binary)
-                        } else {
-                            shared::SignalValue::Missing
-                        }
-                    } else {
-                        shared::SignalValue::Missing
-                    };
-                    
-                    cursor_values.insert(unique_id, signal_value);
-                }
-                
-                // Delegate to SignalDataService for consistent handling
-                // TODO: Remove this legacy handler once all queries use UnifiedSignalRequest
-                if !cursor_values.is_empty() {
-                    // Simulate unified response format for SignalDataService
-                    let fake_request_id = format!("legacy-{}-{}", file_path, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis());
-                    let statistics = shared::SignalStatistics {
-                        total_signals: cursor_values.len(),
-                        cached_signals: 0, // Legacy queries are not cached
-                        query_time_ms: 0,
-                        cache_hit_ratio: 0.0, // No cache hits for legacy queries
-                    };
-                    crate::signal_data_service::SignalDataService::handle_unified_response(
-                        fake_request_id.to_string(), 
-                        Vec::new(), // No signal data in legacy format
-                        cursor_values, 
-                        Some(statistics)
-                    );
-                }
-            }
-            DownMsg::SignalValuesError { file_path, error } => {
-                // DEPRECATED: Legacy signal values error handler - should be migrated to UnifiedSignalError
-                
-                // Delegate to SignalDataService for consistent error handling
-                let fake_request_id = format!("legacy-error-{}-{}", file_path, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis());
-                crate::signal_data_service::SignalDataService::handle_unified_error(fake_request_id.to_string(), error);
-            }
             DownMsg::SignalTransitions { file_path, results } => {
                 crate::debug_utils::debug_signal_transitions(&format!("Received {} transitions for {}", results.len(), file_path));
                 
@@ -288,9 +234,11 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                     
                     // zoon::println!("=== INSERTING TO CACHE: {} with {} transitions ===", cache_key, result.transitions.len());
                     
-                    // Store backend data in cache
-                    crate::waveform_canvas::SIGNAL_TRANSITIONS_CACHE.lock_mut()
-                        .insert(cache_key.clone(), result.transitions);
+                    // Store backend data in unified cache
+                    crate::unified_timeline_service::UnifiedTimelineService::insert_raw_transitions(
+                        cache_key.clone(), 
+                        result.transitions
+                    );
                     
                     // Don't clear processed cache - data hasn't changed, just updated
                     // Processed cache will remain valid for existing time ranges
@@ -316,7 +264,7 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                         );
                         
                         // Check if cursor time is within this variable's file time range
-                        let cursor_time = TIMELINE_CURSOR_NS.get().to_seconds();
+                        let cursor_time = TIMELINE_CURSOR_NS.get().display_seconds();
                         let within_time_range = is_cursor_within_variable_time_range(&unique_id, cursor_time);
                         
                         let signal_value = if within_time_range {
@@ -332,7 +280,7 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                     }
                 }
             }
-            DownMsg::UnifiedSignalResponse { request_id, signal_data, cursor_values, statistics, cached_time_range: _ } => {
+            DownMsg::UnifiedSignalResponse { request_id, signal_data, cursor_values, statistics, cached_time_range_ns: _ } => {
                 // Clone data for dual handling during transition period
                 let request_id_legacy = request_id.clone();
                 let signal_data_legacy = signal_data.clone();
@@ -343,14 +291,24 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 crate::unified_timeline_service::UnifiedTimelineService::handle_unified_response(request_id, signal_data, cursor_values, statistics);
                 
                 // LEGACY: Also handle through old signal data service for compatibility during transition
-                crate::signal_data_service::SignalDataService::handle_unified_response(request_id_legacy, signal_data_legacy, cursor_values_legacy, statistics_legacy);
+                crate::unified_timeline_service::UnifiedTimelineService::handle_unified_response(request_id_legacy, signal_data_legacy, cursor_values_legacy, statistics_legacy);
             }
             DownMsg::UnifiedSignalError { request_id, error } => {
                 // Handle unified signal error through the NEW unified timeline service
                 crate::unified_timeline_service::UnifiedTimelineService::handle_unified_error(request_id.clone(), error.clone());
                 
                 // LEGACY: Also handle through old signal data service for compatibility
-                crate::signal_data_service::SignalDataService::handle_unified_error(request_id, error);
+                crate::unified_timeline_service::UnifiedTimelineService::handle_unified_error(request_id, error);
+            }
+            
+            DownMsg::SignalValues { .. } => {
+                // Handle legacy SignalValues message (deprecated in favor of UnifiedSignalResponse)
+                crate::debug_utils::debug_conditional("Received deprecated SignalValues message");
+            }
+            
+            DownMsg::SignalValuesError { .. } => {
+                // Handle legacy SignalValuesError message (deprecated in favor of UnifiedSignalError)
+                crate::debug_utils::debug_conditional("Received deprecated SignalValuesError message");
             }
         }
     })
@@ -368,8 +326,6 @@ pub fn send_up_msg(up_msg: UpMsg) {
                 // zoon::println!("=== SEND_UP_MSG: Message sent successfully via raw connection ===");
             }
             Err(error) => {
-                zoon::println!("ERROR: Raw connection send error - {:?}", error);
-                
                 // Create and display connection error alert
                 let error_alert = ErrorAlert::new_connection_error(format!("Connection failed: {}", error));
                 add_error_alert(error_alert);

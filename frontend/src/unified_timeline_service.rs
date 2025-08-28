@@ -13,6 +13,12 @@ use crate::connection::send_up_msg;
 use crate::time_types::{TimeNs, Viewport, TimelineCache, CacheRequestType, CacheRequestState};
 use crate::state::UNIFIED_TIMELINE_CACHE;
 
+// ===== DATA STRUCTURES =====
+
+// Re-export shared::UnifiedSignalRequest as SignalRequest for compatibility
+pub use shared::UnifiedSignalRequest as SignalRequest;
+
+
 // ===== PUBLIC API =====
 
 pub struct UnifiedTimelineService;
@@ -28,6 +34,7 @@ impl UnifiedTimelineService {
     }
     
     /// Request viewport data for rendering (decimated transitions)
+    #[allow(dead_code)] // TODO: Used for enhanced viewport data requests
     pub fn request_viewport_data(
         signal_ids: Vec<String>,
         viewport: Viewport,
@@ -76,11 +83,9 @@ impl UnifiedTimelineService {
             
             // Track active request
             cache.active_requests.insert(request_id.clone(), CacheRequestState {
-                request_id: request_id.clone(),
                 requested_signals: cache_misses.clone(),
-                cursor_time: None,
                 viewport: Some(viewport),
-                timestamp_ns: TimeNs::from_seconds(js_sys::Date::now() / 1000.0),
+                timestamp_ns: TimeNs::from_external_seconds(js_sys::Date::now() / 1000.0),
                 request_type: CacheRequestType::ViewportData,
             });
             
@@ -93,7 +98,7 @@ impl UnifiedTimelineService {
                         file_path: parts[0].to_string(),
                         scope_path: parts[1].to_string(),
                         variable_name: parts[2].to_string(),
-                        time_range: Some((viewport.start.to_seconds(), viewport.end.to_seconds())),
+                        time_range_ns: Some((viewport.start.nanos(), viewport.end.nanos())),
                         max_transitions: Some(10000), // Decimation limit
                         format: shared::VarFormat::Binary, // Default format
                     }
@@ -104,7 +109,7 @@ impl UnifiedTimelineService {
             
             send_up_msg(UpMsg::UnifiedSignalQuery {
                 signal_requests: backend_requests,
-                cursor_time: None,
+                cursor_time_ns: None,
                 request_id,
             });
         }
@@ -153,11 +158,9 @@ impl UnifiedTimelineService {
             let request_id = Self::generate_request_id();
             
             cache.active_requests.insert(request_id.clone(), CacheRequestState {
-                request_id: request_id.clone(),
                 requested_signals: cache_misses.clone(),
-                cursor_time: Some(cursor_time),
                 viewport: None,
-                timestamp_ns: TimeNs::from_seconds(js_sys::Date::now() / 1000.0),
+                timestamp_ns: TimeNs::from_external_seconds(js_sys::Date::now() / 1000.0),
                 request_type: CacheRequestType::CursorValues,
             });
             
@@ -169,7 +172,7 @@ impl UnifiedTimelineService {
                         file_path: parts[0].to_string(),
                         scope_path: parts[1].to_string(),
                         variable_name: parts[2].to_string(),
-                        time_range: None, // Point query, not range
+                        time_range_ns: None, // Point query, not range
                         max_transitions: None,
                         format: shared::VarFormat::Binary,
                     }
@@ -180,7 +183,7 @@ impl UnifiedTimelineService {
             
             send_up_msg(UpMsg::UnifiedSignalQuery {
                 signal_requests: backend_requests,
-                cursor_time: Some(cursor_time.to_seconds()),
+                cursor_time_ns: Some(cursor_time.nanos()),
                 request_id,
             });
         }
@@ -198,7 +201,6 @@ impl UnifiedTimelineService {
                 
                 // Check cursor value cache first
                 if let Some(cached_value) = cache.get_cursor_value(&signal_id_cloned) {
-                    zoon::println!("🎯 CURSOR: Cache hit for {}", signal_id_cloned);
                     match cached_value {
                         SignalValue::Present(data) => data.clone(),
                         SignalValue::Missing => "N/A".to_string(),
@@ -206,25 +208,21 @@ impl UnifiedTimelineService {
                 }
                 // Then check if we can interpolate from raw transitions
                 else if let Some(transitions) = cache.get_raw_transitions(&signal_id_cloned) {
-                    zoon::println!("🔄 CURSOR: Interpolating from {} transitions for {}", transitions.len(), signal_id_cloned);
                     if let Some(interpolated) = Self::interpolate_cursor_value(transitions, *cursor_ns) {
                         match interpolated {
                             SignalValue::Present(data) => data,
                             SignalValue::Missing => "N/A".to_string(),
                         }
                     } else {
-                        zoon::println!("❌ CURSOR: Interpolation failed for {}", signal_id_cloned);
                         "N/A".to_string()
                     }
                 }
                 // Check for pending request
                 else if Self::has_pending_request(&cache, &signal_id_cloned, CacheRequestType::CursorValues) {
-                    zoon::println!("⏳ CURSOR: Pending request for {}", signal_id_cloned);
                     "Loading...".to_string()
                 }
                 // No data available - trigger request for cursor values
                 else {
-                    zoon::println!("🚀 CURSOR: Triggering new request for {}", signal_id_cloned);
                     // Trigger async request for cursor values outside viewport
                     let signal_ids = vec![signal_id_cloned.clone()];
                     let cursor_time = *cursor_ns;
@@ -244,7 +242,6 @@ impl UnifiedTimelineService {
         cursor_values: std::collections::BTreeMap<String, SignalValue>,
         statistics: Option<shared::SignalStatistics>,
     ) {
-        zoon::println!("📦 UNIFIED: Received response - {} signals, {} cursor values", signal_data.len(), cursor_values.len());
         let mut cache = UNIFIED_TIMELINE_CACHE.lock_mut();
         
         // Get request info first to avoid borrow conflicts
@@ -261,7 +258,7 @@ impl UnifiedTimelineService {
                     let viewport_data = crate::time_types::ViewportSignalData {
                         transitions: raw_transitions,
                         viewport: request.viewport.unwrap_or(cache.metadata.current_viewport),
-                        last_updated_ns: TimeNs::from_seconds(js_sys::Date::now() / 1000.0),
+                        last_updated_ns: TimeNs::from_external_seconds(js_sys::Date::now() / 1000.0),
                         total_source_transitions: signal.total_transitions,
                     };
                     cache.viewport_data.insert(signal.unique_id, viewport_data);
@@ -291,10 +288,50 @@ impl UnifiedTimelineService {
     }
     
     /// Clear all cache data (for app restart)
+    #[allow(dead_code)] // TODO: Used for cache reset operations
     pub fn clear_all_caches() {
         let mut cache = UNIFIED_TIMELINE_CACHE.lock_mut();
         *cache = TimelineCache::new();
     }
+    
+    /// Get raw transitions for a signal (public accessor for compatibility)
+    pub fn get_raw_transitions(signal_id: &str) -> Option<Vec<shared::SignalTransition>> {
+        let cache = UNIFIED_TIMELINE_CACHE.lock_ref();
+        cache.raw_transitions.get(signal_id).cloned()
+    }
+    
+    /// Insert raw transitions (public accessor for backend data)
+    pub fn insert_raw_transitions(signal_id: String, transitions: Vec<shared::SignalTransition>) {
+        let mut cache = UNIFIED_TIMELINE_CACHE.lock_mut();
+        cache.raw_transitions.insert(signal_id, transitions);
+    }
+    
+    /// Get signal for cache changes (public accessor for reactivity)
+    pub fn cache_signal() -> impl Signal<Item = ()> + use<> {
+        UNIFIED_TIMELINE_CACHE.signal_ref(|_| ())
+    }
+    
+    /// Clean up data for specific variables (for compatibility with legacy API)
+    pub fn cleanup_variables(removed_signal_ids: &[String]) {
+        if removed_signal_ids.is_empty() {
+            return;
+        }
+        
+        let mut cache = UNIFIED_TIMELINE_CACHE.lock_mut();
+        
+        // Remove viewport data for removed variables
+        for signal_id in removed_signal_ids {
+            cache.viewport_data.remove(signal_id);
+            cache.cursor_values.remove(signal_id);
+            cache.raw_transitions.remove(signal_id);
+        }
+        
+        // Remove any active requests for these variables
+        cache.active_requests.retain(|_, request| {
+            !request.requested_signals.iter().any(|id| removed_signal_ids.contains(id))
+        });
+    }
+    
     
     // ===== PRIVATE HELPERS =====
     
@@ -313,9 +350,9 @@ impl UnifiedTimelineService {
             return false;
         }
         
-        let cursor_seconds = cursor_time.to_seconds();
-        let first_time = transitions[0].time_seconds;
-        let last_time = transitions[transitions.len() - 1].time_seconds;
+        let cursor_seconds = cursor_time.display_seconds();
+        let first_time = transitions[0].time_ns as f64 / 1_000_000_000.0;
+        let last_time = transitions[transitions.len() - 1].time_ns as f64 / 1_000_000_000.0;
         
         cursor_seconds >= first_time && cursor_seconds <= last_time
     }
@@ -325,11 +362,11 @@ impl UnifiedTimelineService {
             return None;
         }
         
-        let cursor_seconds = cursor_time.to_seconds();
+        let cursor_seconds = cursor_time.display_seconds();
         
         // Find the most recent transition at or before cursor time
         for transition in transitions.iter().rev() {
-            if transition.time_seconds <= cursor_seconds {
+            if transition.time_ns as f64 / 1_000_000_000.0 <= cursor_seconds {
                 return Some(SignalValue::Present(transition.value.clone()));
             }
         }
@@ -355,8 +392,8 @@ impl UnifiedTimelineService {
     
     fn cleanup_old_requests() {
         let mut cache = UNIFIED_TIMELINE_CACHE.lock_mut();
-        let now = TimeNs::from_seconds(js_sys::Date::now() / 1000.0);
-        let cutoff_threshold = crate::time_types::DurationNs::from_seconds(10.0); // 10 seconds
+        let now = TimeNs::from_external_seconds(js_sys::Date::now() / 1000.0);
+        let cutoff_threshold = crate::time_types::DurationNs::from_external_seconds(10.0); // 10 seconds
         
         cache.active_requests.retain(|_, request| {
             now.duration_since(request.timestamp_ns) < cutoff_threshold

@@ -21,7 +21,7 @@ use crate::{
     FILE_PICKER_ERROR, FILE_PICKER_ERROR_CACHE, FILE_TREE_CACHE, DOCK_TOGGLE_IN_PROGRESS,
     TRACKED_FILES, state, clipboard
 };
-use crate::state::TIMELINE_ZOOM_LEVEL;
+use crate::state::TIMELINE_NS_PER_PIXEL;
 use crate::state::SELECTED_VARIABLES_ROW_HEIGHT;
 use crate::state::{SELECTED_VARIABLES, clear_selected_variables, remove_selected_variable};
 use crate::format_utils::truncate_value;
@@ -727,44 +727,23 @@ pub fn compute_value_from_cached_transitions(
         // Cache lookup debug logging removed to prevent event loop blocking
     }
     
-    let cache = crate::waveform_canvas::SIGNAL_TRANSITIONS_CACHE.lock_ref();
-    
-    // First, try the exact cache key
-    if let Some(transitions) = cache.get(&cache_key) {
+    // First, try the exact cache key from unified service
+    if let Some(transitions) = crate::unified_timeline_service::UnifiedTimelineService::get_raw_transitions(&cache_key) {
         if file_path.ends_with(".fst") && variable_name == "clk" {
             // Debug logging removed to prevent event loop blocking
         }
-        return compute_value_from_transitions(transitions, time_seconds, file_path);
+        return compute_value_from_transitions(&transitions, time_seconds, file_path);
     }
     
     // If no exact match, try alternative key formats for robustness
     if file_path.ends_with(".fst") && variable_name == "clk" {
         // Alternative key lookup debug logging removed to prevent event loop blocking
         
-        // List all cache keys for FST files
-        for (key, _) in cache.iter() {
-            if key.contains(".fst") {
-                // Debug logging removed to prevent event loop blocking
-            }
-        }
+        // Debug: FST file keys - removed since cache iteration not available
     }
     
-    // List all cache keys that start with this file_path
-    for (key, transitions) in cache.iter() {
-        if key.starts_with(file_path) && key.contains(variable_name) {
-            if file_path.ends_with(".fst") && variable_name == "clk" {
-                // Debug logging removed to prevent event loop blocking
-            }
-            // If this looks like the same variable but different scope format, use it
-            let key_parts: Vec<&str> = key.split('|').collect();
-            if key_parts.len() == 3 && key_parts[2] == variable_name {
-                if file_path.ends_with(".fst") && variable_name == "clk" {
-                    // Debug logging removed to prevent event loop blocking
-                }
-                return compute_value_from_transitions(transitions, time_seconds, file_path);
-            }
-        }
-    }
+    // Debug: Alternative cache key lookup with fallback formats - removed since cache iteration not available
+    // (This was fallback logic for finding similar variables with different scope formats)
     
     if file_path.ends_with(".fst") && variable_name == "clk" {
         // Debug logging removed to prevent event loop blocking
@@ -783,7 +762,7 @@ fn compute_value_from_transitions(
     // Check if time exceeds file boundaries - return missing if so
     let loaded_files = LOADED_FILES.lock_ref();
     if let Some(loaded_file) = loaded_files.iter().find(|f| f.id == file_path) {
-        if let Some(max_time) = loaded_file.max_time {
+        if let Some(max_time) = loaded_file.max_time_ns.map(|ns| ns as f64 / 1_000_000_000.0) {
             if time_seconds > max_time {
                 // Debug logging removed to prevent event loop blocking
                 return Some(shared::SignalValue::Missing); // No data beyond file boundaries
@@ -796,9 +775,9 @@ fn compute_value_from_transitions(
     let mut last_transition_time = None;
     
     for transition in transitions {
-        if transition.time_seconds <= time_seconds {
+        if transition.time_ns as f64 / 1_000_000_000.0 <= time_seconds {
             current_value = Some(transition.value.clone());
-            last_transition_time = Some(transition.time_seconds);
+            last_transition_time = Some(transition.time_ns as f64 / 1_000_000_000.0);
         } else {
             break; // Transitions should be sorted by time
         }
@@ -812,7 +791,7 @@ fn compute_value_from_transitions(
         let min_gap = if transitions.len() > 1 {
             let mut min = f64::MAX;
             for i in 1..transitions.len() {
-                let gap = transitions[i].time_seconds - transitions[i-1].time_seconds;
+                let gap = transitions[i].time_ns as f64 / 1_000_000_000.0 - transitions[i-1].time_ns as f64 / 1_000_000_000.0;
                 if gap > 0.0 {
                     min = min.min(gap);
                 }
@@ -863,7 +842,7 @@ pub fn is_cursor_within_variable_time_range(unique_id: &str, cursor_time: f64) -
     // Find the loaded file and check its time range
     let loaded_files = LOADED_FILES.lock_ref();
     if let Some(loaded_file) = loaded_files.iter().find(|f| f.id == file_path) {
-        if let (Some(min_time), Some(max_time)) = (loaded_file.min_time, loaded_file.max_time) {
+        if let (Some(min_time), Some(max_time)) = (loaded_file.min_time_ns.map(|ns| ns as f64 / 1_000_000_000.0), loaded_file.max_time_ns.map(|ns| ns as f64 / 1_000_000_000.0)) {
             // Check if cursor time is within the file's time range
             cursor_time >= min_time && cursor_time <= max_time
         } else {
@@ -1004,17 +983,19 @@ fn request_single_variable_value(unique_id: &str, cursor_time: f64) {
     let variable_name = parts[2];
     
     // Use SignalDataService for proper deduplication and coordination
-    let request = crate::signal_data_service::SignalRequest {
+    let request = crate::unified_timeline_service::SignalRequest {
         file_path: file_path.to_string(),
         scope_path: scope_path.to_string(),
         variable_name: variable_name.to_string(),
-        time_range: Some((cursor_time - 0.1, cursor_time + 0.1)), // Small range around cursor
+        time_range_ns: Some((((cursor_time - 0.1) * 1_000_000_000.0) as u64, ((cursor_time + 0.1) * 1_000_000_000.0) as u64)), // Small range around cursor
         max_transitions: Some(50), // Minimal transitions for cursor value
         format: shared::VarFormat::Binary, // Default format
     };
     
-    // Use high priority since this is a targeted cursor value request
-    crate::signal_data_service::SignalDataService::request_signal_data(vec![request], Some(cursor_time), true);
+    // Convert to signal ID and request cursor value
+    let signal_id = format!("{}|{}|{}", request.file_path, request.scope_path, request.variable_name);
+    let cursor_time_ns = crate::time_types::TimeNs::from_nanos((cursor_time * 1_000_000_000.0) as u64);
+    crate::unified_timeline_service::UnifiedTimelineService::request_cursor_values(vec![signal_id], cursor_time_ns);
 }
 
 /// Update signal values in UI from cached or backend results
@@ -1065,12 +1046,12 @@ pub fn trigger_signal_value_queries() {
     
     // Query at current timeline cursor position with range check
     let cursor_ns = crate::state::TIMELINE_CURSOR_NS.get();
-    let cursor_pos = cursor_ns.to_seconds();
+    let cursor_pos = cursor_ns.display_seconds();
     
     // Check if cursor is within visible timeline range
     let viewport = crate::state::TIMELINE_VIEWPORT.get();
-    let start = viewport.start.to_seconds();
-    let end = viewport.end.to_seconds();
+    let start = viewport.start.display_seconds();
+    let end = viewport.end.display_seconds();
     
     if cursor_pos >= start && cursor_pos <= end {
         // Cursor in visible range - use cached transition data (fast path)
@@ -1087,11 +1068,12 @@ pub fn trigger_signal_value_queries() {
         let mut _cache_hits = 0;
         let mut _cache_misses = 0;
         
-        let transitions_cache = crate::waveform_canvas::SIGNAL_TRANSITIONS_CACHE.lock_ref();
+        // Check if unified cache has any data - use a dummy lookup
+        let cache_has_data = crate::unified_timeline_service::UnifiedTimelineService::get_raw_transitions("dummy")
+            .is_some() || !crate::state::LOADED_FILES.lock_ref().is_empty();
         
         // If cache is empty, set Loading states and fall back to slow path immediately
-        if transitions_cache.is_empty() {
-            drop(transitions_cache);
+        if !cache_has_data {
             
             // Set Loading states for all selected variables before slow path
             let mut loading_values = crate::state::SIGNAL_VALUES.get_cloned();
@@ -1114,11 +1096,11 @@ pub fn trigger_signal_value_queries() {
                 continue;
             }
             
-            if let Some(signal_transitions) = transitions_cache.get(&selected_var.unique_id) {
+            if let Some(signal_transitions) = crate::unified_timeline_service::UnifiedTimelineService::get_raw_transitions(&selected_var.unique_id) {
                 // Find the most recent transition at or before the given time
                 let mut found = false;
                 for transition in signal_transitions.iter().rev() {
-                    if transition.time_seconds <= cursor_pos {
+                    if transition.time_ns as f64 / 1_000_000_000.0 <= cursor_pos {
                         let signal_value = crate::format_utils::SignalValue::from_data(transition.value.clone());
                         new_values.insert(selected_var.unique_id.clone(), signal_value);
                         any_updated = true;
@@ -1633,9 +1615,9 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                                             .s(Font::new().color_signal(neutral_11()).center())
                                                                             .child(
                                                                                 Text::with_signal(
-                                                                                    TIMELINE_ZOOM_LEVEL.signal().map(|zoom| {
-                                                                                        // Use ZoomLevel's built-in Display formatting
-                                                                                        format!("{}", zoom)
+                                                                                    TIMELINE_NS_PER_PIXEL.signal().map(|ns_per_pixel| {
+                                                                                        // Use NsPerPixel's built-in Display formatting
+                                                                                        format!("{}", ns_per_pixel)
                                                                                     })
                                                                                 )
                                                                             )
@@ -1752,7 +1734,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                                             .child(
                                                                                 Text::with_signal(
                                                                                     crate::state::TIMELINE_CURSOR_NS.signal().map(|cursor_ns| {
-                                                                                        let cursor_pos = cursor_ns.to_seconds();
+                                                                                        let cursor_pos = cursor_ns.display_seconds();
                                                                                         // Use proper time formatting with appropriate units instead of rounding to seconds
                                                                                         if !cursor_pos.is_finite() || cursor_pos < 0.0 {
                                                                                             "0s".to_string()
@@ -2059,7 +2041,7 @@ fn get_file_timeline_info(file_path: &str, _waveform_file: &shared::WaveformFile
     let loaded_files = LOADED_FILES.lock_ref();
     
     let (min_time_f64, max_time_f64, unit) = if let Some(loaded_file) = loaded_files.iter().find(|f| f.id == file_path) {
-        if let (Some(min_time), Some(max_time)) = (loaded_file.min_time, loaded_file.max_time) {
+        if let (Some(min_time), Some(max_time)) = (loaded_file.min_time_ns.map(|ns| ns as f64 / 1_000_000_000.0), loaded_file.max_time_ns.map(|ns| ns as f64 / 1_000_000_000.0)) {
             // Determine appropriate time unit based on time range magnitude
             let time_range = max_time - min_time;
             

@@ -2,7 +2,7 @@ use zoon::*;
 use std::collections::HashMap;
 use indexmap::{IndexMap, IndexSet};
 use shared::{WaveformFile, LoadingFile, FileSystemItem, TrackedFile, FileState, create_tracked_file};
-use crate::time_types::{TimeNs, Viewport, ZoomLevel, TimelineCache};
+use crate::time_types::{TimeNs, Viewport, NsPerPixel, TimelineCache, TimelineCoordinates};
 // Using simpler queue approach with MutableVec
 
 // ===== STABLE SIGNAL HELPERS =====
@@ -238,12 +238,23 @@ pub static TIMELINE_CURSOR_NS: Lazy<Mutable<TimeNs>> = Lazy::new(|| Mutable::new
 pub static TIMELINE_VIEWPORT: Lazy<Mutable<Viewport>> = Lazy::new(|| {
     Mutable::new(Viewport::new(
         TimeNs::ZERO,
-        TimeNs::from_seconds(100.0) // Default 100 second range
+TimeNs::from_external_seconds(100.0) // Default 100 second range
     ))
 });
 
-// Timeline zoom level (as percentage: 100 = 1x, 200 = 2x, etc.)
-pub static TIMELINE_ZOOM_LEVEL: Lazy<Mutable<ZoomLevel>> = Lazy::new(|| Mutable::new(ZoomLevel::NORMAL));
+// Timeline resolution (nanoseconds per pixel - replaces zoom percentage)
+pub static TIMELINE_NS_PER_PIXEL: Lazy<Mutable<NsPerPixel>> = Lazy::new(|| Mutable::new(NsPerPixel::MEDIUM_ZOOM));
+
+/// Unified timeline coordinates - replaces floating-point coordinate conversions
+/// Provides pure integer coordinate system for all timeline operations
+pub static TIMELINE_COORDINATES: Lazy<Mutable<TimelineCoordinates>> = Lazy::new(|| {
+    Mutable::new(TimelineCoordinates::new(
+        TimeNs::ZERO,                    // cursor_ns
+        TimeNs::ZERO,                    // viewport_start_ns
+        NsPerPixel::MEDIUM_ZOOM,         // ns_per_pixel
+        800                              // canvas_width_pixels (initial value)
+    ))
+});
 
 /// Unified timeline cache - replaces 4 separate cache systems
 /// Contains viewport data, cursor values, raw transitions, and request deduplication

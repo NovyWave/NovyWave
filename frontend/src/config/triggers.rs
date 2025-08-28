@@ -1,6 +1,6 @@
 use crate::config::config_store;
 use crate::state::*;
-use crate::time_types::ZoomLevel;
+use crate::time_types::NsPerPixel;
 use crate::platform::{Platform, CurrentPlatform};
 use shared::{UpMsg, DockMode, FileState, create_tracked_file};
 use indexmap::IndexSet;
@@ -154,28 +154,21 @@ fn sync_panel_layout_from_config() {
 fn sync_timeline_from_config() {
     let workspace = config_store().workspace.lock_ref();
     
-    // Timeline cursor position with NaN validation
+    // Timeline cursor position - already TimeNs, no conversion needed
     let cursor_pos = workspace.timeline_cursor_position.get();
-    if cursor_pos.is_finite() {
-        TIMELINE_CURSOR_NS.set_neq(crate::time_types::TimeNs::from_seconds(cursor_pos));
-    }
+    TIMELINE_CURSOR_NS.set_neq(cursor_pos);
     
     // Timeline zoom level with validation  
     let zoom_level = workspace.timeline_zoom_level.get();
     if zoom_level.is_finite() && zoom_level > 0.0 {
-        TIMELINE_ZOOM_LEVEL.set_neq(ZoomLevel::from_factor(zoom_level));
+        TIMELINE_NS_PER_PIXEL.set_neq(NsPerPixel::MEDIUM_ZOOM.zoom_in_smooth((1.0 - zoom_level) as f64));
     }
     
-    // Timeline visible range with validation
+    // Timeline visible range - already TimeNs, no conversion needed
     let range_start = workspace.timeline_visible_range_start.get();
     let range_end = workspace.timeline_visible_range_end.get();
-    if range_start.is_finite() && range_end.is_finite() {
-        let viewport = crate::time_types::Viewport::new(
-            crate::time_types::TimeNs::from_seconds(range_start),
-            crate::time_types::TimeNs::from_seconds(range_end)
-        );
-        TIMELINE_VIEWPORT.set_neq(viewport);
-    }
+    let viewport = crate::time_types::Viewport::new(range_start, range_end);
+    TIMELINE_VIEWPORT.set_neq(viewport);
 }
 
 /// One-shot session UI state sync

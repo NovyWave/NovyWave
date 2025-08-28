@@ -39,8 +39,6 @@ use state::*;
 use state::VARIABLES_SEARCH_INPUT_FOCUSED;
 pub use state::CONFIG_INITIALIZATION_COMPLETE;
 
-mod signal_data_service;
-use signal_data_service::*;
 
 mod unified_timeline_service;
 use unified_timeline_service::*;
@@ -68,7 +66,7 @@ fn init_timeline_signal_handlers() {
         
         // Monitor timeline cursor position changes with intelligent debouncing
         crate::state::TIMELINE_CURSOR_NS.signal().for_each_sync(move |cursor_ns| {
-            let cursor_pos = cursor_ns.to_seconds();
+            let cursor_pos = cursor_ns.display_seconds();
             let last_position_clone = last_position.clone();
             let last_request_time_clone = last_request_time.clone();
             
@@ -97,7 +95,7 @@ fn init_timeline_signal_handlers() {
                     if !selected_vars.is_empty() {
                         
                         // Create signal requests for direct SignalDataService call
-                        let signal_requests: Vec<crate::signal_data_service::SignalRequest> = selected_vars
+                        let signal_requests: Vec<crate::unified_timeline_service::SignalRequest> = selected_vars
                             .iter()
                             .filter_map(|var| {
                                 // Parse unique_id: "/path/file.ext|scope|variable"
@@ -106,11 +104,11 @@ fn init_timeline_signal_handlers() {
                                     return None;
                                 }
                                 
-                                Some(crate::signal_data_service::SignalRequest {
+                                Some(crate::unified_timeline_service::SignalRequest {
                                     file_path: parts[0].to_string(),
                                     scope_path: parts[1].to_string(),  
                                     variable_name: parts[2].to_string(),
-                                    time_range: None, // Point query for cursor position
+                                    time_range_ns: None, // Point query for cursor position
                                     max_transitions: None, // Use service defaults
                                     format: var.formatter.unwrap_or_default(), // Use VarFormat default
                                 })
@@ -119,12 +117,12 @@ fn init_timeline_signal_handlers() {
                         
                         if !signal_requests.is_empty() {
                             
-                            // Direct call to SignalDataService
-                            crate::signal_data_service::SignalDataService::request_signal_data(
-                                signal_requests,
-                                Some(cursor_pos), // Cursor time for point queries
-                                true // High priority for timeline cursor requests
-                            );
+                            // Convert to signal IDs and request cursor values
+                            let signal_ids: Vec<String> = signal_requests.iter()
+                                .map(|req| format!("{}|{}|{}", req.file_path, req.scope_path, req.variable_name))
+                                .collect();
+                            let cursor_time_ns = crate::time_types::TimeNs::from_nanos((cursor_pos * 1_000_000_000.0) as u64);
+                            crate::unified_timeline_service::UnifiedTimelineService::request_cursor_values(signal_ids, cursor_time_ns);
                             
                             // Update last request time
                             last_request_time_clone.set(current_time);
@@ -167,7 +165,7 @@ fn init_selected_variables_signal_service_bridge() {
                 
                 if current_count == 0 && previous_count > 0 {
                     // All variables were removed - clean up SignalDataService cache
-                    crate::signal_data_service::SignalDataService::clear_all_caches();
+                    crate::unified_timeline_service::UnifiedTimelineService::clear_all_caches();
                 } else if current_count > 0 {
                     // Identify removed variables for targeted cleanup
                     let previous_ids: std::collections::HashSet<String> = previous_state
@@ -193,15 +191,15 @@ fn init_selected_variables_signal_service_bridge() {
                         .collect();
                     
                     if !removed_ids.is_empty() {
-                        crate::signal_data_service::SignalDataService::cleanup_variables(&removed_ids);
+                        crate::unified_timeline_service::UnifiedTimelineService::cleanup_variables(&removed_ids);
                     }
                     
                     if !added_ids.is_empty() || (!removed_ids.is_empty() && current_count > 0) {
                         // Variables were added OR some removed but others remain - request data for current variables
-                        let current_cursor = TIMELINE_CURSOR_NS.get().to_seconds();
+                        let current_cursor = TIMELINE_CURSOR_NS.get().display_seconds();
                         
                         // Create signal requests for all currently selected variables  
-                        let signal_requests: Vec<crate::signal_data_service::SignalRequest> = current_vars
+                        let signal_requests: Vec<crate::unified_timeline_service::SignalRequest> = current_vars
                             .iter()
                             .filter_map(|var| {
                                 // Parse unique_id: "/path/file.ext|scope|variable"
@@ -210,11 +208,11 @@ fn init_selected_variables_signal_service_bridge() {
                                     return None;
                                 }
                                 
-                                Some(crate::signal_data_service::SignalRequest {
+                                Some(crate::unified_timeline_service::SignalRequest {
                                     file_path: parts[0].to_string(),
                                     scope_path: parts[1].to_string(),  
                                     variable_name: parts[2].to_string(),
-                                    time_range: None, // Point query at current cursor position
+                                    time_range_ns: None, // Point query at current cursor position
                                     max_transitions: None, // Use service defaults
                                     format: var.formatter.unwrap_or_default(), // Use VarFormat default
                                 })
@@ -225,12 +223,12 @@ fn init_selected_variables_signal_service_bridge() {
                             if !added_ids.is_empty() {
                             }
                             
-                            // Register variables with SignalDataService and immediately request their data
-                            crate::signal_data_service::SignalDataService::request_signal_data(
-                                signal_requests,
-                                Some(current_cursor), // Request data at current cursor position
-                                false // Normal priority for variable selection changes
-                            );
+                            // Convert to signal IDs and request cursor values  
+                            let signal_ids: Vec<String> = signal_requests.iter()
+                                .map(|req| format!("{}|{}|{}", req.file_path, req.scope_path, req.variable_name))
+                                .collect();
+                            let cursor_time_ns = crate::time_types::TimeNs::from_nanos((current_cursor * 1_000_000_000.0) as u64);
+                            crate::unified_timeline_service::UnifiedTimelineService::request_cursor_values(signal_ids, cursor_time_ns);
                         } else {
                         }
                     }
@@ -267,10 +265,7 @@ pub fn main() {
         // Initialize error display system
         init_error_display_system();
         
-        // Initialize unified signal data service
-        initialize_signal_data_service();
-        
-        // Initialize NEW unified timeline service with integer time architecture
+        // Initialize unified timeline service with integer time architecture
         initialize_unified_timeline_service();
         
         init_connection();
@@ -358,7 +353,7 @@ pub fn main() {
             let last_position = Mutable::new(0.0);
             
             crate::state::TIMELINE_CURSOR_NS.signal().for_each_sync(move |cursor_ns| {
-                let cursor_pos = cursor_ns.to_seconds();
+                let cursor_pos = cursor_ns.display_seconds();
                 let is_moving = crate::state::IS_CURSOR_MOVING_LEFT.get() || crate::state::IS_CURSOR_MOVING_RIGHT.get();
                 
                 // Only query for direct position changes (not during Q/E movement)
@@ -378,7 +373,7 @@ pub fn main() {
 /// Check if cursor is within the currently visible timeline range
 pub fn is_cursor_in_visible_range(cursor_time: f64) -> bool {
     let viewport = crate::state::TIMELINE_VIEWPORT.get();
-    let cursor_ns = crate::time_types::TimeNs::from_seconds(cursor_time);
+    let cursor_ns = crate::time_types::TimeNs::from_nanos((cursor_time * 1_000_000_000.0) as u64);
     viewport.contains(cursor_ns)
 }
 
@@ -476,7 +471,7 @@ async fn load_and_register_fonts() {
 /// Complete application initialization with proper phases to fix N/A bug
 async fn initialize_complete_app_flow() {
     // Phase 1: Clear all caches to ensure fresh start
-    SignalDataService::clear_all_caches();
+    UnifiedTimelineService::clear_all_caches();
     
     // Phase 2: Load restored files from config (if any)
     let config_store = config_store();
@@ -811,4 +806,3 @@ fn docked_layout_wrapper() -> impl Element {
             }
         }))
 }
-

@@ -3,6 +3,9 @@ use std::collections::{HashMap, BTreeMap};
 use std::str::FromStr;
 use convert_base;
 
+// ===== TIME TYPES =====
+
+
 // ===== MESSAGE TYPES =====
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -24,12 +27,12 @@ pub enum UpMsg {
     QuerySignalTransitions {
         file_path: String,
         signal_queries: Vec<SignalTransitionQuery>,
-        time_range: (f64, f64),
+        time_range: (u64, u64),
     },
     /// Unified signal data query - serves both timeline and cursor value needs
     UnifiedSignalQuery {
         signal_requests: Vec<UnifiedSignalRequest>,
-        cursor_time: Option<f64>,
+        cursor_time_ns: Option<u64>,
         request_id: String, // For deduplication and tracking
     },
 }
@@ -71,7 +74,7 @@ pub enum DownMsg {
         request_id: String,
         signal_data: Vec<UnifiedSignalData>,
         cursor_values: BTreeMap<String, SignalValue>,
-        cached_time_range: Option<(f64, f64)>, // What's available in backend cache
+        cached_time_range_ns: Option<(u64, u64)>, // What's available in backend cache
         statistics: Option<SignalStatistics>,
     },
     UnifiedSignalError {
@@ -219,8 +222,19 @@ pub struct SignalTransitionResult {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SignalTransition {
-    pub time_seconds: f64,
+    pub time_ns: u64,
     pub value: String,
+    
+}
+
+impl SignalTransition {
+    /// Create new signal transition with nanosecond precision
+    pub fn new(time_ns: u64, value: String) -> Self {
+        Self {
+            time_ns,
+            value,
+        }
+    }
 }
 
 // ===== UNIFIED SIGNAL QUERY TYPES =====
@@ -231,7 +245,7 @@ pub struct UnifiedSignalRequest {
     pub file_path: String,
     pub scope_path: String,
     pub variable_name: String,
-    pub time_range: Option<(f64, f64)>, // None = all available data
+    pub time_range_ns: Option<(u64, u64)>, // None = all available data
     pub max_transitions: Option<usize>, // For downsampling large datasets
     pub format: VarFormat,
 }
@@ -245,7 +259,7 @@ pub struct UnifiedSignalData {
     pub unique_id: String, // Computed unique identifier
     pub transitions: Vec<SignalTransition>,
     pub total_transitions: usize, // Before any downsampling
-    pub actual_time_range: Option<(f64, f64)>, // Actual data boundaries
+    pub actual_time_range_ns: Option<(u64, u64)>, // Actual data boundaries
 }
 
 /// Statistics about signals for performance optimization
@@ -299,9 +313,11 @@ pub struct WaveformFile {
     pub filename: String,
     pub format: FileFormat,
     pub scopes: Vec<ScopeData>,
-    pub min_time: Option<f64>,
-    pub max_time: Option<f64>,
+    pub min_time_ns: Option<u64>,
+    pub max_time_ns: Option<u64>,
+    
 }
+
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum FileFormat {
@@ -1008,9 +1024,10 @@ fn default_toast_dismiss_ms() -> u64 {
     10000 // Default 10 seconds
 }
 
-fn default_timeline_cursor_position() -> f64 {
-    10.0 // Default timeline cursor position in seconds
+fn default_timeline_cursor_position_ns() -> u64 {
+    10_000_000_000 // Default timeline cursor position: 10 seconds in nanoseconds
 }
+
 
 fn default_timeline_zoom_level() -> f32 {
     1.0 // Default zoom level (1.0 = normal, no zoom)
@@ -1058,14 +1075,20 @@ pub struct WorkspaceSection {
     pub variables_search_filter: String,
     #[serde(default)]
     pub selected_variables: Vec<SelectedVariable>,
-    #[serde(default = "default_timeline_cursor_position")]
-    pub timeline_cursor_position: f64,
+    // Timeline cursor position in nanoseconds
+    #[serde(default = "default_timeline_cursor_position_ns")]
+    pub timeline_cursor_position_ns: u64,
+    
+    // Timeline zoom level (deprecated - replaced by NsPerPixel in frontend)
     #[serde(default = "default_timeline_zoom_level")]
     pub timeline_zoom_level: f32,
+    
+    // Timeline visible range in nanoseconds
     #[serde(default)]
-    pub timeline_visible_range_start: Option<f64>,
+    pub timeline_visible_range_start_ns: Option<u64>,
     #[serde(default)]
-    pub timeline_visible_range_end: Option<f64>,
+    pub timeline_visible_range_end_ns: Option<u64>,
+    
 }
 
 impl Default for WorkspaceSection {
@@ -1081,13 +1104,16 @@ impl Default for WorkspaceSection {
             load_files_scroll_position: 0,
             variables_search_filter: String::new(),
             selected_variables: Vec::new(),
-            timeline_cursor_position: default_timeline_cursor_position(),
+            // New nanosecond fields
+            timeline_cursor_position_ns: default_timeline_cursor_position_ns(),
+            timeline_visible_range_start_ns: None,
+            timeline_visible_range_end_ns: None,
+            
             timeline_zoom_level: default_timeline_zoom_level(),
-            timeline_visible_range_start: None,
-            timeline_visible_range_end: None,
         }
     }
 }
+
 
 // Custom deserializer for dock mode with backward compatibility
 fn deserialize_dock_mode<'de, D>(deserializer: D) -> Result<DockMode, D::Error>

@@ -496,9 +496,9 @@ pub fn icon_name_from_str(name: &str) -> IconName {
         "moon" => IconName::Moon,
         "sun" => IconName::Sun,
         _ => {
-            // Runtime check: warn about unregistered icons
-            zoon::println!("⚠️  NovyUI Icon Warning: Icon '{}' not found in registry, falling back to CircleHelp", name);
-            zoon::println!("   Available icons include: arrow-down, arrow-down-to-line, arrow-left, arrow-right, arrow-up, check, x, folder, etc.");
+            // Runtime check: warn about unregistered icons (debug only)
+            #[cfg(debug_assertions)]
+            zoon::println!("⚠️ NovyUI: Icon '{}' not found, using fallback", name);
             IconName::CircleHelp // Default fallback
         }
     }

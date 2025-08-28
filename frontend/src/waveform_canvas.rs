@@ -2,11 +2,11 @@ use zoon::*;
 use fast2d;
 use crate::state::{SELECTED_VARIABLES, LOADED_FILES, TIMELINE_CURSOR_NS, CANVAS_WIDTH, CANVAS_HEIGHT, 
     IS_ZOOMING_IN, IS_ZOOMING_OUT, IS_PANNING_LEFT, IS_PANNING_RIGHT, IS_CURSOR_MOVING_LEFT, IS_CURSOR_MOVING_RIGHT,
-    MOUSE_X_POSITION, MOUSE_TIME_NS, ZOOM_CENTER_NS, TIMELINE_ZOOM_LEVEL, TIMELINE_VIEWPORT, IS_LOADING};
-use crate::time_types::{TimeNs, Viewport, ZoomLevel};
+    MOUSE_X_POSITION, MOUSE_TIME_NS, ZOOM_CENTER_NS, TIMELINE_NS_PER_PIXEL, TIMELINE_VIEWPORT, IS_LOADING, TIMELINE_COORDINATES};
+use crate::time_types::{TimeNs, Viewport, NsPerPixel};
 use crate::platform::{Platform, CurrentPlatform};
 use crate::config::{current_theme, CONFIG_LOADED};
-use shared::{SelectedVariable, UpMsg, SignalTransitionQuery, SignalTransition};
+use shared::{SelectedVariable, UpMsg, SignalTransitionQuery};
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -19,7 +19,11 @@ use palette::{Oklch, Srgb, IntoColor};
 
 // High-performance cursor movement constants
 const PIXELS_PER_FRAME: f64 = 20.0;      // Consistent 20-pixel movement per frame
-const MIN_VALID_RANGE: f64 = 1e-6;       // 1 microsecond minimum range
+// Minimum range is now based on maximum zoom level (1 ns/pixel) 
+// For 800px canvas: minimum range = 800 ns
+fn get_min_valid_range_ns(canvas_width: u32) -> u64 {
+    NsPerPixel::MAX_ZOOM_IN.nanos() * canvas_width as u64
+}
 const SAFE_FALLBACK_START: f64 = 0.0;    // Safe fallback start time
 const SAFE_FALLBACK_END: f64 = 100.0;    // Safe fallback end time
 const MOVEMENT_FRAME_MS: u32 = 16;       // 60fps animation frame timing
@@ -28,10 +32,8 @@ const _MAX_FAILURES: u32 = 10;           // Circuit breaker threshold
 // High-precision timing for smooth cursor animation (nanoseconds)
 const ANIMATION_FRAME_NS: u64 = 16_666_666; // 16.666ms = 60fps in nanoseconds
 
-// Cache for real signal transition data from backend - PUBLIC for connection.rs
-pub static SIGNAL_TRANSITIONS_CACHE: Lazy<Mutable<HashMap<String, Vec<SignalTransition>>>> = Lazy::new(|| {
-    Mutable::new(HashMap::new())
-});
+// REMOVED: SIGNAL_TRANSITIONS_CACHE - now handled by unified_timeline_service
+// Raw signal transitions are now stored in UNIFIED_TIMELINE_CACHE.raw_transitions
 
 // Simplified request tracking - just a pending flag to prevent overlapping requests
 static HAS_PENDING_REQUEST: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
@@ -230,17 +232,17 @@ fn request_transitions_for_all_variables(time_range: Option<(f64, f64)>) {
     }
     
     // NEW: Use unified SignalDataService instead of old query system
-    let signal_requests: Vec<crate::signal_data_service::SignalRequest> = variables_to_request
+    let signal_requests: Vec<crate::unified_timeline_service::SignalRequest> = variables_to_request
         .into_iter()
         .filter_map(|unique_id| {
             // Parse unique_id: "/path/file.ext|scope|variable"
             let parts: Vec<&str> = unique_id.split('|').collect();
             if parts.len() >= 3 {
-                Some(crate::signal_data_service::SignalRequest {
+                Some(crate::unified_timeline_service::SignalRequest {
                     file_path: parts[0].to_string(),
                     scope_path: parts[1].to_string(),
                     variable_name: parts[2].to_string(),
-                    time_range: Some((min_time, max_time)),
+                    time_range_ns: Some(((min_time * 1_000_000_000.0) as u64, (max_time * 1_000_000_000.0) as u64)),
                     max_transitions: Some(10000), // Match timeline needs
                     format: shared::VarFormat::Hexadecimal, // Default for timeline
                 })
@@ -254,14 +256,13 @@ fn request_transitions_for_all_variables(time_range: Option<(f64, f64)>) {
         return;
     }
     
-    // Request data through unified service instead of old system
-    let cursor_time = Some(crate::state::TIMELINE_CURSOR_NS.get().to_seconds());
+    // Request data through unified service 
+    let signal_ids: Vec<String> = signal_requests.iter()
+        .map(|req| format!("{}|{}|{}", req.file_path, req.scope_path, req.variable_name))
+        .collect();
+    let cursor_time_ns = crate::state::TIMELINE_CURSOR_NS.get();
     let _request_count = signal_requests.len(); // logging removed
-    crate::signal_data_service::SignalDataService::request_signal_data(
-        signal_requests, 
-        cursor_time, 
-        true // high priority for timeline
-    );
+    crate::unified_timeline_service::UnifiedTimelineService::request_cursor_values(signal_ids, cursor_time_ns);
     
 }
 
@@ -468,7 +469,7 @@ pub fn clear_processed_signal_cache() {
     // already handle timeline changes properly
     
     // TODO: Implement a proper processed data cache separate from raw backend data
-    // SIGNAL_TRANSITIONS_CACHE contains raw backend data and should NOT be cleared
+    // Raw backend data is now stored in unified_timeline_service and should NOT be cleared
 }
 
 // Convert shared theme to NovyUI theme
@@ -574,26 +575,35 @@ pub fn waveform_canvas() -> impl Element {
 
 /// Validate and recover initial timeline state on startup
 fn validate_startup_state() {
-    let cursor_pos = TIMELINE_CURSOR_NS.get().to_seconds();
-    let zoom_level = TIMELINE_ZOOM_LEVEL.get();
+    let cursor_pos = TIMELINE_CURSOR_NS.get().display_seconds();
+    let ns_per_pixel = TIMELINE_NS_PER_PIXEL.get();
     let viewport = TIMELINE_VIEWPORT.get();
-    let start = viewport.start.to_seconds();
-    let end = viewport.end.to_seconds();
+    let start = viewport.start.display_seconds();
+    let end = viewport.end.display_seconds();
     
     // Check if any values are invalid
+    let canvas_width = CANVAS_WIDTH.get() as u32;
+    let min_valid_range = get_min_valid_range_ns(canvas_width) as f64 / 1_000_000_000.0;
     if !cursor_pos.is_finite() || !start.is_finite() || !end.is_finite() || 
-       zoom_level.percent() == 0 || start >= end || (end - start) < MIN_VALID_RANGE {
+       ns_per_pixel.nanos() == 0 || start >= end || (end - start) < min_valid_range {
         
         crate::debug_utils::debug_timeline_validation("STARTUP: Invalid timeline state detected, applying recovery");
-        let (recovery_start, recovery_end) = emergency_timeline_recovery();
-        let recovery_viewport = crate::time_types::Viewport::new(
-            TimeNs::from_seconds(recovery_start),
-            TimeNs::from_seconds(recovery_end)
-        );
+        
+        // Simple recovery using safe defaults
+        let recovery_viewport = Viewport::new(TimeNs::ZERO, TimeNs::from_external_seconds(100.0));
         TIMELINE_VIEWPORT.set_neq(recovery_viewport);
-        TIMELINE_CURSOR_NS.set_neq(TimeNs::from_seconds((recovery_start + recovery_end) / 2.0));
-        TIMELINE_ZOOM_LEVEL.set_neq(ZoomLevel::NORMAL);
-        ZOOM_CENTER_NS.set_neq(TimeNs::from_seconds((recovery_start + recovery_end) / 2.0));
+        TIMELINE_CURSOR_NS.set_neq(TimeNs::from_external_seconds(50.0));
+        TIMELINE_NS_PER_PIXEL.set_neq(NsPerPixel::MEDIUM_ZOOM);
+        
+        // Update TimelineCoordinates with recovery state
+        let mut coords = TIMELINE_COORDINATES.lock_mut();
+        coords.cursor_ns = TimeNs::from_external_seconds(50.0);
+        coords.viewport_start_ns = TimeNs::ZERO;
+        coords.ns_per_pixel = NsPerPixel::MEDIUM_ZOOM;
+        coords.set_canvas_width(800); // Safe default
+        drop(coords);
+        
+        ZOOM_CENTER_NS.set_neq(TimeNs::from_external_seconds(50.0));
     } else {
         crate::debug_utils::debug_timeline_validation("STARTUP: Timeline state validation passed");
     }
@@ -627,7 +637,7 @@ async fn create_canvas_element() -> impl Element {
     CANVAS_HEIGHT.set_neq(400.0);
 
     // Initialize direct cursor animation with current cursor position
-    let current_cursor = TIMELINE_CURSOR_NS.get().to_seconds();
+    let current_cursor = TIMELINE_CURSOR_NS.get().display_seconds();
     DIRECT_CURSOR_ANIMATION.lock_mut().current_position = current_cursor;
     DIRECT_CURSOR_ANIMATION.lock_mut().target_position = current_cursor;
     let canvas_wrapper_for_signal = canvas_wrapper_shared.clone();
@@ -647,7 +657,7 @@ async fn create_canvas_element() -> impl Element {
                     }
                     
                     let selected_vars = SELECTED_VARIABLES.lock_ref();
-                    let cursor_pos = TIMELINE_CURSOR_NS.get().to_seconds();
+                    let cursor_pos = TIMELINE_CURSOR_NS.get().display_seconds();
                     // Get current theme from cache (updated by theme handler)
                     let novyui_theme = CURRENT_THEME_CACHE.get();
                     *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &novyui_theme, cursor_pos);
@@ -676,7 +686,7 @@ async fn create_canvas_element() -> impl Element {
                     }
                     
                     let selected_vars = SELECTED_VARIABLES.lock_ref();
-                    let cursor_pos = TIMELINE_CURSOR_NS.get().to_seconds();
+                    let cursor_pos = TIMELINE_CURSOR_NS.get().display_seconds();
                     *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &novyui_theme, cursor_pos);
                 });
             }
@@ -686,7 +696,7 @@ async fn create_canvas_element() -> impl Element {
     // Add reactive updates when zoom state changes
     let canvas_wrapper_for_zoom = canvas_wrapper_shared.clone();
     Task::start(async move {
-        crate::state::TIMELINE_ZOOM_LEVEL.signal().for_each(move |_| {
+        crate::state::TIMELINE_NS_PER_PIXEL.signal().for_each(move |_| {
             let canvas_wrapper_for_zoom = canvas_wrapper_for_zoom.clone();
             async move {
                 canvas_wrapper_for_zoom.borrow_mut().update_objects(move |objects| {
@@ -699,7 +709,7 @@ async fn create_canvas_element() -> impl Element {
                     }
                     
                     let selected_vars = SELECTED_VARIABLES.lock_ref();
-                    let cursor_pos = TIMELINE_CURSOR_NS.get().to_seconds();
+                    let cursor_pos = TIMELINE_CURSOR_NS.get().display_seconds();
                     // Get current theme from cache (updated by theme handler)
                     let novyui_theme = CURRENT_THEME_CACHE.get();
                     *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &novyui_theme, cursor_pos);
@@ -724,7 +734,7 @@ async fn create_canvas_element() -> impl Element {
                     }
                     
                     let selected_vars = SELECTED_VARIABLES.lock_ref();
-                    let cursor_pos = TIMELINE_CURSOR_NS.get().to_seconds();
+                    let cursor_pos = TIMELINE_CURSOR_NS.get().display_seconds();
                     // Get current theme from cache (updated by theme handler)
                     let novyui_theme = CURRENT_THEME_CACHE.get();
                     *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &novyui_theme, cursor_pos);
@@ -741,7 +751,7 @@ async fn create_canvas_element() -> impl Element {
             async move {
                 canvas_wrapper_for_zoom_center.borrow_mut().update_objects(move |objects| {
                     let selected_vars = SELECTED_VARIABLES.lock_ref();
-                    let cursor_pos = TIMELINE_CURSOR_NS.get().to_seconds();
+                    let cursor_pos = TIMELINE_CURSOR_NS.get().display_seconds();
                     let canvas_width = CANVAS_WIDTH.get();
                     let canvas_height = CANVAS_HEIGHT.get();
                     // Get current theme from cache (updated by theme handler)
@@ -755,12 +765,12 @@ async fn create_canvas_element() -> impl Element {
     // Add reactive updates when signal cache changes (for new backend data)
     let canvas_wrapper_for_cache = canvas_wrapper_shared.clone();
     Task::start(async move {
-        SIGNAL_TRANSITIONS_CACHE.signal_ref(|_| ()).for_each(move |_| {
+        crate::unified_timeline_service::UnifiedTimelineService::cache_signal().for_each(move |_| {
             let canvas_wrapper_for_cache = canvas_wrapper_for_cache.clone();
             async move {
                 canvas_wrapper_for_cache.borrow_mut().update_objects(move |objects| {
                     let selected_vars = SELECTED_VARIABLES.lock_ref();
-                    let cursor_pos = TIMELINE_CURSOR_NS.get().to_seconds();
+                    let cursor_pos = TIMELINE_CURSOR_NS.get().display_seconds();
                     let canvas_width = CANVAS_WIDTH.get();
                     let canvas_height = CANVAS_HEIGHT.get();
                     // Get current theme from cache (updated by theme handler)
@@ -779,7 +789,7 @@ async fn create_canvas_element() -> impl Element {
             async move {
                 canvas_wrapper_for_hover.borrow_mut().update_objects(move |objects| {
                     let selected_vars = SELECTED_VARIABLES.lock_ref();
-                    let cursor_pos = TIMELINE_CURSOR_NS.get().to_seconds();
+                    let cursor_pos = TIMELINE_CURSOR_NS.get().display_seconds();
                     let canvas_width = CANVAS_WIDTH.get();
                     let canvas_height = CANVAS_HEIGHT.get();
                     // Get current theme from cache (updated by theme handler)
@@ -800,8 +810,8 @@ async fn create_canvas_element() -> impl Element {
                 // Calculate new range from selected variables 
                 if let Some((min_time, max_time)) = get_current_timeline_range() {
                     let range_viewport = crate::time_types::Viewport::new(
-                        TimeNs::from_seconds(min_time),
-                        TimeNs::from_seconds(max_time)
+                        TimeNs::from_external_seconds(min_time),
+                        TimeNs::from_external_seconds(max_time)
                     );
                     TIMELINE_VIEWPORT.set_neq(range_viewport);
                     
@@ -817,7 +827,7 @@ async fn create_canvas_element() -> impl Element {
                     // No selected variables - use safe default range
                     let default_viewport = crate::time_types::Viewport::new(
                         TimeNs::ZERO,
-                        TimeNs::from_seconds(100.0)
+                        TimeNs::from_external_seconds(100.0)
                     );
                     TIMELINE_VIEWPORT.set_neq(default_viewport);
                 }
@@ -831,8 +841,8 @@ async fn create_canvas_element() -> impl Element {
         // Combined signal for any timeline range change
         map_ref! {
             let viewport = TIMELINE_VIEWPORT.signal(),
-            let zoom = TIMELINE_ZOOM_LEVEL.signal()
-            => (viewport.start.to_seconds(), viewport.end.to_seconds(), *zoom)
+            let ns_per_pixel = TIMELINE_NS_PER_PIXEL.signal()
+            => (viewport.start.display_seconds(), viewport.end.display_seconds(), *ns_per_pixel)
         }
         .dedupe() // Prevent duplicate triggers
         .for_each(move |_| {
@@ -847,7 +857,7 @@ async fn create_canvas_element() -> impl Element {
                 
                 canvas_wrapper.borrow_mut().update_objects(move |objects| {
                     let selected_vars = SELECTED_VARIABLES.lock_ref();
-                    let cursor_pos = TIMELINE_CURSOR_NS.get().to_seconds();
+                    let cursor_pos = TIMELINE_CURSOR_NS.get().display_seconds();
                     let canvas_width = CANVAS_WIDTH.get();
                     let canvas_height = CANVAS_HEIGHT.get();
                     let novyui_theme = CURRENT_THEME_CACHE.get();
@@ -873,7 +883,7 @@ async fn create_canvas_element() -> impl Element {
                     }
                     
                     let selected_vars = SELECTED_VARIABLES.lock_ref();
-                    let cursor_pos = TIMELINE_CURSOR_NS.get().to_seconds();
+                    let cursor_pos = TIMELINE_CURSOR_NS.get().display_seconds();
                     let novyui_theme = CURRENT_THEME_CACHE.get();
                     *objects = create_waveform_objects_with_dimensions_and_theme(
                         &selected_vars, canvas_width, canvas_height, &novyui_theme, cursor_pos
@@ -942,35 +952,45 @@ async fn create_canvas_element() -> impl Element {
                 let canvas_width = CANVAS_WIDTH.get();
                 let canvas_height = CANVAS_HEIGHT.get();
                 
-                // Calculate time from click position with precision-safe calculations
-                if let Some((min_time, max_time)) = get_current_timeline_range() {
-                    let _time_range = max_time - min_time;
+                // Use TimelineCoordinates for precise mouse-to-time conversion
+                let mut coords = TIMELINE_COORDINATES.lock_mut();
+                
+                // Update canvas width in coordinates
+                coords.set_canvas_width(canvas_width as u32);
+                
+                // Convert mouse position to timeline time using pure integer arithmetic
+                let clicked_time_ns = coords.mouse_to_time(click_x as u32);
+                
+                // Get file bounds for clamping
+                if let Some((file_min, file_max)) = get_current_timeline_range() {
+                    let file_start_ns = TimeNs::from_external_seconds(file_min);
+                    let file_end_ns = TimeNs::from_external_seconds(file_max);
                     
-                    // Use f64 precision for calculation to avoid precision loss
-                    let time_range_f64 = max_time - min_time;
-                    let normalized_x = click_x / canvas_width as f64;
-                    let clicked_time_f64 = min_time + normalized_x * time_range_f64;
+                    // Clamp cursor to file bounds
+                    let clamped_time_ns = TimeNs(clicked_time_ns.nanos().clamp(file_start_ns.nanos(), file_end_ns.nanos()));
                     
-                    // Validate before applying
-                    if clicked_time_f64.is_finite() && clicked_time_f64 >= 0.0 {
-                        let clamped_time = clicked_time_f64.max(min_time).min(max_time);
-                        
-                        // Update cursor position directly (no animation for clicks)
-                        TIMELINE_CURSOR_NS.set(TimeNs::from_seconds(clamped_time));
-                        
-                        // Synchronize direct animation to prevent jumps
-                        let mut animation = DIRECT_CURSOR_ANIMATION.lock_mut();
-                        animation.current_position = clicked_time_f64;
-                        animation.target_position = clicked_time_f64;
-                        animation.is_animating = false; // Stop any ongoing animation
-                        
-                        // Immediately redraw canvas with new cursor position
-                        canvas_wrapper_for_click.borrow_mut().update_objects(move |objects| {
-                            let selected_vars = SELECTED_VARIABLES.lock_ref();
-                            let novyui_theme = CURRENT_THEME_CACHE.get();
-                            *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &novyui_theme, clamped_time);
-                        });
-                    }
+                    // Update cursor in coordinates struct
+                    coords.set_cursor(clamped_time_ns);
+                    
+                    // Update global cursor position
+                    TIMELINE_CURSOR_NS.set(clamped_time_ns);
+                    
+                    // Synchronize direct animation to prevent jumps  
+                    let clamped_time_seconds = clamped_time_ns.display_seconds();
+                    let mut animation = DIRECT_CURSOR_ANIMATION.lock_mut();
+                    animation.current_position = clamped_time_seconds;
+                    animation.target_position = clamped_time_seconds;
+                    animation.is_animating = false; // Stop any ongoing animation
+                    
+                    // Drop coordinate lock before canvas update
+                    drop(coords);
+                    
+                    // Immediately redraw canvas with new cursor position
+                    canvas_wrapper_for_click.borrow_mut().update_objects(move |objects| {
+                        let selected_vars = SELECTED_VARIABLES.lock_ref();
+                        let novyui_theme = CURRENT_THEME_CACHE.get();
+                        *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &novyui_theme, clamped_time_seconds);
+                    });
                 }
             }
         })
@@ -991,68 +1011,83 @@ async fn create_canvas_element() -> impl Element {
             let mouse_y = page_mouse_y as f64 - canvas_top;
             MOUSE_X_POSITION.set_neq(mouse_x as f32);
             
-            // Convert mouse X to timeline time and calculate hover info
+            // Convert mouse X to timeline time using TimelineCoordinates
             let canvas_width = CANVAS_WIDTH.get();
             let canvas_height = CANVAS_HEIGHT.get();
-            if let Some((min_time, max_time)) = get_current_timeline_range() {
-                let time_range = max_time - min_time;
-                let mouse_time = min_time + (mouse_x as f32 / canvas_width) as f64 * time_range;
+            
+            // Use TimelineCoordinates for precise mouse-to-time conversion
+            let coords = TIMELINE_COORDINATES.lock_ref();
+            
+            // Ensure mouse_x is within canvas bounds
+            if mouse_x >= 0.0 && mouse_x <= canvas_width as f64 {
+                let mouse_time_ns = coords.mouse_to_time(mouse_x as u32);
                 
-                // Clamp to valid range and update mouse time position
-                let mouse_time = mouse_time.max(min_time).min(max_time);
-                MOUSE_TIME_NS.set_neq(TimeNs::from_seconds(mouse_time));
-                
-                // Also update zoom center to mouse position for interactive zoom control
-                ZOOM_CENTER_NS.set_neq(TimeNs::from_seconds(mouse_time));
-                
-                // Calculate hover info for tooltip
-                let selected_vars = SELECTED_VARIABLES.lock_ref();
-                let total_rows = selected_vars.len() + 1; // variables + timeline
-                let row_height = if total_rows > 0 { canvas_height / total_rows as f32 } else { canvas_height };
-                
-                // Determine which variable row the mouse is over
-                let hover_row = (mouse_y as f32 / row_height) as usize;
-                
-                if hover_row < selected_vars.len() {
-                    // Mouse is over a variable row
-                    let var = &selected_vars[hover_row];
-                    let variable_name = var.unique_id.split('|').last().unwrap_or("Unknown").to_string();
+                // Get file bounds for validation
+                if let Some((file_min, file_max)) = get_current_timeline_range() {
+                    let file_start_ns = TimeNs::from_external_seconds(file_min);
+                    let file_end_ns = TimeNs::from_external_seconds(file_max);
                     
-                    let time_value_pairs = get_signal_transitions_for_variable(var, (min_time, max_time));
+                    // Clamp mouse time to file bounds
+                    let clamped_mouse_time_ns = TimeNs(mouse_time_ns.nanos().clamp(file_start_ns.nanos(), file_end_ns.nanos()));
                     
-                    // Find the value at the current mouse time
-                    let mut current_value = shared::SignalValue::present("X"); // Default unknown
-                    for (time, value) in time_value_pairs.iter() {
-                        if (*time as f64) <= mouse_time {
-                            current_value = value.clone();
-                        } else {
-                            break;
+                    MOUSE_TIME_NS.set_neq(clamped_mouse_time_ns);
+                    
+                    // Also update zoom center to mouse position for interactive zoom control
+                    ZOOM_CENTER_NS.set_neq(clamped_mouse_time_ns);
+                    
+                    // Calculate hover info for tooltip (within valid time range)
+                    let selected_vars = SELECTED_VARIABLES.lock_ref();
+                    let total_rows = selected_vars.len() + 1; // variables + timeline
+                    let row_height = if total_rows > 0 { canvas_height / total_rows as f32 } else { canvas_height };
+                    
+                    // Determine which variable row the mouse is over
+                    let hover_row = (mouse_y as f32 / row_height) as usize;
+                    
+                    if hover_row < selected_vars.len() {
+                        // Mouse is over a variable row
+                        let var = &selected_vars[hover_row];
+                        let variable_name = var.unique_id.split('|').last().unwrap_or("Unknown").to_string();
+                        
+                        let time_value_pairs = get_signal_transitions_for_variable(var, (file_min, file_max));
+                        let mouse_time_seconds = clamped_mouse_time_ns.display_seconds();
+                        
+                        // Find the value at the current mouse time
+                        let mut current_value = shared::SignalValue::present("X"); // Default unknown
+                        for (time, value) in time_value_pairs.iter() {
+                            if (*time as f64) <= mouse_time_seconds {
+                                current_value = value.clone();
+                            } else {
+                                break;
+                            }
                         }
+                        
+                        // Format the value using the variable's formatter
+                        let formatted_value = match current_value {
+                            shared::SignalValue::Present(ref value) => {
+                                var.formatter.unwrap_or_default().format(value)
+                            },
+                            shared::SignalValue::Missing => {
+                                "N/A".to_string()
+                            }
+                        };
+                        
+                        HOVER_INFO.set_neq(Some(HoverInfo {
+                            mouse_x: mouse_x as f32,
+                            mouse_y: mouse_y as f32,
+                            time: mouse_time_seconds as f32,
+                            variable_name,
+                            value: formatted_value,
+                        }));
+                    } else {
+                        // Mouse is over timeline or outside variable area
+                        HOVER_INFO.set_neq(None);
                     }
-                    
-                    // Format the value using the variable's formatter
-                    let formatted_value = match current_value {
-                        shared::SignalValue::Present(ref value) => {
-                            var.formatter.unwrap_or_default().format(value)
-                        },
-                        shared::SignalValue::Missing => {
-                            "N/A".to_string()
-                        }
-                    };
-                    
-                    HOVER_INFO.set_neq(Some(HoverInfo {
-                        mouse_x: mouse_x as f32,
-                        mouse_y: mouse_y as f32,
-                        time: mouse_time as f32,
-                        variable_name,
-                        value: formatted_value,
-                    }));
                 } else {
-                    // Mouse is over timeline or outside variable area
+                    // No file bounds available - clear hover info
                     HOVER_INFO.set_neq(None);
                 }
             } else {
-                // No timeline range available - clear hover info
+                // Mouse outside canvas bounds - clear hover info
                 HOVER_INFO.set_neq(None);
             }
         })
@@ -1087,13 +1122,12 @@ fn get_signal_transitions_for_variable(var: &SelectedVariable, time_range: (f64,
     
     // Not in processed cache, check raw backend data cache
     let raw_cache_key = format!("{}|{}|{}", file_path, scope_path, variable_name);
-    let cache = SIGNAL_TRANSITIONS_CACHE.lock_ref();
-    if let Some(transitions) = cache.get(&raw_cache_key) {
+    if let Some(transitions) = crate::unified_timeline_service::UnifiedTimelineService::get_raw_transitions(&raw_cache_key) {
         
         // Convert real backend data to canvas format with proper waveform logic
         // Include ALL transitions to determine proper rectangle boundaries
         let mut canvas_transitions: Vec<(f32, shared::SignalValue)> = transitions.iter()
-            .map(|t| (t.time_seconds as f32, shared::SignalValue::present(t.value.clone())))
+            .map(|t| ((t.time_ns as f64 / 1_000_000_000.0) as f32, shared::SignalValue::present(t.value.clone())))
             .collect();
             
         // Sort by time to ensure proper ordering
@@ -1102,13 +1136,13 @@ fn get_signal_transitions_for_variable(var: &SelectedVariable, time_range: (f64,
         // Check for time ranges beyond file boundaries and mark as missing
         let loaded_files = LOADED_FILES.lock_ref();
         if let Some(loaded_file) = loaded_files.iter().find(|f| f.id == file_path) {
-            if let Some(max_time) = loaded_file.max_time {
+            if let Some(max_time) = loaded_file.max_time_ns.map(|ns| ns as f64 / 1_000_000_000.0) {
                 // If the timeline extends beyond the file's max time, add missing data transition
                 if time_range.1 > max_time {
                     canvas_transitions.push((max_time as f32, shared::SignalValue::missing()));
                 }
             }
-            if let Some(min_time) = loaded_file.min_time {
+            if let Some(min_time) = loaded_file.min_time_ns.map(|ns| ns as f64 / 1_000_000_000.0) {
                 // If timeline starts before file's min time, add missing data at start
                 if time_range.0 < min_time {
                     canvas_transitions.insert(0, (time_range.0 as f32, shared::SignalValue::missing()));
@@ -1124,7 +1158,7 @@ fn get_signal_transitions_for_variable(var: &SelectedVariable, time_range: (f64,
         
         // Find the most recent transition before the visible timeline starts
         for transition in transitions.iter() {
-            if transition.time_seconds <= time_range.0 {
+            if transition.time_ns as f64 / 1_000_000_000.0 <= time_range.0 {
                 initial_value = shared::SignalValue::present(transition.value.clone());
             } else {
                 break; // Transitions should be in time order
@@ -1153,7 +1187,6 @@ fn get_signal_transitions_for_variable(var: &SelectedVariable, time_range: (f64,
         
         return canvas_transitions;
     }
-    drop(cache);
     
     // No cached data - request from backend (deduplication removed, now handled by batching)
     crate::debug_utils::debug_cache_miss(&format!("requesting from backend for {}/{}", scope_path, variable_name));
@@ -1181,8 +1214,8 @@ pub fn request_signal_transitions_from_backend(file_path: &str, scope_path: &str
         let loaded_files = LOADED_FILES.lock_ref();
         if let Some(loaded_file) = loaded_files.iter().find(|f| f.id == file_path || file_path.ends_with(&f.filename)) {
             (
-                loaded_file.min_time.unwrap_or(0.0),
-                loaded_file.max_time.unwrap_or(1000.0)  // Use higher fallback to avoid premature filler
+                loaded_file.min_time_ns.map(|ns| ns as f64 / 1_000_000_000.0).unwrap_or(0.0),
+                loaded_file.max_time_ns.map(|ns| ns as f64 / 1_000_000_000.0).unwrap_or(1000.0)  // Use higher fallback to avoid premature filler
             )
         } else {
             // Don't make request if file isn't loaded yet - prevents race condition
@@ -1194,17 +1227,13 @@ pub fn request_signal_transitions_from_backend(file_path: &str, scope_path: &str
     let message = UpMsg::QuerySignalTransitions {
         file_path: file_path.to_string(),
         signal_queries: vec![query],
-        time_range: (file_min, file_max), // Request entire file range to ensure all transitions available
+        time_range: ((file_min * 1_000_000_000.0) as u64, (file_max * 1_000_000_000.0) as u64), // Request entire file range to ensure all transitions available
     };
     
     // Send real backend request
     // zoon::println!("=== SENDING QuerySignalTransitions for {}/{} ===", scope_path, variable_name);
     Task::start(async move {
-        if let Err(e) = CurrentPlatform::send_message(message).await {
-            zoon::println!("ERROR: Failed to query signal transitions via platform: {}", e);
-        } else {
-            // zoon::println!("=== QuerySignalTransitions sent successfully ===");
-        }
+        let _ = CurrentPlatform::send_message(message).await;
     });
 }
 
@@ -1240,16 +1269,18 @@ fn get_selected_variable_file_paths() -> std::collections::HashSet<String> {
 // ROCK-SOLID coordinate transformation system with zoom reliability
 // Returns None when no variables are selected (no timeline should be shown)
 pub fn get_current_timeline_range() -> Option<(f64, f64)> {
-    let zoom_level = crate::state::TIMELINE_ZOOM_LEVEL.get();
+    let ns_per_pixel = crate::state::TIMELINE_NS_PER_PIXEL.get();
     
     // If zoomed in, return the visible range with validation
-    if zoom_level.percent() > 100 {
+    // Lower ns_per_pixel means more zoomed in
+    if ns_per_pixel.nanos() < NsPerPixel::MEDIUM_ZOOM.nanos() {
         let viewport = crate::state::TIMELINE_VIEWPORT.get();
-        let range_start = viewport.start.to_seconds();
-        let range_end = viewport.end.to_seconds();
+        let range_start = viewport.start.display_seconds();
+        let range_end = viewport.end.display_seconds();
         
         // CRITICAL: Enforce minimum time range to prevent coordinate precision loss
-        let min_zoom_range = 1e-9; // Minimum 1 nanosecond range prevents division by near-zero
+        let canvas_width = CANVAS_WIDTH.get() as u32;
+        let min_zoom_range = get_min_valid_range_ns(canvas_width) as f64 / 1_000_000_000.0; // NsPerPixel-based minimum
         let current_range = range_end - range_start;
         
         // Validate range is sensible and has sufficient precision
@@ -1307,7 +1338,7 @@ pub fn get_current_timeline_range() -> Option<(f64, f64)> {
             
             
             if file_matches {
-                if let (Some(file_min), Some(file_max)) = (file.min_time, file.max_time) {
+                if let (Some(file_min), Some(file_max)) = (file.min_time_ns.map(|ns| ns as f64 / 1_000_000_000.0), file.max_time_ns.map(|ns| ns as f64 / 1_000_000_000.0)) {
                     min_time = min_time.min(file_min);
                     max_time = max_time.max(file_max);
                     has_valid_files = true;
@@ -1323,7 +1354,7 @@ pub fn get_current_timeline_range() -> Option<(f64, f64)> {
         let mut has_any_files = false;
         
         for file in loaded_files.iter() {
-            if let (Some(file_min), Some(file_max)) = (file.min_time, file.max_time) {
+            if let (Some(file_min), Some(file_max)) = (file.min_time_ns.map(|ns| ns as f64 / 1_000_000_000.0), file.max_time_ns.map(|ns| ns as f64 / 1_000_000_000.0)) {
                 fallback_min = fallback_min.min(file_min);
                 fallback_max = fallback_max.max(file_max);
                 has_any_files = true;
@@ -1333,8 +1364,8 @@ pub fn get_current_timeline_range() -> Option<(f64, f64)> {
         if has_any_files && fallback_min != fallback_max {
             // Use range from any available files as fallback
             let fallback_range = fallback_max - fallback_min;
-            if fallback_range < 1e-9 {
-                Some((fallback_min, fallback_min + 1e-9))
+            if fallback_range < get_min_valid_range_ns(CANVAS_WIDTH.get() as u32) as f64 / 1_000_000_000.0 {
+                Some((fallback_min, fallback_min + get_min_valid_range_ns(CANVAS_WIDTH.get() as u32) as f64 / 1_000_000_000.0))
             } else {
                 Some((fallback_min, fallback_max))
             }
@@ -1351,12 +1382,12 @@ pub fn get_current_timeline_range() -> Option<(f64, f64)> {
         
         // Ensure minimum range for coordinate precision (but don't override valid microsecond ranges!)
         let file_range = max_time - min_time;
-        if file_range < 1e-9 {  // Only enforce minimum for truly tiny ranges (< 1 nanosecond)
-            let expanded_end = min_time + 1e-9;
+        if file_range < get_min_valid_range_ns(CANVAS_WIDTH.get() as u32) as f64 / 1_000_000_000.0 {  // Only enforce minimum for truly tiny ranges (< 1 nanosecond)
+            let expanded_end = min_time + get_min_valid_range_ns(CANVAS_WIDTH.get() as u32) as f64 / 1_000_000_000.0;
             if expanded_end.is_finite() {
                 Some((min_time, expanded_end))  // Minimum 1 nanosecond range
             } else {
-                Some((0.0, 1e-9)) // Ultimate fallback
+                Some((0.0, get_min_valid_range_ns(CANVAS_WIDTH.get() as u32) as f64 / 1_000_000_000.0)) // Ultimate fallback
             }
         } else {
             Some((min_time, max_time))  // Use actual range, even if it's microseconds
@@ -1393,7 +1424,7 @@ pub fn get_maximum_timeline_range() -> Option<(f64, f64)> {
             });
             
             if file_matches {
-                if let (Some(file_min), Some(file_max)) = (file.min_time, file.max_time) {
+                if let (Some(file_min), Some(file_max)) = (file.min_time_ns.map(|ns| ns as f64 / 1_000_000_000.0), file.max_time_ns.map(|ns| ns as f64 / 1_000_000_000.0)) {
                     min_time = min_time.min(file_min);
                     max_time = max_time.max(file_max);
                     has_valid_files = true;
@@ -1409,7 +1440,7 @@ pub fn get_maximum_timeline_range() -> Option<(f64, f64)> {
         let mut has_any_files = false;
         
         for file in loaded_files.iter() {
-            if let (Some(file_min), Some(file_max)) = (file.min_time, file.max_time) {
+            if let (Some(file_min), Some(file_max)) = (file.min_time_ns.map(|ns| ns as f64 / 1_000_000_000.0), file.max_time_ns.map(|ns| ns as f64 / 1_000_000_000.0)) {
                 fallback_min = fallback_min.min(file_min);
                 fallback_max = fallback_max.max(file_max);
                 has_any_files = true;
@@ -1419,8 +1450,8 @@ pub fn get_maximum_timeline_range() -> Option<(f64, f64)> {
         if has_any_files && fallback_min != fallback_max {
             // Use range from any available files as fallback
             let fallback_range = fallback_max - fallback_min;
-            if fallback_range < 1e-9 {
-                Some((fallback_min, fallback_min + 1e-9))
+            if fallback_range < get_min_valid_range_ns(CANVAS_WIDTH.get() as u32) as f64 / 1_000_000_000.0 {
+                Some((fallback_min, fallback_min + get_min_valid_range_ns(CANVAS_WIDTH.get() as u32) as f64 / 1_000_000_000.0))
             } else {
                 Some((fallback_min, fallback_max))
             }
@@ -1437,12 +1468,12 @@ pub fn get_maximum_timeline_range() -> Option<(f64, f64)> {
         
         // Ensure minimum range for coordinate precision (but don't override valid microsecond ranges!)
         let file_range = max_time - min_time;
-        if file_range < 1e-9 {  // Only enforce minimum for truly tiny ranges (< 1 nanosecond)
-            let expanded_end = min_time + 1e-9;
+        if file_range < get_min_valid_range_ns(CANVAS_WIDTH.get() as u32) as f64 / 1_000_000_000.0 {  // Only enforce minimum for truly tiny ranges (< 1 nanosecond)
+            let expanded_end = min_time + get_min_valid_range_ns(CANVAS_WIDTH.get() as u32) as f64 / 1_000_000_000.0;
             if expanded_end.is_finite() {
                 Some((min_time, expanded_end))  // Minimum 1 nanosecond range
             } else {
-                Some((0.0, 1e-9)) // Ultimate fallback
+                Some((0.0, get_min_valid_range_ns(CANVAS_WIDTH.get() as u32) as f64 / 1_000_000_000.0)) // Ultimate fallback
             }
         } else {
             Some((min_time, max_time))  // Use actual range, even if it's microseconds
@@ -1456,16 +1487,21 @@ pub fn start_smooth_zoom_in() {
         IS_ZOOMING_IN.set_neq(true);
         Task::start(async move {
             while IS_ZOOMING_IN.get() {
-                let current = TIMELINE_ZOOM_LEVEL.get();
+                let current = TIMELINE_NS_PER_PIXEL.get();
                 // Check for Shift key for fast zoom
-                let zoom_multiplier = if crate::state::IS_SHIFT_PRESSED.get() {
-                    1.10  // Fast zoom with Shift (10% per frame)
+                let zoom_factor = if crate::state::IS_SHIFT_PRESSED.get() {
+                    0.10  // Fast zoom with Shift (10% zoom in per frame)
                 } else {
-                    1.02  // Normal smooth zoom (2% per frame)
+                    0.02  // Normal smooth zoom (2% zoom in per frame)
                 };
-                let new_zoom = current.zoom_in(zoom_multiplier);
-                if new_zoom != current {
-                    update_zoom_with_mouse_center(new_zoom.factor());
+                let new_ns_per_pixel = current.zoom_in_smooth(zoom_factor);
+                if new_ns_per_pixel != current {
+                    TIMELINE_NS_PER_PIXEL.set_neq(new_ns_per_pixel);
+                    let zoom_center_ns = ZOOM_CENTER_NS.get();
+                    let current_viewport = TIMELINE_VIEWPORT.get();
+                    let canvas_width = CANVAS_WIDTH.get() as u32;
+                    let new_viewport = current_viewport.zoom_to(new_ns_per_pixel, zoom_center_ns, canvas_width);
+                    TIMELINE_VIEWPORT.set_neq(new_viewport);
                 } else {
                     break; // Hit zoom limit
                 }
@@ -1480,16 +1516,21 @@ pub fn start_smooth_zoom_out() {
         IS_ZOOMING_OUT.set_neq(true);
         Task::start(async move {
             while IS_ZOOMING_OUT.get() {
-                let current = TIMELINE_ZOOM_LEVEL.get();
+                let current = TIMELINE_NS_PER_PIXEL.get();
                 // Check for Shift key for fast zoom
-                let zoom_multiplier = if crate::state::IS_SHIFT_PRESSED.get() {
-                    1.10  // Fast zoom with Shift (10% per frame)
+                let zoom_factor = if crate::state::IS_SHIFT_PRESSED.get() {
+                    0.10  // Fast zoom with Shift (10% zoom out per frame)
                 } else {
-                    1.02  // Normal smooth zoom (2% per frame)
+                    0.02  // Normal smooth zoom (2% zoom out per frame)
                 };
-                let new_zoom = current.zoom_out(zoom_multiplier);
-                if new_zoom != current {
-                    update_zoom_with_mouse_center(new_zoom.factor());
+                let new_ns_per_pixel = current.zoom_out_smooth(zoom_factor);
+                if new_ns_per_pixel != current {
+                    TIMELINE_NS_PER_PIXEL.set_neq(new_ns_per_pixel);
+                    let zoom_center_ns = ZOOM_CENTER_NS.get();
+                    let current_viewport = TIMELINE_VIEWPORT.get();
+                    let canvas_width = CANVAS_WIDTH.get() as u32;
+                    let new_viewport = current_viewport.zoom_to(new_ns_per_pixel, zoom_center_ns, canvas_width);
+                    TIMELINE_VIEWPORT.set_neq(new_viewport);
                 } else {
                     break; // Hit zoom limit
                 }
@@ -1513,37 +1554,37 @@ pub fn start_smooth_pan_left() {
         IS_PANNING_LEFT.set_neq(true);
         Task::start(async move {
             while IS_PANNING_LEFT.get() {
-                let zoom_level = TIMELINE_ZOOM_LEVEL.get();
+                let ns_per_pixel = TIMELINE_NS_PER_PIXEL.get();
                 // Allow panning when zoomed in OR when actively zooming in for simultaneous operation
-                if zoom_level.percent() > 100 || IS_ZOOMING_IN.get() {
-                    let current_viewport = TIMELINE_VIEWPORT.get();
-                    let current_start = current_viewport.start.to_seconds();
-                    let current_end = current_viewport.end.to_seconds();
-                    let visible_range = current_end - current_start;
+                // Lower ns_per_pixel means more zoomed in
+                if ns_per_pixel.nanos() < NsPerPixel::MEDIUM_ZOOM.nanos() || IS_ZOOMING_IN.get() {
+                    let mut coords = TIMELINE_COORDINATES.lock_mut();
                     
                     // Check for Shift key for turbo panning
-                    let pan_multiplier = if crate::state::IS_SHIFT_PRESSED.get() {
-                        0.10  // Turbo pan with Shift (10% per frame)
+                    let pan_pixels = if crate::state::IS_SHIFT_PRESSED.get() {
+                        -10  // Turbo pan with Shift (10 pixels per frame)
                     } else {
-                        0.02  // Normal smooth pan (2% per frame)
+                        -2   // Normal smooth pan (2 pixels per frame)
                     };
-                    let pan_distance = visible_range * pan_multiplier;
                     
-                    // Get file bounds for clamping
-                    let (file_min, _file_max) = get_full_file_range();
+                    // Store original viewport start for comparison
+                    let original_start = coords.viewport_start_ns;
                     
-                    // Calculate new positions
-                    let new_start = (current_start - pan_distance).max(file_min);
-                    let new_end = new_start + visible_range;
+                    // Pan by pixels (negative = pan left)
+                    coords.pan_by_pixels(pan_pixels);
                     
-                    // Update if changed (pan left succeeded)
-                    if new_start != current_start {
-                        let new_viewport = crate::time_types::Viewport::new(
-                            TimeNs::from_seconds(new_start),
-                            TimeNs::from_seconds(new_end)
-                        );
-                        TIMELINE_VIEWPORT.set_neq(new_viewport);
-                    } else {
+                    // Get file bounds and clamp viewport
+                    let (file_min, file_max) = get_full_file_range();
+                    let file_start_ns = TimeNs::from_external_seconds(file_min);
+                    let file_end_ns = TimeNs::from_external_seconds(file_max);
+                    coords.clamp_viewport(file_start_ns, file_end_ns);
+                    
+                    // Update global viewport state
+                    let new_viewport = coords.viewport();
+                    TIMELINE_VIEWPORT.set_neq(new_viewport);
+                    
+                    // Check if we actually moved (if not, we hit boundary)
+                    if coords.viewport_start_ns == original_start {
                         break; // Hit left boundary
                     }
                 }
@@ -1558,37 +1599,37 @@ pub fn start_smooth_pan_right() {
         IS_PANNING_RIGHT.set_neq(true);
         Task::start(async move {
             while IS_PANNING_RIGHT.get() {
-                let zoom_level = TIMELINE_ZOOM_LEVEL.get();
+                let ns_per_pixel = TIMELINE_NS_PER_PIXEL.get();
                 // Allow panning when zoomed in OR when actively zooming in for simultaneous operation
-                if zoom_level.percent() > 100 || IS_ZOOMING_IN.get() {
-                    let current_viewport = TIMELINE_VIEWPORT.get();
-                    let current_start = current_viewport.start.to_seconds();
-                    let current_end = current_viewport.end.to_seconds();
-                    let visible_range = current_end - current_start;
+                // Lower ns_per_pixel means more zoomed in
+                if ns_per_pixel.nanos() < NsPerPixel::MEDIUM_ZOOM.nanos() || IS_ZOOMING_IN.get() {
+                    let mut coords = TIMELINE_COORDINATES.lock_mut();
                     
                     // Check for Shift key for turbo panning
-                    let pan_multiplier = if crate::state::IS_SHIFT_PRESSED.get() {
-                        0.10  // Turbo pan with Shift (10% per frame)
+                    let pan_pixels = if crate::state::IS_SHIFT_PRESSED.get() {
+                        10   // Turbo pan with Shift (10 pixels per frame)
                     } else {
-                        0.02  // Normal smooth pan (2% per frame)
+                        2    // Normal smooth pan (2 pixels per frame)
                     };
-                    let pan_distance = visible_range * pan_multiplier;
                     
-                    // Get file bounds for clamping
-                    let (_file_min, file_max) = get_full_file_range();
+                    // Store original viewport start for comparison
+                    let original_start = coords.viewport_start_ns;
                     
-                    // Calculate new positions
-                    let new_end = (current_end + pan_distance).min(file_max);
-                    let new_start = new_end - visible_range;
+                    // Pan by pixels (positive = pan right)
+                    coords.pan_by_pixels(pan_pixels);
                     
-                    // Update if changed (pan right succeeded)
-                    if new_end != current_end {
-                        let new_viewport = crate::time_types::Viewport::new(
-                            TimeNs::from_seconds(new_start),
-                            TimeNs::from_seconds(new_end)
-                        );
-                        TIMELINE_VIEWPORT.set_neq(new_viewport);
-                    } else {
+                    // Get file bounds and clamp viewport
+                    let (file_min, file_max) = get_full_file_range();
+                    let file_start_ns = TimeNs::from_external_seconds(file_min);
+                    let file_end_ns = TimeNs::from_external_seconds(file_max);
+                    coords.clamp_viewport(file_start_ns, file_end_ns);
+                    
+                    // Update global viewport state
+                    let new_viewport = coords.viewport();
+                    TIMELINE_VIEWPORT.set_neq(new_viewport);
+                    
+                    // Check if we actually moved (if not, we hit boundary)
+                    if coords.viewport_start_ns == original_start {
                         break; // Hit right boundary
                     }
                 }
@@ -1620,12 +1661,14 @@ fn validate_and_sanitize_range(start: f64, end: f64) -> (f64, f64) {
         return (SAFE_FALLBACK_START, SAFE_FALLBACK_END);
     }
     
-    // Enforce minimum viable range to prevent precision issues
+    // Enforce minimum viable range based on maximum zoom level
     let range = end - start;
-    if range < MIN_VALID_RANGE {
-        crate::debug_utils::debug_timeline_validation(&format!("Range too small: {:.3e}s, enforcing minimum", range));
+    let canvas_width = CANVAS_WIDTH.get() as u32;
+    let min_valid_range = get_min_valid_range_ns(canvas_width) as f64 / 1_000_000_000.0;
+    if range < min_valid_range {
+        crate::debug_utils::debug_timeline_validation(&format!("Range too small: {:.3e}s, enforcing minimum of {:.3e}s", range, min_valid_range));
         let center = (start + end) / 2.0;
-        let half_range = MIN_VALID_RANGE / 2.0;
+        let half_range = min_valid_range / 2.0;
         return (center - half_range, center + half_range);
     }
     
@@ -1633,85 +1676,68 @@ fn validate_and_sanitize_range(start: f64, end: f64) -> (f64, f64) {
     (start, end)
 }
 
-/// Emergency recovery system for corrupted timeline state
-fn emergency_timeline_recovery() -> (f64, f64) {
-    crate::debug_utils::debug_critical("EMERGENCY: Timeline state corrupted, attempting recovery");
+/// Simple cursor movement using TimelineCoordinates - replaces complex fallback algorithms
+fn move_cursor_by_pixels(pixel_offset: i32, current_time_ns: TimeNs) -> Option<TimeNs> {
+    let coords = TIMELINE_COORDINATES.lock_ref();
     
-    // Reset to safe defaults first
-    TIMELINE_ZOOM_LEVEL.set_neq(ZoomLevel::NORMAL);
-    ZOOM_CENTER_NS.set_neq(TimeNs::from_seconds(50.0));
-    
-    // Try to get actual file range
-    if let Some((file_min, file_max)) = get_current_timeline_range() {
-        let (validated_min, validated_max) = validate_and_sanitize_range(file_min, file_max);
-        crate::debug_utils::debug_critical(&format!("EMERGENCY: Recovered using file range: {} to {}", validated_min, validated_max));
-        return (validated_min, validated_max);
-    }
-    
-    // Ultimate fallback
-    crate::debug_utils::debug_critical("EMERGENCY: Using ultimate fallback range");
-    (SAFE_FALLBACK_START, SAFE_FALLBACK_END)
-}
-
-/// Time-based fallback movement when pixel conversion fails repeatedly
-fn apply_fallback_movement(direction: f64, current_time: f64) -> Option<f64> {
-    // Use a simple time-based step that works regardless of zoom level
-    let time_step = 1e-6 * direction; // 1 microsecond step
-    let new_time = current_time + time_step;
-    
-    if new_time >= 0.0 && new_time.is_finite() {
-        Some(new_time)
+    // Convert current time to pixel position
+    if let Some(current_pixel) = coords.time_to_pixel(current_time_ns) {
+        // Calculate new pixel position
+        let new_pixel = (current_pixel as i32).saturating_add(pixel_offset);
+        if new_pixel >= 0 {
+            // Convert back to time
+            let new_time_ns = coords.mouse_to_time(new_pixel as u32);
+            
+            // Clamp to file bounds if available
+            if let Some((file_min, file_max)) = get_current_timeline_range() {
+                let file_start_ns = TimeNs::from_external_seconds(file_min);
+                let file_end_ns = TimeNs::from_external_seconds(file_max);
+                let clamped_time_ns = TimeNs(new_time_ns.nanos().clamp(file_start_ns.nanos(), file_end_ns.nanos()));
+                Some(clamped_time_ns)
+            } else {
+                Some(new_time_ns)
+            }
+        } else {
+            // Hit left boundary
+            Some(TimeNs::ZERO)
+        }
     } else {
-        None
+        // Current time is outside viewport - use simple time-based fallback
+        let time_step_ns = 1_000_000; // 1 millisecond step
+        let new_time_nanos = if pixel_offset > 0 {
+            current_time_ns.nanos().saturating_add(time_step_ns)
+        } else {
+            current_time_ns.nanos().saturating_sub(time_step_ns)
+        };
+        Some(TimeNs(new_time_nanos))
     }
 }
 
-/// Safe pixel-to-time conversion with emergency recovery
-fn convert_pixel_to_time_safe(pixel_offset: f64, current_time: f64) -> Option<f64> {
-    // First, validate and potentially recover timeline ranges
+/// Synchronize TimelineCoordinates with global timeline state
+/// Called whenever global state changes to keep coordinates in sync
+#[allow(dead_code)] // TODO: Used for enhanced timeline coordinate synchronization
+pub fn sync_timeline_coordinates() {
+    let cursor_ns = TIMELINE_CURSOR_NS.get();
     let viewport = TIMELINE_VIEWPORT.get();
-    let visible_start_raw = viewport.start.to_seconds();
-    let visible_end_raw = viewport.end.to_seconds();
+    let ns_per_pixel = TIMELINE_NS_PER_PIXEL.get();
+    let canvas_width = CANVAS_WIDTH.get() as u32;
     
-    // Detect corrupted timeline state and recover
-    let (visible_start, visible_end) = if !visible_start_raw.is_finite() || !visible_end_raw.is_finite() || visible_start_raw >= visible_end_raw {
-        let (recovered_start, recovered_end) = emergency_timeline_recovery();
-        let recovery_viewport = crate::time_types::Viewport::new(
-            TimeNs::from_seconds(recovered_start),
-            TimeNs::from_seconds(recovered_end)
-        );
-        TIMELINE_VIEWPORT.set_neq(recovery_viewport);
-        (recovered_start as f64, recovered_end as f64)
-    } else {
-        (visible_start_raw as f64, visible_end_raw as f64)
-    };
+    let mut coords = TIMELINE_COORDINATES.lock_mut();
+    coords.cursor_ns = cursor_ns;
+    coords.viewport_start_ns = viewport.start;
+    coords.ns_per_pixel = ns_per_pixel;
+    coords.set_canvas_width(canvas_width);
+}
+
+/// Update global timeline state from TimelineCoordinates
+/// Called after coordinate operations to sync back to global state
+#[allow(dead_code)] // TODO: Used for coordinate state management
+pub fn update_global_from_coordinates() {
+    let coords = TIMELINE_COORDINATES.lock_ref();
     
-    let visible_range = visible_end - visible_start;
-    let canvas_width = CANVAS_WIDTH.get() as f64;
-    
-    // Validate remaining inputs
-    if !current_time.is_finite() {
-        crate::debug_utils::debug_timeline_validation(&format!("CURSOR DEBUG: Non-finite current time: {}", current_time));
-        return None;
-    }
-    
-    if canvas_width <= 0.0 {
-        crate::debug_utils::debug_timeline_validation(&format!("CURSOR DEBUG: Invalid canvas width: {}", canvas_width));
-        return None;
-    }
-    
-    // Perform conversion with validated inputs
-    let current_pixel = ((current_time - visible_start) / visible_range) * canvas_width;
-    let new_pixel = current_pixel + pixel_offset;
-    let new_time = visible_start + (new_pixel / canvas_width) * visible_range;
-    
-    // Final validation
-    if new_time.is_finite() {
-        Some(new_time)
-    } else {
-        crate::debug_utils::debug_timeline_validation("CURSOR DEBUG: Calculation produced non-finite result");
-        None
-    }
+    TIMELINE_CURSOR_NS.set_neq(coords.cursor_ns);
+    TIMELINE_VIEWPORT.set_neq(coords.viewport());
+    TIMELINE_NS_PER_PIXEL.set_neq(coords.ns_per_pixel);
 }
 
 // High-performance direct cursor animation loop
@@ -1726,29 +1752,23 @@ fn start_direct_cursor_animation_loop() {
                 continue;
             }
             
-            // Calculate new position based on direction and velocity
-            let pixel_delta = animation.direction as f64 * animation.velocity_pixels_per_frame;
+            // Calculate new position using TimelineCoordinates
+            let pixel_delta = (animation.direction as f64 * animation.velocity_pixels_per_frame) as i32;
+            let current_time_ns = TimeNs::from_external_seconds(animation.current_position);
             
-            if let Some(new_time) = convert_pixel_to_time_safe(pixel_delta, animation.current_position) {
-                let safe_time = new_time.max(0.0);
+            if let Some(new_time_ns) = move_cursor_by_pixels(pixel_delta, current_time_ns) {
+                let new_time_seconds = new_time_ns.display_seconds();
                 
                 // Update animation state
-                animation.current_position = safe_time;
+                animation.current_position = new_time_seconds;
                 drop(animation);
                 
                 // Update timeline cursor with debouncing
-                update_timeline_cursor_with_debouncing(safe_time);
+                update_timeline_cursor_with_debouncing(new_time_seconds);
             } else {
-                // Fallback to percentage-based movement if pixel conversion fails
-                if let Some(new_time) = apply_fallback_movement(animation.direction as f64, animation.current_position) {
-                    animation.current_position = new_time;
-                    drop(animation);
-                    update_timeline_cursor_with_debouncing(new_time);
-                } else {
-                    // Stop animation if both methods fail
-                    animation.is_animating = false;
-                    drop(animation);
-                }
+                // Stop animation if movement fails (shouldn't happen with new system)
+                animation.is_animating = false;
+                drop(animation);
             }
         }
     });
@@ -1756,7 +1776,7 @@ fn start_direct_cursor_animation_loop() {
 
 // Smart cursor update with debouncing to reduce canvas redraw overhead
 fn update_timeline_cursor_with_debouncing(new_position: f64) {
-    TIMELINE_CURSOR_NS.set_neq(TimeNs::from_seconds(new_position));
+    TIMELINE_CURSOR_NS.set_neq(TimeNs::from_external_seconds(new_position));
     
     // Debounce canvas updates - only redraw every 16ms maximum
     let now = get_current_time_ns();
@@ -1786,7 +1806,7 @@ pub fn start_smooth_cursor_left() {
     let mut animation = DIRECT_CURSOR_ANIMATION.lock_mut();
     animation.direction = -1;
     animation.is_animating = true;
-    animation.current_position = TIMELINE_CURSOR_NS.get().to_seconds();
+    animation.current_position = TIMELINE_CURSOR_NS.get().display_seconds();
     IS_CURSOR_MOVING_LEFT.set_neq(true);
 }
 
@@ -1794,7 +1814,7 @@ pub fn start_smooth_cursor_right() {
     let mut animation = DIRECT_CURSOR_ANIMATION.lock_mut();
     animation.direction = 1;
     animation.is_animating = true;
-    animation.current_position = TIMELINE_CURSOR_NS.get().to_seconds();
+    animation.current_position = TIMELINE_CURSOR_NS.get().display_seconds();
     IS_CURSOR_MOVING_RIGHT.set_neq(true);
 }
 
@@ -1821,22 +1841,23 @@ pub fn stop_smooth_cursor_right() {
 
 
 /// Get viewport covering all loaded files using integer time
+#[allow(dead_code)] // TODO: Used for full file range viewport calculations
 fn get_full_file_viewport_ns() -> Viewport {
     let loaded_files = LOADED_FILES.lock_ref();
     
     if loaded_files.is_empty() {
-        return Viewport::new(TimeNs::ZERO, TimeNs::from_seconds(100.0));
+        return Viewport::new(TimeNs::ZERO, TimeNs::from_external_seconds(100.0));
     }
     
-    let mut min_time_ns = TimeNs::from_seconds(f64::MAX);
+    let mut min_time_ns = TimeNs::from_external_seconds(f64::MAX);
     let mut max_time_ns = TimeNs::ZERO;
     let mut found_valid = false;
     
     for file in loaded_files.iter() {
-        if let (Some(file_min), Some(file_max)) = (file.min_time, file.max_time) {
+        if let (Some(file_min), Some(file_max)) = (file.min_time_ns.map(|ns| ns as f64 / 1_000_000_000.0), file.max_time_ns.map(|ns| ns as f64 / 1_000_000_000.0)) {
             if file_min.is_finite() && file_max.is_finite() && file_min < file_max {
-                let file_min_ns = TimeNs::from_seconds(file_min.max(0.0));
-                let file_max_ns = TimeNs::from_seconds(file_max);
+                let file_min_ns = TimeNs::from_external_seconds(file_min.max(0.0));
+                let file_max_ns = TimeNs::from_external_seconds(file_max);
                 
                 min_time_ns = if found_valid { min_time_ns.min(file_min_ns) } else { file_min_ns };
                 max_time_ns = max_time_ns.max(file_max_ns);
@@ -1848,11 +1869,12 @@ fn get_full_file_viewport_ns() -> Viewport {
     if found_valid {
         Viewport::new(min_time_ns, max_time_ns)
     } else {
-        Viewport::new(TimeNs::ZERO, TimeNs::from_seconds(100.0))
+        Viewport::new(TimeNs::ZERO, TimeNs::from_external_seconds(100.0))
     }
 }
 
 
+#[allow(dead_code)] // TODO: Used for enhanced mouse-centered zoom operations
 fn update_zoom_with_mouse_center(new_zoom_factor: f32) {
     // Validate input zoom level
     if !new_zoom_factor.is_finite() || new_zoom_factor <= 0.0 {
@@ -1860,23 +1882,55 @@ fn update_zoom_with_mouse_center(new_zoom_factor: f32) {
         return;
     }
     
+    // Get zoom center with validation
     let zoom_center_ns = ZOOM_CENTER_NS.get();
-    let new_zoom_level = ZoomLevel::from_factor(new_zoom_factor);
-    
-    // Set the new zoom level
-    TIMELINE_ZOOM_LEVEL.set_neq(new_zoom_level);
-    
-    let current_viewport = TIMELINE_VIEWPORT.get();
-    
-    if new_zoom_level.percent() == 100 {
-        // At exactly 1x zoom - show full file range
-        let new_viewport = get_full_file_viewport_ns();
-        TIMELINE_VIEWPORT.set_neq(new_viewport);
-    } else {
-        // Zoomed in (>100%) - use integer zoom calculation centered on mouse position
-        let new_viewport = current_viewport.zoom_to(new_zoom_level, zoom_center_ns);
-        TIMELINE_VIEWPORT.set_neq(new_viewport);
+    if zoom_center_ns.nanos() == 0 {
+        // No zoom center set - use cursor position as fallback
+        let cursor_ns = TIMELINE_CURSOR_NS.get();
+        ZOOM_CENTER_NS.set_neq(cursor_ns);
     }
+    let validated_zoom_center = ZOOM_CENTER_NS.get();
+    
+    // Use TimelineCoordinates for zoom operations
+    let mut coords = TIMELINE_COORDINATES.lock_mut();
+    
+    if new_zoom_factor == 1.0 {
+        // At exactly 1x zoom - show full file range
+        if let Some((file_min, file_max)) = get_current_timeline_range() {
+            let file_start_ns = TimeNs::from_external_seconds(file_min);
+            let file_end_ns = TimeNs::from_external_seconds(file_max);
+            
+            // Calculate ns_per_pixel to show full file range
+            let canvas_width = CANVAS_WIDTH.get() as u32;
+            let full_range_ns_per_pixel = NsPerPixel::from_viewport(
+                Viewport::new(file_start_ns, file_end_ns), 
+                canvas_width
+            );
+            
+            coords.ns_per_pixel = full_range_ns_per_pixel;
+            coords.viewport_start_ns = file_start_ns;
+            coords.set_cursor(validated_zoom_center); // Keep cursor position
+        } else {
+            // No files - use default zoom
+            coords.ns_per_pixel = NsPerPixel::MEDIUM_ZOOM;
+        }
+    } else {
+        // Zoomed in - use zoom calculation centered on mouse/zoom center position
+        let new_ns_per_pixel = NsPerPixel::MEDIUM_ZOOM.zoom_in_smooth(1.0 - new_zoom_factor as f64);
+        coords.zoom_to(new_ns_per_pixel);
+        
+        // Ensure zoom center is within file bounds if files are loaded
+        if let Some((file_min, file_max)) = get_current_timeline_range() {
+            let file_start_ns = TimeNs::from_external_seconds(file_min);
+            let file_end_ns = TimeNs::from_external_seconds(file_max);
+            coords.clamp_viewport(file_start_ns, file_end_ns);
+        }
+    }
+    
+    // Update global state to match TimelineCoordinates
+    let new_viewport = coords.viewport();
+    TIMELINE_VIEWPORT.set_neq(new_viewport);
+    TIMELINE_NS_PER_PIXEL.set_neq(coords.ns_per_pixel);
 }
 
 fn get_full_file_range() -> (f64, f64) {
@@ -1887,7 +1941,7 @@ fn get_full_file_range() -> (f64, f64) {
     let mut has_valid_files = false;
     
     for file in loaded_files.iter() {
-        if let (Some(file_min), Some(file_max)) = (file.min_time, file.max_time) {
+        if let (Some(file_min), Some(file_max)) = (file.min_time_ns.map(|ns| ns as f64 / 1_000_000_000.0), file.max_time_ns.map(|ns| ns as f64 / 1_000_000_000.0)) {
             // Validate file times before using them
             if file_min.is_finite() && file_max.is_finite() && file_min < file_max {
                 min_time = min_time.min(file_min);
@@ -1939,7 +1993,7 @@ fn get_selected_variables_file_range() -> (f64, f64) {
     // Only include files that have selected variables
     for file in loaded_files.iter() {
         if selected_file_paths.contains(&file.id) {
-            if let (Some(file_min), Some(file_max)) = (file.min_time, file.max_time) {
+            if let (Some(file_min), Some(file_max)) = (file.min_time_ns.map(|ns| ns as f64 / 1_000_000_000.0), file.max_time_ns.map(|ns| ns as f64 / 1_000_000_000.0)) {
                 min_time = min_time.min(file_min);
                 max_time = max_time.max(file_max);
                 has_valid_files = true;
@@ -1955,7 +2009,7 @@ fn get_selected_variables_file_range() -> (f64, f64) {
 }
 
 fn create_waveform_objects_with_theme(selected_vars: &[SelectedVariable], theme: &NovyUITheme) -> Vec<fast2d::Object2d> {
-    let cursor_pos = TIMELINE_CURSOR_NS.get().to_seconds();
+    let cursor_pos = TIMELINE_CURSOR_NS.get().display_seconds();
     let canvas_width = CANVAS_WIDTH.get();
     let canvas_height = CANVAS_HEIGHT.get();
     create_waveform_objects_with_dimensions_and_theme(selected_vars, canvas_width, canvas_height, theme, cursor_pos)
@@ -2282,7 +2336,7 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
         
         // Add zoom center line spanning all rows (if different from cursor)
         let zoom_center_ns = ZOOM_CENTER_NS.get();
-        let zoom_center_position = zoom_center_ns.to_seconds();
+        let zoom_center_position = zoom_center_ns.display_seconds();
         if zoom_center_position >= min_time && zoom_center_position <= max_time && zoom_center_position != cursor_position {
             let zoom_center_x = ((zoom_center_position - min_time) / time_range) * canvas_width as f64;
             
@@ -2405,13 +2459,12 @@ pub fn collect_all_transitions() -> Vec<f64> {
         let cache_key = format!("{}|{}|{}", file_path, scope_path, variable_name);
         
         // Get transitions from cache
-        let cache = SIGNAL_TRANSITIONS_CACHE.lock_ref();
-        if let Some(transitions) = cache.get(&cache_key) {
+        if let Some(transitions) = crate::unified_timeline_service::UnifiedTimelineService::get_raw_transitions(&cache_key) {
             // Extract time points and convert to f64
-            for transition in transitions {
+            for transition in &transitions {
                 // Only include transitions within reasonable bounds
-                if transition.time_seconds >= 0.0 {
-                    all_transitions.push(transition.time_seconds);
+                if transition.time_ns as f64 / 1_000_000_000.0 >= 0.0 {
+                    all_transitions.push(transition.time_ns as f64 / 1_000_000_000.0);
                 }
             }
         }
@@ -2441,7 +2494,7 @@ pub fn jump_to_previous_transition() {
         return; // No valid timeline range available
     }
     
-    let current_cursor = TIMELINE_CURSOR_NS.get().to_seconds();
+    let current_cursor = TIMELINE_CURSOR_NS.get().display_seconds();
     let transitions = collect_all_transitions();
     
     if transitions.is_empty() {
@@ -2461,7 +2514,7 @@ pub fn jump_to_previous_transition() {
     
     if let Some(prev_time) = previous_transition {
         // Jump to previous transition
-        TIMELINE_CURSOR_NS.set_neq(TimeNs::from_seconds(prev_time));
+        TIMELINE_CURSOR_NS.set_neq(TimeNs::from_external_seconds(prev_time));
         // Synchronize direct animation to prevent jumps when using Q/E after transition jump
         let mut animation = DIRECT_CURSOR_ANIMATION.lock_mut();
         animation.current_position = prev_time;
@@ -2470,7 +2523,7 @@ pub fn jump_to_previous_transition() {
     } else if !transitions.is_empty() {
         // If no previous transition, wrap to the last transition
         let last_transition = transitions[transitions.len() - 1];
-        TIMELINE_CURSOR_NS.set_neq(TimeNs::from_seconds(last_transition));
+        TIMELINE_CURSOR_NS.set_neq(TimeNs::from_external_seconds(last_transition));
         // Synchronize direct animation to prevent jumps when using Q/E after transition jump
         let mut animation = DIRECT_CURSOR_ANIMATION.lock_mut();
         animation.current_position = last_transition;
@@ -2494,7 +2547,7 @@ pub fn jump_to_next_transition() {
         return; // No valid timeline range available
     }
     
-    let current_cursor = TIMELINE_CURSOR_NS.get().to_seconds();
+    let current_cursor = TIMELINE_CURSOR_NS.get().display_seconds();
     let transitions = collect_all_transitions();
     
     if transitions.is_empty() {
@@ -2508,7 +2561,7 @@ pub fn jump_to_next_transition() {
     
     if let Some(next_time) = next_transition {
         // Jump to next transition
-        TIMELINE_CURSOR_NS.set_neq(TimeNs::from_seconds(next_time));
+        TIMELINE_CURSOR_NS.set_neq(TimeNs::from_external_seconds(next_time));
         // Synchronize direct animation to prevent jumps when using Q/E after transition jump
         let mut animation = DIRECT_CURSOR_ANIMATION.lock_mut();
         animation.current_position = next_time;
@@ -2517,7 +2570,7 @@ pub fn jump_to_next_transition() {
     } else if !transitions.is_empty() {
         // If no next transition, wrap to the first transition
         let first_transition = transitions[0];
-        TIMELINE_CURSOR_NS.set_neq(TimeNs::from_seconds(first_transition));
+        TIMELINE_CURSOR_NS.set_neq(TimeNs::from_external_seconds(first_transition));
         // Synchronize direct animation to prevent jumps when using Q/E after transition jump
         let mut animation = DIRECT_CURSOR_ANIMATION.lock_mut();
         animation.current_position = first_transition;
@@ -2529,19 +2582,19 @@ pub fn jump_to_next_transition() {
 /// Reset zoom to fit all data in view (recovery function for broken zoom states)
 pub fn reset_zoom_to_fit_all() {
     // Reset zoom to 1x
-    TIMELINE_ZOOM_LEVEL.set_neq(ZoomLevel::NORMAL);
+    TIMELINE_NS_PER_PIXEL.set_neq(NsPerPixel::MEDIUM_ZOOM);
     
     // Get range for files with selected variables only
     let (file_min, file_max) = get_selected_variables_file_range();
     let viewport = crate::time_types::Viewport::new(
-        TimeNs::from_seconds(file_min),
-        TimeNs::from_seconds(file_max)
+        TimeNs::from_external_seconds(file_min),
+        TimeNs::from_external_seconds(file_max)
     );
     TIMELINE_VIEWPORT.set_neq(viewport);
     
     // Reset cursor to a reasonable position
     let middle_time = (file_min + file_max) / 2.0;
-    TIMELINE_CURSOR_NS.set_neq(TimeNs::from_seconds(middle_time));
+    TIMELINE_CURSOR_NS.set_neq(TimeNs::from_external_seconds(middle_time));
     
     // Synchronize direct animation to prevent jumps when using Q/E after zoom reset
     let mut animation = DIRECT_CURSOR_ANIMATION.lock_mut();

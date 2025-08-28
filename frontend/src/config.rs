@@ -6,32 +6,33 @@ use serde::{Deserialize, Serialize};
 use shared::UpMsg;
 pub use shared::{Theme, DockMode}; // Re-export for frontend usage
 use crate::CONFIG_INITIALIZATION_COMPLETE;
+use crate::time_types::{NsPerPixel, TimeNs};
 
 // Reactive triggers module
 pub mod triggers;
 
-// Timeline validation constants
-const MIN_VALID_RANGE: f64 = 1e-6;       // 1 microsecond minimum range
-const SAFE_FALLBACK_START: f64 = 0.0;    // Safe fallback start time
-const SAFE_FALLBACK_END: f64 = 100.0;    // Safe fallback end time
+// Timeline validation constants  
+const MIN_VALID_RANGE_NS: u64 = 1_000;       // 1 microsecond minimum range in nanoseconds
+const SAFE_FALLBACK_START_NS: u64 = 0;       // Safe fallback start time in nanoseconds
+const SAFE_FALLBACK_END_NS: u64 = 100_000_000_000;  // Safe fallback end time (100s) in nanoseconds
 
-/// Validate timeline values from config to prevent NaN propagation
-fn validate_timeline_values(cursor: f64, zoom: f32, start: f64, end: f64) -> (f64, f32, f64, f64) {
-    // Validate cursor position
-    let safe_cursor = if cursor.is_finite() && cursor >= 0.0 { cursor } else { 50.0 };
+/// Validate timeline values from config to prevent invalid values
+fn validate_timeline_values_ns(cursor_ns: u64, zoom: f32, start_ns: u64, end_ns: u64) -> (TimeNs, f32, TimeNs, TimeNs) {
+    // Validate cursor position (convert to TimeNs)
+    let safe_cursor = TimeNs::from_nanos(cursor_ns);
     
     // Validate zoom level
     let safe_zoom = if zoom.is_finite() && zoom >= 1.0 && zoom <= 1e9 { zoom } else { 1.0 };
     
     // Validate range
-    let (safe_start, safe_end) = if start.is_finite() && end.is_finite() && start < end && (end - start) >= MIN_VALID_RANGE {
-        (start, end)
+    let (safe_start_ns, safe_end_ns) = if start_ns < end_ns && (end_ns - start_ns) >= MIN_VALID_RANGE_NS {
+        (start_ns, end_ns)
     } else {
-        crate::debug_utils::debug_critical(&format!("CONFIG: Invalid timeline range ({}, {}), using fallback", start, end));
-        (SAFE_FALLBACK_START, SAFE_FALLBACK_END)
+        crate::debug_utils::debug_critical(&format!("CONFIG: Invalid timeline range ({}, {}), using fallback", start_ns, end_ns));
+        (SAFE_FALLBACK_START_NS, SAFE_FALLBACK_END_NS)
     };
     
-    (safe_cursor, safe_zoom, safe_start, safe_end)
+    (safe_cursor, safe_zoom, TimeNs::from_nanos(safe_start_ns), TimeNs::from_nanos(safe_end_ns))
 }
 
 // =============================================================================
@@ -111,10 +112,10 @@ pub struct WorkspaceSection {
     pub load_files_expanded_directories: MutableVec<String>,
     pub panel_layouts: Mutable<PanelLayouts>,
     pub selected_variables: MutableVec<shared::SelectedVariable>,
-    pub timeline_cursor_position: Mutable<f64>,
+    pub timeline_cursor_position: Mutable<TimeNs>,
     pub timeline_zoom_level: Mutable<f32>,
-    pub timeline_visible_range_start: Mutable<f64>,
-    pub timeline_visible_range_end: Mutable<f64>,
+    pub timeline_visible_range_start: Mutable<TimeNs>,
+    pub timeline_visible_range_end: Mutable<TimeNs>,
 }
 
 // DockMode enum now imported from shared crate for type safety
@@ -228,10 +229,10 @@ impl Default for WorkspaceSection {
             load_files_expanded_directories: MutableVec::new(),
             panel_layouts: Mutable::new(PanelLayouts::default()),
             selected_variables: MutableVec::new(),
-            timeline_cursor_position: Mutable::new(10.0),
+            timeline_cursor_position: Mutable::new(TimeNs::from_nanos(10_000_000_000)), // 10 seconds
             timeline_zoom_level: Mutable::new(1.0),
-            timeline_visible_range_start: Mutable::new(0.0),
-            timeline_visible_range_end: Mutable::new(100.0),
+            timeline_visible_range_start: Mutable::new(TimeNs::from_nanos(0)),
+            timeline_visible_range_end: Mutable::new(TimeNs::from_nanos(100_000_000_000)), // 100 seconds
         }
     }
 }
@@ -325,10 +326,10 @@ pub struct SerializableWorkspaceSection {
     pub load_files_expanded_directories: Vec<String>,
     pub panel_layouts: SerializablePanelLayouts,
     pub selected_variables: Vec<shared::SelectedVariable>,
-    pub timeline_cursor_position: f64,
+    pub timeline_cursor_position: u64,  // nanoseconds
     pub timeline_zoom_level: f32,
-    pub timeline_visible_range_start: f64,
-    pub timeline_visible_range_end: f64,
+    pub timeline_visible_range_start: u64,  // nanoseconds
+    pub timeline_visible_range_end: u64,  // nanoseconds
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -402,10 +403,10 @@ impl ConfigStore {
                         variables_value_column_width: self.workspace.lock_ref().panel_layouts.lock_ref().docked_to_right.lock_ref().variables_value_column_width.get(),
                     },
                 },
-                timeline_cursor_position: self.workspace.lock_ref().timeline_cursor_position.get(),
+                timeline_cursor_position: self.workspace.lock_ref().timeline_cursor_position.get().nanos(),
                 timeline_zoom_level: self.workspace.lock_ref().timeline_zoom_level.get(),
-                timeline_visible_range_start: self.workspace.lock_ref().timeline_visible_range_start.get(),
-                timeline_visible_range_end: self.workspace.lock_ref().timeline_visible_range_end.get(),
+                timeline_visible_range_start: self.workspace.lock_ref().timeline_visible_range_start.get().nanos(),
+                timeline_visible_range_end: self.workspace.lock_ref().timeline_visible_range_end.get().nanos(),
             },
             dialogs: SerializableDialogSection {
                 show_file_dialog: self.dialogs.lock_ref().show_file_dialog.get(),
@@ -447,8 +448,8 @@ impl ConfigStore {
         self.workspace.lock_mut().load_files_expanded_directories.lock_mut().replace_cloned(config.workspace.load_files_expanded_directories);
         self.workspace.lock_mut().selected_variables.lock_mut().replace_cloned(config.workspace.selected_variables);
         
-        // Validate timeline values before setting to prevent NaN propagation
-        let (safe_cursor, safe_zoom, safe_start, safe_end) = validate_timeline_values(
+        // Validate timeline values before setting to prevent invalid values
+        let (safe_cursor, safe_zoom, safe_start, safe_end) = validate_timeline_values_ns(
             config.workspace.timeline_cursor_position,
             config.workspace.timeline_zoom_level,
             config.workspace.timeline_visible_range_start,
@@ -772,41 +773,31 @@ fn save_config_immediately() {
             load_files_scroll_position: serializable_config.session.file_picker.scroll_position,
             variables_search_filter: serializable_config.session.variables_search_filter,
             selected_variables: serializable_config.workspace.selected_variables,
-            timeline_cursor_position: {
+            // New nanosecond fields
+            timeline_cursor_position_ns: {
                 let cursor_ns = crate::state::TIMELINE_CURSOR_NS.get();
-                let pos = cursor_ns.to_seconds();
-                if pos.is_finite() && pos >= 0.0 { pos } else { 10.0 } // Default to 10.0s if invalid
+                cursor_ns.nanos()
+            },
+            timeline_visible_range_start_ns: {
+                let viewport = crate::state::TIMELINE_VIEWPORT.get();
+                Some(viewport.start.nanos())
+            },
+            timeline_visible_range_end_ns: {
+                let viewport = crate::state::TIMELINE_VIEWPORT.get();
+                Some(viewport.end.nanos())
             },
             timeline_zoom_level: {
-                let zoom = crate::state::TIMELINE_ZOOM_LEVEL.get();
-                zoom.factor() // Convert ZoomLevel to f32 for config storage
-            },
-            timeline_visible_range_start: {
-                let viewport = crate::state::TIMELINE_VIEWPORT.get();
-                let start = viewport.start.to_seconds();
-                if start.is_finite() && start >= 0.0 {
-                    Some(start)
-                } else {
-                    None  // Send None instead of Some(NaN) to prevent JSON deserialization error
-                }
-            },
-            timeline_visible_range_end: {
-                let viewport = crate::state::TIMELINE_VIEWPORT.get();
-                let end = viewport.end.to_seconds();
-                if end.is_finite() && end > 0.0 {
-                    Some(end)
-                } else {
-                    None  // Send None instead of Some(NaN) to prevent JSON deserialization error
-                }
+                let ns_per_pixel = crate::state::TIMELINE_NS_PER_PIXEL.get();
+                // Convert NsPerPixel to normalized factor for config storage
+                let factor = (NsPerPixel::LOW_ZOOM.nanos() as f64 / ns_per_pixel.nanos() as f64).clamp(0.0, 1.0);
+                factor as f32
             },
         },
     };
 
     // Use platform abstraction instead of direct connection
     Task::start(async move {
-        if let Err(e) = CurrentPlatform::send_message(UpMsg::SaveConfig(app_config)).await {
-            zoon::println!("ERROR: Failed to save config via platform: {}", e);
-        }
+        let _ = CurrentPlatform::send_message(UpMsg::SaveConfig(app_config)).await;
     });
 }
 
@@ -901,10 +892,10 @@ pub fn apply_config(config: shared::AppConfig) {
             expanded_scopes: config.workspace.expanded_scopes,
             load_files_expanded_directories: config.workspace.load_files_expanded_directories,
             selected_variables: config.workspace.selected_variables,
-            timeline_cursor_position: config.workspace.timeline_cursor_position,
+            timeline_cursor_position: config.workspace.timeline_cursor_position_ns,  // u64 - no unwrap needed
             timeline_zoom_level: config.workspace.timeline_zoom_level,
-            timeline_visible_range_start: config.workspace.timeline_visible_range_start.unwrap_or(0.0),
-            timeline_visible_range_end: config.workspace.timeline_visible_range_end.unwrap_or(100.0),
+            timeline_visible_range_start: config.workspace.timeline_visible_range_start_ns.unwrap_or(0),  // Option<u64>
+            timeline_visible_range_end: config.workspace.timeline_visible_range_end_ns.unwrap_or(100_000_000_000),  // Option<u64>
             panel_layouts: SerializablePanelLayouts {
                 docked_to_bottom: SerializablePanelDimensions {
                     files_panel_width: config.workspace.docked_bottom_dimensions.files_and_scopes_panel_width as f32,
@@ -1087,17 +1078,18 @@ pub fn setup_reactive_config_persistence() {
     Task::start(async {
         TIMELINE_CURSOR_NS.signal().for_each(|cursor_ns| async move {
             if CONFIG_INITIALIZATION_COMPLETE.get() {
-                let cursor_pos = cursor_ns.to_seconds();
-                config_store().workspace.lock_mut().timeline_cursor_position.set_neq(cursor_pos);
+                config_store().workspace.lock_mut().timeline_cursor_position.set_neq(cursor_ns);
                 save_config_to_backend();
             }
         }).await
     });
 
     Task::start(async {
-        TIMELINE_ZOOM_LEVEL.signal().for_each(|zoom_level| async move {
+        TIMELINE_NS_PER_PIXEL.signal().for_each(|ns_per_pixel| async move {
             if CONFIG_INITIALIZATION_COMPLETE.get() {
-                config_store().workspace.lock_mut().timeline_zoom_level.set_neq(zoom_level.factor());
+                // Convert NsPerPixel to normalized factor for config storage
+                let factor = (NsPerPixel::LOW_ZOOM.nanos() as f64 / ns_per_pixel.nanos() as f64).clamp(0.0, 1.0);
+                config_store().workspace.lock_mut().timeline_zoom_level.set_neq(factor as f32);
                 save_config_to_backend();
             }
         }).await
@@ -1106,10 +1098,8 @@ pub fn setup_reactive_config_persistence() {
     Task::start(async {
         TIMELINE_VIEWPORT.signal().for_each(|viewport| async move {
             if CONFIG_INITIALIZATION_COMPLETE.get() {
-                let start = viewport.start.to_seconds();
-                let end = viewport.end.to_seconds();
-                config_store().workspace.lock_mut().timeline_visible_range_start.set_neq(start);
-                config_store().workspace.lock_mut().timeline_visible_range_end.set_neq(end);
+                config_store().workspace.lock_mut().timeline_visible_range_start.set_neq(viewport.start);
+                config_store().workspace.lock_mut().timeline_visible_range_end.set_neq(viewport.end);
                 save_config_to_backend();
             }
         }).await

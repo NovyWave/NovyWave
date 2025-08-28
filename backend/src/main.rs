@@ -64,7 +64,7 @@ impl SignalCacheManager {
     async fn query_unified_signals(
         &self,
         signal_requests: Vec<UnifiedSignalRequest>,
-        cursor_time: Option<f64>,
+        cursor_time: Option<u64>,
     ) -> Result<(Vec<UnifiedSignalData>, BTreeMap<String, SignalValue>, SignalStatistics), String> {
         let start_time = std::time::Instant::now();
         
@@ -115,9 +115,9 @@ impl SignalCacheManager {
                 stats.cache_hits += 1;
                 
                 // Filter by time range if specified
-                let filtered_transitions = if let Some((start, end)) = request.time_range {
+                let filtered_transitions = if let Some((start, end)) = request.time_range_ns {
                     transitions.iter()
-                        .filter(|t| t.time_seconds >= start && t.time_seconds <= end)
+                        .filter(|t| t.time_ns >= start && t.time_ns <= end)
                         .cloned()
                         .collect()
                 } else {
@@ -138,7 +138,7 @@ impl SignalCacheManager {
                     unique_id: unique_id.clone(),
                     transitions: final_transitions,
                     total_transitions: transitions.len(),
-                    actual_time_range: self.compute_time_range(transitions),
+                    actual_time_range_ns: self.compute_time_range(transitions),
                 });
             }
         }
@@ -165,9 +165,9 @@ impl SignalCacheManager {
                 }
                 
                 // Filter by time range and downsample
-                let filtered_transitions = if let Some((start, end)) = request.time_range {
+                let filtered_transitions = if let Some((start, end)) = request.time_range_ns {
                     transitions.iter()
-                        .filter(|t| t.time_seconds >= start && t.time_seconds <= end)
+                        .filter(|t| t.time_ns >= start && t.time_ns <= end)
                         .cloned()
                         .collect()
                 } else {
@@ -187,7 +187,7 @@ impl SignalCacheManager {
                     unique_id: unique_id.to_string(),
                     transitions: final_transitions,
                     total_transitions: transitions.len(),
-                    actual_time_range: self.compute_time_range(&transitions),
+                    actual_time_range_ns: self.compute_time_range(&transitions),
                 });
             }
         }
@@ -213,13 +213,13 @@ impl SignalCacheManager {
     }
     
     /// Compute signal values at cursor time
-    fn compute_cursor_values(&self, signal_data: &[UnifiedSignalData], cursor_time: f64) -> BTreeMap<String, SignalValue> {
+    fn compute_cursor_values(&self, signal_data: &[UnifiedSignalData], cursor_time: u64) -> BTreeMap<String, SignalValue> {
         let mut cursor_values = BTreeMap::new();
         
         for signal in signal_data {
             // Find the most recent transition at or before cursor time
             let value = signal.transitions.iter()
-                .filter(|t| t.time_seconds <= cursor_time)
+                .filter(|t| t.time_ns <= cursor_time)
                 .last()
                 .map(|t| SignalValue::Present(t.value.clone()))
                 .unwrap_or(SignalValue::Missing);
@@ -245,12 +245,12 @@ impl SignalCacheManager {
     }
     
     /// Compute time range from transitions
-    fn compute_time_range(&self, transitions: &[SignalTransition]) -> Option<(f64, f64)> {
+    fn compute_time_range(&self, transitions: &[SignalTransition]) -> Option<(u64, u64)> {
         if transitions.is_empty() {
             None
         } else {
-            let min_time = transitions.first().unwrap().time_seconds;
-            let max_time = transitions.last().unwrap().time_seconds;
+            let min_time = transitions.first().unwrap().time_ns;
+            let max_time = transitions.last().unwrap().time_ns;
             Some((min_time, max_time))
         }
     }
@@ -311,9 +311,9 @@ async fn up_msg_handler(req: UpMsgRequest<UpMsg>) {
             // Send batch response
             send_down_msg(DownMsg::BatchSignalValues { batch_id: batch_id.clone(), file_results }, session_id, cor_id).await;
         }
-        UpMsg::UnifiedSignalQuery { signal_requests, cursor_time, request_id } => {
+        UpMsg::UnifiedSignalQuery { signal_requests, cursor_time_ns, request_id } => {
             // Handle unified signal query using the new cache manager
-            handle_unified_signal_query(signal_requests.clone(), cursor_time.clone(), request_id.clone(), session_id, cor_id).await;
+            handle_unified_signal_query(signal_requests.clone(), cursor_time_ns.clone(), request_id.clone(), session_id, cor_id).await;
         }
     }
 }
@@ -478,7 +478,7 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
                     
                     // FST: Extract time range using proper timescale
                     let (min_seconds, max_seconds) = extract_fst_time_range(&body_result, timescale_factor);
-                    let (min_time, max_time) = (Some(min_seconds), Some(max_seconds));
+                    let (min_time_ns, max_time_ns) = (Some((min_seconds * 1_000_000_000.0) as u64), Some((max_seconds * 1_000_000_000.0) as u64));
                     
                     // Extract scopes from hierarchy 
                     let scopes = extract_scopes_from_hierarchy(&header_result.hierarchy, &file_path);
@@ -517,8 +517,8 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
                         filename: filename.clone(),
                         format,
                         scopes,
-                        min_time,
-                        max_time,
+                        min_time_ns,
+                        max_time_ns,
                     };
                     
                     let file_hierarchy = FileHierarchy {
@@ -592,7 +592,7 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
                     let scopes = extract_scopes_from_hierarchy(&header_result.hierarchy, &file_path);
                     
                     let format = FileFormat::VCD;
-                    let (min_time, max_time) = (Some(min_seconds), Some(max_seconds));
+                    let (min_time_ns, max_time_ns) = (Some((min_seconds * 1_000_000_000.0) as u64), Some((max_seconds * 1_000_000_000.0) as u64));
                     
                     // Create lightweight file data WITHOUT full signal source
                     let waveform_file = WaveformFile {
@@ -600,8 +600,8 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
                         filename: filename.clone(),
                         format,
                         scopes,
-                        min_time,
-                        max_time,
+                        min_time_ns,
+                        max_time_ns,
                     };
                     
                     let file_hierarchy = FileHierarchy {
@@ -1896,7 +1896,7 @@ async fn process_signal_value_queries_internal(file_path: &str, queries: &[Signa
 async fn query_signal_transitions(
     file_path: String, 
     signal_queries: Vec<SignalTransitionQuery>, 
-    time_range: (f64, f64), 
+    time_range: (u64, u64), 
     session_id: SessionId, 
     cor_id: CorId
 ) {
@@ -1941,18 +1941,22 @@ async fn query_signal_transitions(
             Some(&signal_ref) => {
                 let mut transitions = Vec::new();
                 
-                // Convert time range from seconds back to native file units
+                // Convert time range from nanoseconds to native file units
                 let (mut start_time, mut end_time) = match waveform_data.file_format {
                     wellen::FileFormat::Vcd => {
-                        // For VCD: Convert from seconds back to VCD native units using stored timescale
-                        // time_range is in seconds, need to convert to VCD native units
-                        let start_native = (time_range.0 / waveform_data.timescale_factor) as u64;
-                        let end_native = (time_range.1 / waveform_data.timescale_factor) as u64;
+                        // For VCD: Convert from nanoseconds to VCD native units using stored timescale
+                        // time_range is in nanoseconds, convert to seconds then to VCD native units
+                        let start_seconds = time_range.0 as f64 / 1_000_000_000.0;
+                        let end_seconds = time_range.1 as f64 / 1_000_000_000.0;
+                        let start_native = (start_seconds / waveform_data.timescale_factor) as u64;
+                        let end_native = (end_seconds / waveform_data.timescale_factor) as u64;
                         (start_native, end_native)
                     },
                     _ => {
                         // For other formats (like FST), use proper timescale conversion
-                        ((time_range.0 / waveform_data.timescale_factor) as u64, (time_range.1 / waveform_data.timescale_factor) as u64)
+                        let start_seconds = time_range.0 as f64 / 1_000_000_000.0;
+                        let end_seconds = time_range.1 as f64 / 1_000_000_000.0;
+                        ((start_seconds / waveform_data.timescale_factor) as u64, (end_seconds / waveform_data.timescale_factor) as u64)
                     }
                 };
                 
@@ -1984,7 +1988,7 @@ async fn query_signal_transitions(
                 
                 if let Some((_, signal)) = loaded_signals.into_iter().next() {
                     let mut last_value: Option<String> = None;
-                    let mut last_transition_time: Option<f64> = None;
+                    let mut last_transition_time: Option<u64> = None;
                     
                     // Use binary search to find time range bounds - much faster than linear iteration
                     let start_idx = match waveform_data.time_table.binary_search(&start_time) {
@@ -2014,13 +2018,17 @@ async fn query_signal_transitions(
                     let mut idx = start_idx;
                     while idx < end_idx.min(waveform_data.time_table.len()) {
                         if let Some(&time_val) = waveform_data.time_table.get(idx) {
-                            // Convert time back to seconds for frontend using proper timescale
-                            let time_seconds = match waveform_data.file_format {
+                            // Convert time to nanoseconds for frontend using proper timescale
+                            let time_ns = match waveform_data.file_format {
                                 wellen::FileFormat::Vcd => {
-                                    // Convert VCD native units back to seconds using stored timescale
-                                    time_val as f64 * waveform_data.timescale_factor
+                                    // Convert VCD native units to seconds, then to nanoseconds
+                                    let time_seconds = time_val as f64 * waveform_data.timescale_factor;
+                                    (time_seconds * 1_000_000_000.0) as u64
                                 },
-                                _ => time_val as f64 * waveform_data.timescale_factor,
+                                _ => {
+                                    let time_seconds = time_val as f64 * waveform_data.timescale_factor;
+                                    (time_seconds * 1_000_000_000.0) as u64
+                                },
                             };
                             
                             // Get signal value at this time index
@@ -2036,11 +2044,11 @@ async fn query_signal_transitions(
                                 // TRANSITION DETECTION: Only send when value actually changes
                                 if last_value.as_ref() != Some(&value_str) {
                                     transitions.push(SignalTransition {
-                                        time_seconds,
+                                        time_ns,
                                         value: value_str.clone(),
                                     });
                                     last_value = Some(value_str);
-                                    last_transition_time = Some(time_seconds);
+                                    last_transition_time = Some(time_ns);
                                 }
                             }
                         }
@@ -2053,18 +2061,22 @@ async fn query_signal_transitions(
                     if let (Some(last_val), Some(last_time)) = (&last_value, last_transition_time) {
                         if last_val != "0" {
                             // Calculate actual file end time for proper filler timing using proper timescale
-                            let file_end_time_seconds = match waveform_data.file_format {
+                            let file_end_time_ns = match waveform_data.file_format {
                                 wellen::FileFormat::Vcd => {
-                                    // Convert VCD native units to seconds using stored timescale
-                                    end_time as f64 * waveform_data.timescale_factor
+                                    // Convert VCD native units to seconds, then to nanoseconds
+                                    let time_seconds = end_time as f64 * waveform_data.timescale_factor;
+                                    (time_seconds * 1_000_000_000.0) as u64
                                 },
-                                _ => end_time as f64 * waveform_data.timescale_factor,
+                                _ => {
+                                    let time_seconds = end_time as f64 * waveform_data.timescale_factor;
+                                    (time_seconds * 1_000_000_000.0) as u64
+                                },
                             };
                             
                             // Add "0" filler at actual signal end time (not viewing window end)
-                            if last_time < file_end_time_seconds {
+                            if last_time < file_end_time_ns {
                                 transitions.push(SignalTransition {
-                                    time_seconds: file_end_time_seconds,
+                                    time_ns: file_end_time_ns,
                                     value: "0".to_string(),
                                 });
                             }
@@ -2228,18 +2240,18 @@ fn format_non_binary_signal_value(value: &wellen::SignalValue) -> String {
 /// Handle unified signal query using the new cache manager
 async fn handle_unified_signal_query(
     signal_requests: Vec<UnifiedSignalRequest>,
-    cursor_time: Option<f64>,
+    cursor_time_ns: Option<u64>,
     request_id: String,
     session_id: SessionId,
     cor_id: CorId,
 ) {
-    match SIGNAL_CACHE_MANAGER.query_unified_signals(signal_requests, cursor_time).await {
+    match SIGNAL_CACHE_MANAGER.query_unified_signals(signal_requests, cursor_time_ns).await {
         Ok((signal_data, cursor_values, statistics)) => {
             send_down_msg(DownMsg::UnifiedSignalResponse {
                 request_id,
                 signal_data,
                 cursor_values,
-                cached_time_range: None, // TODO: Implement based on actual cache data
+                cached_time_range_ns: None, // TODO: Implement based on actual cache data
                 statistics: Some(statistics),
             }, session_id, cor_id).await;
         }

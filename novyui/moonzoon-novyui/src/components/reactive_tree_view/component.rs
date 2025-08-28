@@ -100,6 +100,7 @@ where T: Clone + 'static
         if let Some(dom_updater) = self.dom_updater.lock_ref().as_ref() {
             // Apply changes through DOM updater
             // Note: We would need to clone the updater or use RefCell for interior mutability
+            #[cfg(debug_assertions)]
             zoon::println!("🔄 ReactiveTreeView: Applying {} changes", changes.len());
         }
         
