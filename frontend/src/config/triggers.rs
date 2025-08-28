@@ -19,12 +19,6 @@ pub fn setup_one_time_config_sync() {
     sync_selection_from_config();
 }
 
-/// DEPRECATED: Replaced with one-shot initialization to prevent loops
-#[allow(dead_code)]
-pub fn setup_reactive_config_system() {
-    // This function caused infinite loops due to bidirectional sync
-    // Use setup_one_time_config_sync() instead
-}
 
 /// One-shot file management sync with state preservation
 fn sync_file_management_from_config() {

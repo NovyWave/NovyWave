@@ -18,12 +18,12 @@ opened_files = [
 ]
 dock_mode = "bottom"
 expanded_scopes = [
-    "/home/martinkavik/repos/NovyWave/test_files/simple.vcd",
-    "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb",
     "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst",
     "/home/martinkavik/repos/NovyWave/test_files/stress_test.vcd",
     "/home/martinkavik/repos/NovyWave/test_files/stress_test.vcd|stress_test",
     "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP",
+    "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb",
+    "/home/martinkavik/repos/NovyWave/test_files/simple.vcd",
     "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP",
 ]
 load_files_expanded_directories = [

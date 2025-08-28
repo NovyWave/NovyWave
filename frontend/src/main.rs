@@ -160,13 +160,10 @@ fn init_selected_variables_signal_service_bridge() {
                 
                 let current_count = current_vars.len();
                 let previous_state = previous_vars.get_cloned();
-                let previous_count = previous_state.len();
+                let _previous_count = previous_state.len();
                 
                 
-                if current_count == 0 && previous_count > 0 {
-                    // All variables were removed - clean up SignalDataService cache
-                    crate::unified_timeline_service::UnifiedTimelineService::clear_all_caches();
-                } else if current_count > 0 {
+                if current_count > 0 {
                     // Identify removed variables for targeted cleanup
                     let previous_ids: std::collections::HashSet<String> = previous_state
                         .iter()
@@ -470,10 +467,7 @@ async fn load_and_register_fonts() {
 
 /// Complete application initialization with proper phases to fix N/A bug
 async fn initialize_complete_app_flow() {
-    // Phase 1: Clear all caches to ensure fresh start
-    UnifiedTimelineService::clear_all_caches();
-    
-    // Phase 2: Load restored files from config (if any)
+    // Phase 1: Load restored files from config (if any)
     let config_store = config_store();
     let opened_files = config_store.session.lock_ref().opened_files.lock_ref().to_vec();
     

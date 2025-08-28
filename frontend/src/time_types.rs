@@ -110,10 +110,6 @@ impl DurationNs {
         self.0 as f64 / 1_000_000_000.0
     }
     
-    /// Multiply duration by a factor (for zoom calculations)
-    pub fn mul_f64(self, multiplier: f64) -> DurationNs {
-        DurationNs((self.0 as f64 * multiplier).round() as u64)
-    }
 }
 
 impl fmt::Display for DurationNs {
@@ -164,39 +160,12 @@ pub struct NsPerPixel(pub u64);
 
 impl NsPerPixel {
     pub const MAX_ZOOM_IN: NsPerPixel = NsPerPixel(1);      // 1 ns/pixel (finest resolution)
-    #[allow(dead_code)] // TODO: Used for high-detail zoom level
-    pub const HIGH_ZOOM: NsPerPixel = NsPerPixel(1_000);    // 1 μs/pixel
     pub const MEDIUM_ZOOM: NsPerPixel = NsPerPixel(1_000_000); // 1 ms/pixel  
     pub const LOW_ZOOM: NsPerPixel = NsPerPixel(1_000_000_000); // 1 s/pixel
     
-    // Industry-standard zoom levels (powers of 2 for efficiency)
-    pub const ZOOM_LEVELS_POW2: &'static [u64] = &[
-        1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384,
-        32768, 65536, 131072, 262144, 524288, 1048576, 2097152, 4194304, 8388608,
-        16777216, 33554432, 67108864, 134217728, 268435456, 536870912, 1073741824
-    ];
     
-    // Human-friendly zoom levels (powers of 10)
-    #[allow(dead_code)] // TODO: Used for human-friendly discrete zoom levels
-    pub const ZOOM_LEVELS_POW10: &'static [u64] = &[
-        1, 10, 100, 1_000, 10_000, 100_000, 1_000_000, 10_000_000, 
-        100_000_000, 1_000_000_000, 10_000_000_000
-    ];
     
-    /// Create NsPerPixel from nanoseconds value
-    #[allow(dead_code)] // TODO: Used for precise zoom level construction
-    pub fn from_nanos(nanos_per_pixel: u64) -> Self {
-        NsPerPixel(nanos_per_pixel.max(1)) // Never allow zero
-    }
     
-    /// Create NsPerPixel for a given viewport and canvas width
-    pub fn from_viewport(viewport: Viewport, canvas_width_pixels: u32) -> Self {
-        if canvas_width_pixels == 0 {
-            return Self::MEDIUM_ZOOM;
-        }
-        let ns_per_pixel = viewport.duration().nanos() / (canvas_width_pixels as u64);
-        NsPerPixel(ns_per_pixel.max(1))
-    }
     
     /// Get nanoseconds per pixel value
     pub fn nanos(self) -> u64 {
@@ -208,11 +177,6 @@ impl NsPerPixel {
         DurationNs(self.0 * canvas_width_pixels as u64)
     }
     
-    /// Check if this resolution shows more detail than another
-    #[allow(dead_code)] // TODO: Used for zoom level comparisons
-    pub fn is_more_detailed_than(self, other: NsPerPixel) -> bool {
-        self.0 < other.0  // Fewer ns/pixel = more detailed
-    }
     
     /// Zoom in by reducing nanoseconds per pixel (smooth zoom)
     pub fn zoom_in_smooth(self, factor: f64) -> Self {
@@ -226,48 +190,8 @@ impl NsPerPixel {
         NsPerPixel(new_ns_per_pixel)
     }
     
-    /// Snap to nearest power-of-2 zoom level
-    #[allow(dead_code)] // TODO: Used for discrete pow-2 zoom snapping
-    pub fn snap_to_pow2(self) -> Self {
-        let current = self.0;
-        let closest = Self::ZOOM_LEVELS_POW2.iter()
-            .min_by_key(|&&level| ((level as i64) - (current as i64)).abs())
-            .copied()
-            .unwrap_or(current);
-        NsPerPixel(closest)
-    }
     
-    /// Snap to nearest power-of-10 zoom level
-    #[allow(dead_code)] // TODO: Used for discrete pow-10 zoom snapping
-    pub fn snap_to_pow10(self) -> Self {
-        let current = self.0;
-        let closest = Self::ZOOM_LEVELS_POW10.iter()
-            .min_by_key(|&&level| ((level as i64) - (current as i64)).abs())
-            .copied()
-            .unwrap_or(current);
-        NsPerPixel(closest)
-    }
     
-    /// Step to next power-of-2 level (for discrete zoom)
-    #[allow(dead_code)] // TODO: Used for discrete pow-2 zoom stepping
-    pub fn step_pow2(self, zoom_in: bool) -> Self {
-        let current = self.0;
-        if zoom_in {
-            // Find largest level smaller than current
-            let next = Self::ZOOM_LEVELS_POW2.iter().rev()
-                .find(|&&level| level < current)
-                .copied()
-                .unwrap_or(1);
-            NsPerPixel(next)
-        } else {
-            // Find smallest level larger than current
-            let next = Self::ZOOM_LEVELS_POW2.iter()
-                .find(|&&level| level > current)
-                .copied()
-                .unwrap_or(current);
-            NsPerPixel(next)
-        }
-    }
 }
 
 impl fmt::Display for NsPerPixel {
@@ -331,25 +255,6 @@ impl Viewport {
         Viewport::centered_on(center, new_duration)
     }
     
-    /// Pan this viewport by a duration (positive = pan right, negative = pan left)
-    #[allow(dead_code)] // TODO: Used for viewport panning operations
-    pub fn pan(self, offset: DurationNs) -> Self {
-        Viewport::new(
-            self.start.add_duration(offset),
-            self.end.add_duration(offset)
-        )
-    }
-    
-    /// Expand this viewport by adding buffer on both sides (for caching)
-    #[allow(dead_code)] // TODO: Used for viewport caching with buffer
-    pub fn with_buffer(self, buffer_percent: f32) -> Self {
-        let duration = self.duration();
-        let buffer = duration.mul_f64(buffer_percent as f64);
-        Viewport::new(
-            self.start.sub_duration(buffer),
-            self.end.add_duration(buffer)
-        )
-    }
 }
 
 impl fmt::Display for Viewport {
@@ -480,21 +385,13 @@ mod tests {
         // Test time to pixel conversion (pure integer)
         let pixel_x = time_to_pixel(TimeNs::from_external_seconds(2.5), ns_per_pixel, viewport.start);
         assert!(pixel_x.is_some()); // Should be valid conversion
-        
-        // TODO: Legacy function tests commented out - functions don't exist
-        // let legacy_time = mouse_to_time_ns_legacy(50.0, 100.0, viewport);
-        // assert_eq!(legacy_time.display_seconds(), 5.0); // Should be 5 seconds
-        // 
-        // let legacy_pixel = time_to_pixel_legacy(TimeNs::from_external_seconds(2.5), 100.0, viewport);
-        // assert_eq!(legacy_pixel, 25.0); // 25% of 100 pixels = 25 pixels
     }
     
     #[test]
     fn test_viewport_conversion() {
         use super::coordinates::*;
         
-        // TODO: Legacy function test commented out - function doesn't exist
-        // let viewport = viewport_from_f64_range(1.5, 3.5);
+        // Create viewport directly since viewport_from_f64_range doesn't exist
         let viewport = Viewport { start: TimeNs::from_external_seconds(1.5), end: TimeNs::from_external_seconds(3.5) };
         let (start, end) = viewport_to_f64_range(viewport);
         
@@ -533,25 +430,13 @@ pub struct TimelineCache {
 /// Signal data optimized for viewport rendering
 #[derive(Clone, Debug)]
 pub struct ViewportSignalData {
-    /// Decimated transitions for current viewport (optimized for rendering)
-    #[allow(dead_code)] // TODO: Used for viewport signal rendering
-    pub transitions: Vec<shared::SignalTransition>,
-    /// Viewport this data covers
-    #[allow(dead_code)] // TODO: Used for viewport validation
-    pub viewport: Viewport,
-    /// When this data was last updated
-    #[allow(dead_code)] // TODO: Used for cache freshness
-    pub last_updated_ns: TimeNs,
-    /// Total number of transitions in source data (before decimation)
-    #[allow(dead_code)] // TODO: Used for decimation statistics
-    pub total_source_transitions: usize,
 }
 
 /// Request state for cache deduplication
 #[derive(Clone, Debug)]
 pub struct CacheRequestState {
     pub requested_signals: Vec<String>,
-    pub viewport: Option<Viewport>,
+    pub _viewport: Option<Viewport>,
     pub timestamp_ns: TimeNs,
     pub request_type: CacheRequestType,
 }
@@ -587,9 +472,6 @@ pub struct CacheValidity {
     pub viewport_valid: bool,
     /// Are cursor values valid for current position?
     pub cursor_valid: bool,
-    /// Are raw transitions complete and up-to-date?
-    #[allow(dead_code)] // TODO: Used for cache validation
-    pub raw_transitions_valid: bool,
 }
 
 impl TimelineCache {
@@ -613,7 +495,6 @@ impl TimelineCache {
                 validity: CacheValidity {
                     viewport_valid: false,
                     cursor_valid: false,
-                    raw_transitions_valid: false,
                 },
             },
         }
@@ -655,11 +536,6 @@ impl TimelineCache {
         }
     }
     
-    /// Get viewport signal data for rendering
-    #[allow(dead_code)] // TODO: Used for viewport data retrieval
-    pub fn get_viewport_data(&self, signal_id: &str) -> Option<&ViewportSignalData> {
-        self.viewport_data.get(signal_id)
-    }
     
     /// Get cursor value at current timeline position
     pub fn get_cursor_value(&self, signal_id: &str) -> Option<&shared::SignalValue> {
@@ -756,35 +632,7 @@ impl TimelineCoordinates {
         }
     }
     
-    /// Zoom in/out while keeping cursor position stable
-    #[allow(dead_code)] // TODO: Used for enhanced cursor-stable zooming
-    pub fn zoom(&mut self, zoom_in: bool, zoom_factor: f64) {
-        // Calculate cursor position relative to viewport start
-        let cursor_offset_pixels = self.time_to_pixel(self.cursor_ns).unwrap_or(0);
-        
-        // Update zoom level
-        if zoom_in {
-            self.ns_per_pixel = self.ns_per_pixel.zoom_in_smooth(zoom_factor);
-        } else {
-            self.ns_per_pixel = self.ns_per_pixel.zoom_out_smooth(zoom_factor);
-        }
-        
-        // Recalculate viewport start to keep cursor at same pixel position
-        let cursor_offset_ns = (cursor_offset_pixels as u64) * self.ns_per_pixel.nanos();
-        self.viewport_start_ns = TimeNs(self.cursor_ns.nanos().saturating_sub(cursor_offset_ns));
-    }
     
-    /// Zoom to a specific resolution (ns per pixel)
-    #[allow(dead_code)] // TODO: Used for precise zoom level control
-    pub fn zoom_to(&mut self, new_ns_per_pixel: NsPerPixel) {
-        let cursor_offset_pixels = self.time_to_pixel(self.cursor_ns).unwrap_or(0);
-        
-        self.ns_per_pixel = new_ns_per_pixel;
-        
-        // Recalculate viewport to keep cursor position stable
-        let cursor_offset_ns = (cursor_offset_pixels as u64) * self.ns_per_pixel.nanos();
-        self.viewport_start_ns = TimeNs(self.cursor_ns.nanos().saturating_sub(cursor_offset_ns));
-    }
     
     /// Set cursor position
     pub fn set_cursor(&mut self, cursor_ns: TimeNs) {
@@ -796,24 +644,6 @@ impl TimelineCoordinates {
         self.canvas_width_pixels = canvas_width_pixels;
     }
     
-    /// Check if a time is visible in the current viewport
-    #[allow(dead_code)] // TODO: Used for efficient visibility tests
-    pub fn is_time_visible(&self, time_ns: TimeNs) -> bool {
-        let viewport_end = self.viewport_end_ns();
-        time_ns >= self.viewport_start_ns && time_ns <= viewport_end
-    }
-    
-    /// Get the time range of the current viewport
-    #[allow(dead_code)] // TODO: Used for viewport range queries
-    pub fn get_time_range(&self) -> (TimeNs, TimeNs) {
-        (self.viewport_start_ns, self.viewport_end_ns())
-    }
-    
-    /// Clamp cursor to be within file bounds
-    #[allow(dead_code)] // TODO: Used for cursor boundary validation
-    pub fn clamp_cursor(&mut self, file_start: TimeNs, file_end: TimeNs) {
-        self.cursor_ns = TimeNs(self.cursor_ns.nanos().clamp(file_start.nanos(), file_end.nanos()));
-    }
     
     /// Clamp viewport to be within file bounds
     pub fn clamp_viewport(&mut self, file_start: TimeNs, file_end: TimeNs) {

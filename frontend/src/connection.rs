@@ -282,22 +282,11 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
             }
             DownMsg::UnifiedSignalResponse { request_id, signal_data, cursor_values, statistics, cached_time_range_ns: _ } => {
                 // Clone data for dual handling during transition period
-                let request_id_legacy = request_id.clone();
-                let signal_data_legacy = signal_data.clone();
-                let cursor_values_legacy = cursor_values.clone();
-                let statistics_legacy = statistics.clone();
-                
-                // Handle unified signal response through the NEW unified timeline service
+                // Handle unified signal response through the unified timeline service
                 crate::unified_timeline_service::UnifiedTimelineService::handle_unified_response(request_id, signal_data, cursor_values, statistics);
-                
-                // LEGACY: Also handle through old signal data service for compatibility during transition
-                crate::unified_timeline_service::UnifiedTimelineService::handle_unified_response(request_id_legacy, signal_data_legacy, cursor_values_legacy, statistics_legacy);
             }
             DownMsg::UnifiedSignalError { request_id, error } => {
-                // Handle unified signal error through the NEW unified timeline service
-                crate::unified_timeline_service::UnifiedTimelineService::handle_unified_error(request_id.clone(), error.clone());
-                
-                // LEGACY: Also handle through old signal data service for compatibility
+                // Handle unified signal error through the unified timeline service
                 crate::unified_timeline_service::UnifiedTimelineService::handle_unified_error(request_id, error);
             }
             

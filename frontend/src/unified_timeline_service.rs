@@ -10,7 +10,7 @@
 use zoon::*;
 use shared::{UpMsg, SignalValue, SignalTransition};
 use crate::connection::send_up_msg;
-use crate::time_types::{TimeNs, Viewport, TimelineCache, CacheRequestType, CacheRequestState};
+use crate::time_types::{TimeNs, TimelineCache, CacheRequestType, CacheRequestState};
 use crate::state::UNIFIED_TIMELINE_CACHE;
 
 // ===== DATA STRUCTURES =====
@@ -33,87 +33,6 @@ impl UnifiedTimelineService {
         Self::start_cache_invalidation_handlers();
     }
     
-    /// Request viewport data for rendering (decimated transitions)
-    #[allow(dead_code)] // TODO: Used for enhanced viewport data requests
-    pub fn request_viewport_data(
-        signal_ids: Vec<String>,
-        viewport: Viewport,
-    ) {
-        let mut cache = UNIFIED_TIMELINE_CACHE.lock_mut();
-        
-        // Check for duplicate requests
-        if cache.is_duplicate_request(&signal_ids, CacheRequestType::ViewportData) {
-            return;
-        }
-        
-        // Update cache viewport and invalidate if needed
-        cache.invalidate_viewport(viewport);
-        
-        // Check cache hits first
-        let mut cache_hits = Vec::new();
-        let mut cache_misses = Vec::new();
-        
-        for signal_id in &signal_ids {
-            if let Some(viewport_data) = cache.get_viewport_data(signal_id) {
-                // Check if cached data covers current viewport
-                if viewport_data.viewport.start <= viewport.start && 
-                   viewport_data.viewport.end >= viewport.end {
-                    cache_hits.push(signal_id.clone());
-                    cache.metadata.statistics.cached_signals += 1;
-                } else {
-                    cache_misses.push(signal_id.clone());
-                }
-            } else {
-                cache_misses.push(signal_id.clone());
-            }
-        }
-        
-        // Update cache hit ratio
-        let total_requests = signal_ids.len();
-        cache.metadata.statistics.total_signals += total_requests;
-        if total_requests > 0 {
-            cache.metadata.statistics.cache_hit_ratio = 
-                (cache.metadata.statistics.cached_signals as f64) / 
-                (cache.metadata.statistics.total_signals as f64);
-        }
-        
-        // Request missing data from backend
-        if !cache_misses.is_empty() {
-            let request_id = Self::generate_request_id();
-            
-            // Track active request
-            cache.active_requests.insert(request_id.clone(), CacheRequestState {
-                requested_signals: cache_misses.clone(),
-                viewport: Some(viewport),
-                timestamp_ns: TimeNs::from_external_seconds(js_sys::Date::now() / 1000.0),
-                request_type: CacheRequestType::ViewportData,
-            });
-            
-            // Convert to backend request format
-            let backend_requests: Vec<shared::UnifiedSignalRequest> = cache_misses
-                .into_iter()
-                .map(|signal_id| {
-                    let parts: Vec<&str> = signal_id.split('|').collect();
-                    shared::UnifiedSignalRequest {
-                        file_path: parts[0].to_string(),
-                        scope_path: parts[1].to_string(),
-                        variable_name: parts[2].to_string(),
-                        time_range_ns: Some((viewport.start.nanos(), viewport.end.nanos())),
-                        max_transitions: Some(10000), // Decimation limit
-                        format: shared::VarFormat::Binary, // Default format
-                    }
-                })
-                .collect();
-            
-            drop(cache); // Release lock before sending request
-            
-            send_up_msg(UpMsg::UnifiedSignalQuery {
-                signal_requests: backend_requests,
-                cursor_time_ns: None,
-                request_id,
-            });
-        }
-    }
     
     /// Request cursor values at specific timeline position
     pub fn request_cursor_values(
@@ -159,7 +78,7 @@ impl UnifiedTimelineService {
             
             cache.active_requests.insert(request_id.clone(), CacheRequestState {
                 requested_signals: cache_misses.clone(),
-                viewport: None,
+                _viewport: None,
                 timestamp_ns: TimeNs::from_external_seconds(js_sys::Date::now() / 1000.0),
                 request_type: CacheRequestType::CursorValues,
             });
@@ -256,10 +175,6 @@ impl UnifiedTimelineService {
                 
                 if request.request_type == CacheRequestType::ViewportData {
                     let viewport_data = crate::time_types::ViewportSignalData {
-                        transitions: raw_transitions,
-                        viewport: request.viewport.unwrap_or(cache.metadata.current_viewport),
-                        last_updated_ns: TimeNs::from_external_seconds(js_sys::Date::now() / 1000.0),
-                        total_source_transitions: signal.total_transitions,
                     };
                     cache.viewport_data.insert(signal.unique_id, viewport_data);
                 }
@@ -284,15 +199,8 @@ impl UnifiedTimelineService {
     pub fn handle_unified_error(request_id: String, _error: String) {
         let mut cache = UNIFIED_TIMELINE_CACHE.lock_mut();
         cache.active_requests.remove(&request_id);
-        // TODO: Implement error recovery strategies
     }
     
-    /// Clear all cache data (for app restart)
-    #[allow(dead_code)] // TODO: Used for cache reset operations
-    pub fn clear_all_caches() {
-        let mut cache = UNIFIED_TIMELINE_CACHE.lock_mut();
-        *cache = TimelineCache::new();
-    }
     
     /// Get raw transitions for a signal (public accessor for compatibility)
     pub fn get_raw_transitions(signal_id: &str) -> Option<Vec<shared::SignalTransition>> {
@@ -433,7 +341,6 @@ impl UnifiedTimelineService {
                     // (Implementation could be optimized to only clear removed variables)
                     if !cache.viewport_data.is_empty() || !cache.cursor_values.is_empty() {
                         // For now, clear all cached values to ensure consistency
-                        // TODO: Optimize to only clear data for removed variables
                         cache.cursor_values.clear();
                         cache.metadata.validity.cursor_valid = false;
                         

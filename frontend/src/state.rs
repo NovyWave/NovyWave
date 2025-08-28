@@ -27,63 +27,112 @@ pub fn loaded_files_count_signal() -> impl Signal<Item = usize> {
 
 
 
-/// ✅ FIXED: Stable tree files signal using dedicated Mutable pattern
-/// 
-/// This eliminates the signal_vec→signal antipattern that caused 20+ renders per file operation.
-/// Instead uses a dedicated Mutable<Vec<TrackedFile>> that gets updated atomically when needed.
-static STABLE_TREE_FILES: Lazy<Mutable<Vec<TrackedFile>>> = Lazy::new(|| {
-    let stable_files = Mutable::new(Vec::new());
-    
-    // Initialize with current TRACKED_FILES and set up reactive updates
-    let stable_files_clone = stable_files.clone();
-    Task::start(async move {
-        // Initialize with current files
-        {
-            let current_files: Vec<TrackedFile> = TRACKED_FILES.lock_ref().to_vec();
-            stable_files_clone.set_neq(current_files);
-        }
-        
-        // React to future changes with proper deduplication
-        Task::start(async move {
-            TRACKED_FILES.signal_vec_cloned().for_each(move |_| {
-                let current_files: Vec<TrackedFile> = TRACKED_FILES.lock_ref().to_vec();
-                stable_files_clone.set_neq(current_files);
-                async {}
-            }).await;
-        });
-    });
-    
-    stable_files
-});
 
-pub fn get_stable_tree_files_signal() -> impl Signal<Item = Vec<TrackedFile>> {
-    STABLE_TREE_FILES.signal_cloned().dedupe_cloned()
-}
-
-/// ✅ NEW: Batch loading function to prevent multiple renders during file loading
+/// ✅ ENHANCED: Batch loading function with full backend integration
 /// 
-/// This replaces individual file.push() operations with a single atomic update,
+/// This replaces individual file operations with a single atomic update,
 /// reducing renders from 6+ to 1 during batch file loading operations.
+/// Includes duplicate detection, reloading logic, and backend communication.
 pub fn batch_load_files(file_paths: Vec<String>) {
     if file_paths.is_empty() {
         return;
     }
     
+    // Get currently tracked file IDs for duplicate detection
+    let existing_tracked_files: std::collections::HashMap<String, TrackedFile> = TRACKED_FILES.lock_ref()
+        .iter()
+        .map(|f| (f.id.clone(), f.clone()))
+        .collect();
+    
+    // Process files and separate new vs reload
+    let mut files_to_process = Vec::new();
+    let mut files_to_reload = Vec::new();
+    
+    for file_path in file_paths {
+        let file_id = shared::generate_file_id(&file_path);
+        
+        if existing_tracked_files.contains_key(&file_id) {
+            files_to_reload.push((file_id, file_path));
+        } else {
+            files_to_process.push(file_path);
+        }
+    }
+    
+    // Get IDs of files being reloaded for filtering (before moving files_to_reload)
+    let reload_ids: std::collections::HashSet<String> = files_to_reload.iter().map(|(id, _)| id.clone()).collect();
+    
+    // Handle reloads: clean up existing files first
+    for (file_id, _) in &files_to_reload {
+        cleanup_file_related_state_for_batch(file_id);
+        // Remove from legacy systems too
+        crate::LOADED_FILES.lock_mut().retain(|f| f.id != *file_id);
+        crate::FILE_PATHS.lock_mut().shift_remove(file_id);
+    }
+    
+    // Collect all files to process (new + reloaded)
+    let mut all_file_paths: Vec<String> = files_to_process;
+    all_file_paths.extend(files_to_reload.into_iter().map(|(_, path)| path));
+    
+    if all_file_paths.is_empty() {
+        return;
+    }
+    
     // Create TrackedFiles from paths with smart labels
-    let smart_labels = shared::generate_smart_labels(&file_paths);
-    let tracked_files: Vec<TrackedFile> = file_paths.into_iter()
+    let smart_labels = shared::generate_smart_labels(&all_file_paths);
+    let new_tracked_files: Vec<TrackedFile> = all_file_paths.iter()
         .map(|path| {
             let mut tracked_file = create_tracked_file(path.clone(), shared::FileState::Loading(shared::LoadingStatus::Starting));
-            tracked_file.smart_label = smart_labels.get(&path).unwrap_or(&tracked_file.filename).clone();
+            tracked_file.smart_label = smart_labels.get(path).unwrap_or(&tracked_file.filename).clone();
             tracked_file
         })
         .collect();
     
+    // Combine existing files (minus reloaded ones) with new files
+    let mut final_files: Vec<TrackedFile> = TRACKED_FILES.lock_ref()
+        .iter()
+        .filter(|f| !reload_ids.contains(&f.id))
+        .cloned()
+        .collect();
+    
+    final_files.extend(new_tracked_files.clone());
+    
     // Single atomic update instead of multiple individual pushes
-    TRACKED_FILES.lock_mut().replace_cloned(tracked_files);
+    TRACKED_FILES.lock_mut().replace_cloned(final_files);
     
     // Update the file IDs cache
     update_tracked_file_ids_cache();
+    
+    // Send backend requests for each file
+    for tracked_file in new_tracked_files {
+        // Add to legacy FILE_PATHS for compatibility
+        crate::FILE_PATHS.lock_mut().insert(tracked_file.id.clone(), tracked_file.path.clone());
+        
+        // Send backend request
+        Task::start({
+            let file_path = tracked_file.path.clone();
+            async move {
+                use crate::platform::{Platform, CurrentPlatform};
+                let _ = CurrentPlatform::send_message(shared::UpMsg::LoadWaveformFile(file_path)).await;
+            }
+        });
+    }
+    
+    // Save config to persist the new file list
+    crate::config::save_file_list();
+}
+
+/// Helper function to clean up file-related state during batch operations
+fn cleanup_file_related_state_for_batch(file_id: &str) {
+    // Clear scope selections for this file
+    crate::TREE_SELECTED_ITEMS.lock_mut().retain(|id| !id.starts_with(&format!("scope_{}_", file_id)));
+    
+    // Clear variables from this file
+    crate::SELECTED_VARIABLES.lock_mut().retain(|var| 
+        var.file_path().as_ref().map(|path| path.as_str()) != Some(file_id)
+    );
+    
+    // Clear expanded scopes for this file  
+    crate::EXPANDED_SCOPES.lock_mut().retain(|scope_id| !scope_id.starts_with(&format!("{}_", file_id)));
 }
 
 
@@ -93,7 +142,6 @@ pub fn batch_load_files(file_paths: Vec<String>) {
 
 #[derive(Debug, Clone)]
 pub enum FileUpdateMessage {
-    Add { tracked_file: TrackedFile },
     Update { file_id: String, new_state: FileState },
     Remove { file_id: String },
 }
@@ -152,41 +200,6 @@ fn start_queue_processor(queue: &Mutable<Vec<FileUpdateMessage>>) {
 /// Process file update messages synchronously - the ONLY place that locks TRACKED_FILES for writing
 async fn process_file_update_message_sync(message: FileUpdateMessage) {
     match message {
-        FileUpdateMessage::Add { tracked_file } => {
-            // Check if file already exists and replace if it does
-            let existing_index = {
-                let files = TRACKED_FILES.lock_ref();
-                files.iter().position(|f| f.id == tracked_file.id)
-            };
-            
-            // ✅ OPTIMIZED: Compute smart label when adding individual files
-            let mut tracked_file_with_smart_label = tracked_file.clone();
-            if tracked_file_with_smart_label.smart_label.is_empty() {
-                // Get all current file paths for smart label computation
-                let current_paths: Vec<String> = {
-                    let files = TRACKED_FILES.lock_ref();
-                    let mut paths: Vec<String> = files.iter().map(|f| f.path.clone()).collect();
-                    paths.push(tracked_file.path.clone());
-                    paths
-                };
-                
-                let smart_labels = shared::generate_smart_labels(&current_paths);
-                tracked_file_with_smart_label.smart_label = smart_labels.get(&tracked_file.path)
-                    .unwrap_or(&tracked_file.filename)
-                    .clone();
-            }
-            
-            if let Some(index) = existing_index {
-                // Update existing file
-                TRACKED_FILES.lock_mut().set_cloned(index, tracked_file_with_smart_label);
-            } else {
-                // Add new file
-                TRACKED_FILES.lock_mut().push_cloned(tracked_file_with_smart_label);
-            }
-            
-            // Update the file IDs cache
-            update_tracked_file_ids_cache();
-        },
         
         FileUpdateMessage::Update { file_id, new_state } => {
             // Find and update the file state
@@ -523,13 +536,6 @@ pub static TOAST_NOTIFICATIONS: Lazy<MutableVec<ErrorAlert>> = lazy::default();
 
 // ===== TRACKED FILES MANAGEMENT UTILITIES =====
 
-/// Add a new file to tracking with initial state
-pub fn add_tracked_file(file_path: String, initial_state: FileState) {
-    let tracked_file = create_tracked_file(file_path, initial_state);
-    
-    // Use message queue to prevent recursive locking
-    send_file_update_message(FileUpdateMessage::Add { tracked_file });
-}
 
 /// Update the state of an existing tracked file
 pub fn update_tracked_file_state(file_id: &str, new_state: FileState) {
