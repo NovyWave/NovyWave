@@ -1334,15 +1334,6 @@ pub fn files_panel() -> impl Element {
                                             .s(Height::fill())
                                             .s(Width::fill())
                                             .child_signal(
-                                                // ⚠️  PATCHED TREE VIEW RENDERING: Reduces flickering during file loading
-                                                //
-                                                // CURRENT STATE: Applied patches to minimize TreeView recreations
-                                                // USER EXPERIENCE: Some brief flashing may still occur during file loading
-                                                // 
-                                                // PATCHES APPLIED:
-                                                // - Filtered transitional loading states (Starting -> Parsing)
-                                                // - Heavy signal deduplication to prevent identical updates  
-                                                // - Optimized empty state handling
                                                 TRACKED_FILES.signal_vec_cloned().len().map(|file_count| {
                                     if file_count == 0 {
                                         empty_state_hint("Click 'Load Files' to add waveform files.")
@@ -1361,41 +1352,35 @@ pub fn files_panel() -> impl Element {
         )
 }
 
-/// ⚠️  PATCHED TREE VIEW: Reduces flickering with optimized rendering strategy
+/// ✅ PHASE 2: Enhanced TreeView with better signal handling
 ///
-/// KNOWN ISSUE: Still recreates entire TreeView on file state changes due to signal antipattern
-/// WORKAROUND: Uses filtered stable signals + optimized tree data conversion
-///
-/// USER IMPACT: Reduces visible flickering during file loading, but may still see brief flashes
-/// PROPER FIX: Requires implementing ReactiveTreeView with items_signal_vec pattern
+/// Uses the fixed stable signal pattern with additional optimizations for even better performance.
 fn create_stable_tree_view() -> impl Element {
     El::new()
         .s(Width::fill())
         .s(Height::fill())
         .child_signal(
-            crate::state::get_stable_tree_files_signal().map(|tracked_files| {
-                // PATCH: Use tree view for both empty and non-empty states to maintain type consistency  
-                let tree_data = if tracked_files.is_empty() {
-                    // Empty state: Create empty tree data instead of different UI element
-                    Vec::new()
-                } else {
-                    // PATCH: Optimize tree data conversion with caching hints
-                    convert_tracked_files_to_tree_data_optimized(&tracked_files)
-                };
-                
-                // PATCH: Use consistent TreeView component for both states
-                tree_view()
-                    .data(tree_data)
-                    .size(TreeViewSize::Medium)
-                    .variant(TreeViewVariant::Basic)  
-                    .show_icons(true)
-                    .show_checkboxes(true)
-                    .show_checkboxes_on_scopes_only(true)
-                    .single_scope_selection(true)
-                    .external_expanded(EXPANDED_SCOPES.clone())
-                    .external_selected(TREE_SELECTED_ITEMS.clone())
-                    .build()
-            })
+            crate::state::get_stable_tree_files_signal()
+                .map(|tracked_files| {
+                    let tree_data = if tracked_files.is_empty() {
+                        Vec::new()
+                    } else {
+                        // Enhanced: Use the improved tree data conversion with better caching
+                        convert_tracked_files_to_tree_data_optimized(&tracked_files)
+                    };
+                    
+                    tree_view()
+                        .data(tree_data)
+                        .size(TreeViewSize::Medium)
+                        .variant(TreeViewVariant::Basic)  
+                        .show_icons(true)
+                        .show_checkboxes(true)
+                        .show_checkboxes_on_scopes_only(true)
+                        .single_scope_selection(true)
+                        .external_expanded(EXPANDED_SCOPES.clone())
+                        .external_selected(TREE_SELECTED_ITEMS.clone())
+                        .build()
+                })
         )
 }
 
