@@ -18,7 +18,6 @@ NovyWave - Professional waveform viewer for digital design verification and anal
 **Project Structure:**
 ```
 frontend/     - Rust/WASM frontend (shared)
-  reactive_actors/  - Actor+Relay state management module
 backend/      - MoonZoon backend (browser only)
 src-tauri/    - Tauri desktop wrapper
 shared/       - Shared types and utilities between frontend/backend
@@ -352,14 +351,14 @@ fn variable_item(
 
 ### Module Structure
 
-**Frontend Module Organization:**
+**Frontend Module Organization (to be created during migration):**
 ```rust
-// frontend/src/reactive_actors/mod.rs
+// frontend/src/actors/mod.rs (or similar module structure)
 pub mod relay;              // Relay<T> implementation
 pub mod actor;              // Actor<T> implementation  
 pub mod actor_vec;          // ActorVec<T> implementation
-pub mod actor_map;    // ActorMap<K,V> implementation
-pub mod atom;       // Atom<T> implementation
+pub mod actor_map;          // ActorMap<K,V> implementation
+pub mod atom;               // Atom<T> implementation
 
 // Re-exports for easy importing
 pub use relay::Relay;
@@ -378,7 +377,7 @@ pub fn relay<T>() -> (Relay<T>, impl Stream<Item = T>) {
 
 **Usage in Components:**
 ```rust
-use crate::reactive_actors::{Actor, ActorVec, Relay, Atom, relay};
+use crate::actors::{Actor, ActorVec, Relay, Atom, relay};
 
 // Domain struct using Actor+Relay
 struct AppState {
