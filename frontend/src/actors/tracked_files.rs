@@ -2,9 +2,9 @@
 //!
 //! Consolidated file management domain to replace global mutables with event-driven architecture.
 
-use crate::actors::{Actor, ActorVec, ActorVecHandle, Relay, relay};
+use crate::actors::{Actor, ActorVec, Relay, relay};
 use shared::{TrackedFile, FileState, LoadingStatus, FileError};
-use zoon::Task;
+use zoon::{Task, SignalVecExt};
 use indexmap::IndexSet;
 use futures::{select, StreamExt};
 use std::path::PathBuf;
@@ -75,7 +75,7 @@ impl TrackedFiles {
         
         // Create files actor with comprehensive event handling
         let files = ActorVec::new(vec![], {
-            async move |files_handle| {
+            async move |files_mutable| {
                 use futures::StreamExt;
                 let mut files_dropped = files_dropped_stream.fuse();
                 let mut file_removed = file_removed_stream.fuse();
@@ -85,7 +85,7 @@ impl TrackedFiles {
                     futures::select! {
                         paths_opt = files_dropped.next() => {
                             match paths_opt {
-                                Some(paths) => Self::handle_files_dropped(&files_handle, paths),
+                                Some(paths) => Self::handle_files_dropped(&files_mutable, paths),
                                 None => break,
                             }
                         },
@@ -155,7 +155,7 @@ impl TrackedFiles {
     
     /// Get reactive signal for all tracked files
     pub fn files_signal(&self) -> impl zoon::Signal<Item = Vec<TrackedFile>> {
-        self.files.signal()
+        self.files.signal_vec().to_signal_cloned()
     }
     
     /// Get reactive signal for files as signal vec (VecDiff updates)  
@@ -189,7 +189,7 @@ impl TrackedFiles {
 impl TrackedFiles {
     /// Handle files dropped by user onto application
     fn handle_files_dropped(
-        files_handle: &ActorVecHandle<TrackedFile>,
+        files: &zoon::MutableVec<TrackedFile>,
         paths: Vec<PathBuf>
     ) {
         for path in paths {
@@ -214,7 +214,7 @@ impl TrackedFiles {
             };
             
             // Add to collection
-            files_handle.push_cloned(tracked_file);
+            files.lock_mut().push_cloned(tracked_file);
         }
     }
     

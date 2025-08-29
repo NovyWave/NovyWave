@@ -5,7 +5,7 @@
 
 use crate::actors::{Actor, ActorVec, ActorMap, Relay, relay};
 use shared::{Theme, DockMode, DockedRightDimensions, DockedBottomDimensions, VarFormat, AppConfig, AppSection, UiSection, WorkspaceSection};
-use zoon::Task;
+use zoon::{Task, SignalVecExt};
 use futures::StreamExt;
 use std::collections::BTreeMap;
 
@@ -109,55 +109,55 @@ impl UserConfiguration {
         let (config_import_requested_relay, _config_import_requested_stream) = relay::<String>();
         
         // Create theme actor with event handling
-        let current_theme = Actor::new(Theme::Dark, async move |theme_handle| {
+        let current_theme = Actor::new(Theme::Dark, async move |state| {
             let mut theme_changed = theme_changed_stream;
             
             while let Some(theme) = theme_changed.next().await {
-                theme_handle.set(theme);
+                state.set(theme);
             }
         });
         
         // Create dock mode actor
-        let dock_mode = Actor::new(DockMode::Right, async move |dock_handle| {
+        let dock_mode = Actor::new(DockMode::Right, async move |state| {
             let mut dock_mode_changed = dock_mode_changed_stream;
             
             while let Some(mode) = dock_mode_changed.next().await {
-                dock_handle.set(mode);
+                state.set(mode);
             }
         });
         
         // Create panel dimensions actors
         let docked_right_dimensions = Actor::new(
             DockedRightDimensions::default(),
-            async move |right_dimensions_handle| {
+            async move |state| {
                 let mut right_panel_resized = right_panel_resized_stream;
                 
                 while let Some(dimensions) = right_panel_resized.next().await {
-                    right_dimensions_handle.set(dimensions);
+                    state.set(dimensions);
                 }
             }
         );
         
         let docked_bottom_dimensions = Actor::new(
             DockedBottomDimensions::default(),
-            async move |bottom_dimensions_handle| {
+            async move |state| {
                 let mut bottom_panel_resized = bottom_panel_resized_stream;
                 
                 while let Some(dimensions) = bottom_panel_resized.next().await {
-                    bottom_dimensions_handle.set(dimensions);
+                    state.set(dimensions);
                 }
             }
         );
         
         // Create recent files actor
-        let recent_files = ActorVec::new(vec![], async move |files_handle| {
+        let recent_files = ActorVec::new(vec![], async move |files| {
             let mut file_added_to_recent = file_added_to_recent_stream;
             let mut recent_files_cleared = recent_files_cleared_stream;
             
             loop {
                 if let Some(file_path) = file_added_to_recent.next().await {
                     // Add file to recent list (remove duplicates and limit to 10)
-                    files_handle.update(|files| {
+                    files.update_mut(|files| {
                         // Remove if already present
                         if let Some(pos) = files.iter().position(|f| f == &file_path) {
                             files.remove(pos);
@@ -170,7 +170,7 @@ impl UserConfiguration {
                         }
                     });
                 } else if let Some(()) = recent_files_cleared.next().await {
-                    files_handle.clear();
+                    files.lock_mut().clear();
                 } else {
                     break;
                 }
@@ -178,41 +178,43 @@ impl UserConfiguration {
         });
         
         // Create default formats map
-        let default_formats = ActorMap::new(BTreeMap::new(), async move |formats_handle| {
+        let default_formats = ActorMap::new(BTreeMap::new(), async move |map, signal_map| {
             let mut default_format_changed = default_format_changed_stream;
             
             while let Some((var_type, format)) = default_format_changed.next().await {
-                formats_handle.insert(var_type, format);
+                map.lock_mut().insert_cloned(var_type.clone(), format.clone());
+                signal_map.lock_mut().insert(var_type, format);
             }
         });
         
         // Create panel visibility map
-        let panel_visibility = ActorMap::new(BTreeMap::new(), async move |visibility_handle| {
+        let panel_visibility = ActorMap::new(BTreeMap::new(), async move |map, signal_map| {
             let mut panel_visibility_toggled = panel_visibility_toggled_stream;
             
             while let Some((panel_name, is_visible)) = panel_visibility_toggled.next().await {
-                visibility_handle.insert(panel_name, is_visible);
+                map.lock_mut().insert_cloned(panel_name.clone(), is_visible);
+                signal_map.lock_mut().insert(panel_name, is_visible);
             }
         });
         
         // Create configuration state actors
-        let is_config_loaded = Actor::new(false, async move |loaded_handle| {
+        let is_config_loaded = Actor::new(false, async move |state| {
             let mut config_loaded = config_loaded_stream;
             
             while let Some(_config) = config_loaded.next().await {
-                loaded_handle.set(true);
+                state.set(true);
             }
         });
         
-        let is_config_saving = Actor::new(false, async move |saving_handle| {
+        let is_config_saving = Actor::new(false, async move |state| {
             let mut config_save_requested = config_save_requested_stream;
             let mut config_saved = config_saved_stream;
             
             loop {
                 if let Some(()) = config_save_requested.next().await {
-                    saving_handle.set(true);
+                    state.set(true);
                 } else if let Some(()) = config_saved.next().await {
-                    saving_handle.set(false);
+                    state.set(false);
                 } else {
                     break;
                 }
@@ -272,7 +274,7 @@ impl UserConfiguration {
     
     /// Get reactive signal for recent files
     pub fn recent_files_signal(&self) -> impl zoon::Signal<Item = Vec<String>> {
-        self.recent_files.signal()
+        self.recent_files.signal_vec().to_signal_cloned()
     }
     
     /// Get reactive signal for default formats

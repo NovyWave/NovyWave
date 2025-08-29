@@ -5,7 +5,7 @@
 
 use crate::actors::{Actor, ActorVec, ActorVecHandle, Relay, relay};
 use shared::SelectedVariable;
-use zoon::Task;
+use zoon::{Task, SignalVecExt};
 use indexmap::IndexSet;
 use futures::{select, StreamExt};
 
@@ -90,7 +90,7 @@ impl SelectedVariables {
         
         // Create variables actor with event handling
         let variables = ActorVec::new(vec![], {
-            async move |variables_handle| {
+            async move |variables| {
                 let mut variable_clicked = variable_clicked_stream;
                 let mut variable_removed = variable_removed_stream;
                 let mut selection_cleared = selection_cleared_stream;
@@ -99,7 +99,7 @@ impl SelectedVariables {
                 let _all_files_cleared = all_files_cleared_stream;
                 
                 while let Some(variable) = variable_clicked.next().await {
-                    Self::handle_variable_clicked(&variables_handle, variable);
+                    Self::handle_variable_clicked(&variables, variable);
                 }
                 // Additional event handlers will be added in future iterations
             }
@@ -166,7 +166,7 @@ impl SelectedVariables {
     
     /// Get reactive signal for all selected variables
     pub fn variables_signal(&self) -> impl zoon::Signal<Item = Vec<SelectedVariable>> {
-        self.variables.signal()
+        self.variables.signal_vec().to_signal_cloned()
     }
     
     /// Get reactive signal for variables as signal vec (VecDiff updates)  
@@ -204,7 +204,7 @@ impl SelectedVariables {
     /// Get variables from a specific file  
     pub fn file_variables_signal(&self, file_path: String) -> impl zoon::Signal<Item = Vec<SelectedVariable>> {
         use zoon::SignalExt;
-        self.variables.signal()
+        self.variables.signal_vec().to_signal_cloned()
             .map(move |vars| {
                 vars.iter()
                     .filter(|v| v.file_path().as_ref() == Some(&file_path))

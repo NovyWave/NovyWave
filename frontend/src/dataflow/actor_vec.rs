@@ -3,9 +3,10 @@
 //! ActorVec provides controlled collection management with sequential message processing.
 //! It wraps MutableVec<T> and processes events from Relays to update collections safely.
 
-use zoon::{MutableVec, Signal, Task, SignalVecExt, SignalExt, MutableVecExt};
+use zoon::{MutableVec, Signal, Task, TaskHandle, SignalVecExt, SignalExt, MutableVecExt};
 use futures::stream::Stream;
 use std::future::Future;
+use std::sync::Arc;
 
 /// Reactive collection container for Actor+Relay architecture.
 /// 
@@ -28,14 +29,16 @@ use std::future::Future;
 /// let (add_item_relay, add_stream) = relay();
 /// let (remove_item_relay, remove_stream) = relay();
 /// 
-/// let items = ActorVec::new(vec!["initial".to_string()], async move |items_handle| {
+/// let items = ActorVec::new(vec!["initial".to_string()], async move |items| {
 ///     loop {
 ///         select! {
 ///             Some(item) = add_stream.next() => {
-///                 items_handle.push_cloned(item);
+///                 items.lock_mut().push_cloned(item);
 ///             }
 ///             Some(index) = remove_stream.next() => {
-///                 items_handle.remove(index);
+///                 if index < items.lock_ref().len() {
+///                     items.lock_mut().remove(index);
+///                 }
 ///             }
 ///         }
 ///     }
@@ -54,6 +57,7 @@ where
     T: Clone + Send + Sync + 'static,
 {
     vec: MutableVec<T>,
+    task_handle: Arc<TaskHandle>,
     #[cfg(debug_assertions)]
     creation_location: &'static std::panic::Location<'static>,
 }
@@ -82,47 +86,29 @@ where
     /// 
     /// let items = ActorVec::new(vec![], async move |items| {
     ///     while let Some(new_item) = add_stream.next().await {
-    ///         items.push_cloned(new_item);
+    ///         items.lock_mut().push_cloned(new_item);
     ///     }
     /// });
     /// ```
     #[track_caller]
     pub fn new<F, Fut>(initial_items: Vec<T>, processor: F) -> Self
     where
-        F: FnOnce(ActorVecHandle<T>) -> Fut + Send + 'static,
+        F: FnOnce(MutableVec<T>) -> Fut + Send + 'static,
         Fut: Future<Output = ()> + Send + 'static,
     {
         let vec = MutableVec::new_with_values(initial_items);
-        let vec_handle = ActorVecHandle {
-            mutable_vec: vec.clone(),
-        };
 
-        // Start the async processor task
-        Task::start(processor(vec_handle));
+        // Start the async processor task with droppable handle
+        let task_handle = Arc::new(Task::start_droppable(processor(vec.clone())));
 
         Self { 
             vec,
+            task_handle,
             #[cfg(debug_assertions)]
             creation_location: std::panic::Location::caller(),
         }
     }
 
-    /// Get a signal for the entire collection.
-    /// 
-    /// Returns a signal that emits the full collection whenever it changes.
-    /// Use `signal_vec()` for more efficient VecDiff updates.
-    /// 
-    /// # Examples
-    /// 
-    /// ```rust
-    /// let items = ActorVec::new(vec![1, 2, 3], /* processor */);
-    /// 
-    /// // Get full collection on changes
-    /// items.signal().map(|vec| vec.len())
-    /// ```
-    pub fn signal(&self) -> impl Signal<Item = Vec<T>> {
-        self.vec.signal_vec_cloned().to_signal_cloned()
-    }
 
     /// Get an efficient VecDiff signal for reactive UI updates.
     /// 
@@ -169,11 +155,10 @@ where
             .dedupe()
     }
 
-    /// Get a reactive signal for the collection length.
+    /// Get a reactive signal for the collection count.
     /// 
-    /// Returns a signal that emits the collection size whenever it changes.
-    /// More efficient than using `signal_ref(|v| v.len())` as it avoids
-    /// creating intermediate closures.
+    /// Returns a signal that emits the number of items whenever the collection changes.
+    /// Uses SignalVecExt::len() for optimal performance, avoiding full vector cloning.
     /// 
     /// # Examples
     /// 
@@ -182,216 +167,42 @@ where
     /// 
     /// // Display reactive count
     /// Text::new().content_signal(
-    ///     items.len_signal().map(|len| format!("{} items", len))
+    ///     items.count_signal().map(|count| format!("{} items", count))
     /// )
     /// ```
-    pub fn len_signal(&self) -> impl Signal<Item = usize> {
-        self.signal_ref(|vec| vec.len())
+    pub fn count_signal(&self) -> impl Signal<Item = usize> {
+        self.vec.signal_vec_cloned().len()
     }
 
-    /// Convert to a stream for async processing.
+
+    /// Get a reactive signal indicating if the collection is empty.
     /// 
-    /// Returns a stream that emits the full collection on every change.
-    /// Useful for testing and async processing scenarios.
+    /// Returns a signal that emits `true` when the collection has no items,
+    /// `false` when it contains items. More semantic than checking count == 0.
     /// 
     /// # Examples
     /// 
     /// ```rust
     /// let items = ActorVec::new(vec![], /* processor */);
     /// 
-    /// // Process collection changes asynchronously
-    /// let mut stream = items.to_stream();
-    /// while let Some(vec) = stream.next().await {
-    ///     println!("Collection now has {} items", vec.len());
-    /// }
+    /// // Show/hide UI elements based on empty state
+    /// El::new().child_signal(
+    ///     items.is_empty_signal().map(|is_empty| {
+    ///         if is_empty {
+    ///             Text::new("No items")
+    ///         } else {
+    ///             Text::new("Has items")
+    ///         }
+    ///     })
+    /// )
     /// ```
-    pub fn to_stream(&self) -> impl Stream<Item = Vec<T>> {
-        self.signal().to_stream()
+    pub fn is_empty_signal(&self) -> impl Signal<Item = bool> {
+        self.count_signal().map(|count| count == 0)
     }
+
 }
 
-/// Handle for updating ActorVec from within the processor function.
-/// 
-/// This handle provides controlled access to the underlying MutableVec<T>
-/// for collection updates. It's only available within the ActorVec's processor.
-pub struct ActorVecHandle<T>
-where
-    T: Clone + Send + Sync + 'static,
-{
-    mutable_vec: MutableVec<T>,
-}
 
-impl<T> ActorVecHandle<T>
-where
-    T: Clone + Send + Sync + 'static,
-{
-    /// Add an item to the end of the collection.
-    /// 
-    /// The item is cloned into the collection. This triggers a VecDiff::Push
-    /// signal for efficient UI updates.
-    /// 
-    /// # Examples
-    /// 
-    /// ```rust
-    /// items_handle.push_cloned(new_item);
-    /// ```
-    pub fn push_cloned(&self, item: T) {
-        self.mutable_vec.lock_mut().push_cloned(item);
-    }
-
-    /// Insert an item at a specific index.
-    /// 
-    /// Panics if the index is out of bounds. Triggers a VecDiff::InsertAt
-    /// signal for the UI.
-    /// 
-    /// # Examples
-    /// 
-    /// ```rust
-    /// items_handle.insert_cloned(0, first_item); // Insert at beginning
-    /// ```
-    pub fn insert_cloned(&self, index: usize, item: T) {
-        self.mutable_vec.lock_mut().insert_cloned(index, item);
-    }
-
-    /// Remove an item at a specific index.
-    /// 
-    /// Returns the removed item if the index is valid, or None if out of bounds.
-    /// Triggers a VecDiff::RemoveAt signal.
-    /// 
-    /// # Examples
-    /// 
-    /// ```rust
-    /// if let Some(removed) = items_handle.remove(index) {
-    ///     println!("Removed: {:?}", removed);
-    /// }
-    /// ```
-    pub fn remove(&self, index: usize) -> Option<T> {
-        let mut vec_guard = self.mutable_vec.lock_mut();
-        if index < vec_guard.len() {
-            Some(vec_guard.remove(index))
-        } else {
-            None
-        }
-    }
-
-    /// Remove all items that match a predicate.
-    /// 
-    /// Returns the number of items removed. More efficient than removing
-    /// items one by one as it minimizes signal emissions.
-    /// 
-    /// # Examples
-    /// 
-    /// ```rust
-    /// // Remove all items matching condition
-    /// let removed_count = items_handle.retain(|item| item.is_active());
-    /// ```
-    pub fn retain<F>(&self, mut f: F) -> usize
-    where
-        F: FnMut(&T) -> bool,
-    {
-        let mut vec_guard = self.mutable_vec.lock_mut();
-        let initial_len = vec_guard.len();
-        vec_guard.retain(|item| f(item));
-        initial_len - vec_guard.len()
-    }
-
-    /// Replace an item at a specific index.
-    /// 
-    /// Returns the old item if the index is valid. Triggers a VecDiff::UpdateAt
-    /// signal for efficient UI updates.
-    /// 
-    /// # Examples
-    /// 
-    /// ```rust
-    /// if let Some(old_item) = items_handle.set_cloned(2, updated_item) {
-    ///     println!("Replaced: {:?}", old_item);
-    /// }
-    /// ```
-    pub fn set_cloned(&self, index: usize, item: T) -> Option<T> {
-        let mut vec_guard = self.mutable_vec.lock_mut();
-        if index < vec_guard.len() {
-            let old_item = vec_guard[index].clone();
-            vec_guard.set_cloned(index, item);
-            Some(old_item)
-        } else {
-            None
-        }
-    }
-
-    /// Replace the entire collection with new items.
-    /// 
-    /// This is more efficient than clearing and adding items individually
-    /// as it minimizes signal emissions.
-    /// 
-    /// # Examples
-    /// 
-    /// ```rust
-    /// items_handle.replace_cloned(vec![item1, item2, item3]);
-    /// ```
-    pub fn replace_cloned(&self, items: Vec<T>) {
-        self.mutable_vec.lock_mut().replace_cloned(items);
-    }
-
-    /// Clear all items from the collection.
-    /// 
-    /// Triggers a VecDiff::Clear signal for the UI.
-    /// 
-    /// # Examples
-    /// 
-    /// ```rust
-    /// items_handle.clear();
-    /// ```
-    pub fn clear(&self) {
-        self.mutable_vec.lock_mut().clear();
-    }
-
-    /// Update the collection using a closure.
-    /// 
-    /// The closure receives a mutable reference to the underlying MutableVec
-    /// and can perform multiple operations efficiently.
-    /// 
-    /// # Examples
-    /// 
-    /// ```rust
-    /// items_handle.update(|items| {
-    ///     items.sort();
-    ///     items.dedup();
-    /// });
-    /// ```
-    pub fn update<F>(&self, f: F)
-    where
-        F: FnOnce(&mut zoon::MutableVecLockMut<T>),
-    {
-        self.mutable_vec.update_mut(f)
-    }
-
-    /// Get the current length of the collection.
-    /// 
-    /// This provides synchronous access to the length without cloning.
-    /// Use sparingly - prefer reactive signals where possible.
-    /// 
-    /// # Examples
-    /// 
-    /// ```rust
-    /// let current_length = items_handle.len();
-    /// ```
-    pub fn len(&self) -> usize {
-        self.mutable_vec.lock_ref().len()
-    }
-
-    /// Check if the collection is empty.
-    /// 
-    /// # Examples
-    /// 
-    /// ```rust
-    /// if items_handle.is_empty() {
-    ///     // Handle empty collection
-    /// }
-    /// ```
-    pub fn is_empty(&self) -> bool {
-        self.mutable_vec.lock_ref().is_empty()
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -404,14 +215,16 @@ mod tests {
         let (add_relay, mut add_stream) = relay();
         let (remove_relay, mut remove_stream) = relay();
         
-        let items = ActorVec::new(vec!["initial".to_string()], async move |items_handle| {
+        let items = ActorVec::new(vec!["initial".to_string()], async move |items| {
             loop {
                 select! {
                     Some(item) = add_stream.next() => {
-                        items_handle.push_cloned(item);
+                        items.lock_mut().push_cloned(item);
                     }
                     Some(index) = remove_stream.next() => {
-                        items_handle.remove(index);
+                        if index < items.lock_ref().len() {
+                            items.lock_mut().remove(index);
+                        }
                     }
                 }
             }
@@ -426,14 +239,14 @@ mod tests {
         // Wait for processing
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
-        let current_items = items.to_stream().next().await.unwrap();
+        let current_items = items.signal_vec().to_signal_cloned().to_stream().next().await.unwrap();
         assert_eq!(current_items, vec!["initial", "second", "third"]);
 
         remove_relay.send(1); // Remove "second"
 
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
-        let final_items = items.to_stream().next().await.unwrap();
+        let final_items = items.signal_vec().to_signal_cloned().to_stream().next().await.unwrap();
         assert_eq!(final_items, vec!["initial", "third"]);
     }
 
@@ -457,13 +270,13 @@ mod tests {
         operation_relay.send("reverse".to_string());
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
-        let reversed = items.to_stream().next().await.unwrap();
+        let reversed = items.signal_vec().to_signal_cloned().to_stream().next().await.unwrap();
         assert_eq!(reversed, vec![3, 2, 1]);
 
         operation_relay.send("clear".to_string());
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
-        let cleared = items.to_stream().next().await.unwrap();
+        let cleared = items.signal_vec().to_signal_cloned().to_stream().next().await.unwrap();
         assert!(cleared.is_empty());
     }
 
@@ -482,7 +295,7 @@ mod tests {
         filter_relay.send(3); // Keep only items > 3
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
-        let filtered = items.to_stream().next().await.unwrap();
+        let filtered = items.signal_vec().to_signal_cloned().to_stream().next().await.unwrap();
         assert_eq!(filtered, vec![4, 5]);
     }
 }

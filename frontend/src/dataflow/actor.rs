@@ -3,9 +3,10 @@
 //! Actor provides controlled state management with sequential message processing.
 //! It owns a Mutable<T> and processes events from Relays to update state safely.
 
-use zoon::{Mutable, Signal, Task, MutableExt};
+use zoon::{Mutable, Signal, Task, TaskHandle, MutableExt};
 // futures imports removed - not needed in current implementation
 use std::future::Future;
+use std::sync::Arc;
 
 /// Single-value reactive state container for Actor+Relay architecture.
 /// 
@@ -32,10 +33,10 @@ use std::future::Future;
 ///     loop {
 ///         select! {
 ///             Some(amount) = increment_stream.next() => {
-///                 state.update(|current| current + amount);
+///                 state.update_mut(|current| *current += amount);
 ///             }
 ///             Some(amount) = decrement_stream.next() => {
-///                 state.update(|current| current.saturating_sub(amount));
+///                 state.update_mut(|current| *current = current.saturating_sub(amount));
 ///             }
 ///         }
 ///     }
@@ -54,6 +55,7 @@ where
     T: Clone + Send + Sync + 'static,
 {
     state: Mutable<T>,
+    task_handle: Arc<TaskHandle>,
     #[cfg(debug_assertions)]
     creation_location: &'static std::panic::Location<'static>,
 }
@@ -89,19 +91,17 @@ where
     #[track_caller]
     pub fn new<F, Fut>(initial_state: T, processor: F) -> Self
     where
-        F: FnOnce(ActorStateHandle<T>) -> Fut + Send + 'static,
+        F: FnOnce(Mutable<T>) -> Fut + Send + 'static,
         Fut: Future<Output = ()> + Send + 'static,
     {
         let state = Mutable::new(initial_state);
-        let state_handle = ActorStateHandle {
-            mutable: state.clone(),
-        };
 
-        // Start the async processor task
-        Task::start(processor(state_handle));
+        // Start the async processor task with droppable handle
+        let task_handle = Arc::new(Task::start_droppable(processor(state.clone())));
 
         Self { 
             state,
+            task_handle,
             #[cfg(debug_assertions)]
             creation_location: std::panic::Location::caller(),
         }
@@ -149,105 +149,7 @@ where
 
 }
 
-/// Handle for updating Actor state from within the processor function.
-/// 
-/// This handle provides controlled access to the underlying Mutable<T>
-/// for state updates. It's only available within the Actor's processor.
-pub struct ActorStateHandle<T>
-where
-    T: Clone + Send + Sync + 'static,
-{
-    mutable: Mutable<T>,
-}
 
-impl<T> ActorStateHandle<T>
-where
-    T: Clone + Send + Sync + 'static,
-{
-    /// Update the state with a new value.
-    /// 
-    /// Only updates if the new value is different from the current value.
-    /// This prevents unnecessary signal emissions.
-    /// 
-    /// # Examples
-    /// 
-    /// ```rust
-    /// state.set_neq(new_value);
-    /// ```
-    pub fn set_neq(&self, value: T)
-    where
-        T: PartialEq,
-    {
-        self.mutable.set_neq(value);
-    }
-
-    /// Update the state using a closure.
-    /// 
-    /// The closure receives a mutable reference to the current state
-    /// and can modify it in place.
-    /// 
-    /// # Examples
-    /// 
-    /// ```rust
-    /// // Increment a counter
-    /// state.update(|current| current + 1);
-    /// 
-    /// // Modify a collection
-    /// state.update(|items| items.push(new_item));
-    /// ```
-    pub fn update(&self, f: impl FnOnce(&mut T)) {
-        self.mutable.update_mut(f);
-    }
-
-    /// Set the state to a new value (always triggers signals).
-    /// 
-    /// Unlike `set_neq`, this always emits signals even if the value
-    /// hasn't changed. Use sparingly - prefer `set_neq` in most cases.
-    /// 
-    /// # Examples
-    /// 
-    /// ```rust
-    /// state.set(new_value);
-    /// ```
-    pub fn set(&self, value: T) {
-        self.mutable.set(value);
-    }
-
-    /// Apply a function to the current state and update with the result.
-    /// 
-    /// Useful for transformations that depend on the current state.
-    /// 
-    /// # Examples
-    /// 
-    /// ```rust
-    /// // Double the current value
-    /// state.map(|current| current * 2);
-    /// 
-    /// // Transform a string
-    /// state.map(|s| s.to_uppercase());
-    /// ```
-    pub fn map(&self, f: impl FnOnce(T) -> T) {
-        let current = self.mutable.get_cloned();
-        let new_value = f(current);
-        self.mutable.set(new_value);
-    }
-
-    /// Replace the state only if it's different (efficient version of set_neq).
-    /// 
-    /// This is equivalent to `set_neq` but may be more readable in some contexts.
-    /// 
-    /// # Examples
-    /// 
-    /// ```rust
-    /// state.replace_if_neq(computed_value);
-    /// ```
-    pub fn replace_if_neq(&self, value: T)
-    where
-        T: PartialEq,
-    {
-        self.set_neq(value);
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -261,7 +163,7 @@ mod tests {
         
         let counter = Actor::new(0, async move |state| {
             while let Some(amount) = increment_stream.next().await {
-                state.update(|current| *current += amount);
+                state.update_mut(|current| *current += amount);
             }
         });
 
@@ -288,10 +190,10 @@ mod tests {
             loop {
                 select! {
                     Some(amount) = increment_stream.next() => {
-                        state.update(|current| *current += amount);
+                        state.update_mut(|current| *current += amount);
                     }
                     Some(amount) = decrement_stream.next() => {
-                        state.update(|current| *current = current.saturating_sub(amount));
+                        state.update_mut(|current| *current = current.saturating_sub(amount));
                     }
                 }
             }
@@ -317,9 +219,12 @@ mod tests {
         let actor = Actor::new("initial".to_string(), async move |state| {
             while let Some(operation) = event_stream.next().await {
                 match operation.as_str() {
-                    "uppercase" => state.map(|s| s.to_uppercase()),
+                    "uppercase" => {
+                        let current = state.get_cloned();
+                        state.set(current.to_uppercase());
+                    },
                     "clear" => state.set_neq(String::new()),
-                    value => state.update(|s| s.push_str(value)),
+                    value => state.update_mut(|s| s.push_str(value)),
                 }
             }
         });

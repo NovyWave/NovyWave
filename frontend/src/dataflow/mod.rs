@@ -27,9 +27,9 @@ pub mod atom;
 
 // Core exports
 pub use relay::{Relay, RelayError, relay};
-pub use actor::{Actor, ActorStateHandle};
-pub use actor_vec::{ActorVec, ActorVecHandle};
-pub use actor_map::{ActorMap, ActorMapHandle};
+pub use actor::Actor;
+pub use actor_vec::ActorVec;
+pub use actor_map::ActorMap;
 pub use atom::Atom;
 
 // Re-export futures types commonly used with dataflow

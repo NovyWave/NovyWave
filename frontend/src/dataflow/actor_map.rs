@@ -1,26 +1,28 @@
 //! Reactive map Actor implementation
 //!
 //! ActorMap provides controlled key-value map management with sequential message processing.
-//! Built on std::collections::BTreeMap for ordered, deterministic iteration.
+//! Built on MutableBTreeMap for ordered, deterministic iteration and efficient MapDiff updates.
 
-use zoon::{MutableBTreeMap, Mutable, Signal, Task, MutableBTreeMapExt, MutableExt};
+use zoon::{MutableBTreeMap, Signal, SignalVec, Task, TaskHandle, MutableBTreeMapExt, SignalMapExt, SignalExt};
 use std::collections::BTreeMap;
 use std::future::Future;
+use std::sync::Arc;
 
 /// Reactive key-value map container for Actor+Relay architecture.
 /// 
 /// ActorMap controls all mutations to a BTreeMap through sequential
-/// message processing. It provides reactive access to map contents
-/// and individual key-value pairs.
+/// message processing. It provides reactive access to map contents,
+/// individual key-value pairs, and efficient MapDiff updates.
 /// 
-/// Uses BTreeMap internally for deterministic ordering and iteration.
+/// Uses MutableBTreeMap internally for deterministic ordering and efficient reactivity.
 /// 
 /// # Core Principles
 /// 
 /// - **Sequential Processing**: Map updates processed one at a time
-/// - **Reactive Individual Keys**: Each key-value pair can be observed
+/// - **MapDiff Efficiency**: Efficient UI updates with only changed items  
 /// - **Ordered Iteration**: Deterministic key ordering via BTreeMap
 /// - **Event-Driven**: All changes come through Relay events
+/// - **No Direct Access**: Use signals for all access
 /// 
 /// # Examples
 /// 
@@ -30,14 +32,14 @@ use std::future::Future;
 /// let (set_relay, set_stream) = relay();
 /// let (remove_relay, remove_stream) = relay();
 /// 
-/// let cache = ActorMap::new(BTreeMap::new(), async move |map_handle| {
+/// let cache = ActorMap::new(BTreeMap::new(), async move |map| {
 ///     loop {
 ///         select! {
 ///             Some((key, value)) = set_stream.next() => {
-///                 map_handle.insert(key, value);
+///                 map.lock_mut().insert_cloned(key, value);
 ///             }
 ///             Some(key) = remove_stream.next() => {
-///                 map_handle.remove(&key);
+///                 map.lock_mut().remove(&key);
 ///             }
 ///         }
 ///     }
@@ -47,9 +49,9 @@ use std::future::Future;
 /// set_relay.send(("key1".to_string(), "value1".to_string()));
 /// remove_relay.send("key1".to_string());
 /// 
-/// // Bind to UI
-/// cache.signal()  // Full map changes
-/// cache.signal_key("specific_key")  // Individual key changes
+/// // Bind to UI with efficient MapDiff updates
+/// cache.signal_map()  // Primary reactive method
+/// cache.value_signal("specific_key")  // Individual key monitoring
 /// ```
 #[derive(Clone, Debug)]
 pub struct ActorMap<K, V>
@@ -58,8 +60,7 @@ where
     V: Clone + Send + Sync + 'static,
 {
     map: MutableBTreeMap<K, V>,
-    // Keep a Mutable copy for signal generation
-    signal_map: Mutable<BTreeMap<K, V>>,
+    task_handle: Arc<TaskHandle>,
     #[cfg(debug_assertions)]
     creation_location: &'static std::panic::Location<'static>,
 }
@@ -90,41 +91,54 @@ where
     /// 
     /// let cache = ActorMap::new(BTreeMap::new(), async move |map| {
     ///     while let Some((key, value)) = update_stream.next().await {
-    ///         map.insert(key, value);
+    ///         map.lock_mut().insert_cloned(key, value);
     ///     }
     /// });
     /// ```
     #[track_caller]
     pub fn new<F, Fut>(initial_map: BTreeMap<K, V>, processor: F) -> Self
     where
-        F: FnOnce(ActorMapHandle<K, V>) -> Fut + Send + 'static,
+        F: FnOnce(MutableBTreeMap<K, V>) -> Fut + Send + 'static,
         Fut: Future<Output = ()> + Send + 'static,
     {
         let map = MutableBTreeMap::new();
-        let signal_map = Mutable::new(initial_map.clone());
         for (k, v) in initial_map {
             map.lock_mut().insert_cloned(k, v);
         }
-        let map_handle = ActorMapHandle {
-            map: map.clone(),
-            signal_map: signal_map.clone(),
-        };
 
-        // Start the async processor task
-        Task::start(processor(map_handle));
+        // Start the async processor task with droppable handle
+        let task_handle = Arc::new(Task::start_droppable(processor(map.clone())));
 
         Self { 
             map,
-            signal_map,
+            task_handle,
             #[cfg(debug_assertions)]
             creation_location: std::panic::Location::caller(),
         }
     }
 
+    /// Get an efficient SignalMap for reactive UI updates.
+    /// 
+    /// This is the preferred way to bind maps to UI as it only
+    /// emits changes (insertions, removals, updates) rather than the full
+    /// map on every change.
+    /// 
+    /// # Examples
+    /// 
+    /// ```rust
+    /// let cache = ActorMap::new(BTreeMap::new(), /* processor */);
+    /// 
+    /// // Efficient UI binding with MapDiff
+    /// cache.signal_map()
+    /// ```
+    pub fn signal_map(&self) -> impl SignalMapExt<Key = K, Value = V> {
+        self.map.signal_map_cloned()
+    }
+
     /// Get a signal for the entire map.
     /// 
     /// Returns a signal that emits the full map whenever it changes.
-    /// Use `signal_key()` for more efficient individual key monitoring.
+    /// Use `signal_map()` for more efficient MapDiff updates when possible.
     /// 
     /// # Examples
     /// 
@@ -135,10 +149,10 @@ where
     /// cache.signal().map(|map| map.len())
     /// ```
     pub fn signal(&self) -> impl Signal<Item = BTreeMap<K, V>> {
-        self.signal_map.signal_cloned()
+        self.map.signal_map_cloned().to_signal_cloned()
     }
 
-    /// Get a signal for a specific key.
+    /// Get a signal for a specific key's value.
     /// 
     /// Returns a signal that emits `Option<V>` whenever the value for
     /// the given key changes (including insertions and removals).
@@ -148,66 +162,98 @@ where
     /// ```rust
     /// let cache = ActorMap::new(BTreeMap::new(), /* processor */);
     /// 
-    /// // Monitor specific key
-    /// cache.signal_key("important_key").map(|opt_value| {
+    /// // Monitor specific key's value
+    /// cache.value_signal("important_key").map(|opt_value| {
     ///     match opt_value {
     ///         Some(value) => format!("Key exists: {}", value),
     ///         None => "Key not found".to_string(),
     ///     }
     /// })
     /// ```
-    pub fn signal_key(&self, key: K) -> impl Signal<Item = Option<V>> {
-        self.signal_map.signal_ref(move |map| map.get(&key).cloned())
+    pub fn value_signal(&self, key: K) -> impl Signal<Item = Option<V>> {
+        // Use key_cloned for efficient single key tracking
+        self.map.signal_map_cloned().key_cloned(key)
     }
 
-    /// Get a signal for all keys in the map.
+    /// Get an efficient SignalVec for all keys in the map.
     /// 
-    /// Returns a signal that emits a Vec of all keys whenever the
-    /// map changes. Keys are in BTreeMap order (sorted).
+    /// Returns a SignalVec that emits key changes efficiently.
+    /// Keys are in BTreeMap order (sorted).
     /// 
     /// # Examples
     /// 
     /// ```rust
     /// let cache = ActorMap::new(BTreeMap::new(), /* processor */);
     /// 
-    /// // Get sorted list of keys
-    /// cache.signal_keys()
+    /// // Efficient UI binding for keys
+    /// cache.keys_signal_vec()
     /// ```
-    pub fn signal_keys(&self) -> impl Signal<Item = Vec<K>> {
-        self.signal_map.signal_ref(|map| map.keys().cloned().collect())
+    pub fn keys_signal_vec(&self) -> impl SignalVec<Item = K> {
+        // Use MutableBTreeMap's native signal_vec_keys() method
+        self.map.signal_vec_keys()
     }
 
-    /// Get a signal for all values in the map.
+    /// Get an efficient SignalVec for all entries (key-value pairs) in the map.
     /// 
-    /// Returns a signal that emits a Vec of all values whenever the
-    /// map changes. Values are in key order (BTreeMap order).
+    /// Returns a SignalVec that emits entry changes efficiently.
+    /// Entries are in key order (BTreeMap order).
     /// 
     /// # Examples
     /// 
     /// ```rust
     /// let cache = ActorMap::new(BTreeMap::new(), /* processor */);
     /// 
-    /// // Get values in key order
-    /// cache.signal_values()
+    /// // Efficient UI binding for entries
+    /// cache.entries_signal_vec()
     /// ```
-    pub fn signal_values(&self) -> impl Signal<Item = Vec<V>> {
-        self.signal_map.signal_ref(|map| map.values().cloned().collect())
+    pub fn entries_signal_vec(&self) -> impl SignalVec<Item = (K, V)> {
+        // Use MutableBTreeMap's native entries_cloned() method
+        self.map.entries_cloned()
     }
 
-    /// Get a signal for the number of entries.
+    /// Get a reactive signal for the map count.
     /// 
-    /// Returns a signal that emits the map size whenever it changes.
+    /// Returns a signal that emits the number of entries whenever the map changes.
+    /// Uses SignalMapExt::len() for optimal performance, avoiding full map cloning.
     /// 
     /// # Examples
     /// 
     /// ```rust
     /// let cache = ActorMap::new(BTreeMap::new(), /* processor */);
     /// 
-    /// // Monitor map size
-    /// cache.signal_len()
+    /// // Display reactive count
+    /// Text::new().content_signal(
+    ///     cache.count_signal().map(|count| format!("{} items", count))
+    /// )
     /// ```
-    pub fn signal_len(&self) -> impl Signal<Item = usize> {
-        self.signal_map.signal_ref(|map| map.len())
+    pub fn count_signal(&self) -> impl Signal<Item = usize> {
+        // Use signal_vec_keys().len() for efficient counting
+        self.map.signal_vec_keys().len()
+    }
+
+    /// Get a reactive signal indicating if the map is empty.
+    /// 
+    /// Returns a signal that emits `true` when the map has no entries,
+    /// `false` when it contains entries. More semantic than checking count == 0.
+    /// 
+    /// # Examples
+    /// 
+    /// ```rust
+    /// let cache = ActorMap::new(BTreeMap::new(), /* processor */);
+    /// 
+    /// // Show/hide UI elements based on empty state
+    /// El::new().child_signal(
+    ///     cache.is_empty_signal().map(|is_empty| {
+    ///         if is_empty {
+    ///             Text::new("No items")
+    ///         } else {
+    ///             Text::new("Has items")
+    ///         }
+    ///     })
+    /// )
+    /// ```
+    pub fn is_empty_signal(&self) -> impl Signal<Item = bool> {
+        self.count_signal().map(|count| count == 0)
     }
 
     /// Check if the map contains a specific key reactively.
@@ -220,240 +266,17 @@ where
     /// let cache = ActorMap::new(BTreeMap::new(), /* processor */);
     /// 
     /// // Check key existence reactively
-    /// cache.signal_contains_key("target_key")
+    /// cache.contains_key_signal("target_key")
     /// ```
-    pub fn signal_contains_key(&self, key: K) -> impl Signal<Item = bool> {
-        self.signal_map.signal_ref(move |map| map.contains_key(&key))
+    pub fn contains_key_signal(&self, key: K) -> impl Signal<Item = bool> {
+        // TODO: Implement using SignalMap when available
+        // For now, derive from value_signal
+        self.value_signal(key).map(|opt| opt.is_some())
     }
 
-    /// Get a reference signal for efficient map transformations.
-    /// 
-    /// Allows computing derived values from the map without cloning
-    /// the entire BTreeMap.
-    /// 
-    /// # Examples
-    /// 
-    /// ```rust
-    /// let cache = ActorMap::new(BTreeMap::new(), /* processor */);
-    /// 
-    /// // Compute total sum without cloning map
-    /// let total = cache.signal_map_ref(|map| {
-    ///     map.values().sum::<i32>()
-    /// });
-    /// 
-    /// // Count entries matching condition
-    /// let active_count = cache.signal_map_ref(|map| {
-    ///     map.values().filter(|v| v.is_active()).count()
-    /// });
-    /// ```
-    pub fn signal_map_ref<U>(&self, f: impl Fn(&BTreeMap<K, V>) -> U + Send + Sync + 'static) -> impl Signal<Item = U>
-    where
-        U: PartialEq + Send + Sync + 'static,
-    {
-        self.signal_map.signal_ref(f)
-    }
 }
 
-/// Handle for updating ActorMap from within the processor function.
-/// 
-/// This handle provides controlled access to the underlying BTreeMap
-/// for map updates. It's only available within the ActorMap's processor.
-pub struct ActorMapHandle<K, V>
-where
-    K: Clone + Ord + Send + Sync + 'static,
-    V: Clone + Send + Sync + 'static,
-{
-    map: MutableBTreeMap<K, V>,
-    signal_map: Mutable<BTreeMap<K, V>>,
-}
 
-impl<K, V> ActorMapHandle<K, V>
-where
-    K: Clone + Ord + Send + Sync + 'static,
-    V: Clone + Send + Sync + 'static,
-{
-    /// Insert a key-value pair into the map.
-    /// 
-    /// Returns the previous value if the key existed, or None if it's new.
-    /// Triggers reactive signals for the full map and the specific key.
-    /// 
-    /// # Examples
-    /// 
-    /// ```rust
-    /// let old_value = map_handle.insert("key".to_string(), "value".to_string());
-    /// ```
-    pub fn insert(&self, key: K, value: V) -> Option<V> {
-        self.map.lock_mut().insert_cloned(key, value)
-    }
-
-    /// Remove a key-value pair from the map.
-    /// 
-    /// Returns the removed value if the key existed, or None if not found.
-    /// Triggers reactive signals for the full map and the specific key.
-    /// 
-    /// # Examples
-    /// 
-    /// ```rust
-    /// if let Some(removed_value) = map_handle.remove(&"key".to_string()) {
-    ///     println!("Removed: {:?}", removed_value);
-    /// }
-    /// ```
-    pub fn remove(&self, key: &K) -> Option<V> {
-        self.map.lock_mut().remove(key)
-    }
-
-    /// Update a value if the key exists.
-    /// 
-    /// The closure receives the current value and returns the new value.
-    /// Returns true if the key existed and was updated, false otherwise.
-    /// 
-    /// # Examples
-    /// 
-    /// ```rust
-    /// // Increment a counter value
-    /// let updated = map_handle.update(&"counter".to_string(), |count| count + 1);
-    /// ```
-    pub fn update<F>(&self, key: &K, f: F) -> bool
-    where
-        F: FnOnce(V) -> V,
-    {
-        let mut map_guard = self.map.lock_mut();
-        if let Some(current_value) = map_guard.remove(key) {
-            let new_value = f(current_value);
-            map_guard.insert_cloned(key.clone(), new_value.clone());
-            self.signal_map.lock_mut().insert(key.clone(), new_value);
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Insert a key-value pair only if the key doesn't exist.
-    /// 
-    /// Returns true if the value was inserted, false if key already existed.
-    /// 
-    /// # Examples
-    /// 
-    /// ```rust
-    /// let was_inserted = map_handle.insert_if_missing("new_key".to_string(), "value".to_string());
-    /// ```
-    pub fn insert_if_missing(&self, key: K, value: V) -> bool {
-        let mut map_guard = self.map.lock_mut();
-        if map_guard.contains_key(&key) {
-            false
-        } else {
-            map_guard.insert_cloned(key.clone(), value.clone());
-            self.signal_map.lock_mut().insert(key, value);
-            true
-        }
-    }
-
-    /// Clear all entries from the map.
-    /// 
-    /// Triggers reactive signals for the full map and all individual keys.
-    /// 
-    /// # Examples
-    /// 
-    /// ```rust
-    /// map_handle.clear();
-    /// ```
-    pub fn clear(&self) {
-        self.map.lock_mut().clear();
-    }
-
-    /// Replace the entire map with new entries.
-    /// 
-    /// More efficient than clearing and inserting individually as it
-    /// minimizes signal emissions.
-    /// 
-    /// # Examples
-    /// 
-    /// ```rust
-    /// let new_map = BTreeMap::from([
-    ///     ("key1".to_string(), "value1".to_string()),
-    ///     ("key2".to_string(), "value2".to_string()),
-    /// ]);
-    /// map_handle.replace(new_map);
-    /// ```
-    pub fn replace(&self, new_map: BTreeMap<K, V>) {
-        let mut map_guard = self.map.lock_mut();
-        map_guard.clear();
-        for (k, v) in new_map.clone() {
-            map_guard.insert_cloned(k, v);
-        }
-        self.signal_map.set(new_map);
-    }
-
-    /// Update the map using a closure.
-    /// 
-    /// The closure receives a mutable reference to the underlying BTreeMap
-    /// and can perform multiple operations efficiently.
-    /// 
-    /// # Examples
-    /// 
-    /// ```rust
-    /// map_handle.update_map(|map| {
-    ///     map.insert("key1".to_string(), "value1".to_string());
-    ///     map.insert("key2".to_string(), "value2".to_string());
-    ///     map.remove(&"old_key".to_string());
-    /// });
-    /// ```
-    pub fn update_map<F>(&self, f: F)
-    where
-        F: FnOnce(&mut BTreeMap<K, V>),
-    {
-        let mut guard = self.map.lock_mut();
-        let mut temp_map = guard.iter().map(|(k, v)| (k.clone(), v.clone())).collect::<BTreeMap<_, _>>();
-        f(&mut temp_map);
-        guard.clear();
-        for (k, v) in temp_map {
-            guard.insert_cloned(k, v);
-        }
-    }
-
-    /// Get the current number of entries.
-    /// 
-    /// Provides synchronous access to the map size without cloning.
-    /// Use sparingly - prefer reactive signals where possible.
-    /// 
-    /// # Examples
-    /// 
-    /// ```rust
-    /// let current_size = map_handle.len();
-    /// ```
-    pub fn len(&self) -> usize {
-        self.map.lock_ref().len()
-    }
-
-    /// Check if the map is empty.
-    /// 
-    /// # Examples
-    /// 
-    /// ```rust
-    /// if map_handle.is_empty() {
-    ///     // Handle empty map
-    /// }
-    /// ```
-    pub fn is_empty(&self) -> bool {
-        self.map.lock_ref().is_empty()
-    }
-
-    /// Check if a key exists in the map.
-    /// 
-    /// Provides synchronous access for conditional logic.
-    /// Use sparingly - prefer reactive signals where possible.
-    /// 
-    /// # Examples
-    /// 
-    /// ```rust
-    /// if map_handle.contains_key(&"target_key".to_string()) {
-    ///     // Key exists
-    /// }
-    /// ```
-    pub fn contains_key(&self, key: &K) -> bool {
-        self.map.lock_ref().contains_key(key)
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -470,14 +293,14 @@ mod tests {
         let mut initial_map = BTreeMap::new();
         initial_map.insert("initial".to_string(), 0);
         
-        let cache = ActorMap::new(initial_map, async move |map_handle| {
+        let cache = ActorMap::new(initial_map, async move |map| {
             loop {
                 select! {
                     Some((key, value)) = set_stream.next() => {
-                        map_handle.insert(key, value);
+                        map.lock_mut().insert_cloned(key, value);
                     }
                     Some(key) = remove_stream.next() => {
-                        map_handle.remove(&key);
+                        map.lock_mut().remove(&key);
                     }
                 }
             }
@@ -491,44 +314,51 @@ mod tests {
 
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
-        let current_map = cache.signal().to_stream().next().await.unwrap();
-        assert_eq!(current_map.len(), 3);
-        assert_eq!(current_map.get("key1"), Some(&1));
-        assert_eq!(current_map.get("key2"), Some(&2));
+        // Test count signal
+        let current_count = cache.count_signal().to_stream().next().await.unwrap();
+        assert_eq!(current_count, 3);
+
+        // Test value signals
+        let key1_value = cache.value_signal("key1".to_string()).to_stream().next().await.unwrap();
+        let key2_value = cache.value_signal("key2".to_string()).to_stream().next().await.unwrap();
+        assert_eq!(key1_value, Some(1));
+        assert_eq!(key2_value, Some(2));
 
         remove_relay.send("key1".to_string());
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
-        let final_map = cache.signal().to_stream().next().await.unwrap();
-        assert_eq!(final_map.len(), 2);
-        assert!(!final_map.contains_key("key1"));
+        let final_count = cache.count_signal().to_stream().next().await.unwrap();
+        let key1_removed = cache.contains_key_signal("key1".to_string()).to_stream().next().await.unwrap();
+        assert_eq!(final_count, 2);
+        assert_eq!(key1_removed, false);
     }
 
     #[tokio::test]
-    async fn test_actor_map_signal_key() {
+    async fn test_actor_map_value_signal() {
         let (update_relay, mut update_stream) = relay();
         
-        let cache = ActorMap::new(BTreeMap::new(), async move |map_handle| {
+        let cache = ActorMap::new(BTreeMap::new(), async move |map| {
             while let Some((key, value)) = update_stream.next().await {
-                map_handle.insert(key, value);
+                map.lock_mut().insert_cloned(key, value);
             }
         });
-
-        let key_signal = cache.signal_key("test_key".to_string());
-        let mut key_stream = key_signal.to_stream();
 
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
         // Initial value should be None
-        let initial = key_stream.next().await.unwrap();
+        let initial = cache.value_signal("test_key".to_string()).to_stream().next().await.unwrap();
         assert_eq!(initial, None);
 
         update_relay.send(("test_key".to_string(), "first_value".to_string()));
-        let first = key_stream.next().await.unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        
+        let first = cache.value_signal("test_key".to_string()).to_stream().next().await.unwrap();
         assert_eq!(first, Some("first_value".to_string()));
 
         update_relay.send(("test_key".to_string(), "updated_value".to_string()));
-        let updated = key_stream.next().await.unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        
+        let updated = cache.value_signal("test_key".to_string()).to_stream().next().await.unwrap();
         assert_eq!(updated, Some("updated_value".to_string()));
     }
 
@@ -539,13 +369,14 @@ mod tests {
         let mut initial = BTreeMap::new();
         initial.insert("counter".to_string(), 5);
         
-        let cache = ActorMap::new(initial, async move |map_handle| {
+        let cache = ActorMap::new(initial, async move |map| {
             while let Some(operation) = operation_stream.next().await {
                 match operation.as_str() {
                     "increment" => {
-                        map_handle.update(&"counter".to_string(), |count| count + 1);
+                        let current = map.lock_ref().get("counter").cloned().unwrap_or(0);
+                        map.lock_mut().insert_cloned("counter".to_string(), current + 1);
                     }
-                    "clear" => map_handle.clear(),
+                    "clear" => map.clear(),
                     _ => {}
                 }
             }
@@ -556,13 +387,13 @@ mod tests {
         operation_relay.send("increment".to_string());
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
-        let incremented = cache.signal_key("counter".to_string()).to_stream().next().await.unwrap();
+        let incremented = cache.value_signal("counter".to_string()).to_stream().next().await.unwrap();
         assert_eq!(incremented, Some(6));
 
         operation_relay.send("clear".to_string());
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
-        let cleared = cache.signal().to_stream().next().await.unwrap();
-        assert!(cleared.is_empty());
+        let is_empty = cache.is_empty_signal().to_stream().next().await.unwrap();
+        assert_eq!(is_empty, true);
     }
 }
