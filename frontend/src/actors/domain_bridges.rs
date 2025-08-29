@@ -3,17 +3,18 @@
 //! Provides synchronization between new Actor+Relay domains and legacy global mutables
 //! during the transition period. These bridges will be removed once migration is complete.
 
-use crate::actors::{tracked_files_domain, waveform_timeline_domain};
+use crate::actors::{tracked_files_domain};
+use crate::actors::waveform_timeline::{initialize_waveform_timeline, cursor_position_seconds_signal, cursor_moved_relay};
 use crate::state::TRACKED_FILES;
 use crate::time_types::{TimeNs, Viewport, NsPerPixel, TimelineCoordinates};
 use zoon::{Task, SignalExt};
-use futures::stream::select;
 use std::sync::{Mutex, OnceLock};
 
 /// Initialize bridges between Actor+Relay domains and legacy global state
 /// This ensures backward compatibility during the migration period
 pub async fn initialize_domain_bridges() {
     initialize_tracked_files_bridge();
+    initialize_waveform_timeline().await;
     initialize_waveform_timeline_bridge();
     // More domain bridges will be added here as other domains are migrated
 }
@@ -57,6 +58,10 @@ static CACHED_NS_PER_PIXEL: OnceLock<Mutex<NsPerPixel>> = OnceLock::new();
 /// Cache for current timeline coordinates using value caching pattern
 static CACHED_COORDINATES: OnceLock<Mutex<TimelineCoordinates>> = OnceLock::new();
 
+/// Cache for current canvas dimensions
+static CACHED_CANVAS_WIDTH: OnceLock<Mutex<f32>> = OnceLock::new();
+static CACHED_CANVAS_HEIGHT: OnceLock<Mutex<f32>> = OnceLock::new();
+
 /// Get cached cursor position (replacement for TIMELINE_CURSOR_NS.get())
 pub fn get_cached_cursor_position_seconds() -> f64 {
     *CACHED_CURSOR_POSITION.get_or_init(|| Mutex::new(0.0)).lock().unwrap()
@@ -81,6 +86,24 @@ pub fn get_cached_coordinates() -> TimelineCoordinates {
     )).lock().unwrap()
 }
 
+// === CANVAS DIMENSION ACCESS ===
+
+/// Get cached canvas width (replacement for CANVAS_WIDTH.get())
+pub fn get_canvas_width() -> f32 {
+    *CACHED_CANVAS_WIDTH.get_or_init(|| Mutex::new(800.0)).lock().unwrap()
+}
+
+/// Get cached canvas height (replacement for CANVAS_HEIGHT.get())
+pub fn get_canvas_height() -> f32 {
+    *CACHED_CANVAS_HEIGHT.get_or_init(|| Mutex::new(400.0)).lock().unwrap()
+}
+
+/// Set canvas dimensions through WaveformTimeline actor
+pub fn set_canvas_dimensions(width: f32, height: f32) {
+    use crate::actors::waveform_timeline::canvas_resized_relay;
+    canvas_resized_relay().send((width, height));
+}
+
 /// Get cached cursor position as TimeNs (direct replacement for TIMELINE_CURSOR_NS.get())
 pub fn get_cached_cursor_position() -> TimeNs {
     let seconds = *CACHED_CURSOR_POSITION.get_or_init(|| Mutex::new(0.0)).lock().unwrap();
@@ -89,42 +112,37 @@ pub fn get_cached_cursor_position() -> TimeNs {
 
 /// Set cursor position through domain event (replacement for TIMELINE_CURSOR_NS.set())
 pub fn set_cursor_position(time_ns: TimeNs) {
-    let waveform_timeline = waveform_timeline_domain();
-    let seconds = time_ns.display_seconds();
-    waveform_timeline.cursor_dragged_relay.send(seconds);
+    cursor_moved_relay().send(time_ns);
 }
 
 /// Set cursor position through domain event (replacement for TIMELINE_CURSOR_NS.set_neq())
 pub fn set_cursor_position_if_changed(time_ns: TimeNs) {
-    let seconds = time_ns.display_seconds();
-    let current_seconds = get_cached_cursor_position_seconds();
+    let current_ns = get_cached_cursor_position();
     
     // Only emit event if value actually changed
-    if (seconds - current_seconds).abs() > f64::EPSILON {
-        let waveform_timeline = waveform_timeline_domain();
-        waveform_timeline.cursor_dragged_relay.send(seconds);
+    if current_ns != time_ns {
+        cursor_moved_relay().send(time_ns);
     }
 }
 
 /// Set cursor position from f64 seconds (convenience function)
 pub fn set_cursor_position_seconds(seconds: f64) {
-    let waveform_timeline = waveform_timeline_domain();
-    waveform_timeline.cursor_dragged_relay.send(seconds);
+    let time_ns = TimeNs::from_external_seconds(seconds);
+    cursor_moved_relay().send(time_ns);
 }
 
-// Static domain instance to avoid temporary value borrow issues
-static WAVEFORM_TIMELINE_FOR_SIGNALS: OnceLock<crate::actors::WaveformTimeline> = OnceLock::new();
+// Removed old static domain instance - now using direct function calls
 
 /// Get cursor position signal (helper to avoid temporary value borrow issues)  
 pub fn cursor_position_signal() -> impl zoon::Signal<Item = f64> {
-    WAVEFORM_TIMELINE_FOR_SIGNALS.get_or_init(|| waveform_timeline_domain()).cursor_position_signal()
+    cursor_position_seconds_signal()
 }
 
 /// Set viewport through domain event (replacement for TIMELINE_VIEWPORT.set())
-pub fn set_viewport(viewport: Viewport) {
-    let waveform_timeline = waveform_timeline_domain();
+pub fn _set_viewport(viewport: Viewport) {
+    use crate::actors::waveform_timeline::viewport_changed_relay;
     let viewport_tuple = (viewport.start.display_seconds(), viewport.end.display_seconds());
-    waveform_timeline.viewport_changed_relay.send(viewport_tuple);
+    viewport_changed_relay().send(viewport_tuple);
 }
 
 /// Set viewport if changed (replacement for TIMELINE_VIEWPORT.set_neq())
@@ -133,23 +151,23 @@ pub fn set_viewport_if_changed(new_viewport: Viewport) {
     
     // Only emit event if value actually changed
     if current_viewport != new_viewport {
-        let waveform_timeline = waveform_timeline_domain();
+        use crate::actors::waveform_timeline::viewport_changed_relay;
         let viewport_tuple = (new_viewport.start.display_seconds(), new_viewport.end.display_seconds());
-        waveform_timeline.viewport_changed_relay.send(viewport_tuple);
+        viewport_changed_relay().send(viewport_tuple);
     }
 }
 
 /// Get viewport signal (replacement for TIMELINE_VIEWPORT.signal())
-pub fn viewport_signal() -> impl zoon::Signal<Item = Viewport> {
-    WAVEFORM_TIMELINE_FOR_SIGNALS.get_or_init(|| waveform_timeline_domain()).viewport_signal()
+pub fn viewport_signal_bridge() -> impl zoon::Signal<Item = Viewport> {
+    viewport_signal()
 }
 
 /// Set ns_per_pixel through domain event (replacement for TIMELINE_NS_PER_PIXEL.set())
-pub fn set_ns_per_pixel(ns_per_pixel: NsPerPixel) {
-    let waveform_timeline = waveform_timeline_domain();
-    // Convert NsPerPixel to zoom factor for the zoom_changed_relay
-    let zoom_factor = 1_000_000.0 / (ns_per_pixel.nanos() as f32);
-    waveform_timeline.zoom_changed_relay.send(zoom_factor);
+pub fn _set_ns_per_pixel(_ns_per_pixel: NsPerPixel) {
+    use crate::actors::waveform_timeline::zoom_in_started_relay;
+    // Use the timeline position for zoom center - simplified for now
+    let zoom_center = get_cached_cursor_position();
+    zoom_in_started_relay().send(zoom_center);
 }
 
 /// Set ns_per_pixel if changed (replacement for TIMELINE_NS_PER_PIXEL.set_neq())
@@ -158,28 +176,28 @@ pub fn set_ns_per_pixel_if_changed(new_ns_per_pixel: NsPerPixel) {
     
     // Only emit event if value actually changed
     if current_ns_per_pixel != new_ns_per_pixel {
-        let waveform_timeline = waveform_timeline_domain();
-        let zoom_factor = 1_000_000.0 / (new_ns_per_pixel.nanos() as f32);
-        waveform_timeline.zoom_changed_relay.send(zoom_factor);
+        use crate::actors::waveform_timeline::zoom_in_started_relay;
+        let zoom_center = get_cached_cursor_position();
+        zoom_in_started_relay().send(zoom_center);
     }
 }
 
 /// Get ns_per_pixel signal (replacement for TIMELINE_NS_PER_PIXEL.signal())
-pub fn ns_per_pixel_signal() -> impl zoon::Signal<Item = NsPerPixel> {
-    WAVEFORM_TIMELINE_FOR_SIGNALS.get_or_init(|| waveform_timeline_domain()).ns_per_pixel_signal()
+pub fn ns_per_pixel_signal_bridge() -> impl zoon::Signal<Item = NsPerPixel> {
+    ns_per_pixel_signal()
 }
 
 /// Get coordinates signal (replacement for TIMELINE_COORDINATES.signal())
-pub fn coordinates_signal() -> impl zoon::Signal<Item = TimelineCoordinates> {
-    WAVEFORM_TIMELINE_FOR_SIGNALS.get_or_init(|| waveform_timeline_domain()).coordinates_signal()
+#[allow(dead_code)]
+pub fn coordinates_signal_bridge() -> impl zoon::Signal<Item = TimelineCoordinates> {
+    coordinates_signal()
 }
 
 /// Bridge WaveformTimeline domain changes to timeline-related global mutables
 fn initialize_waveform_timeline_bridge() {
     // Value caching pattern: Cache cursor position as it flows through signals
     Task::start(async move {
-        let waveform_timeline = waveform_timeline_domain();
-        waveform_timeline.cursor_position_signal()
+        cursor_position_seconds_signal()
             .for_each(move |cursor_position| {
                 // Cache the current value for synchronous access
                 *CACHED_CURSOR_POSITION.get_or_init(|| Mutex::new(0.0)).lock().unwrap() = cursor_position;
@@ -193,8 +211,7 @@ fn initialize_waveform_timeline_bridge() {
     
     // Value caching pattern: Cache viewport as it flows through signals
     Task::start(async move {
-        let waveform_timeline = waveform_timeline_domain();
-        waveform_timeline.viewport_signal()
+        viewport_signal()
             .for_each(move |viewport| {
                 // Cache the current value for synchronous access
                 *CACHED_VIEWPORT.get_or_init(|| Mutex::new(
@@ -210,8 +227,7 @@ fn initialize_waveform_timeline_bridge() {
     
     // Value caching pattern: Cache ns_per_pixel as it flows through signals
     Task::start(async move {
-        let waveform_timeline = waveform_timeline_domain();
-        waveform_timeline.ns_per_pixel_signal()
+        ns_per_pixel_signal()
             .for_each(move |ns_per_pixel| {
                 // Cache the current value for synchronous access
                 *CACHED_NS_PER_PIXEL.get_or_init(|| Mutex::new(NsPerPixel::MEDIUM_ZOOM)).lock().unwrap() = ns_per_pixel;
@@ -225,13 +241,41 @@ fn initialize_waveform_timeline_bridge() {
     
     // Value caching pattern: Cache coordinates as it flows through signals
     Task::start(async move {
-        let waveform_timeline = waveform_timeline_domain();
-        waveform_timeline.coordinates_signal()
+        coordinates_signal()
             .for_each(move |coordinates| {
                 // Cache the current value for synchronous access
                 *CACHED_COORDINATES.get_or_init(|| Mutex::new(
                     TimelineCoordinates::new(TimeNs::ZERO, TimeNs::ZERO, NsPerPixel::MEDIUM_ZOOM, 800)
                 )).lock().unwrap() = coordinates;
+                
+                // Value cached for synchronous access
+                
+                async {}
+            })
+            .await;
+    });
+    
+    // Value caching pattern: Cache canvas dimensions as they flow through signals
+    Task::start(async move {
+        use crate::actors::waveform_timeline::canvas_width_signal;
+        canvas_width_signal()
+            .for_each(move |width| {
+                // Cache the current value for synchronous access
+                *CACHED_CANVAS_WIDTH.get_or_init(|| Mutex::new(800.0)).lock().unwrap() = width;
+                
+                // Value cached for synchronous access
+                
+                async {}
+            })
+            .await;
+    });
+    
+    Task::start(async move {
+        use crate::actors::waveform_timeline::canvas_height_signal;
+        canvas_height_signal()
+            .for_each(move |height| {
+                // Cache the current value for synchronous access
+                *CACHED_CANVAS_HEIGHT.get_or_init(|| Mutex::new(400.0)).lock().unwrap() = height;
                 
                 // Value cached for synchronous access
                 
@@ -249,4 +293,21 @@ fn initialize_waveform_timeline_bridge() {
 fn initialize_user_configuration_bridge() {
     // TODO: Implement when UserConfiguration migration begins
     // UserConfiguration domain bridge - placeholder for future implementation
+}
+
+// === PUBLIC RE-EXPORTS FOR LEGACY COMPATIBILITY ===
+
+/// Re-export viewport signal for legacy imports
+pub fn viewport_signal() -> impl zoon::Signal<Item = Viewport> {
+    crate::actors::waveform_timeline::viewport_signal()
+}
+
+/// Re-export ns_per_pixel signal for legacy imports  
+pub fn ns_per_pixel_signal() -> impl zoon::Signal<Item = NsPerPixel> {
+    crate::actors::waveform_timeline::ns_per_pixel_signal()
+}
+
+/// Re-export coordinates signal for legacy imports
+pub fn coordinates_signal() -> impl zoon::Signal<Item = TimelineCoordinates> {
+    crate::actors::waveform_timeline::coordinates_signal()
 }

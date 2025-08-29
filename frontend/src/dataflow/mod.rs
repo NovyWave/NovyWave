@@ -26,16 +26,10 @@ pub mod actor_map;
 pub mod atom;
 
 // Core exports
-pub use relay::{Relay, RelayError, relay};
+pub use relay::{Relay, relay};
 pub use actor::Actor;
 pub use actor_vec::ActorVec;
 pub use actor_map::ActorMap;
 pub use atom::Atom;
 
-// Re-export futures types commonly used with dataflow
-pub use futures::stream::Stream;
-pub use futures::StreamExt;
-
-// Re-export futures::select! macro for Actor processing loops
-// This is essential for the Actor+Relay pattern
-pub use futures::select;
+// Note: futures exports removed as they were unused

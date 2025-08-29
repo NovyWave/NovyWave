@@ -5,7 +5,7 @@
 
 use crate::actors::{Actor, ActorVec, ActorMap, Relay, relay};
 use shared::{Theme, DockMode, DockedRightDimensions, DockedBottomDimensions, VarFormat, AppConfig, AppSection, UiSection, WorkspaceSection};
-use zoon::{Task, SignalVecExt};
+use zoon::{SignalVecExt, MutableVecExt};
 use futures::StreamExt;
 use std::collections::BTreeMap;
 
@@ -14,6 +14,7 @@ use std::collections::BTreeMap;
 /// Replaces configuration-related global mutables with cohesive event-driven state management.
 /// Manages themes, panel layouts, file paths, and user preferences.
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct UserConfiguration {
     /// Current application theme
     current_theme: Actor<Theme>,
@@ -87,6 +88,7 @@ pub struct UserConfiguration {
     pub config_import_requested_relay: Relay<String>,
 }
 
+#[allow(dead_code)]
 impl UserConfiguration {
     /// Create a new UserConfiguration domain with event processors
     pub async fn new() -> Self {
@@ -178,22 +180,20 @@ impl UserConfiguration {
         });
         
         // Create default formats map
-        let default_formats = ActorMap::new(BTreeMap::new(), async move |map, signal_map| {
+        let default_formats = ActorMap::new(BTreeMap::new(), async move |map| {
             let mut default_format_changed = default_format_changed_stream;
             
             while let Some((var_type, format)) = default_format_changed.next().await {
-                map.lock_mut().insert_cloned(var_type.clone(), format.clone());
-                signal_map.lock_mut().insert(var_type, format);
+                map.lock_mut().insert_cloned(var_type, format);
             }
         });
         
         // Create panel visibility map
-        let panel_visibility = ActorMap::new(BTreeMap::new(), async move |map, signal_map| {
+        let panel_visibility = ActorMap::new(BTreeMap::new(), async move |map| {
             let mut panel_visibility_toggled = panel_visibility_toggled_stream;
             
             while let Some((panel_name, is_visible)) = panel_visibility_toggled.next().await {
-                map.lock_mut().insert_cloned(panel_name.clone(), is_visible);
-                signal_map.lock_mut().insert(panel_name, is_visible);
+                map.lock_mut().insert_cloned(panel_name, is_visible);
             }
         });
         
@@ -279,12 +279,18 @@ impl UserConfiguration {
     
     /// Get reactive signal for default formats
     pub fn default_formats_signal(&self) -> impl zoon::Signal<Item = BTreeMap<String, VarFormat>> {
-        self.default_formats.signal()
+        use zoon::SignalExt;
+        self.default_formats.entries_signal_vec().to_signal_cloned().map(|entries| {
+            entries.into_iter().collect()
+        })
     }
     
     /// Get reactive signal for panel visibility
     pub fn panel_visibility_signal(&self) -> impl zoon::Signal<Item = BTreeMap<String, bool>> {
-        self.panel_visibility.signal()
+        use zoon::SignalExt;
+        self.panel_visibility.entries_signal_vec().to_signal_cloned().map(|entries| {
+            entries.into_iter().collect()
+        })
     }
     
     /// Get reactive signal for configuration loaded state
@@ -300,16 +306,16 @@ impl UserConfiguration {
     /// Get signal for specific panel visibility
     pub fn is_panel_visible_signal(&self, panel_name: String) -> impl zoon::Signal<Item = bool> {
         use zoon::SignalExt;
-        self.panel_visibility.signal().map(move |visibility_map| {
-            visibility_map.get(&panel_name).copied().unwrap_or(true) // Default to visible
+        self.panel_visibility.value_signal(panel_name).map(|opt_value| {
+            opt_value.unwrap_or(true) // Default to visible
         })
     }
     
     /// Get signal for default format of variable type
     pub fn default_format_for_type_signal(&self, var_type: String) -> impl zoon::Signal<Item = VarFormat> {
         use zoon::SignalExt;
-        self.default_formats.signal().map(move |formats| {
-            formats.get(&var_type).copied().unwrap_or(VarFormat::Binary) // Default format
+        self.default_formats.value_signal(var_type).map(|opt_value| {
+            opt_value.unwrap_or(VarFormat::Binary) // Default format
         })
     }
     
@@ -323,12 +329,13 @@ impl UserConfiguration {
 
 // === EVENT HANDLER IMPLEMENTATIONS ===
 
+#[allow(dead_code)]
 impl UserConfiguration {
     /// Apply loaded configuration to all actors
     fn apply_loaded_config(
         config: &AppConfig,
-        theme_handle: &crate::actors::ActorStateHandle<Theme>,
-        dock_handle: &crate::actors::ActorStateHandle<DockMode>,
+        theme_handle: &zoon::Mutable<Theme>,
+        dock_handle: &zoon::Mutable<DockMode>,
         // Add other handles as needed
     ) {
         // Apply theme from UI section
@@ -385,19 +392,21 @@ impl UserConfiguration {
 // === CONVENIENCE FUNCTIONS FOR UI INTEGRATION ===
 
 /// Global UserConfiguration instance
-static USER_CONFIGURATION_INSTANCE: std::sync::OnceLock<UserConfiguration> = std::sync::OnceLock::new();
+static _USER_CONFIGURATION_INSTANCE: std::sync::OnceLock<UserConfiguration> = std::sync::OnceLock::new();
 
 /// Initialize the UserConfiguration domain (call once on app startup)
+#[allow(dead_code)]
 pub async fn initialize_user_configuration() -> UserConfiguration {
     let user_configuration = UserConfiguration::new().await;
-    USER_CONFIGURATION_INSTANCE.set(user_configuration.clone())
+    _USER_CONFIGURATION_INSTANCE.set(user_configuration.clone())
         .expect("UserConfiguration already initialized - initialize_user_configuration() should only be called once");
     user_configuration
 }
 
 /// Get the global UserConfiguration instance
+#[allow(dead_code)]
 pub fn get_user_configuration() -> UserConfiguration {
-    USER_CONFIGURATION_INSTANCE.get()
+    _USER_CONFIGURATION_INSTANCE.get()
         .expect("UserConfiguration not initialized - call initialize_user_configuration() first")
         .clone()
 }

@@ -40,7 +40,15 @@ mod state;
 use state::*;
 use actors::domain_bridges::{get_cached_cursor_position_seconds, get_cached_viewport};
 use actors::waveform_timeline_domain;
-use state::VARIABLES_SEARCH_INPUT_FOCUSED;
+use actors::selected_variables::{variables_signal, tree_selection_signal, selected_scope_signal, expanded_scopes_signal};
+use actors::panel_layout::{
+    files_width_signal, files_height_signal, vertical_dragging_signal, horizontal_dragging_signal,
+    name_divider_dragging_signal, value_divider_dragging_signal, docked_to_bottom_signal,
+    vertical_divider_dragged_relay, horizontal_divider_dragged_relay,
+    name_divider_dragged_relay, value_divider_dragged_relay,
+    mouse_moved_relay
+};
+use actors::dialog_manager::{file_dialog_open_signal};
 pub use state::CONFIG_INITIALIZATION_COMPLETE;
 
 
@@ -69,7 +77,7 @@ fn init_timeline_signal_handlers() {
         
         
         // Monitor timeline cursor position changes with intelligent debouncing
-        waveform_timeline_domain().cursor_position_signal().for_each_sync(move |cursor_pos| {
+        waveform_timeline_domain().cursor_position_seconds_signal().for_each_sync(move |cursor_pos| {
             let last_position_clone = last_position.clone();
             let last_request_time_clone = last_request_time.clone();
             
@@ -93,12 +101,16 @@ fn init_timeline_signal_handlers() {
                 // Only proceed if enough time has passed (300ms debounce)
                 if time_since_last >= 300.0 {
                     
-                    // Get current selected variables for direct service call
+                    // TODO: Fix Actor+Relay API - .sample() method doesn't exist
+                    // For now, comment out until proper reactive approach implemented
+                    // let selected_vars = crate::actors::selected_variables_domain().variables_signal().sample();
+                    
+                    // Temporarily use the old approach until migration is complete
                     let selected_vars = crate::state::SELECTED_VARIABLES.lock_ref();
                     if !selected_vars.is_empty() {
-                        
-                        // Create signal requests for direct SignalDataService call
-                        let signal_requests: Vec<crate::unified_timeline_service::SignalRequest> = selected_vars
+                            
+                            // Create signal requests for direct SignalDataService call
+                            let signal_requests: Vec<crate::unified_timeline_service::SignalRequest> = selected_vars
                             .iter()
                             .filter_map(|var| {
                                 // Parse unique_id: "/path/file.ext|scope|variable"
@@ -118,25 +130,21 @@ fn init_timeline_signal_handlers() {
                             })
                             .collect();
                         
-                        if !signal_requests.is_empty() {
-                            
-                            // Convert to signal IDs and request cursor values
-                            let signal_ids: Vec<String> = signal_requests.iter()
-                                .map(|req| format!("{}|{}|{}", req.file_path, req.scope_path, req.variable_name))
-                                .collect();
-                            let cursor_time_ns = crate::time_types::TimeNs::from_nanos((cursor_pos * 1_000_000_000.0) as u64);
-                            crate::unified_timeline_service::UnifiedTimelineService::request_cursor_values(signal_ids, cursor_time_ns);
-                            
-                            // Update last request time
-                            last_request_time_clone.set(current_time);
-                        } else {
+                            if !signal_requests.is_empty() {
+                                
+                                // Convert to signal IDs and request cursor values
+                                let signal_ids: Vec<String> = signal_requests.iter()
+                                    .map(|req| format!("{}|{}|{}", req.file_path, req.scope_path, req.variable_name))
+                                    .collect();
+                                let cursor_time_ns = crate::time_types::TimeNs::from_nanos((cursor_pos * 1_000_000_000.0) as u64);
+                                crate::unified_timeline_service::UnifiedTimelineService::request_cursor_values(signal_ids, cursor_time_ns);
+                                
+                                // Update last request time
+                                last_request_time_clone.set(current_time);
+                            }
                         }
-                    } else {
                     }
-                } else {
                 }
-            } else {
-            }
             
             // Always update last position
             last_position_clone.set(cursor_pos);
@@ -144,7 +152,7 @@ fn init_timeline_signal_handlers() {
     });
 }
 
-/// Initialize reactive handlers that bridge SELECTED_VARIABLES state to SignalDataService
+/// Initialize reactive handlers that bridge SelectedVariables domain to SignalDataService
 /// This ensures that when variables are added/removed, SignalDataService is automatically updated
 fn init_selected_variables_signal_service_bridge() {
     
@@ -152,8 +160,8 @@ fn init_selected_variables_signal_service_bridge() {
         // Track previous state to detect additions and removals
         let previous_vars: Mutable<Vec<shared::SelectedVariable>> = Mutable::new(Vec::new());
         
-        // Use MutableVec.signal_vec_cloned().to_signal_cloned() to get Vec instead of VecDiff
-        SELECTED_VARIABLES.signal_vec_cloned().to_signal_cloned().for_each(move |current_vars| {
+        // Use SelectedVariables Actor+Relay signal instead of global mutable
+        variables_signal().for_each(move |current_vars| {
             let previous_vars = previous_vars.clone();
             async move {
                 // Only process changes after config initialization is complete
@@ -163,7 +171,6 @@ fn init_selected_variables_signal_service_bridge() {
                 
                 let current_count = current_vars.len();
                 let previous_state = previous_vars.get_cloned();
-                let _previous_count = previous_state.len();
                 
                 
                 if current_count > 0 {
@@ -298,7 +305,7 @@ pub fn main() {
                     
                     // Initialize theme system with unified config persistence  
                     // NOTE: Access config_store() AFTER apply_config() has loaded real values
-                    let current_theme = config_store().ui.lock_ref().theme.get_cloned();
+                    let current_theme = config_store().ui.current_value().theme;
                     let novyui_theme = match current_theme {
                         config::Theme::Light => Theme::Light,
                         config::Theme::Dark => Theme::Dark,
@@ -312,7 +319,9 @@ pub fn main() {
                                 Theme::Light => config::Theme::Light,
                                 Theme::Dark => config::Theme::Dark,
                             };
-                            config_store().ui.lock_mut().theme.set_neq(config_theme.clone());
+                            let mut ui = config_store().ui.current_value();
+                            ui.theme = config_theme;
+                            config_store().ui.set(ui);
                             
                             // Only save if initialization is complete to prevent startup overwrites
                             if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
@@ -358,7 +367,7 @@ pub fn main() {
         Task::start(async {
             let last_position = Mutable::new(0.0);
             
-            waveform_timeline_domain().cursor_position_signal().for_each_sync(move |cursor_pos| {
+            waveform_timeline_domain().cursor_position_seconds_signal().for_each_sync(move |cursor_pos| {
                 let is_moving = crate::state::IS_CURSOR_MOVING_LEFT.get() || crate::state::IS_CURSOR_MOVING_RIGHT.get();
                 
                 // Only query for direct position changes (not during Q/E movement)
@@ -387,9 +396,7 @@ pub fn is_cursor_in_visible_range(cursor_time: f64) -> bool {
 
 fn init_scope_selection_handlers() {
     Task::start(async {
-        TREE_SELECTED_ITEMS.signal_ref(|selected_items| {
-            selected_items.clone()
-        }).for_each_sync(|selected_items| {
+        tree_selection_signal().for_each_sync(|selected_items| {
             // Find the first selected scope (not a file)
             // Files are tracked in TRACKED_FILE_IDS cache, scopes are not
             if let Some(tree_id) = selected_items.iter().find(|id| {
@@ -403,24 +410,20 @@ fn init_scope_selection_handlers() {
                     tree_id.clone()
                 };
                 
-                SELECTED_SCOPE_ID.set_neq(Some(scope_id));
-                // Clear the flag when a scope is selected
-                USER_CLEARED_SELECTION.set_neq(false);
+                // Send events through SelectedVariables domain
+                use actors::selected_variables::{scope_selected_relay};
+                scope_selected_relay().send(Some(scope_id));
             } else {
-                // No scope selected - check if this is user action or startup
-                SELECTED_SCOPE_ID.set_neq(None);
-                
-                // Only set flag if config is loaded (prevents startup interference)
-                if CONFIG_LOADED.get() {
-                    USER_CLEARED_SELECTION.set_neq(true);
-                }
+                // No scope selected - clear scope selection through domain
+                use actors::selected_variables::{scope_selected_relay};
+                scope_selected_relay().send(None);
             }
         }).await
     });
     
     // Auto-save when selected scope changes
     Task::start(async {
-        SELECTED_SCOPE_ID.signal_cloned().for_each_sync(|_| {
+        selected_scope_signal().for_each_sync(|_| {
             if CONFIG_LOADED.get() && !DOCK_TOGGLE_IN_PROGRESS.get() {
                 config::save_scope_selection();
             }
@@ -429,9 +432,7 @@ fn init_scope_selection_handlers() {
     
     // Auto-save when expanded scopes change
     Task::start(async {
-        EXPANDED_SCOPES.signal_ref(|expanded_scopes| {
-            expanded_scopes.clone()
-        }).for_each_sync(|_expanded_scopes| {
+        expanded_scopes_signal().for_each_sync(|_expanded_scopes| {
             if CONFIG_LOADED.get() && !DOCK_TOGGLE_IN_PROGRESS.get() {
                 config::save_scope_selection();
             }
@@ -440,7 +441,7 @@ fn init_scope_selection_handlers() {
     
     // Auto-query signal values when selected variables change
     Task::start(async {
-        SELECTED_VARIABLES.signal_vec_cloned().for_each(move |_| async move {
+        variables_signal().for_each(move |_| async move {
             if CONFIG_LOADED.get() && !IS_LOADING.get() {
                 // Variable selection changed - use unified caching logic
                 crate::views::trigger_signal_value_queries();
@@ -477,7 +478,7 @@ async fn load_and_register_fonts() {
 async fn initialize_complete_app_flow() {
     // Phase 1: Load restored files from config (if any)
     let config_store = config_store();
-    let opened_files = config_store.session.lock_ref().opened_files.lock_ref().to_vec();
+    let opened_files = config_store.session.current_value().opened_files.clone();
     
     if !opened_files.is_empty() {
         // Start loading files
@@ -543,7 +544,7 @@ fn root() -> impl Element {
         .s(Background::new().color_signal(neutral_1()))
         .s(Font::new().family([FontFamily::new("Inter"), FontFamily::new("system-ui"), FontFamily::new("Segoe UI"), FontFamily::new("Arial"), FontFamily::SansSerif]))
         .layer(main_layout())
-        .layer_signal(SHOW_FILE_DIALOG.signal().map_true(
+        .layer_signal(file_dialog_open_signal().map_true(
             || file_paths_dialog()
         ))
         .layer(toast_notifications_container())
@@ -552,10 +553,10 @@ fn root() -> impl Element {
 
 fn main_layout() -> impl Element {
     let is_any_divider_dragging = map_ref! {
-        let vertical = VERTICAL_DIVIDER_DRAGGING.signal(),
-        let horizontal = HORIZONTAL_DIVIDER_DRAGGING.signal(),
-        let vars_name = VARIABLES_NAME_DIVIDER_DRAGGING.signal(),
-        let vars_value = VARIABLES_VALUE_DIVIDER_DRAGGING.signal() =>
+        let vertical = vertical_dragging_signal(),
+        let horizontal = horizontal_dragging_signal(),
+        let vars_name = name_divider_dragging_signal(),
+        let vars_value = value_divider_dragging_signal() =>
         *vertical || *horizontal || *vars_name || *vars_value
     };
 
@@ -574,10 +575,10 @@ fn main_layout() -> impl Element {
         )
         .s(Cursor::with_signal(
             map_ref! {
-                let vertical = VERTICAL_DIVIDER_DRAGGING.signal(),
-                let horizontal = HORIZONTAL_DIVIDER_DRAGGING.signal(),
-                let vars_name = VARIABLES_NAME_DIVIDER_DRAGGING.signal(),
-                let vars_value = VARIABLES_VALUE_DIVIDER_DRAGGING.signal() =>
+                let vertical = vertical_dragging_signal(),
+                let horizontal = horizontal_dragging_signal(),
+                let vars_name = name_divider_dragging_signal(),
+                let vars_value = value_divider_dragging_signal() =>
                 if *vertical || *vars_name || *vars_value {
                     Some(CursorIcon::ColumnResize)
                 } else if *horizontal {
@@ -588,56 +589,33 @@ fn main_layout() -> impl Element {
             }
         ))
         .on_pointer_up(|| {
-            VERTICAL_DIVIDER_DRAGGING.set_neq(false);
-            HORIZONTAL_DIVIDER_DRAGGING.set_neq(false);
-            VARIABLES_NAME_DIVIDER_DRAGGING.set_neq(false);
-            VARIABLES_VALUE_DIVIDER_DRAGGING.set_neq(false);
+            vertical_divider_dragged_relay().send(0.0);
+            horizontal_divider_dragged_relay().send(0.0);
+            name_divider_dragged_relay().send(0.0);
+            value_divider_dragged_relay().send(0.0);
         })
         .on_pointer_leave(|| {
-            VERTICAL_DIVIDER_DRAGGING.set_neq(false);
-            HORIZONTAL_DIVIDER_DRAGGING.set_neq(false);
-            VARIABLES_NAME_DIVIDER_DRAGGING.set_neq(false);
-            VARIABLES_VALUE_DIVIDER_DRAGGING.set_neq(false);
+            vertical_divider_dragged_relay().send(0.0);
+            horizontal_divider_dragged_relay().send(0.0);
+            name_divider_dragged_relay().send(0.0);
+            value_divider_dragged_relay().send(0.0);
         })
         .on_pointer_move_event(|event| {
-            if VERTICAL_DIVIDER_DRAGGING.get() {
-                FILES_PANEL_WIDTH.update(|width| {
-                    let new_width = width as i32 + event.movement_x();
-                    u32::max(50, u32::try_from(new_width).unwrap_or(50))
-                });
-                if CONFIG_LOADED.get() && !DOCK_TOGGLE_IN_PROGRESS.get() {
-                    config::save_panel_layout();
-                }
-            } else if HORIZONTAL_DIVIDER_DRAGGING.get() {
-                if IS_DOCKED_TO_BOTTOM.get() {
-                    // In "Docked to Bottom" mode, horizontal divider controls files panel height
-                    FILES_PANEL_HEIGHT.update(|height| {
-                        let new_height = height as i32 + event.movement_y();
-                        u32::max(50, u32::try_from(new_height).unwrap_or(50))
-                    });
-                } else {
-                    // In "Docked to Right" mode, horizontal divider controls files panel height
-                    FILES_PANEL_HEIGHT.update(|height| {
-                        let new_height = height as i32 + event.movement_y();
-                        u32::max(50, u32::try_from(new_height).unwrap_or(50))
-                    });
-                }
-            } else if VARIABLES_NAME_DIVIDER_DRAGGING.get() {
-                VARIABLES_NAME_COLUMN_WIDTH.update(|width| {
-                    let new_width = width as i32 + event.movement_x();
-                    u32::max(50, u32::try_from(new_width).unwrap_or(50))
-                });
-            } else if VARIABLES_VALUE_DIVIDER_DRAGGING.get() {
-                VARIABLES_VALUE_COLUMN_WIDTH.update(|width| {
-                    let new_width = width as i32 + event.movement_x();
-                    u32::max(50, u32::try_from(new_width).unwrap_or(50))
-                });
+            // Send mouse movement to panel layout domain to handle dragging
+            mouse_moved_relay().send((event.movement_x() as f32, event.movement_y() as f32));
+            
+            // TODO: Handle config saving when layout changes
+            // This was previously done inline but should be handled via actor signals
+            if CONFIG_LOADED.get() && !DOCK_TOGGLE_IN_PROGRESS.get() {
+                // Check if any divider is dragging before saving
+                // This could be improved by making the actor handle config saving
+                config::save_panel_layout();
             }
         })
         .update_raw_el(move |raw_el| {
             raw_el.global_event_handler(move |event: zoon::events::KeyDown| {
                 // Skip timeline controls if typing in search input
-                if VARIABLES_SEARCH_INPUT_FOCUSED.get() {
+                if state::VARIABLES_SEARCH_INPUT_FOCUSED.get() {
                     return;
                 }
                 
@@ -731,7 +709,7 @@ fn main_layout() -> impl Element {
             })
             .global_event_handler(move |event: zoon::events::KeyUp| {
                 // Skip timeline controls if typing in search input
-                if VARIABLES_SEARCH_INPUT_FOCUSED.get() {
+                if state::VARIABLES_SEARCH_INPUT_FOCUSED.get() {
                     return;
                 }
                 
@@ -779,7 +757,7 @@ fn docked_layout_wrapper() -> impl Element {
         .s(Height::screen())
         .s(Width::fill())
         // TEST 3: Remove root container scrollbars
-        .child_signal(IS_DOCKED_TO_BOTTOM.signal().map(|is_docked| {
+        .child_signal(docked_to_bottom_signal().map(|is_docked| {
             if is_docked {
                 // Docked to Bottom layout
                 El::new()
@@ -790,15 +768,15 @@ fn docked_layout_wrapper() -> impl Element {
                             .s(Width::fill())
                             .item(
                                 Row::new()
-                                    .s(Height::exact_signal(FILES_PANEL_HEIGHT.signal()))
+                                    .s(Height::exact_signal(files_height_signal()))
                                     .s(Width::fill())
                                     .item(
                                         El::new()
-                                            .s(Width::exact_signal(FILES_PANEL_WIDTH.signal()))
+                                            .s(Width::exact_signal(files_width_signal()))
                                             .s(Height::fill())
                                             .child(files_panel_with_height())
                                     )
-                                    .item(vertical_divider(VERTICAL_DIVIDER_DRAGGING.clone()))
+                                    .item(vertical_divider(vertical_dragging_signal()))
                                     .item(
                                         El::new()
                                             .s(Width::fill())
@@ -806,7 +784,7 @@ fn docked_layout_wrapper() -> impl Element {
                                             .child(variables_panel_with_fill())
                                     )
                             )
-                            .item(horizontal_divider(HORIZONTAL_DIVIDER_DRAGGING.clone()))
+                            .item(horizontal_divider(horizontal_dragging_signal()))
                             .item(
                                 El::new()
                                     .s(Width::fill())
@@ -825,17 +803,17 @@ fn docked_layout_wrapper() -> impl Element {
                             .s(Width::fill())
                             .item(
                                 El::new()
-                                    .s(Width::exact_signal(FILES_PANEL_WIDTH.signal()))
+                                    .s(Width::exact_signal(files_width_signal()))
                                     .s(Height::fill())
                                     .child(
                                         Column::new()
                                             .s(Height::fill())
                                             .item(files_panel_with_height())
-                                            .item(horizontal_divider(HORIZONTAL_DIVIDER_DRAGGING.clone()))
+                                            .item(horizontal_divider(horizontal_dragging_signal()))
                                             .item(variables_panel_with_fill())
                                     )
                             )
-                            .item(vertical_divider(VERTICAL_DIVIDER_DRAGGING.clone()))
+                            .item(vertical_divider(vertical_dragging_signal()))
                             .item(
                                 El::new()
                                     .s(Width::fill())

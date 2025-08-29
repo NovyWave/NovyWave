@@ -128,7 +128,7 @@ mod naming_compliance_tests {
 }
 
 /// Manual validation helper for development
-pub fn validate_current_relay_naming() {
+pub fn _validate_current_relay_naming() {
     println!("🔍 Scanning for relay naming compliance...");
     
     // This will be called during development to check naming patterns
@@ -139,7 +139,7 @@ pub fn validate_current_relay_naming() {
 }
 
 /// Get examples of correct event-source relay naming for each domain
-pub fn get_naming_examples() -> Vec<(&'static str, Vec<&'static str>)> {
+pub fn _get_naming_examples() -> Vec<(&'static str, Vec<&'static str>)> {
     vec![
         ("TrackedFiles", vec![
             "file_dropped_relay: Relay<Vec<PathBuf>>",

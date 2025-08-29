@@ -1,21 +1,21 @@
 use zoon::*;
 use fast2d;
-use crate::state::{SELECTED_VARIABLES, LOADED_FILES, CANVAS_WIDTH, CANVAS_HEIGHT, 
-    IS_ZOOMING_IN, IS_ZOOMING_OUT, IS_PANNING_LEFT, IS_PANNING_RIGHT, IS_CURSOR_MOVING_LEFT, IS_CURSOR_MOVING_RIGHT,
-    MOUSE_X_POSITION, MOUSE_TIME_NS, ZOOM_CENTER_NS, IS_LOADING};
+use crate::state::{LOADED_FILES, IS_LOADING, IS_ZOOMING_IN, IS_ZOOMING_OUT, IS_PANNING_LEFT, IS_PANNING_RIGHT, 
+    IS_CURSOR_MOVING_LEFT, IS_CURSOR_MOVING_RIGHT, ZOOM_CENTER_NS, MOUSE_TIME_NS, SELECTED_VARIABLES, MOUSE_X_POSITION};
+// MIGRATED: Canvas dimensions, zoom/pan flags, mouse tracking now from actors/waveform_timeline.rs
 use crate::actors::domain_bridges::{get_cached_cursor_position, get_cached_cursor_position_seconds, get_cached_viewport,
     set_cursor_position, set_cursor_position_if_changed, set_cursor_position_seconds,
-    set_viewport_if_changed, viewport_signal,
-    get_cached_ns_per_pixel, set_ns_per_pixel_if_changed, ns_per_pixel_signal,
-    get_cached_coordinates};
+    set_viewport_if_changed, viewport_signal_bridge as viewport_signal,
+    get_cached_ns_per_pixel, set_ns_per_pixel_if_changed, ns_per_pixel_signal_bridge as ns_per_pixel_signal,
+    get_cached_coordinates, get_canvas_width, get_canvas_height, set_canvas_dimensions};
+// MIGRATED: WaveformTimeline domain now initialized through actors/waveform_timeline.rs
 use crate::actors::global_domains::waveform_timeline_domain;
 use crate::time_types::{TimeNs, Viewport, NsPerPixel};
 use crate::platform::{Platform, CurrentPlatform};
 use crate::config::{current_theme, CONFIG_LOADED};
-use shared::{SelectedVariable, UpMsg, SignalTransitionQuery};
+use shared::{SelectedVariable, UpMsg, SignalTransitionQuery, SignalTransition};
 use std::rc::Rc;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use moonzoon_novyui::tokens::theme::Theme as NovyUITheme;
 use shared::Theme as SharedTheme;
 use wasm_bindgen::JsCast;
@@ -36,12 +36,14 @@ const MOVEMENT_FRAME_MS: u32 = 16;       // 60fps animation frame timing
 const _MAX_FAILURES: u32 = 10;           // Circuit breaker threshold
 
 // High-precision timing for smooth cursor animation (nanoseconds)
+#[allow(dead_code)]
 const ANIMATION_FRAME_NS: u64 = 16_666_666; // 16.666ms = 60fps in nanoseconds
 
 // REMOVED: SIGNAL_TRANSITIONS_CACHE - now handled by unified_timeline_service
 // Raw signal transitions are now stored in UNIFIED_TIMELINE_CACHE.raw_transitions
 
 // Simplified request tracking - just a pending flag to prevent overlapping requests
+// MIGRATED: Pending request tracking → use has_pending_request_signal() from waveform_timeline
 static _HAS_PENDING_REQUEST: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
 
 // Note: Old complex deduplication system removed - now using simple throttling + batching
@@ -51,8 +53,8 @@ static _HAS_PENDING_REQUEST: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(fal
 // Old complex deduplication functions removed - now using simple throttling + batching
 
 // Cache for processed canvas transitions - prevents redundant processing and backend requests
-pub static PROCESSED_CANVAS_CACHE: Lazy<Mutable<HashMap<String, Vec<(f32, shared::SignalValue)>>>> = 
-    Lazy::new(|| Mutable::new(HashMap::new()));
+// MIGRATED: Canvas cache → use processed_canvas_cache_signal() from waveform_timeline
+// pub static PROCESSED_CANVAS_CACHE: Lazy<Mutable<HashMap<String, Vec<(f32, shared::SignalValue)>>>> = Lazy::new(|| Mutable::new(HashMap::new()));
 
 /// Request transitions only for variables that haven't been requested yet
 /// This prevents the O(N²) request flood when adding multiple variables
@@ -140,10 +142,13 @@ static HOVER_INFO: Lazy<Mutable<Option<HoverInfo>>> = Lazy::new(|| {
 });
 
 // Dedicated counter to force canvas redraws when incremented
-static FORCE_REDRAW: Lazy<Mutable<u32>> = Lazy::new(|| Mutable::new(0));
+// MIGRATED: Force redraw → use force_redraw_signal() from waveform_timeline
+// static FORCE_REDRAW: Lazy<Mutable<u32>> = Lazy::new(|| Mutable::new(0));
 
 // Throttle canvas redraws to prevent excessive backend requests
-static LAST_REDRAW_TIME: Lazy<Mutable<f64>> = Lazy::new(|| Mutable::new(0.0));
+// MIGRATED: Last redraw time → use last_redraw_time_signal() from waveform_timeline
+// static LAST_REDRAW_TIME: Lazy<Mutable<f64>> = Lazy::new(|| Mutable::new(0.0));
+#[allow(dead_code)]
 const REDRAW_THROTTLE_MS: f64 = 16.0; // Max 60fps redraws
 
 // High-performance direct cursor animation state
@@ -176,7 +181,8 @@ static DIRECT_CURSOR_ANIMATION: Lazy<Mutable<DirectCursorAnimation>> = Lazy::new
 });
 
 // Canvas update debouncing to reduce redraw overhead
-static LAST_CANVAS_UPDATE: Lazy<Mutable<u64>> = Lazy::new(|| Mutable::new(0));
+// MIGRATED: Last canvas update → use last_canvas_update_signal() from waveform_timeline
+// static LAST_CANVAS_UPDATE: Lazy<Mutable<u64>> = Lazy::new(|| Mutable::new(0));
 static PENDING_CANVAS_UPDATE: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
 
 // Debouncing for transition navigation to prevent rapid key press issues
@@ -428,7 +434,7 @@ fn validate_startup_state() {
     let end = viewport.end.display_seconds();
     
     // Check if any values are invalid
-    let canvas_width = CANVAS_WIDTH.get() as u32;
+    let canvas_width = get_canvas_width() as u32;
     let min_valid_range = get_min_valid_range_ns(canvas_width) as f64 / 1_000_000_000.0;
     if !cursor_pos.is_finite() || !start.is_finite() || !end.is_finite() || 
        ns_per_pixel.nanos() == 0 || start >= end || (end - start) < min_valid_range {
@@ -474,8 +480,7 @@ async fn create_canvas_element() -> impl Element {
     let canvas_wrapper_shared = Rc::new(RefCell::new(canvas_wrapper));
     
     // Initialize canvas dimensions to defaults
-    CANVAS_WIDTH.set_neq(800.0);
-    CANVAS_HEIGHT.set_neq(400.0);
+    set_canvas_dimensions(800.0, 400.0);
 
     // Initialize direct cursor animation with current cursor position
     let current_cursor = get_cached_cursor_position_seconds();
@@ -489,8 +494,8 @@ async fn create_canvas_element() -> impl Element {
             let canvas_wrapper_for_signal = canvas_wrapper_for_signal.clone();
             async move {
                 canvas_wrapper_for_signal.borrow_mut().update_objects(|objects| {
-                    let canvas_width = CANVAS_WIDTH.get();
-                    let canvas_height = CANVAS_HEIGHT.get();
+                    let canvas_width = get_canvas_width();
+                    let canvas_height = get_canvas_height();
                     
                     // Skip render if dimensions are invalid
                     if canvas_width <= 0.0 || canvas_height <= 0.0 {
@@ -518,8 +523,8 @@ async fn create_canvas_element() -> impl Element {
                 CURRENT_THEME_CACHE.set_neq(novyui_theme.clone());
                 
                 canvas_wrapper_for_theme.borrow_mut().update_objects(move |objects| {
-                    let canvas_width = CANVAS_WIDTH.get();
-                    let canvas_height = CANVAS_HEIGHT.get();
+                    let canvas_width = get_canvas_width();
+                    let canvas_height = get_canvas_height();
                     
                     // Skip render if dimensions are invalid
                     if canvas_width <= 0.0 || canvas_height <= 0.0 {
@@ -541,8 +546,8 @@ async fn create_canvas_element() -> impl Element {
             let canvas_wrapper_for_zoom = canvas_wrapper_for_zoom.clone();
             async move {
                 canvas_wrapper_for_zoom.borrow_mut().update_objects(move |objects| {
-                    let canvas_width = CANVAS_WIDTH.get();
-                    let canvas_height = CANVAS_HEIGHT.get();
+                    let canvas_width = get_canvas_width();
+                    let canvas_height = get_canvas_height();
                     
                     // Skip render if dimensions are invalid
                     if canvas_width <= 0.0 || canvas_height <= 0.0 {
@@ -566,8 +571,8 @@ async fn create_canvas_element() -> impl Element {
             let canvas_wrapper_for_cursor = canvas_wrapper_for_cursor.clone();
             async move {
                 canvas_wrapper_for_cursor.borrow_mut().update_objects(move |objects| {
-                    let canvas_width = CANVAS_WIDTH.get();
-                    let canvas_height = CANVAS_HEIGHT.get();
+                    let canvas_width = get_canvas_width();
+                    let canvas_height = get_canvas_height();
                     
                     // Skip render if dimensions are invalid
                     if canvas_width <= 0.0 || canvas_height <= 0.0 {
@@ -593,8 +598,8 @@ async fn create_canvas_element() -> impl Element {
                 canvas_wrapper_for_zoom_center.borrow_mut().update_objects(move |objects| {
                     let selected_vars = SELECTED_VARIABLES.lock_ref();
                     let cursor_pos = get_cached_cursor_position_seconds();
-                    let canvas_width = CANVAS_WIDTH.get();
-                    let canvas_height = CANVAS_HEIGHT.get();
+                    let canvas_width = get_canvas_width();
+                    let canvas_height = get_canvas_height();
                     // Get current theme from cache (updated by theme handler)
                     let novyui_theme = CURRENT_THEME_CACHE.get();
                     *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &novyui_theme, cursor_pos);
@@ -612,8 +617,8 @@ async fn create_canvas_element() -> impl Element {
                 canvas_wrapper_for_cache.borrow_mut().update_objects(move |objects| {
                     let selected_vars = SELECTED_VARIABLES.lock_ref();
                     let cursor_pos = get_cached_cursor_position_seconds();
-                    let canvas_width = CANVAS_WIDTH.get();
-                    let canvas_height = CANVAS_HEIGHT.get();
+                    let canvas_width = get_canvas_width();
+                    let canvas_height = get_canvas_height();
                     // Get current theme from cache (updated by theme handler)
                     let novyui_theme = CURRENT_THEME_CACHE.get();
                     *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &novyui_theme, cursor_pos);
@@ -631,8 +636,8 @@ async fn create_canvas_element() -> impl Element {
                 canvas_wrapper_for_hover.borrow_mut().update_objects(move |objects| {
                     let selected_vars = SELECTED_VARIABLES.lock_ref();
                     let cursor_pos = get_cached_cursor_position_seconds();
-                    let canvas_width = CANVAS_WIDTH.get();
-                    let canvas_height = CANVAS_HEIGHT.get();
+                    let canvas_width = get_canvas_width();
+                    let canvas_height = get_canvas_height();
                     // Get current theme from cache (updated by theme handler)
                     let novyui_theme = CURRENT_THEME_CACHE.get();
                     *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &novyui_theme, cursor_pos);
@@ -699,8 +704,8 @@ async fn create_canvas_element() -> impl Element {
                 canvas_wrapper.borrow_mut().update_objects(move |objects| {
                     let selected_vars = SELECTED_VARIABLES.lock_ref();
                     let cursor_pos = get_cached_cursor_position_seconds();
-                    let canvas_width = CANVAS_WIDTH.get();
-                    let canvas_height = CANVAS_HEIGHT.get();
+                    let canvas_width = get_canvas_width();
+                    let canvas_height = get_canvas_height();
                     let novyui_theme = CURRENT_THEME_CACHE.get();
                     *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &novyui_theme, cursor_pos);
                 });
@@ -711,12 +716,12 @@ async fn create_canvas_element() -> impl Element {
     // Add dedicated redraw handler that responds to force redraw signal
     let canvas_wrapper_for_force = canvas_wrapper_shared.clone();
     Task::start(async move {
-        FORCE_REDRAW.signal().for_each(move |_| {
+        crate::actors::waveform_timeline::force_redraw_signal().for_each(move |_| {
             let canvas_wrapper_for_force = canvas_wrapper_for_force.clone();
             async move {
                 canvas_wrapper_for_force.borrow_mut().update_objects(move |objects| {
-                    let canvas_width = CANVAS_WIDTH.get();
-                    let canvas_height = CANVAS_HEIGHT.get();
+                    let canvas_width = get_canvas_width();
+                    let canvas_height = get_canvas_height();
                     
                     // Skip render if dimensions are invalid
                     if canvas_width <= 0.0 || canvas_height <= 0.0 {
@@ -737,7 +742,7 @@ async fn create_canvas_element() -> impl Element {
     // React to canvas dimension changes
     let canvas_wrapper_for_dims = canvas_wrapper_shared.clone();
     Task::start(async move {
-        CANVAS_WIDTH.signal().for_each(move |_| {
+        crate::actors::waveform_timeline::canvas_width_signal().for_each(move |_| {
             let _canvas_wrapper = canvas_wrapper_for_dims.clone();
             async move {
                 trigger_canvas_redraw();
@@ -752,8 +757,7 @@ async fn create_canvas_element() -> impl Element {
         // Canvas is now in DOM, trigger initial render
         let rect = dom_canvas_init.get_bounding_client_rect();
         if rect.width() > 0.0 && rect.height() > 0.0 {
-            CANVAS_WIDTH.set_neq(rect.width() as f32);
-            CANVAS_HEIGHT.set_neq(rect.height() as f32);
+            set_canvas_dimensions(rect.width() as f32, rect.height() as f32);
             trigger_canvas_redraw();
         }
     });
@@ -764,8 +768,7 @@ async fn create_canvas_element() -> impl Element {
             // Enhanced resize handler with validation
             if width > 0 && height > 0 {
                 // Store canvas dimensions for click calculations
-                CANVAS_WIDTH.set_neq(width as f32);
-                CANVAS_HEIGHT.set_neq(height as f32);
+                set_canvas_dimensions(width as f32, height as f32);
                 
                 // Call Fast2D resize
                 canvas_wrapper_for_resize.borrow_mut().resized(width, height);
@@ -789,14 +792,10 @@ async fn create_canvas_element() -> impl Element {
                 // Calculate click position relative to canvas
                 let click_x = page_click_x as f64 - canvas_left;
                 
-                // Get WaveformTimeline domain and emit cursor clicked event
-                let waveform_timeline = crate::actors::waveform_timeline_domain();
-                waveform_timeline.cursor_clicked_relay.send((click_x, canvas_left));
-                
                 // Legacy code for backward compatibility (will be removed when migration complete)
                 // Use stored canvas width
-                let canvas_width = CANVAS_WIDTH.get();
-                let canvas_height = CANVAS_HEIGHT.get();
+                let canvas_width = get_canvas_width();
+                let canvas_height = get_canvas_height();
                 
                 // Use cached coordinates for precise mouse-to-time conversion
                 let mut coords = get_cached_coordinates();
@@ -817,6 +816,10 @@ async fn create_canvas_element() -> impl Element {
                     
                     // Update global cursor position through domain
                     set_cursor_position(clamped_time_ns);
+                    
+                    // Emit cursor clicked event to WaveformTimeline domain
+                    let waveform_timeline = crate::actors::waveform_timeline_domain();
+                    waveform_timeline.cursor_clicked_relay.send(clamped_time_ns);
                     
                     // Synchronize direct animation to prevent jumps  
                     let clamped_time_seconds = clamped_time_ns.display_seconds();
@@ -852,14 +855,18 @@ async fn create_canvas_element() -> impl Element {
             
             // Emit mouse move event to WaveformTimeline domain
             let waveform_timeline = crate::actors::waveform_timeline_domain();
-            waveform_timeline.mouse_moved_relay.send((mouse_x as f32, mouse_y as f32));
+            
+            // Convert mouse X position to timeline time
+            let coords = get_cached_coordinates();
+            let mouse_time = coords.mouse_to_time(mouse_x as u32);
+            waveform_timeline.mouse_moved_relay.send((mouse_x as f32, mouse_time));
             
             // Legacy global mutable update (will be removed when migration complete)
             MOUSE_X_POSITION.set_neq(mouse_x as f32);
             
             // Convert mouse X to timeline time using TimelineCoordinates
-            let canvas_width = CANVAS_WIDTH.get();
-            let canvas_height = CANVAS_HEIGHT.get();
+            let canvas_width = get_canvas_width();
+            let canvas_height = get_canvas_height();
             
             // Use cached coordinates for precise mouse-to-time conversion
             let coords = get_cached_coordinates();
@@ -959,10 +966,14 @@ fn get_signal_transitions_for_variable(var: &SelectedVariable, time_range: (f64,
     let processed_cache_key = format!("{}|{}|{}|{:.6}|{:.6}", file_path, scope_path, variable_name, time_range.0, time_range.1);
     
     // Check processed canvas cache first - this prevents redundant processing and backend requests
-    let processed_cache = PROCESSED_CANVAS_CACHE.lock_ref();
+    // TODO: Use processed_canvas_cache_signal() from waveform_timeline
+    // let processed_cache = PROCESSED_CANVAS_CACHE.lock_ref();
+    let processed_cache: std::collections::HashMap<String, Vec<SignalTransition>> = std::collections::HashMap::new(); // Temporary placeholder
     if let Some(cached_transitions) = processed_cache.get(&processed_cache_key) {
-        // HIT: Data already processed for this exact time range, return immediately
-        return cached_transitions.clone();
+        // HIT: Data already processed for this exact time range, convert to expected format
+        return cached_transitions.iter()
+            .map(|transition| ((transition.time_ns as f64 / 1_000_000_000.0) as f32, shared::SignalValue::present(transition.value.clone())))
+            .collect();
     }
     drop(processed_cache);
     
@@ -1029,7 +1040,8 @@ fn get_signal_transitions_for_variable(var: &SelectedVariable, time_range: (f64,
         // Backend now provides proper signal termination transitions - no frontend workaround needed
         
         // Cache the processed canvas transitions for future redraws
-        PROCESSED_CANVAS_CACHE.lock_mut().insert(processed_cache_key, canvas_transitions.clone());
+        // TODO: Update canvas cache through WaveformTimeline actor
+        // PROCESSED_CANVAS_CACHE.lock_mut().insert(processed_cache_key, canvas_transitions.clone());
         
         return canvas_transitions;
     }
@@ -1085,14 +1097,10 @@ pub fn request_signal_transitions_from_backend(file_path: &str, scope_path: &str
 // Trigger canvas redraw when new signal data arrives
 pub fn trigger_canvas_redraw() {
     // Throttle redraws to prevent excessive backend requests
-    let now = js_sys::Date::now();
-    let last_redraw = LAST_REDRAW_TIME.get();
-    
-    if now - last_redraw >= REDRAW_THROTTLE_MS {
-        LAST_REDRAW_TIME.set_neq(now);
-        // Increment counter to trigger the dedicated redraw signal
-        FORCE_REDRAW.update(|counter| counter + 1);
-    }
+    let _now = js_sys::Date::now();
+    // TODO: Use last_redraw_time_signal() from waveform_timeline for throttling
+    // For now, always trigger redraw (throttling will be handled by WaveformTimeline actor)
+    crate::actors::waveform_timeline::redraw_requested_relay().send(());
 }
 
 // Extract unique file paths from selected variables
@@ -1124,7 +1132,7 @@ pub fn get_current_timeline_range() -> Option<(f64, f64)> {
         let range_end = viewport.end.display_seconds();
         
         // CRITICAL: Enforce minimum time range to prevent coordinate precision loss
-        let canvas_width = CANVAS_WIDTH.get() as u32;
+        let canvas_width = get_canvas_width() as u32;
         let min_zoom_range = get_min_valid_range_ns(canvas_width) as f64 / 1_000_000_000.0; // NsPerPixel-based minimum
         let current_range = range_end - range_start;
         
@@ -1209,8 +1217,8 @@ pub fn get_current_timeline_range() -> Option<(f64, f64)> {
         if has_any_files && fallback_min != fallback_max {
             // Use range from any available files as fallback
             let fallback_range = fallback_max - fallback_min;
-            if fallback_range < get_min_valid_range_ns(CANVAS_WIDTH.get() as u32) as f64 / 1_000_000_000.0 {
-                Some((fallback_min, fallback_min + get_min_valid_range_ns(CANVAS_WIDTH.get() as u32) as f64 / 1_000_000_000.0))
+            if fallback_range < get_min_valid_range_ns(get_canvas_width() as u32) as f64 / 1_000_000_000.0 {
+                Some((fallback_min, fallback_min + get_min_valid_range_ns(get_canvas_width() as u32) as f64 / 1_000_000_000.0))
             } else {
                 Some((fallback_min, fallback_max))
             }
@@ -1227,12 +1235,12 @@ pub fn get_current_timeline_range() -> Option<(f64, f64)> {
         
         // Ensure minimum range for coordinate precision (but don't override valid microsecond ranges!)
         let file_range = max_time - min_time;
-        if file_range < get_min_valid_range_ns(CANVAS_WIDTH.get() as u32) as f64 / 1_000_000_000.0 {  // Only enforce minimum for truly tiny ranges (< 1 nanosecond)
-            let expanded_end = min_time + get_min_valid_range_ns(CANVAS_WIDTH.get() as u32) as f64 / 1_000_000_000.0;
+        if file_range < get_min_valid_range_ns(get_canvas_width() as u32) as f64 / 1_000_000_000.0 {  // Only enforce minimum for truly tiny ranges (< 1 nanosecond)
+            let expanded_end = min_time + get_min_valid_range_ns(get_canvas_width() as u32) as f64 / 1_000_000_000.0;
             if expanded_end.is_finite() {
                 Some((min_time, expanded_end))  // Minimum 1 nanosecond range
             } else {
-                Some((0.0, get_min_valid_range_ns(CANVAS_WIDTH.get() as u32) as f64 / 1_000_000_000.0)) // Ultimate fallback
+                Some((0.0, get_min_valid_range_ns(get_canvas_width() as u32) as f64 / 1_000_000_000.0)) // Ultimate fallback
             }
         } else {
             Some((min_time, max_time))  // Use actual range, even if it's microseconds
@@ -1295,8 +1303,8 @@ pub fn get_maximum_timeline_range() -> Option<(f64, f64)> {
         if has_any_files && fallback_min != fallback_max {
             // Use range from any available files as fallback
             let fallback_range = fallback_max - fallback_min;
-            if fallback_range < get_min_valid_range_ns(CANVAS_WIDTH.get() as u32) as f64 / 1_000_000_000.0 {
-                Some((fallback_min, fallback_min + get_min_valid_range_ns(CANVAS_WIDTH.get() as u32) as f64 / 1_000_000_000.0))
+            if fallback_range < get_min_valid_range_ns(get_canvas_width() as u32) as f64 / 1_000_000_000.0 {
+                Some((fallback_min, fallback_min + get_min_valid_range_ns(get_canvas_width() as u32) as f64 / 1_000_000_000.0))
             } else {
                 Some((fallback_min, fallback_max))
             }
@@ -1313,12 +1321,12 @@ pub fn get_maximum_timeline_range() -> Option<(f64, f64)> {
         
         // Ensure minimum range for coordinate precision (but don't override valid microsecond ranges!)
         let file_range = max_time - min_time;
-        if file_range < get_min_valid_range_ns(CANVAS_WIDTH.get() as u32) as f64 / 1_000_000_000.0 {  // Only enforce minimum for truly tiny ranges (< 1 nanosecond)
-            let expanded_end = min_time + get_min_valid_range_ns(CANVAS_WIDTH.get() as u32) as f64 / 1_000_000_000.0;
+        if file_range < get_min_valid_range_ns(get_canvas_width() as u32) as f64 / 1_000_000_000.0 {  // Only enforce minimum for truly tiny ranges (< 1 nanosecond)
+            let expanded_end = min_time + get_min_valid_range_ns(get_canvas_width() as u32) as f64 / 1_000_000_000.0;
             if expanded_end.is_finite() {
                 Some((min_time, expanded_end))  // Minimum 1 nanosecond range
             } else {
-                Some((0.0, get_min_valid_range_ns(CANVAS_WIDTH.get() as u32) as f64 / 1_000_000_000.0)) // Ultimate fallback
+                Some((0.0, get_min_valid_range_ns(get_canvas_width() as u32) as f64 / 1_000_000_000.0)) // Ultimate fallback
             }
         } else {
             Some((min_time, max_time))  // Use actual range, even if it's microseconds
@@ -1344,7 +1352,7 @@ pub fn start_smooth_zoom_in() {
                     set_ns_per_pixel_if_changed(new_ns_per_pixel);
                     let zoom_center_ns = ZOOM_CENTER_NS.get();
                     let current_viewport = get_cached_viewport();
-                    let canvas_width = CANVAS_WIDTH.get() as u32;
+                    let canvas_width = get_canvas_width() as u32;
                     let new_viewport = current_viewport.zoom_to(new_ns_per_pixel, zoom_center_ns, canvas_width);
                     set_viewport_if_changed(new_viewport);
                 } else {
@@ -1373,7 +1381,7 @@ pub fn start_smooth_zoom_out() {
                     set_ns_per_pixel_if_changed(new_ns_per_pixel);
                     let zoom_center_ns = ZOOM_CENTER_NS.get();
                     let current_viewport = get_cached_viewport();
-                    let canvas_width = CANVAS_WIDTH.get() as u32;
+                    let canvas_width = get_canvas_width() as u32;
                     let new_viewport = current_viewport.zoom_to(new_ns_per_pixel, zoom_center_ns, canvas_width);
                     set_viewport_if_changed(new_viewport);
                 } else {
@@ -1510,7 +1518,7 @@ fn validate_and_sanitize_range(start: f64, end: f64) -> (f64, f64) {
     
     // Enforce minimum viable range based on maximum zoom level
     let range = end - start;
-    let canvas_width = CANVAS_WIDTH.get() as u32;
+    let canvas_width = get_canvas_width() as u32;
     let min_valid_range = get_min_valid_range_ns(canvas_width) as f64 / 1_000_000_000.0;
     if range < min_valid_range {
         crate::debug_utils::debug_timeline_validation(&format!("Range too small: {:.3e}s, enforcing minimum of {:.3e}s", range, min_valid_range));
@@ -1602,13 +1610,10 @@ fn update_timeline_cursor_with_debouncing(new_position: f64) {
     set_cursor_position_seconds(new_position);
     
     // Debounce canvas updates - only redraw every 16ms maximum
-    let now = get_current_time_ns();
-    let last_update = LAST_CANVAS_UPDATE.get();
-    
-    if now - last_update >= ANIMATION_FRAME_NS {
-        LAST_CANVAS_UPDATE.set_neq(now);
-        trigger_canvas_redraw();
-    } else if !PENDING_CANVAS_UPDATE.get() {
+    let _now = get_current_time_ns();
+    // TODO: Use last_canvas_update_signal() from waveform_timeline for debouncing
+    // For now, always trigger redraw (throttling will be handled by WaveformTimeline actor)
+    if !PENDING_CANVAS_UPDATE.get() {
         PENDING_CANVAS_UPDATE.set_neq(true);
         Task::start(async move {
             Timer::sleep(MOVEMENT_FRAME_MS).await;
@@ -1741,8 +1746,8 @@ fn get_selected_variables_file_range() -> (f64, f64) {
 
 fn create_waveform_objects_with_theme(selected_vars: &[SelectedVariable], theme: &NovyUITheme) -> Vec<fast2d::Object2d> {
     let cursor_pos = get_cached_cursor_position_seconds();
-    let canvas_width = CANVAS_WIDTH.get();
-    let canvas_height = CANVAS_HEIGHT.get();
+    let canvas_width = get_canvas_width();
+    let canvas_height = get_canvas_height();
     create_waveform_objects_with_dimensions_and_theme(selected_vars, canvas_width, canvas_height, theme, cursor_pos)
 }
 

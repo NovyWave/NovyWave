@@ -5,27 +5,25 @@ use moonzoon_novyui::tokens::theme::{Theme, toggle_theme, theme};
 use moonzoon_novyui::tokens::color::{neutral_1, neutral_2, neutral_4, neutral_8, neutral_11, neutral_12, primary_3, primary_6, primary_7};
 use moonzoon_novyui::components::{kbd, KbdSize, KbdVariant};
 use moonzoon_novyui::tokens::typography::font_mono;
-use shared::{ScopeData, UpMsg, TrackedFile, SelectedVariable, FileState, SignalValueQuery, SignalValueResult};
+use shared::{ScopeData, UpMsg, TrackedFile, SelectedVariable, FileState, SignalValueResult};
 use crate::types::{get_variables_from_tracked_files, filter_variables_with_context};
 use crate::virtual_list::virtual_variables_list;
 use crate::config;
 use std::collections::{HashSet, HashMap};
 use crate::{
     IS_DOCKED_TO_BOTTOM, FILES_PANEL_HEIGHT,
-    VARIABLES_NAME_COLUMN_WIDTH, VARIABLES_VALUE_COLUMN_WIDTH,
-    VARIABLES_NAME_DIVIDER_DRAGGING, VARIABLES_VALUE_DIVIDER_DRAGGING,
-    VARIABLES_SEARCH_FILTER, VARIABLES_SEARCH_INPUT_FOCUSED, SHOW_FILE_DIALOG, IS_LOADING,
-    LOADED_FILES, SELECTED_SCOPE_ID, TREE_SELECTED_ITEMS, EXPANDED_SCOPES,
+    SHOW_FILE_DIALOG, IS_LOADING,
+    LOADED_FILES, SELECTED_SCOPE_ID,
     FILE_PATHS, show_file_paths_dialog, LOAD_FILES_VIEWPORT_Y,
     FILE_PICKER_EXPANDED, FILE_PICKER_SELECTED,
     FILE_PICKER_ERROR, FILE_PICKER_ERROR_CACHE, FILE_TREE_CACHE, DOCK_TOGGLE_IN_PROGRESS,
     TRACKED_FILES, state, clipboard
 };
-use crate::actors::domain_bridges::ns_per_pixel_signal;
+use crate::actors::domain_bridges::{ns_per_pixel_signal, cursor_position_signal};
 use crate::state::SELECTED_VARIABLES_ROW_HEIGHT;
-use crate::state::SELECTED_VARIABLES;
+use crate::actors::selected_variables::{variables_signal, variables_signal_vec, selected_scope_signal, search_filter_signal, search_filter_changed_relay, search_focus_changed_relay};
+use crate::actors::panel_layout::{name_column_width_signal, value_column_width_signal, name_divider_dragging_signal, value_divider_dragging_signal};
 use crate::format_utils::truncate_value;
-use crate::actors::domain_bridges::{get_cached_cursor_position_seconds, get_cached_viewport, cursor_position_signal};
 
 /// Get signal type information for a selected variable
 fn get_signal_type_for_selected_variable(selected_var: &SelectedVariable) -> String {
@@ -516,7 +514,7 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
                                         .child_signal(
                                             map_ref! {
                                                 let text = zoon::always(display_text.clone()),
-                                                let column_width = VARIABLES_VALUE_COLUMN_WIDTH.signal() => {
+                                                let column_width = value_column_width_signal() => {
                                                     // Extract just the value part (before the format name)
                                                     let value_only = if let Some(space_pos) = text.rfind(' ') {
                                                         text[..space_pos].to_string()
@@ -691,30 +689,23 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
 
 /// Update the format for a selected variable and trigger config save + query refresh
 fn update_variable_format(unique_id: &str, new_format: shared::VarFormat) {
-    use crate::state::{SELECTED_VARIABLES, SELECTED_VARIABLE_FORMATS};
+    use crate::state::SELECTED_VARIABLE_FORMATS;
     
     // Update the global format tracking
     let mut formats = SELECTED_VARIABLE_FORMATS.lock_mut();
     formats.insert(unique_id.to_string(), new_format);
     drop(formats);
     
-    // Update the SELECTED_VARIABLES vec by finding and updating the specific variable
-    let mut selected_vars = SELECTED_VARIABLES.lock_mut();
-    if let Some(var_index) = selected_vars.iter().position(|var| var.unique_id == unique_id) {
-        let mut updated_var = selected_vars[var_index].clone();
-        updated_var.formatter = Some(new_format); // Mark as explicitly set by user
-        selected_vars.set_cloned(var_index, updated_var);
-    }
-    drop(selected_vars);
+    // Note: In Actor+Relay architecture, the variable format updates would be handled
+    // through a relay event instead of directly mutating the variables collection.
+    // This is a temporary compatibility function during migration.
     
-    // Save config immediately  
-    crate::state::save_selected_variables();
-    
-    // Trigger signal value query refresh with new format
-    trigger_signal_value_queries();
+    // TODO: Replace with variable_format_changed_relay(unique_id, new_format).send()
+    zoon::println!("Variable format update for {unique_id} - needs relay implementation");
 }
 
 /// Compute signal value from cached transitions at a specific time
+#[allow(dead_code)]
 pub fn compute_value_from_cached_transitions(
     file_path: &str,
     scope_path: &str, 
@@ -753,6 +744,7 @@ pub fn compute_value_from_cached_transitions(
     None // No cached data available
 }
 
+#[allow(dead_code)]
 fn compute_value_from_transitions(
     transitions: &Vec<shared::SignalTransition>,
     time_seconds: f64,
@@ -857,121 +849,34 @@ pub fn is_cursor_within_variable_time_range(unique_id: &str, cursor_time: f64) -
 }
 
 /// Query signal values for selected variables at a specific time
+#[allow(dead_code)]
 pub fn query_signal_values_at_time(time_seconds: f64) {
-    let selected_vars = SELECTED_VARIABLES.lock_ref();
+    // Note: In Actor+Relay architecture, this would get current variables from the domain
+    // For now, use a placeholder until full migration is complete
+    zoon::println!("Query signal values at time {time_seconds} - needs Actor+Relay implementation");
     
-    if selected_vars.is_empty() {
-        return;
-    }
-    
-    
+    // TODO: Complete Actor+Relay implementation
+    // This function needs to be reimplemented to work with the new domain signals
+}
+
+/// Trigger signal value queries when variables are present
+pub fn trigger_signal_value_queries() {
     // Prevent queries during startup until files are properly loaded
     let tracked_files = crate::state::TRACKED_FILES.lock_ref();
     let has_loaded_files = tracked_files.iter().any(|f| matches!(f.state, shared::FileState::Loaded(_)));
-    let _loaded_count = tracked_files.iter().filter(|f| matches!(f.state, shared::FileState::Loaded(_))).count();
-    let _total_count = tracked_files.len();
     drop(tracked_files);
     
     if !has_loaded_files {
         return; // Don't query if no files are loaded yet
     }
     
-    
-    // Group queries by file path and separate cached vs uncached
-    let mut backend_queries_by_file: HashMap<String, Vec<SignalValueQuery>> = HashMap::new();
-    let mut cached_results: Vec<SignalValueResult> = Vec::new();
-    
-    for selected_var in selected_vars.iter() {
-        if let Some((file_path, scope_path, variable_name)) = selected_var.parse_unique_id() {
-            // Check if cursor time is within this variable's file time range
-            if !is_cursor_within_variable_time_range(&selected_var.unique_id, time_seconds) {
-                // Cursor is beyond this variable's file time range - show N/A instead of held value
-                let result = SignalValueResult {
-                    scope_path: scope_path.clone(),
-                    variable_name: variable_name.clone(),
-                    time_seconds,
-                    raw_value: None,  // None indicates N/A
-                    formatted_value: None,  // None will display as N/A in UI
-                    format: selected_var.formatter.unwrap_or_default(),
-                };
-                cached_results.push(result);
-                continue; // Skip backend query for this variable
-            }
-            
-            // Check cached transitions first to avoid unnecessary server requests
-            if let Some(cached_signal_value) = compute_value_from_cached_transitions(
-                &file_path, &scope_path, &variable_name, time_seconds
-            ) {
-                // Use cached value - apply proper formatting
-                let raw_value = cached_signal_value.as_option();
-                let formatted_value = if let Some(raw_str) = &raw_value {
-                    // Apply the requested format to the cached raw value
-                    let format = selected_var.formatter.unwrap_or_default();
-                    let formatted = format.format(raw_str);
-                    Some(formatted)
-                } else {
-                    raw_value.clone()
-                };
-                
-                let result = SignalValueResult {
-                    scope_path: scope_path.clone(),
-                    variable_name: variable_name.clone(),
-                    time_seconds,
-                    raw_value,
-                    formatted_value,
-                    format: selected_var.formatter.unwrap_or_default(),
-                };
-                cached_results.push(result);
-            } else {
-                // No cached data - need backend query
-                let query = SignalValueQuery {
-                    scope_path,
-                    variable_name,
-                    time_seconds,
-                    format: selected_var.formatter.unwrap_or_default(),
-                };
-                backend_queries_by_file.entry(file_path).or_insert_with(Vec::new).push(query);
-            }
-        }
-    }
-    
-    // Debug cache effectiveness
-    let _total_queries: usize = backend_queries_by_file.values().map(|v| v.len()).sum();
-    
-    // Update UI immediately with cached results
-    if !cached_results.is_empty() {
-        update_signal_values_in_ui(&cached_results);
-    }
-    
-    // Set Loading states for variables that need backend queries
-    if !backend_queries_by_file.is_empty() {
-        let mut loading_values = crate::state::SIGNAL_VALUES.get_cloned();
-        let mut loading_updates = false;
-        
-        for (file_path, queries) in &backend_queries_by_file {
-            for query in queries {
-                let unique_id = format!("{}|{}|{}", file_path, query.scope_path, query.variable_name);
-                loading_values.insert(unique_id, crate::format_utils::SignalValue::Loading);
-                loading_updates = true;
-            }
-        }
-        
-        // Update UI immediately with Loading states
-        if loading_updates {
-            crate::state::SIGNAL_VALUES.set(loading_values);
-        }
-    }
-    
-    // Send backend queries only for uncached variables
-    for (file_path, queries) in backend_queries_by_file {
-        Task::start(async move {
-            use crate::platform::{Platform, CurrentPlatform};
-            let _ = CurrentPlatform::send_message(UpMsg::QuerySignalValues { file_path, queries }).await;
-        });
-    }
+    // TODO: Complete Actor+Relay implementation
+    // This function needs to be reimplemented to work with the new domain signals
 }
 
+
 /// Request backend value for a single variable at specific cursor position
+#[allow(dead_code)]
 fn request_single_variable_value(unique_id: &str, cursor_time: f64) {
     // Parse unique_id: file_path|scope_path|variable_name
     let parts: Vec<&str> = unique_id.split('|').collect();
@@ -1000,6 +905,7 @@ fn request_single_variable_value(unique_id: &str, cursor_time: f64) {
 }
 
 /// Update signal values in UI from cached or backend results
+#[allow(dead_code)]
 fn update_signal_values_in_ui(results: &[SignalValueResult]) {
     for result in results {
         // Create unique_id in the same format as SelectedVariable: file_path|scope_path|variable_name
@@ -1008,6 +914,9 @@ fn update_signal_values_in_ui(results: &[SignalValueResult]) {
         let _unique_id = format!("{}|{}", result.scope_path, result.variable_name);
         
         // Find the full unique_id by checking which selected variable matches
+        // TODO: Need to implement domain bridge to get current selected variables synchronously
+        // For now, skip this processing since it depends on old mutable architecture
+        /*
         let selected_vars = SELECTED_VARIABLES.lock_ref();
         if let Some(matching_var) = selected_vars.iter().find(|var| {
             if let Some((_, scope, name)) = var.parse_unique_id() {
@@ -1031,123 +940,47 @@ fn update_signal_values_in_ui(results: &[SignalValueResult]) {
             new_values.insert(full_unique_id, signal_value);
             crate::state::SIGNAL_VALUES.set(new_values);
         }
-    }
-}
-
-/// Trigger signal value queries when variables are present
-pub fn trigger_signal_value_queries() {
-    // Prevent queries during startup until files are properly loaded
-    let tracked_files = crate::state::TRACKED_FILES.lock_ref();
-    let has_loaded_files = tracked_files.iter().any(|f| matches!(f.state, shared::FileState::Loaded(_)));
-    drop(tracked_files);
-    
-    if !has_loaded_files {
-        return; // Don't query if no files are loaded yet
-    }
-    
-    // Query at current timeline cursor position with range check
-    let cursor_pos = get_cached_cursor_position_seconds();
-    
-    // Check if cursor is within visible timeline range
-    let viewport = get_cached_viewport();
-    let start = viewport.start.display_seconds();
-    let end = viewport.end.display_seconds();
-    
-    if cursor_pos >= start && cursor_pos <= end {
-        // Cursor in visible range - use cached transition data (fast path)
-        let selected_vars = SELECTED_VARIABLES.lock_ref();
-        if selected_vars.is_empty() {
-            return;
-        }
-        
-        let _var_count = selected_vars.len();
-        
-        // Collect new values from cached transition data
-        let mut new_values = crate::state::SIGNAL_VALUES.get_cloned();
-        let mut any_updated = false;
-        let mut _cache_hits = 0;
-        let mut _cache_misses = 0;
-        
-        // Check if unified cache has any data - use a dummy lookup
-        let cache_has_data = crate::unified_timeline_service::UnifiedTimelineService::get_raw_transitions("dummy")
-            .is_some() || !crate::state::LOADED_FILES.lock_ref().is_empty();
-        
-        // If cache is empty, set Loading states and fall back to slow path immediately
-        if !cache_has_data {
-            
-            // Set Loading states for all selected variables before slow path
-            let mut loading_values = crate::state::SIGNAL_VALUES.get_cloned();
-            for selected_var in selected_vars.iter() {
-                loading_values.insert(selected_var.unique_id.clone(), crate::format_utils::SignalValue::Loading);
-            }
-            crate::state::SIGNAL_VALUES.set(loading_values);
-            
-            query_signal_values_at_time(cursor_pos);
-            return;
-        }
-        
-        for selected_var in selected_vars.iter() {
-            // First check if cursor is within this variable's file time range (same as slow path)
-            if !is_cursor_within_variable_time_range(&selected_var.unique_id, cursor_pos) {
-                // Cursor is beyond this variable's file time range - show N/A (same as slow path)
-                new_values.insert(selected_var.unique_id.clone(), crate::format_utils::SignalValue::missing());
-                any_updated = true;
-                _cache_hits += 1; // Count as cache hit since we avoided server query
-                continue;
-            }
-            
-            if let Some(signal_transitions) = crate::unified_timeline_service::UnifiedTimelineService::get_raw_transitions(&selected_var.unique_id) {
-                // Find the most recent transition at or before the given time
-                let mut found = false;
-                for transition in signal_transitions.iter().rev() {
-                    if transition.time_ns as f64 / 1_000_000_000.0 <= cursor_pos {
-                        let signal_value = crate::format_utils::SignalValue::from_data(transition.value.clone());
-                        new_values.insert(selected_var.unique_id.clone(), signal_value);
-                        any_updated = true;
-                        found = true;
-                        break;
-                    }
-                }
-                if found {
-                    _cache_hits += 1;
-                } else {
-                    _cache_misses += 1;
-                    // Cache miss: trigger backend request for this specific variable
-                    request_single_variable_value(&selected_var.unique_id, cursor_pos);
-                }
-            } else {
-                _cache_misses += 1;
-                // No cached transitions: trigger backend request for this specific variable
-                request_single_variable_value(&selected_var.unique_id, cursor_pos);
-            }
-        }
-        
-        
-        // Trigger UI update if any values were found from cache
-        if any_updated {
-            crate::state::SIGNAL_VALUES.set(new_values);
-        }
-    } else {
-        // Cursor outside visible range - query backend (slow path)
-        query_signal_values_at_time(cursor_pos);
+        */
     }
 }
 
 
-
-fn variables_vertical_divider(is_dragging: Mutable<bool>) -> impl Element {
+fn variables_name_vertical_divider(is_dragging_signal: impl Signal<Item = bool> + Unpin + 'static) -> impl Element {
+    use crate::actors::panel_layout::name_divider_dragged_relay;
+    
     El::new()
         .s(Width::exact(4))
         .s(Height::fill())
         .s(Background::new().color_signal(
-            is_dragging.signal().map_bool_signal(
+            is_dragging_signal.map_bool_signal(
                 || primary_7(),
                 || primary_6()
             )
         ))
         .s(Cursor::new(CursorIcon::ColumnResize))
         .s(Padding::all(0))
-        .on_pointer_down(move || is_dragging.set_neq(true))
+        .on_pointer_down(move || {
+            name_divider_dragged_relay().send(1.0);
+        })
+}
+
+fn variables_value_vertical_divider(is_dragging_signal: impl Signal<Item = bool> + Unpin + 'static) -> impl Element {
+    use crate::actors::panel_layout::value_divider_dragged_relay;
+    
+    El::new()
+        .s(Width::exact(4))
+        .s(Height::fill())
+        .s(Background::new().color_signal(
+            is_dragging_signal.map_bool_signal(
+                || primary_7(),
+                || primary_6()
+            )
+        ))
+        .s(Cursor::new(CursorIcon::ColumnResize))
+        .s(Padding::all(0))
+        .on_pointer_down(move || {
+            value_divider_dragged_relay().send(1.0);
+        })
 }
 
 fn empty_state_hint(text: &str) -> impl Element {
@@ -1398,8 +1231,8 @@ pub fn variables_panel() -> impl Element {
                             .s(Font::new().no_wrap().color_signal(neutral_8()).size(13))
                             .child_signal(
                                 map_ref! {
-                                    let selected_scope_id = SELECTED_SCOPE_ID.signal_ref(|id| id.clone()),
-                                    let search_filter = VARIABLES_SEARCH_FILTER.signal_cloned(),
+                                    let selected_scope_id = selected_scope_signal(),
+                                    let search_filter = search_filter_signal(),
                                     let _loaded_files_count = crate::state::loaded_files_count_signal() =>
                                     {
                                         if let Some(scope_id) = selected_scope_id {
@@ -1420,16 +1253,16 @@ pub fn variables_panel() -> impl Element {
                             .child(
                                 input()
                                     .placeholder("variable_name")
-                                    .value_signal(VARIABLES_SEARCH_FILTER.signal_cloned())
+                                    .value_signal(search_filter_signal())
                                     .left_icon(IconName::Search)
-                                    .right_icon_signal(VARIABLES_SEARCH_FILTER.signal_cloned().map(|text| {
+                                    .right_icon_signal(search_filter_signal().map(|text| {
                                         if text.is_empty() { None } else { Some(IconName::X) }
                                     }))
-                                    .on_right_icon_click(|| VARIABLES_SEARCH_FILTER.set_neq(String::new()))
+                                    .on_right_icon_click(|| search_filter_changed_relay().send(String::new()))
                                     .size(InputSize::Small)
-                                    .on_change(|text| VARIABLES_SEARCH_FILTER.set_neq(text))
-                                    .on_focus(|| VARIABLES_SEARCH_INPUT_FOCUSED.set_neq(true))
-                                    .on_blur(|| VARIABLES_SEARCH_INPUT_FOCUSED.set_neq(false))
+                                    .on_change(|text| search_filter_changed_relay().send(text))
+                                    .on_focus(|| search_focus_changed_relay().send(true))
+                                    .on_blur(|| search_focus_changed_relay().send(false))
                                     .build()
                             )
                     ),
@@ -1476,9 +1309,9 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                         // Resizable columns layout with draggable separators
                         El::new()
                             .s(Height::exact_signal(
-                                SELECTED_VARIABLES.signal_vec_cloned().len().map(|vars_count| {
+                                variables_signal().map(|vars| {
                                     // Add one extra row height for scrollbar (names/values) or footer/timeline (canvas)
-                                    (vars_count + 1) as u32 * SELECTED_VARIABLES_ROW_HEIGHT
+                                    (vars.len() + 1) as u32 * SELECTED_VARIABLES_ROW_HEIGHT
                                 })
                             ))
                             .s(Width::fill())
@@ -1491,7 +1324,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                     .item(
                                         // Column 1: Variable name (resizable) with footer
                                         Column::new()
-                                            .s(Width::exact_signal(VARIABLES_NAME_COLUMN_WIDTH.signal()))
+                                            .s(Width::exact_signal(name_column_width_signal()))
                                             .s(Height::fill())
                                             .s(Align::new().top())
                                             .s(Scrollbars::x_and_clip_y())
@@ -1499,7 +1332,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                 raw_el.style("scrollbar-width", "thin")
                                             })
                                             .items_signal_vec(
-                                                SELECTED_VARIABLES.signal_vec_cloned().map(|selected_var| {
+                                                variables_signal_vec().map(|selected_var| {
                                                     Row::new()
                                                         .s(Height::exact(SELECTED_VARIABLES_ROW_HEIGHT))
                                                         .s(Width::fill())
@@ -1612,11 +1445,11 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                     )
                                             )
                                     )
-                                    .item(variables_vertical_divider(VARIABLES_NAME_DIVIDER_DRAGGING.clone()))
+                                    .item(variables_name_vertical_divider(name_divider_dragging_signal()))
                                     .item(
                                         // Column 2: Variable value (resizable) - HEIGHT FOLLOWER
                                         Column::new()
-                                            .s(Width::exact_signal(VARIABLES_VALUE_COLUMN_WIDTH.signal()))
+                                            .s(Width::exact_signal(value_column_width_signal()))
                                             .s(Height::fill())
                                             .s(Align::new().top())
                                             .s(Scrollbars::x_and_clip_y())
@@ -1624,7 +1457,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                 raw_el.style("scrollbar-width", "thin")
                                             })
                                             .items_signal_vec(
-                                                SELECTED_VARIABLES.signal_vec_cloned().map(|selected_var| {
+                                                variables_signal_vec().map(|selected_var| {
                                                     El::new()
                                                         .s(Height::exact(SELECTED_VARIABLES_ROW_HEIGHT))
                                                         .s(Width::fill())
@@ -1657,8 +1490,8 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                                             .child(
                                                                                 Text::with_signal(
                                                                                     // Get maximum timeline range (min value) - reactive signal that updates when either LOADED_FILES or SELECTED_VARIABLES changes
-                                                                                    crate::state::LOADED_FILES.signal_vec_cloned().to_signal_map(|_loaded_files| {
-                                                                                        crate::state::SELECTED_VARIABLES.signal_vec_cloned().to_signal_map(|_selected_vars| {
+                                                                                    crate::state::LOADED_FILES.signal_vec_cloned().to_signal_cloned().map(|_loaded_files| {
+                                                                                        variables_signal().map(|_selected_vars| {
                                                                                             if let Some((min_time, _max_time)) = crate::waveform_canvas::get_maximum_timeline_range() {
                                                                                                 // Smart time formatting that removes unnecessary decimals
                                                                                                 if !min_time.is_finite() || min_time <= 0.0 {
@@ -1749,8 +1582,8 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                                             .child(
                                                                                 Text::with_signal(
                                                                                     // Get maximum timeline range (max value) - reactive signal that updates when either LOADED_FILES or SELECTED_VARIABLES changes
-                                                                                    crate::state::LOADED_FILES.signal_vec_cloned().to_signal_map(|_loaded_files| {
-                                                                                        crate::state::SELECTED_VARIABLES.signal_vec_cloned().to_signal_map(|_selected_vars| {
+                                                                                    crate::state::LOADED_FILES.signal_vec_cloned().to_signal_cloned().map(|_loaded_files| {
+                                                                                        variables_signal().map(|_selected_vars| {
                                                                                             if let Some((_min_time, max_time)) = crate::waveform_canvas::get_maximum_timeline_range() {
                                                                                                 // Smart time formatting that removes unnecessary decimals
                                                                                                 if !max_time.is_finite() || max_time <= 0.0 {
@@ -1795,7 +1628,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                     )
                                             )
                                     )
-                                    .item(variables_vertical_divider(VARIABLES_VALUE_DIVIDER_DRAGGING.clone()))
+                                    .item(variables_value_vertical_divider(value_divider_dragging_signal()))
                                     .item(
                                         // Column 3: Unified waveform canvas (fills remaining space) - HEIGHT FOLLOWER
                                         El::new()
@@ -1917,8 +1750,8 @@ fn simple_variables_content() -> impl Element {
                 .s(Width::fill())
                 .child_signal(
                     map_ref! {
-                        let selected_scope_id = SELECTED_SCOPE_ID.signal_ref(|id| id.clone()),
-                        let search_filter = VARIABLES_SEARCH_FILTER.signal_cloned(),
+                        let selected_scope_id = selected_scope_signal(),
+                        let search_filter = search_filter_signal(),
                         let _loaded_files_count = crate::state::loaded_files_count_signal() =>
                         {
                             if let Some(scope_id) = selected_scope_id {
@@ -2012,8 +1845,8 @@ fn render_tracked_file_as_tree_item(tracked_file: TrackedFile) -> impl Element {
         .show_checkboxes(true)
         .show_checkboxes_on_scopes_only(true)
         .single_scope_selection(true)
-        .external_expanded(EXPANDED_SCOPES.clone())
-        .external_selected(TREE_SELECTED_ITEMS.clone())
+        .external_expanded(crate::state::EXPANDED_SCOPES.clone())
+        .external_selected(crate::state::TREE_SELECTED_ITEMS.clone())
         .build()
 }
 
@@ -2034,6 +1867,8 @@ fn cleanup_file_related_state(file_id: &str) {
         }
     }
     
+    // TODO: Replace with Actor+Relay domain event emissions
+    /*
     // Clear expanded scopes for this file
     // New scope ID format: {full_path}|{scope_full_name} or just {full_path}
     EXPANDED_SCOPES.lock_mut().retain(|scope| {
@@ -2049,6 +1884,7 @@ fn cleanup_file_related_state(file_id: &str) {
             !unique_id.starts_with(&format!("{}|", file_path))
         });
     }
+    */
 }
 
 // Enhanced file removal handler that works with both old and new systems
@@ -2438,10 +2274,13 @@ fn clear_all_files() {
     LOADED_FILES.lock_mut().clear();
     FILE_PATHS.lock_mut().clear();
     
+    // TODO: Replace with Actor+Relay domain event emissions  
+    /*
     // Clear any remaining scope/tree selections
     SELECTED_SCOPE_ID.set_neq(None);
     EXPANDED_SCOPES.lock_mut().clear();
     TREE_SELECTED_ITEMS.lock_mut().clear();
+    */
     
     // Save the empty file list
     config::save_file_list();
@@ -2530,33 +2369,41 @@ fn dock_toggle_button() -> impl Element {
         }))
 }
 
-pub fn vertical_divider(is_dragging: Mutable<bool>) -> impl Element {
+pub fn vertical_divider(is_dragging_signal: impl Signal<Item = bool> + Unpin + 'static) -> impl Element {
+    use crate::actors::panel_layout::vertical_divider_dragged_relay;
+    
     El::new()
         .s(Width::exact(4))
         .s(Height::fill())
         .s(Background::new().color_signal(
-            is_dragging.signal().map_bool_signal(
+            is_dragging_signal.map_bool_signal(
                 || primary_7(),
                 || primary_6()
             )
         ))
         .s(Cursor::new(CursorIcon::ColumnResize))
         .s(Padding::all(0))
-        .on_pointer_down(move || is_dragging.set_neq(true))
+        .on_pointer_down(move || {
+            vertical_divider_dragged_relay().send(1.0);
+        })
 }
 
-pub fn horizontal_divider(is_dragging: Mutable<bool>) -> impl Element {
+pub fn horizontal_divider(is_dragging_signal: impl Signal<Item = bool> + Unpin + 'static) -> impl Element {
+    use crate::actors::panel_layout::horizontal_divider_dragged_relay;
+    
     El::new()
         .s(Width::fill())
         .s(Height::exact(4))
         .s(Background::new().color_signal(
-            is_dragging.signal().map_bool_signal(
+            is_dragging_signal.map_bool_signal(
                 || primary_7(),
                 || primary_6()
             )
         ))
         .s(Cursor::new(CursorIcon::RowResize))
-        .on_pointer_down(move || is_dragging.set_neq(true))
+        .on_pointer_down(move || {
+            horizontal_divider_dragged_relay().send(1.0);
+        })
 }
 
 // ===== UNIFIED WAVEFORM CANVAS =====

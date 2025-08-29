@@ -5,7 +5,9 @@ use zoon::{Task, Timer};
 
 pub fn show_file_paths_dialog() {
     // Set both the global state AND the config store to work with sync system
-    config_store().dialogs.lock_mut().show_file_dialog.set(true);
+    let mut dialogs = config_store().dialogs.current_value();
+    dialogs.show_file_dialog = true;
+    config_store().dialogs.set(dialogs);
     SHOW_FILE_DIALOG.set(true);
     FILE_PATHS_INPUT.set_neq(String::new());
     
@@ -50,7 +52,7 @@ pub fn show_file_paths_dialog() {
         }
         
         // Get saved scroll position directly from config store (not lazy static which may be stale)
-        let saved_scroll_position = crate::config::config_store().session.lock_ref().file_picker.lock_ref().scroll_position.get();
+        let saved_scroll_position = crate::config::config_store().session.current_value().file_picker.scroll_position;
         
         // Set viewport Y to the saved scroll position
         LOAD_FILES_VIEWPORT_Y.set(saved_scroll_position);

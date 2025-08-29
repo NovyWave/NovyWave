@@ -24,8 +24,8 @@ pub fn setup_one_time_config_sync() {
 /// One-shot file management sync with state preservation
 fn sync_file_management_from_config() {
     // Get config values once
-    let file_paths = config_store().session.lock_ref().opened_files.lock_ref().to_vec();
-    let selected_vars = config_store().workspace.lock_ref().selected_variables.lock_ref().to_vec();
+    let file_paths = config_store().session.current_value().opened_files.clone();
+    let selected_vars = config_store().workspace.current_value().selected_variables.clone();
     
     // Handle TRACKED_FILES with state preservation
     if !file_paths.is_empty() {
@@ -91,7 +91,7 @@ fn sync_file_management_from_config() {
 /// One-shot UI state sync
 fn sync_ui_state_from_config() {
     // EXPANDED_SCOPES with scope_ prefix transform
-    let expanded_scopes = config_store().workspace.lock_ref().expanded_scopes.lock_ref().to_vec();
+    let expanded_scopes = config_store().workspace.current_value().expanded_scopes.clone();
     let mut expanded_set = IndexSet::new();
     for scope_id in expanded_scopes {
         if scope_id.contains('|') {
@@ -103,39 +103,39 @@ fn sync_ui_state_from_config() {
     EXPANDED_SCOPES.set_neq(expanded_set);
     
     // FILE_PICKER_EXPANDED
-    let load_files_dirs = config_store().workspace.lock_ref().load_files_expanded_directories.lock_ref().to_vec();
+    let load_files_dirs = config_store().workspace.current_value().load_files_expanded_directories.clone();
     let expanded_set: IndexSet<String> = load_files_dirs.into_iter().collect();
     FILE_PICKER_EXPANDED.set_neq(expanded_set);
 
     // VARIABLES_SEARCH_FILTER
-    let search_filter = config_store().session.lock_ref().variables_search_filter.get_cloned();
+    let search_filter = config_store().session.current_value().variables_search_filter.clone();
     VARIABLES_SEARCH_FILTER.set_neq(search_filter);
 }
 
 /// One-shot panel layout sync
 fn sync_panel_layout_from_config() {
     // Get dock mode and set boolean
-    let dock_mode = config_store().workspace.lock_ref().dock_mode.get_cloned();
+    let dock_mode = config_store().workspace.current_value().dock_mode;
     IS_DOCKED_TO_BOTTOM.set_neq(matches!(dock_mode, DockMode::Bottom));
     
     // Load appropriate dimensions for current dock mode
-    let workspace = config_store().workspace.lock_ref();
-    let layouts = workspace.panel_layouts.lock_ref();
+    let workspace = config_store().workspace.current_value();
+    let layouts = &workspace.panel_layouts;
     
     let (files_width, files_height, name_col_width, value_col_width) = match dock_mode {
         DockMode::Bottom => {
-            let dims = layouts.docked_to_bottom.lock_ref();
-            (dims.files_panel_width.get(), 
-             dims.files_panel_height.get(),
-             dims.variables_name_column_width.get(), 
-             dims.variables_value_column_width.get())
+            let dims = &layouts.docked_to_bottom;
+            (dims.files_panel_width, 
+             dims.files_panel_height,
+             dims.variables_name_column_width, 
+             dims.variables_value_column_width)
         }
         DockMode::Right => {
-            let dims = layouts.docked_to_right.lock_ref();
-            (dims.files_panel_width.get(), 
-             dims.files_panel_height.get(),
-             dims.variables_name_column_width.get(), 
-             dims.variables_value_column_width.get())
+            let dims = &layouts.docked_to_right;
+            (dims.files_panel_width, 
+             dims.files_panel_height,
+             dims.variables_name_column_width, 
+             dims.variables_value_column_width)
         }
     };
     
@@ -147,46 +147,46 @@ fn sync_panel_layout_from_config() {
 
 /// One-shot timeline state sync with NaN validation
 fn sync_timeline_from_config() {
-    let workspace = config_store().workspace.lock_ref();
+    let workspace = config_store().workspace.current_value();
     
     // Timeline cursor position - already TimeNs, no conversion needed
-    let cursor_pos = workspace.timeline_cursor_position.get();
+    let cursor_pos = workspace.timeline_cursor_position;
     set_cursor_position(cursor_pos);
     
     // Timeline zoom level with validation  
-    let zoom_level = workspace.timeline_zoom_level.get();
+    let zoom_level = workspace.timeline_zoom_level;
     if zoom_level.is_finite() && zoom_level > 0.0 {
         set_ns_per_pixel_if_changed(NsPerPixel::MEDIUM_ZOOM.zoom_in_smooth((1.0 - zoom_level) as f64));
     }
     
     // Timeline visible range - already TimeNs, no conversion needed
-    let range_start = workspace.timeline_visible_range_start.get();
-    let range_end = workspace.timeline_visible_range_end.get();
+    let range_start = workspace.timeline_visible_range_start;
+    let range_end = workspace.timeline_visible_range_end;
     let viewport = crate::time_types::Viewport::new(range_start, range_end);
     set_viewport_if_changed(viewport);
 }
 
 /// One-shot session UI state sync
 fn sync_session_state_from_config() {
-    let session = config_store().session.lock_ref();
-    let file_picker = session.file_picker.lock_ref();
+    let session = config_store().session.current_value();
+    let file_picker = &session.file_picker;
     
     // CURRENT_DIRECTORY with validation
-    if let Some(current_dir) = file_picker.current_directory.get_cloned() {
+    if let Some(current_dir) = &file_picker.current_directory {
         // Validate directory exists before setting
         if std::path::Path::new(&current_dir).is_dir() {
-            CURRENT_DIRECTORY.set_neq(current_dir);
+            CURRENT_DIRECTORY.set_neq(current_dir.clone());
         }
     }
     
     // LOAD_FILES_SCROLL_POSITION
-    let scroll_pos = file_picker.scroll_position.get();
+    let scroll_pos = file_picker.scroll_position;
     LOAD_FILES_SCROLL_POSITION.set_neq(scroll_pos);
 }
 
 /// One-shot selection state sync
 fn sync_selection_from_config() {
     // SELECTED_SCOPE_ID
-    let selected_scope_id = config_store().workspace.lock_ref().selected_scope_id.get_cloned();
+    let selected_scope_id = config_store().workspace.current_value().selected_scope_id.clone();
     SELECTED_SCOPE_ID.set_neq(selected_scope_id);
 }

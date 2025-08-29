@@ -3,7 +3,7 @@
 //! ActorMap provides controlled key-value map management with sequential message processing.
 //! Built on MutableBTreeMap for ordered, deterministic iteration and efficient MapDiff updates.
 
-use zoon::{MutableBTreeMap, Signal, SignalVec, Task, TaskHandle, MutableBTreeMapExt, SignalMapExt, SignalExt};
+use zoon::{MutableBTreeMap, Signal, SignalVec, Task, TaskHandle, SignalMapExt, SignalExt, SignalVecExt};
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::sync::Arc;
@@ -60,8 +60,12 @@ where
     V: Clone + Send + Sync + 'static,
 {
     map: MutableBTreeMap<K, V>,
+    // Part of public Actor+Relay API - will be used when moved to standalone crate
+    #[allow(dead_code)]
     task_handle: Arc<TaskHandle>,
+    // Part of public Actor+Relay API - will be used when moved to standalone crate
     #[cfg(debug_assertions)]
+    #[allow(dead_code)]
     creation_location: &'static std::panic::Location<'static>,
 }
 
@@ -131,26 +135,12 @@ where
     /// // Efficient UI binding with MapDiff
     /// cache.signal_map()
     /// ```
+    // Part of public Actor+Relay API - will be used when moved to standalone crate
+    #[allow(dead_code)]
     pub fn signal_map(&self) -> impl SignalMapExt<Key = K, Value = V> {
         self.map.signal_map_cloned()
     }
 
-    /// Get a signal for the entire map.
-    /// 
-    /// Returns a signal that emits the full map whenever it changes.
-    /// Use `signal_map()` for more efficient MapDiff updates when possible.
-    /// 
-    /// # Examples
-    /// 
-    /// ```rust
-    /// let cache = ActorMap::new(BTreeMap::new(), /* processor */);
-    /// 
-    /// // Get full map on changes
-    /// cache.signal().map(|map| map.len())
-    /// ```
-    pub fn signal(&self) -> impl Signal<Item = BTreeMap<K, V>> {
-        self.map.signal_map_cloned().to_signal_cloned()
-    }
 
     /// Get a signal for a specific key's value.
     /// 
@@ -188,6 +178,8 @@ where
     /// // Efficient UI binding for keys
     /// cache.keys_signal_vec()
     /// ```
+    // Part of public Actor+Relay API - will be used when moved to standalone crate
+    #[allow(dead_code)]
     pub fn keys_signal_vec(&self) -> impl SignalVec<Item = K> {
         // Use MutableBTreeMap's native signal_vec_keys() method
         self.map.signal_vec_keys()
@@ -226,6 +218,8 @@ where
     ///     cache.count_signal().map(|count| format!("{} items", count))
     /// )
     /// ```
+    // Part of public Actor+Relay API - will be used when moved to standalone crate
+    #[allow(dead_code)]
     pub fn count_signal(&self) -> impl Signal<Item = usize> {
         // Use signal_vec_keys().len() for efficient counting
         self.map.signal_vec_keys().len()
@@ -252,6 +246,8 @@ where
     ///     })
     /// )
     /// ```
+    // Part of public Actor+Relay API - will be used when moved to standalone crate
+    #[allow(dead_code)]
     pub fn is_empty_signal(&self) -> impl Signal<Item = bool> {
         self.count_signal().map(|count| count == 0)
     }
@@ -268,6 +264,8 @@ where
     /// // Check key existence reactively
     /// cache.contains_key_signal("target_key")
     /// ```
+    // Part of public Actor+Relay API - will be used when moved to standalone crate
+    #[allow(dead_code)]
     pub fn contains_key_signal(&self, key: K) -> impl Signal<Item = bool> {
         // TODO: Implement using SignalMap when available
         // For now, derive from value_signal

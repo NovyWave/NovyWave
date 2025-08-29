@@ -3,8 +3,7 @@
 //! ActorVec provides controlled collection management with sequential message processing.
 //! It wraps MutableVec<T> and processes events from Relays to update collections safely.
 
-use zoon::{MutableVec, Signal, Task, TaskHandle, SignalVecExt, SignalExt, MutableVecExt};
-use futures::stream::Stream;
+use zoon::{MutableVec, Signal, Task, TaskHandle, SignalVecExt, SignalExt};
 use std::future::Future;
 use std::sync::Arc;
 
@@ -57,8 +56,12 @@ where
     T: Clone + Send + Sync + 'static,
 {
     vec: MutableVec<T>,
+    // Part of public Actor+Relay API - will be used when moved to standalone crate
+    #[allow(dead_code)]
     task_handle: Arc<TaskHandle>,
+    // Part of public Actor+Relay API - will be used when moved to standalone crate
     #[cfg(debug_assertions)]
+    #[allow(dead_code)]
     creation_location: &'static std::panic::Location<'static>,
 }
 
@@ -170,6 +173,8 @@ where
     ///     items.count_signal().map(|count| format!("{} items", count))
     /// )
     /// ```
+    // Part of public Actor+Relay API - will be used when moved to standalone crate
+    #[allow(dead_code)]
     pub fn count_signal(&self) -> impl Signal<Item = usize> {
         self.vec.signal_vec_cloned().len()
     }
@@ -196,6 +201,8 @@ where
     ///     })
     /// )
     /// ```
+    // Part of public Actor+Relay API - will be used when moved to standalone crate
+    #[allow(dead_code)]
     pub fn is_empty_signal(&self) -> impl Signal<Item = bool> {
         self.count_signal().map(|count| count == 0)
     }

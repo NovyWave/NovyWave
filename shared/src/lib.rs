@@ -836,7 +836,7 @@ impl std::fmt::Display for Theme {
 }
 
 // Type-safe dock mode handling with validation
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum DockMode {
     Right,

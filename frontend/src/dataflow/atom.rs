@@ -12,6 +12,8 @@ use futures::StreamExt;
 #[derive(Clone, Debug)]
 enum AtomUpdate<T> {
     Set(T),
+    // Part of public Actor+Relay API - will be used when moved to standalone crate
+    #[allow(dead_code)]
     SetNeq(T),
 }
 
@@ -154,6 +156,8 @@ where
     ///     })
     /// )
     /// ```
+    // Part of public Actor+Relay API - will be used when moved to standalone crate
+    #[allow(dead_code)]
     pub fn signal(&self) -> impl Signal<Item = T> {
         self.actor.signal()
     }
@@ -191,6 +195,8 @@ where
     /// counter.set_neq(5); // No update, value is already 5
     /// counter.set_neq(10); // Updates to 10
     /// ```
+    // Part of public Actor+Relay API - will be used when moved to standalone crate
+    #[allow(dead_code)]
     pub fn set_neq(&self, value: T) 
     where
         T: PartialEq,
@@ -198,6 +204,23 @@ where
         self.setter.send(AtomUpdate::SetNeq(value));
     }
 
+    /// Get the current value synchronously.
+    /// 
+    /// This method is provided for compatibility with legacy code that requires
+    /// synchronous access (like config serialization). For reactive access,
+    /// prefer using signal() or signal_ref().
+    /// 
+    /// # Examples
+    /// 
+    /// ```rust
+    /// let counter = Atom::new(42);
+    /// let current = counter.current_value(); // 42
+    /// ```
+    pub fn current_value(&self) -> T {
+        // Use Actor's synchronous access method
+        self.actor.current_value()
+    }
+    
     // Note: update() and toggle() methods are not implemented.
     // These would require mutable closure access to internal state,
     // which conflicts with the Actor+Relay architecture.

@@ -394,11 +394,11 @@ pub mod test_utils {
 /// Development testing helpers (available in debug builds)
 #[cfg(debug_assertions)]
 pub mod dev_testing {
-    use super::*;
     use std::sync::{Arc, Mutex};
     use std::collections::HashMap;
     
     /// Debug tracker for Actor+Relay interactions
+    #[allow(dead_code)]
     pub struct ActorDebugger {
         enabled: Arc<Mutex<bool>>,
         filter: Arc<Mutex<Option<String>>>,
@@ -406,6 +406,7 @@ pub mod dev_testing {
     }
     
     #[derive(Debug, Clone)]
+    #[allow(dead_code)]
     pub struct DebugEvent {
         pub timestamp: f64,
         pub actor_name: String,
@@ -413,6 +414,7 @@ pub mod dev_testing {
         pub data: String,
     }
     
+    #[allow(dead_code)]
     impl ActorDebugger {
         /// Create new debugger instance
         pub fn new() -> Self {
@@ -483,7 +485,7 @@ pub mod dev_testing {
     }
     
     /// Global debugger instance
-    static ACTOR_DEBUGGER: std::sync::LazyLock<ActorDebugger> = 
+    static _ACTOR_DEBUGGER: std::sync::LazyLock<ActorDebugger> = 
         std::sync::LazyLock::new(|| ActorDebugger::new());
     
     /// Debug macro for Actor events
@@ -491,38 +493,38 @@ pub mod dev_testing {
     macro_rules! actor_debug {
         ($actor:expr, $event_type:expr, $data:expr) => {
             #[cfg(debug_assertions)]
-            $crate::actors::testing::ACTOR_DEBUGGER.record_event($actor, $event_type, &format!("{}", $data));
+            $crate::actors::testing::_ACTOR_DEBUGGER.record_event($actor, $event_type, &format!("{}", $data));
         };
     }
     
     /// Enable Actor debugging for development
-    pub fn enable_actor_debugging() {
-        ACTOR_DEBUGGER.set_enabled(true);
+    pub fn _enable_actor_debugging() {
+        _ACTOR_DEBUGGER.set_enabled(true);
     }
     
     /// Disable Actor debugging
-    pub fn disable_actor_debugging() {
-        ACTOR_DEBUGGER.set_enabled(false);
+    pub fn _disable_actor_debugging() {
+        _ACTOR_DEBUGGER.set_enabled(false);
     }
     
     /// Set Actor debugging filter
-    pub fn set_actor_debug_filter(pattern: Option<String>) {
-        ACTOR_DEBUGGER.set_filter(pattern);
+    pub fn _set_actor_debug_filter(pattern: Option<String>) {
+        _ACTOR_DEBUGGER.set_filter(pattern);
     }
     
     /// Get Actor debugging summary
-    pub fn get_actor_debug_summary() -> Vec<DebugEvent> {
-        ACTOR_DEBUGGER.get_events()
+    pub fn _get_actor_debug_summary() -> Vec<DebugEvent> {
+        _ACTOR_DEBUGGER.get_events()
     }
     
     /// Clear Actor debugging data
-    pub fn clear_actor_debug_data() {
-        ACTOR_DEBUGGER.clear();
+    pub fn _clear_actor_debug_data() {
+        _ACTOR_DEBUGGER.clear();
     }
     
     /// Print Actor debugging summary
-    pub fn print_actor_debug_summary() {
-        ACTOR_DEBUGGER.print_summary();
+    pub fn _print_actor_debug_summary() {
+        _ACTOR_DEBUGGER.print_summary();
     }
 }
 

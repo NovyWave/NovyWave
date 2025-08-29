@@ -3,7 +3,7 @@
 //! Relay provides type-safe event streaming for Actor+Relay architecture
 //! using simple unbounded channels instead of complex custom Stream implementation.
 
-use futures::channel::mpsc::{unbounded, UnboundedSender, UnboundedReceiver};
+use futures::channel::mpsc::{unbounded, UnboundedSender};
 use futures::stream::Stream;
 use std::sync::{Arc, OnceLock, Mutex};
 
@@ -53,11 +53,17 @@ where
 #[derive(Debug, Clone)]
 pub enum RelayError {
     /// The channel has been closed (receiver dropped)
+    // Part of public Actor+Relay API - will be used when moved to standalone crate
+    #[allow(dead_code)]
     ChannelClosed,
     /// Relay send called from multiple locations (debug builds only)
     #[cfg(debug_assertions)]
     MultipleEmitters {
+        // Part of public Actor+Relay API - will be used when moved to standalone crate
+        #[allow(dead_code)]
         previous: &'static std::panic::Location<'static>,
+        // Part of public Actor+Relay API - will be used when moved to standalone crate
+        #[allow(dead_code)]
         current: &'static std::panic::Location<'static>,
     },
 }
@@ -97,7 +103,7 @@ where
     /// let mut stream1 = relay.subscribe();
     /// let mut stream2 = relay.subscribe(); // Multiple subscribers
     /// ```
-    pub fn subscribe(&self) -> impl Stream<Item = T> {
+    pub fn subscribe(&self) -> impl Stream<Item = T> + use<T> {
         let (sender, receiver) = unbounded();
         
         if let Ok(mut subscribers) = self.subscribers.lock() {
@@ -172,6 +178,8 @@ where
     /// }
     /// ```
     #[track_caller]
+    // Part of public Actor+Relay API - will be used when moved to standalone crate
+    #[allow(dead_code)]
     pub fn try_send(&self, value: T) -> Result<(), RelayError> {
         #[cfg(debug_assertions)]
         self.check_single_source()?;

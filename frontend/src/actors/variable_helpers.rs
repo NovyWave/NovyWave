@@ -3,7 +3,7 @@
 //! Utility functions for converting raw variable data to SelectedVariable objects
 //! for use with the Actor+Relay architecture.
 
-use shared::{SelectedVariable, Signal, FileState, TrackedFile};
+use shared::{SelectedVariable, Signal, FileState};
 use crate::state::{TRACKED_FILES, find_scope_full_name};
 
 /// Create a SelectedVariable from raw variable data and context

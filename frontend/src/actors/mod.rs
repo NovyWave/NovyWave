@@ -38,32 +38,32 @@
 // This allows existing code to continue using crate::actors::{...}
 pub use crate::dataflow::{
     // Core types
-    Actor, ActorVec, ActorMap, Atom, Relay, RelayError,
-    // Handle types
-    ActorStateHandle, ActorVecHandle, ActorMapHandle,
+    Actor, ActorVec, ActorMap, Relay,
     // Functions and traits
-    relay, Stream, StreamExt, select
+    relay
 };
 pub mod tracked_files;
 pub mod selected_variables;
 pub mod waveform_timeline;
 pub mod user_configuration;
+pub mod panel_layout;
+pub mod dialog_manager;
+pub mod error_manager;
+pub mod config_sync;
 pub mod global_domains;
 pub mod domain_bridges;
 pub mod variable_helpers;
 pub mod naming_validation;
 pub mod testing;
-pub use tracked_files::{TrackedFiles, initialize_tracked_files, get_tracked_files};
-pub use selected_variables::{SelectedVariables, initialize_selected_variables, get_selected_variables};
-pub use waveform_timeline::{WaveformTimeline, TimelineStats, initialize_waveform_timeline, get_waveform_timeline};
-pub use user_configuration::{UserConfiguration, initialize_user_configuration, get_user_configuration};
+pub use tracked_files::{TrackedFiles};
+pub use selected_variables::{SelectedVariables};
+pub use waveform_timeline::{WaveformTimeline};
+pub use user_configuration::{UserConfiguration};
 pub use global_domains::{
     initialize_all_domains, 
     tracked_files_domain, 
-    selected_variables_domain, 
-    waveform_timeline_domain, 
-    _user_configuration_domain,
-    _are_domains_initialized
+    selected_variables_domain,
+    waveform_timeline_domain
 };
 pub use domain_bridges::initialize_domain_bridges;
-pub use variable_helpers::{create_selected_variable, _is_variable_selected};
+pub use variable_helpers::{create_selected_variable};

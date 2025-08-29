@@ -3,7 +3,7 @@
 //! Actor provides controlled state management with sequential message processing.
 //! It owns a Mutable<T> and processes events from Relays to update state safely.
 
-use zoon::{Mutable, Signal, Task, TaskHandle, MutableExt};
+use zoon::{Mutable, Signal, Task, TaskHandle};
 // futures imports removed - not needed in current implementation
 use std::future::Future;
 use std::sync::Arc;
@@ -55,8 +55,12 @@ where
     T: Clone + Send + Sync + 'static,
 {
     state: Mutable<T>,
+    // Part of public Actor+Relay API - will be used when moved to standalone crate
+    #[allow(dead_code)]
     task_handle: Arc<TaskHandle>,
+    // Part of public Actor+Relay API - will be used when moved to standalone crate
     #[cfg(debug_assertions)]
+    #[allow(dead_code)]
     creation_location: &'static std::panic::Location<'static>,
 }
 
@@ -145,6 +149,22 @@ where
         U: PartialEq + Send + Sync + 'static,
     {
         self.state.signal_ref(f)
+    }
+    
+    /// Get current value synchronously (for compatibility with serialization).
+    /// 
+    /// This method provides synchronous access to the current state value.
+    /// It should be used sparingly and only when necessary (like config serialization).
+    /// For reactive access, prefer using signal() or signal_ref().
+    /// 
+    /// # Examples
+    /// 
+    /// ```rust
+    /// let counter = Actor::new(42, |_| async {});
+    /// let current = counter.current_value(); // 42
+    /// ```
+    pub fn current_value(&self) -> T {
+        self.state.get_cloned()
     }
 
 }

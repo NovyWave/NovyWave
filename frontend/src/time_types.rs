@@ -163,9 +163,25 @@ impl NsPerPixel {
     pub const MEDIUM_ZOOM: NsPerPixel = NsPerPixel(1_000_000); // 1 ms/pixel  
     pub const LOW_ZOOM: NsPerPixel = NsPerPixel(1_000_000_000); // 1 s/pixel
     
+    /// Create a new NsPerPixel from nanoseconds
+    #[allow(dead_code)]
+    pub fn from_nanos(nanos: u64) -> Self {
+        NsPerPixel(nanos)
+    }
     
+    /// Create NsPerPixel from viewport and canvas width
+    #[allow(dead_code)]
+    pub fn from_viewport(viewport: Viewport, canvas_width_pixels: u32) -> Self {
+        let duration_ns = viewport.duration().nanos();
+        let ns_per_pixel = duration_ns / canvas_width_pixels as u64;
+        NsPerPixel(ns_per_pixel.max(1)) // Ensure minimum 1 ns/pixel
+    }
     
-    
+    /// Check if this resolution is more detailed than another
+    #[allow(dead_code)]
+    pub fn is_more_detailed_than(self, other: NsPerPixel) -> bool {
+        self.0 < other.0  // Lower ns/pixel = more detailed
+    }
     
     /// Get nanoseconds per pixel value
     pub fn nanos(self) -> u64 {
@@ -635,7 +651,7 @@ impl TimelineCoordinates {
     
     
     /// Set cursor position
-    pub fn set_cursor(&mut self, cursor_ns: TimeNs) {
+    pub fn _set_cursor(&mut self, cursor_ns: TimeNs) {
         self.cursor_ns = cursor_ns;
     }
     

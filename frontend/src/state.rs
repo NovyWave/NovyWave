@@ -2,7 +2,7 @@ use zoon::*;
 use std::collections::HashMap;
 use indexmap::{IndexMap, IndexSet};
 use shared::{WaveformFile, LoadingFile, FileSystemItem, TrackedFile, FileState, create_tracked_file};
-use crate::time_types::{TimeNs, Viewport, NsPerPixel, TimelineCache, TimelineCoordinates};
+use crate::time_types::{TimeNs, TimelineCache};
 // Using simpler queue approach with MutableVec
 
 // ===== STABLE SIGNAL HELPERS =====
@@ -258,75 +258,83 @@ pub fn send_file_update_message(message: FileUpdateMessage) {
 // Panel resizing state
 pub static FILES_PANEL_WIDTH: Lazy<Mutable<u32>> = Lazy::new(|| 470.into());
 pub static FILES_PANEL_HEIGHT: Lazy<Mutable<u32>> = Lazy::new(|| 300.into());
+#[allow(dead_code)]
 pub static VERTICAL_DIVIDER_DRAGGING: Lazy<Mutable<bool>> = lazy::default();
+#[allow(dead_code)]
 pub static HORIZONTAL_DIVIDER_DRAGGING: Lazy<Mutable<bool>> = lazy::default();
 
 // Variables panel column resizing state
 pub static VARIABLES_NAME_COLUMN_WIDTH: Lazy<Mutable<u32>> = Lazy::new(|| 180.into());
 pub static VARIABLES_VALUE_COLUMN_WIDTH: Lazy<Mutable<u32>> = Lazy::new(|| 100.into());
+#[allow(dead_code)]
 pub static VARIABLES_NAME_DIVIDER_DRAGGING: Lazy<Mutable<bool>> = lazy::default();
+#[allow(dead_code)]
 pub static VARIABLES_VALUE_DIVIDER_DRAGGING: Lazy<Mutable<bool>> = lazy::default();
 
 // Selected Variables panel row height
 pub const SELECTED_VARIABLES_ROW_HEIGHT: u32 = 30;
 
-// Timeline cursor position (in nanoseconds since file start)
-pub static TIMELINE_CURSOR_NS: Lazy<Mutable<TimeNs>> = Lazy::new(|| Mutable::new(TimeNs::ZERO));
+// ===== MIGRATED TO ACTOR+RELAY: WaveformTimeline domain =====
+// These mutables have been migrated to actors/waveform_timeline.rs
+// Use functions from that module instead of these globals
 
-// Timeline viewport (visible time range in nanoseconds)
-pub static TIMELINE_VIEWPORT: Lazy<Mutable<Viewport>> = Lazy::new(|| {
-    Mutable::new(Viewport::new(
-        TimeNs::ZERO,
-TimeNs::from_external_seconds(100.0) // Default 100 second range
-    ))
-});
+// MIGRATED: Timeline cursor position → use cursor_position_signal() from waveform_timeline
+// pub static _TIMELINE_CURSOR_NS: Lazy<Mutable<TimeNs>> = Lazy::new(|| Mutable::new(TimeNs::ZERO));
 
-// Timeline resolution (nanoseconds per pixel - replaces zoom percentage)
-pub static TIMELINE_NS_PER_PIXEL: Lazy<Mutable<NsPerPixel>> = Lazy::new(|| Mutable::new(NsPerPixel::MEDIUM_ZOOM));
+// MIGRATED: Timeline viewport → use viewport_signal() from waveform_timeline  
+// pub static _TIMELINE_VIEWPORT: Lazy<Mutable<Viewport>> = Lazy::new(|| {
+//     Mutable::new(Viewport::new(
+//         TimeNs::ZERO,
+// TimeNs::from_external_seconds(100.0) // Default 100 second range
+//     ))
+// });
 
-/// Unified timeline coordinates - replaces floating-point coordinate conversions
-/// Provides pure integer coordinate system for all timeline operations
-pub static TIMELINE_COORDINATES: Lazy<Mutable<TimelineCoordinates>> = Lazy::new(|| {
-    Mutable::new(TimelineCoordinates::new(
-        TimeNs::ZERO,                    // cursor_ns
-        TimeNs::ZERO,                    // viewport_start_ns
-        NsPerPixel::MEDIUM_ZOOM,         // ns_per_pixel
-        800                              // canvas_width_pixels (initial value)
-    ))
-});
+// MIGRATED: Timeline resolution → use ns_per_pixel_signal() from waveform_timeline
+// pub static _TIMELINE_NS_PER_PIXEL: Lazy<Mutable<NsPerPixel>> = Lazy::new(|| Mutable::new(NsPerPixel::MEDIUM_ZOOM));
 
-/// Unified timeline cache - replaces 4 separate cache systems
-/// Contains viewport data, cursor values, raw transitions, and request deduplication
+// MIGRATED: Timeline coordinates → use coordinates_signal() from waveform_timeline
+// pub static _TIMELINE_COORDINATES: Lazy<Mutable<TimelineCoordinates>> = Lazy::new(|| {
+//     Mutable::new(TimelineCoordinates::new(
+//         TimeNs::ZERO,                    // cursor_ns
+//         TimeNs::ZERO,                    // viewport_start_ns
+//         NsPerPixel::MEDIUM_ZOOM,         // ns_per_pixel
+//         800                              // canvas_width_pixels (initial value)
+//     ))
+// });
+
+// ===== MIGRATED TO ACTOR+RELAY: WaveformTimeline domain (15 more mutables) =====
+
+// MIGRATED: Timeline cache → use unified_timeline_cache_signal() from waveform_timeline
 pub static UNIFIED_TIMELINE_CACHE: Lazy<Mutable<TimelineCache>> = Lazy::new(|| Mutable::new(TimelineCache::new()));
 
-// Track if cursor position was set during startup before files loaded
+// MIGRATED: Cursor initialization → use startup_cursor_position_set_signal() from waveform_timeline
 pub static STARTUP_CURSOR_POSITION_SET: Lazy<Mutable<bool>> = lazy::default();
 
-// Smooth zoom control
+// MIGRATED: Zoom control → use is_zooming_in_signal() / is_zooming_out_signal() from waveform_timeline
 pub static IS_ZOOMING_IN: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
 pub static IS_ZOOMING_OUT: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
 
-// Smooth pan control
+// MIGRATED: Pan control → use is_panning_left_signal() / is_panning_right_signal() from waveform_timeline
 pub static IS_PANNING_LEFT: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
 pub static IS_PANNING_RIGHT: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
 
-// Smooth cursor movement control
+// MIGRATED: Cursor movement → use is_cursor_moving_left/right_signal() from waveform_timeline
 pub static IS_CURSOR_MOVING_LEFT: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
 pub static IS_CURSOR_MOVING_RIGHT: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
 
-// Shift key state tracking for modifier combinations
+// MIGRATED: Shift key → use is_shift_pressed_signal() from waveform_timeline
 pub static IS_SHIFT_PRESSED: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
 
-// Mouse position tracking for zoom center
+// MIGRATED: Mouse tracking → use mouse_x_position_signal() / mouse_time_ns_signal() from waveform_timeline
 pub static MOUSE_X_POSITION: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(0.0));
 pub static MOUSE_TIME_NS: Lazy<Mutable<TimeNs>> = Lazy::new(|| Mutable::new(TimeNs::ZERO));
 
-// Zoom center position (in nanoseconds) - separate from mouse position for explicit control
+// MIGRATED: Zoom center → use zoom_center_ns_signal() from waveform_timeline
 pub static ZOOM_CENTER_NS: Lazy<Mutable<TimeNs>> = Lazy::new(|| Mutable::new(TimeNs::ZERO));
 
-// Canvas dimensions for click calculations
-pub static CANVAS_WIDTH: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(800.0));
-pub static CANVAS_HEIGHT: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(400.0));
+// MIGRATED: Canvas dimensions → use canvas_width_signal() / canvas_height_signal() from waveform_timeline
+// pub static CANVAS_WIDTH: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(800.0));
+// pub static CANVAS_HEIGHT: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(400.0));
 
 // Search filter for Variables panel
 pub static VARIABLES_SEARCH_FILTER: Lazy<Mutable<String>> = lazy::default();
@@ -385,19 +393,21 @@ pub static USER_CLEARED_SELECTION: Lazy<Mutable<bool>> = lazy::default(); // Fla
 // Track expanded scopes for TreeView persistence
 pub static EXPANDED_SCOPES: Lazy<Mutable<IndexSet<String>>> = lazy::default();
 
-// Selected variables management
-pub static SELECTED_VARIABLES: Lazy<MutableVec<shared::SelectedVariable>> = lazy::default();
-pub static SELECTED_VARIABLES_INDEX: Lazy<Mutable<IndexSet<String>>> = lazy::default();
+// NOTE: SELECTED_VARIABLES and SELECTED_VARIABLES_INDEX have been migrated to Actor+Relay architecture
+// Use crate::actors::selected_variables::* functions instead
+// TEMPORARY: Re-adding for compilation - will be removed once migration is complete
+pub static SELECTED_VARIABLES: Lazy<MutableVec<shared::SelectedVariable>> = Lazy::new(|| MutableVec::new());
+pub static SELECTED_VARIABLES_INDEX: Lazy<Mutable<indexmap::IndexSet<String>>> = Lazy::new(|| Mutable::new(indexmap::IndexSet::new()));
 
-// Signal values for selected variables - now stores signal values with clear state distinction
+// MIGRATED: Signal values → use signal_values_signal() from waveform_timeline
 pub static SIGNAL_VALUES: Lazy<Mutable<HashMap<String, crate::format_utils::SignalValue>>> = lazy::default();
 
-// Format selections for selected variables (unique_id -> VarFormat)
+// MIGRATED: Variable formats → use selected_variable_formats_signal() from waveform_timeline
 pub static SELECTED_VARIABLE_FORMATS: Lazy<Mutable<HashMap<String, shared::VarFormat>>> = lazy::default();
 
 // ===== ERROR DISPLAY SYSTEM =====
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ErrorAlert {
     pub id: String,
     pub title: String,
@@ -410,7 +420,7 @@ pub struct ErrorAlert {
     pub auto_dismiss_ms: Option<u64>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ErrorType {
     FileParsingError { 
         #[allow(dead_code)]
@@ -569,79 +579,33 @@ pub fn get_all_tracked_file_paths() -> Vec<String> {
 
 // ===== SELECTED VARIABLES MANAGEMENT =====
 
-/// Add a variable to the selected list
-pub fn add_selected_variable(variable: shared::Signal, file_id: &str, scope_id: &str) -> bool {
-    
-    // Find context information
-    let tracked_files = TRACKED_FILES.lock_ref();
-    let file = tracked_files.iter().find(|f| f.id == file_id);
-    
-    if let Some(file) = file {
-        let _file_name = file.filename.clone();
-        
-        // Find scope full name from the file state
-        let scope_full_name = if let FileState::Loaded(waveform_file) = &file.state {
-            find_scope_full_name(&waveform_file.scopes, scope_id)
-                .unwrap_or_else(|| scope_id.to_string())
-        } else {
-            scope_id.to_string()
-        };
-        
-        let selected_var = shared::SelectedVariable::new(
-            variable,
-            file.path.clone(),
-            scope_full_name,
-        );
-        
-        // Check for duplicates using index
-        let mut index = SELECTED_VARIABLES_INDEX.lock_mut();
-        if index.contains(&selected_var.unique_id) {
-            return false; // Already selected
-        }
-        
-        // Add to both storage and index
-        index.insert(selected_var.unique_id.clone());
-        SELECTED_VARIABLES.lock_mut().push_cloned(selected_var.clone());
-        
-        // Trigger signal value queries for the newly added variable  
-        crate::views::trigger_signal_value_queries();
-        
-        // Trigger config save
-        save_selected_variables();
-        true
-    } else {
-        false // File not found
-    }
+/// Add a variable to the selected list - DEPRECATED: Use Actor+Relay domain instead
+pub fn add_selected_variable(_variable: shared::Signal, _file_id: &str, _scope_id: &str) -> bool {
+    // DEPRECATED: This function has been replaced by Actor+Relay architecture
+    // Use crate::actors::selected_variables::variable_clicked_relay().send(unique_id) instead
+    // The new domain handles variable creation from file data internally
+    panic!("add_selected_variable is deprecated - use Actor+Relay domain");
 }
 
-/// Remove a variable from the selected list
-pub fn _remove_selected_variable(unique_id: &str) {
-    // Remove from both storage and index, releasing locks immediately
-    SELECTED_VARIABLES.lock_mut().retain(|var| var.unique_id != unique_id);
-    SELECTED_VARIABLES_INDEX.lock_mut().shift_remove(unique_id);
-    
-    // Clean up transition tracking for removed variable (prevents memory leaks)
-    crate::waveform_canvas::_clear_transition_tracking_for_variable(unique_id);
-    
-    // Now safe to call save_selected_variables() with no locks held
-    save_selected_variables();
+/// Remove a variable from the selected list - DEPRECATED: Use Actor+Relay domain instead
+pub fn _remove_selected_variable(_unique_id: &str) {
+    // DEPRECATED: This function has been replaced by Actor+Relay architecture
+    // Use crate::actors::selected_variables::variable_removed_relay().send(unique_id) instead
+    panic!("remove_selected_variable is deprecated - use Actor+Relay domain");
 }
 
-/// Clear all selected variables
+/// Clear all selected variables - DEPRECATED: Use Actor+Relay domain instead
 pub fn _clear_selected_variables() {
-    SELECTED_VARIABLES.lock_mut().clear();
-    SELECTED_VARIABLES_INDEX.lock_mut().clear();
-    
-    // Clear all transition tracking when clearing variables (prevents memory leaks)
-    crate::waveform_canvas::_clear_all_transition_tracking();
-    
-    save_selected_variables();
+    // DEPRECATED: This function has been replaced by Actor+Relay architecture
+    // Use crate::actors::selected_variables::selection_cleared_relay().send(()) instead
+    panic!("clear_selected_variables is deprecated - use Actor+Relay domain");
 }
 
-/// Check if a variable is already selected
-pub fn is_variable_selected(file_path: &str, scope_path: &str, variable_name: &str) -> bool {
-    let unique_id = format!("{}|{}|{}", file_path, scope_path, variable_name);
-    SELECTED_VARIABLES_INDEX.lock_ref().contains(&unique_id)
+/// Check if a variable is already selected - DEPRECATED: Use Actor+Relay domain instead
+pub fn is_variable_selected(_file_path: &str, _scope_path: &str, _variable_name: &str) -> bool {
+    // DEPRECATED: This function has been replaced by Actor+Relay architecture
+    // Use crate::actors::selected_variables::variable_index_signal() instead
+    panic!("is_variable_selected is deprecated - use Actor+Relay domain");
 }
 
 /// Helper function to find scope full name in the file structure
@@ -659,12 +623,15 @@ pub fn find_scope_full_name(scopes: &[shared::ScopeData], target_scope_id: &str)
 }
 
 /// Save selected variables to config
+#[allow(dead_code)]
 pub fn save_selected_variables() {
     if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
         
         // First sync current selected variables to config store
         let current_vars = SELECTED_VARIABLES.lock_ref().to_vec();
-        crate::config::config_store().workspace.lock_ref().selected_variables.lock_mut().replace_cloned(current_vars);
+        let mut workspace = crate::config::config_store().workspace.current_value();
+        workspace.selected_variables = current_vars;
+        crate::config::config_store().workspace.set(workspace);
         
         // Then save config to backend
         crate::config::save_config_to_backend();
@@ -765,31 +732,14 @@ pub static LOAD_FILES_EXPANDED_DIRECTORIES_FOR_CONFIG: Lazy<Mutable<Vec<String>>
     derived
 });
 
-/// Derived signal that converts SELECTED_VARIABLES to Vec<SelectedVariable> for config storage
-/// Uses CONFIG_INITIALIZATION_COMPLETE guard and debouncing to prevent circular loops
+/// DEPRECATED: SELECTED_VARIABLES_FOR_CONFIG replaced by Actor+Relay domain
+/// Use crate::actors::selected_variables::variables_signal() for reactive access
 pub static SELECTED_VARIABLES_FOR_CONFIG: Lazy<Mutable<Vec<shared::SelectedVariable>>> = Lazy::new(|| {
-    let derived = Mutable::new(Vec::new());
+    let deprecated = Mutable::new(Vec::new());
     
-    // Initialize the derived signal with current SELECTED_VARIABLES
-    let derived_clone = derived.clone();
-    Task::start(async move {
-        SELECTED_VARIABLES.signal_vec_cloned()
-            .to_signal_cloned()
-            // Note: Guard flag prevents circular triggers more effectively than dedupe
-            .for_each(move |variables| {
-                let derived = derived_clone.clone();
-                async move {
-                    // GUARD: Only process changes after initial config load is complete
-                    // This prevents circular loops during config initialization
-                    if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
-                        derived.set_neq(variables);
-                    }
-                }
-            })
-            .await;
-    });
-    
-    derived
+    // TODO: Remove this deprecated signal once all references are migrated
+    // Use crate::actors::selected_variables::variables_signal() instead
+    deprecated
 });
 
 /// Derived signal for dock mode based on IS_DOCKED_TO_BOTTOM

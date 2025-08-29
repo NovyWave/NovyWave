@@ -4,8 +4,8 @@
 //! Replaces global mutables with domain-driven reactive state management.
 
 use crate::actors::{TrackedFiles, SelectedVariables, WaveformTimeline, UserConfiguration};
+use crate::actors::{panel_layout, dialog_manager, error_manager, config_sync};
 use std::sync::OnceLock;
-use zoon::Task;
 
 /// Global TrackedFiles domain instance
 static TRACKED_FILES_DOMAIN_INSTANCE: OnceLock<TrackedFiles> = OnceLock::new();
@@ -21,7 +21,7 @@ static USER_CONFIGURATION_DOMAIN_INSTANCE: OnceLock<UserConfiguration> = OnceLoc
 
 /// Initialize all domain instances - call once on app startup
 pub async fn initialize_all_domains() {
-    // Initialize domains in parallel for better startup performance
+    // Initialize legacy domains in parallel for better startup performance
     let (tracked_files, selected_variables, waveform_timeline, user_config) = futures::join!(
         TrackedFiles::new(),
         SelectedVariables::new(),
@@ -29,7 +29,7 @@ pub async fn initialize_all_domains() {
         UserConfiguration::new()
     );
     
-    // Store instances for global access
+    // Store legacy instances for global access
     TRACKED_FILES_DOMAIN_INSTANCE.set(tracked_files)
         .expect("TrackedFiles domain already initialized - initialize_all_domains() should only be called once");
     SELECTED_VARIABLES_DOMAIN_INSTANCE.set(selected_variables)
@@ -38,6 +38,12 @@ pub async fn initialize_all_domains() {
         .expect("WaveformTimeline domain already initialized - initialize_all_domains() should only be called once");
     USER_CONFIGURATION_DOMAIN_INSTANCE.set(user_config)
         .expect("UserConfiguration domain already initialized - initialize_all_domains() should only be called once");
+    
+    // Initialize Phase 2 domains (Lazy-initialized automatically on first access)
+    panel_layout::initialize();
+    dialog_manager::initialize();
+    error_manager::initialize();
+    config_sync::initialize();
     
     // All Actor+Relay domains initialized successfully
 }
