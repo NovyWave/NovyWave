@@ -38,7 +38,7 @@ load_files_expanded_directories = [
 ]
 selected_scope_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv"
 load_files_scroll_position = 992
-timeline_cursor_position_ns = 125000000000
+timeline_cursor_position_ns = 0
 timeline_zoom_level = 1.0
 timeline_visible_range_start_ns = 0
 timeline_visible_range_end_ns = 100000000000

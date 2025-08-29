@@ -27,7 +27,7 @@ public/       - Static assets
 
 ### Key Dependencies
 
-- MoonZone pinned to git revision `7c5178d891cf4afbc2bbbe864ca63588b6c10f2a`
+- MoonZoon pinned to git revision `7c5178d891cf4afbc2bbbe864ca63588b6c10f2a`
 - Fast2D graphics from NovyWave/Fast2D
 - NovyUI component library with IconName tokens
 
@@ -82,6 +82,8 @@ use shared::{LoadingFile, LoadingStatus, WaveformFile, Signal};
 **Do NOT duplicate types:** Always import from `shared` rather than defining duplicate types in frontend or backend.
 
 ## Actor+Relay Architecture Patterns
+
+> **📖 Complete API Reference:** See `docs/actors_relays/moonzoon/api.md` for full API specification with all methods and the critical "Cache Current Values" pattern.
 
 ### MANDATORY State Management Rules
 
@@ -265,6 +267,45 @@ struct WaveformTimeline {
 }
 ```
 
+### Critical Pattern: Cache Current Values
+
+**⚠️ MANDATORY: This is the ONLY acceptable place to cache values in Actor+Relay architecture**
+
+The "Cache Current Values" pattern is used **EXCLUSIVELY inside Actor processing loops** to maintain current state values for use when responding to events.
+
+```rust
+// ✅ CORRECT: Cache values ONLY inside Actor loops for event response
+let actor = ActorVec::new(vec![], async move |state| {
+    // Cache current values as they flow through streams
+    let mut current_filter = String::new();
+    let mut selected_items = Vec::new();
+    
+    loop {
+        select! {
+            // Update cached values when they change
+            Some(filter) = filter_stream.next() => {
+                current_filter = filter;
+            }
+            Some(items) = selection_stream.next() => {
+                selected_items = items;
+            }
+            // Use cached values when responding to events
+            Some(()) = action_button_stream.next() => {
+                process_selection(&current_filter, &selected_items);
+            }
+        }
+    }
+});
+```
+
+**Key Rules:**
+- **ONLY cache inside Actor loops** - never in UI components or globally
+- **Use caching for event response** - when you need multiple values at once
+- **Otherwise use signals** - for all other state access
+- **Never use raw Mutables for caching** - defeats the architecture
+
+See [docs/actors_relays/moonzoon/api.md#critical-pattern-cache-current-values](../../docs/actors_relays/moonzoon/api.md#critical-pattern-cache-current-values) for detailed examples.
+
 ### Atom for Local UI Patterns
 
 **Replace all local Mutables with Atom:**
@@ -391,10 +432,10 @@ struct AppState {
 }
 ```
 
-## MoonZone Framework Configuration
+## MoonZoon Framework Configuration
 
 ### Framework Overview
-MoonZone is a Rust-based full-stack web framework using:
+MoonZoon is a Rust-based full-stack web framework using:
 - **Frontend:** Rust + WASM using Zoon UI framework
 - **Backend:** Moon server framework (optional)
 - **Build Tool:** mzoon CLI

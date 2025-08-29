@@ -599,9 +599,11 @@ fn create_stable_variable_element_hybrid(state: VirtualElementState, hovered_ind
                 let scope_id = scope_id_signal.get_cloned();
                 // zoon::println!("Click context: file_id={}, scope_id={}", file_id, scope_id);
                 if let Some(variable) = variable_signal.get_cloned() {
-                    // zoon::println!("Variable found: {}", variable.name);
-                    use crate::state::add_selected_variable;
-                    add_selected_variable(variable, &file_id, &scope_id);
+                    // ✅ ACTOR+RELAY MIGRATION: Use SelectedVariables domain events
+                    if let Some(selected_var) = crate::actors::create_selected_variable(variable, &file_id, &scope_id) {
+                        let selected_variables = crate::actors::selected_variables_domain();
+                        selected_variables.variable_clicked_relay.send(selected_var);
+                    }
                 } else {
                     // zoon::println!("No variable found in variable_signal");
                 }
@@ -722,9 +724,11 @@ fn create_variable_name_display(
                                             let scope_id = scope_id_signal.get_cloned();
                                             // zoon::println!("Paragraph click context: file_id={}, scope_id={}", file_id, scope_id);
                                             if let Some(variable) = variable_signal.get_cloned() {
-                                                // zoon::println!("Paragraph variable found: {}", variable.name);
-                                                use crate::state::add_selected_variable;
-                                                add_selected_variable(variable, &file_id, &scope_id);
+                                                // ✅ ACTOR+RELAY MIGRATION: Use SelectedVariables domain events
+                                                if let Some(selected_var) = crate::actors::create_selected_variable(variable, &file_id, &scope_id) {
+                                                    let selected_variables = crate::actors::selected_variables_domain();
+                                                    selected_variables.variable_clicked_relay.send(selected_var);
+                                                }
                                             } else {
                                                 // zoon::println!("No variable found in paragraph variable_signal");
                                             }

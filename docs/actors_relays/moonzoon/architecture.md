@@ -4,9 +4,10 @@ This document covers the **core concepts and API design** for Actor+Relay archit
 
 ## 📚 Related Documentation
 
+- **[Complete API Reference](api.md)** - Full API specification with all methods and patterns
 - **[Actor+Relay Patterns](patterns.md)** - Migration strategies and modern patterns
 - **[Implementation Examples](examples.md)** - Complete working examples
-- **[Testing Guide](testing_guide.md)** - Testing and debugging strategies  
+- **[Testing Guide](testing.md)** - Testing and debugging strategies  
 - **[External API Bridging](bridging.md)** - ConnectionAdapter and external service integration
 - **[Refactoring Guide](refactoring.md)** - Step-by-step migration and antipatterns
 
@@ -143,6 +144,8 @@ UI Updates
 
 ## API Design
 
+> **📖 Complete API Reference:** See [api.md](api.md) for the full API specification including all methods for Relay, Actor, ActorVec, ActorMap, and Atom.
+
 ### Core API Pattern
 
 ```rust
@@ -213,6 +216,44 @@ let actor = Actor::new(State::default(), async move |state| {
     state.handle_batch(result_a, result_b);
 });
 ```
+
+### Critical Pattern: Cache Current Values
+
+> **⚠️ CRITICAL:** This is the ONLY acceptable place to cache values in Actor+Relay architecture
+
+The "Cache Current Values" pattern is used **EXCLUSIVELY inside Actor processing loops** to maintain current state values for use when responding to events.
+
+```rust
+// ✅ CORRECT: Cache values ONLY inside Actors for event response
+let actor = ActorVec::new(vec![], async move |state| {
+    // Cache current values as they flow through streams
+    let mut current_username = String::new();
+    let mut current_message = String::new();
+    
+    loop {
+        select! {
+            // Update cached values when they change
+            Some(username) = username_stream.next() => {
+                current_username = username;
+            }
+            Some(message) = message_stream.next() => {
+                current_message = message;
+            }
+            // Use cached values when responding to events
+            Some(()) = send_button_stream.next() => {
+                send_message(&current_username, &current_message);
+            }
+        }
+    }
+});
+```
+
+**Key Rules:**
+- **ONLY cache inside Actor loops** - never in UI components or globally
+- **Use caching for event response** - when you need multiple values at once
+- **Otherwise use signals** - for all other state access
+
+See [api.md#critical-pattern-cache-current-values](api.md#critical-pattern-cache-current-values) for detailed examples and guidelines.
 
 ### Collection Patterns
 

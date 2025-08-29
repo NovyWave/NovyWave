@@ -10,6 +10,7 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(web_sys_unstable_apis)', '
 [dependencies]
 zoon.workspace = true
 serde = { version = "1.0", features = ["derive"] }
+futures = "0.3"
 indexmap = "2.0"
 fast2d = { path = "../../Fast2D/crates/fast2d", default-features = false, features = [
     # Choose one of the following rendering APIs:

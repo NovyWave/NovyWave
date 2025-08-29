@@ -21,10 +21,11 @@ use crate::{
     FILE_PICKER_ERROR, FILE_PICKER_ERROR_CACHE, FILE_TREE_CACHE, DOCK_TOGGLE_IN_PROGRESS,
     TRACKED_FILES, state, clipboard
 };
-use crate::state::TIMELINE_NS_PER_PIXEL;
+use crate::actors::domain_bridges::ns_per_pixel_signal;
 use crate::state::SELECTED_VARIABLES_ROW_HEIGHT;
-use crate::state::{SELECTED_VARIABLES, clear_selected_variables, remove_selected_variable};
+use crate::state::SELECTED_VARIABLES;
 use crate::format_utils::truncate_value;
+use crate::actors::domain_bridges::{get_cached_cursor_position_seconds, get_cached_viewport, cursor_position_signal};
 
 /// Get signal type information for a selected variable
 fn get_signal_type_for_selected_variable(selected_var: &SelectedVariable) -> String {
@@ -1045,11 +1046,10 @@ pub fn trigger_signal_value_queries() {
     }
     
     // Query at current timeline cursor position with range check
-    let cursor_ns = crate::state::TIMELINE_CURSOR_NS.get();
-    let cursor_pos = cursor_ns.display_seconds();
+    let cursor_pos = get_cached_cursor_position_seconds();
     
     // Check if cursor is within visible timeline range
-    let viewport = crate::state::TIMELINE_VIEWPORT.get();
+    let viewport = get_cached_viewport();
     let start = viewport.start.display_seconds();
     let end = viewport.end.display_seconds();
     
@@ -1513,7 +1513,9 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                                 .size(ButtonSize::Small)
                                                                 .custom_padding(2, 2)
                                                                 .on_press(move || {
-                                                                    remove_selected_variable(&unique_id);
+                                                                    // ✅ ACTOR+RELAY MIGRATION: Use SelectedVariables domain events
+                                                                    let selected_variables = crate::actors::selected_variables_domain();
+                                                                    selected_variables.variable_removed_relay.send(unique_id.clone());
                                                                 })
                                                                 .build()
                                                         })
@@ -1594,7 +1596,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                                             .s(Font::new().color_signal(neutral_11()).center())
                                                                             .child(
                                                                                 Text::with_signal(
-                                                                                    TIMELINE_NS_PER_PIXEL.signal().map(|ns_per_pixel| {
+                                                                                    ns_per_pixel_signal().map(|ns_per_pixel| {
                                                                                         // Use NsPerPixel's built-in Display formatting
                                                                                         format!("{}", ns_per_pixel)
                                                                                     })
@@ -1712,8 +1714,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                                             .s(Font::new().color_signal(neutral_11()).center())
                                                                             .child(
                                                                                 Text::with_signal(
-                                                                                    crate::state::TIMELINE_CURSOR_NS.signal().map(|cursor_ns| {
-                                                                                        let cursor_pos = cursor_ns.display_seconds();
+                                                                                    cursor_position_signal().map(|cursor_pos| {
                                                                                         // Use proper time formatting with appropriate units instead of rounding to seconds
                                                                                         if !cursor_pos.is_finite() || cursor_pos < 0.0 {
                                                                                             "0s".to_string()
@@ -2053,13 +2054,14 @@ fn cleanup_file_related_state(file_id: &str) {
 // Enhanced file removal handler that works with both old and new systems
 fn create_enhanced_file_remove_handler(_file_id: String) -> impl Fn(&str) + 'static {
     move |id: &str| {
-        // Clean up all file-related state
+        // Clean up all file-related state (legacy cleanup during transition)
         cleanup_file_related_state(id);
         
-        // Remove from new TRACKED_FILES system
-        state::remove_tracked_file(id);
+        // ✅ ACTOR+RELAY MIGRATION: Emit file_removed event through TrackedFiles domain
+        let tracked_files = crate::actors::tracked_files_domain();
+        tracked_files.file_removed_relay.send(id.to_string());
         
-        // Remove from legacy systems during transition
+        // Remove from legacy systems during transition (will be removed later)
         LOADED_FILES.lock_mut().retain(|f| f.id != id);
         FILE_PATHS.lock_mut().shift_remove(id);
         
@@ -2395,9 +2397,17 @@ fn process_file_picker_selection() {
     if !selected_files.is_empty() {
         IS_LOADING.set(true);
         
-        // ✅ ENHANCED: Use batch loading for dramatic performance improvement
-        // This replaces individual file processing with single atomic update
-        state::batch_load_files(selected_files);
+        // ✅ ACTOR+RELAY MIGRATION: Use TrackedFiles domain events instead of direct state manipulation
+        // Convert String paths to PathBuf for the domain relay
+        use std::path::PathBuf;
+        let file_paths: Vec<PathBuf> = selected_files
+            .into_iter()
+            .map(|path| PathBuf::from(path))
+            .collect();
+        
+        // Emit files_dropped event through TrackedFiles domain
+        let tracked_files = crate::actors::tracked_files_domain();
+        tracked_files.files_dropped_relay.send(file_paths);
         
         // Close dialog and clear selection
         SHOW_FILE_DIALOG.set(false);
@@ -2407,25 +2417,24 @@ fn process_file_picker_selection() {
 }
 
 fn clear_all_files() {
-    // Clear all loaded files and related state
+    // ✅ ACTOR+RELAY MIGRATION: Use TrackedFiles domain events instead of direct state manipulation
     
-    // Get all tracked file IDs before clearing
+    // Get all tracked file IDs before clearing (for cleanup)
     let file_ids: Vec<String> = state::TRACKED_FILES.lock_ref()
         .iter()
         .map(|f| f.id.clone())
         .collect();
     
-    // Cleanup tracked files
-    
-    // Clean up all file-related state for each file
+    // Clean up all file-related state for each file (legacy cleanup during transition)
     for file_id in &file_ids {
         cleanup_file_related_state(file_id);
     }
     
-    // Clear all tracked files
-    state::TRACKED_FILES.lock_mut().clear();
+    // Emit all_files_cleared event through TrackedFiles domain
+    let tracked_files = crate::actors::tracked_files_domain();
+    tracked_files.all_files_cleared_relay.send(());
     
-    // Clear legacy systems during transition
+    // Clear legacy systems during transition (will be removed later)
     LOADED_FILES.lock_mut().clear();
     FILE_PATHS.lock_mut().clear();
     
@@ -2458,7 +2467,9 @@ fn clear_all_variables_button() -> impl Element {
         .variant(ButtonVariant::DestructiveGhost)
         .size(ButtonSize::Small)
         .on_press(|| {
-            clear_selected_variables();
+            // ✅ ACTOR+RELAY MIGRATION: Use SelectedVariables domain events
+            let selected_variables = crate::actors::selected_variables_domain();
+            selected_variables.selection_cleared_relay.send(());
         })
         .build()
 }

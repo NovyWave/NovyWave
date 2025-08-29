@@ -5,7 +5,7 @@ use crate::error_display::add_error_alert;
 use crate::state::ErrorAlert;
 use crate::utils::restore_scope_selection_for_file;
 use crate::views::is_cursor_within_variable_time_range;
-use crate::state::TIMELINE_CURSOR_NS;
+use crate::actors::domain_bridges::get_cached_cursor_position_seconds;
 use shared::{UpMsg, DownMsg};
 use shared::{LoadingFile, LoadingStatus};
 use wasm_bindgen::JsValue;
@@ -264,7 +264,7 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                         );
                         
                         // Check if cursor time is within this variable's file time range
-                        let cursor_time = TIMELINE_CURSOR_NS.get().display_seconds();
+                        let cursor_time = get_cached_cursor_position_seconds();
                         let within_time_range = is_cursor_within_variable_time_range(&unique_id, cursor_time);
                         
                         let signal_value = if within_time_range {

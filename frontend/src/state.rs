@@ -33,7 +33,7 @@ pub fn loaded_files_count_signal() -> impl Signal<Item = usize> {
 /// This replaces individual file operations with a single atomic update,
 /// reducing renders from 6+ to 1 during batch file loading operations.
 /// Includes duplicate detection, reloading logic, and backend communication.
-pub fn batch_load_files(file_paths: Vec<String>) {
+pub fn _batch_load_files(file_paths: Vec<String>) {
     if file_paths.is_empty() {
         return;
     }
@@ -63,7 +63,7 @@ pub fn batch_load_files(file_paths: Vec<String>) {
     
     // Handle reloads: clean up existing files first
     for (file_id, _) in &files_to_reload {
-        cleanup_file_related_state_for_batch(file_id);
+        _cleanup_file_related_state_for_batch(file_id);
         // Remove from legacy systems too
         crate::LOADED_FILES.lock_mut().retain(|f| f.id != *file_id);
         crate::FILE_PATHS.lock_mut().shift_remove(file_id);
@@ -122,7 +122,7 @@ pub fn batch_load_files(file_paths: Vec<String>) {
 }
 
 /// Helper function to clean up file-related state during batch operations
-fn cleanup_file_related_state_for_batch(file_id: &str) {
+fn _cleanup_file_related_state_for_batch(file_id: &str) {
     // Clear scope selections for this file
     crate::TREE_SELECTED_ITEMS.lock_mut().retain(|id| !id.starts_with(&format!("scope_{}_", file_id)));
     
@@ -143,6 +143,7 @@ fn cleanup_file_related_state_for_batch(file_id: &str) {
 #[derive(Debug, Clone)]
 pub enum FileUpdateMessage {
     Update { file_id: String, new_state: FileState },
+    #[allow(dead_code)]
     Remove { file_id: String },
 }
 
@@ -547,7 +548,7 @@ pub fn update_tracked_file_state(file_id: &str, new_state: FileState) {
 }
 
 /// Remove a tracked file by ID
-pub fn remove_tracked_file(file_id: &str) {
+pub fn _remove_tracked_file(file_id: &str) {
     // Use message queue to prevent recursive locking
     send_file_update_message(FileUpdateMessage::Remove {
         file_id: file_id.to_string(),
@@ -614,25 +615,25 @@ pub fn add_selected_variable(variable: shared::Signal, file_id: &str, scope_id: 
 }
 
 /// Remove a variable from the selected list
-pub fn remove_selected_variable(unique_id: &str) {
+pub fn _remove_selected_variable(unique_id: &str) {
     // Remove from both storage and index, releasing locks immediately
     SELECTED_VARIABLES.lock_mut().retain(|var| var.unique_id != unique_id);
     SELECTED_VARIABLES_INDEX.lock_mut().shift_remove(unique_id);
     
     // Clean up transition tracking for removed variable (prevents memory leaks)
-    crate::waveform_canvas::clear_transition_tracking_for_variable(unique_id);
+    crate::waveform_canvas::_clear_transition_tracking_for_variable(unique_id);
     
     // Now safe to call save_selected_variables() with no locks held
     save_selected_variables();
 }
 
 /// Clear all selected variables
-pub fn clear_selected_variables() {
+pub fn _clear_selected_variables() {
     SELECTED_VARIABLES.lock_mut().clear();
     SELECTED_VARIABLES_INDEX.lock_mut().clear();
     
     // Clear all transition tracking when clearing variables (prevents memory leaks)
-    crate::waveform_canvas::clear_all_transition_tracking();
+    crate::waveform_canvas::_clear_all_transition_tracking();
     
     save_selected_variables();
 }

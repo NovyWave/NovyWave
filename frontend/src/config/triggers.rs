@@ -1,5 +1,6 @@
 use crate::config::config_store;
 use crate::state::*;
+use crate::actors::domain_bridges::{set_cursor_position, set_viewport_if_changed, set_ns_per_pixel_if_changed};
 use crate::time_types::NsPerPixel;
 use crate::platform::{Platform, CurrentPlatform};
 use shared::{UpMsg, DockMode, FileState, create_tracked_file};
@@ -150,19 +151,19 @@ fn sync_timeline_from_config() {
     
     // Timeline cursor position - already TimeNs, no conversion needed
     let cursor_pos = workspace.timeline_cursor_position.get();
-    TIMELINE_CURSOR_NS.set_neq(cursor_pos);
+    set_cursor_position(cursor_pos);
     
     // Timeline zoom level with validation  
     let zoom_level = workspace.timeline_zoom_level.get();
     if zoom_level.is_finite() && zoom_level > 0.0 {
-        TIMELINE_NS_PER_PIXEL.set_neq(NsPerPixel::MEDIUM_ZOOM.zoom_in_smooth((1.0 - zoom_level) as f64));
+        set_ns_per_pixel_if_changed(NsPerPixel::MEDIUM_ZOOM.zoom_in_smooth((1.0 - zoom_level) as f64));
     }
     
     // Timeline visible range - already TimeNs, no conversion needed
     let range_start = workspace.timeline_visible_range_start.get();
     let range_end = workspace.timeline_visible_range_end.get();
     let viewport = crate::time_types::Viewport::new(range_start, range_end);
-    TIMELINE_VIEWPORT.set_neq(viewport);
+    set_viewport_if_changed(viewport);
 }
 
 /// One-shot session UI state sync

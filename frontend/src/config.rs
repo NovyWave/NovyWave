@@ -6,6 +6,9 @@ use serde::{Deserialize, Serialize};
 use shared::UpMsg;
 pub use shared::{Theme, DockMode}; // Re-export for frontend usage
 use crate::CONFIG_INITIALIZATION_COMPLETE;
+use crate::actors::domain_bridges::{get_cached_cursor_position, get_cached_viewport, viewport_signal,
+    get_cached_ns_per_pixel, ns_per_pixel_signal};
+use crate::actors::global_domains::waveform_timeline_domain;
 use crate::time_types::{NsPerPixel, TimeNs};
 
 // Reactive triggers module
@@ -661,8 +664,10 @@ fn store_config_on_any_change() {
     });
     
     // Timeline cursor position changes - TRUE DEBOUNCING with droppable tasks
-    let timeline_cursor_position_signal = crate::state::TIMELINE_CURSOR_NS.signal();
     Task::start(async move {
+        let waveform_timeline = waveform_timeline_domain();
+        let cursor_signal = waveform_timeline.cursor_position_signal();
+        let timeline_cursor_position_signal = cursor_signal.map(|pos| TimeNs::from_external_seconds(pos));
         let debounce_task: Mutable<Option<TaskHandle>> = Mutable::new(None);
         
         timeline_cursor_position_signal
@@ -775,19 +780,19 @@ fn save_config_immediately() {
             selected_variables: serializable_config.workspace.selected_variables,
             // New nanosecond fields
             timeline_cursor_position_ns: {
-                let cursor_ns = crate::state::TIMELINE_CURSOR_NS.get();
+                let cursor_ns = get_cached_cursor_position();
                 cursor_ns.nanos()
             },
             timeline_visible_range_start_ns: {
-                let viewport = crate::state::TIMELINE_VIEWPORT.get();
+                let viewport = get_cached_viewport();
                 Some(viewport.start.nanos())
             },
             timeline_visible_range_end_ns: {
-                let viewport = crate::state::TIMELINE_VIEWPORT.get();
+                let viewport = get_cached_viewport();
                 Some(viewport.end.nanos())
             },
             timeline_zoom_level: {
-                let ns_per_pixel = crate::state::TIMELINE_NS_PER_PIXEL.get();
+                let ns_per_pixel = get_cached_ns_per_pixel();
                 // Convert NsPerPixel to normalized factor for config storage
                 let factor = (NsPerPixel::LOW_ZOOM.nanos() as f64 / ns_per_pixel.nanos() as f64).clamp(0.0, 1.0);
                 factor as f32
@@ -1076,7 +1081,8 @@ pub fn setup_reactive_config_persistence() {
 
     // Observe timeline state and update config store
     Task::start(async {
-        TIMELINE_CURSOR_NS.signal().for_each(|cursor_ns| async move {
+        waveform_timeline_domain().cursor_position_signal().for_each(|cursor_pos| async move {
+            let cursor_ns = TimeNs::from_external_seconds(cursor_pos);
             if CONFIG_INITIALIZATION_COMPLETE.get() {
                 config_store().workspace.lock_mut().timeline_cursor_position.set_neq(cursor_ns);
                 save_config_to_backend();
@@ -1085,7 +1091,7 @@ pub fn setup_reactive_config_persistence() {
     });
 
     Task::start(async {
-        TIMELINE_NS_PER_PIXEL.signal().for_each(|ns_per_pixel| async move {
+        ns_per_pixel_signal().for_each(|ns_per_pixel| async move {
             if CONFIG_INITIALIZATION_COMPLETE.get() {
                 // Convert NsPerPixel to normalized factor for config storage
                 let factor = (NsPerPixel::LOW_ZOOM.nanos() as f64 / ns_per_pixel.nanos() as f64).clamp(0.0, 1.0);
@@ -1096,7 +1102,7 @@ pub fn setup_reactive_config_persistence() {
     });
 
     Task::start(async {
-        TIMELINE_VIEWPORT.signal().for_each(|viewport| async move {
+        viewport_signal().for_each(|viewport| async move {
             if CONFIG_INITIALIZATION_COMPLETE.get() {
                 config_store().workspace.lock_mut().timeline_visible_range_start.set_neq(viewport.start);
                 config_store().workspace.lock_mut().timeline_visible_range_end.set_neq(viewport.end);

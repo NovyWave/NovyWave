@@ -19,6 +19,8 @@ Core guidance for Claude Code when working with NovyWave.
 
 **CRITICAL: NovyWave uses Actor+Relay architecture - NO raw Mutables allowed**
 
+> **📖 Complete API Reference:** See `docs/actors_relays/moonzoon/api.md` for full API specification with all methods and the critical "Cache Current Values" pattern.
+
 ### Core Architectural Rules
 
 1. **NO RAW MUTABLES:** All state must use Actor+Relay or Atom
@@ -62,6 +64,28 @@ Core guidance for Claude Code when working with NovyWave.
    struct FileManager { ... }               // Artificial "manager"
    struct TimelineService { ... }           // Unnecessary "service"
    struct DataController { ... }            // Vague "controller"
+   ```
+
+4. **Cache Current Values Pattern (CRITICAL):**
+   ```rust
+   // ✅ ONLY inside Actor loops for event response
+   let actor = ActorVec::new(vec![], async move |state| {
+       let mut cached_username = String::new();  // Cache values
+       let mut cached_message = String::new();
+       
+       loop {
+           select! {
+               Some(username) = username_stream.next() => cached_username = username,
+               Some(message) = message_stream.next() => cached_message = message,
+               Some(()) = send_button_stream.next() => {
+                   // Use cached values when responding to events
+                   send_message(&cached_username, &cached_message);
+               }
+           }
+       }
+   });
+   
+   // ❌ NEVER cache values anywhere else - use signals instead
    ```
 
 ### Migration Status: 74+ Mutables → Actor+Relay

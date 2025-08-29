@@ -12,6 +12,7 @@ use shared::{UpMsg, SignalValue, SignalTransition};
 use crate::connection::send_up_msg;
 use crate::time_types::{TimeNs, TimelineCache, CacheRequestType, CacheRequestState};
 use crate::state::UNIFIED_TIMELINE_CACHE;
+use crate::actors::domain_bridges::{cursor_position_signal, viewport_signal};
 
 // ===== DATA STRUCTURES =====
 
@@ -114,7 +115,7 @@ impl UnifiedTimelineService {
         
         // React to both cursor changes and cache updates
         map_ref! {
-            let cursor_ns = crate::state::TIMELINE_CURSOR_NS.signal(),
+            let cursor_pos = cursor_position_signal(),
             let _cache_signal = UNIFIED_TIMELINE_CACHE.signal_ref(|_| ()) => {
                 let cache = UNIFIED_TIMELINE_CACHE.lock_ref();
                 
@@ -127,7 +128,8 @@ impl UnifiedTimelineService {
                 }
                 // Then check if we can interpolate from raw transitions
                 else if let Some(transitions) = cache.get_raw_transitions(&signal_id_cloned) {
-                    if let Some(interpolated) = Self::interpolate_cursor_value(transitions, *cursor_ns) {
+                    let cursor_ns = TimeNs::from_external_seconds(*cursor_pos);
+                    if let Some(interpolated) = Self::interpolate_cursor_value(transitions, cursor_ns) {
                         match interpolated {
                             SignalValue::Present(data) => data,
                             SignalValue::Missing => "N/A".to_string(),
@@ -144,7 +146,7 @@ impl UnifiedTimelineService {
                 else {
                     // Trigger async request for cursor values outside viewport
                     let signal_ids = vec![signal_id_cloned.clone()];
-                    let cursor_time = *cursor_ns;
+                    let cursor_time = TimeNs::from_external_seconds(*cursor_pos);
                     Task::start(async move {
                         Self::request_cursor_values(signal_ids, cursor_time);
                     });
@@ -311,7 +313,7 @@ impl UnifiedTimelineService {
     fn start_cache_invalidation_handlers() {
         // React to viewport changes and invalidate cache accordingly
         Task::start(async {
-            crate::state::TIMELINE_VIEWPORT.signal().for_each(move |new_viewport| {
+            viewport_signal().for_each(move |new_viewport| {
                 async move {
                     let mut cache = UNIFIED_TIMELINE_CACHE.lock_mut();
                     cache.invalidate_viewport(new_viewport);
@@ -321,7 +323,8 @@ impl UnifiedTimelineService {
         
         // React to cursor changes and invalidate cursor cache accordingly  
         Task::start(async {
-            crate::state::TIMELINE_CURSOR_NS.signal().for_each(move |new_cursor| {
+            cursor_position_signal().for_each(move |cursor_pos| {
+                let new_cursor = TimeNs::from_external_seconds(cursor_pos);
                 async move {
                     let mut cache = UNIFIED_TIMELINE_CACHE.lock_mut();
                     cache.invalidate_cursor(new_cursor);

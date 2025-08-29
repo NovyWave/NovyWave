@@ -2,6 +2,8 @@ use zoon::{*, futures_util::future::try_join_all};
 use moonzoon_novyui::tokens::theme::{Theme, init_theme};
 use moonzoon_novyui::tokens::color::{neutral_1};
 
+mod dataflow;
+mod actors;
 
 mod virtual_list;
 
@@ -36,6 +38,8 @@ use views::*;
 
 mod state;
 use state::*;
+use actors::domain_bridges::{get_cached_cursor_position_seconds, get_cached_viewport};
+use actors::waveform_timeline_domain;
 use state::VARIABLES_SEARCH_INPUT_FOCUSED;
 pub use state::CONFIG_INITIALIZATION_COMPLETE;
 
@@ -65,8 +69,7 @@ fn init_timeline_signal_handlers() {
         
         
         // Monitor timeline cursor position changes with intelligent debouncing
-        crate::state::TIMELINE_CURSOR_NS.signal().for_each_sync(move |cursor_ns| {
-            let cursor_pos = cursor_ns.display_seconds();
+        waveform_timeline_domain().cursor_position_signal().for_each_sync(move |cursor_pos| {
             let last_position_clone = last_position.clone();
             let last_request_time_clone = last_request_time.clone();
             
@@ -193,7 +196,7 @@ fn init_selected_variables_signal_service_bridge() {
                     
                     if !added_ids.is_empty() || (!removed_ids.is_empty() && current_count > 0) {
                         // Variables were added OR some removed but others remain - request data for current variables
-                        let current_cursor = TIMELINE_CURSOR_NS.get().display_seconds();
+                        let current_cursor = get_cached_cursor_position_seconds();
                         
                         // Create signal requests for all currently selected variables  
                         let signal_requests: Vec<crate::unified_timeline_service::SignalRequest> = current_vars
@@ -242,6 +245,12 @@ fn init_selected_variables_signal_service_bridge() {
 pub fn main() {
     Task::start(async {
         load_and_register_fonts().await;
+        
+        // Initialize Actor+Relay domain instances  
+        crate::actors::initialize_all_domains().await;
+        
+        // Initialize bridges between domains and legacy global state
+        crate::actors::initialize_domain_bridges().await;
         
         // Initialize scope selection handling
         init_scope_selection_handlers();
@@ -349,8 +358,7 @@ pub fn main() {
         Task::start(async {
             let last_position = Mutable::new(0.0);
             
-            crate::state::TIMELINE_CURSOR_NS.signal().for_each_sync(move |cursor_ns| {
-                let cursor_pos = cursor_ns.display_seconds();
+            waveform_timeline_domain().cursor_position_signal().for_each_sync(move |cursor_pos| {
                 let is_moving = crate::state::IS_CURSOR_MOVING_LEFT.get() || crate::state::IS_CURSOR_MOVING_RIGHT.get();
                 
                 // Only query for direct position changes (not during Q/E movement)
@@ -369,7 +377,7 @@ pub fn main() {
 
 /// Check if cursor is within the currently visible timeline range
 pub fn is_cursor_in_visible_range(cursor_time: f64) -> bool {
-    let viewport = crate::state::TIMELINE_VIEWPORT.get();
+    let viewport = get_cached_viewport();
     let cursor_ns = crate::time_types::TimeNs::from_nanos((cursor_time * 1_000_000_000.0) as u64);
     viewport.contains(cursor_ns)
 }
@@ -639,45 +647,83 @@ fn main_layout() -> impl Element {
                         crate::state::IS_SHIFT_PRESSED.set_neq(true);
                     },
                     "w" | "W" => {
-                        // Start smooth zoom in
+                        // Zoom in using WaveformTimeline domain
+                        let waveform_timeline = crate::actors::waveform_timeline_domain();
+                        waveform_timeline.zoom_in_pressed_relay.send(());
+                        
+                        // Legacy function call for backward compatibility (will be removed)
                         crate::waveform_canvas::start_smooth_zoom_in();
                     },
                     "s" | "S" => {
-                        // Start smooth zoom out
+                        // Zoom out using WaveformTimeline domain
+                        let waveform_timeline = crate::actors::waveform_timeline_domain();
+                        waveform_timeline.zoom_out_pressed_relay.send(());
+                        
+                        // Legacy function call for backward compatibility (will be removed)
                         crate::waveform_canvas::start_smooth_zoom_out();
                     },
                     "a" | "A" => {
-                        // Start smooth pan left
+                        // Pan left using WaveformTimeline domain
+                        let waveform_timeline = crate::actors::waveform_timeline_domain();
+                        waveform_timeline.pan_left_pressed_relay.send(());
+                        
+                        // Legacy function call for backward compatibility (will be removed)
                         crate::waveform_canvas::start_smooth_pan_left();
                     },
                     "d" | "D" => {
-                        // Start smooth pan right
+                        // Pan right using WaveformTimeline domain
+                        let waveform_timeline = crate::actors::waveform_timeline_domain();
+                        waveform_timeline.pan_right_pressed_relay.send(());
+                        
+                        // Legacy function call for backward compatibility (will be removed)
                         crate::waveform_canvas::start_smooth_pan_right();
                     },
                     "q" | "Q" => {
+                        let waveform_timeline = crate::actors::waveform_timeline_domain();
                         if crate::state::IS_SHIFT_PRESSED.get() {
-                            // Shift+Q: Jump to previous transition
+                            // Shift+Q: Jump to previous transition using WaveformTimeline domain
+                            waveform_timeline.jump_to_previous_pressed_relay.send(());
+                            
+                            // Legacy function call for backward compatibility (will be removed)
                             crate::waveform_canvas::jump_to_previous_transition();
                         } else {
-                            // Q: Start smooth cursor left
+                            // Q: Cursor left using WaveformTimeline domain
+                            waveform_timeline.left_key_pressed_relay.send(());
+                            
+                            // Legacy function call for backward compatibility (will be removed)
                             crate::waveform_canvas::start_smooth_cursor_left();
                         }
                     },
                     "e" | "E" => {
+                        let waveform_timeline = crate::actors::waveform_timeline_domain();
                         if crate::state::IS_SHIFT_PRESSED.get() {
-                            // Shift+E: Jump to next transition
+                            // Shift+E: Jump to next transition using WaveformTimeline domain
+                            waveform_timeline.jump_to_next_pressed_relay.send(());
+                            
+                            // Legacy function call for backward compatibility (will be removed)
                             crate::waveform_canvas::jump_to_next_transition();
                         } else {
-                            // E: Start smooth cursor right
+                            // E: Cursor right using WaveformTimeline domain
+                            waveform_timeline.right_key_pressed_relay.send(());
+                            
+                            // Legacy function call for backward compatibility (will be removed)
                             crate::waveform_canvas::start_smooth_cursor_right();
                         }
                     },
                     "r" | "R" => {
-                        // R: Reset zoom to 1x and fit all data
+                        // R: Reset zoom using WaveformTimeline domain
+                        let waveform_timeline = crate::actors::waveform_timeline_domain();
+                        waveform_timeline.reset_zoom_pressed_relay.send(());
+                        
+                        // Legacy function call for backward compatibility (will be removed)
                         crate::waveform_canvas::reset_zoom_to_fit_all();
                     },
                     "z" | "Z" => {
-                        // Z: Reset zoom center to 0
+                        // Z: Reset zoom center using WaveformTimeline domain
+                        let waveform_timeline = crate::actors::waveform_timeline_domain();
+                        waveform_timeline.reset_zoom_center_pressed_relay.send(());
+                        
+                        // Legacy function call for backward compatibility (will be removed)
                         crate::waveform_canvas::reset_zoom_center();
                     },
                     _ => {} // Ignore other keys
@@ -800,3 +846,4 @@ fn docked_layout_wrapper() -> impl Element {
             }
         }))
 }
+

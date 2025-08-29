@@ -5,11 +5,12 @@ A comprehensive guide to modern Actor+Relay patterns and migration strategies fo
 ## Table of Contents
 
 1. [Architecture Overview](#architecture-overview)
-2. [Modern Actor+Relay Patterns](#modern-actorrelay-patterns)
-3. [Migration Patterns](#migration-patterns)
-4. [Atom Helper](#atom-helper)
-5. [Performance Best Practices](#performance-best-practices)
-6. [Event-Driven Architecture Patterns](#event-driven-architecture-patterns)
+2. [Critical Pattern: Cache Current Values](#critical-pattern-cache-current-values)
+3. [Modern Actor+Relay Patterns](#modern-actorrelay-patterns)
+4. [Migration Patterns](#migration-patterns)
+5. [Atom Helper](#atom-helper)
+6. [Performance Best Practices](#performance-best-practices)
+7. [Event-Driven Architecture Patterns](#event-driven-architecture-patterns)
 
 ## Architecture Overview
 
@@ -43,6 +44,8 @@ UI Updates
 
 ### Core API Pattern
 
+> **📖 Complete API Reference:** See [api.md](api.md) for the full API specification.
+
 ```rust
 /// Creates a new Relay with an associated stream, following Rust's channel pattern.
 /// This is the idiomatic way to create a Relay for use with Actors.
@@ -69,6 +72,205 @@ let counter = Actor::new(0, async move |state| {
     }
 });
 ```
+
+## Critical Pattern: Cache Current Values
+
+### ⚠️ The ONLY Acceptable Place for Value Caching
+
+The "Cache Current Values" pattern is a **CRITICAL** pattern that must be understood correctly. It is used **EXCLUSIVELY inside Actor processing loops** to maintain current state values for use when responding to events.
+
+### The Pattern Explained
+
+```rust
+// ✅ CORRECT: Cache values ONLY inside Actor loops for event response
+let chat_actor = ActorVec::new(vec![], async move |messages| {
+    // Cache current values as they flow through streams
+    let mut current_username = String::new();
+    let mut current_message = String::new();
+    
+    loop {
+        select! {
+            // Update cached value when username changes
+            Some(username) = username_input_stream.next() => {
+                current_username = username;
+            }
+            
+            // Update cached value when message changes
+            Some(message) = message_input_stream.next() => {
+                current_message = message;
+            }
+            
+            // Use cached values when responding to send event
+            Some(()) = send_button_stream.next() => {
+                if !current_message.trim().is_empty() {
+                    let chat_message = ChatMessage {
+                        username: current_username.clone(),
+                        text: current_message.clone(),
+                    };
+                    connection.send(chat_message);
+                    
+                    // Clear message after sending
+                    current_message.clear();
+                    message_input_cleared_relay.send(());
+                }
+            }
+        }
+    }
+});
+```
+
+### Why This Pattern Exists
+
+1. **Synchronous Access Requirement**: When an event occurs (like button click), you often need multiple values immediately
+2. **Signals Are Async**: You can't query signals synchronously inside the select! loop
+3. **Maintains Architecture**: Caching inside the Actor maintains single-point mutation principle
+4. **Practical Necessity**: Without this pattern, complex event handling would be impossible
+
+### Rules for Using This Pattern
+
+#### ✅ DO:
+- Cache values **ONLY inside Actor processing loops**
+- Update cached values when their streams emit new values
+- Use cached values when responding to action events
+- Clear/reset cached values after use when appropriate
+
+#### ❌ DON'T:
+- Cache values in UI components
+- Use global variables for caching
+- Create Mutables for caching outside Actors
+- Try to .get() from Actors (no such method exists)
+
+### Real-World Examples
+
+#### Form Submission
+```rust
+let form_actor = Actor::new(FormState::default(), async move |state| {
+    // Cache all form fields
+    let mut name = String::new();
+    let mut email = String::new();
+    let mut phone = String::new();
+    let mut message = String::new();
+    
+    loop {
+        select! {
+            Some(v) = name_input_stream.next() => name = v,
+            Some(v) = email_input_stream.next() => email = v,
+            Some(v) = phone_input_stream.next() => phone = v,
+            Some(v) = message_input_stream.next() => message = v,
+            
+            Some(()) = submit_button_stream.next() => {
+                // Use all cached values for submission
+                let form = FormData { name, email, phone, message };
+                if validate_form(&form) {
+                    submit_to_backend(form).await;
+                    form_submitted_relay.send(());
+                }
+            }
+        }
+    }
+});
+```
+
+#### File Dialog with Filters
+```rust
+let dialog_actor = Actor::new(DialogState::default(), async move |state| {
+    // Cache dialog state
+    let mut search_filter = String::new();
+    let mut selected_files = Vec::new();
+    let mut current_directory = PathBuf::from("/");
+    
+    loop {
+        select! {
+            Some(filter) = search_input_stream.next() => {
+                search_filter = filter;
+                update_filtered_view(&search_filter);
+            }
+            
+            Some(files) = file_selection_stream.next() => {
+                selected_files = files;
+            }
+            
+            Some(dir) = directory_changed_stream.next() => {
+                current_directory = dir;
+                selected_files.clear();
+            }
+            
+            Some(()) = open_button_stream.next() => {
+                // Use cached selections
+                for file in &selected_files {
+                    let full_path = current_directory.join(file);
+                    open_file(full_path).await;
+                }
+                dialog_closed_relay.send(());
+            }
+        }
+    }
+});
+```
+
+#### Timeline Cursor with Multiple Values
+```rust
+let timeline_actor = Actor::new(TimelineState::default(), async move |state| {
+    // Cache timeline state
+    let mut cursor_position = 0.0;
+    let mut zoom_level = 1.0;
+    let mut visible_range = (0.0, 100.0);
+    
+    loop {
+        select! {
+            Some(pos) = cursor_moved_stream.next() => {
+                cursor_position = pos;
+                state.set_cursor(pos);
+            }
+            
+            Some(zoom) = zoom_changed_stream.next() => {
+                zoom_level = zoom;
+                // Recalculate visible range based on cursor and zoom
+                visible_range = calculate_range(cursor_position, zoom_level);
+                state.set_range(visible_range);
+            }
+            
+            Some(()) = center_cursor_stream.next() => {
+                // Use cached values to center view
+                let center = (visible_range.0 + visible_range.1) / 2.0;
+                cursor_position = center;
+                state.set_cursor(center);
+            }
+        }
+    }
+});
+```
+
+### Common Mistakes to Avoid
+
+```rust
+// ❌ WRONG: Global caching
+static mut CACHED_VALUE: String = String::new();  // NEVER!
+
+// ❌ WRONG: Caching in UI components
+fn my_component() -> impl Element {
+    let mut cached = String::new();  // NO! Use signals instead
+    Button::new().on_click(move || {
+        send_value(&cached);  // Wrong place for caching
+    })
+}
+
+// ❌ WRONG: Using Mutables for caching
+let cached_username = Mutable::new(String::new());  // Defeats architecture!
+
+// ❌ WRONG: Trying to get values synchronously from Actors
+let current = some_actor.get();  // No .get() method exists!
+```
+
+### Summary
+
+The "Cache Current Values" pattern is:
+- **Essential** for practical Actor+Relay usage
+- **Restricted** to Actor processing loops only
+- **Never** used anywhere else in the codebase
+- **The bridge** between async streams and synchronous event handling
+
+This pattern maintains architectural purity while enabling real-world functionality. When in doubt, ask: "Am I inside an Actor's async processing loop?" If not, use signals instead.
 
 ## Modern Actor+Relay Patterns
 

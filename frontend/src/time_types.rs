@@ -572,7 +572,7 @@ impl Default for TimelineCache {
 /// 
 /// This replaces all floating-point timeline calculations with precise integer operations.
 /// Used for mouse interactions, panning, zooming, and rendering.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TimelineCoordinates {
     pub cursor_ns: TimeNs,              // Current cursor position in nanoseconds
     pub viewport_start_ns: TimeNs,      // Viewport start time in nanoseconds  

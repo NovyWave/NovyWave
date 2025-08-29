@@ -363,8 +363,11 @@ Once I understand these details clearly, I'll implement all the improvements eff
 ## Development Server Management
 
 ### Server Management Rules
-- **ABSOLUTE PROHIBITION: NEVER restart dev server without explicit user permission**
-- **MANDATORY: ALWAYS ask user to use `makers kill` or `makers start` commands**
+- **ABSOLUTE PROHIBITION: NEVER run dev server or compilation commands yourself**
+- **DO NOT** execute `makers start`, `makers kill`, or any compilation commands
+- **DO NOT** attempt to manage the mzoon dev server process  
+- **ALWAYS** read `dev_server.log` to check compilation status
+- If auto-compilation appears to not be working, **TELL THE DEVELOPER** to start the mzoon CLI
 - Backend/shared crate compilation takes DOZENS OF SECONDS TO MINUTES - this is normal
 - **WAIT ENFORCEMENT: Must wait for compilation to complete, no matter how long**
 
