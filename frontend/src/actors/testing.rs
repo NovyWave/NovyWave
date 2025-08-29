@@ -116,10 +116,10 @@ mod actor_relay_tests {
     /// Test that value caching bridge works correctly
     #[tokio::test]
     async fn test_value_caching_bridge() {
-        use crate::actors::domain_bridges::{
-            get_cached_cursor_position_seconds, 
+        use crate::actors::waveform_timeline::{
+            current_cursor_position_seconds, 
             set_cursor_position_seconds,
-            get_cached_viewport,
+            current_viewport,
             set_viewport_if_changed
         };
         use crate::time_types::Viewport;
@@ -132,7 +132,7 @@ mod actor_relay_tests {
         Timer::sleep(50).await;
         
         // Verify cached access returns same value
-        let cached_position = get_cached_cursor_position_seconds();
+        let cached_position = current_cursor_position_seconds();
         assert_eq!(cached_position, test_position);
         
         // Test viewport caching
@@ -146,7 +146,7 @@ mod actor_relay_tests {
         Timer::sleep(50).await;
         
         // Verify cached access
-        let cached_viewport = get_cached_viewport();
+        let cached_viewport = current_viewport();
         assert_eq!(cached_viewport.start.display_seconds(), 100.0);
         assert_eq!(cached_viewport.end.display_seconds(), 200.0);
     }

@@ -12,7 +12,7 @@ use shared::{UpMsg, SignalValue, SignalTransition};
 use crate::connection::send_up_msg;
 use crate::time_types::{TimeNs, TimelineCache, CacheRequestType, CacheRequestState};
 use crate::state::UNIFIED_TIMELINE_CACHE;
-use crate::actors::domain_bridges::{cursor_position_signal, viewport_signal};
+use crate::actors::waveform_timeline::{cursor_position_signal, viewport_signal};
 
 // ===== DATA STRUCTURES =====
 
@@ -128,7 +128,7 @@ impl UnifiedTimelineService {
                 }
                 // Then check if we can interpolate from raw transitions
                 else if let Some(transitions) = cache.get_raw_transitions(&signal_id_cloned) {
-                    let cursor_ns = TimeNs::from_external_seconds(*cursor_pos);
+                    let cursor_ns = *cursor_pos;
                     if let Some(interpolated) = Self::interpolate_cursor_value(transitions, cursor_ns) {
                         match interpolated {
                             SignalValue::Present(data) => data,
@@ -146,7 +146,7 @@ impl UnifiedTimelineService {
                 else {
                     // Trigger async request for cursor values outside viewport
                     let signal_ids = vec![signal_id_cloned.clone()];
-                    let cursor_time = TimeNs::from_external_seconds(*cursor_pos);
+                    let cursor_time = *cursor_pos;
                     Task::start(async move {
                         Self::request_cursor_values(signal_ids, cursor_time);
                     });
@@ -324,7 +324,7 @@ impl UnifiedTimelineService {
         // React to cursor changes and invalidate cursor cache accordingly  
         Task::start(async {
             cursor_position_signal().for_each(move |cursor_pos| {
-                let new_cursor = TimeNs::from_external_seconds(cursor_pos);
+                let new_cursor = cursor_pos;
                 async move {
                     let mut cache = UNIFIED_TIMELINE_CACHE.lock_mut();
                     cache.invalidate_cursor(new_cursor);
@@ -334,7 +334,7 @@ impl UnifiedTimelineService {
         
         // React to selected variables changes and clear related cache entries
         Task::start(async {
-            crate::state::SELECTED_VARIABLES.signal_vec_cloned().for_each(move |_selected_vars| {
+            crate::actors::selected_variables::variables_signal_vec().for_each(move |_selected_vars| {
                 async move {
                     // Clear cache when selected variables change significantly
                     // This ensures we don't show stale data for newly selected or deselected variables

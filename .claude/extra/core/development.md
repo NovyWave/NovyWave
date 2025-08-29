@@ -13,6 +13,36 @@ When making changes to files, first understand the file's code conventions. Mimi
 
 - IMPORTANT: DO NOT ADD ***ANY*** COMMENTS unless asked
 
+### WASM Error Handling Best Practices
+
+**Use WASM-specific error handling methods for better debugging:**
+
+```rust
+// ✅ WASM-optimized error handling
+use zoon::*; // Provides unwrap_throw, expect_throw
+
+// Better panic messages with expect_throw
+let value = option_value
+    .expect_throw("Failed to get user configuration - check initialization order");
+
+// Better unwrap with unwrap_throw  
+let element = event.target()
+    .unwrap_throw(); // Provides proper WASM stack traces
+
+// Use zoon::eprintln! for error logging
+zoon::eprintln!("🚨 ERROR: Failed to initialize domain: {}", error_msg);
+
+// Use zoon::println! for normal logging
+zoon::println!("✅ Domain initialized successfully");
+```
+
+**Why this matters in WASM:**
+- `unwrap_throw()` and `expect_throw()` provide proper stack traces in browser dev tools
+- `zoon::eprintln!()` goes to console.error() - visible and filterable in browser console  
+- `zoon::println!()` goes to console.log() - good for normal logging
+- Standard `std::println!()` does nothing in WASM environments
+- Better error messages prevent cryptic "unreachable" WASM panics
+
 ### Modern Rust Formatting Syntax
 
 Use modern Rust formatting macros with inline expressions:

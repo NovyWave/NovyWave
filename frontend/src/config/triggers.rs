@@ -1,6 +1,8 @@
 use crate::config::config_store;
 use crate::state::*;
-use crate::actors::domain_bridges::{set_cursor_position, set_viewport_if_changed, set_ns_per_pixel_if_changed};
+use crate::actors::waveform_timeline::{set_cursor_position, set_viewport_if_changed, set_ns_per_pixel_if_changed};
+use crate::actors::panel_layout::{set_dock_mode, set_files_panel_width, set_files_panel_height, 
+    set_variables_name_column_width, set_variables_value_column_width};
 use crate::time_types::NsPerPixel;
 use crate::platform::{Platform, CurrentPlatform};
 use shared::{UpMsg, DockMode, FileState, create_tracked_file};
@@ -79,12 +81,9 @@ fn sync_file_management_from_config() {
     
     // Handle SELECTED_VARIABLES (simple replacement - no state preservation needed)
     if !selected_vars.is_empty() {
-        let index: IndexSet<String> = selected_vars.iter()
-            .map(|var| var.unique_id.clone())
-            .collect();
-            
-        SELECTED_VARIABLES.lock_mut().replace_cloned(selected_vars);
-        SELECTED_VARIABLES_INDEX.set_neq(index);
+        // Use domain event to restore variables from config
+        crate::actors::selected_variables::variables_restored_relay().send(selected_vars);
+        // Note: variable_index is managed automatically by the domain
     }
 }
 
@@ -114,9 +113,9 @@ fn sync_ui_state_from_config() {
 
 /// One-shot panel layout sync
 fn sync_panel_layout_from_config() {
-    // Get dock mode and set boolean
+    // Get dock mode and set domain state
     let dock_mode = config_store().workspace.current_value().dock_mode;
-    IS_DOCKED_TO_BOTTOM.set_neq(matches!(dock_mode, DockMode::Bottom));
+    set_dock_mode(dock_mode);
     
     // Load appropriate dimensions for current dock mode
     let workspace = config_store().workspace.current_value();
@@ -139,10 +138,10 @@ fn sync_panel_layout_from_config() {
         }
     };
     
-    FILES_PANEL_WIDTH.set_neq(files_width as u32);
-    FILES_PANEL_HEIGHT.set_neq(files_height as u32);
-    VARIABLES_NAME_COLUMN_WIDTH.set_neq(name_col_width as u32);
-    VARIABLES_VALUE_COLUMN_WIDTH.set_neq(value_col_width as u32);
+    set_files_panel_width(files_width as u32);
+    set_files_panel_height(files_height as u32);
+    set_variables_name_column_width(name_col_width as u32);
+    set_variables_value_column_width(value_col_width as u32);
 }
 
 /// One-shot timeline state sync with NaN validation
@@ -186,7 +185,7 @@ fn sync_session_state_from_config() {
 
 /// One-shot selection state sync
 fn sync_selection_from_config() {
-    // SELECTED_SCOPE_ID
+    // SELECTED_SCOPE_ID - use domain event to restore from config
     let selected_scope_id = config_store().workspace.current_value().selected_scope_id.clone();
-    SELECTED_SCOPE_ID.set_neq(selected_scope_id);
+    crate::actors::selected_variables::scope_selected_relay().send(selected_scope_id);
 }

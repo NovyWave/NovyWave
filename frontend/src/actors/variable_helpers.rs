@@ -42,8 +42,7 @@ pub fn create_selected_variable(
 /// This checks both the legacy global state and domain state during transition
 pub fn _is_variable_selected(unique_id: &str) -> bool {
     // During transition, check the legacy index
-    // This will be updated once SelectedVariables domain bridge is implemented
-    use crate::state::SELECTED_VARIABLES_INDEX;
-    let index = SELECTED_VARIABLES_INDEX.lock_ref();
+    // Use domain synchronous access for variable index
+    let index = crate::actors::selected_variables::current_variable_index();
     index.contains(unique_id)
 }

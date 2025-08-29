@@ -21,8 +21,7 @@ use zoon::{SignalVecExt, MutableExt, MutableVecExt, SignalExt};
 use indexmap::IndexSet;
 use futures::{StreamExt, future::{select, Either}};
 
-/// Static instance for direct signal access (following waveform_timeline pattern)
-static SELECTED_VARIABLES_INSTANCE: std::sync::OnceLock<SelectedVariables> = std::sync::OnceLock::new();
+// Note: Using global_domains SELECTED_VARIABLES_DOMAIN_INSTANCE instead of local static
 
 /// Complete variable selection domain with Actor+Relay architecture.
 /// 
@@ -475,84 +474,151 @@ pub fn tree_selection_changed_relay() -> Relay<IndexSet<String>> {
     selected_variables_domain().tree_selection_changed_relay
 }
 
-// === STATIC INSTANCE INITIALIZATION ===
-
-/// Initialize SelectedVariables static instance (following waveform_timeline pattern)
-pub async fn initialize_selected_variables() -> SelectedVariables {
-    let selected_variables = SelectedVariables::new().await;
-    SELECTED_VARIABLES_INSTANCE.set(selected_variables.clone())
-        .expect("SelectedVariables already initialized - initialize_selected_variables() should only be called once");
-    selected_variables
-}
-
-/// Get the global SelectedVariables instance
-fn get_selected_variables() -> SelectedVariables {
-    SELECTED_VARIABLES_INSTANCE.get()
-        .expect("SelectedVariables not initialized - call initialize_selected_variables() first")
-        .clone()
-}
+// === GLOBAL DOMAINS ACCESS PATTERN ===
+// Note: Initialization handled by global_domains::initialize_all_domains()
+// Signal access uses crate::actors::global_domains::SELECTED_VARIABLES_DOMAIN_INSTANCE
 
 // === PUBLIC SIGNAL ACCESS FUNCTIONS (replace global mutables) ===
 
 /// Get reactive signal for all selected variables → replaces SELECTED_VARIABLES.signal_vec_cloned()
 pub fn variables_signal() -> impl zoon::Signal<Item = Vec<SelectedVariable>> {
-    SELECTED_VARIABLES_INSTANCE.get()
-        .expect("SelectedVariables not initialized")
-        .variables_signal()
+    crate::actors::global_domains::SELECTED_VARIABLES_DOMAIN_INSTANCE.get()
+        .map(|domain| domain.variables.signal_vec().to_signal_cloned())
+        .unwrap_or_else(|| {
+            zoon::eprintln!("⚠️ SelectedVariables domain not initialized, returning empty signal");
+            zoon::always(Vec::new())
+        })
 }
 
 /// Get reactive signal vec for all selected variables → replaces SELECTED_VARIABLES.signal_vec_cloned()
 pub fn variables_signal_vec() -> impl zoon::SignalVec<Item = SelectedVariable> {
-    SELECTED_VARIABLES_INSTANCE.get()
-        .expect("SelectedVariables not initialized")
-        .variables_signal_vec()
+    crate::actors::global_domains::SELECTED_VARIABLES_DOMAIN_INSTANCE.get()
+        .map(|domain| domain.variables.signal_vec())
+        .unwrap_or_else(|| {
+            zoon::eprintln!("⚠️ SelectedVariables domain not initialized, returning empty signal vec");
+            zoon::MutableVec::new().signal_vec()
+        })
 }
 
 /// Get reactive signal for variable index → replaces SELECTED_VARIABLES_INDEX.signal()
 pub fn variable_index_signal() -> impl zoon::Signal<Item = IndexSet<String>> {
-    SELECTED_VARIABLES_INSTANCE.get()
-        .expect("SelectedVariables not initialized")
-        .variable_index_signal()
+    crate::actors::global_domains::SELECTED_VARIABLES_DOMAIN_INSTANCE.get()
+        .map(|domain| domain.variable_index.signal())
+        .unwrap_or_else(|| {
+            zoon::eprintln!("⚠️ SelectedVariables domain not initialized, returning empty index signal");
+            zoon::always(IndexSet::new())
+        })
 }
 
 /// Get reactive signal for selected scope → replaces SELECTED_SCOPE_ID.signal()
 pub fn selected_scope_signal() -> impl zoon::Signal<Item = Option<String>> {
-    SELECTED_VARIABLES_INSTANCE.get()
-        .expect("SelectedVariables not initialized")
-        .selected_scope_signal()
+    crate::actors::global_domains::SELECTED_VARIABLES_DOMAIN_INSTANCE.get()
+        .map(|domain| domain.selected_scope.signal())
+        .unwrap_or_else(|| {
+            zoon::eprintln!("⚠️ SelectedVariables domain not initialized, returning None scope signal");
+            zoon::always(None)
+        })
 }
 
 /// Get reactive signal for tree selection → replaces TREE_SELECTED_ITEMS.signal()
 pub fn tree_selection_signal() -> impl zoon::Signal<Item = IndexSet<String>> {
-    SELECTED_VARIABLES_INSTANCE.get()
-        .expect("SelectedVariables not initialized")
-        .tree_selection_signal()
+    crate::actors::global_domains::SELECTED_VARIABLES_DOMAIN_INSTANCE.get()
+        .map(|domain| domain.tree_selection.signal())
+        .unwrap_or_else(|| {
+            zoon::eprintln!("⚠️ SelectedVariables domain not initialized, returning empty tree selection signal");
+            zoon::always(IndexSet::new())
+        })
 }
 
 /// Get reactive signal for user cleared flag → replaces USER_CLEARED_SELECTION.signal()
 pub fn user_cleared_signal() -> impl zoon::Signal<Item = bool> {
-    SELECTED_VARIABLES_INSTANCE.get()
-        .expect("SelectedVariables not initialized")
-        .user_cleared_signal()
+    crate::actors::global_domains::SELECTED_VARIABLES_DOMAIN_INSTANCE.get()
+        .map(|domain| domain.user_cleared.signal())
+        .unwrap_or_else(|| {
+            zoon::eprintln!("⚠️ SelectedVariables domain not initialized, returning false user cleared signal");
+            zoon::always(false)
+        })
 }
 
 /// Get reactive signal for expanded scopes → replaces EXPANDED_SCOPES.signal()
 pub fn expanded_scopes_signal() -> impl zoon::Signal<Item = IndexSet<String>> {
-    SELECTED_VARIABLES_INSTANCE.get()
-        .expect("SelectedVariables not initialized")
-        .expanded_scopes_signal()
+    crate::actors::global_domains::SELECTED_VARIABLES_DOMAIN_INSTANCE.get()
+        .map(|domain| domain.expanded_scopes.signal())
+        .unwrap_or_else(|| {
+            zoon::eprintln!("⚠️ SelectedVariables domain not initialized, returning empty expanded scopes signal");
+            zoon::always(IndexSet::new())
+        })
 }
 
 /// Get reactive signal for search filter → replaces VARIABLES_SEARCH_FILTER.signal()
 pub fn search_filter_signal() -> impl zoon::Signal<Item = String> {
-    SELECTED_VARIABLES_INSTANCE.get()
-        .expect("SelectedVariables not initialized")
-        .search_filter_signal()
+    crate::actors::global_domains::SELECTED_VARIABLES_DOMAIN_INSTANCE.get()
+        .map(|domain| domain.search_filter.signal())
+        .unwrap_or_else(|| {
+            zoon::eprintln!("⚠️ SelectedVariables domain not initialized, returning empty search filter signal");
+            zoon::always(String::new())
+        })
 }
 
 /// Get reactive signal for search focus → replaces VARIABLES_SEARCH_INPUT_FOCUSED.signal()
 pub fn search_focused_signal() -> impl zoon::Signal<Item = bool> {
-    SELECTED_VARIABLES_INSTANCE.get()
-        .expect("SelectedVariables not initialized")
-        .search_focused_signal()
+    crate::actors::global_domains::SELECTED_VARIABLES_DOMAIN_INSTANCE.get()
+        .map(|domain| domain.search_focused.signal())
+        .unwrap_or_else(|| {
+            zoon::eprintln!("⚠️ SelectedVariables domain not initialized, returning false search focused signal");
+            zoon::always(false)
+        })
 }
+
+// === SYNCHRONOUS ACCESS FUNCTIONS (for non-reactive contexts) ===
+
+/// Get current selected variables (synchronous access for legacy functions)
+pub fn current_variables() -> Vec<SelectedVariable> {
+    crate::actors::global_domains::SELECTED_VARIABLES_DOMAIN_INSTANCE.get()
+        .map(|domain| domain.variables.current_value())
+        .unwrap_or_else(|| {
+            zoon::eprintln!("⚠️ SelectedVariables domain not initialized, returning empty vec");
+            Vec::new()
+        })
+}
+
+/// Get current expanded scopes (synchronous access for legacy functions) 
+pub fn current_expanded_scopes() -> IndexSet<String> {
+    crate::actors::global_domains::SELECTED_VARIABLES_DOMAIN_INSTANCE.get()
+        .map(|domain| domain.expanded_scopes.current_value())
+        .unwrap_or_else(|| {
+            zoon::eprintln!("⚠️ SelectedVariables domain not initialized, returning empty expanded scopes");
+            IndexSet::new()
+        })
+}
+
+/// Get current selected scope (synchronous access for legacy functions)
+pub fn current_selected_scope() -> Option<String> {
+    crate::actors::global_domains::SELECTED_VARIABLES_DOMAIN_INSTANCE.get()
+        .map(|domain| domain.selected_scope.current_value())
+        .unwrap_or_else(|| {
+            zoon::eprintln!("⚠️ SelectedVariables domain not initialized, returning None selected scope");
+            None
+        })
+}
+
+/// Get current search filter (synchronous access for legacy functions)
+pub fn current_search_filter() -> String {
+    crate::actors::global_domains::SELECTED_VARIABLES_DOMAIN_INSTANCE.get()
+        .map(|domain| domain.search_filter.current_value())
+        .unwrap_or_else(|| {
+            zoon::eprintln!("⚠️ SelectedVariables domain not initialized, returning empty search filter");
+            String::new()
+        })
+}
+
+/// Get current variable index (synchronous access for legacy functions)
+pub fn current_variable_index() -> IndexSet<String> {
+    crate::actors::global_domains::SELECTED_VARIABLES_DOMAIN_INSTANCE.get()
+        .map(|domain| domain.variable_index.current_value())
+        .unwrap_or_else(|| {
+            zoon::eprintln!("⚠️ SelectedVariables domain not initialized, returning empty variable index");
+            IndexSet::new()
+        })
+}
+

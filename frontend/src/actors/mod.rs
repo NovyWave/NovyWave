@@ -51,7 +51,6 @@ pub mod dialog_manager;
 pub mod error_manager;
 pub mod config_sync;
 pub mod global_domains;
-pub mod domain_bridges;
 pub mod variable_helpers;
 pub mod naming_validation;
 pub mod testing;
@@ -59,11 +58,18 @@ pub use tracked_files::{TrackedFiles};
 pub use selected_variables::{SelectedVariables};
 pub use waveform_timeline::{WaveformTimeline};
 pub use user_configuration::{UserConfiguration};
+pub use panel_layout::{PanelLayout};
+pub use dialog_manager::{DialogManager};
+pub use error_manager::{ErrorManager};
 pub use global_domains::{
     initialize_all_domains, 
     tracked_files_domain, 
     selected_variables_domain,
-    waveform_timeline_domain
+    waveform_timeline_domain,
+    // Domain signal functions (only used ones)
+    tracked_files_signal,
+    tracked_files_signal_vec,
+    file_count_signal,
+    loaded_files_count_signal
 };
-pub use domain_bridges::initialize_domain_bridges;
 pub use variable_helpers::{create_selected_variable};

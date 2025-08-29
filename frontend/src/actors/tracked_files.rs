@@ -439,14 +439,13 @@ static _TRACKED_FILES_INSTANCE: std::sync::OnceLock<TrackedFiles> = std::sync::O
 /// Initialize the TrackedFiles domain (call once on app startup)
 pub async fn _initialize_tracked_files() -> TrackedFiles {
     let tracked_files = TrackedFiles::new().await;
-    _TRACKED_FILES_INSTANCE.set(tracked_files.clone())
-        .expect("TrackedFiles already initialized - initialize_tracked_files() should only be called once");
+    if let Err(_) = _TRACKED_FILES_INSTANCE.set(tracked_files.clone()) {
+        zoon::eprintln!("⚠️ TrackedFiles already initialized - ignoring duplicate initialization");
+    }
     tracked_files
 }
 
 /// Get the global TrackedFiles instance
-pub fn _get_tracked_files() -> TrackedFiles {
-    _TRACKED_FILES_INSTANCE.get()
-        .expect("TrackedFiles not initialized - call initialize_tracked_files() first")
-        .clone()
+pub fn _get_tracked_files() -> Option<TrackedFiles> {
+    _TRACKED_FILES_INSTANCE.get().map(|files| files.clone())
 }

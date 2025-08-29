@@ -9,13 +9,7 @@ theme = "dark"
 toast_dismiss_ms = 10000
 
 [workspace]
-opened_files = [
-    "/home/martinkavik/repos/NovyWave/test_files/simple.vcd",
-    "/home/martinkavik/repos/NovyWave/test_files/complex.vcd",
-    "/home/martinkavik/repos/NovyWave/test_files/big_3_GB.vcd",
-    "/home/martinkavik/repos/NovyWave/test_files/stress_test.vcd",
-    "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst",
-]
+opened_files = []
 dock_mode = "bottom"
 expanded_scopes = [
     "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst",
@@ -37,8 +31,8 @@ load_files_expanded_directories = [
     "/home/martinkavik/repos/NovyWave/test_files/nested_dir",
 ]
 selected_scope_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv"
-load_files_scroll_position = 992
-timeline_cursor_position_ns = 0
+load_files_scroll_position = 0
+timeline_cursor_position_ns = 10000000000
 timeline_zoom_level = 1.0
 timeline_visible_range_start_ns = 0
 timeline_visible_range_end_ns = 100000000000
@@ -47,7 +41,7 @@ timeline_visible_range_end_ns = 100000000000
 files_and_scopes_panel_width = 470.0
 files_and_scopes_panel_height = 479.0
 selected_variables_panel_name_column_width = 222.0
-selected_variables_panel_value_column_width = 222.0
+selected_variables_panel_value_column_width = 100.0
 
 [workspace.docked_right_dimensions]
 files_and_scopes_panel_width = 216.0

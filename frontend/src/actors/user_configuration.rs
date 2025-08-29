@@ -398,15 +398,14 @@ static _USER_CONFIGURATION_INSTANCE: std::sync::OnceLock<UserConfiguration> = st
 #[allow(dead_code)]
 pub async fn initialize_user_configuration() -> UserConfiguration {
     let user_configuration = UserConfiguration::new().await;
-    _USER_CONFIGURATION_INSTANCE.set(user_configuration.clone())
-        .expect("UserConfiguration already initialized - initialize_user_configuration() should only be called once");
+    if let Err(_) = _USER_CONFIGURATION_INSTANCE.set(user_configuration.clone()) {
+        zoon::eprintln!("⚠️ UserConfiguration already initialized - ignoring duplicate initialization");
+    }
     user_configuration
 }
 
 /// Get the global UserConfiguration instance
 #[allow(dead_code)]
-pub fn get_user_configuration() -> UserConfiguration {
-    _USER_CONFIGURATION_INSTANCE.get()
-        .expect("UserConfiguration not initialized - call initialize_user_configuration() first")
-        .clone()
+pub fn get_user_configuration() -> Option<UserConfiguration> {
+    _USER_CONFIGURATION_INSTANCE.get().map(|config| config.clone())
 }

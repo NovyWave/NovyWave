@@ -7,9 +7,11 @@ use shared::UpMsg;
 pub use shared::{Theme, DockMode}; // Re-export for frontend usage
 use crate::CONFIG_INITIALIZATION_COMPLETE;
 use crate::dataflow::Atom;
-use crate::actors::domain_bridges::{get_cached_cursor_position, get_cached_viewport, viewport_signal,
-    get_cached_ns_per_pixel, ns_per_pixel_signal};
+use crate::actors::waveform_timeline::{current_cursor_position, current_viewport, viewport_signal,
+    current_ns_per_pixel, ns_per_pixel_signal};
 use crate::actors::global_domains::waveform_timeline_domain;
+use crate::actors::panel_layout::{files_panel_width_signal, files_panel_height_signal, 
+    variables_name_column_width_signal, variables_value_column_width_signal};
 use crate::time_types::{NsPerPixel, TimeNs};
 
 // Reactive triggers module
@@ -730,19 +732,19 @@ fn save_config_immediately() {
             selected_variables: serializable_config.workspace.selected_variables,
             // New nanosecond fields
             timeline_cursor_position_ns: {
-                let cursor_ns = get_cached_cursor_position();
+                let cursor_ns = current_cursor_position();
                 cursor_ns.nanos()
             },
             timeline_visible_range_start_ns: {
-                let viewport = get_cached_viewport();
+                let viewport = current_viewport();
                 Some(viewport.start.nanos())
             },
             timeline_visible_range_end_ns: {
-                let viewport = get_cached_viewport();
+                let viewport = current_viewport();
                 Some(viewport.end.nanos())
             },
             timeline_zoom_level: {
-                let ns_per_pixel = get_cached_ns_per_pixel();
+                let ns_per_pixel = current_ns_per_pixel();
                 // Convert NsPerPixel to normalized factor for config storage
                 let factor = (NsPerPixel::LOW_ZOOM.nanos() as f64 / ns_per_pixel.nanos() as f64).clamp(0.0, 1.0);
                 factor as f32
@@ -1091,7 +1093,7 @@ pub fn setup_reactive_config_persistence() {
 
     // Observe panel dimensions back to config when UI updates them  
     Task::start(async {
-        FILES_PANEL_WIDTH.signal().for_each(|width| async move {
+        files_panel_width_signal().for_each(|width| async move {
             if CONFIG_INITIALIZATION_COMPLETE.get() {
                 let mut workspace = config_store().workspace.current_value();
                 let dock_mode = workspace.dock_mode;
@@ -1111,7 +1113,7 @@ pub fn setup_reactive_config_persistence() {
     });
 
     Task::start(async {
-        FILES_PANEL_HEIGHT.signal().for_each(|height| async move {
+        files_panel_height_signal().for_each(|height| async move {
             if CONFIG_INITIALIZATION_COMPLETE.get() {
                 let mut workspace = config_store().workspace.current_value();
                 let dock_mode = workspace.dock_mode;
@@ -1132,7 +1134,7 @@ pub fn setup_reactive_config_persistence() {
 
     // Observe column widths and update config when user drags dividers
     Task::start(async {
-        VARIABLES_NAME_COLUMN_WIDTH.signal().for_each(|width| async move {
+        variables_name_column_width_signal().for_each(|width| async move {
             if CONFIG_INITIALIZATION_COMPLETE.get() {
                 let mut workspace = config_store().workspace.current_value();
                 let dock_mode = workspace.dock_mode;
@@ -1152,7 +1154,7 @@ pub fn setup_reactive_config_persistence() {
     });
 
     Task::start(async {
-        VARIABLES_VALUE_COLUMN_WIDTH.signal().for_each(|width| async move {
+        variables_value_column_width_signal().for_each(|width| async move {
             if CONFIG_INITIALIZATION_COMPLETE.get() {
                 let mut workspace = config_store().workspace.current_value();
                 let dock_mode = workspace.dock_mode;

@@ -38,17 +38,15 @@ use views::*;
 
 mod state;
 use state::*;
-use actors::domain_bridges::{get_cached_cursor_position_seconds, get_cached_viewport};
-use actors::waveform_timeline_domain;
-use actors::selected_variables::{variables_signal, tree_selection_signal, selected_scope_signal, expanded_scopes_signal};
+use actors::waveform_timeline::{current_viewport};
 use actors::panel_layout::{
     files_width_signal, files_height_signal, vertical_dragging_signal, horizontal_dragging_signal,
     name_divider_dragging_signal, value_divider_dragging_signal, docked_to_bottom_signal,
     vertical_divider_dragged_relay, horizontal_divider_dragged_relay,
     name_divider_dragged_relay, value_divider_dragged_relay,
-    mouse_moved_relay
+    mouse_moved_relay, is_dock_transitioning
 };
-use actors::dialog_manager::{file_dialog_open_signal};
+use actors::dialog_manager::{dialog_visible_signal, file_picker_selected_signal};
 pub use state::CONFIG_INITIALIZATION_COMPLETE;
 
 
@@ -66,187 +64,7 @@ mod error_ui;
 use error_ui::*;
 
 
-fn init_timeline_signal_handlers() {
-    // Enhanced timeline cursor signal handler that directly calls SignalDataService
-    // This extends the existing cursor handling with direct service integration
-    
-    Task::start(async {
-        // Track last cursor position and request time to avoid duplicate requests
-        let last_position = Mutable::new(0.0);
-        let last_request_time = Mutable::new(0.0);
-        
-        
-        // Monitor timeline cursor position changes with intelligent debouncing
-        waveform_timeline_domain().cursor_position_seconds_signal().for_each_sync(move |cursor_pos| {
-            let last_position_clone = last_position.clone();
-            let last_request_time_clone = last_request_time.clone();
-            
-            let old_pos = last_position_clone.get();
-            let position_delta = (cursor_pos - old_pos).abs();
-            
-            // Skip if position hasn't changed significantly (avoid noise)
-            if position_delta < 0.0000001 { // Ultra-low threshold for microsecond-level changes (0.1μs)
-                return;
-            }
-            
-            
-            // Skip during active cursor movement to prevent excessive requests
-            let is_moving = crate::state::IS_CURSOR_MOVING_LEFT.get() || crate::state::IS_CURSOR_MOVING_RIGHT.get();
-            
-            if !is_moving {
-                // Simple time-based debouncing using js_sys::Date::now()
-                let current_time = js_sys::Date::now();
-                let time_since_last = current_time - last_request_time_clone.get();
-                
-                // Only proceed if enough time has passed (300ms debounce)
-                if time_since_last >= 300.0 {
-                    
-                    // TODO: Fix Actor+Relay API - .sample() method doesn't exist
-                    // For now, comment out until proper reactive approach implemented
-                    // let selected_vars = crate::actors::selected_variables_domain().variables_signal().sample();
-                    
-                    // Temporarily use the old approach until migration is complete
-                    let selected_vars = crate::state::SELECTED_VARIABLES.lock_ref();
-                    if !selected_vars.is_empty() {
-                            
-                            // Create signal requests for direct SignalDataService call
-                            let signal_requests: Vec<crate::unified_timeline_service::SignalRequest> = selected_vars
-                            .iter()
-                            .filter_map(|var| {
-                                // Parse unique_id: "/path/file.ext|scope|variable"
-                                let parts: Vec<&str> = var.unique_id.split('|').collect();
-                                if parts.len() != 3 {
-                                    return None;
-                                }
-                                
-                                Some(crate::unified_timeline_service::SignalRequest {
-                                    file_path: parts[0].to_string(),
-                                    scope_path: parts[1].to_string(),  
-                                    variable_name: parts[2].to_string(),
-                                    time_range_ns: None, // Point query for cursor position
-                                    max_transitions: None, // Use service defaults
-                                    format: var.formatter.unwrap_or_default(), // Use VarFormat default
-                                })
-                            })
-                            .collect();
-                        
-                            if !signal_requests.is_empty() {
-                                
-                                // Convert to signal IDs and request cursor values
-                                let signal_ids: Vec<String> = signal_requests.iter()
-                                    .map(|req| format!("{}|{}|{}", req.file_path, req.scope_path, req.variable_name))
-                                    .collect();
-                                let cursor_time_ns = crate::time_types::TimeNs::from_nanos((cursor_pos * 1_000_000_000.0) as u64);
-                                crate::unified_timeline_service::UnifiedTimelineService::request_cursor_values(signal_ids, cursor_time_ns);
-                                
-                                // Update last request time
-                                last_request_time_clone.set(current_time);
-                            }
-                        }
-                    }
-                }
-            
-            // Always update last position
-            last_position_clone.set(cursor_pos);
-        }).await;
-    });
-}
 
-/// Initialize reactive handlers that bridge SelectedVariables domain to SignalDataService
-/// This ensures that when variables are added/removed, SignalDataService is automatically updated
-fn init_selected_variables_signal_service_bridge() {
-    
-    Task::start(async {
-        // Track previous state to detect additions and removals
-        let previous_vars: Mutable<Vec<shared::SelectedVariable>> = Mutable::new(Vec::new());
-        
-        // Use SelectedVariables Actor+Relay signal instead of global mutable
-        variables_signal().for_each(move |current_vars| {
-            let previous_vars = previous_vars.clone();
-            async move {
-                // Only process changes after config initialization is complete
-                if !CONFIG_LOADED.get() || IS_LOADING.get() {
-                    return;
-                }
-                
-                let current_count = current_vars.len();
-                let previous_state = previous_vars.get_cloned();
-                
-                
-                if current_count > 0 {
-                    // Identify removed variables for targeted cleanup
-                    let previous_ids: std::collections::HashSet<String> = previous_state
-                        .iter()
-                        .map(|var| var.unique_id.clone())
-                        .collect();
-                        
-                    let current_ids: std::collections::HashSet<String> = current_vars
-                        .iter()
-                        .map(|var| var.unique_id.clone())
-                        .collect();
-                    
-                    // Find removed variables
-                    let removed_ids: Vec<String> = previous_ids
-                        .difference(&current_ids)
-                        .cloned()
-                        .collect();
-                    
-                    // Find added variables  
-                    let added_ids: Vec<String> = current_ids
-                        .difference(&previous_ids)
-                        .cloned()
-                        .collect();
-                    
-                    if !removed_ids.is_empty() {
-                        crate::unified_timeline_service::UnifiedTimelineService::cleanup_variables(&removed_ids);
-                    }
-                    
-                    if !added_ids.is_empty() || (!removed_ids.is_empty() && current_count > 0) {
-                        // Variables were added OR some removed but others remain - request data for current variables
-                        let current_cursor = get_cached_cursor_position_seconds();
-                        
-                        // Create signal requests for all currently selected variables  
-                        let signal_requests: Vec<crate::unified_timeline_service::SignalRequest> = current_vars
-                            .iter()
-                            .filter_map(|var| {
-                                // Parse unique_id: "/path/file.ext|scope|variable"
-                                let parts: Vec<&str> = var.unique_id.split('|').collect();
-                                if parts.len() != 3 {
-                                    return None;
-                                }
-                                
-                                Some(crate::unified_timeline_service::SignalRequest {
-                                    file_path: parts[0].to_string(),
-                                    scope_path: parts[1].to_string(),  
-                                    variable_name: parts[2].to_string(),
-                                    time_range_ns: None, // Point query at current cursor position
-                                    max_transitions: None, // Use service defaults
-                                    format: var.formatter.unwrap_or_default(), // Use VarFormat default
-                                })
-                            })
-                            .collect();
-                        
-                        if !signal_requests.is_empty() {
-                            if !added_ids.is_empty() {
-                            }
-                            
-                            // Convert to signal IDs and request cursor values  
-                            let signal_ids: Vec<String> = signal_requests.iter()
-                                .map(|req| format!("{}|{}|{}", req.file_path, req.scope_path, req.variable_name))
-                                .collect();
-                            let cursor_time_ns = crate::time_types::TimeNs::from_nanos((current_cursor * 1_000_000_000.0) as u64);
-                            crate::unified_timeline_service::UnifiedTimelineService::request_cursor_values(signal_ids, cursor_time_ns);
-                        } else {
-                        }
-                    }
-                }
-                
-                // Update previous state for next comparison
-                previous_vars.set_neq(current_vars);
-            }
-        }).await;
-    });
-}
 
 /// Entry point: loads fonts and starts the app.
 pub fn main() {
@@ -254,13 +72,31 @@ pub fn main() {
         load_and_register_fonts().await;
         
         // Initialize Actor+Relay domain instances  
-        crate::actors::initialize_all_domains().await;
+        if let Err(error_msg) = crate::actors::initialize_all_domains().await {
+            zoon::println!("🚨 DOMAIN INITIALIZATION FAILED: {}", error_msg);
+            panic!("Domain initialization failed - application cannot continue: {}", error_msg);
+        }
         
-        // Initialize bridges between domains and legacy global state
-        crate::actors::initialize_domain_bridges().await;
+        // Add delay to ensure domain storage is visible across async boundaries before any access
+        Timer::sleep(100).await;
         
-        // Initialize scope selection handling
-        init_scope_selection_handlers();
+        // Verify domains are actually accessible before starting UI
+        if !crate::actors::global_domains::_are_domains_initialized() {
+            zoon::println!("🚨 CRITICAL: Domains not accessible after delay - extending wait");
+            Timer::sleep(500).await;
+        }
+        
+        // TEMPORARILY DISABLED: Value caching initialization causing startup panics
+        // crate::actors::waveform_timeline::initialize_value_caching();  // ❌ Calls domain functions before domains ready
+        
+        // TEMPORARILY DISABLED: Scope selection handlers causing startup race conditions
+        // if crate::actors::global_domains::_are_domains_initialized() {
+        //     zoon::println!("🔄 Initializing scope selection handlers after domain verification");
+        //     init_scope_selection_handlers();  // ❌ Calls domain functions before domains ready
+        // } else {
+        //     zoon::println!("⚠️ Domains not initialized after delay - skipping scope selection handlers");
+        // }
+        zoon::println!("⚠️ DISABLED: init_scope_selection_handlers() - prevents startup race conditions");
         
         // Initialize file picker directory browsing
         init_file_picker_handlers();
@@ -269,11 +105,11 @@ pub fn main() {
         init_signal_chains();
         
         
-        // Initialize timeline cursor signal value queries
-        init_timeline_signal_handlers();
+        // TEMPORARILY DISABLED: Timeline signal handlers causing startup race conditions
+        // init_timeline_signal_handlers();  // ❌ Calls waveform_timeline_domain() before domains ready
         
-        // Initialize SELECTED_VARIABLES -> SignalDataService bridge
-        init_selected_variables_signal_service_bridge();
+        // TEMPORARILY DISABLED: Selected variables signal service bridge causing startup race conditions
+        // init_selected_variables_signal_service_bridge();  // ❌ Calls variables_signal() before domains ready
         
         // Initialize error display system
         init_error_display_system();
@@ -340,45 +176,47 @@ pub fn main() {
             }).await
         });
         
-        // Query signal values when cursor movement stops (listen to movement flags directly)
-        Task::start(async {
-            let was_moving = Mutable::new(false);
-            
-            // Listen to movement flags directly instead of cursor position changes
-            let movement_signal = map_ref! {
-                let left = crate::state::IS_CURSOR_MOVING_LEFT.signal(),
-                let right = crate::state::IS_CURSOR_MOVING_RIGHT.signal() =>
-                *left || *right
-            };
-            
-            movement_signal.for_each_sync(move |is_moving| {
-                if is_moving {
-                    // Movement started - just track state, don't query
-                    was_moving.set(true);
-                } else if was_moving.get() {
-                    // Movement just stopped - use unified caching logic with built-in range checking
-                    was_moving.set(false);
-                    crate::views::trigger_signal_value_queries();
-                }
-            }).await;
-        });
+        // TEMPORARILY DISABLED: Query signal values when cursor movement stops
+        // Disabled to prevent startup panics from domain access race conditions
+        // Task::start(async {
+        //     let was_moving = Mutable::new(false);
+        //     
+        //     // Listen to movement flags directly instead of cursor position changes
+        //     let movement_signal = map_ref! {
+        //         let left = crate::actors::waveform_timeline::is_cursor_moving_left_signal(),  // ❌ Calls domain before ready
+        //         let right = crate::actors::waveform_timeline::is_cursor_moving_right_signal() =>  // ❌ Calls domain before ready
+        //         *left || *right
+        //     };
+        //     
+        //     movement_signal.for_each_sync(move |is_moving| {
+        //         if is_moving {
+        //             // Movement started - just track state, don't query
+        //             was_moving.set(true);
+        //         } else if was_moving.get() {
+        //             // Movement just stopped - use unified caching logic with built-in range checking
+        //             was_moving.set(false);
+        //             crate::views::trigger_signal_value_queries();
+        //         }
+        //     }).await;
+        // });
         
-        // Separate handler for direct cursor position changes (mouse clicks)
-        Task::start(async {
-            let last_position = Mutable::new(0.0);
-            
-            waveform_timeline_domain().cursor_position_seconds_signal().for_each_sync(move |cursor_pos| {
-                let is_moving = crate::state::IS_CURSOR_MOVING_LEFT.get() || crate::state::IS_CURSOR_MOVING_RIGHT.get();
-                
-                // Only query for direct position changes (not during Q/E movement)
-                if !is_moving && (cursor_pos - last_position.get()).abs() > 0.001 {
-                    // Use the unified caching logic with built-in range checking
-                    crate::views::trigger_signal_value_queries();
-                }
-                
-                last_position.set(cursor_pos);
-            }).await;
-        });
+        // TEMPORARILY DISABLED: Direct cursor position handler causing startup race conditions
+        // Task::start(async {
+        //     let last_position = Mutable::new(0.0);
+        //     
+        //     waveform_timeline_domain().cursor_position_seconds_signal().for_each_sync(move |cursor_pos| {  // ❌ Calls domain before ready
+        //         // TODO: Replace with domain signal when uncommenting
+        //         let is_moving = crate::state::IS_CURSOR_MOVING_LEFT.get() || crate::state::IS_CURSOR_MOVING_RIGHT.get();
+        //         
+        //         // Only query for direct position changes (not during Q/E movement)
+        //         if !is_moving && (cursor_pos - last_position.get()).abs() > 0.001 {
+        //             // Use the unified caching logic with built-in range checking
+        //             crate::views::trigger_signal_value_queries();
+        //         }
+        //         
+        //         last_position.set(cursor_pos);
+        //     }).await;
+        // });
     });
 }
 
@@ -386,7 +224,7 @@ pub fn main() {
 
 /// Check if cursor is within the currently visible timeline range
 pub fn is_cursor_in_visible_range(cursor_time: f64) -> bool {
-    let viewport = get_cached_viewport();
+    let viewport = current_viewport();
     let cursor_ns = crate::time_types::TimeNs::from_nanos((cursor_time * 1_000_000_000.0) as u64);
     viewport.contains(cursor_ns)
 }
@@ -394,66 +232,11 @@ pub fn is_cursor_in_visible_range(cursor_time: f64) -> bool {
 
 
 
-fn init_scope_selection_handlers() {
-    Task::start(async {
-        tree_selection_signal().for_each_sync(|selected_items| {
-            // Find the first selected scope (not a file)
-            // Files are tracked in TRACKED_FILE_IDS cache, scopes are not
-            if let Some(tree_id) = selected_items.iter().find(|id| {
-                // Check if this ID is NOT a tracked file ID - use cache to prevent recursive locking
-                !TRACKED_FILE_IDS.lock_ref().contains(*id)
-            }) {
-                // Convert TreeView scope ID back to original scope ID
-                let scope_id = if tree_id.starts_with("scope_") {
-                    tree_id.strip_prefix("scope_").unwrap_or(tree_id).to_string()
-                } else {
-                    tree_id.clone()
-                };
-                
-                // Send events through SelectedVariables domain
-                use actors::selected_variables::{scope_selected_relay};
-                scope_selected_relay().send(Some(scope_id));
-            } else {
-                // No scope selected - clear scope selection through domain
-                use actors::selected_variables::{scope_selected_relay};
-                scope_selected_relay().send(None);
-            }
-        }).await
-    });
-    
-    // Auto-save when selected scope changes
-    Task::start(async {
-        selected_scope_signal().for_each_sync(|_| {
-            if CONFIG_LOADED.get() && !DOCK_TOGGLE_IN_PROGRESS.get() {
-                config::save_scope_selection();
-            }
-        }).await
-    });
-    
-    // Auto-save when expanded scopes change
-    Task::start(async {
-        expanded_scopes_signal().for_each_sync(|_expanded_scopes| {
-            if CONFIG_LOADED.get() && !DOCK_TOGGLE_IN_PROGRESS.get() {
-                config::save_scope_selection();
-            }
-        }).await
-    });
-    
-    // Auto-query signal values when selected variables change
-    Task::start(async {
-        variables_signal().for_each(move |_| async move {
-            if CONFIG_LOADED.get() && !IS_LOADING.get() {
-                // Variable selection changed - use unified caching logic
-                crate::views::trigger_signal_value_queries();
-            }
-        }).await
-    });
-}
 
 fn init_file_picker_handlers() {
     // Watch for file selection events (double-click to browse directories)
     Task::start(async {
-        FILE_PICKER_SELECTED.signal_vec_cloned().for_each(|_| async move {
+        file_picker_selected_signal().for_each(|_| async move {
             // Simple approach: For now, we'll implement manual directory browsing
             // via the breadcrumb navigation rather than automatic expansion
             // This avoids the complexity of tracking which directories have been loaded
@@ -544,7 +327,7 @@ fn root() -> impl Element {
         .s(Background::new().color_signal(neutral_1()))
         .s(Font::new().family([FontFamily::new("Inter"), FontFamily::new("system-ui"), FontFamily::new("Segoe UI"), FontFamily::new("Arial"), FontFamily::SansSerif]))
         .layer(main_layout())
-        .layer_signal(file_dialog_open_signal().map_true(
+        .layer_signal(dialog_visible_signal().map_true(
             || file_paths_dialog()
         ))
         .layer(toast_notifications_container())
@@ -606,7 +389,7 @@ fn main_layout() -> impl Element {
             
             // TODO: Handle config saving when layout changes
             // This was previously done inline but should be handled via actor signals
-            if CONFIG_LOADED.get() && !DOCK_TOGGLE_IN_PROGRESS.get() {
+            if CONFIG_LOADED.get() && !is_dock_transitioning() {
                 // Check if any divider is dragging before saving
                 // This could be improved by making the actor handle config saving
                 config::save_panel_layout();

@@ -11,21 +11,56 @@ use crate::virtual_list::virtual_variables_list;
 use crate::config;
 use std::collections::{HashSet, HashMap};
 use crate::{
-    IS_DOCKED_TO_BOTTOM, FILES_PANEL_HEIGHT,
-    SHOW_FILE_DIALOG, IS_LOADING,
+    IS_LOADING,
     LOADED_FILES, SELECTED_SCOPE_ID,
-    FILE_PATHS, show_file_paths_dialog, LOAD_FILES_VIEWPORT_Y,
-    FILE_PICKER_EXPANDED, FILE_PICKER_SELECTED,
-    FILE_PICKER_ERROR, FILE_PICKER_ERROR_CACHE, FILE_TREE_CACHE, DOCK_TOGGLE_IN_PROGRESS,
+    FILE_PATHS, show_file_paths_dialog, FILE_TREE_CACHE,
     TRACKED_FILES, state, clipboard
 };
-use crate::actors::domain_bridges::{ns_per_pixel_signal, cursor_position_signal};
+use crate::actors::waveform_timeline::{ns_per_pixel_signal, cursor_position_seconds_signal};
 use crate::state::SELECTED_VARIABLES_ROW_HEIGHT;
 use crate::actors::selected_variables::{variables_signal, variables_signal_vec, selected_scope_signal, search_filter_signal, search_filter_changed_relay, search_focus_changed_relay};
-use crate::actors::panel_layout::{name_column_width_signal, value_column_width_signal, name_divider_dragging_signal, value_divider_dragging_signal};
+use crate::actors::panel_layout::{
+    name_column_width_signal, value_column_width_signal, name_divider_dragging_signal, value_divider_dragging_signal,
+    files_panel_height_signal, dock_mode_signal, toggle_dock_mode
+};
+use crate::actors::dialog_manager::{
+    close_file_dialog, file_picker_selected_signal, file_picker_expanded_signal,
+    file_picker_error_cache_signal, change_files_selection,
+    change_dialog_viewport, current_dialog_visible, current_selected_files
+};
 use crate::format_utils::truncate_value;
 
-/// Get signal type information for a selected variable
+/// Get signal type information for a selected variable (signal-based version)
+fn get_signal_type_for_selected_variable_from_files(selected_var: &SelectedVariable, files: &[TrackedFile]) -> String {
+    // Parse the unique_id to get file_path, scope_path, and variable_name
+    if let Some((file_path, scope_path, variable_name)) = selected_var.parse_unique_id() {
+        // Find the corresponding file by path and check if it's loaded
+        for tracked_file in files.iter() {
+            // Match by file path (tracked_file.path is the file path)
+            if tracked_file.path == file_path {
+                if let FileState::Loaded(waveform_file) = &tracked_file.state {
+                    // The scope IDs in waveform_file include the full file path prefix
+                    // We need to construct the full scope ID to match what's stored
+                    let full_scope_id = format!("{}|{}", file_path, scope_path);
+                    
+                    // Find variables in the specific scope using the full scope ID
+                    if let Some(variables) = shared::find_variables_in_scope(&waveform_file.scopes, &full_scope_id) {
+                        // Find the specific variable by name
+                        if let Some(signal) = variables.iter().find(|v| v.name == variable_name) {
+                            return format!("{} {}-bit", signal.signal_type, signal.width);
+                        }
+                    }
+                }
+                break; // Found the file, no need to continue searching
+            }
+        }
+    }
+    
+    // Fallback if variable not found or file not loaded
+    "Loading...".to_string()
+}
+
+/// Get signal type information for a selected variable (legacy synchronous version)
 fn get_signal_type_for_selected_variable(selected_var: &SelectedVariable) -> String {
     // Parse the unique_id to get file_path, scope_path, and variable_name
     if let Some((file_path, scope_path, variable_name)) = selected_var.parse_unique_id() {
@@ -917,7 +952,7 @@ fn update_signal_values_in_ui(results: &[SignalValueResult]) {
         // TODO: Need to implement domain bridge to get current selected variables synchronously
         // For now, skip this processing since it depends on old mutable architecture
         /*
-        let selected_vars = SELECTED_VARIABLES.lock_ref();
+        let selected_vars = crate::actors::selected_variables::current_variables();
         if let Some(matching_var) = selected_vars.iter().find(|var| {
             if let Some((_, scope, name)) = var.parse_unique_id() {
                 scope == result.scope_path && name == result.variable_name
@@ -993,12 +1028,8 @@ fn empty_state_hint(text: &str) -> impl Element {
 
 pub fn file_paths_dialog() -> impl Element {
     let close_dialog = move || {
-        SHOW_FILE_DIALOG.set(false);
-        // Clear file picker state on close
-        FILE_PICKER_SELECTED.lock_mut().clear();
-        FILE_PICKER_ERROR.set_neq(None);
-        // DON'T clear error cache - preserve error state for next dialog opening
-        // This ensures users see error indicators immediately on subsequent opens
+        // Use domain function to close dialog and clear state
+        close_file_dialog();
     };
 
 
@@ -1031,7 +1062,7 @@ pub fn file_paths_dialog() -> impl Element {
                     .global_event_handler({
                         let close_dialog = close_dialog.clone();
                         move |event: KeyDown| {
-                            if SHOW_FILE_DIALOG.get() {  // Only handle when dialog is open
+                            if current_dialog_visible() {  // Only handle when dialog is open
                                 if event.key() == "Escape" {
                                     close_dialog();
                                 } else if event.key() == "Enter" {
@@ -1167,7 +1198,7 @@ pub fn files_panel() -> impl Element {
                                             .s(Height::fill())
                                             .s(Width::fill())
                                             .child_signal(
-                                                TRACKED_FILES.signal_vec_cloned().len().map(|file_count| {
+                                                crate::state::tracked_files_count_signal().map(|file_count| {
                                     if file_count == 0 {
                                         empty_state_hint("Click 'Load Files' to add waveform files.")
                                             .unify()
@@ -1204,7 +1235,7 @@ fn create_stable_tree_view() -> impl Element {
                 })
                 .s(Gap::new().y(2))
                 .items_signal_vec(
-                    TRACKED_FILES.signal_vec_cloned().map(move |tracked_file| {
+                    crate::actors::tracked_files_signal_vec().map(move |tracked_file| {
                         render_tracked_file_as_tree_item(tracked_file)
                     })
                 )
@@ -1377,18 +1408,18 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                                         })
                                                                         .child_signal({
                                                                             let selected_var = selected_var.clone();
-                                                                            crate::state::TRACKED_FILES.signal_vec_cloned().to_signal_cloned().map(move |_files| {
-                                                                                get_signal_type_for_selected_variable(&selected_var)
+                                                                            crate::actors::tracked_files_signal().map(move |files: Vec<TrackedFile>| {
+                                                                                get_signal_type_for_selected_variable_from_files(&selected_var, &files)
                                                                             })
                                                                         })
                                                                 )
                                                                 .update_raw_el({
                                                                     let selected_var = selected_var.clone();
                                                                     move |raw_el| {
-                                                                        let title_signal = crate::state::tracked_files_count_signal().map({
+                                                                        let title_signal = crate::actors::tracked_files_signal().map({
                                                                             let selected_var = selected_var.clone();
-                                                                            move |_count| {
-                                                                                let signal_type = get_signal_type_for_selected_variable(&selected_var);
+                                                                            move |files: Vec<TrackedFile>| {
+                                                                                let signal_type = get_signal_type_for_selected_variable_from_files(&selected_var, &files);
                                                                                 format!("{} - {} - {}", 
                                                                                     selected_var.file_path().unwrap_or_default(), 
                                                                                     selected_var.scope_path().unwrap_or_default(), 
@@ -1547,7 +1578,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                                             .s(Font::new().color_signal(neutral_11()).center())
                                                                             .child(
                                                                                 Text::with_signal(
-                                                                                    cursor_position_signal().map(|cursor_pos| {
+                                                                                    cursor_position_seconds_signal().map(|cursor_pos| {
                                                                                         // Use proper time formatting with appropriate units instead of rounding to seconds
                                                                                         if !cursor_pos.is_finite() || cursor_pos < 0.0 {
                                                                                             "0s".to_string()
@@ -1650,7 +1681,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
 pub fn files_panel_with_height() -> impl Element {
     // TEST 2: Remove Scrollbars::both() from individual panels
     El::new()
-        .s(Height::exact_signal(FILES_PANEL_HEIGHT.signal()))
+        .s(Height::exact_signal(files_panel_height_signal()))
         .s(Width::growable())
         .update_raw_el(|raw_el| {
             raw_el.style("scrollbar-width", "thin")
@@ -1665,12 +1696,13 @@ pub fn variables_panel_with_fill() -> impl Element {
         .s(Width::growable())
         .s(Height::fill())
         .s(Scrollbars::both())
-        .child_signal(IS_DOCKED_TO_BOTTOM.signal().map(|is_docked| {
+        .child_signal(dock_mode_signal().map(|dock_mode| {
+            let is_docked = matches!(dock_mode, shared::DockMode::Bottom);
             if is_docked {
-                // When docked to bottom, use FILES_PANEL_HEIGHT signal for synchronized resizing
+                // When docked to bottom, use files panel height signal for synchronized resizing
                 El::new()
                     .s(Width::fill())
-                    .s(Height::exact_signal(FILES_PANEL_HEIGHT.signal()))
+                    .s(Height::exact_signal(files_panel_height_signal()))
                     .update_raw_el(|raw_el| {
                         raw_el.style("scrollbar-width", "thin")
                             .style_signal("scrollbar-color", primary_6().map(|thumb| primary_3().map(move |track| format!("{} {}", thumb, track))).flatten())
@@ -1879,10 +1911,18 @@ fn cleanup_file_related_state(file_id: &str) {
     // Clear selected variables from this file
     // SelectedVariable uses full file path in new format
     if !file_path.is_empty() {
-        state::SELECTED_VARIABLES.lock_mut().retain(|var| var.file_path().unwrap_or_default() != file_path);
-        state::SELECTED_VARIABLES_INDEX.lock_mut().retain(|unique_id| {
-            !unique_id.starts_with(&format!("{}|", file_path))
-        });
+        // Remove selected variables from this file using domain events
+        let current_vars = crate::actors::selected_variables::current_variables();
+        let vars_to_remove: Vec<String> = current_vars.iter()
+            .filter(|var| var.file_path().unwrap_or_default() == file_path)
+            .map(|var| var.unique_id.clone())
+            .collect();
+        
+        // Send remove events for each variable from this file
+        for var_id in vars_to_remove {
+            crate::actors::selected_variables::variable_removed_relay().send(var_id);
+        }
+        // Note: variable_index is managed automatically by the domain
     }
     */
 }
@@ -1961,7 +2001,7 @@ fn load_files_picker_button() -> impl Element {
         .label_signal(
             map_ref! {
                 let is_loading = IS_LOADING.signal(),
-                let selected_count = FILE_PICKER_SELECTED.signal_vec_cloned().len() =>
+                let selected_count = file_picker_selected_signal().map(|files| files.len()) =>
                 move {
                     if *is_loading {
                         "Loading...".to_string()
@@ -1976,7 +2016,7 @@ fn load_files_picker_button() -> impl Element {
         .disabled_signal(
             map_ref! {
                 let is_loading = IS_LOADING.signal(),
-                let selected_count = FILE_PICKER_SELECTED.signal_vec_cloned().len() =>
+                let selected_count = file_picker_selected_signal().map(|files| files.len()) =>
                 *is_loading || *selected_count == 0
             }
         )
@@ -2006,11 +2046,11 @@ fn simple_file_picker_tree() -> impl Element {
         .s(Height::fill())
         .s(Width::fill())
         .s(Scrollbars::both())
-        .viewport_y_signal(LOAD_FILES_VIEWPORT_Y.signal())
+        .viewport_y_signal(crate::actors::dialog_manager::viewport_y_signal())
         .on_viewport_location_change(|_scene, viewport| {
             // Only update viewport Y if initialization is complete to prevent overwriting loaded scroll position
             if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
-                LOAD_FILES_VIEWPORT_Y.set_neq(viewport.y);
+                change_dialog_viewport(viewport.y);
             } else {
             }
         })
@@ -2024,8 +2064,8 @@ fn simple_file_picker_tree() -> impl Element {
         .child_signal(
             map_ref! {
                 let tree_cache = FILE_TREE_CACHE.signal_cloned(),
-                let error_cache = FILE_PICKER_ERROR_CACHE.signal_cloned(),
-                let expanded = FILE_PICKER_EXPANDED.signal_cloned() =>
+                let error_cache = file_picker_error_cache_signal(),
+                let expanded = file_picker_expanded_signal() =>
                 move {
                     monitor_directory_expansions(expanded.iter().cloned().collect::<HashSet<_>>());
                     
@@ -2043,8 +2083,9 @@ fn simple_file_picker_tree() -> impl Element {
                             .variant(TreeViewVariant::Basic)
                             .show_icons(true)
                             .show_checkboxes(true)
-                            .external_expanded(FILE_PICKER_EXPANDED.clone())
-                            .external_selected_vec(FILE_PICKER_SELECTED.clone())
+                            // TODO: Add domain TreeView integration for external state
+                            // .external_expanded(dialog_manager_expanded_mutable())
+                            // .external_selected_vec(dialog_manager_selected_mutable())
                             .build()
                             .unify()
                     } else {
@@ -2191,7 +2232,7 @@ fn selected_files_display() -> impl Element {
     El::new()
         .s(Padding::all(4))
         .child_signal(
-            FILE_PICKER_SELECTED.signal_vec_cloned().to_signal_map(|selected_paths| {
+            file_picker_selected_signal().map(|selected_paths| {
                 if selected_paths.is_empty() {
                     El::new()
                         .s(Font::new().italic().color_signal(neutral_8()))
@@ -2211,7 +2252,12 @@ fn selected_files_display() -> impl Element {
                                 .on_remove({
                                     let path = path.clone();
                                     move || {
-                                        FILE_PICKER_SELECTED.lock_mut().retain(|p| p != &path);
+                                        // Use domain function to remove file from selection
+                                        let current_files = current_selected_files();
+                                        let new_files: Vec<String> = current_files.into_iter()
+                                            .filter(|p| p != &path)
+                                            .collect();
+                                        change_files_selection(new_files);
                                     }
                                 })
                                 .build()
@@ -2228,7 +2274,7 @@ fn selected_files_display() -> impl Element {
 
 
 fn process_file_picker_selection() {
-    let selected_files = FILE_PICKER_SELECTED.lock_ref().to_vec();
+    let selected_files = current_selected_files();
     
     if !selected_files.is_empty() {
         IS_LOADING.set(true);
@@ -2245,10 +2291,8 @@ fn process_file_picker_selection() {
         let tracked_files = crate::actors::tracked_files_domain();
         tracked_files.files_dropped_relay.send(file_paths);
         
-        // Close dialog and clear selection
-        SHOW_FILE_DIALOG.set(false);
-        FILE_PICKER_SELECTED.lock_mut().clear();
-        FILE_PICKER_ERROR.set_neq(None);
+        // Close dialog using domain function
+        close_file_dialog();
     }
 }
 
@@ -2331,12 +2375,14 @@ fn theme_toggle_button() -> impl Element {
 
 fn dock_toggle_button() -> impl Element {
     El::new()
-        .child_signal(IS_DOCKED_TO_BOTTOM.signal().map(|is_docked| {
+        .child_signal(dock_mode_signal().map(|dock_mode| {
+            let is_docked = matches!(dock_mode, shared::DockMode::Bottom);
             button()
                 .label(if is_docked { "Dock to Right" } else { "Dock to Bottom" })
                 .left_icon_element(|| {
                     El::new()
-                        .child_signal(IS_DOCKED_TO_BOTTOM.signal().map(|is_docked| {
+                        .child_signal(dock_mode_signal().map(|dock_mode| {
+                            let is_docked = matches!(dock_mode, shared::DockMode::Bottom);
                             let icon_el = icon(IconName::ArrowDownToLine).size(IconSize::Small).color(IconColor::Primary).build();
                             if is_docked {
                                 El::new()
@@ -2352,16 +2398,8 @@ fn dock_toggle_button() -> impl Element {
                 .variant(ButtonVariant::Outline)
                 .size(ButtonSize::Small)
                 .on_press(|| {
-                    DOCK_TOGGLE_IN_PROGRESS.set(true);
-                    let new_is_docked = !IS_DOCKED_TO_BOTTOM.get();
-                    
-                    // Atomically switch dock mode while preserving dimensions
-                    config::switch_dock_mode_preserving_dimensions(new_is_docked);
-                    
-                    // Update UI state after config is saved
-                    IS_DOCKED_TO_BOTTOM.set_neq(new_is_docked);
-                    
-                    DOCK_TOGGLE_IN_PROGRESS.set(false);
+                    // Use domain function to toggle dock mode (handles all logic internally)
+                    toggle_dock_mode();
                 })
                 .align(Align::center())
                 .build()

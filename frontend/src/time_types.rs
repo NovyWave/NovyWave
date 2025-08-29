@@ -224,6 +224,12 @@ impl fmt::Display for NsPerPixel {
     }
 }
 
+impl Default for NsPerPixel {
+    fn default() -> Self {
+        NsPerPixel::MEDIUM_ZOOM // 1 ms/pixel - reasonable default zoom
+    }
+}
+
 /// Represents a viewport (visible time range) in the timeline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Viewport {
@@ -276,6 +282,12 @@ impl Viewport {
 impl fmt::Display for Viewport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} → {}", self.start, self.end)
+    }
+}
+
+impl Default for Viewport {
+    fn default() -> Self {
+        Viewport::new(TimeNs::ZERO, TimeNs::from_nanos(1_000_000_000)) // 0-1 second default
     }
 }
 
@@ -674,6 +686,17 @@ impl TimelineCoordinates {
         // If viewport starts before file start, move it forward
         if self.viewport_start_ns.nanos() < file_start.nanos() {
             self.viewport_start_ns = file_start;
+        }
+    }
+}
+
+impl Default for TimelineCoordinates {
+    fn default() -> Self {
+        Self {
+            cursor_ns: TimeNs::ZERO,
+            viewport_start_ns: TimeNs::ZERO,
+            ns_per_pixel: NsPerPixel::default(),
+            canvas_width_pixels: 800, // Reasonable default width
         }
     }
 }

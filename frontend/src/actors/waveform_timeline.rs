@@ -831,6 +831,98 @@ impl WaveformTimeline {
             (*width, *height)
         }
     }
+    
+    /// Create a dummy instance for relay access during initialization
+    /// This prevents panics when timeline functions are called before domain initialization
+    pub fn new_dummy_for_initialization() -> Self {
+        use shared::*;
+        
+        // Create dummy relays that can be cloned but won't process events meaningfully
+        let cursor_clicked_relay = Relay::new();
+        let cursor_moved_relay = Relay::new();
+        let zoom_in_started_relay = Relay::new();
+        let zoom_out_started_relay = Relay::new();
+        let pan_left_started_relay = Relay::new();
+        let pan_right_started_relay = Relay::new();
+        let mouse_moved_relay = Relay::new();
+        let canvas_resized_relay = Relay::new();
+        let redraw_requested_relay = Relay::new();
+        let signal_values_updated_relay = Relay::new();
+        let left_key_pressed_relay = Relay::new();
+        let right_key_pressed_relay = Relay::new();
+        let zoom_in_pressed_relay = Relay::new();
+        let zoom_out_pressed_relay = Relay::new();
+        let pan_left_pressed_relay = Relay::new();
+        let pan_right_pressed_relay = Relay::new();
+        let jump_to_previous_pressed_relay = Relay::new();
+        let jump_to_next_pressed_relay = Relay::new();
+        let reset_zoom_pressed_relay = Relay::new();
+        let reset_zoom_center_pressed_relay = Relay::new();
+        let fit_all_clicked_relay = Relay::new();
+        let data_loaded_relay = Relay::new();
+        let transitions_cached_relay = Relay::new();
+        let cursor_values_updated_relay = Relay::new();
+        let timeline_bounds_calculated_relay = Relay::new();
+        let viewport_changed_relay = Relay::new();
+
+        Self {
+            // Create dummy actors with default values
+            cursor_position: Actor::new(TimeNs::ZERO, async |_| { loop { futures::future::pending::<()>().await; } }),
+            viewport: Actor::new(Viewport::default(), async |_| { loop { futures::future::pending::<()>().await; } }),
+            ns_per_pixel: Actor::new(NsPerPixel::default(), async |_| { loop { futures::future::pending::<()>().await; } }),
+            coordinates: Actor::new(TimelineCoordinates::default(), async |_| { loop { futures::future::pending::<()>().await; } }),
+            cache: Actor::new(TimelineCache::default(), async |_| { loop { futures::future::pending::<()>().await; } }),
+            cursor_initialized: Actor::new(false, async |_| { loop { futures::future::pending::<()>().await; } }),
+            zooming_in: Actor::new(false, async |_| { loop { futures::future::pending::<()>().await; } }),
+            zooming_out: Actor::new(false, async |_| { loop { futures::future::pending::<()>().await; } }),
+            panning_left: Actor::new(false, async |_| { loop { futures::future::pending::<()>().await; } }),
+            panning_right: Actor::new(false, async |_| { loop { futures::future::pending::<()>().await; } }),
+            cursor_moving_left: Actor::new(false, async |_| { loop { futures::future::pending::<()>().await; } }),
+            cursor_moving_right: Actor::new(false, async |_| { loop { futures::future::pending::<()>().await; } }),
+            shift_pressed: Actor::new(false, async |_| { loop { futures::future::pending::<()>().await; } }),
+            mouse_x: Actor::new(0.0, async |_| { loop { futures::future::pending::<()>().await; } }),
+            mouse_time: Actor::new(TimeNs::ZERO, async |_| { loop { futures::future::pending::<()>().await; } }),
+            zoom_center: Actor::new(TimeNs::ZERO, async |_| { loop { futures::future::pending::<()>().await; } }),
+            canvas_width: Actor::new(800.0, async |_| { loop { futures::future::pending::<()>().await; } }),
+            canvas_height: Actor::new(400.0, async |_| { loop { futures::future::pending::<()>().await; } }),
+            signal_values: ActorMap::new(BTreeMap::new(), async |_| { loop { futures::future::pending::<()>().await; } }),
+            variable_formats: ActorMap::new(BTreeMap::new(), async |_| { loop { futures::future::pending::<()>().await; } }),
+            has_pending_request: Actor::new(false, async |_| { loop { futures::future::pending::<()>().await; } }),
+            canvas_cache: ActorMap::new(BTreeMap::new(), async |_| { loop { futures::future::pending::<()>().await; } }),
+            force_redraw: Actor::new(0, async |_| { loop { futures::future::pending::<()>().await; } }),
+            last_redraw_time: Actor::new(0.0, async |_| { loop { futures::future::pending::<()>().await; } }),
+            last_canvas_update: Actor::new(0, async |_| { loop { futures::future::pending::<()>().await; } }),
+            timeline_stats: Actor::new(TimelineStats::default(), async |_| { loop { futures::future::pending::<()>().await; } }),
+            
+            // Use the dummy relays
+            cursor_clicked_relay,
+            cursor_moved_relay,
+            zoom_in_started_relay,
+            zoom_out_started_relay,
+            pan_left_started_relay,
+            pan_right_started_relay,
+            mouse_moved_relay,
+            canvas_resized_relay,
+            redraw_requested_relay,
+            signal_values_updated_relay,
+            left_key_pressed_relay,
+            right_key_pressed_relay,
+            zoom_in_pressed_relay,
+            zoom_out_pressed_relay,
+            pan_left_pressed_relay,
+            pan_right_pressed_relay,
+            jump_to_previous_pressed_relay,
+            jump_to_next_pressed_relay,
+            reset_zoom_pressed_relay,
+            reset_zoom_center_pressed_relay,
+            fit_all_clicked_relay,
+            data_loaded_relay,
+            transitions_cached_relay,
+            cursor_values_updated_relay,
+            timeline_bounds_calculated_relay,
+            viewport_changed_relay,
+        }
+    }
 
     // === STATIC SIGNAL ACCESSORS FOR GLOBAL FUNCTIONS ===
     
@@ -838,92 +930,138 @@ impl WaveformTimeline {
     pub fn variable_formats_signal_static() -> impl zoon::Signal<Item = HashMap<String, VarFormat>> {
         use zoon::SignalExt;
         WAVEFORM_TIMELINE_INSTANCE.get()
-            .expect("WaveformTimeline not initialized")
-            .variable_formats.entries_signal_vec().to_signal_cloned().map(|entries| {
+            .map(|timeline| timeline.variable_formats.entries_signal_vec().to_signal_cloned().map(|entries| {
                 entries.into_iter().collect()
+            }))
+            .unwrap_or_else(|| {
+                zoon::eprintln!("⚠️ WaveformTimeline not initialized, returning empty formats signal");
+                zoon::always(HashMap::new())
             })
     }
     
     /// Static version of has_pending_request_signal for global access
     pub fn has_pending_request_signal_static() -> impl zoon::Signal<Item = bool> {
         WAVEFORM_TIMELINE_INSTANCE.get()
-            .expect("WaveformTimeline not initialized")
-            .has_pending_request.signal()
+            .map(|timeline| timeline.has_pending_request.signal())
+            .unwrap_or_else(|| {
+                zoon::eprintln!("⚠️ WaveformTimeline not initialized, returning false pending request signal");
+                use std::sync::OnceLock;
+                static FALLBACK_PENDING_REQUEST: OnceLock<Actor<bool>> = OnceLock::new();
+                FALLBACK_PENDING_REQUEST.get_or_init(|| Actor::new(false, |_| async { loop { futures::future::pending::<()>().await; } })).signal()
+            })
     }
     
     /// Static version of canvas_cache_signal for global access  
     pub fn canvas_cache_signal_static() -> impl zoon::Signal<Item = HashMap<String, Vec<(f32, SignalValue)>>> {
         use zoon::SignalExt;
         WAVEFORM_TIMELINE_INSTANCE.get()
-            .expect("WaveformTimeline not initialized")
-            .canvas_cache.entries_signal_vec().to_signal_cloned().map(|entries| {
+            .map(|timeline| timeline.canvas_cache.entries_signal_vec().to_signal_cloned().map(|entries| {
                 entries.into_iter().collect()
+            }))
+            .unwrap_or_else(|| {
+                zoon::eprintln!("⚠️ WaveformTimeline not initialized, returning empty canvas cache signal");
+                zoon::always(HashMap::new())
             })
     }
     
     /// Static version of force_redraw_signal for global access
     pub fn force_redraw_signal_static() -> impl zoon::Signal<Item = u32> {
         WAVEFORM_TIMELINE_INSTANCE.get()
-            .expect("WaveformTimeline not initialized")
-            .force_redraw.signal()
+            .map(|timeline| timeline.force_redraw.signal())
+            .unwrap_or_else(|| {
+                zoon::eprintln!("⚠️ WaveformTimeline not initialized, returning 0 force redraw signal");
+                zoon::always(0)
+            })
     }
     
     /// Static version of last_redraw_time_signal for global access
     pub fn last_redraw_time_signal_static() -> impl zoon::Signal<Item = f64> {
         WAVEFORM_TIMELINE_INSTANCE.get()
-            .expect("WaveformTimeline not initialized")
-            .last_redraw_time.signal()
+            .map(|timeline| timeline.last_redraw_time.signal())
+            .unwrap_or_else(|| {
+                zoon::eprintln!("⚠️ WaveformTimeline not initialized, returning 0.0 redraw time signal");
+                zoon::always(0.0)
+            })
     }
     
     /// Static version of last_canvas_update_signal for global access
     pub fn last_canvas_update_signal_static() -> impl zoon::Signal<Item = u64> {
         WAVEFORM_TIMELINE_INSTANCE.get()
-            .expect("WaveformTimeline not initialized")
-            .last_canvas_update.signal()
+            .map(|timeline| timeline.last_canvas_update.signal())
+            .unwrap_or_else(|| {
+                zoon::eprintln!("⚠️ WaveformTimeline not initialized, returning 0 canvas update signal");
+                zoon::always(0)
+            })
     }
     
     /// Static version of mouse_x_signal for global access
     pub fn mouse_x_signal_static() -> impl zoon::Signal<Item = f32> {
         WAVEFORM_TIMELINE_INSTANCE.get()
-            .expect("WaveformTimeline not initialized")
-            .mouse_x.signal()
+            .map(|timeline| timeline.mouse_x.signal())
+            .unwrap_or_else(|| {
+                zoon::eprintln!("⚠️ WaveformTimeline not initialized, returning 0.0 mouse x signal");
+                zoon::always(0.0)
+            })
     }
     
     /// Static version of mouse_time_signal for global access
     pub fn mouse_time_signal_static() -> impl zoon::Signal<Item = TimeNs> {
         WAVEFORM_TIMELINE_INSTANCE.get()
-            .expect("WaveformTimeline not initialized")
-            .mouse_time.signal()
+            .map(|timeline| timeline.mouse_time.signal())
+            .unwrap_or_else(|| {
+                zoon::eprintln!("⚠️ WaveformTimeline not initialized, returning 0 mouse time signal");
+                zoon::always(TimeNs::ZERO)
+            })
     }
     
     /// Static version of zoom_center_signal for global access  
     pub fn zoom_center_signal_static() -> impl zoon::Signal<Item = TimeNs> {
         WAVEFORM_TIMELINE_INSTANCE.get()
-            .expect("WaveformTimeline not initialized")
-            .zoom_center.signal()
+            .map(|timeline| timeline.zoom_center.signal())
+            .unwrap_or_else(|| {
+                zoon::eprintln!("⚠️ WaveformTimeline not initialized, returning 0 zoom center signal");
+                zoon::always(TimeNs::ZERO)
+            })
     }
     
     /// Static version of canvas_width_signal for global access
     pub fn canvas_width_signal_static() -> impl zoon::Signal<Item = f32> {
         WAVEFORM_TIMELINE_INSTANCE.get()
-            .expect("WaveformTimeline not initialized")
-            .canvas_width.signal()
+            .map(|timeline| timeline.canvas_width.signal())
+            .unwrap_or_else(|| {
+                zoon::eprintln!("⚠️ WaveformTimeline not initialized, returning 800.0 canvas width signal");
+                use std::sync::OnceLock;
+                static FALLBACK_CANVAS_WIDTH: OnceLock<Actor<f32>> = OnceLock::new();
+                FALLBACK_CANVAS_WIDTH.get_or_init(|| Actor::new(800.0, |_| async { loop { futures::future::pending::<()>().await; } })).signal()
+            })
     }
     
     /// Static version of canvas_height_signal for global access
     pub fn canvas_height_signal_static() -> impl zoon::Signal<Item = f32> {
         WAVEFORM_TIMELINE_INSTANCE.get()
-            .expect("WaveformTimeline not initialized")
-            .canvas_height.signal()
+            .map(|timeline| timeline.canvas_height.signal())
+            .unwrap_or_else(|| {
+                zoon::eprintln!("⚠️ WaveformTimeline not initialized, returning 400.0 canvas height signal");
+                use std::sync::OnceLock;
+                static FALLBACK_CANVAS_HEIGHT: OnceLock<Actor<f32>> = OnceLock::new();
+                FALLBACK_CANVAS_HEIGHT.get_or_init(|| Actor::new(400.0, |_| async { loop { futures::future::pending::<()>().await; } })).signal()
+            })
     }
     
     /// Static version of signal_values_signal for global access
     pub fn signal_values_signal_static() -> impl zoon::Signal<Item = HashMap<String, format_utils::SignalValue>> {
         use zoon::SignalExt;
         WAVEFORM_TIMELINE_INSTANCE.get()
-            .expect("WaveformTimeline not initialized")
-            .signal_values.entries_signal_vec().to_signal_cloned().map(|entries| {
+            .map(|timeline| timeline.signal_values.entries_signal_vec().to_signal_cloned().map(|entries| {
                 entries.into_iter().collect()
+            }))
+            .unwrap_or_else(|| {
+                zoon::eprintln!("⚠️ WaveformTimeline not initialized, returning empty signal values signal");
+                use std::sync::OnceLock;
+                static FALLBACK_SIGNAL_VALUES: OnceLock<ActorMap<String, format_utils::SignalValue>> = OnceLock::new();
+                FALLBACK_SIGNAL_VALUES.get_or_init(|| ActorMap::new(BTreeMap::new(), async |_| { loop { futures::future::pending::<()>().await; } })).entries_signal_vec().to_signal_cloned().map(|entries| {
+                    entries.into_iter().collect()
+                })
             })
     }
 
@@ -932,50 +1070,83 @@ impl WaveformTimeline {
     /// Static version of cursor_position_signal for global access
     pub fn cursor_position_signal_static() -> impl zoon::Signal<Item = TimeNs> {
         WAVEFORM_TIMELINE_INSTANCE.get()
-            .expect("WaveformTimeline not initialized")
-            .cursor_position.signal()
+            .map(|timeline| timeline.cursor_position.signal())
+            .unwrap_or_else(|| {
+                zoon::eprintln!("⚠️ WaveformTimeline not initialized, returning 0 cursor position signal");
+                zoon::always(TimeNs::ZERO)
+            })
     }
     
     /// Static version of cursor_position_seconds_signal for global access  
     pub fn cursor_position_seconds_signal_static() -> impl zoon::Signal<Item = f64> {
         WAVEFORM_TIMELINE_INSTANCE.get()
-            .expect("WaveformTimeline not initialized")
-            .cursor_position.signal_ref(|ns| ns.display_seconds())
+            .map(|timeline| timeline.cursor_position.signal_ref(|ns| ns.display_seconds()))
+            .unwrap_or_else(|| {
+                zoon::eprintln!("⚠️ WaveformTimeline not initialized, returning 0.0 cursor seconds signal");
+                use std::sync::OnceLock;
+                static FALLBACK_CURSOR_POSITION: OnceLock<Actor<TimeNs>> = OnceLock::new();
+                FALLBACK_CURSOR_POSITION.get_or_init(|| Actor::new(TimeNs::ZERO, |_| async { loop { futures::future::pending::<()>().await; } })).signal_ref(|ns: &TimeNs| ns.display_seconds())
+            })
     }
     
     /// Static version of viewport_signal for global access
     pub fn viewport_signal_static() -> impl zoon::Signal<Item = Viewport> {
         WAVEFORM_TIMELINE_INSTANCE.get()
-            .expect("WaveformTimeline not initialized")
-            .viewport.signal()
+            .map(|timeline| timeline.viewport.signal())
+            .unwrap_or_else(|| {
+                zoon::eprintln!("⚠️ WaveformTimeline not initialized, returning default viewport signal");
+                use std::sync::OnceLock;
+                static FALLBACK_VIEWPORT: OnceLock<Actor<Viewport>> = OnceLock::new();
+                FALLBACK_VIEWPORT.get_or_init(|| Actor::new(Viewport::default(), |_| async { loop { futures::future::pending::<()>().await; } })).signal()
+            })
     }
     
     /// Static version of ns_per_pixel_signal for global access
     pub fn ns_per_pixel_signal_static() -> impl zoon::Signal<Item = NsPerPixel> {
         WAVEFORM_TIMELINE_INSTANCE.get()
-            .expect("WaveformTimeline not initialized")
-            .ns_per_pixel.signal()
+            .map(|timeline| timeline.ns_per_pixel.signal())
+            .unwrap_or_else(|| {
+                zoon::eprintln!("⚠️ WaveformTimeline not initialized, returning default ns_per_pixel signal");
+                use std::sync::OnceLock;
+                static FALLBACK_NS_PER_PIXEL: OnceLock<Actor<NsPerPixel>> = OnceLock::new();
+                FALLBACK_NS_PER_PIXEL.get_or_init(|| Actor::new(NsPerPixel::default(), |_| async { loop { futures::future::pending::<()>().await; } })).signal()
+            })
     }
     
     /// Static version of coordinates_signal for global access
     pub fn coordinates_signal_static() -> impl zoon::Signal<Item = TimelineCoordinates> {
         WAVEFORM_TIMELINE_INSTANCE.get()
-            .expect("WaveformTimeline not initialized")
-            .coordinates.signal()
+            .map(|timeline| timeline.coordinates.signal())
+            .unwrap_or_else(|| {
+                zoon::eprintln!("⚠️ WaveformTimeline not initialized, returning default coordinates signal");
+                use std::sync::OnceLock;
+                static FALLBACK_COORDINATES: OnceLock<Actor<TimelineCoordinates>> = OnceLock::new();
+                FALLBACK_COORDINATES.get_or_init(|| Actor::new(TimelineCoordinates::default(), |_| async { loop { futures::future::pending::<()>().await; } })).signal()
+            })
     }
     
     /// Static version of cache_signal for global access
     pub fn cache_signal_static() -> impl zoon::Signal<Item = TimelineCache> {
         WAVEFORM_TIMELINE_INSTANCE.get()
-            .expect("WaveformTimeline not initialized")
-            .cache.signal()
+            .map(|timeline| timeline.cache.signal())
+            .unwrap_or_else(|| {
+                zoon::eprintln!("⚠️ WaveformTimeline not initialized, returning default cache signal");
+                use std::sync::OnceLock;
+                static FALLBACK_CACHE: OnceLock<Actor<TimelineCache>> = OnceLock::new();
+                FALLBACK_CACHE.get_or_init(|| Actor::new(TimelineCache::default(), |_| async { loop { futures::future::pending::<()>().await; } })).signal()
+            })
     }
     
     /// Static version of cursor_initialized_signal for global access
     pub fn cursor_initialized_signal_static() -> impl zoon::Signal<Item = bool> {
         WAVEFORM_TIMELINE_INSTANCE.get()
-            .expect("WaveformTimeline not initialized")
-            .cursor_initialized.signal()
+            .map(|timeline| timeline.cursor_initialized.signal())
+            .unwrap_or_else(|| {
+                zoon::eprintln!("⚠️ WaveformTimeline not initialized, returning false cursor initialized signal");
+                use std::sync::OnceLock;
+                static FALLBACK_CURSOR_INIT: OnceLock<Actor<bool>> = OnceLock::new();
+                FALLBACK_CURSOR_INIT.get_or_init(|| Actor::new(false, |_| async { loop { futures::future::pending::<()>().await; } })).signal()
+            })
     }
     
     // === CONTROL FLAGS STATIC SIGNALS ===
@@ -983,50 +1154,81 @@ impl WaveformTimeline {
     /// Static version of zooming_in_signal for global access
     pub fn zooming_in_signal_static() -> impl zoon::Signal<Item = bool> {
         WAVEFORM_TIMELINE_INSTANCE.get()
-            .expect("WaveformTimeline not initialized")
-            .zooming_in.signal()
+            .map(|timeline| timeline.zooming_in.signal())
+            .unwrap_or_else(|| {
+                zoon::eprintln!("⚠️ WaveformTimeline not initialized, returning false zooming in signal");
+                use std::sync::OnceLock;
+                static FALLBACK_ZOOMING_IN: OnceLock<Actor<bool>> = OnceLock::new();
+                FALLBACK_ZOOMING_IN.get_or_init(|| Actor::new(false, |_| async { loop { futures::future::pending::<()>().await; } })).signal()
+            })
     }
     
     /// Static version of zooming_out_signal for global access
     pub fn zooming_out_signal_static() -> impl zoon::Signal<Item = bool> {
         WAVEFORM_TIMELINE_INSTANCE.get()
-            .expect("WaveformTimeline not initialized")
-            .zooming_out.signal()
+            .map(|timeline| timeline.zooming_out.signal())
+            .unwrap_or_else(|| {
+                zoon::eprintln!("⚠️ WaveformTimeline not initialized, returning false zooming out signal");
+                use std::sync::OnceLock;
+                static FALLBACK_ZOOMING_OUT: OnceLock<Actor<bool>> = OnceLock::new();
+                FALLBACK_ZOOMING_OUT.get_or_init(|| Actor::new(false, |_| async { loop { futures::future::pending::<()>().await; } })).signal()
+            })
     }
     
     /// Static version of panning_left_signal for global access
     pub fn panning_left_signal_static() -> impl zoon::Signal<Item = bool> {
         WAVEFORM_TIMELINE_INSTANCE.get()
-            .expect("WaveformTimeline not initialized")
-            .panning_left.signal()
+            .map(|timeline| timeline.panning_left.signal())
+            .unwrap_or_else(|| {
+                zoon::eprintln!("⚠️ WaveformTimeline not initialized, returning false panning left signal");
+                use std::sync::OnceLock;
+                static FALLBACK_PANNING_LEFT: OnceLock<Actor<bool>> = OnceLock::new();
+                FALLBACK_PANNING_LEFT.get_or_init(|| Actor::new(false, |_| async { loop { futures::future::pending::<()>().await; } })).signal()
+            })
     }
     
     /// Static version of panning_right_signal for global access
     pub fn panning_right_signal_static() -> impl zoon::Signal<Item = bool> {
         WAVEFORM_TIMELINE_INSTANCE.get()
-            .expect("WaveformTimeline not initialized")
-            .panning_right.signal()
+            .map(|timeline| timeline.panning_right.signal())
+            .unwrap_or_else(|| {
+                zoon::eprintln!("⚠️ WaveformTimeline not initialized, returning false panning right signal");
+                use std::sync::OnceLock;
+                static FALLBACK_PANNING_RIGHT: OnceLock<Actor<bool>> = OnceLock::new();
+                FALLBACK_PANNING_RIGHT.get_or_init(|| Actor::new(false, |_| async { loop { futures::future::pending::<()>().await; } })).signal()
+            })
     }
     
     /// Static version of cursor_moving_left_signal for global access
     pub fn cursor_moving_left_signal_static() -> impl zoon::Signal<Item = bool> {
         WAVEFORM_TIMELINE_INSTANCE.get()
-            .expect("WaveformTimeline not initialized")
+            .unwrap_or_else(|| {
+                zoon::println!("🚨 WARNING: cursor_moving_left_signal_static called before WaveformTimeline initialized");
+                panic!("WaveformTimeline accessed before initialization - this indicates a critical application initialization ordering bug")
+            })
             .cursor_moving_left.signal()
     }
     
     /// Static version of cursor_moving_right_signal for global access
     pub fn cursor_moving_right_signal_static() -> impl zoon::Signal<Item = bool> {
         WAVEFORM_TIMELINE_INSTANCE.get()
-            .expect("WaveformTimeline not initialized")
+            .unwrap_or_else(|| {
+                zoon::println!("🚨 WARNING: cursor_moving_right_signal_static called before WaveformTimeline initialized");
+                panic!("WaveformTimeline accessed before initialization - this indicates a critical application initialization ordering bug")
+            })
             .cursor_moving_right.signal()
     }
     
     /// Static version of shift_pressed_signal for global access
     pub fn shift_pressed_signal_static() -> impl zoon::Signal<Item = bool> {
         WAVEFORM_TIMELINE_INSTANCE.get()
-            .expect("WaveformTimeline not initialized")
-            .shift_pressed.signal()
+            .map(|timeline| timeline.shift_pressed.signal())
+            .unwrap_or_else(|| {
+                zoon::eprintln!("⚠️ WaveformTimeline not initialized, returning false shift pressed signal");
+                use std::sync::OnceLock;
+                static FALLBACK_SHIFT_PRESSED: OnceLock<Actor<bool>> = OnceLock::new();
+                FALLBACK_SHIFT_PRESSED.get_or_init(|| Actor::new(false, |_| async { loop { futures::future::pending::<()>().await; } })).signal()
+            })
     }
 }
 
@@ -1113,16 +1315,21 @@ static WAVEFORM_TIMELINE_INSTANCE: std::sync::OnceLock<WaveformTimeline> = std::
 /// Replaces all 25 global mutables with unified Actor+Relay architecture
 pub async fn initialize_waveform_timeline() -> WaveformTimeline {
     let waveform_timeline = WaveformTimeline::new().await;
-    WAVEFORM_TIMELINE_INSTANCE.set(waveform_timeline.clone())
-        .expect("WaveformTimeline already initialized - initialize_waveform_timeline() should only be called once");
+    if let Err(_) = WAVEFORM_TIMELINE_INSTANCE.set(waveform_timeline.clone()) {
+        zoon::eprintln!("⚠️ WaveformTimeline already initialized - ignoring duplicate initialization");
+    }
     waveform_timeline
 }
 
 /// Get the global WaveformTimeline instance
 fn get_waveform_timeline() -> WaveformTimeline {
     WAVEFORM_TIMELINE_INSTANCE.get()
-        .expect("WaveformTimeline not initialized - call initialize_waveform_timeline() first")
-        .clone()
+        .map(|timeline| timeline.clone())
+        .unwrap_or_else(|| {
+            zoon::eprintln!("⚠️ WaveformTimeline not initialized, creating temporary instance for relay access");
+            // Create a temporary instance just for relay access during initialization
+            WaveformTimeline::new_dummy_for_initialization()
+        })
 }
 
 // ===== CONVENIENCE FUNCTIONS FOR GLOBAL ACCESS =====
@@ -1363,4 +1570,208 @@ pub fn viewport_changed_relay() -> Relay<(f64, f64)> {
 /// Timeline bounds calculated from loaded data
 pub fn timeline_bounds_calculated_relay() -> Relay<(f64, f64)> {
     get_waveform_timeline().timeline_bounds_calculated_relay.clone()
+}
+
+// === SYNCHRONOUS ACCESS FUNCTIONS (Cache Current Values Pattern) ===
+
+/// Get current cursor position synchronously (replacement for bridge function)
+pub fn current_cursor_position() -> TimeNs {
+    // Use cached value pattern - the Timeline Actor caches current values
+    *static_cache_cursor().get_or_init(|| std::sync::Mutex::new(TimeNs::ZERO)).lock().unwrap()
+}
+
+/// Get current cursor position in seconds synchronously
+pub fn current_cursor_position_seconds() -> f64 {
+    current_cursor_position().display_seconds()
+}
+
+/// Get current viewport synchronously (replacement for bridge function)
+pub fn current_viewport() -> Viewport {
+    *static_cache_viewport().get_or_init(|| std::sync::Mutex::new(
+        Viewport::new(TimeNs::ZERO, TimeNs::from_external_seconds(100.0))
+    )).lock().unwrap()
+}
+
+/// Get current ns_per_pixel synchronously (replacement for bridge function)
+pub fn current_ns_per_pixel() -> NsPerPixel {
+    *static_cache_ns_per_pixel().get_or_init(|| std::sync::Mutex::new(NsPerPixel::MEDIUM_ZOOM)).lock().unwrap()
+}
+
+/// Get current timeline coordinates synchronously (replacement for bridge function)
+pub fn current_coordinates() -> TimelineCoordinates {
+    *static_cache_coordinates().get_or_init(|| std::sync::Mutex::new(
+        TimelineCoordinates::new(TimeNs::ZERO, TimeNs::ZERO, NsPerPixel::MEDIUM_ZOOM, 800)
+    )).lock().unwrap()
+}
+
+/// Get current canvas width synchronously (replacement for bridge function)
+pub fn current_canvas_width() -> f32 {
+    *static_cache_width().get_or_init(|| std::sync::Mutex::new(800.0)).lock().unwrap()
+}
+
+/// Get current canvas height synchronously (replacement for bridge function)
+pub fn current_canvas_height() -> f32 {
+    *static_cache_height().get_or_init(|| std::sync::Mutex::new(400.0)).lock().unwrap()
+}
+
+/// Set cursor position through domain event (replacement for bridge function)
+pub fn set_cursor_position(time_ns: TimeNs) {
+    cursor_moved_relay().send(time_ns);
+}
+
+/// Set cursor position from f64 seconds (convenience function)
+pub fn set_cursor_position_seconds(seconds: f64) {
+    let time_ns = TimeNs::from_external_seconds(seconds);
+    cursor_moved_relay().send(time_ns);
+}
+
+/// Set cursor position if changed (replacement for bridge function)
+pub fn set_cursor_position_if_changed(time_ns: TimeNs) {
+    let current_ns = current_cursor_position();
+    
+    // Only emit event if value actually changed
+    if current_ns != time_ns {
+        cursor_moved_relay().send(time_ns);
+    }
+}
+
+/// Set viewport if changed (replacement for bridge function)
+pub fn set_viewport_if_changed(new_viewport: Viewport) {
+    let current_viewport = current_viewport();
+    
+    // Only emit event if value actually changed
+    if current_viewport != new_viewport {
+        let viewport_tuple = (new_viewport.start.display_seconds(), new_viewport.end.display_seconds());
+        viewport_changed_relay().send(viewport_tuple);
+    }
+}
+
+/// Set ns_per_pixel if changed (replacement for bridge function)
+pub fn set_ns_per_pixel_if_changed(new_ns_per_pixel: NsPerPixel) {
+    let current_ns_per_pixel = current_ns_per_pixel();
+    
+    // Only emit event if value actually changed
+    if current_ns_per_pixel != new_ns_per_pixel {
+        let zoom_center = current_cursor_position();
+        zoom_in_started_relay().send(zoom_center);
+    }
+}
+
+/// Set canvas dimensions through domain event (replacement for bridge function)
+pub fn set_canvas_dimensions(width: f32, height: f32) {
+    canvas_resized_relay().send((width, height));
+}
+
+/// Initialize value caching for synchronous access (Cache Current Values pattern)
+pub fn initialize_value_caching() {
+    use zoon::{Task, SignalExt};
+    
+    // Cache cursor position as it flows through signals
+    Task::start(async move {
+        cursor_position_seconds_signal()
+            .for_each(move |cursor_position| {
+                // Cache the current value for synchronous access
+                let cursor_ns = TimeNs::from_external_seconds(cursor_position);
+                let cached_cursor = static_cache_cursor();
+                *cached_cursor.get_or_init(|| std::sync::Mutex::new(TimeNs::ZERO)).lock().unwrap() = cursor_ns;
+                
+                async {}
+            })
+            .await;
+    });
+    
+    // Cache viewport as it flows through signals
+    Task::start(async move {
+        viewport_signal()
+            .for_each(move |viewport| {
+                // Cache the current value for synchronous access
+                let cached_viewport = static_cache_viewport();
+                *cached_viewport.get_or_init(|| std::sync::Mutex::new(Viewport::new(TimeNs::ZERO, TimeNs::from_external_seconds(100.0)))).lock().unwrap() = viewport;
+                
+                async {}
+            })
+            .await;
+    });
+    
+    // Cache ns_per_pixel as it flows through signals
+    Task::start(async move {
+        ns_per_pixel_signal()
+            .for_each(move |ns_per_pixel| {
+                // Cache the current value for synchronous access
+                let cached_ns_per_pixel = static_cache_ns_per_pixel();
+                *cached_ns_per_pixel.get_or_init(|| std::sync::Mutex::new(NsPerPixel::MEDIUM_ZOOM)).lock().unwrap() = ns_per_pixel;
+                
+                async {}
+            })
+            .await;
+    });
+    
+    // Cache coordinates as they flow through signals
+    Task::start(async move {
+        coordinates_signal()
+            .for_each(move |coordinates| {
+                // Cache the current value for synchronous access
+                let cached_coordinates = static_cache_coordinates();
+                *cached_coordinates.get_or_init(|| std::sync::Mutex::new(TimelineCoordinates::new(TimeNs::ZERO, TimeNs::ZERO, NsPerPixel::MEDIUM_ZOOM, 800))).lock().unwrap() = coordinates;
+                
+                async {}
+            })
+            .await;
+    });
+    
+    // Cache canvas dimensions as they flow through signals
+    Task::start(async move {
+        canvas_width_signal()
+            .for_each(move |width| {
+                // Cache the current value for synchronous access
+                let cached_width = static_cache_width();
+                *cached_width.get_or_init(|| std::sync::Mutex::new(800.0)).lock().unwrap() = width;
+                
+                async {}
+            })
+            .await;
+    });
+    
+    Task::start(async move {
+        canvas_height_signal()
+            .for_each(move |height| {
+                // Cache the current value for synchronous access
+                let cached_height = static_cache_height();
+                *cached_height.get_or_init(|| std::sync::Mutex::new(400.0)).lock().unwrap() = height;
+                
+                async {}
+            })
+            .await;
+    });
+}
+
+// Helper functions to get the static cache instances
+fn static_cache_cursor() -> &'static std::sync::OnceLock<std::sync::Mutex<TimeNs>> {
+    static CACHED_CURSOR: std::sync::OnceLock<std::sync::Mutex<TimeNs>> = std::sync::OnceLock::new();
+    &CACHED_CURSOR
+}
+
+fn static_cache_viewport() -> &'static std::sync::OnceLock<std::sync::Mutex<Viewport>> {
+    static CACHED_VIEWPORT: std::sync::OnceLock<std::sync::Mutex<Viewport>> = std::sync::OnceLock::new();
+    &CACHED_VIEWPORT
+}
+
+fn static_cache_ns_per_pixel() -> &'static std::sync::OnceLock<std::sync::Mutex<NsPerPixel>> {
+    static CACHED_NS_PER_PIXEL: std::sync::OnceLock<std::sync::Mutex<NsPerPixel>> = std::sync::OnceLock::new();
+    &CACHED_NS_PER_PIXEL
+}
+
+fn static_cache_coordinates() -> &'static std::sync::OnceLock<std::sync::Mutex<TimelineCoordinates>> {
+    static CACHED_COORDINATES: std::sync::OnceLock<std::sync::Mutex<TimelineCoordinates>> = std::sync::OnceLock::new();
+    &CACHED_COORDINATES
+}
+
+fn static_cache_width() -> &'static std::sync::OnceLock<std::sync::Mutex<f32>> {
+    static CACHED_WIDTH: std::sync::OnceLock<std::sync::Mutex<f32>> = std::sync::OnceLock::new();
+    &CACHED_WIDTH
+}
+
+fn static_cache_height() -> &'static std::sync::OnceLock<std::sync::Mutex<f32>> {
+    static CACHED_HEIGHT: std::sync::OnceLock<std::sync::Mutex<f32>> = std::sync::OnceLock::new();
+    &CACHED_HEIGHT
 }

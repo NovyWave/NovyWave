@@ -5,7 +5,8 @@ use crate::error_display::add_error_alert;
 use crate::state::ErrorAlert;
 use crate::utils::restore_scope_selection_for_file;
 use crate::views::is_cursor_within_variable_time_range;
-use crate::actors::domain_bridges::get_cached_cursor_position_seconds;
+use crate::actors::waveform_timeline::current_cursor_position_seconds;
+use crate::actors::dialog_manager::{set_file_error};
 use shared::{UpMsg, DownMsg};
 use shared::{LoadingFile, LoadingStatus};
 use wasm_bindgen::JsValue;
@@ -158,6 +159,7 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 
                 // Auto-expand home directory path and its parent directories
                 if path.contains("/home/") || path.starts_with("/Users/") {
+                    // TODO: Add domain function for bulk directory expansion
                     let mut expanded = crate::FILE_PICKER_EXPANDED.lock_mut();
                     
                     // Expand the home directory itself
@@ -177,7 +179,8 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 }
                 
                 // Clear any previous error for this directory (fresh data overwrites cached errors)
-                crate::FILE_PICKER_ERROR.set_neq(None);
+                set_file_error(None);
+                // TODO: Add domain function for error cache manipulation
                 crate::FILE_PICKER_ERROR_CACHE.lock_mut().remove(&path);
             }
             DownMsg::DirectoryError { path, error } => {
@@ -186,10 +189,11 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 add_error_alert(error_alert);
                 
                 // Store error for this specific directory
+                // TODO: Add domain function for error cache manipulation
                 crate::FILE_PICKER_ERROR_CACHE.lock_mut().insert(path.clone(), error);
                 
                 // Clear global error (we now use per-directory errors)
-                crate::FILE_PICKER_ERROR.set_neq(None);
+                set_file_error(None);
             }
             DownMsg::ConfigLoaded(config) => {
                 crate::debug_utils::debug_conditional("RECEIVED ConfigLoaded message");
@@ -211,19 +215,21 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                             crate::FILE_TREE_CACHE.lock_mut().insert(path.clone(), items);
                             
                             // Clear any previous error for this directory
+                            // TODO: Add domain function for error cache manipulation
                             crate::FILE_PICKER_ERROR_CACHE.lock_mut().remove(&path);
                         }
                         Err(error) => {
                             // Handle directory scan error
                             let error_alert = crate::state::ErrorAlert::new_directory_error(path.clone(), error.clone());
                             crate::error_display::add_error_alert(error_alert);
+                            // TODO: Add domain function for error cache manipulation
                             crate::FILE_PICKER_ERROR_CACHE.lock_mut().insert(path.clone(), error);
                         }
                     }
                 }
                 
                 // Clear global error (batch operations successful)
-                crate::FILE_PICKER_ERROR.set_neq(None);
+                set_file_error(None);
             }
             DownMsg::SignalTransitions { file_path, results } => {
                 crate::debug_utils::debug_signal_transitions(&format!("Received {} transitions for {}", results.len(), file_path));
@@ -264,7 +270,7 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                         );
                         
                         // Check if cursor time is within this variable's file time range
-                        let cursor_time = get_cached_cursor_position_seconds();
+                        let cursor_time = current_cursor_position_seconds();
                         let within_time_range = is_cursor_within_variable_time_range(&unique_id, cursor_time);
                         
                         let signal_value = if within_time_range {

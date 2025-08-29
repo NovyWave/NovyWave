@@ -1,7 +1,8 @@
 use zoon::*;
 use moonzoon_novyui::components::icon::{icon, IconName, IconSize, IconColor};
 use moonzoon_novyui::tokens::*;
-use crate::state::{ErrorAlert, TOAST_NOTIFICATIONS};
+use crate::state::ErrorAlert;
+use crate::actors::error_manager::toast_notifications_signal;
 use crate::error_display::dismiss_error_alert;
 
 
@@ -29,7 +30,7 @@ pub fn toast_notifications_container() -> impl Element {
                     raw_el.style("pointer-events", "auto")  // Re-enable pointer events for toast content
                 })
                 .items_signal_vec(
-                    TOAST_NOTIFICATIONS.signal_vec_cloned().map(|alert| {
+                    toast_notifications_signal().to_signal_vec().map(|alert| {
                         create_toast_element(alert)
                     })
                 )

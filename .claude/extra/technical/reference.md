@@ -15,6 +15,12 @@ zoon::println!("Debug");  // ✅ Works in WASM
 std::println!("Debug");   // ❌ Does nothing
 ```
 
+### Browser MCP Limitations
+- **F12 and F5 keys don't work** with browsermcp - use specialized tools instead
+- **For console logs**: Use `mcp__browsermcp__browser_get_console_logs` tool
+- **For refresh**: Use `mcp__browsermcp__browser_navigate` to same URL instead of F5
+- **For DevTools**: Access logs programmatically rather than manual F12
+
 ## Core Component Patterns
 
 ### NovyUI Design System

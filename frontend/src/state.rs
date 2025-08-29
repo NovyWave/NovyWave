@@ -1,124 +1,38 @@
 use zoon::*;
 use std::collections::HashMap;
 use indexmap::{IndexMap, IndexSet};
-use shared::{WaveformFile, LoadingFile, FileSystemItem, TrackedFile, FileState, create_tracked_file};
+use shared::{WaveformFile, LoadingFile, FileSystemItem, TrackedFile, FileState};
 use crate::time_types::{TimeNs, TimelineCache};
+use crate::actors::panel_layout::dock_mode_signal;
 // Using simpler queue approach with MutableVec
 
 // ===== STABLE SIGNAL HELPERS =====
 
-/// ✅ EFFICIENT: Count-only signal for file counts in titles and UI
-/// Tracks only the count of tracked files, not the full file list
+/// ✅ MIGRATED: Count-only signal for file counts in titles and UI
 pub fn tracked_files_count_signal() -> impl Signal<Item = usize> {
-    TRACKED_FILES.signal_vec_cloned().len().dedupe()
+    crate::actors::file_count_signal()
 }
 
-/// ✅ NEW: Signal that tracks count of files that are actually LOADED with data
-/// This is what Variables panel should use - only fires when files have scopes loaded
+/// ✅ MIGRATED: Signal that tracks count of files that are actually LOADED with data
 pub fn loaded_files_count_signal() -> impl Signal<Item = usize> {
-    TRACKED_FILES.signal_vec_cloned().to_signal_cloned()
-        .map(|files| {
-            files.iter()
-                .filter(|file| matches!(file.state, shared::FileState::Loaded(_)))
-                .count()
-        })
-        .dedupe()
+    crate::actors::loaded_files_count_signal()
 }
 
 
 
 
-/// ✅ ENHANCED: Batch loading function with full backend integration
+/// ✅ ACTOR+RELAY: Batch loading function using TrackedFiles domain
 /// 
-/// This replaces individual file operations with a single atomic update,
-/// reducing renders from 6+ to 1 during batch file loading operations.
-/// Includes duplicate detection, reloading logic, and backend communication.
+/// Migrated from legacy global mutables to Actor+Relay architecture.
+/// All file operations now go through the TrackedFiles domain.
 pub fn _batch_load_files(file_paths: Vec<String>) {
     if file_paths.is_empty() {
         return;
     }
     
-    // Get currently tracked file IDs for duplicate detection
-    let existing_tracked_files: std::collections::HashMap<String, TrackedFile> = TRACKED_FILES.lock_ref()
-        .iter()
-        .map(|f| (f.id.clone(), f.clone()))
-        .collect();
-    
-    // Process files and separate new vs reload
-    let mut files_to_process = Vec::new();
-    let mut files_to_reload = Vec::new();
-    
-    for file_path in file_paths {
-        let file_id = shared::generate_file_id(&file_path);
-        
-        if existing_tracked_files.contains_key(&file_id) {
-            files_to_reload.push((file_id, file_path));
-        } else {
-            files_to_process.push(file_path);
-        }
-    }
-    
-    // Get IDs of files being reloaded for filtering (before moving files_to_reload)
-    let reload_ids: std::collections::HashSet<String> = files_to_reload.iter().map(|(id, _)| id.clone()).collect();
-    
-    // Handle reloads: clean up existing files first
-    for (file_id, _) in &files_to_reload {
-        _cleanup_file_related_state_for_batch(file_id);
-        // Remove from legacy systems too
-        crate::LOADED_FILES.lock_mut().retain(|f| f.id != *file_id);
-        crate::FILE_PATHS.lock_mut().shift_remove(file_id);
-    }
-    
-    // Collect all files to process (new + reloaded)
-    let mut all_file_paths: Vec<String> = files_to_process;
-    all_file_paths.extend(files_to_reload.into_iter().map(|(_, path)| path));
-    
-    if all_file_paths.is_empty() {
-        return;
-    }
-    
-    // Create TrackedFiles from paths with smart labels
-    let smart_labels = shared::generate_smart_labels(&all_file_paths);
-    let new_tracked_files: Vec<TrackedFile> = all_file_paths.iter()
-        .map(|path| {
-            let mut tracked_file = create_tracked_file(path.clone(), shared::FileState::Loading(shared::LoadingStatus::Starting));
-            tracked_file.smart_label = smart_labels.get(path).unwrap_or(&tracked_file.filename).clone();
-            tracked_file
-        })
-        .collect();
-    
-    // Combine existing files (minus reloaded ones) with new files
-    let mut final_files: Vec<TrackedFile> = TRACKED_FILES.lock_ref()
-        .iter()
-        .filter(|f| !reload_ids.contains(&f.id))
-        .cloned()
-        .collect();
-    
-    final_files.extend(new_tracked_files.clone());
-    
-    // Single atomic update instead of multiple individual pushes
-    TRACKED_FILES.lock_mut().replace_cloned(final_files);
-    
-    // Update the file IDs cache
-    update_tracked_file_ids_cache();
-    
-    // Send backend requests for each file
-    for tracked_file in new_tracked_files {
-        // Add to legacy FILE_PATHS for compatibility
-        crate::FILE_PATHS.lock_mut().insert(tracked_file.id.clone(), tracked_file.path.clone());
-        
-        // Send backend request
-        Task::start({
-            let file_path = tracked_file.path.clone();
-            async move {
-                use crate::platform::{Platform, CurrentPlatform};
-                let _ = CurrentPlatform::send_message(shared::UpMsg::LoadWaveformFile(file_path)).await;
-            }
-        });
-    }
-    
-    // Save config to persist the new file list
-    crate::config::save_file_list();
+    // Use TrackedFiles domain instead of legacy TRACKED_FILES
+    let tracked_files_domain = crate::actors::tracked_files_domain();
+    tracked_files_domain.batch_load_files(file_paths);
 }
 
 /// Helper function to clean up file-related state during batch operations
@@ -126,13 +40,29 @@ fn _cleanup_file_related_state_for_batch(file_id: &str) {
     // Clear scope selections for this file
     crate::TREE_SELECTED_ITEMS.lock_mut().retain(|id| !id.starts_with(&format!("scope_{}_", file_id)));
     
-    // Clear variables from this file
-    crate::SELECTED_VARIABLES.lock_mut().retain(|var| 
-        var.file_path().as_ref().map(|path| path.as_str()) != Some(file_id)
-    );
+    // Clear variables from this file using domain events
+    let current_vars = crate::actors::selected_variables::current_variables();
+    let vars_to_remove: Vec<String> = current_vars.iter()
+        .filter(|var| var.file_path().as_ref().map(|path| path.as_str()) == Some(file_id))
+        .map(|var| var.unique_id.clone())
+        .collect();
     
-    // Clear expanded scopes for this file  
-    crate::EXPANDED_SCOPES.lock_mut().retain(|scope_id| !scope_id.starts_with(&format!("{}_", file_id)));
+    // Send remove events for each variable from this file
+    for var_id in vars_to_remove {
+        crate::actors::selected_variables::variable_removed_relay().send(var_id);
+    }
+    
+    // Clear expanded scopes for this file using domain events
+    let current_scopes = crate::actors::selected_variables::current_expanded_scopes();
+    let scopes_to_collapse: Vec<String> = current_scopes.iter()
+        .filter(|scope_id| scope_id.starts_with(&format!("{}_", file_id)))
+        .cloned()
+        .collect();
+    
+    // Send collapse events for each scope from this file
+    for scope_id in scopes_to_collapse {
+        crate::actors::selected_variables::scope_collapsed_relay().send(scope_id);
+    }
 }
 
 
@@ -147,112 +77,23 @@ pub enum FileUpdateMessage {
     Remove { file_id: String },
 }
 
+// ===== LEGACY FILE UPDATE QUEUE SYSTEM - REPLACED BY TRACKEDFILES DOMAIN =====
+// This entire section is now handled by the TrackedFiles domain and can be removed
+// after migration is complete. Keeping for reference during migration.
+
+/*
 // Message queue system to prevent recursive locking
 static FILE_UPDATE_QUEUE: Lazy<Mutable<Vec<FileUpdateMessage>>> = Lazy::new(|| {
-    let queue = Mutable::new(Vec::new());
-    
-    // Start the processing task immediately when queue is first accessed
-    start_queue_processor(&queue);
-    
-    queue
+    // ... (queue processing code now handled by TrackedFiles domain) ...
 });
+*/
 
-static QUEUE_PROCESSOR_RUNNING: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
-
-fn start_queue_processor(queue: &Mutable<Vec<FileUpdateMessage>>) {
-    let queue_clone = queue.clone();
-    Task::start(async move {
-        // Ensure only one processor runs
-        if QUEUE_PROCESSOR_RUNNING.replace(true) {
-            return; // Another processor is already running
-        }
-        
-        loop {
-            // Wait for messages
-            let messages = {
-                let mut queue_lock = queue_clone.lock_mut();
-                if queue_lock.is_empty() {
-                    drop(queue_lock);
-                    Timer::sleep(10).await; // Small delay to prevent busy waiting
-                    continue;
-                }
-                
-                // Take all messages and clear the queue
-                std::mem::take(&mut *queue_lock)
-            };
-            
-            // Process each message sequentially with proper event loop yielding
-            for message in messages {
-                // CRITICAL: Yield to the event loop between messages to ensure:
-                // 1. Previous locks are fully dropped
-                // 2. Signal handlers complete execution  
-                // 3. DOM updates are processed
-                // This prevents recursive mutex locks by allowing the JavaScript event loop
-                // to run between operations, ensuring signals fire after locks are released
-                Task::next_macro_tick().await;
-                
-                // Process the message sequentially (not concurrently!)
-                process_file_update_message_sync(message).await;
-            }
-        }
-    });
-}
-
-/// Process file update messages synchronously - the ONLY place that locks TRACKED_FILES for writing
-async fn process_file_update_message_sync(message: FileUpdateMessage) {
-    match message {
-        
-        FileUpdateMessage::Update { file_id, new_state } => {
-            // Find and update the file state
-            let file_index = {
-                let tracked_files = TRACKED_FILES.lock_ref();
-                let index = tracked_files.iter().position(|f| f.id == file_id);
-                if index.is_none() {
-                }
-                index
-            };
-            
-            if let Some(index) = file_index {
-                let mut tracked_files = TRACKED_FILES.lock_mut();
-                if let Some(mut file) = tracked_files.get(index).cloned() {
-                    file.state = new_state;
-                    tracked_files.set_cloned(index, file);
-                }
-                // Drop the lock before triggering signal
-            }
-            
-            // Note: TreeView updates automatically via treeview_tracked_files_signal() when needed
-            
-            // Update the file IDs cache
-            update_tracked_file_ids_cache();
-        },
-        
-        FileUpdateMessage::Remove { file_id } => {
-            TRACKED_FILES.lock_mut().retain(|f| f.id != file_id);
-            
-            // Update the file IDs cache
-            update_tracked_file_ids_cache();
-        },
-    }
-}
-
-/// Update the cached file IDs to prevent recursive locking in signal handlers
-fn update_tracked_file_ids_cache() {
-    let tracked_files = TRACKED_FILES.lock_ref();
-    let file_ids: IndexSet<String> = tracked_files.iter().map(|f| f.id.clone()).collect();
-    TRACKED_FILE_IDS.set_neq(file_ids);
-    
-    // Removed broken trigger system that was causing over-rendering
-}
-
-/// Queue a message for processing (non-recursive)
-fn queue_file_update_message(message: FileUpdateMessage) {
-    FILE_UPDATE_QUEUE.lock_mut().push(message);
-}
-
-/// Send a message to the file update processor
-pub fn send_file_update_message(message: FileUpdateMessage) {
-    queue_file_update_message(message);
+/// ✅ ACTOR+RELAY: Send a message to the file update processor
+/// Migrated to use TrackedFiles domain (legacy queue system removed)
+pub fn send_file_update_message(_message: FileUpdateMessage) {
+    // Note: File update messaging is now handled internally by the TrackedFiles domain
+    // This function is kept for compatibility but does nothing - callers should use
+    // domain methods directly (update_file_state, remove_file, etc.)
 }
 
 // Panel resizing state
@@ -395,9 +236,6 @@ pub static EXPANDED_SCOPES: Lazy<Mutable<IndexSet<String>>> = lazy::default();
 
 // NOTE: SELECTED_VARIABLES and SELECTED_VARIABLES_INDEX have been migrated to Actor+Relay architecture
 // Use crate::actors::selected_variables::* functions instead
-// TEMPORARY: Re-adding for compilation - will be removed once migration is complete
-pub static SELECTED_VARIABLES: Lazy<MutableVec<shared::SelectedVariable>> = Lazy::new(|| MutableVec::new());
-pub static SELECTED_VARIABLES_INDEX: Lazy<Mutable<indexmap::IndexSet<String>>> = Lazy::new(|| Mutable::new(indexmap::IndexSet::new()));
 
 // MIGRATED: Signal values → use signal_values_signal() from waveform_timeline
 pub static SIGNAL_VALUES: Lazy<Mutable<HashMap<String, crate::format_utils::SignalValue>>> = lazy::default();
@@ -539,40 +377,34 @@ pub fn make_error_user_friendly(error: &str) -> String {
     }
 }
 
-// Global error alert management
-pub static ERROR_ALERTS: Lazy<MutableVec<ErrorAlert>> = lazy::default();
-
-// Toast notification system state
-pub static TOAST_NOTIFICATIONS: Lazy<MutableVec<ErrorAlert>> = lazy::default();
+// ❌ LEGACY: Replaced by ErrorManager domain (actors/error_manager.rs)
+// pub static ERROR_ALERTS: Lazy<MutableVec<ErrorAlert>> = lazy::default();
+// pub static TOAST_NOTIFICATIONS: Lazy<MutableVec<ErrorAlert>> = lazy::default();
 
 // ===== TRACKED FILES MANAGEMENT UTILITIES =====
 
 
-/// Update the state of an existing tracked file
+/// ✅ ACTOR+RELAY: Update the state of an existing tracked file
+/// Migrated to use TrackedFiles domain
 pub fn update_tracked_file_state(file_id: &str, new_state: FileState) {
-    // Use message queue to prevent recursive locking
-    send_file_update_message(FileUpdateMessage::Update {
-        file_id: file_id.to_string(),
-        new_state,
-    });
+    let tracked_files_domain = crate::actors::tracked_files_domain();
+    tracked_files_domain.update_file_state(file_id.to_string(), new_state);
 }
 
-/// Remove a tracked file by ID
+/// ✅ ACTOR+RELAY: Remove a tracked file by ID
+/// Migrated to use TrackedFiles domain
 pub fn _remove_tracked_file(file_id: &str) {
-    // Use message queue to prevent recursive locking
-    send_file_update_message(FileUpdateMessage::Remove {
-        file_id: file_id.to_string(),
-    });
+    let tracked_files_domain = crate::actors::tracked_files_domain();
+    tracked_files_domain.remove_file(file_id.to_string());
 }
 
 
 
-/// Get all file paths currently being tracked
+/// ✅ ACTOR+RELAY: Get all file paths currently being tracked  
+/// Migrated to use TrackedFiles domain
 pub fn get_all_tracked_file_paths() -> Vec<String> {
-    TRACKED_FILES.lock_ref()
-        .iter()
-        .map(|f| f.path.clone())
-        .collect()
+    let tracked_files_domain = crate::actors::tracked_files_domain();
+    tracked_files_domain.get_all_file_paths()
 }
 
 
@@ -628,7 +460,7 @@ pub fn save_selected_variables() {
     if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
         
         // First sync current selected variables to config store
-        let current_vars = SELECTED_VARIABLES.lock_ref().to_vec();
+        let current_vars = crate::actors::selected_variables::current_variables();
         let mut workspace = crate::config::config_store().workspace.current_value();
         workspace.selected_variables = current_vars;
         crate::config::config_store().workspace.set(workspace);
@@ -742,21 +574,16 @@ pub static SELECTED_VARIABLES_FOR_CONFIG: Lazy<Mutable<Vec<shared::SelectedVaria
     deprecated
 });
 
-/// Derived signal for dock mode based on IS_DOCKED_TO_BOTTOM
+/// ✅ MIGRATED: Derived signal for dock mode using panel layout domain
 pub static DOCK_MODE_FOR_CONFIG: Lazy<Mutable<shared::DockMode>> = Lazy::new(|| {
     let derived = Mutable::new(shared::DockMode::Bottom);
     
     let derived_clone = derived.clone();
     Task::start(async move {
-        IS_DOCKED_TO_BOTTOM.signal()
-            .for_each(move |is_docked_to_bottom| {
+        dock_mode_signal()
+            .for_each(move |dock_mode| {
                 let derived = derived_clone.clone();
                 async move {
-                    let dock_mode = if is_docked_to_bottom {
-                        shared::DockMode::Bottom
-                    } else {
-                        shared::DockMode::Right
-                    };
                     derived.set_neq(dock_mode);
                 }
             })

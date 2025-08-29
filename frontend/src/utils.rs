@@ -1,7 +1,7 @@
 use zoon::*;
 use shared::{ScopeData, file_contains_scope};
 use shared::LoadingStatus;
-use crate::state::{LOADING_FILES, IS_LOADING, LOADED_FILES, SELECTED_SCOPE_ID, TREE_SELECTED_ITEMS, EXPANDED_SCOPES, USER_CLEARED_SELECTION, STARTUP_CURSOR_POSITION_SET};
+use crate::state::{LOADING_FILES, IS_LOADING, LOADED_FILES, TREE_SELECTED_ITEMS, EXPANDED_SCOPES, USER_CLEARED_SELECTION, STARTUP_CURSOR_POSITION_SET};
 use std::collections::HashSet;
 
 // Signal for completion state changes - triggers clearing of completed files
@@ -42,7 +42,7 @@ pub fn restore_scope_selections_sequenced() {
     }
     
     // Check if there's a saved selected_scope_id to restore
-    let scope_to_restore = SELECTED_SCOPE_ID.get_cloned();
+    let scope_to_restore = crate::actors::selected_variables::current_selected_scope();
     
     if let Some(scope_id) = scope_to_restore {
         // Validate that the scope still exists in loaded files
@@ -95,7 +95,7 @@ pub fn restore_scope_selection_for_file(loaded_file: &shared::WaveformFile) {
     }
     
     // Check if there's a saved selected_scope_id to restore
-    let scope_to_restore = SELECTED_SCOPE_ID.get_cloned();
+    let scope_to_restore = crate::actors::selected_variables::current_selected_scope();
     
     if let Some(scope_id) = scope_to_restore {
         // Check if this specific file contains the scope we want to restore
