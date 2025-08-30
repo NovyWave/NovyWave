@@ -1200,7 +1200,7 @@ pub fn files_panel() -> impl Element {
                                             .s(Width::fill())
                                             .child_signal(
                                                 crate::actors::tracked_files::tracked_files_count_signal().map(|file_count| {
-                                    zoon::println!("🔍 DEBUG: File count for UI decision: {}", file_count);
+                                    // File count for UI decision
                                     if file_count == 0 {
                                         empty_state_hint("Click 'Load Files' to add waveform files.")
                                             .unify()
@@ -1305,8 +1305,9 @@ fn render_tracked_file_as_tree_item_with_label_and_expanded_state(
         }
     };
     
-    // Create expanded_scopes_mutable from parameter instead of static clone
-    let expanded_scopes_mutable = zoon::Mutable::new(expanded_scopes.clone());
+    // FIX: Use global EXPANDED_SCOPES directly to enable bi-directional updates
+    // The parameter `expanded_scopes` is only used for rendering decisions,
+    // but TreeView must update the global state when user clicks expand/collapse
     
     // Create a mini tree_view for this single file section
     tree_view()
@@ -1317,7 +1318,7 @@ fn render_tracked_file_as_tree_item_with_label_and_expanded_state(
         .show_checkboxes(true)
         .show_checkboxes_on_scopes_only(true)
         .single_scope_selection(true)
-        .external_expanded(expanded_scopes_mutable)  // Use parameter instead of static clone
+        .external_expanded(crate::state::EXPANDED_SCOPES.clone())  // FIX: Use global state
         .external_selected(crate::state::TREE_SELECTED_ITEMS.clone())
         .build()
 }
@@ -1373,6 +1374,9 @@ fn compute_smart_label_for_file(target_file: &TrackedFile) -> String {
         }
         shared::FileState::Loading(_) => {
             // Show loading status
+            // TODO: Loading text color issue - unique filenames show in blue (like time postfix)
+            // instead of regular text color during loading. TreeView styling treats "(Loading...)"
+            // like time postfix pattern. Non-unique files work correctly (regular color).
             format!("{} (Loading...)", base_name)
         }
         _ => {
@@ -1387,7 +1391,7 @@ fn compute_smart_label_for_file(target_file: &TrackedFile) -> String {
 /// Uses items_signal_vec to render each TrackedFile individually, avoiding signal conversion issues.
 /// This is the proven working pattern that should NOT be changed.
 fn create_stable_tree_view() -> impl Element {
-    zoon::println!("🔍 DEBUG: create_stable_tree_view() called");
+    // create_stable_tree_view() called
     El::new()
         .s(Width::fill())
         .s(Height::fill())
@@ -1405,9 +1409,6 @@ fn create_stable_tree_view() -> impl Element {
                     map_ref! {
                         let tracked_files = crate::actors::tracked_files::tracked_files_signal_vec().to_signal_cloned(),
                         let expanded_scopes = crate::state::EXPANDED_SCOPES.signal_cloned() => {
-                            zoon::println!("🔄 TreeView re-render triggered - {} files, {} expanded scopes", 
-                                tracked_files.len(), expanded_scopes.len());
-                            
                             // When either tracked files OR expanded scopes change, re-render all TreeViews
                             // Pass current expanded scopes state to each TreeView
                             tracked_files.into_iter().map(|tracked_file| {
@@ -2270,6 +2271,10 @@ fn simple_file_picker_tree() -> impl Element {
                                 .with_children(build_hierarchical_tree("/", &tree_cache, &error_cache))
                         ];
                         
+                        // TODO: TreeView file selection UX issues:
+                        // 1. Icon clicking doesn't toggle file selection (only checkbox and label work)
+                        // 2. Label clicking toggles file selection but doesn't update checkbox visual state
+                        // Need NovyUI TreeView component API for full-row selection behavior
                         tree_view()
                             .data(tree_data)
                             .size(TreeViewSize::Medium)

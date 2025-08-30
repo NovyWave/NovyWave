@@ -11,18 +11,19 @@ toast_dismiss_ms = 5000
 [workspace]
 opened_files = [
     "/home/martinkavik/repos/NovyWave/test_files/nested_dir/wave_27.fst",
-    "/home/martinkavik/repos/NovyWave/test_files/complex.vcd",
     "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst",
     "/home/martinkavik/repos/NovyWave/test_files/simple.vcd",
-    "/home/martinkavik/repos/NovyWave/test_files/corrupted.vcd",
-    "/home/martinkavik/repos/NovyWave/test_files/fake.fst",
     "/home/martinkavik/repos/NovyWave/test_files/big_3_GB.vcd",
     "/home/martinkavik/repos/NovyWave/test_files/stress_test.vcd",
 ]
 dock_mode = "right"
 expanded_scopes = [
     "/home/martinkavik/repos/NovyWave/test_files/simple.vcd",
+    "/home/martinkavik/repos/NovyWave/test_files/nested_dir/wave_27.fst",
+    "/home/martinkavik/repos/NovyWave/test_files/nested_dir/wave_27.fst|TOP",
+    "/home/martinkavik/repos/NovyWave/test_files/nested_dir/wave_27.fst|TOP.VexiiRiscv",
     "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb",
+    "/home/martinkavik/repos/NovyWave/test_files/complex.vcd|top",
 ]
 load_files_expanded_directories = [
     "/",
@@ -33,6 +34,7 @@ load_files_expanded_directories = [
     "/home/martinkavik/repos/NovyWave/test_files",
     "/home/martinkavik/repos/NovyWave/test_files/nested_dir",
 ]
+selected_scope_id = "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s"
 load_files_scroll_position = 960
 selected_variables = []
 timeline_cursor_position_ns = 0

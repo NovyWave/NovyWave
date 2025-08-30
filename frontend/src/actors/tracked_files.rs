@@ -47,7 +47,7 @@ impl TrackedFiles {
                 select! {
                     config_files = config_stream.next() => {
                         if let Some(file_paths) = config_files {
-                            zoon::println!("🔄 TrackedFiles: Config loaded {} files", file_paths.len());
+                            // TrackedFiles: Config loaded files
                             
                             let tracked_files: Vec<TrackedFile> = file_paths.into_iter()
                                 .map(|path_str| create_tracked_file(path_str, FileState::Loading(LoadingStatus::Starting)))
@@ -55,7 +55,7 @@ impl TrackedFiles {
                             
                             // Trigger parsing for each file
                             for file in &tracked_files {
-                                zoon::println!("🚀 TrackedFiles: Triggering parse for file: {}", file.path);
+                                // TrackedFiles: Triggering parse for file
                                 trigger_file_parsing(file.path.clone());
                             }
                             
@@ -77,7 +77,7 @@ impl TrackedFiles {
                                 // Don't add duplicates
                                 let existing = files_handle.lock_ref().iter().any(|f| f.id == new_file.id);
                                 if !existing {
-                                    zoon::println!("🚀 TrackedFiles: Triggering parse for dropped file: {}", new_file.path);
+                                    // TrackedFiles: Triggering parse for dropped file
                                     trigger_file_parsing(new_file.path.clone());
                                     files_handle.lock_mut().push_cloned(new_file);
                                 }
@@ -237,7 +237,7 @@ pub fn tracked_files_domain() -> Option<&'static TrackedFiles> {
 
 /// Initialize TrackedFiles domain from config data
 pub fn initialize_from_config(config_file_paths: Vec<String>) {
-    zoon::println!("🚀 TrackedFiles: Initializing with {} files from config", config_file_paths.len());
+    // TrackedFiles: Initializing with files from config
     
     if let Some(domain) = tracked_files_domain() {
         domain.config_files_loaded_relay.send(config_file_paths);
@@ -257,15 +257,14 @@ pub fn tracked_files_signal() -> impl Signal<Item = Vec<TrackedFile>> {
 
 /// Get signal vec for tracked files (convenience function)
 pub fn tracked_files_signal_vec() -> impl SignalVec<Item = TrackedFile> {
-    zoon::println!("🔍 tracked_files_signal_vec() called - using global_domains");
+    // tracked_files_signal_vec() called - using global_domains
     // Use the global_domains version instead of the local TRACKED_FILES_INSTANCE
-    zoon::println!("✅ TrackedFiles signal_vec found via global_domains");
+    // TrackedFiles signal_vec found via global_domains
     crate::actors::global_domains::tracked_files_signal_vec()
 }
 
 /// Get signal for file count (convenience function)
 pub fn tracked_files_count_signal() -> impl Signal<Item = usize> {
-    zoon::println!("🔍 tracked_files_count_signal() called - using global_domains signal");
     // Use the signal access function from global_domains
     crate::actors::global_domains::file_count_signal()
 }
@@ -312,7 +311,7 @@ fn trigger_file_parsing(file_path: String) {
     zoon::Task::start(async move {
         match CurrentPlatform::send_message(UpMsg::LoadWaveformFile(file_path.clone())).await {
             Ok(()) => {
-                zoon::println!("✅ TrackedFiles: Parse request sent for: {}", file_path);
+                // Parse request sent - monitoring progress through domain signals
             }
             Err(e) => {
                 zoon::eprintln!("🚨 TrackedFiles: Failed to send parse request for {}: {}", file_path, e);

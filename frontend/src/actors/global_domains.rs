@@ -175,10 +175,10 @@ pub static ERROR_MANAGER_SIGNALS: OnceLock<ErrorManagerSignalStorage> = OnceLock
 
 /// Initialize all domain instances - call once on app startup
 pub async fn initialize_all_domains() -> Result<(), &'static str> {
-    zoon::println!("🔄 Starting Actor+Relay domain initialization...");
+    // Starting Actor+Relay domain initialization
     
     // PHASE 1: Initialize static signal storage first
-    zoon::println!("🔄 Initializing static signal storage...");
+    // Initializing static signal storage
     TRACKED_FILES_SIGNALS.set(TrackedFilesSignalStorage::new())
         .map_err(|_| "FATAL: TrackedFiles signal storage already initialized")?;
     SELECTED_VARIABLES_SIGNALS.set(SelectedVariablesSignalStorage::new())
@@ -191,7 +191,7 @@ pub async fn initialize_all_domains() -> Result<(), &'static str> {
         .map_err(|_| "FATAL: ErrorManager signal storage already initialized")?;
     
     // PHASE 2: Initialize legacy domains in parallel for better startup performance
-    zoon::println!("🔄 Creating domain instances...");
+    // Creating domain instances
     let (tracked_files, selected_variables, waveform_timeline, user_config, panel_layout, dialog_manager, error_manager) = futures::join!(
         TrackedFiles::new(),
         SelectedVariables::new(),
@@ -202,7 +202,7 @@ pub async fn initialize_all_domains() -> Result<(), &'static str> {
         ErrorManager::new()
     );
     
-    zoon::println!("🔄 Domain constructors completed, storing instances...");
+    // Domain constructors completed, storing instances
     
     // Store legacy instances for global access
     TRACKED_FILES_DOMAIN_INSTANCE.set(tracked_files)
@@ -227,11 +227,11 @@ pub async fn initialize_all_domains() -> Result<(), &'static str> {
     config_sync::initialize();
     
     // PHASE 3: Connect TrackedFiles domain to config persistence
-    zoon::println!("🔄 Setting up TrackedFiles ↔ Config persistence bridge...");
+    // Setting up TrackedFiles ↔ Config persistence bridge
     setup_tracked_files_config_bridge().await;
     
     // All Actor+Relay domains initialized successfully
-    zoon::println!("✅ All Actor+Relay domains initialized successfully");
+    // All Actor+Relay domains initialized successfully
     Ok(())
 }
 
@@ -363,7 +363,7 @@ fn compare_tracked_files(a: &shared::TrackedFile, b: &shared::TrackedFile) -> st
 pub fn tracked_files_signal_vec() -> impl SignalVec<Item = TrackedFile> {
     TRACKED_FILES_SIGNALS.get()
         .map(|signals| {
-            zoon::println!("🔍 DEBUG: TrackedFiles signals found, returning sorted signal_vec");
+            // TrackedFiles signals found, returning sorted signal_vec
             signals.files_mutable.signal_vec_cloned().sort_by_cloned(compare_tracked_files)
         })
         .unwrap_or_else(|| {
@@ -407,7 +407,7 @@ pub fn file_count_signal() -> impl Signal<Item = usize> {
     // For now, use config directly until TrackedFiles domain is fully integrated
     crate::config::app_config().session_state_actor.signal().map(|session| {
         let count = session.opened_files.len();
-        zoon::println!("🔍 DEBUG: file_count_signal returning: {}", count);
+        // file_count_signal returning count
         count
     })
 }
@@ -893,7 +893,7 @@ pub fn test_synchronous_domain_access() {
 /// Set up bridge between TrackedFiles domain and config persistence
 /// Similar to how expanded directories work with direct config connection
 async fn setup_tracked_files_config_bridge() {
-    zoon::println!("🔗 TrackedFiles: Setting up config bridge...");
+    // TrackedFiles: Setting up config bridge
     
     // Step 1: Load files from config into TrackedFiles domain
     let app_config = crate::config::app_config();
@@ -901,7 +901,7 @@ async fn setup_tracked_files_config_bridge() {
     
     if let Some(session_state) = initial_files {
         if !session_state.opened_files.is_empty() {
-            zoon::println!("📂 TrackedFiles: Loading {} files from config", session_state.opened_files.len());
+            // TrackedFiles: Loading files from config
             let tracked_files_domain = tracked_files_domain();
             tracked_files_domain.config_files_loaded_relay.send(session_state.opened_files);
         }
@@ -920,7 +920,6 @@ async fn setup_tracked_files_config_bridge() {
             async move {
                 // Step 2a: Update static signal storage for UI
                 update_tracked_files_signals(files_copy.clone());
-                zoon::println!("📡 TrackedFiles: Updated static signal storage with {} files for UI", files_copy.len());
                 
                 // Step 2b: Sync to config for persistence
                 // Extract file paths from TrackedFiles
@@ -940,5 +939,5 @@ async fn setup_tracked_files_config_bridge() {
         }).await;
     });
     
-    zoon::println!("✅ TrackedFiles ↔ Config bridge established");
+    // TrackedFiles ↔ Config bridge established
 }

@@ -625,6 +625,35 @@ dock_button.on_click(|| {
 
 This pattern provides automatic, efficient, and decoupled configuration persistence while maintaining clean Actor+Relay architecture principles.
 
+### CRITICAL Bi-directional UI State Antipattern
+
+**❌ ANTIPATTERN: Local State Copies Breaking Bi-directional Updates**
+
+From successful expanded scopes persistence fix:
+
+```rust
+// ❌ BROKEN: Creates local copy, breaks bi-directional updates
+let expanded_scopes_mutable = zoon::Mutable::new(expanded_scopes.clone());
+tree_view().external_expanded(expanded_scopes_mutable)  // Updates local copy only!
+```
+
+**✅ CORRECT: Use global state directly for bi-directional updates**
+```rust
+tree_view().external_expanded(crate::state::EXPANDED_SCOPES.clone())  // Updates global state!
+```
+
+**Key Lesson:** When UI components need to both READ and WRITE state (bi-directional), they must reference the actual state, not copies. Creating local `Mutable` copies breaks the write-back mechanism.
+
+### Complete State Persistence Pattern (Actor+Relay Proper)
+
+**Implementation within Actor+Relay domains:**
+1. **Domain Events:** Use event-source relays for user interactions
+2. **Actor State:** Manage persistence state within domain Actors  
+3. **Config Integration:** ConfigSaver monitors domain signals automatically
+4. **UI Integration:** Connect UI components to domain signals, not global state
+
+**Key Principle:** Avoid global state patterns - use proper domain-driven Actor+Relay architecture instead.
+
 ### Atom for Local UI Patterns
 
 **Replace all local Mutables with Atom:**

@@ -231,7 +231,13 @@ pub static TREE_SELECTED_ITEMS: Lazy<Mutable<IndexSet<String>>> = lazy::default(
 pub static USER_CLEARED_SELECTION: Lazy<Mutable<bool>> = lazy::default(); // Flag to prevent unwanted restoration
 
 // Track expanded scopes for TreeView persistence
-pub static EXPANDED_SCOPES: Lazy<Mutable<IndexSet<String>>> = lazy::default();
+pub static EXPANDED_SCOPES: Lazy<Mutable<IndexSet<String>>> = Lazy::new(|| {
+    let expanded = Mutable::new(IndexSet::new());
+    
+    // State changes monitored by ConfigSaver automatically
+    
+    expanded
+});
 
 // NOTE: SELECTED_VARIABLES and SELECTED_VARIABLES_INDEX have been migrated to Actor+Relay architecture
 // Use crate::actors::selected_variables::* functions instead
@@ -515,6 +521,7 @@ pub static EXPANDED_SCOPES_FOR_CONFIG: Lazy<Mutable<Vec<String>>> = Lazy::new(||
                             })
                             .collect();
                     
+                    // Debug logging removed - ConfigSaver handles monitoring
                     derived.set_neq(expanded_vec);
                 }
             })
@@ -547,6 +554,77 @@ pub static LOAD_FILES_EXPANDED_DIRECTORIES_FOR_CONFIG: Lazy<Mutable<Vec<String>>
     
     derived
 });
+
+/// Derived signal that converts SELECTED_SCOPE_ID (Option<String>) to Option<String> for config storage  
+/// Strips TreeView "scope_" prefixes before storing to config
+pub static SELECTED_SCOPE_ID_FOR_CONFIG: Lazy<Mutable<Option<String>>> = Lazy::new(|| {
+    let derived = Mutable::new(None);
+    
+    // Initialize the derived signal with current SELECTED_SCOPE_ID
+    let derived_clone = derived.clone();
+    Task::start(async move {
+        SELECTED_SCOPE_ID.signal_ref(|selected_scope| selected_scope.clone())
+            .for_each(move |selected_scope| {
+                let derived = derived_clone.clone();
+                async move {
+                    // Process selected scope for config storage
+                    // Strip TreeView "scope_" prefix before storing to config
+                    let config_scope = selected_scope.as_ref().map(|scope_id| {
+                        if scope_id.starts_with("scope_") {
+                            scope_id.strip_prefix("scope_").unwrap_or(scope_id).to_string()
+                        } else {
+                            scope_id.clone()
+                        }
+                    });
+                    
+                    derived.set_neq(config_scope);
+                }
+            })
+            .await;
+    });
+    
+    derived
+});
+
+// =============================================================================
+// SELECTED SCOPE SYNCHRONIZATION - Bi-directional sync between UI and persistence
+// =============================================================================
+
+/// Initialize synchronization between SELECTED_SCOPE_ID (persisted) and TREE_SELECTED_ITEMS (UI state)
+pub fn initialize_selected_scope_synchronization() {
+    // 1. SELECTED_SCOPE_ID → TREE_SELECTED_ITEMS (config load to UI)
+    Task::start(async move {
+        SELECTED_SCOPE_ID.signal_ref(|selected_scope| selected_scope.clone())
+            .for_each(|selected_scope| async move {
+                if let Some(scope_id) = selected_scope {
+                    let mut tree_selected = TREE_SELECTED_ITEMS.lock_mut();
+                    tree_selected.clear();
+                    tree_selected.insert(scope_id);
+                } else {
+                    TREE_SELECTED_ITEMS.lock_mut().clear();
+                }
+            })
+            .await;
+    });
+    
+    // 2. TREE_SELECTED_ITEMS → SELECTED_SCOPE_ID (user selection to persistence)
+    Task::start(async move {
+        TREE_SELECTED_ITEMS.signal_ref(|tree_selected| tree_selected.clone())
+            .for_each(|tree_selected| async move {
+                let selected_scope = if tree_selected.is_empty() {
+                    None
+                } else if tree_selected.len() == 1 {
+                    tree_selected.iter().next().cloned()
+                } else {
+                    // Multiple selections - take the first one (single_scope_selection should prevent this)
+                    tree_selected.iter().next().cloned()
+                };
+                
+                SELECTED_SCOPE_ID.set_neq(selected_scope);
+            })
+            .await;
+    });
+}
 
 
 

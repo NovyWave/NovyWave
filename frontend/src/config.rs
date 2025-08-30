@@ -25,7 +25,7 @@ fn create_config_saver_actor(
 ) -> Actor<()> {
     Actor::new((), async move |_state| {
         let debounce_task = Arc::new(std::sync::Mutex::new(None::<TaskHandle>));
-        zoon::println!("💾 ConfigSaver: Watching all config signals...");
+        // ConfigSaver: Watching all config signals for automatic persistence
         
         // Combine all config signals - trigger save when ANY change
         let config_change_signal = map_ref! {
@@ -37,14 +37,15 @@ fn create_config_saver_actor(
             let session = session_actor.signal(),
             let ui = ui_actor.signal(),
             let dialogs = dialogs_actor.signal(),
-            let expanded_scopes = crate::state::EXPANDED_SCOPES_FOR_CONFIG.signal_cloned() =>
+            let expanded_scopes = crate::state::EXPANDED_SCOPES_FOR_CONFIG.signal_cloned(),
+            let selected_scope_id = crate::state::SELECTED_SCOPE_ID_FOR_CONFIG.signal_cloned() =>
             (theme.clone(), dock_mode.clone(), panel_right.clone(), panel_bottom.clone(), 
-             timeline.clone(), session.clone(), ui.clone(), dialogs.clone(), expanded_scopes.clone())
+             timeline.clone(), session.clone(), ui.clone(), dialogs.clone(), expanded_scopes.clone(), selected_scope_id.clone())
         };
         
         config_change_signal.to_stream().skip(1).for_each({
             let debounce_task = debounce_task.clone();
-            move |(theme, dock_mode, panel_right, panel_bottom, timeline, session, ui, _dialogs, _expanded_scopes)| {
+            move |(theme, dock_mode, panel_right, panel_bottom, timeline, session, ui, _dialogs, _expanded_scopes, _selected_scope_id)| {
                 let debounce_task = debounce_task.clone();
                 async move {
                     // Cancel any pending save
@@ -53,7 +54,7 @@ fn create_config_saver_actor(
             // Schedule new save with 1 second debounce
             let handle = Task::start_droppable(async move {
                 Timer::sleep(1000).await;
-                zoon::println!("💾 ConfigSaver: Executing debounced save");
+                // ConfigSaver: Executing debounced save
                 
                 // Build config from current values
                 let shared_config = shared::AppConfig {
@@ -75,7 +76,7 @@ fn create_config_saver_actor(
                         dock_mode: dock_mode.clone(),
                         expanded_scopes: crate::state::EXPANDED_SCOPES_FOR_CONFIG.get_cloned(),
                         load_files_expanded_directories: session.file_picker_expanded_directories,
-                        selected_scope_id: None,
+                        selected_scope_id: crate::state::SELECTED_SCOPE_ID_FOR_CONFIG.get_cloned(),
                         load_files_scroll_position: session.file_picker_scroll_position,
                         variables_search_filter: session.variables_search_filter,
                         selected_variables: Vec::new(),
@@ -255,7 +256,6 @@ impl AppConfig {
                 SharedAppConfig::default()
             });
         
-        zoon::println!("✅ Config loaded: dock_mode={:?}", config.workspace.dock_mode);
         
         // Create relays for all events
         let (theme_button_clicked_relay, theme_button_clicked_stream) = relay();
@@ -282,13 +282,13 @@ impl AppConfig {
                 SharedTheme::Dark => theme::Theme::Dark,
             };
             theme::init_theme(Some(initial_novyui_theme), None);
-            zoon::println!("🎨 Theme Actor: Initialized NovyUI theme system with {:?}", initial_novyui_theme);
+            // Theme Actor: Initialized NovyUI theme system
             
             loop {
                 select! {
                     button_click = theme_button_clicked_stream.next() => {
                         if let Some(()) = button_click {
-                            zoon::println!("🎨 Theme Actor: Processing button click");
+                            // Theme Actor: Processing button click
                             // ✅ Read and modify state directly
                             {
                                 let mut theme = state.lock_mut();
@@ -297,7 +297,7 @@ impl AppConfig {
                                     SharedTheme::Light => SharedTheme::Dark,
                                     SharedTheme::Dark => SharedTheme::Light,
                                 };
-                                zoon::println!("🎨 Theme Actor: Toggling from {:?} to {:?}", old_theme, *theme);
+                                // Theme Actor: Toggling theme
                                 
                                 // Update NovyUI theme system immediately
                                 let novyui_theme = match *theme {
@@ -456,7 +456,7 @@ impl AppConfig {
         });
 
         // Create automatic config saver actor that watches all config changes
-        zoon::println!("🔧 AppConfig: Creating config saver actor...");
+        // AppConfig: Creating config saver actor
         let config_saver_actor = create_config_saver_actor(
             theme_actor.clone(),
             dock_mode_actor.clone(), 
@@ -467,7 +467,7 @@ impl AppConfig {
             ui_state_actor.clone(),
             dialogs_data_actor.clone(),
         );
-        zoon::println!("✅ AppConfig: Config saver actor created successfully");
+        // AppConfig: Config saver actor created successfully
 
         // Create file picker expanded directories mutable with loaded config
         let file_picker_expanded_directories = {
@@ -480,9 +480,8 @@ impl AppConfig {
 
         // Load expanded scopes from config into EXPANDED_SCOPES
         {
-            zoon::println!("🔍 Config: About to load expanded scopes from config");
-            zoon::println!("🔍 Config: Found {} expanded scopes in config: {:?}", 
-                config.workspace.expanded_scopes.len(), config.workspace.expanded_scopes);
+            // Config: Loading expanded scopes from config
+            // Config: Found expanded scopes in config
             
             let mut expanded_scopes = crate::state::EXPANDED_SCOPES.lock_mut();
             expanded_scopes.clear();
@@ -494,18 +493,39 @@ impl AppConfig {
                 } else if scope.contains('|') {
                     // Nested scope - add "scope_" prefix  
                     let prefixed = format!("scope_{}", scope);
-                    zoon::println!("🔍 Config: Loading nested scope '{}' as '{}'", scope, prefixed);
+                    // Config: Loading nested scope with prefix
                     prefixed
                 } else {
                     // File-level expansion - use path directly (no prefix)
-                    zoon::println!("🔍 Config: Loading file-level expansion '{}' as '{}'", scope, scope);
+                    // Config: Loading file-level expansion
                     scope.clone()
                 };
                 expanded_scopes.insert(scope_id);
             }
-            zoon::println!("✅ Config: Loaded {} expanded scopes from config into EXPANDED_SCOPES", expanded_scopes.len());
-            zoon::println!("🔍 Config: Final EXPANDED_SCOPES contents: {:?}", 
-                expanded_scopes.iter().collect::<Vec<_>>());
+            // Config: Loaded expanded scopes from config into EXPANDED_SCOPES
+            // Config: Final EXPANDED_SCOPES contents loaded
+        }
+
+        // Load selected scope ID from config into SELECTED_SCOPE_ID
+        if let Some(selected_scope) = &config.workspace.selected_scope_id {
+            // Config: Loading selected scope from config
+            
+            // Apply same prefix logic as expanded_scopes for consistency
+            let scope_id = if selected_scope.contains('|') {
+                // Nested scope - add "scope_" prefix
+                let prefixed = format!("scope_{}", selected_scope);
+                // Config: Loading selected nested scope with prefix
+                prefixed
+            } else {
+                // File-level selection - use path directly (no prefix)
+                // Config: Loading selected file-level scope
+                selected_scope.clone()
+            };
+            
+            crate::state::SELECTED_SCOPE_ID.set_neq(Some(scope_id.clone()));
+            // Config: Loaded selected scope ID into SELECTED_SCOPE_ID
+        } else {
+            // Config: No selected scope ID in config, leaving SELECTED_SCOPE_ID as None
         }
 
         // Create file picker scroll position mutable with loaded config
@@ -526,7 +546,7 @@ impl AppConfig {
                         
                         // Trigger session state change to save config
                         session_changed_relay.send(session_state);
-                        zoon::println!("🔄 File picker directories synced to session state → config save triggered");
+                        // File picker directories synced to session state
                     }
                 }
             }).await;
@@ -547,7 +567,7 @@ impl AppConfig {
                         
                         // Trigger session state change to save config
                         session_scroll_changed_relay.send(session_state);
-                        zoon::println!("🔄 File picker scroll position synced to session state → config save triggered");
+                        // File picker scroll position synced to session state
                     }
                 }
             }).await;

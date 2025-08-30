@@ -80,7 +80,7 @@ pub fn main() {
             zoon::println!("🚨 APP CONFIG INITIALIZATION FAILED: AppConfig already initialized");
             return;
         }
-        zoon::println!("✅ AppConfig initialized successfully");
+        // AppConfig initialized successfully
         
         // Initialize Actor+Relay domain instances  
         if let Err(error_msg) = crate::actors::initialize_all_domains().await {
@@ -101,11 +101,10 @@ pub fn main() {
         start_app("app", root);
 
         // Initialize value caching - domains are already initialized
-        zoon::println!("🔄 Initializing value caching after domain verification");
         crate::actors::waveform_timeline::initialize_value_caching();
         
-        // Note: init_scope_selection_handlers() function does not exist yet - skipping
-        zoon::println!("⚠️ init_scope_selection_handlers() not implemented yet - skipping");
+        // Initialize selected scope synchronization between UI and persistence
+        crate::state::initialize_selected_scope_synchronization();
         
         // Initialize file picker directory browsing
         init_file_picker_handlers();
@@ -116,7 +115,7 @@ pub fn main() {
         
         // Note: init_timeline_signal_handlers() and init_selected_variables_signal_service_bridge() 
         // functions do not exist yet - skipping
-        zoon::println!("⚠️ Timeline and variables signal bridge functions not implemented yet");
+        // Timeline and variables signal bridge functions not implemented yet
         
         // Initialize error display system
         init_error_display_system();

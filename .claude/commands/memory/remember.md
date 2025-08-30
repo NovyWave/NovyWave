@@ -14,15 +14,17 @@ Add new knowledge, patterns, or lessons learned to Claude's memory for this proj
 /memory:remember <knowledge_to_remember>
 ```
 
-## Examples
+**Note:** The command automatically prepends "remember " to your argument if it doesn't already start with "remember", so you can write naturally:
 
 ```bash
-/memory:remember Use saturating_sub() instead of - for counts to avoid integer overflow panics
-/memory:remember TreeView backgrounds need min-width: max-content + width: 100% for proper scrolling
-/memory:remember Always check CONFIG_LOADED.get() before triggering config save to prevent startup overwrites
+/memory:remember that CONFIG_LOADED should be checked before saving
+/memory:remember to use Actor+Relay instead of raw mutables  
+/memory:remember TreeView backgrounds need min-width: max-content + width: 100%
 ```
 
 ## Your Task
+
+**Implementation Note:** Check if the user's argument starts with "remember". If not, automatically prepend "remember " before processing. This allows natural usage like `/memory:remember to check CONFIG_LOADED` without redundant "remember" words.
 
 ### Smart Content Placement:
 
