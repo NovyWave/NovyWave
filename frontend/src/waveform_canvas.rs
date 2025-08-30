@@ -3,12 +3,9 @@ use fast2d;
 use crate::state::{LOADED_FILES, IS_LOADING, IS_ZOOMING_IN, IS_ZOOMING_OUT, IS_PANNING_LEFT, IS_PANNING_RIGHT, 
     IS_CURSOR_MOVING_LEFT, IS_CURSOR_MOVING_RIGHT, ZOOM_CENTER_NS, MOUSE_TIME_NS, MOUSE_X_POSITION};
 use crate::actors::waveform_timeline::{
-    is_zooming_in_signal, is_zooming_out_signal, is_panning_left_signal, is_panning_right_signal,
-    is_cursor_moving_left_signal, is_cursor_moving_right_signal, zoom_center_ns_signal, 
-    mouse_time_ns_signal, mouse_x_position_signal, zoom_in_started_relay, zoom_out_started_relay,
-    pan_left_started_relay, pan_right_started_relay, mouse_moved_relay, zoom_in_pressed_relay,
-    zoom_out_pressed_relay
+    zoom_in_started_relay, zoom_center_ns_signal
 };
+// Most other functions removed as unused, but these are needed for zoom functionality
 // MIGRATED: Canvas dimensions, zoom/pan flags, mouse tracking now from actors/waveform_timeline.rs
 use crate::actors::waveform_timeline::{current_cursor_position, current_cursor_position_seconds, current_viewport,
     set_cursor_position, set_cursor_position_if_changed, set_cursor_position_seconds,

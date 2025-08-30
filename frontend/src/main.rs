@@ -74,7 +74,16 @@ pub fn main() {
         // Initialize Actor+Relay domain instances  
         if let Err(error_msg) = crate::actors::initialize_all_domains().await {
             zoon::println!("🚨 DOMAIN INITIALIZATION FAILED: {}", error_msg);
-            panic!("Domain initialization failed - application cannot continue: {}", error_msg);
+            error_display::add_error_alert(crate::state::ErrorAlert {
+                id: "domain_init_failure".to_string(),
+                title: "Domain Initialization Failed".to_string(),
+                message: format!("Critical startup error: {}", error_msg),
+                technical_error: error_msg.to_string(),
+                error_type: crate::state::ErrorType::ConfigError,
+                timestamp: js_sys::Date::now() as u64,
+                auto_dismiss_ms: None, // Critical errors should not auto-dismiss
+            });
+            return; // Exit gracefully instead of panic
         }
         
         // Add delay to ensure domain storage is visible across async boundaries before any access
@@ -86,17 +95,16 @@ pub fn main() {
             Timer::sleep(500).await;
         }
         
-        // TEMPORARILY DISABLED: Value caching initialization causing startup panics
-        // crate::actors::waveform_timeline::initialize_value_caching();  // ❌ Calls domain functions before domains ready
+        // Initialize value caching after domain verification
+        if crate::actors::global_domains::_are_domains_initialized() {
+            zoon::println!("🔄 Initializing value caching after domain verification");
+            crate::actors::waveform_timeline::initialize_value_caching();
+        } else {
+            zoon::println!("⚠️ WARNING: Domains not initialized - skipping value caching initialization");
+        }
         
-        // TEMPORARILY DISABLED: Scope selection handlers causing startup race conditions
-        // if crate::actors::global_domains::_are_domains_initialized() {
-        //     zoon::println!("🔄 Initializing scope selection handlers after domain verification");
-        //     init_scope_selection_handlers();  // ❌ Calls domain functions before domains ready
-        // } else {
-        //     zoon::println!("⚠️ Domains not initialized after delay - skipping scope selection handlers");
-        // }
-        zoon::println!("⚠️ DISABLED: init_scope_selection_handlers() - prevents startup race conditions");
+        // Note: init_scope_selection_handlers() function does not exist yet - skipping
+        zoon::println!("⚠️ init_scope_selection_handlers() not implemented yet - skipping");
         
         // Initialize file picker directory browsing
         init_file_picker_handlers();
@@ -105,11 +113,9 @@ pub fn main() {
         init_signal_chains();
         
         
-        // TEMPORARILY DISABLED: Timeline signal handlers causing startup race conditions
-        // init_timeline_signal_handlers();  // ❌ Calls waveform_timeline_domain() before domains ready
-        
-        // TEMPORARILY DISABLED: Selected variables signal service bridge causing startup race conditions
-        // init_selected_variables_signal_service_bridge();  // ❌ Calls variables_signal() before domains ready
+        // Note: init_timeline_signal_handlers() and init_selected_variables_signal_service_bridge() 
+        // functions do not exist yet - skipping
+        zoon::println!("⚠️ Timeline and variables signal bridge functions not implemented yet");
         
         // Initialize error display system
         init_error_display_system();
@@ -176,47 +182,65 @@ pub fn main() {
             }).await
         });
         
-        // TEMPORARILY DISABLED: Query signal values when cursor movement stops
-        // Disabled to prevent startup panics from domain access race conditions
-        // Task::start(async {
-        //     let was_moving = Mutable::new(false);
-        //     
-        //     // Listen to movement flags directly instead of cursor position changes
-        //     let movement_signal = map_ref! {
-        //         let left = crate::actors::waveform_timeline::is_cursor_moving_left_signal(),  // ❌ Calls domain before ready
-        //         let right = crate::actors::waveform_timeline::is_cursor_moving_right_signal() =>  // ❌ Calls domain before ready
-        //         *left || *right
-        //     };
-        //     
-        //     movement_signal.for_each_sync(move |is_moving| {
-        //         if is_moving {
-        //             // Movement started - just track state, don't query
-        //             was_moving.set(true);
-        //         } else if was_moving.get() {
-        //             // Movement just stopped - use unified caching logic with built-in range checking
-        //             was_moving.set(false);
-        //             crate::views::trigger_signal_value_queries();
-        //         }
-        //     }).await;
-        // });
+        // Query signal values when cursor movement stops (ENABLED - using domain signals)
+        Task::start(async {
+            // Wait for CONFIG_LOADED to avoid startup race conditions
+            CONFIG_LOADED.signal().for_each_sync(|loaded| {
+                if loaded {
+                    let was_moving = Mutable::new(false);
+                    
+                    Task::start(async move {
+                        // Use domain signals instead of direct domain access
+                        let movement_signal = map_ref! {
+                            let left = crate::actors::waveform_timeline::is_cursor_moving_left_signal(),
+                            let right = crate::actors::waveform_timeline::is_cursor_moving_right_signal() =>
+                            *left || *right
+                        };
+                        
+                        movement_signal.for_each_sync(move |is_moving| {
+                            if is_moving {
+                                // Movement started - just track state, don't query
+                                was_moving.set(true);
+                            } else if was_moving.get() {
+                                // Movement just stopped - use unified caching logic with built-in range checking
+                                crate::views::trigger_signal_value_queries();
+                                was_moving.set(false);
+                            }
+                        }).await;
+                    });
+                }
+            }).await;
+        });
         
-        // TEMPORARILY DISABLED: Direct cursor position handler causing startup race conditions
-        // Task::start(async {
-        //     let last_position = Mutable::new(0.0);
-        //     
-        //     waveform_timeline_domain().cursor_position_seconds_signal().for_each_sync(move |cursor_pos| {  // ❌ Calls domain before ready
-        //         // TODO: Replace with domain signal when uncommenting
-        //         let is_moving = crate::state::IS_CURSOR_MOVING_LEFT.get() || crate::state::IS_CURSOR_MOVING_RIGHT.get();
-        //         
-        //         // Only query for direct position changes (not during Q/E movement)
-        //         if !is_moving && (cursor_pos - last_position.get()).abs() > 0.001 {
-        //             // Use the unified caching logic with built-in range checking
-        //             crate::views::trigger_signal_value_queries();
-        //         }
-        //         
-        //         last_position.set(cursor_pos);
-        //     }).await;
-        // });
+        // Direct cursor position handler (ENABLED - using domain signals)
+        Task::start(async {
+            // Wait for CONFIG_LOADED to avoid startup race conditions
+            CONFIG_LOADED.signal().for_each_sync(|loaded| {
+                if loaded {
+                    Task::start(async move {
+                        let last_position = Mutable::new(0.0);
+                        
+                        // Use domain signal instead of direct domain access - combined approach
+                        let movement_and_position_signal = map_ref! {
+                            let cursor_pos = crate::actors::waveform_timeline::cursor_position_seconds_signal(),
+                            let left = crate::actors::waveform_timeline::is_cursor_moving_left_signal(),
+                            let right = crate::actors::waveform_timeline::is_cursor_moving_right_signal() =>
+                            (*cursor_pos, *left || *right)
+                        };
+                        
+                        movement_and_position_signal.for_each_sync(move |(cursor_pos, is_moving)| {
+                            // Only query for direct position changes (not during Q/E movement)
+                            if !is_moving && (cursor_pos - last_position.get()).abs() > 0.001 {
+                                // Use the unified caching logic with built-in range checking
+                                crate::views::trigger_signal_value_queries();
+                            }
+                            
+                            last_position.set(cursor_pos);
+                        }).await;
+                    });
+                }
+            }).await;
+        });
     });
 }
 

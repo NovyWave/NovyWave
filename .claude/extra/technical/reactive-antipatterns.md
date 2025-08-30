@@ -215,3 +215,83 @@ When performance is bad, acknowledge it and investigate systematically rather th
 - Debug logging in hot paths → Performance false negatives
 
 This experience provided invaluable insights into MoonZone/Zoon reactive patterns and performance debugging methodology.
+
+## 🚨 NEW ANTIPATTERNS DISCOVERED (2025-08-30)
+
+### 4. **Static Mutable Signal Bypass (Compilation Shortcut)**
+
+**❌ ANTIPATTERN: Hardcoded Static Signals to Fix Compilation**
+
+During aggressive compilation error fixes, we introduced the following pattern:
+
+```rust
+// ANTIPATTERN: Static Mutable bypasses proper Actor+Relay architecture
+pub fn cursor_position_signal_static() -> impl zoon::Signal<Item = TimeNs> {
+    use std::sync::OnceLock;
+    static CURSOR_POSITION_SIGNAL: OnceLock<zoon::Mutable<TimeNs>> = OnceLock::new();
+    
+    let signal = CURSOR_POSITION_SIGNAL.get_or_init(|| zoon::Mutable::new(TimeNs::ZERO));
+    signal.signal()
+}
+```
+
+**Why this is an antipattern:**
+- **Breaks Actor+Relay architecture** - No centralized event processing
+- **Hardcoded default values** - `TimeNs::ZERO`, `HashMap::new()`, etc.
+- **No state synchronization** - Static signals never update from domain events
+- **Compilation-driven development** - Fixed types, not behavior
+- **Defeats reactive architecture** - Returns static unchanging signals
+
+**Where we introduced this:**
+- `frontend/src/actors/waveform_timeline.rs`: **13 static signal functions** 
+- `frontend/src/actors/selected_variables.rs`: **9 static signal functions**
+- `frontend/src/actors/global_domains.rs`: File count and other signals
+- **Total: 22+ hardcoded static signals** that never update from domain events
+
+**Real examples from our code:**
+```rust
+// ❌ All return static, never-updating signals:
+pub fn variables_signal() -> impl zoon::Signal<Item = Vec<SelectedVariable>>
+pub fn cursor_position_signal_static() -> impl zoon::Signal<Item = TimeNs>
+pub fn file_count_signal() -> impl Signal<Item = usize>
+pub fn signal_values_signal_static() -> impl zoon::Signal<Item = HashMap<String, SignalValue>>
+```
+
+**✅ CORRECT APPROACH: Real Actor+Relay Signals**
+
+These should be proper domain signals that actually update:
+
+```rust
+// ✅ CORRECT: Signals from actual Actor state that updates
+pub fn cursor_position_signal() -> impl Signal<Item = TimeNs> {
+    WAVEFORM_TIMELINE_DOMAIN.get()
+        .map(|domain| domain.cursor_position.signal())
+        .unwrap_or_else(|| /* proper fallback */)
+}
+
+// ✅ CORRECT: Event-driven updates
+cursor_clicked_relay.send(new_time);  // Actually updates the signal
+```
+
+**Impact of this antipattern:**
+- **UI shows stale data** - Signals never reflect actual state changes
+- **Events don't propagate** - No reactive updates when domain state changes
+- **False sense of "working"** - Compilation succeeds but functionality is broken
+- **Debug confusion** - Appears to work in isolated tests but fails in integration
+
+**How this happened:**
+1. User directive: "somehow get rid of the compilation errors, don't be afraid to rewrite it to our better architecture"
+2. Complex closure type mismatches in Rust signal chains
+3. Time pressure led to "compilation-first" instead of "architecture-first" fixes
+4. Quick OnceLock pattern worked to eliminate type errors
+5. Successfully compiled but created non-functional static signals
+
+**Recovery strategy:**
+1. **Identify all static signal functions** (grep for `OnceLock<zoon::Mutable`)
+2. **Connect to real domain events** - Replace with proper Actor signal access
+3. **Test reactive behavior** - Verify signals actually update when domain changes
+4. **Remove hardcoded defaults** - Use proper initialization from domain state
+
+**Lesson learned:**
+**Never prioritize compilation success over architectural correctness.** 
+Working compilation with broken reactivity is worse than compilation errors with correct architecture.

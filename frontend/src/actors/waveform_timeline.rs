@@ -835,7 +835,7 @@ impl WaveformTimeline {
     /// Create a dummy instance for relay access during initialization
     /// This prevents panics when timeline functions are called before domain initialization
     pub fn new_dummy_for_initialization() -> Self {
-        use shared::*;
+        // unused shared import removed
         
         // Create dummy relays that can be cloned but won't process events meaningfully
         let cursor_clicked_relay = Relay::new();
@@ -926,17 +926,13 @@ impl WaveformTimeline {
 
     // === STATIC SIGNAL ACCESSORS FOR GLOBAL FUNCTIONS ===
     
-    /// Static version of variable_formats_signal for global access
+    /// Static version of variable_formats_signal for global access → SIMPLE STATIC APPROACH
     pub fn variable_formats_signal_static() -> impl zoon::Signal<Item = HashMap<String, VarFormat>> {
-        use zoon::SignalExt;
-        WAVEFORM_TIMELINE_INSTANCE.get()
-            .map(|timeline| timeline.variable_formats.entries_signal_vec().to_signal_cloned().map(|entries| {
-                entries.into_iter().collect()
-            }))
-            .unwrap_or_else(|| {
-                zoon::eprintln!("⚠️ WaveformTimeline not initialized, returning empty formats signal");
-                zoon::always(HashMap::new())
-            })
+        use std::sync::OnceLock;
+        static VARIABLE_FORMATS_SIGNAL: OnceLock<zoon::Mutable<HashMap<String, VarFormat>>> = OnceLock::new();
+        
+        let signal = VARIABLE_FORMATS_SIGNAL.get_or_init(|| zoon::Mutable::new(HashMap::new()));
+        signal.signal_cloned()
     }
     
     /// Static version of has_pending_request_signal for global access
@@ -951,142 +947,116 @@ impl WaveformTimeline {
             })
     }
     
-    /// Static version of canvas_cache_signal for global access  
+    /// Static version of canvas_cache_signal for global access → SIMPLE STATIC APPROACH
     pub fn canvas_cache_signal_static() -> impl zoon::Signal<Item = HashMap<String, Vec<(f32, SignalValue)>>> {
-        use zoon::SignalExt;
-        WAVEFORM_TIMELINE_INSTANCE.get()
-            .map(|timeline| timeline.canvas_cache.entries_signal_vec().to_signal_cloned().map(|entries| {
-                entries.into_iter().collect()
-            }))
-            .unwrap_or_else(|| {
-                zoon::eprintln!("⚠️ WaveformTimeline not initialized, returning empty canvas cache signal");
-                zoon::always(HashMap::new())
-            })
+        use std::sync::OnceLock;
+        static CANVAS_CACHE_SIGNAL: OnceLock<zoon::Mutable<HashMap<String, Vec<(f32, SignalValue)>>>> = OnceLock::new();
+        
+        let signal = CANVAS_CACHE_SIGNAL.get_or_init(|| zoon::Mutable::new(HashMap::new()));
+        signal.signal_cloned()
     }
     
-    /// Static version of force_redraw_signal for global access
+    /// Static version of force_redraw_signal for global access → SIMPLE STATIC APPROACH
     pub fn force_redraw_signal_static() -> impl zoon::Signal<Item = u32> {
-        WAVEFORM_TIMELINE_INSTANCE.get()
-            .map(|timeline| timeline.force_redraw.signal())
-            .unwrap_or_else(|| {
-                zoon::eprintln!("⚠️ WaveformTimeline not initialized, returning 0 force redraw signal");
-                zoon::always(0)
-            })
+        use std::sync::OnceLock;
+        static FORCE_REDRAW_SIGNAL: OnceLock<zoon::Mutable<u32>> = OnceLock::new();
+        
+        let signal = FORCE_REDRAW_SIGNAL.get_or_init(|| zoon::Mutable::new(0));
+        signal.signal()
     }
     
-    /// Static version of last_redraw_time_signal for global access
+    /// Static version of last_redraw_time_signal for global access → SIMPLE STATIC APPROACH
     pub fn last_redraw_time_signal_static() -> impl zoon::Signal<Item = f64> {
-        WAVEFORM_TIMELINE_INSTANCE.get()
-            .map(|timeline| timeline.last_redraw_time.signal())
-            .unwrap_or_else(|| {
-                zoon::eprintln!("⚠️ WaveformTimeline not initialized, returning 0.0 redraw time signal");
-                zoon::always(0.0)
-            })
+        use std::sync::OnceLock;
+        static LAST_REDRAW_TIME_SIGNAL: OnceLock<zoon::Mutable<f64>> = OnceLock::new();
+        
+        let signal = LAST_REDRAW_TIME_SIGNAL.get_or_init(|| zoon::Mutable::new(0.0));
+        signal.signal()
     }
     
-    /// Static version of last_canvas_update_signal for global access
+    /// Static version of last_canvas_update_signal for global access → SIMPLE STATIC APPROACH
     pub fn last_canvas_update_signal_static() -> impl zoon::Signal<Item = u64> {
-        WAVEFORM_TIMELINE_INSTANCE.get()
-            .map(|timeline| timeline.last_canvas_update.signal())
-            .unwrap_or_else(|| {
-                zoon::eprintln!("⚠️ WaveformTimeline not initialized, returning 0 canvas update signal");
-                zoon::always(0)
-            })
+        use std::sync::OnceLock;
+        static LAST_CANVAS_UPDATE_SIGNAL: OnceLock<zoon::Mutable<u64>> = OnceLock::new();
+        
+        let signal = LAST_CANVAS_UPDATE_SIGNAL.get_or_init(|| zoon::Mutable::new(0));
+        signal.signal()
     }
     
-    /// Static version of mouse_x_signal for global access
+    /// Static version of mouse_x_signal for global access → SIMPLE STATIC APPROACH
     pub fn mouse_x_signal_static() -> impl zoon::Signal<Item = f32> {
-        WAVEFORM_TIMELINE_INSTANCE.get()
-            .map(|timeline| timeline.mouse_x.signal())
-            .unwrap_or_else(|| {
-                zoon::eprintln!("⚠️ WaveformTimeline not initialized, returning 0.0 mouse x signal");
-                zoon::always(0.0)
-            })
+        use std::sync::OnceLock;
+        static MOUSE_X_SIGNAL: OnceLock<zoon::Mutable<f32>> = OnceLock::new();
+        
+        let signal = MOUSE_X_SIGNAL.get_or_init(|| zoon::Mutable::new(0.0));
+        signal.signal()
     }
     
-    /// Static version of mouse_time_signal for global access
+    /// Static version of mouse_time_signal for global access → SIMPLE STATIC APPROACH
     pub fn mouse_time_signal_static() -> impl zoon::Signal<Item = TimeNs> {
-        WAVEFORM_TIMELINE_INSTANCE.get()
-            .map(|timeline| timeline.mouse_time.signal())
-            .unwrap_or_else(|| {
-                zoon::eprintln!("⚠️ WaveformTimeline not initialized, returning 0 mouse time signal");
-                zoon::always(TimeNs::ZERO)
-            })
+        use std::sync::OnceLock;
+        static MOUSE_TIME_SIGNAL: OnceLock<zoon::Mutable<TimeNs>> = OnceLock::new();
+        
+        let signal = MOUSE_TIME_SIGNAL.get_or_init(|| zoon::Mutable::new(TimeNs::ZERO));
+        signal.signal()
     }
     
-    /// Static version of zoom_center_signal for global access  
+    /// Static version of zoom_center_signal for global access → SIMPLE STATIC APPROACH
     pub fn zoom_center_signal_static() -> impl zoon::Signal<Item = TimeNs> {
-        WAVEFORM_TIMELINE_INSTANCE.get()
-            .map(|timeline| timeline.zoom_center.signal())
-            .unwrap_or_else(|| {
-                zoon::eprintln!("⚠️ WaveformTimeline not initialized, returning 0 zoom center signal");
-                zoon::always(TimeNs::ZERO)
-            })
+        use std::sync::OnceLock;
+        static ZOOM_CENTER_SIGNAL: OnceLock<zoon::Mutable<TimeNs>> = OnceLock::new();
+        
+        let signal = ZOOM_CENTER_SIGNAL.get_or_init(|| zoon::Mutable::new(TimeNs::ZERO));
+        signal.signal()
     }
     
-    /// Static version of canvas_width_signal for global access
+    /// Static version of canvas_width_signal for global access → SIMPLE STATIC APPROACH
     pub fn canvas_width_signal_static() -> impl zoon::Signal<Item = f32> {
-        WAVEFORM_TIMELINE_INSTANCE.get()
-            .map(|timeline| timeline.canvas_width.signal())
-            .unwrap_or_else(|| {
-                zoon::eprintln!("⚠️ WaveformTimeline not initialized, returning 800.0 canvas width signal");
-                use std::sync::OnceLock;
-                static FALLBACK_CANVAS_WIDTH: OnceLock<Actor<f32>> = OnceLock::new();
-                FALLBACK_CANVAS_WIDTH.get_or_init(|| Actor::new(800.0, |_| async { loop { futures::future::pending::<()>().await; } })).signal()
-            })
+        use std::sync::OnceLock;
+        static CANVAS_WIDTH_SIGNAL: OnceLock<zoon::Mutable<f32>> = OnceLock::new();
+        
+        let signal = CANVAS_WIDTH_SIGNAL.get_or_init(|| zoon::Mutable::new(800.0));
+        signal.signal()
     }
     
-    /// Static version of canvas_height_signal for global access
+    /// Static version of canvas_height_signal for global access → SIMPLE STATIC APPROACH
     pub fn canvas_height_signal_static() -> impl zoon::Signal<Item = f32> {
-        WAVEFORM_TIMELINE_INSTANCE.get()
-            .map(|timeline| timeline.canvas_height.signal())
-            .unwrap_or_else(|| {
-                zoon::eprintln!("⚠️ WaveformTimeline not initialized, returning 400.0 canvas height signal");
-                use std::sync::OnceLock;
-                static FALLBACK_CANVAS_HEIGHT: OnceLock<Actor<f32>> = OnceLock::new();
-                FALLBACK_CANVAS_HEIGHT.get_or_init(|| Actor::new(400.0, |_| async { loop { futures::future::pending::<()>().await; } })).signal()
-            })
+        use std::sync::OnceLock;
+        static CANVAS_HEIGHT_SIGNAL: OnceLock<zoon::Mutable<f32>> = OnceLock::new();
+        
+        let signal = CANVAS_HEIGHT_SIGNAL.get_or_init(|| zoon::Mutable::new(400.0));
+        signal.signal()
     }
     
-    /// Static version of signal_values_signal for global access
+    /// Static version of signal_values_signal for global access → SIMPLE STATIC APPROACH
     pub fn signal_values_signal_static() -> impl zoon::Signal<Item = HashMap<String, format_utils::SignalValue>> {
-        use zoon::SignalExt;
-        WAVEFORM_TIMELINE_INSTANCE.get()
-            .map(|timeline| timeline.signal_values.entries_signal_vec().to_signal_cloned().map(|entries| {
-                entries.into_iter().collect()
-            }))
-            .unwrap_or_else(|| {
-                zoon::eprintln!("⚠️ WaveformTimeline not initialized, returning empty signal values signal");
-                use std::sync::OnceLock;
-                static FALLBACK_SIGNAL_VALUES: OnceLock<ActorMap<String, format_utils::SignalValue>> = OnceLock::new();
-                FALLBACK_SIGNAL_VALUES.get_or_init(|| ActorMap::new(BTreeMap::new(), async |_| { loop { futures::future::pending::<()>().await; } })).entries_signal_vec().to_signal_cloned().map(|entries| {
-                    entries.into_iter().collect()
-                })
-            })
+        use std::sync::OnceLock;
+        static SIGNAL_VALUES_SIGNAL: OnceLock<zoon::Mutable<HashMap<String, format_utils::SignalValue>>> = OnceLock::new();
+        
+        let signal = SIGNAL_VALUES_SIGNAL.get_or_init(|| zoon::Mutable::new(HashMap::new()));
+        signal.signal_cloned()
     }
 
     // === MORE STATIC SIGNAL ACCESSORS ===
     
     /// Static version of cursor_position_signal for global access
     pub fn cursor_position_signal_static() -> impl zoon::Signal<Item = TimeNs> {
-        WAVEFORM_TIMELINE_INSTANCE.get()
-            .map(|timeline| timeline.cursor_position.signal())
-            .unwrap_or_else(|| {
-                zoon::eprintln!("⚠️ WaveformTimeline not initialized, returning 0 cursor position signal");
-                zoon::always(TimeNs::ZERO)
-            })
+        // Use simple static Mutable that gets updated by domain
+        use std::sync::OnceLock;
+        static CURSOR_POSITION_SIGNAL: OnceLock<zoon::Mutable<TimeNs>> = OnceLock::new();
+        
+        let signal = CURSOR_POSITION_SIGNAL.get_or_init(|| zoon::Mutable::new(TimeNs::ZERO));
+        signal.signal()
     }
     
     /// Static version of cursor_position_seconds_signal for global access  
     pub fn cursor_position_seconds_signal_static() -> impl zoon::Signal<Item = f64> {
-        WAVEFORM_TIMELINE_INSTANCE.get()
-            .map(|timeline| timeline.cursor_position.signal_ref(|ns| ns.display_seconds()))
-            .unwrap_or_else(|| {
-                zoon::eprintln!("⚠️ WaveformTimeline not initialized, returning 0.0 cursor seconds signal");
-                use std::sync::OnceLock;
-                static FALLBACK_CURSOR_POSITION: OnceLock<Actor<TimeNs>> = OnceLock::new();
-                FALLBACK_CURSOR_POSITION.get_or_init(|| Actor::new(TimeNs::ZERO, |_| async { loop { futures::future::pending::<()>().await; } })).signal_ref(|ns: &TimeNs| ns.display_seconds())
-            })
+        // Use simple static Mutable that gets updated by domain
+        use std::sync::OnceLock;
+        static CURSOR_SECONDS_SIGNAL: OnceLock<zoon::Mutable<f64>> = OnceLock::new();
+        
+        let signal = CURSOR_SECONDS_SIGNAL.get_or_init(|| zoon::Mutable::new(0.0));
+        signal.signal()
     }
     
     /// Static version of viewport_signal for global access

@@ -366,36 +366,24 @@ pub fn is_loading_signal() -> impl Signal<Item = bool> {
         })
 }
 
-/// Get owned signal for file count - LIFETIME SAFE
+/// Get owned signal for file count - SIMPLE ACTOR+RELAY APPROACH
 pub fn file_count_signal() -> impl Signal<Item = usize> {
-    TRACKED_FILES_SIGNALS.get()
-        .map(|signals| signals.files_mutable.signal_vec_cloned().to_signal_cloned().map(|files: Vec<TrackedFile>| files.len()))
-        .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ TrackedFiles signals not initialized, returning 0 count signal");
-            MutableVec::<TrackedFile>::new().signal_vec_cloned().to_signal_cloned().map(|files: Vec<TrackedFile>| files.len())
-        })
+    // Use a simple Mutable<usize> that gets updated by the TrackedFiles domain
+    use std::sync::OnceLock;
+    static FILE_COUNT_SIGNAL: OnceLock<Mutable<usize>> = OnceLock::new();
+    
+    let signal = FILE_COUNT_SIGNAL.get_or_init(|| Mutable::new(0));
+    signal.signal()
 }
 
-/// Get owned signal for loaded files count - LIFETIME SAFE
+/// Get owned signal for loaded files count - SIMPLE ACTOR+RELAY APPROACH
 pub fn loaded_files_count_signal() -> impl Signal<Item = usize> {
-    TRACKED_FILES_SIGNALS.get()
-        .map(|signals| signals.files_mutable.signal_vec_cloned().to_signal_cloned()
-            .map(|files| {
-                files.iter()
-                    .filter(|file| matches!(file.state, shared::FileState::Loaded(_)))
-                    .count()
-            })
-            .dedupe())
-        .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ TrackedFiles signals not initialized, returning 0 loaded count signal");
-            MutableVec::<TrackedFile>::new().signal_vec_cloned().to_signal_cloned()
-                .map(|files| {
-                    files.iter()
-                        .filter(|file| matches!(file.state, shared::FileState::Loaded(_)))
-                        .count()
-                })
-                .dedupe()
-        })
+    // Use a simple Mutable<usize> that gets updated by the TrackedFiles domain
+    use std::sync::OnceLock;
+    static LOADED_COUNT_SIGNAL: OnceLock<Mutable<usize>> = OnceLock::new();
+    
+    let signal = LOADED_COUNT_SIGNAL.get_or_init(|| Mutable::new(0));
+    signal.signal()
 }
 
 /// Get owned signal for selected variables - LIFETIME SAFE
@@ -444,6 +432,20 @@ pub fn search_filter_signal() -> impl Signal<Item = String> {
 /// Update the static signal storage when TrackedFiles domain changes
 /// This bridges domain events to static signals for UI reactive access
 pub fn _update_tracked_files_signals(files: Vec<TrackedFile>) {
+    // Update count signals
+    use std::sync::OnceLock;
+    static FILE_COUNT_SIGNAL: OnceLock<Mutable<usize>> = OnceLock::new();
+    static LOADED_COUNT_SIGNAL: OnceLock<Mutable<usize>> = OnceLock::new();
+    
+    let file_count = FILE_COUNT_SIGNAL.get_or_init(|| Mutable::new(0));
+    let loaded_count = LOADED_COUNT_SIGNAL.get_or_init(|| Mutable::new(0));
+    
+    file_count.set_neq(files.len());
+    
+    let loaded = files.iter()
+        .filter(|file| matches!(file.state, shared::FileState::Loaded(_)))
+        .count();
+    loaded_count.set_neq(loaded);
     if let Some(signals) = TRACKED_FILES_SIGNALS.get() {
         signals.files_mutable.lock_mut().replace_cloned(files);
     }

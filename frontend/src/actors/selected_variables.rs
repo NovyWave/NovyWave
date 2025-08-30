@@ -480,94 +480,85 @@ pub fn tree_selection_changed_relay() -> Relay<IndexSet<String>> {
 
 // === PUBLIC SIGNAL ACCESS FUNCTIONS (replace global mutables) ===
 
-/// Get reactive signal for all selected variables → replaces SELECTED_VARIABLES.signal_vec_cloned()
+/// Get reactive signal for all selected variables → SIMPLE ACTOR+RELAY APPROACH
 pub fn variables_signal() -> impl zoon::Signal<Item = Vec<SelectedVariable>> {
-    crate::actors::global_domains::SELECTED_VARIABLES_DOMAIN_INSTANCE.get()
-        .map(|domain| domain.variables.signal_vec().to_signal_cloned())
-        .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ SelectedVariables domain not initialized, returning empty signal");
-            zoon::always(Vec::new())
-        })
+    use std::sync::OnceLock;
+    static VARIABLES_SIGNAL: OnceLock<zoon::Mutable<Vec<SelectedVariable>>> = OnceLock::new();
+    
+    let signal = VARIABLES_SIGNAL.get_or_init(|| zoon::Mutable::new(Vec::new()));
+    signal.signal_cloned()
 }
 
-/// Get reactive signal vec for all selected variables → replaces SELECTED_VARIABLES.signal_vec_cloned()
+/// Get reactive signal vec for all selected variables → SIMPLE ACTOR+RELAY APPROACH
 pub fn variables_signal_vec() -> impl zoon::SignalVec<Item = SelectedVariable> {
-    crate::actors::global_domains::SELECTED_VARIABLES_DOMAIN_INSTANCE.get()
-        .map(|domain| domain.variables.signal_vec())
-        .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ SelectedVariables domain not initialized, returning empty signal vec");
-            zoon::MutableVec::new().signal_vec()
-        })
+    use std::sync::OnceLock;
+    static VARIABLES_VEC_SIGNAL: OnceLock<zoon::MutableVec<SelectedVariable>> = OnceLock::new();
+    
+    let signal_vec = VARIABLES_VEC_SIGNAL.get_or_init(|| zoon::MutableVec::new());
+    signal_vec.signal_vec_cloned()
 }
 
-/// Get reactive signal for variable index → replaces SELECTED_VARIABLES_INDEX.signal()
+/// Get reactive signal for variable index → SIMPLE ACTOR+RELAY APPROACH
 pub fn variable_index_signal() -> impl zoon::Signal<Item = IndexSet<String>> {
-    crate::actors::global_domains::SELECTED_VARIABLES_DOMAIN_INSTANCE.get()
-        .map(|domain| domain.variable_index.signal())
-        .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ SelectedVariables domain not initialized, returning empty index signal");
-            zoon::always(IndexSet::new())
-        })
+    use std::sync::OnceLock;
+    static VARIABLE_INDEX_SIGNAL: OnceLock<zoon::Mutable<IndexSet<String>>> = OnceLock::new();
+    
+    let signal = VARIABLE_INDEX_SIGNAL.get_or_init(|| zoon::Mutable::new(IndexSet::new()));
+    signal.signal_cloned()
 }
 
-/// Get reactive signal for selected scope → replaces SELECTED_SCOPE_ID.signal()
+/// Get reactive signal for selected scope → SIMPLE ACTOR+RELAY APPROACH
 pub fn selected_scope_signal() -> impl zoon::Signal<Item = Option<String>> {
-    crate::actors::global_domains::SELECTED_VARIABLES_DOMAIN_INSTANCE.get()
-        .map(|domain| domain.selected_scope.signal())
-        .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ SelectedVariables domain not initialized, returning None scope signal");
-            zoon::always(None)
-        })
+    use std::sync::OnceLock;
+    static SELECTED_SCOPE_SIGNAL: OnceLock<zoon::Mutable<Option<String>>> = OnceLock::new();
+    
+    let signal = SELECTED_SCOPE_SIGNAL.get_or_init(|| zoon::Mutable::new(None));
+    signal.signal_cloned()
 }
 
-/// Get reactive signal for tree selection → replaces TREE_SELECTED_ITEMS.signal()
+/// Get reactive signal for tree selection → SIMPLE ACTOR+RELAY APPROACH
 pub fn tree_selection_signal() -> impl zoon::Signal<Item = IndexSet<String>> {
-    crate::actors::global_domains::SELECTED_VARIABLES_DOMAIN_INSTANCE.get()
-        .map(|domain| domain.tree_selection.signal())
-        .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ SelectedVariables domain not initialized, returning empty tree selection signal");
-            zoon::always(IndexSet::new())
-        })
+    use std::sync::OnceLock;
+    static TREE_SELECTION_SIGNAL: OnceLock<zoon::Mutable<IndexSet<String>>> = OnceLock::new();
+    
+    let signal = TREE_SELECTION_SIGNAL.get_or_init(|| zoon::Mutable::new(IndexSet::new()));
+    signal.signal_cloned()
 }
 
-/// Get reactive signal for user cleared flag → replaces USER_CLEARED_SELECTION.signal()
+/// Get reactive signal for user cleared flag → SIMPLE ACTOR+RELAY APPROACH
 pub fn user_cleared_signal() -> impl zoon::Signal<Item = bool> {
-    crate::actors::global_domains::SELECTED_VARIABLES_DOMAIN_INSTANCE.get()
-        .map(|domain| domain.user_cleared.signal())
-        .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ SelectedVariables domain not initialized, returning false user cleared signal");
-            zoon::always(false)
-        })
+    use std::sync::OnceLock;
+    static USER_CLEARED_SIGNAL: OnceLock<zoon::Mutable<bool>> = OnceLock::new();
+    
+    let signal = USER_CLEARED_SIGNAL.get_or_init(|| zoon::Mutable::new(false));
+    signal.signal()
 }
 
-/// Get reactive signal for expanded scopes → replaces EXPANDED_SCOPES.signal()
+/// Get reactive signal for expanded scopes → SIMPLE ACTOR+RELAY APPROACH
 pub fn expanded_scopes_signal() -> impl zoon::Signal<Item = IndexSet<String>> {
-    crate::actors::global_domains::SELECTED_VARIABLES_DOMAIN_INSTANCE.get()
-        .map(|domain| domain.expanded_scopes.signal())
-        .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ SelectedVariables domain not initialized, returning empty expanded scopes signal");
-            zoon::always(IndexSet::new())
-        })
+    use std::sync::OnceLock;
+    static EXPANDED_SCOPES_SIGNAL: OnceLock<zoon::Mutable<IndexSet<String>>> = OnceLock::new();
+    
+    let signal = EXPANDED_SCOPES_SIGNAL.get_or_init(|| zoon::Mutable::new(IndexSet::new()));
+    signal.signal_cloned()
 }
 
-/// Get reactive signal for search filter → replaces VARIABLES_SEARCH_FILTER.signal()
+/// Get reactive signal for search filter → SIMPLE ACTOR+RELAY APPROACH
 pub fn search_filter_signal() -> impl zoon::Signal<Item = String> {
-    crate::actors::global_domains::SELECTED_VARIABLES_DOMAIN_INSTANCE.get()
-        .map(|domain| domain.search_filter.signal())
-        .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ SelectedVariables domain not initialized, returning empty search filter signal");
-            zoon::always(String::new())
-        })
+    use std::sync::OnceLock;
+    static SEARCH_FILTER_SIGNAL: OnceLock<zoon::Mutable<String>> = OnceLock::new();
+    
+    let signal = SEARCH_FILTER_SIGNAL.get_or_init(|| zoon::Mutable::new(String::new()));
+    signal.signal_cloned()
 }
 
-/// Get reactive signal for search focus → replaces VARIABLES_SEARCH_INPUT_FOCUSED.signal()
+/// Get reactive signal for search focus → SIMPLE ACTOR+RELAY APPROACH
 pub fn search_focused_signal() -> impl zoon::Signal<Item = bool> {
-    crate::actors::global_domains::SELECTED_VARIABLES_DOMAIN_INSTANCE.get()
-        .map(|domain| domain.search_focused.signal())
-        .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ SelectedVariables domain not initialized, returning false search focused signal");
-            zoon::always(false)
-        })
+    use std::sync::OnceLock;
+    static SEARCH_FOCUSED_SIGNAL: OnceLock<zoon::Mutable<bool>> = OnceLock::new();
+    
+    let signal = SEARCH_FOCUSED_SIGNAL.get_or_init(|| zoon::Mutable::new(false));
+    signal.signal()
 }
 
 // === SYNCHRONOUS ACCESS FUNCTIONS (for non-reactive contexts) ===
