@@ -36,14 +36,15 @@ fn create_config_saver_actor(
             let timeline = timeline_actor.signal(),
             let session = session_actor.signal(),
             let ui = ui_actor.signal(),
-            let dialogs = dialogs_actor.signal() =>
+            let dialogs = dialogs_actor.signal(),
+            let expanded_scopes = crate::state::EXPANDED_SCOPES_FOR_CONFIG.signal_cloned() =>
             (theme.clone(), dock_mode.clone(), panel_right.clone(), panel_bottom.clone(), 
-             timeline.clone(), session.clone(), ui.clone(), dialogs.clone())
+             timeline.clone(), session.clone(), ui.clone(), dialogs.clone(), expanded_scopes.clone())
         };
         
         config_change_signal.to_stream().skip(1).for_each({
             let debounce_task = debounce_task.clone();
-            move |(theme, dock_mode, panel_right, panel_bottom, timeline, session, ui, _dialogs)| {
+            move |(theme, dock_mode, panel_right, panel_bottom, timeline, session, ui, _dialogs, _expanded_scopes)| {
                 let debounce_task = debounce_task.clone();
                 async move {
                     // Cancel any pending save
@@ -72,8 +73,8 @@ fn create_config_saver_actor(
                             selected_variables_panel_value_column_width: Some(panel_right.variables_value_column_width as f64),
                         },
                         dock_mode: dock_mode.clone(),
-                        expanded_scopes: Vec::new(),
-                        load_files_expanded_directories: Vec::new(),
+                        expanded_scopes: crate::state::EXPANDED_SCOPES_FOR_CONFIG.get_cloned(),
+                        load_files_expanded_directories: session.file_picker_expanded_directories,
                         selected_scope_id: None,
                         load_files_scroll_position: session.file_picker_scroll_position,
                         variables_search_filter: session.variables_search_filter,
@@ -155,6 +156,7 @@ pub struct SessionState {
     pub opened_files: Vec<String>,
     pub variables_search_filter: String,
     pub file_picker_scroll_position: i32,
+    pub file_picker_expanded_directories: Vec<String>,
 }
 
 impl Default for SessionState {
@@ -163,6 +165,7 @@ impl Default for SessionState {
             opened_files: Vec::new(),
             variables_search_filter: String::new(),
             file_picker_scroll_position: 0,
+            file_picker_expanded_directories: Vec::new(),
         }
     }
 }
@@ -212,6 +215,10 @@ pub struct AppConfig {
     pub toast_dismiss_ms_actor: Actor<u32>,
     pub dialogs_data_actor: Actor<DialogsData>,
     pub is_loaded_actor: Actor<bool>,
+    
+    // === UI MUTABLES FOR DIRECT TREEVIEW CONNECTION ===
+    pub file_picker_expanded_directories: Mutable<indexmap::IndexSet<String>>,
+    pub file_picker_scroll_position: Mutable<i32>,
     
     // Keep config saver actor alive
     _config_saver_actor: Actor<()>,
@@ -403,8 +410,13 @@ impl AppConfig {
             }
         });
 
-        // Create session state actor
-        let session_state_actor = Actor::new(SessionState::default(), async move |state| {
+        // Create session state actor with loaded config values
+        let session_state_actor = Actor::new(SessionState {
+            opened_files: config.workspace.opened_files,
+            variables_search_filter: config.workspace.variables_search_filter,
+            file_picker_scroll_position: config.workspace.load_files_scroll_position,
+            file_picker_expanded_directories: config.workspace.load_files_expanded_directories.clone(),
+        }, async move |state| {
             let mut session_stream = session_state_changed_stream;
             while let Some(new_session) = session_stream.next().await {
                 state.set_neq(new_session);
@@ -457,6 +469,90 @@ impl AppConfig {
         );
         zoon::println!("✅ AppConfig: Config saver actor created successfully");
 
+        // Create file picker expanded directories mutable with loaded config
+        let file_picker_expanded_directories = {
+            let mut expanded_set = indexmap::IndexSet::new();
+            for dir in &config.workspace.load_files_expanded_directories {
+                expanded_set.insert(dir.clone());
+            }
+            Mutable::new(expanded_set)
+        };
+
+        // Load expanded scopes from config into EXPANDED_SCOPES
+        {
+            zoon::println!("🔍 Config: About to load expanded scopes from config");
+            zoon::println!("🔍 Config: Found {} expanded scopes in config: {:?}", 
+                config.workspace.expanded_scopes.len(), config.workspace.expanded_scopes);
+            
+            let mut expanded_scopes = crate::state::EXPANDED_SCOPES.lock_mut();
+            expanded_scopes.clear();
+            for scope in &config.workspace.expanded_scopes {
+                // Distinguish between file-level and scope-level expansion
+                let scope_id = if scope.is_empty() {
+                    zoon::println!("⚠️ Config: Skipping empty scope ID");
+                    continue; // Skip empty scope IDs
+                } else if scope.contains('|') {
+                    // Nested scope - add "scope_" prefix  
+                    let prefixed = format!("scope_{}", scope);
+                    zoon::println!("🔍 Config: Loading nested scope '{}' as '{}'", scope, prefixed);
+                    prefixed
+                } else {
+                    // File-level expansion - use path directly (no prefix)
+                    zoon::println!("🔍 Config: Loading file-level expansion '{}' as '{}'", scope, scope);
+                    scope.clone()
+                };
+                expanded_scopes.insert(scope_id);
+            }
+            zoon::println!("✅ Config: Loaded {} expanded scopes from config into EXPANDED_SCOPES", expanded_scopes.len());
+            zoon::println!("🔍 Config: Final EXPANDED_SCOPES contents: {:?}", 
+                expanded_scopes.iter().collect::<Vec<_>>());
+        }
+
+        // Create file picker scroll position mutable with loaded config
+        let file_picker_scroll_position = Mutable::new(config.workspace.load_files_scroll_position);
+
+        // Set up sync from mutable changes to session state (for config saving)
+        let file_picker_sync = file_picker_expanded_directories.clone();
+        let session_sync = session_state_actor.clone();
+        let session_changed_relay = session_state_changed_relay.clone();
+        Task::start(async move {
+            file_picker_sync.signal_cloned().for_each(move |expanded_set| {
+                let session_sync = session_sync.clone();
+                let session_changed_relay = session_changed_relay.clone();
+                async move {
+                    // Get current session state and update expanded directories
+                    if let Some(mut session_state) = session_sync.signal().to_stream().next().await {
+                        session_state.file_picker_expanded_directories = expanded_set.iter().cloned().collect();
+                        
+                        // Trigger session state change to save config
+                        session_changed_relay.send(session_state);
+                        zoon::println!("🔄 File picker directories synced to session state → config save triggered");
+                    }
+                }
+            }).await;
+        });
+
+        // Set up sync for scroll position changes to session state
+        let scroll_position_sync = file_picker_scroll_position.clone();
+        let session_scroll_sync = session_state_actor.clone();
+        let session_scroll_changed_relay = session_state_changed_relay.clone();
+        Task::start(async move {
+            scroll_position_sync.signal().for_each(move |scroll_position| {
+                let session_scroll_sync = session_scroll_sync.clone();
+                let session_scroll_changed_relay = session_scroll_changed_relay.clone();
+                async move {
+                    // Get current session state and update scroll position
+                    if let Some(mut session_state) = session_scroll_sync.signal().to_stream().next().await {
+                        session_state.file_picker_scroll_position = scroll_position;
+                        
+                        // Trigger session state change to save config
+                        session_scroll_changed_relay.send(session_state);
+                        zoon::println!("🔄 File picker scroll position synced to session state → config save triggered");
+                    }
+                }
+            }).await;
+        });
+
         Self {
             theme_actor,
             dock_mode_actor,
@@ -468,6 +564,9 @@ impl AppConfig {
             toast_dismiss_ms_actor,
             dialogs_data_actor,
             is_loaded_actor,
+            
+            file_picker_expanded_directories,
+            file_picker_scroll_position,
             
             _config_saver_actor: config_saver_actor,
             
@@ -508,9 +607,10 @@ pub fn workspace_section_signal() -> impl Signal<Item = shared::WorkspaceSection
         let dock_mode = app_config().dock_mode_actor.signal(),
         let right_dims = app_config().panel_dimensions_right_actor.signal(),
         let bottom_dims = app_config().panel_dimensions_bottom_actor.signal(),
-        let timeline = app_config().timeline_state_actor.signal() =>
+        let timeline = app_config().timeline_state_actor.signal(),
+        let session = app_config().session_state_actor.signal() =>
         shared::WorkspaceSection {
-            opened_files: Vec::new(), // TODO: get from opened_files domain when implemented
+            opened_files: session.opened_files.clone(),
             docked_bottom_dimensions: shared::DockedBottomDimensions {
                 files_and_scopes_panel_width: bottom_dims.files_panel_width as f64,
                 files_and_scopes_panel_height: bottom_dims.files_panel_height as f64,
@@ -524,11 +624,11 @@ pub fn workspace_section_signal() -> impl Signal<Item = shared::WorkspaceSection
                 selected_variables_panel_value_column_width: Some(right_dims.variables_value_column_width as f64),
             },
             dock_mode: *dock_mode,
-            expanded_scopes: Vec::new(), // TODO: get from expanded_scopes domain when implemented
-            load_files_expanded_directories: Vec::new(),
+            expanded_scopes: crate::state::EXPANDED_SCOPES_FOR_CONFIG.get_cloned(),
+            load_files_expanded_directories: session.file_picker_expanded_directories.clone(),
             selected_scope_id: None,
-            load_files_scroll_position: 0,
-            variables_search_filter: String::new(),
+            load_files_scroll_position: session.file_picker_scroll_position,
+            variables_search_filter: session.variables_search_filter.clone(),
             selected_variables: Vec::new(),
             timeline_cursor_position_ns: timeline.cursor_position.nanos(),
             timeline_visible_range_start_ns: Some(timeline.visible_range.start.nanos()),

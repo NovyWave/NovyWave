@@ -226,6 +226,10 @@ pub async fn initialize_all_domains() -> Result<(), &'static str> {
     error_manager::initialize();
     config_sync::initialize();
     
+    // PHASE 3: Connect TrackedFiles domain to config persistence
+    zoon::println!("🔄 Setting up TrackedFiles ↔ Config persistence bridge...");
+    setup_tracked_files_config_bridge().await;
+    
     // All Actor+Relay domains initialized successfully
     zoon::println!("✅ All Actor+Relay domains initialized successfully");
     Ok(())
@@ -325,17 +329,46 @@ pub fn tracked_files_signal() -> impl Signal<Item = Vec<TrackedFile>> {
         })
 }
 
+/// Compare two TrackedFiles for sorting: filename first, then visible distinguishing prefix
+fn compare_tracked_files(a: &shared::TrackedFile, b: &shared::TrackedFile) -> std::cmp::Ordering {
+    // Use filename directly from TrackedFile (already extracted)
+    let filename_a = &a.filename;
+    let filename_b = &b.filename;
+    
+    // Extract visible distinguishing prefix (immediate parent directory name only)
+    // This matches how smart labels are generated
+    let prefix_a = std::path::Path::new(&a.path)
+        .parent()
+        .and_then(|parent| parent.file_name())
+        .map(|name| name.to_string_lossy())
+        .unwrap_or_else(|| "".into());
+    
+    let prefix_b = std::path::Path::new(&b.path)
+        .parent()
+        .and_then(|parent| parent.file_name())
+        .map(|name| name.to_string_lossy())
+        .unwrap_or_else(|| "".into());
+    
+    // Sort by filename first (case insensitive), then by visible distinguishing prefix
+    let filename_cmp = filename_a.to_lowercase().cmp(&filename_b.to_lowercase());
+    if filename_cmp == std::cmp::Ordering::Equal {
+        prefix_a.to_lowercase().cmp(&prefix_b.to_lowercase())
+    } else {
+        filename_cmp
+    }
+}
+
 /// Get owned signal vec for tracked files - LIFETIME SAFE for items_signal_vec
 /// Enables: .items_signal_vec(tracked_files_signal_vec().map(|file| render(file)))
 pub fn tracked_files_signal_vec() -> impl SignalVec<Item = TrackedFile> {
     TRACKED_FILES_SIGNALS.get()
         .map(|signals| {
-            zoon::println!("🔍 DEBUG: TrackedFiles signals found, returning signal_vec");
-            signals.files_mutable.signal_vec_cloned()
+            zoon::println!("🔍 DEBUG: TrackedFiles signals found, returning sorted signal_vec");
+            signals.files_mutable.signal_vec_cloned().sort_by_cloned(compare_tracked_files)
         })
         .unwrap_or_else(|| {
             zoon::println!("⚠️ DEBUG: TrackedFiles signals not initialized, returning empty signal vec");
-            zoon::MutableVec::new().signal_vec_cloned()
+            zoon::MutableVec::new().signal_vec_cloned().sort_by_cloned(compare_tracked_files)
         })
 }
 
@@ -369,9 +402,9 @@ pub fn is_loading_signal() -> impl Signal<Item = bool> {
         })
 }
 
-/// Get owned signal for file count - SIMPLE ACTOR+RELAY APPROACH
+/// Get owned signal for file count - CONNECTS TO TRACKEDFILES DOMAIN
 pub fn file_count_signal() -> impl Signal<Item = usize> {
-    // Connect to real config data instead of static hardcoded value
+    // For now, use config directly until TrackedFiles domain is fully integrated
     crate::config::app_config().session_state_actor.signal().map(|session| {
         let count = session.opened_files.len();
         zoon::println!("🔍 DEBUG: file_count_signal returning: {}", count);
@@ -855,4 +888,57 @@ pub fn test_synchronous_domain_access() {
     
     // Domain relay example (if available in the domain API)
     // selected_variables_domain().some_relay.send(());
+}
+
+/// Set up bridge between TrackedFiles domain and config persistence
+/// Similar to how expanded directories work with direct config connection
+async fn setup_tracked_files_config_bridge() {
+    zoon::println!("🔗 TrackedFiles: Setting up config bridge...");
+    
+    // Step 1: Load files from config into TrackedFiles domain
+    let app_config = crate::config::app_config();
+    let initial_files = app_config.session_state_actor.signal().to_stream().next().await;
+    
+    if let Some(session_state) = initial_files {
+        if !session_state.opened_files.is_empty() {
+            zoon::println!("📂 TrackedFiles: Loading {} files from config", session_state.opened_files.len());
+            let tracked_files_domain = tracked_files_domain();
+            tracked_files_domain.config_files_loaded_relay.send(session_state.opened_files);
+        }
+    }
+    
+    // Step 2: Watch TrackedFiles changes and sync back to config (like expanded directories)
+    let tracked_files_domain = tracked_files_domain();
+    let session_relay = app_config.session_state_changed_relay.clone();
+    let session_actor = app_config.session_state_actor.clone();
+    
+    Task::start(async move {
+        tracked_files_domain.files_signal().for_each(move |files| {
+            let session_relay = session_relay.clone();
+            let session_actor = session_actor.clone();
+            let files_copy = files.clone();
+            async move {
+                // Step 2a: Update static signal storage for UI
+                update_tracked_files_signals(files_copy.clone());
+                zoon::println!("📡 TrackedFiles: Updated static signal storage with {} files for UI", files_copy.len());
+                
+                // Step 2b: Sync to config for persistence
+                // Extract file paths from TrackedFiles
+                let file_paths: Vec<String> = files.iter().map(|f| f.path.clone()).collect();
+                
+                // Get current session state and update opened_files
+                if let Some(mut session_state) = session_actor.signal().to_stream().next().await {
+                    if session_state.opened_files != file_paths {
+                        session_state.opened_files = file_paths.clone();
+                        
+                        // Trigger config save through session state change
+                        session_relay.send(session_state);
+                        zoon::println!("💾 TrackedFiles: Synced {} files to config → automatic save triggered", file_paths.len());
+                    }
+                }
+            }
+        }).await;
+    });
+    
+    zoon::println!("✅ TrackedFiles ↔ Config bridge established");
 }

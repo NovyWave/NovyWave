@@ -761,13 +761,50 @@ fn render_tree_item(
                                 .s(Padding::new().x(SPACING_2))
                                 .child({
                                     // Apply inline smart label styling if label contains '/' or timeline info
-                                    if item.label.contains('/') {
-                                        // Parse smart label to separate prefix from filename
+                                    if item.label.contains('/') && item.label.contains(" (") && item.label.contains("–") && item.label.ends_with(')') {
+                                        // Parse labels with BOTH path prefix AND timeline info
+                                        if let Some(last_slash) = item.label.rfind('/') {
+                                            let prefix = &item.label[..=last_slash]; // Include trailing slash
+                                            let rest = &item.label[last_slash + 1..]; // Everything after the slash
+                                            
+                                            if let Some(timeline_start) = rest.rfind(" (") {
+                                                let filename = &rest[..timeline_start];
+                                                let timeline_info = &rest[timeline_start..];
+                                                
+                                                // Create Paragraph with styled prefix + filename + timeline
+                                                zoon::Paragraph::new()
+                                                    .content(
+                                                        El::new()
+                                                            .s(Font::new().color_signal(crate::tokens::color::neutral_8()).no_wrap())
+                                                            .child(prefix)
+                                                    )
+                                                    .content(
+                                                        El::new()
+                                                            .s(Font::new().color_signal(theme().map(|t| match t {
+                                                                crate::tokens::theme::Theme::Light => "oklch(15% 0.14 250)", // neutral_11 light
+                                                                crate::tokens::theme::Theme::Dark => "oklch(95% 0.14 250)", // neutral_11 dark
+                                                            })).no_wrap())
+                                                            .child(filename)
+                                                    )
+                                                    .content(
+                                                        El::new()
+                                                            .s(Font::new().color_signal(crate::tokens::color::primary_6()).no_wrap())
+                                                            .child(timeline_info)
+                                                    )
+                                                    .unify()
+                                            } else {
+                                                // Fallback if timeline parsing fails
+                                                Text::new(&item.label).unify()
+                                            }
+                                        } else {
+                                            // Fallback if path parsing fails
+                                            Text::new(&item.label).unify()
+                                        }
+                                    } else if item.label.contains('/') {
+                                        // Parse smart label to separate prefix from filename (no timeline)
                                         if let Some(last_slash) = item.label.rfind('/') {
                                             let prefix = &item.label[..=last_slash]; // Include trailing slash
                                             let filename = &item.label[last_slash + 1..];
-                                            
-                                            // Debug log removed
                                             
                                             // Create Paragraph with styled prefix and filename
                                             zoon::Paragraph::new()
@@ -807,7 +844,7 @@ fn render_tree_item(
                                                 )
                                                 .content(
                                                     El::new()
-                                                        .s(Font::new().color_signal(crate::tokens::color::neutral_8()).no_wrap())
+                                                        .s(Font::new().color_signal(crate::tokens::color::primary_6()).no_wrap())
                                                         .child(timeline_info)
                                                 )
                                                 .unify()

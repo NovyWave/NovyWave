@@ -431,7 +431,59 @@ struct FileManager { ... }        // Artificial "manager" layer
 struct TimelineService { ... }    // Unnecessary "service" abstraction
 struct DataController { ... }     // Vague "controller" pattern
 struct ConfigHandler { ... }      // Generic "handler" pattern
+struct DialogManager { ... }      // Unnecessary dialog abstraction
 ```
+
+### CRITICAL: No Manager/Service/Handler Abstractions
+
+**NEVER create *Manager, *Service, *Controller, or *Handler objects.**
+
+**Why these patterns add complexity through indirection:**
+- **DialogManager vs direct AppConfig**: Instead of managing dialog state through an intermediary, connect TreeView directly to AppConfig actors
+- **FileManager vs TrackedFiles domain**: Don't create artificial managers - model the actual domain (files are tracked, not "managed")  
+- **ServiceLayer vs direct Actor communication**: Services often just forward calls - use Actor+Relay patterns directly
+
+**✅ CORRECT: Objects manage data, not other objects**
+```rust
+// ✅ GOOD: TrackedFiles manages file data directly
+struct TrackedFiles {
+    files: ActorVec<TrackedFile>,
+    file_dropped_relay: Relay<Vec<PathBuf>>,
+}
+
+// ✅ GOOD: AppConfig manages configuration data directly  
+struct AppConfig {
+    theme_actor: Actor<SharedTheme>,
+    file_picker_expanded_directories: Mutable<IndexSet<String>>,
+}
+
+// ✅ GOOD: Direct connection - no intermediary
+TreeView::new()
+    .external_expanded(app_config().file_picker_expanded_directories.clone())
+```
+
+**❌ WRONG: Objects that manage other objects through indirection**
+```rust
+// ❌ BAD: DialogManager doesn't manage data, it manages other components
+struct DialogManager {
+    file_picker: FilePickerWidget,
+    expanded_tracker: ExpandedTracker,  
+}
+
+// ❌ BAD: Unnecessary indirection layer
+impl DialogManager {
+    pub fn expand_directory(&self, path: String) {
+        self.expanded_tracker.add_expanded(path);  // Just forwarding!
+        self.file_picker.refresh();                 // Complex coupling!
+    }
+}
+
+// ❌ BAD: Complex routing through abstraction
+TreeView::new()
+    .external_expanded(dialog_manager().expanded_directories_signal()) // Indirection!
+```
+
+**Key principle: Every object should manage concrete data, never other objects. This reduces complexity, eliminates indirection, and makes the code more maintainable.**
 
 ### Actor+Relay Implementation Pattern
 
@@ -650,12 +702,13 @@ Once I understand these details clearly, I'll implement all the improvements eff
 
 ### Server Management Rules
 - **ABSOLUTE PROHIBITION: NEVER run dev server or compilation commands yourself**
-- **DO NOT** execute `makers start`, `makers kill`, or any compilation commands
+- **DO NOT** execute `makers start`, `makers kill`, `makers build`, or any compilation commands
 - **DO NOT** attempt to manage the mzoon dev server process  
-- **ALWAYS** read `dev_server.log` to check compilation status
+- **ALWAYS** read `dev_server.log` to check compilation status - this is everything you need
 - If auto-compilation appears to not be working, **TELL THE DEVELOPER** to start the mzoon CLI
 - Backend/shared crate compilation takes DOZENS OF SECONDS TO MINUTES - this is normal
 - **WAIT ENFORCEMENT: Must wait for compilation to complete, no matter how long**
+- **NEVER use `cargo build` or similar** - only mzoon handles WASM compilation correctly
 
 ### Log Monitoring Patterns
 ```bash

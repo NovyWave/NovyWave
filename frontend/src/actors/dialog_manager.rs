@@ -299,18 +299,9 @@ pub fn open_file_dialog() {
     if let Some(signals) = crate::actors::global_domains::DIALOG_MANAGER_SIGNALS.get() {
         signals.dialog_visible_mutable.set_neq(true);
         
-        // Auto-expand home directory when dialog opens
-        let mut expanded = signals.expanded_directories_mutable.get_cloned();
-        
-        // Add common home directory paths to expanded set
-        if let Ok(home_dir) = std::env::var("HOME") {
-            expanded.insert(home_dir);
-        }
-        
-        // Also auto-expand root directory for navigation
-        expanded.insert("/".to_string());
-        
-        signals.expanded_directories_mutable.set_neq(expanded);
+        // Expanded directories are now handled by AppConfig directly via TreeView
+        // No need to manage them here - they're loaded from config during AppConfig initialization
+        // and automatically saved when TreeView external_expanded changes
     }
 }
 
@@ -436,6 +427,16 @@ pub fn current_error_cache() -> HashMap<String, String> {
         .unwrap_or_else(|| {
             zoon::eprintln!("⚠️ DialogManager signals not initialized, returning empty error cache");
             HashMap::new()
+        })
+}
+
+/// Migration helper: Get current scroll position (for config persistence)
+pub fn current_scroll_position() -> i32 {
+    crate::actors::global_domains::DIALOG_MANAGER_SIGNALS.get()
+        .map(|signals| signals.scroll_position_mutable.get())
+        .unwrap_or_else(|| {
+            zoon::eprintln!("⚠️ DialogManager signals not initialized, returning 0 scroll position");
+            0
         })
 }
 

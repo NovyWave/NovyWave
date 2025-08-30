@@ -47,7 +47,6 @@ use actors::panel_layout::{
     mouse_moved_relay, is_dock_transitioning
 };
 use actors::dialog_manager::{dialog_visible_signal, file_picker_selected_signal};
-pub use state::CONFIG_INITIALIZATION_COMPLETE;
 
 
 mod unified_timeline_service;
@@ -200,14 +199,13 @@ fn init_file_picker_handlers() {
         }).await
     });
     
-    // Watch for directory expansions in the file picker dialog
+    // Watch for directory expansions in the file picker dialog (for backend loading)
     Task::start(async {
-        use actors::dialog_manager::expanded_directories_signal;
-        use std::collections::HashSet;
+        let config = crate::config::app_config();
         
-        expanded_directories_signal().for_each(|expanded_dirs| async move {
-            let expanded_set: HashSet<String> = expanded_dirs.iter().cloned().collect();
-            crate::views::monitor_directory_expansions(expanded_set);
+        config.file_picker_expanded_directories.signal_cloned().for_each(|expanded_set| async move {
+            let expanded_hash: std::collections::HashSet<String> = expanded_set.iter().cloned().collect();
+            crate::views::monitor_directory_expansions(expanded_hash);
         }).await
     });
 }
@@ -231,8 +229,7 @@ async fn initialize_complete_app_flow() {
     // For now, skip file loading during migration to pure reactive patterns
     // TODO: Implement proper reactive file restoration when Actor+Relay migration is complete
     
-    // Phase 5: Mark initialization as complete immediately during migration
-    crate::CONFIG_INITIALIZATION_COMPLETE.set_neq(true);
+    // Config initialization complete - loaded with await in main
 }
 
 /// Wait for specific files to finish loading

@@ -21,7 +21,7 @@ pub struct TrackedFiles {
     pub files_dropped_relay: Relay<Vec<std::path::PathBuf>>,
     pub file_removed_relay: Relay<String>,
     pub scope_toggled_relay: Relay<String>,
-    pub file_load_completed_relay: Relay<(String, bool)>,
+    pub file_load_completed_relay: Relay<(String, FileState)>,
     pub all_files_cleared_relay: Relay<()>,
 }
 
@@ -32,7 +32,7 @@ impl TrackedFiles {
         let (files_dropped_relay, files_dropped_stream) = relay::<Vec<std::path::PathBuf>>();
         let (file_removed_relay, file_removed_stream) = relay::<String>();
         let (scope_toggled_relay, scope_toggled_stream) = relay::<String>();
-        let (file_load_completed_relay, file_load_completed_stream) = relay::<(String, bool)>();
+        let (file_load_completed_relay, file_load_completed_stream) = relay::<(String, FileState)>();
         let (all_files_cleared_relay, all_files_cleared_stream) = relay::<()>();
         
         // Create files ActorVec with event processing
@@ -53,6 +53,12 @@ impl TrackedFiles {
                                 .map(|path_str| create_tracked_file(path_str, FileState::Loading(LoadingStatus::Starting)))
                                 .collect();
                             
+                            // Trigger parsing for each file
+                            for file in &tracked_files {
+                                zoon::println!("🚀 TrackedFiles: Triggering parse for file: {}", file.path);
+                                trigger_file_parsing(file.path.clone());
+                            }
+                            
                             files_handle.lock_mut().replace_cloned(tracked_files);
                         }
                     }
@@ -71,6 +77,8 @@ impl TrackedFiles {
                                 // Don't add duplicates
                                 let existing = files_handle.lock_ref().iter().any(|f| f.id == new_file.id);
                                 if !existing {
+                                    zoon::println!("🚀 TrackedFiles: Triggering parse for dropped file: {}", new_file.path);
+                                    trigger_file_parsing(new_file.path.clone());
                                     files_handle.lock_mut().push_cloned(new_file);
                                 }
                             }
@@ -83,21 +91,8 @@ impl TrackedFiles {
                         }
                     }
                     completed = completed_stream.next() => {
-                        if let Some((file_id, success)) = completed {
-                            zoon::println!("🔄 TrackedFiles: File load completed: {} success={}", file_id, success);
-                            
-                            let new_state = if success { 
-                                FileState::Loaded(shared::WaveformFile { 
-                                    id: file_id.clone(), 
-                                    filename: String::new(),
-                                    format: FileFormat::VCD,
-                                    scopes: Vec::new(),
-                                    min_time_ns: None,
-                                    max_time_ns: None,
-                                }) 
-                            } else { 
-                                FileState::Loading(LoadingStatus::Error("Load failed".to_string())) 
-                            };
+                        if let Some((file_id, new_state)) = completed {
+                            // zoon::println!("🔄 TrackedFiles: File load completed: {} state={:?}", file_id, new_state);
                             
                             // Update the specific file's state by replacing the entire vector
                             let mut files = files_handle.lock_ref().to_vec();
@@ -215,9 +210,8 @@ impl TrackedFiles {
     
     /// Update file state (compatibility method - should use relays instead)
     pub fn update_file_state(&self, file_id: String, new_state: FileState) {
-        // Convert FileState to success bool for the relay
-        let success = matches!(new_state, FileState::Loaded(_));
-        self.file_load_completed_relay.send((file_id, success));
+        // Send the full FileState to preserve all parsed data
+        self.file_load_completed_relay.send((file_id, new_state));
     }
 }
 
@@ -263,20 +257,17 @@ pub fn tracked_files_signal() -> impl Signal<Item = Vec<TrackedFile>> {
 
 /// Get signal vec for tracked files (convenience function)
 pub fn tracked_files_signal_vec() -> impl SignalVec<Item = TrackedFile> {
-    if let Some(domain) = tracked_files_domain() {
-        domain.files_signal_vec().boxed_local()
-    } else {
-        zoon::always(Vec::new()).to_signal_vec().boxed_local()
-    }
+    zoon::println!("🔍 tracked_files_signal_vec() called - using global_domains");
+    // Use the global_domains version instead of the local TRACKED_FILES_INSTANCE
+    zoon::println!("✅ TrackedFiles signal_vec found via global_domains");
+    crate::actors::global_domains::tracked_files_signal_vec()
 }
 
 /// Get signal for file count (convenience function)
 pub fn tracked_files_count_signal() -> impl Signal<Item = usize> {
-    if let Some(domain) = tracked_files_domain() {
-        domain.file_count_signal().boxed_local()
-    } else {
-        zoon::always(0).boxed_local()
-    }
+    zoon::println!("🔍 tracked_files_count_signal() called - using global_domains signal");
+    // Use the signal access function from global_domains
+    crate::actors::global_domains::file_count_signal()
 }
 
 /// Get signal for expanded scopes (convenience function)
@@ -285,6 +276,15 @@ pub fn expanded_scopes_signal() -> impl Signal<Item = IndexSet<String>> {
         domain.expanded_scopes_signal().boxed_local()
     } else {
         zoon::always(IndexSet::new()).boxed_local()
+    }
+}
+
+/// Get signal for smart labels (convenience function)
+pub fn smart_labels_signal() -> impl Signal<Item = Vec<String>> {
+    if let Some(domain) = tracked_files_domain() {
+        domain.smart_labels_signal().boxed_local()
+    } else {
+        zoon::always(Vec::new()).boxed_local()
     }
 }
 
@@ -302,4 +302,21 @@ fn create_smart_labels(files: &[TrackedFile]) -> Vec<String> {
     files.iter().map(|file| {
         labels_map.get(&file.path).cloned().unwrap_or_else(|| file.filename.clone())
     }).collect()
+}
+
+/// Trigger file parsing by sending LoadWaveformFile message to backend
+fn trigger_file_parsing(file_path: String) {
+    use crate::platform::{Platform, CurrentPlatform};
+    use shared::UpMsg;
+    
+    zoon::Task::start(async move {
+        match CurrentPlatform::send_message(UpMsg::LoadWaveformFile(file_path.clone())).await {
+            Ok(()) => {
+                zoon::println!("✅ TrackedFiles: Parse request sent for: {}", file_path);
+            }
+            Err(e) => {
+                zoon::eprintln!("🚨 TrackedFiles: Failed to send parse request for {}: {}", file_path, e);
+            }
+        }
+    });
 }

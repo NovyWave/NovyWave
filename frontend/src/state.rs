@@ -31,7 +31,7 @@ pub fn _batch_load_files(file_paths: Vec<String>) {
     }
     
     // Use TrackedFiles domain instead of legacy TRACKED_FILES
-    let tracked_files_domain = crate::actors::tracked_files_domain();
+    let tracked_files_domain = crate::actors::global_domains::tracked_files_domain();
     tracked_files_domain.batch_load_files(file_paths);
 }
 
@@ -208,8 +208,7 @@ pub static LOAD_FILES_VIEWPORT_Y: Lazy<Mutable<i32>> = lazy::default();
 // Load Files dialog scroll position (persistent)
 pub static LOAD_FILES_SCROLL_POSITION: Lazy<Mutable<i32>> = lazy::default();
 
-// Prevent config saves during initialization to avoid race conditions
-pub static CONFIG_INITIALIZATION_COMPLETE: Lazy<Mutable<bool>> = lazy::default();
+// Config initialization complete flag removed - config loaded in main with await
 
 // Hierarchical file tree storage - maps directory path to its contents
 pub static FILE_TREE_CACHE: Lazy<Mutable<HashMap<String, Vec<FileSystemItem>>>> = lazy::default();
@@ -387,14 +386,14 @@ pub fn make_error_user_friendly(error: &str) -> String {
 /// ✅ ACTOR+RELAY: Update the state of an existing tracked file
 /// Migrated to use TrackedFiles domain
 pub fn update_tracked_file_state(file_id: &str, new_state: FileState) {
-    let tracked_files_domain = crate::actors::tracked_files_domain();
+    let tracked_files_domain = crate::actors::global_domains::tracked_files_domain();
     tracked_files_domain.update_file_state(file_id.to_string(), new_state);
 }
 
 /// ✅ ACTOR+RELAY: Remove a tracked file by ID
 /// Migrated to use TrackedFiles domain
 pub fn _remove_tracked_file(file_id: &str) {
-    let tracked_files_domain = crate::actors::tracked_files_domain();
+    let tracked_files_domain = crate::actors::global_domains::tracked_files_domain();
     tracked_files_domain.remove_file(file_id.to_string());
 }
 
@@ -458,10 +457,7 @@ pub fn find_scope_full_name(scopes: &[shared::ScopeData], target_scope_id: &str)
 /// Save selected variables to config
 #[allow(dead_code)]
 pub fn save_selected_variables() {
-    if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
-        
-        // Config is now automatically saved through ConfigSaver actor
-    }
+    // Config is now automatically saved through ConfigSaver actor
 }
 
 
@@ -496,7 +492,7 @@ pub static OPENED_FILES_FOR_CONFIG: Lazy<Mutable<Vec<String>>> = Lazy::new(|| {
 });
 
 /// Derived signal that converts EXPANDED_SCOPES (IndexSet) to Vec<String> for config storage
-/// Uses CONFIG_INITIALIZATION_COMPLETE guard and deduplication to prevent circular loops and flickering
+/// Converts EXPANDED_SCOPES (IndexSet) to Vec<String> for config storage
 pub static EXPANDED_SCOPES_FOR_CONFIG: Lazy<Mutable<Vec<String>>> = Lazy::new(|| {
     let derived = Mutable::new(Vec::new());
     
@@ -507,11 +503,9 @@ pub static EXPANDED_SCOPES_FOR_CONFIG: Lazy<Mutable<Vec<String>>> = Lazy::new(||
             .for_each(move |expanded_set| {
                 let derived = derived_clone.clone();
                 async move {
-                    // GUARD: Only process changes after initial config load is complete
-                    // This prevents circular loops and flickering during config initialization
-                    if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
-                        // Strip TreeView "scope_" prefixes before storing to config
-                        let expanded_vec: Vec<String> = expanded_set.into_iter()
+                    // Process scope changes for config storage
+                    // Strip TreeView "scope_" prefixes before storing to config
+                    let expanded_vec: Vec<String> = expanded_set.into_iter()
                             .map(|scope_id| {
                                 if scope_id.starts_with("scope_") {
                                     scope_id.strip_prefix("scope_").unwrap_or(&scope_id).to_string()
@@ -520,9 +514,8 @@ pub static EXPANDED_SCOPES_FOR_CONFIG: Lazy<Mutable<Vec<String>>> = Lazy::new(||
                                 }
                             })
                             .collect();
-                        
-                        derived.set_neq(expanded_vec);
-                    }
+                    
+                    derived.set_neq(expanded_vec);
                 }
             })
             .await;
@@ -532,7 +525,7 @@ pub static EXPANDED_SCOPES_FOR_CONFIG: Lazy<Mutable<Vec<String>>> = Lazy::new(||
 });
 
 /// Derived signal that converts FILE_PICKER_EXPANDED (IndexSet) to Vec<String> for config storage
-/// Uses CONFIG_INITIALIZATION_COMPLETE guard and debouncing to prevent circular loops
+/// Converts FILE_PICKER_EXPANDED (IndexSet) to Vec<String> for config storage
 pub static LOAD_FILES_EXPANDED_DIRECTORIES_FOR_CONFIG: Lazy<Mutable<Vec<String>>> = Lazy::new(|| {
     let derived = Mutable::new(Vec::new());
     
@@ -544,12 +537,9 @@ pub static LOAD_FILES_EXPANDED_DIRECTORIES_FOR_CONFIG: Lazy<Mutable<Vec<String>>
             .for_each(move |expanded_set| {
                 let derived = derived_clone.clone();
                 async move {
-                    // GUARD: Only process changes after initial config load is complete
-                    // This prevents circular loops during config initialization
-                    if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
-                        let expanded_vec: Vec<String> = expanded_set.into_iter().collect();
-                        derived.set_neq(expanded_vec);
-                    }
+                    // Process file picker directory changes for config storage
+                    let expanded_vec: Vec<String> = expanded_set.into_iter().collect();
+                    derived.set_neq(expanded_vec);
                 }
             })
             .await;

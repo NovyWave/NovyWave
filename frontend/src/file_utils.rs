@@ -27,13 +27,7 @@ pub fn show_file_paths_dialog() {
     Task::start(async {
         Timer::sleep(200).await;
         
-        // Wait for config initialization to complete
-        loop {
-            if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
-                break;
-            }
-            Timer::sleep(50).await; // Check every 50ms
-        }
+        // Config is loaded in main with await, so always ready
         
         // TODO: Implement proper reactive scroll position restoration
         // For now, use default scroll position during Actor+Relay migration
