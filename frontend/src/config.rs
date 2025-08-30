@@ -8,6 +8,7 @@ use shared::UpMsg;
 use serde::{Serialize, Deserialize};
 use std::sync::Arc;
 use std::str::FromStr;
+use moonzoon_novyui::tokens::theme;
 
 // === SHARED TYPES FOR ACTORS ===
 
@@ -23,7 +24,7 @@ fn create_config_saver_actor(
     dialogs_actor: Actor<DialogsData>,
 ) -> Actor<()> {
     Actor::new((), async move |_state| {
-        let mut debounce_task: Option<TaskHandle> = None;
+        let debounce_task = Arc::new(std::sync::Mutex::new(None::<TaskHandle>));
         zoon::println!("💾 ConfigSaver: Watching all config signals...");
         
         // Combine all config signals - trigger save when ANY change
@@ -40,9 +41,13 @@ fn create_config_saver_actor(
              timeline.clone(), session.clone(), ui.clone(), dialogs.clone())
         };
         
-        config_change_signal.skip(1).for_each(move |(theme, dock_mode, panel_right, panel_bottom, timeline, session, ui, dialogs)| async move {
-            // Cancel any pending save
-            debounce_task = None;
+        config_change_signal.to_stream().skip(1).for_each({
+            let debounce_task = debounce_task.clone();
+            move |(theme, dock_mode, panel_right, panel_bottom, timeline, session, ui, _dialogs)| {
+                let debounce_task = debounce_task.clone();
+                async move {
+                    // Cancel any pending save
+                    *debounce_task.lock().unwrap() = None;
             
             // Schedule new save with 1 second debounce
             let handle = Task::start_droppable(async move {
@@ -66,7 +71,7 @@ fn create_config_saver_actor(
                             selected_variables_panel_name_column_width: Some(panel_right.variables_name_column_width as f64),
                             selected_variables_panel_value_column_width: Some(panel_right.variables_value_column_width as f64),
                         },
-                        dock_mode: dock_mode.to_string(),
+                        dock_mode: dock_mode.clone(),
                         expanded_scopes: Vec::new(),
                         load_files_expanded_directories: Vec::new(),
                         selected_scope_id: None,
@@ -89,7 +94,9 @@ fn create_config_saver_actor(
                 }
             });
             
-            debounce_task = Some(handle);
+            *debounce_task.lock().unwrap() = Some(handle);
+                }
+            }
         }).await;
     })
 }
@@ -227,56 +234,8 @@ pub struct AppConfig {
 impl AppConfig {
     /// Load configuration from backend using request-response pattern
     async fn load_config_from_backend() -> Result<SharedAppConfig, String> {
-        use futures::channel::oneshot;
-        use std::sync::{Arc, Mutex};
-        
-        // Create a oneshot channel for the response
-        let (sender, receiver) = oneshot::channel::<SharedAppConfig>();
-        let sender = Arc::new(Mutex::new(Some(sender)));
-        
-        // Create a temporary relay to capture the config response
-        let (config_response_relay, mut config_response_stream) = relay::<SharedAppConfig>();
-        
-        // Set up response handler that will forward the config when received
-        let sender_clone = sender.clone();
-        let response_task = Task::start(async move {
-            if let Some(config) = config_response_stream.next().await {
-                if let Some(sender) = sender_clone.lock().unwrap_throw().take() {
-                    let _ = sender.send(config);
-                }
-            }
-        });
-        
-        // Temporarily hook into connection to capture ConfigLoaded response
-        // We'll modify the connection handler to emit through our relay
-        let original_handler = std::sync::Arc::new(std::sync::Mutex::new(None));
-        
-        // Send the load config request
-        CurrentPlatform::send_message(UpMsg::LoadConfig).await
-            .map_err(|e| format!("Failed to send LoadConfig message: {e}"))?;
-        
-        // Set up temporary config capture by patching the connection handler
-        // This is a workaround since we can't easily modify the Connection directly
-        CONFIG_LOAD_RESPONSE_RELAY.set(Some(config_response_relay));
-        
-        // Wait for response with timeout
-        let config = match Timer::timeout(5000, receiver).await {
-            Some(Ok(config)) => config,
-            Some(Err(_)) => {
-                CONFIG_LOAD_RESPONSE_RELAY.set(None);
-                return Err("Config response channel closed".to_string());
-            },
-            None => {
-                CONFIG_LOAD_RESPONSE_RELAY.set(None);
-                return Err("Config load request timed out after 5 seconds".to_string());
-            },
-        };
-        
-        // Clean up
-        CONFIG_LOAD_RESPONSE_RELAY.set(None);
-        response_task.cancel();
-        
-        Ok(config)
+        // Use unified platform abstraction for request-response pattern
+        crate::platform::CurrentPlatform::request_response(UpMsg::LoadConfig).await
     }
     
     /// Create new config domain with Actor+Relay architecture  
@@ -304,10 +263,19 @@ impl AppConfig {
         let (ui_state_changed_relay, ui_state_changed_stream) = relay();
         let (toast_dismiss_ms_changed_relay, toast_dismiss_ms_changed_stream) = relay();
         let (dialogs_data_changed_relay, dialogs_data_changed_stream) = relay();
+        let (config_loaded_relay, config_loaded_stream) = relay::<SharedAppConfig>();
 
         // Create theme actor with loaded config value
         let theme_actor = Actor::new(config.ui.theme, async move |state| {
             let mut theme_button_clicked_stream = theme_button_clicked_stream.fuse();
+            
+            // Initialize NovyUI theme system with current theme
+            let initial_novyui_theme = match config.ui.theme {
+                SharedTheme::Light => theme::Theme::Light,
+                SharedTheme::Dark => theme::Theme::Dark,
+            };
+            theme::init_theme(Some(initial_novyui_theme), None);
+            zoon::println!("🎨 Theme Actor: Initialized NovyUI theme system with {:?}", initial_novyui_theme);
             
             loop {
                 select! {
@@ -323,6 +291,14 @@ impl AppConfig {
                                     SharedTheme::Dark => SharedTheme::Light,
                                 };
                                 zoon::println!("🎨 Theme Actor: Toggling from {:?} to {:?}", old_theme, *theme);
+                                
+                                // Update NovyUI theme system immediately
+                                let novyui_theme = match *theme {
+                                    SharedTheme::Light => theme::Theme::Light,
+                                    SharedTheme::Dark => theme::Theme::Dark,
+                                };
+                                theme::set_theme(novyui_theme);
+                                zoon::println!("🎨 Theme Actor: Updated NovyUI theme to {:?}", novyui_theme);
                             }
                         }
                     }
@@ -332,7 +308,7 @@ impl AppConfig {
 
         // Create dock mode actor with loaded config value
         let dock_mode_actor = Actor::new(
-            DockMode::from_str(&config.workspace.dock_mode).unwrap_or(DockMode::Right), 
+            config.workspace.dock_mode.clone(), 
             async move |state| {
             let mut dock_mode_button_clicked_stream = dock_mode_button_clicked_stream.fuse();
             
@@ -358,7 +334,14 @@ impl AppConfig {
         });
 
         // Create panel dimensions actors with loaded config values
-        let panel_dimensions_right_actor = Actor::new(config.workspace.panel_dimensions_right, async move |state| {
+        let panel_dimensions_right_actor = Actor::new(PanelDimensions {
+            files_panel_width: config.workspace.docked_right_dimensions.files_and_scopes_panel_width as f32,
+            files_panel_height: config.workspace.docked_right_dimensions.files_and_scopes_panel_height as f32,
+            variables_panel_width: 300.0, // Default values for missing fields
+            timeline_panel_height: 200.0,
+            variables_name_column_width: config.workspace.docked_right_dimensions.selected_variables_panel_name_column_width.unwrap_or(150.0) as f32,
+            variables_value_column_width: config.workspace.docked_right_dimensions.selected_variables_panel_value_column_width.unwrap_or(150.0) as f32,
+        }, async move |state| {
             let mut right_stream = panel_dimensions_right_changed_stream.fuse();
             let mut resized_stream = panel_resized_stream.fuse();
             
@@ -379,7 +362,14 @@ impl AppConfig {
             }
         });
 
-        let panel_dimensions_bottom_actor = Actor::new(config.workspace.panel_dimensions_bottom, async move |state| {
+        let panel_dimensions_bottom_actor = Actor::new(PanelDimensions {
+            files_panel_width: config.workspace.docked_bottom_dimensions.files_and_scopes_panel_width as f32,
+            files_panel_height: config.workspace.docked_bottom_dimensions.files_and_scopes_panel_height as f32,
+            variables_panel_width: 300.0, // Default values for missing fields
+            timeline_panel_height: 200.0,
+            variables_name_column_width: config.workspace.docked_bottom_dimensions.selected_variables_panel_name_column_width.unwrap_or(150.0) as f32,
+            variables_value_column_width: config.workspace.docked_bottom_dimensions.selected_variables_panel_value_column_width.unwrap_or(150.0) as f32,
+        }, async move |state| {
             let mut bottom_stream = panel_dimensions_bottom_changed_stream;
             while let Some(new_dims) = bottom_stream.next().await {
                 state.set_neq(new_dims);
@@ -499,24 +489,8 @@ impl AppConfig {
 
 // === GLOBAL INSTANCE ===
 
-static APP_CONFIG: std::sync::OnceLock<AppConfig> = std::sync::OnceLock::new();
+pub static APP_CONFIG: std::sync::OnceLock<AppConfig> = std::sync::OnceLock::new();
 
-/// Temporary relay for capturing config load responses during initialization
-static CONFIG_LOAD_RESPONSE_RELAY: Lazy<Mutable<Option<Relay<SharedAppConfig>>>> = 
-    Lazy::new(|| Mutable::new(None));
-
-/// Initialize the global AppConfig instance
-pub async fn init_app_config() -> Result<(), &'static str> {
-    let config = AppConfig::new().await;
-    APP_CONFIG.set(config).map_err(|_| "AppConfig already initialized")
-}
-
-/// Called by connection handler to forward config load responses during initialization
-pub fn forward_config_load_response(config: SharedAppConfig) {
-    if let Some(relay) = CONFIG_LOAD_RESPONSE_RELAY.get_cloned().flatten() {
-        relay.send(config);
-    }
-}
 
 /// Get the global config domain
 pub fn app_config() -> &'static AppConfig {

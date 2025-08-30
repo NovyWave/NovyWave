@@ -707,6 +707,26 @@ pub fn dialog_manager_last_expanded_signal() -> impl Signal<Item = std::collecti
         })
 }
 
+/// Get expanded directories mutable for TreeView external_expanded - LIFETIME SAFE
+pub fn dialog_manager_expanded_mutable() -> Mutable<IndexSet<String>> {
+    DIALOG_MANAGER_SIGNALS.get()
+        .map(|signals| signals.expanded_directories_mutable.clone())
+        .unwrap_or_else(|| {
+            zoon::eprintln!("⚠️ DialogManager signals not initialized, returning new empty expanded directories mutable");
+            Mutable::new(IndexSet::<String>::new())
+        })
+}
+
+/// Get selected files mutable for TreeView external_selected - LIFETIME SAFE
+pub fn dialog_manager_selected_mutable() -> MutableVec<String> {
+    DIALOG_MANAGER_SIGNALS.get()
+        .map(|signals| signals.selected_files_mutable.clone())
+        .unwrap_or_else(|| {
+            zoon::eprintln!("⚠️ DialogManager signals not initialized, returning new empty selected files mutable");
+            MutableVec::<String>::new()
+        })
+}
+
 /// Get owned signal for error alerts - LIFETIME SAFE
 pub fn error_manager_alerts_signal() -> impl Signal<Item = Vec<crate::state::ErrorAlert>> {
     ERROR_MANAGER_SIGNALS.get()

@@ -16,4 +16,24 @@ impl Platform for WebPlatform {
             .map(|_| ()) // Convert CorId to ()
             .map_err(|e| format!("SSE connection failed: {:?}", e))
     }
+    
+    async fn request_response<T>(msg: UpMsg) -> Result<T, String>
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        // Use proper Zoon Connection exchange_msgs for request-response pattern
+        match crate::connection::CONNECTION.exchange_msgs(msg).await {
+            Ok((down_msg, _cor_id)) => {
+                match down_msg {
+                    shared::DownMsg::ConfigLoaded(config) => {
+                        // Try to deserialize the config as type T
+                        serde_json::from_str(&serde_json::to_string(&config).unwrap())
+                            .map_err(|e| format!("Failed to deserialize response: {e}"))
+                    },
+                    other => Err(format!("Unexpected response: {other:?}")),
+                }
+            },
+            Err(error) => Err(format!("Failed to exchange message: {error:?}")),
+        }
+    }
 }

@@ -295,14 +295,31 @@ pub fn last_expanded_signal() -> impl Signal<Item = HashSet<String>> {
 
 /// Open file dialog event
 pub fn open_file_dialog() {
-    let domain = crate::actors::global_domains::dialog_manager_domain();
-    domain.dialog_opened_relay.send(());
+    // Use existing working pattern: direct signal update
+    if let Some(signals) = crate::actors::global_domains::DIALOG_MANAGER_SIGNALS.get() {
+        signals.dialog_visible_mutable.set_neq(true);
+        
+        // Auto-expand home directory when dialog opens
+        let mut expanded = signals.expanded_directories_mutable.get_cloned();
+        
+        // Add common home directory paths to expanded set
+        if let Ok(home_dir) = std::env::var("HOME") {
+            expanded.insert(home_dir);
+        }
+        
+        // Also auto-expand root directory for navigation
+        expanded.insert("/".to_string());
+        
+        signals.expanded_directories_mutable.set_neq(expanded);
+    }
 }
 
 /// Close file dialog event
 pub fn close_file_dialog() {
-    let domain = crate::actors::global_domains::dialog_manager_domain();
-    domain.dialog_closed_relay.send(());
+    // Use existing working pattern: direct signal update
+    if let Some(signals) = crate::actors::global_domains::DIALOG_MANAGER_SIGNALS.get() {
+        signals.dialog_visible_mutable.set_neq(false);
+    }
 }
 
 /// File paths input changed event

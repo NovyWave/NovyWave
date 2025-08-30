@@ -191,12 +191,11 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 // Clear global error (we now use per-directory errors)
                 set_file_error(None);
             }
-            DownMsg::ConfigLoaded(config) => {
+            DownMsg::ConfigLoaded(_config) => {
                 crate::debug_utils::debug_conditional("RECEIVED ConfigLoaded message");
                 
-                // Forward to initialization handler if waiting for initial load
-                crate::config::forward_config_load_response(config);
-                crate::debug_utils::debug_conditional("Config forwarded to initialization handler");
+                // Config response now handled directly by exchange_msgs in load_config_from_backend
+                crate::debug_utils::debug_conditional("Config response received - handled by exchange_msgs");
             }
             DownMsg::ConfigSaved => {
                 // Config saved successfully

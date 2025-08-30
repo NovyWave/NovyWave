@@ -56,12 +56,12 @@ let _ = function_returning_result();
 ```rust
 // Better: Handle or propagate errors properly
 if let Err(e) = CurrentPlatform::send_message(UpMsg::SaveConfig(config)).await {
-    zoon::eprintln!("🚨 Failed to save config: {}", e);
+    zoon::eprintln!("🚨 Failed to save config: {e}");
 }
 
 // Or if you must ignore but want to see failures in development:
 CurrentPlatform::send_message(UpMsg::SaveConfig(config)).await
-    .unwrap_or_else(|e| zoon::eprintln!("⚠️ Config save failed: {}", e));
+    .unwrap_or_else(|e| zoon::eprintln!("⚠️ Config save failed: {e}"));
 
 // Or use expect_throw for better WASM debugging:
 CurrentPlatform::send_message(UpMsg::SaveConfig(config)).await
@@ -74,6 +74,28 @@ CurrentPlatform::send_message(UpMsg::SaveConfig(config)).await
 - Makes debugging nearly impossible when things go wrong
 - Even `unwrap_throw()` is better because it shows **what** failed and **where**
 - Always prefer explicit error handling or at minimum error logging
+
+### Use Zoon Connection.exchange_message for Request-Response
+
+**❌ WRONG: Manual channel-based request-response**
+```rust
+// Don't implement custom oneshot channels and relay systems
+let (sender, receiver) = oneshot::channel::<SharedAppConfig>();
+let (config_response_relay, mut config_response_stream) = relay::<SharedAppConfig>();
+// Complex manual setup with response tasks and timeouts...
+```
+
+**✅ CORRECT: Use Connection.exchange_message**  
+```rust
+// Zoon Connection provides built-in request-response pattern
+let config = connection.exchange_message(UpMsg::LoadConfig).await?;
+```
+
+**Key Points:**
+- **Zoon Connection has exchange_message method** designed specifically for request-response
+- **Examples exist in MoonZoon repo** - always check there first
+- **Don't reinvent request-response** - use the framework's built-in solutions
+- **Saves complexity** - No manual channels, timeouts, or relay cleanup needed
 
 ### Modern Rust Formatting Syntax
 
@@ -309,9 +331,47 @@ struct TrackedFiles {
     file_selected_relay: Relay<PathBuf>,
 }
 
-// Atom for local UI state
+// Atom for local UI state - USE FOR ALL SIMPLE UI LOGIC
 let dialog_open = Atom::new(false);
 let filter_text = Atom::new(String::new());
+let is_hovering = Atom::new(false);  // Simple hover states
+let is_expanded = Atom::new(false);  // UI toggles
+```
+
+### NO Temporary Code Rule
+
+**CRITICAL: Never create temporary solutions or bridge code**
+
+- **NO "temporary" signal updates** - Either implement proper Actor+Relay or use existing working patterns
+- **NO TODO comments** for "will implement later" - Do it right the first time or use established patterns
+- **Use Atoms for simple UI logic** - Hovering, focus states, local toggles, UI-only state
+- **Use Actor+Relay for domain logic** - Business state, cross-component coordination, persistent data
+
+**✅ CORRECT: Atom for simple UI states**
+```rust
+// Hover effects, focus states, UI toggles - use Atom directly
+let button_hovered = Atom::new(false);
+let panel_collapsed = Atom::new(false);
+let input_focused = Atom::new(false);
+
+// UI event handlers
+.on_hovered_change(move |is_hovered| button_hovered.set_neq(is_hovered))
+.s(Background::new().color_signal(button_hovered.signal().map(|hovered| {
+    if *hovered { hover_color() } else { normal_color() }
+})))
+```
+
+**❌ WRONG: Creating temporary bridge code**
+```rust
+// Don't create "temporary" solutions that bypass proper architecture
+pub fn open_file_dialog() {
+    domain.dialog_opened_relay.send(());
+    
+    // ❌ TEMPORARY: Also update signals directly until Actor processors are implemented
+    if let Some(signals) = SIGNALS.get() {
+        signals.dialog_visible_mutable.set_neq(true);  // Bridge code!
+    }
+}
 ```
 
 ### Event-Source Relay Naming (MANDATORY)

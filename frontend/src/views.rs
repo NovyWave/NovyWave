@@ -2081,9 +2081,8 @@ fn simple_file_picker_tree() -> impl Element {
                             .variant(TreeViewVariant::Basic)
                             .show_icons(true)
                             .show_checkboxes(true)
-                            // TODO: Add domain TreeView integration for external state
-                            // .external_expanded(dialog_manager_expanded_mutable())
-                            // .external_selected_vec(dialog_manager_selected_mutable())
+                            .external_expanded(crate::actors::global_domains::dialog_manager_expanded_mutable())
+                            .external_selected_vec(crate::actors::global_domains::dialog_manager_selected_mutable())
                             .build()
                             .unify()
                     } else {

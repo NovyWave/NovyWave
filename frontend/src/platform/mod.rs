@@ -9,6 +9,11 @@ use shared::UpMsg;
 pub trait Platform {
     /// Send a message to the backend
     async fn send_message(msg: UpMsg) -> Result<(), String>;
+    
+    /// Send a request and wait for response
+    async fn request_response<T>(msg: UpMsg) -> Result<T, String>
+    where
+        T: serde::de::DeserializeOwned;
 }
 
 // Conditional compilation based on NOVYWAVE_PLATFORM

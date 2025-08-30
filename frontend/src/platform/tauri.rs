@@ -23,9 +23,9 @@ impl Platform for TauriPlatform {
                         Ok(config_js) => {
                             // Convert JsValue to AppConfig and apply directly
                             if let Ok(config_str) = serde_wasm_bindgen::from_value::<String>(config_js) {
-                                if let Ok(config) = serde_json::from_str::<shared::AppConfig>(&config_str) {
-                                    // Forward to initialization handler (same as web platform)
-                                    crate::config::forward_config_load_response(config);
+                                if let Ok(_config) = serde_json::from_str::<shared::AppConfig>(&config_str) {
+                                    // Config response now handled directly by exchange_msgs in load_config_from_backend
+                                    // No forwarding needed for Tauri platform
                                 }
                             }
                             Ok(())
@@ -112,6 +112,36 @@ impl Platform for TauriPlatform {
                     
                     Ok(())
                 }
+            }
+        }
+        #[cfg(not(feature = "tauri"))]
+        {
+            Err("Tauri platform not available".to_string())
+        }
+    }
+    
+    async fn request_response<T>(msg: UpMsg) -> Result<T, String>
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        #[cfg(feature = "tauri")]
+        {
+            match msg {
+                UpMsg::LoadConfig => {
+                    let result = tauri_wasm::invoke("load_config", &()).await;
+                    match result {
+                        Ok(config_js) => {
+                            if let Ok(config_str) = serde_wasm_bindgen::from_value::<String>(config_js) {
+                                serde_json::from_str::<T>(&config_str)
+                                    .map_err(|e| format!("Failed to deserialize config: {e}"))
+                            } else {
+                                Err("Failed to convert config from JS".to_string())
+                            }
+                        }
+                        Err(e) => Err(format!("Failed to load config: {:?}", e))
+                    }
+                }
+                _ => Err("Request-response not supported for this message type in Tauri".to_string())
             }
         }
         #[cfg(not(feature = "tauri"))]

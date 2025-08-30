@@ -70,10 +70,15 @@ use error_ui::*;
 pub fn main() {
     Task::start(async {
         load_and_register_fonts().await;
-        
+
+         init_connection();
+
+    
+
         // Initialize AppConfig first
-        if let Err(error_msg) = config::init_app_config().await {
-            zoon::println!("🚨 APP CONFIG INITIALIZATION FAILED: {}", error_msg);
+        let app_config = config::AppConfig::new().await;
+        if config::APP_CONFIG.set(app_config).is_err() {
+            zoon::println!("🚨 APP CONFIG INITIALIZATION FAILED: AppConfig already initialized");
             return;
         }
         zoon::println!("✅ AppConfig initialized successfully");
@@ -92,23 +97,13 @@ pub fn main() {
             });
             return; // Exit gracefully instead of panic
         }
-        
-        // Add delay to ensure domain storage is visible across async boundaries before any access
-        Timer::sleep(100).await;
-        
-        // Verify domains are actually accessible before starting UI
-        if !crate::actors::global_domains::_are_domains_initialized() {
-            zoon::println!("🚨 CRITICAL: Domains not accessible after delay - extending wait");
-            Timer::sleep(500).await;
-        }
-        
-        // Initialize value caching after domain verification
-        if crate::actors::global_domains::_are_domains_initialized() {
-            zoon::println!("🔄 Initializing value caching after domain verification");
-            crate::actors::waveform_timeline::initialize_value_caching();
-        } else {
-            zoon::println!("⚠️ WARNING: Domains not initialized - skipping value caching initialization");
-        }
+
+            // Start the app - config is already loaded with theme
+        start_app("app", root);
+
+        // Initialize value caching - domains are already initialized
+        zoon::println!("🔄 Initializing value caching after domain verification");
+        crate::actors::waveform_timeline::initialize_value_caching();
         
         // Note: init_scope_selection_handlers() function does not exist yet - skipping
         zoon::println!("⚠️ init_scope_selection_handlers() not implemented yet - skipping");
@@ -130,114 +125,53 @@ pub fn main() {
         // Initialize unified timeline service with integer time architecture
         initialize_unified_timeline_service();
         
-        init_connection();
+       
         
-        // Load actual config from backend
-        debug_utils::debug_conditional("Loading real config from backend");
-        send_up_msg(UpMsg::LoadConfig);
         
-        // Default config is already initialized in AppConfig::new()
-        // UI will render with defaults, then update reactively when backend config loads
-        
-        // Wait for config loading, then set up reactive system
-        Task::start(async {
-            // Wait for config to actually load from backend
-            config::app_config().is_loaded_actor.signal().for_each_sync(|loaded| {
-                if loaded {
-                
-                    
-                    // Config persistence, triggers and theme synchronization are now automatic through domain event handlers
-                    
-                    // Initialize theme system with reactive config persistence
-                    // Set up reactive theme initialization - theme updates automatically from signal
-                    Task::start(config::app_config().theme_actor.signal().for_each_sync(|current_theme| {
-                        let novyui_theme = match current_theme {
-                            shared::Theme::Light => Theme::Light,
-                            shared::Theme::Dark => Theme::Dark,
-                        };
-                        
-                        init_theme(
-                            Some(novyui_theme), // Use reactive theme
-                            Some(Box::new(|novyui_theme| {
-                                // Convert NovyUI theme to config theme and update domain
-                                let config_theme = match novyui_theme {
-                                    Theme::Light => shared::Theme::Light,
-                                    Theme::Dark => shared::Theme::Dark,
-                                };
-                                config::app_config().theme_loaded_relay.send(config_theme);
-                                
-                                // Config is automatically saved by ConfigSaver actor
-                            }))
-                        );
-                    }));
-                    
-                    
-                    // NOW start the app after config is fully loaded and reactive system is set up
-                    start_app("app", root);
-                    
-                    // Initialize the complete application flow with proper phases
-                    Task::start(initialize_complete_app_flow());
-                }
-            }).await
-        });
         
         // Query signal values when cursor movement stops (ENABLED - using domain signals)
         Task::start(async {
-            // Wait for CONFIG_LOADED to avoid startup race conditions
-            config::app_config().is_loaded_actor.signal().for_each_sync(|loaded| {
-                if loaded {
-                    let was_moving = Mutable::new(false);
-                    
-                    Task::start(async move {
-                        // Use domain signals instead of direct domain access
-                        let movement_signal = map_ref! {
-                            let left = crate::actors::waveform_timeline::is_cursor_moving_left_signal(),
-                            let right = crate::actors::waveform_timeline::is_cursor_moving_right_signal() =>
-                            *left || *right
-                        };
-                        
-                        movement_signal.for_each_sync(move |is_moving| {
-                            if is_moving {
-                                // Movement started - just track state, don't query
-                                was_moving.set(true);
-                            } else if was_moving.get() {
-                                // Movement just stopped - use unified caching logic with built-in range checking
-                                crate::views::trigger_signal_value_queries();
-                                was_moving.set(false);
-                            }
-                        }).await;
-                    });
+            let was_moving = Mutable::new(false);
+            
+            // Use domain signals instead of direct domain access
+            let movement_signal = map_ref! {
+                let left = crate::actors::waveform_timeline::is_cursor_moving_left_signal(),
+                let right = crate::actors::waveform_timeline::is_cursor_moving_right_signal() =>
+                *left || *right
+            };
+            
+            movement_signal.for_each_sync(move |is_moving| {
+                if is_moving {
+                    // Movement started - just track state, don't query
+                    was_moving.set(true);
+                } else if was_moving.get() {
+                    // Movement just stopped - use unified caching logic with built-in range checking
+                    crate::views::trigger_signal_value_queries();
+                    was_moving.set(false);
                 }
             }).await;
         });
         
         // Direct cursor position handler (ENABLED - using domain signals)
         Task::start(async {
-            // Wait for CONFIG_LOADED to avoid startup race conditions
-            config::app_config().is_loaded_actor.signal().for_each_sync(|loaded| {
-                if loaded {
-                    Task::start(async move {
-                        let last_position = Mutable::new(0.0);
-                        
-                        // Use domain signal instead of direct domain access - combined approach
-                        let movement_and_position_signal = map_ref! {
-                            let cursor_pos = crate::actors::waveform_timeline::cursor_position_seconds_signal(),
-                            let left = crate::actors::waveform_timeline::is_cursor_moving_left_signal(),
-                            let right = crate::actors::waveform_timeline::is_cursor_moving_right_signal() =>
-                            (*cursor_pos, *left || *right)
-                        };
-                        
-                        movement_and_position_signal.for_each_sync(move |(cursor_pos, is_moving)| {
-                            // Only query for direct position changes (not during Q/E movement)
-                            if !is_moving && (cursor_pos - last_position.get()).abs() > 0.001 {
-                                // Use the unified caching logic with built-in range checking
-                                crate::views::trigger_signal_value_queries();
-                            }
-                            
-                            last_position.set(cursor_pos);
-                        }).await;
-                    });
+            let last_position = Mutable::new(0.0);
+            
+            // Use domain signal instead of direct domain access - combined approach
+            let movement_and_position_signal = map_ref! {
+                let cursor_pos = crate::actors::waveform_timeline::cursor_position_seconds_signal(),
+                let left = crate::actors::waveform_timeline::is_cursor_moving_left_signal(),
+                let right = crate::actors::waveform_timeline::is_cursor_moving_right_signal() =>
+                (*cursor_pos, *left || *right)
+            };
+            
+            movement_and_position_signal.for_each_sync(move |(cursor_pos, is_moving)| {
+                // Only query for direct position changes (not during Q/E movement)
+                if !is_moving && (cursor_pos - last_position.get()).abs() > 0.001 {
+                    // Use the unified caching logic with built-in range checking
+                    crate::views::trigger_signal_value_queries();
                 }
+                
+                last_position.set(cursor_pos);
             }).await;
         });
     });
@@ -263,6 +197,17 @@ fn init_file_picker_handlers() {
             // Simple approach: For now, we'll implement manual directory browsing
             // via the breadcrumb navigation rather than automatic expansion
             // This avoids the complexity of tracking which directories have been loaded
+        }).await
+    });
+    
+    // Watch for directory expansions in the file picker dialog
+    Task::start(async {
+        use actors::dialog_manager::expanded_directories_signal;
+        use std::collections::HashSet;
+        
+        expanded_directories_signal().for_each(|expanded_dirs| async move {
+            let expanded_set: HashSet<String> = expanded_dirs.iter().cloned().collect();
+            crate::views::monitor_directory_expansions(expanded_set);
         }).await
     });
 }
