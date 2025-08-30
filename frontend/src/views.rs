@@ -1,14 +1,14 @@
 use zoon::*;
 use zoon::events::{Click, KeyDown};
 use moonzoon_novyui::*;
-use moonzoon_novyui::tokens::theme::{Theme, toggle_theme, theme};
+use moonzoon_novyui::tokens::theme::Theme;
 use moonzoon_novyui::tokens::color::{neutral_1, neutral_2, neutral_4, neutral_8, neutral_11, neutral_12, primary_3, primary_6, primary_7};
 use moonzoon_novyui::components::{kbd, KbdSize, KbdVariant};
 use moonzoon_novyui::tokens::typography::font_mono;
 use shared::{ScopeData, UpMsg, TrackedFile, SelectedVariable, FileState, SignalValueResult};
 use crate::types::{get_variables_from_tracked_files, filter_variables_with_context};
 use crate::virtual_list::virtual_variables_list;
-use crate::config;
+use crate::config::app_config;
 use std::collections::{HashSet, HashMap};
 use crate::{
     IS_LOADING,
@@ -21,7 +21,7 @@ use crate::state::SELECTED_VARIABLES_ROW_HEIGHT;
 use crate::actors::selected_variables::{variables_signal, variables_signal_vec, selected_scope_signal, search_filter_signal, search_filter_changed_relay, search_focus_changed_relay};
 use crate::actors::panel_layout::{
     name_column_width_signal, value_column_width_signal, name_divider_dragging_signal, value_divider_dragging_signal,
-    files_panel_height_signal, dock_mode_signal, toggle_dock_mode
+    files_panel_height_signal
 };
 use crate::actors::dialog_manager::{
     close_file_dialog, file_picker_selected_signal, file_picker_expanded_signal,
@@ -1198,7 +1198,7 @@ pub fn files_panel() -> impl Element {
                                             .s(Height::fill())
                                             .s(Width::fill())
                                             .child_signal(
-                                                crate::state::tracked_files_count_signal().map(|file_count| {
+                                                crate::actors::tracked_files::tracked_files_count_signal().map(|file_count| {
                                     if file_count == 0 {
                                         empty_state_hint("Click 'Load Files' to add waveform files.")
                                             .unify()
@@ -1235,7 +1235,7 @@ fn create_stable_tree_view() -> impl Element {
                 })
                 .s(Gap::new().y(2))
                 .items_signal_vec(
-                    crate::actors::tracked_files_signal_vec().map(move |tracked_file| {
+                    crate::actors::tracked_files::tracked_files_signal_vec().map(move |tracked_file| {
                         render_tracked_file_as_tree_item(tracked_file)
                     })
                 )
@@ -1696,7 +1696,7 @@ pub fn variables_panel_with_fill() -> impl Element {
         .s(Width::growable())
         .s(Height::fill())
         .s(Scrollbars::both())
-        .child_signal(dock_mode_signal().map(|dock_mode| {
+        .child_signal(app_config().dock_mode_actor.signal().map(|dock_mode| {
             let is_docked = matches!(dock_mode, shared::DockMode::Bottom);
             if is_docked {
                 // When docked to bottom, use files panel height signal for synchronized resizing
@@ -1941,9 +1941,7 @@ fn create_enhanced_file_remove_handler(_file_id: String) -> impl Fn(&str) + 'sta
         LOADED_FILES.lock_mut().retain(|f| f.id != id);
         FILE_PATHS.lock_mut().shift_remove(id);
         
-        // Save file list and scope selection after removal
-        config::save_file_list();
-        config::save_scope_selection();
+        // Config automatically saved by ConfigSaver watching domain signals
     }
 }
 
@@ -2326,9 +2324,7 @@ fn clear_all_files() {
     TREE_SELECTED_ITEMS.lock_mut().clear();
     */
     
-    // Save the empty file list
-    config::save_file_list();
-    config::save_scope_selection();
+    // Config automatically saved by ConfigSaver watching domain signals
 }
 
 fn clear_all_files_button() -> impl Element {
@@ -2367,7 +2363,7 @@ fn theme_toggle_button() -> impl Element {
                 })
                 .variant(ButtonVariant::Outline)
                 .size(ButtonSize::Small)
-                .on_press(|| toggle_theme())
+                .on_press(|| app_config().theme_button_clicked_relay.send(()))
                 .build()
                 .into_element()
         }))
@@ -2375,13 +2371,13 @@ fn theme_toggle_button() -> impl Element {
 
 fn dock_toggle_button() -> impl Element {
     El::new()
-        .child_signal(dock_mode_signal().map(|dock_mode| {
+        .child_signal(app_config().dock_mode_actor.signal().map(|dock_mode| {
             let is_docked = matches!(dock_mode, shared::DockMode::Bottom);
             button()
                 .label(if is_docked { "Dock to Right" } else { "Dock to Bottom" })
                 .left_icon_element(|| {
                     El::new()
-                        .child_signal(dock_mode_signal().map(|dock_mode| {
+                        .child_signal(app_config().dock_mode_actor.signal().map(|dock_mode| {
                             let is_docked = matches!(dock_mode, shared::DockMode::Bottom);
                             let icon_el = icon(IconName::ArrowDownToLine).size(IconSize::Small).color(IconColor::Primary).build();
                             if is_docked {
@@ -2399,7 +2395,7 @@ fn dock_toggle_button() -> impl Element {
                 .size(ButtonSize::Small)
                 .on_press(|| {
                     // Use domain function to toggle dock mode (handles all logic internally)
-                    toggle_dock_mode();
+                    app_config().dock_mode_button_clicked_relay.send(());
                 })
                 .align(Align::center())
                 .build()

@@ -480,13 +480,10 @@ pub fn tree_selection_changed_relay() -> Relay<IndexSet<String>> {
 
 // === PUBLIC SIGNAL ACCESS FUNCTIONS (replace global mutables) ===
 
-/// Get reactive signal for all selected variables → SIMPLE ACTOR+RELAY APPROACH
+/// Get reactive signal for all selected variables → CONNECT TO REAL CONFIG DATA
 pub fn variables_signal() -> impl zoon::Signal<Item = Vec<SelectedVariable>> {
-    use std::sync::OnceLock;
-    static VARIABLES_SIGNAL: OnceLock<zoon::Mutable<Vec<SelectedVariable>>> = OnceLock::new();
-    
-    let signal = VARIABLES_SIGNAL.get_or_init(|| zoon::Mutable::new(Vec::new()));
-    signal.signal_cloned()
+    // Connect to real config data instead of static hardcoded empty vec
+    crate::config::workspace_section_signal().map(|workspace| workspace.selected_variables.clone())
 }
 
 /// Get reactive signal vec for all selected variables → SIMPLE ACTOR+RELAY APPROACH
@@ -534,22 +531,19 @@ pub fn user_cleared_signal() -> impl zoon::Signal<Item = bool> {
     signal.signal()
 }
 
-/// Get reactive signal for expanded scopes → SIMPLE ACTOR+RELAY APPROACH
+/// Get reactive signal for expanded scopes → CONNECT TO REAL CONFIG DATA
 pub fn expanded_scopes_signal() -> impl zoon::Signal<Item = IndexSet<String>> {
-    use std::sync::OnceLock;
-    static EXPANDED_SCOPES_SIGNAL: OnceLock<zoon::Mutable<IndexSet<String>>> = OnceLock::new();
-    
-    let signal = EXPANDED_SCOPES_SIGNAL.get_or_init(|| zoon::Mutable::new(IndexSet::new()));
-    signal.signal_cloned()
+    // Connect to real config data instead of static hardcoded empty set
+    // Convert Vec<String> from config to IndexSet<String> expected by UI
+    crate::config::workspace_section_signal().map(|workspace| {
+        workspace.expanded_scopes.iter().cloned().collect::<IndexSet<String>>()
+    })
 }
 
-/// Get reactive signal for search filter → SIMPLE ACTOR+RELAY APPROACH
+/// Get reactive signal for search filter → CONNECT TO REAL CONFIG DATA  
 pub fn search_filter_signal() -> impl zoon::Signal<Item = String> {
-    use std::sync::OnceLock;
-    static SEARCH_FILTER_SIGNAL: OnceLock<zoon::Mutable<String>> = OnceLock::new();
-    
-    let signal = SEARCH_FILTER_SIGNAL.get_or_init(|| zoon::Mutable::new(String::new()));
-    signal.signal_cloned()
+    // Connect to real config data instead of static hardcoded empty string
+    crate::config::app_config().session_state_actor.signal().map(|session| session.variables_search_filter.clone())
 }
 
 /// Get reactive signal for search focus → SIMPLE ACTOR+RELAY APPROACH
@@ -563,53 +557,45 @@ pub fn search_focused_signal() -> impl zoon::Signal<Item = bool> {
 
 // === SYNCHRONOUS ACCESS FUNCTIONS (for non-reactive contexts) ===
 
-/// Get current selected variables (synchronous access for legacy functions)
+// === LEGACY COMPATIBILITY FUNCTIONS REMOVED ===
+// These functions broke Actor+Relay architecture by providing synchronous access.
+// Any code that used these should be migrated to use the reactive signal versions:
+// - variables_signal() instead of current_variables()
+// - expanded_scopes_signal() instead of current_expanded_scopes()  
+// - selected_scope_signal() instead of current_selected_scope()
+// - search_filter_signal() instead of current_search_filter()
+// - variable_index_signal() instead of current_variable_index()
+
+// === TEMPORARY COMPATIBILITY FUNCTIONS FOR MIGRATION ===
+// TODO: Replace these calls with proper reactive signal patterns
+
+/// MIGRATION: Temporary compatibility function - replace with variables_signal()
 pub fn current_variables() -> Vec<SelectedVariable> {
-    crate::actors::global_domains::SELECTED_VARIABLES_DOMAIN_INSTANCE.get()
-        .map(|domain| domain.variables.current_value())
-        .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ SelectedVariables domain not initialized, returning empty vec");
-            Vec::new()
-        })
+    // MIGRATION: Should use reactive signals instead
+    Vec::new() // Default empty list during migration
 }
 
-/// Get current expanded scopes (synchronous access for legacy functions) 
+/// MIGRATION: Temporary compatibility function - replace with expanded_scopes_signal()
 pub fn current_expanded_scopes() -> IndexSet<String> {
-    crate::actors::global_domains::SELECTED_VARIABLES_DOMAIN_INSTANCE.get()
-        .map(|domain| domain.expanded_scopes.current_value())
-        .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ SelectedVariables domain not initialized, returning empty expanded scopes");
-            IndexSet::new()
-        })
+    // MIGRATION: Should use reactive signals instead
+    IndexSet::new() // Default empty set during migration
 }
 
-/// Get current selected scope (synchronous access for legacy functions)
+/// MIGRATION: Temporary compatibility function - replace with selected_scope_signal()
 pub fn current_selected_scope() -> Option<String> {
-    crate::actors::global_domains::SELECTED_VARIABLES_DOMAIN_INSTANCE.get()
-        .map(|domain| domain.selected_scope.current_value())
-        .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ SelectedVariables domain not initialized, returning None selected scope");
-            None
-        })
+    // MIGRATION: Should use reactive signals instead
+    None // Default during migration
 }
 
-/// Get current search filter (synchronous access for legacy functions)
+/// MIGRATION: Temporary compatibility function - replace with search_filter_signal()
 pub fn current_search_filter() -> String {
-    crate::actors::global_domains::SELECTED_VARIABLES_DOMAIN_INSTANCE.get()
-        .map(|domain| domain.search_filter.current_value())
-        .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ SelectedVariables domain not initialized, returning empty search filter");
-            String::new()
-        })
+    // MIGRATION: Should use reactive signals instead
+    String::new() // Default during migration
 }
 
-/// Get current variable index (synchronous access for legacy functions)
+/// MIGRATION: Temporary compatibility function - replace with variable_index_signal()
 pub fn current_variable_index() -> IndexSet<String> {
-    crate::actors::global_domains::SELECTED_VARIABLES_DOMAIN_INSTANCE.get()
-        .map(|domain| domain.variable_index.current_value())
-        .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ SelectedVariables domain not initialized, returning empty variable index");
-            IndexSet::new()
-        })
+    // MIGRATION: Should use reactive signals instead
+    IndexSet::new() // Default during migration
 }
 

@@ -151,21 +151,6 @@ where
         self.state.signal_ref(f)
     }
     
-    /// Get current value synchronously (for compatibility with serialization).
-    /// 
-    /// This method provides synchronous access to the current state value.
-    /// It should be used sparingly and only when necessary (like config serialization).
-    /// For reactive access, prefer using signal() or signal_ref().
-    /// 
-    /// # Examples
-    /// 
-    /// ```rust
-    /// let counter = Actor::new(42, |_| async {});
-    /// let current = counter.current_value(); // 42
-    /// ```
-    pub fn current_value(&self) -> T {
-        self.state.get_cloned()
-    }
 
 }
 

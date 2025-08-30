@@ -295,3 +295,80 @@ cursor_clicked_relay.send(new_time);  // Actually updates the signal
 **Lesson learned:**
 **Never prioritize compilation success over architectural correctness.** 
 Working compilation with broken reactivity is worse than compilation errors with correct architecture.
+
+### 5. **UI Business Logic with State Caching (Actor+Relay Violation)**
+
+**❌ ANTIPATTERN: UI functions doing business logic with state caching**
+
+```rust
+// WRONG: UI handler caches state and implements business logic
+pub fn toggle_theme() {
+    let current = current_theme_now();  // ❌ Caching outside Actor
+    let new_theme = match current {     // ❌ Business logic in UI layer
+        SharedTheme::Light => SharedTheme::Dark,
+        SharedTheme::Dark => SharedTheme::Light,
+    };
+    app_config().theme_changed_relay.send(new_theme);  // ❌ Race condition risk
+}
+
+pub fn toggle_dock_mode() {
+    let current = dock_mode_now();      // ❌ Same antipattern
+    let new_mode = match current {      // ❌ Toggle logic should be in Actor
+        DockMode::Right => DockMode::Bottom,
+        DockMode::Bottom => DockMode::Right,
+    };
+    app_config().dock_mode_changed_relay.send(new_mode);
+}
+```
+
+**Why this is an antipattern:**
+- **Race conditions**: UI reads current state, but Actor might change it before UI sends new state
+- **Business logic in wrong layer**: Toggle logic belongs in Actor, not UI
+- **Unauthorized caching**: Only Actors should cache current values (violates "Cache Current Values" pattern)
+- **Coupling**: UI knows about business rules instead of just emitting events
+
+**✅ CORRECT: UI emits events, Actor handles business logic**
+
+```rust
+// ✅ UI layer: Just emit events
+pub fn toggle_theme_requested() {
+    app_config().theme_toggle_requested_relay.send(());  // Just emit event
+}
+
+pub fn toggle_dock_mode_requested() {
+    app_config().dock_mode_toggle_requested_relay.send(());  // Just emit event
+}
+```
+
+```rust
+// ✅ Actor layer: Handle business logic with proper state caching
+let theme_actor = Actor::new(SharedTheme::Light, async move |state| {
+    let mut theme_changed_stream = theme_changed_stream;
+    let mut theme_toggle_stream = theme_toggle_requested_stream;
+    
+    loop {
+        select! {
+            Some(new_theme) = theme_changed_stream.next() => {
+                state.set_neq(new_theme);
+            }
+            Some(()) = theme_toggle_stream.next() => {
+                // ✅ Business logic inside Actor with cached state
+                let current = state.get();  // ✅ Safe caching inside Actor
+                let new_theme = match current {
+                    SharedTheme::Light => SharedTheme::Dark,
+                    SharedTheme::Dark => SharedTheme::Light,
+                };
+                state.set_neq(new_theme);  // ✅ No race conditions
+            }
+        }
+    }
+});
+```
+
+**Key principles:**
+- **UI emits events** - No business logic, just "user requested X"
+- **Actors handle logic** - All business rules and state transitions
+- **Cache only in Actors** - Current values only accessed inside Actor loops
+- **Event-source naming** - `theme_toggle_requested_relay` not `toggle_theme`
+
+This maintains clean separation: UI → Events → Actor Business Logic → State Updates → ConfigSaver → Persistence.

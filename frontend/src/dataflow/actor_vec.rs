@@ -179,21 +179,6 @@ where
         self.vec.signal_vec_cloned().len()
     }
 
-    /// Get current vector value synchronously (for compatibility with serialization).
-    /// 
-    /// This method provides synchronous access to the current collection state.
-    /// It should be used sparingly and only when necessary (like config serialization).
-    /// For reactive access, prefer using signal_vec() or signal_ref().
-    /// 
-    /// # Examples
-    /// 
-    /// ```rust
-    /// let items = ActorVec::new(vec![1, 2, 3], |_| async {});
-    /// let current = items.current_value(); // vec![1, 2, 3]
-    /// ```
-    pub fn current_value(&self) -> Vec<T> {
-        self.vec.lock_ref().to_vec()
-    }
 
 
     /// Get a reactive signal indicating if the collection is empty.
@@ -222,6 +207,7 @@ where
     pub fn is_empty_signal(&self) -> impl Signal<Item = bool> {
         self.count_signal().map(|count| count == 0)
     }
+
 
 }
 

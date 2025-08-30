@@ -16,7 +16,7 @@ use crate::actors::waveform_timeline::{current_cursor_position, current_cursor_p
 use crate::actors::global_domains::waveform_timeline_domain;
 use crate::time_types::{TimeNs, Viewport, NsPerPixel};
 use crate::platform::{Platform, CurrentPlatform};
-use crate::config::{current_theme, CONFIG_LOADED};
+use crate::config::app_config;
 use shared::{SelectedVariable, UpMsg, SignalTransitionQuery, SignalTransition};
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -520,7 +520,7 @@ async fn create_canvas_element() -> impl Element {
     // Add reactive updates when theme changes
     let canvas_wrapper_for_theme = canvas_wrapper_shared.clone();
     Task::start(async move {
-        current_theme().for_each(move |theme_value| {
+        app_config().theme_actor.signal().for_each(move |theme_value| {
             let canvas_wrapper_for_theme = canvas_wrapper_for_theme.clone();
             async move {
                 // Update the theme cache for other handlers to use
@@ -654,10 +654,12 @@ async fn create_canvas_element() -> impl Element {
     // High-performance direct cursor animation with smart debouncing
     start_direct_cursor_animation_loop();
 
-    // Update timeline range when selected variables change - OPTIMIZED to prevent O(N²) requests
+    // Update timeline range when selected variables change - OPTIMIZED to prevent O(N²) requests  
     Task::start(async move {
-        crate::actors::selected_variables::variables_signal_vec().for_each(move |_| {
-            async move {
+        // Combine variables signal with config loaded state for reactive pattern
+        map_ref! {
+            let _variables = crate::actors::selected_variables::variables_signal_vec().to_signal_cloned(),
+            let config_loaded = app_config().is_loaded_actor.signal() => {
                 // Calculate new range from selected variables 
                 if let Some((min_time, max_time)) = get_current_timeline_range() {
                     let range_viewport = crate::time_types::Viewport::new(
@@ -669,7 +671,7 @@ async fn create_canvas_element() -> impl Element {
                     // DEDUPLICATION: Only request transitions if main.rs handler won't handle it
                     // main.rs handler has condition: CONFIG_LOADED.get() && !IS_LOADING.get()
                     // So this handler should request ONLY when that condition is false
-                    if !CONFIG_LOADED.get() || IS_LOADING.get() {
+                    if !config_loaded || IS_LOADING.get() {
                         request_transitions_for_new_variables_only(Some((min_time, max_time)));
                     }
                     
@@ -683,7 +685,7 @@ async fn create_canvas_element() -> impl Element {
                     set_viewport_if_changed(default_viewport);
                 }
             }
-        }).await;
+        }.for_each_sync(|_| {}).await;
     });
 
     // Clear cache and redraw when timeline range changes (critical for zoom operations)

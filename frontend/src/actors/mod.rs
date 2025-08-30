@@ -54,7 +54,7 @@ pub mod global_domains;
 pub mod variable_helpers;
 pub mod naming_validation;
 pub mod testing;
-pub use tracked_files::{TrackedFiles};
+pub use tracked_files::TrackedFiles;
 pub use selected_variables::{SelectedVariables};
 pub use waveform_timeline::{WaveformTimeline};
 pub use user_configuration::{UserConfiguration};
@@ -68,7 +68,6 @@ pub use global_domains::{
     waveform_timeline_domain,
     // Domain signal functions (only used ones)
     tracked_files_signal,
-    tracked_files_signal_vec,
     file_count_signal,
     loaded_files_count_signal
 };

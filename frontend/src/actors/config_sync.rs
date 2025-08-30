@@ -82,10 +82,6 @@ pub fn selected_variables_signal() -> impl Signal<Item = Vec<SelectedVariable>> 
     CONFIG_SYNC_DOMAIN.signal().map(|state| state.selected_variables.clone()).dedupe_cloned()
 }
 
-/// Get dock mode for config signal
-pub fn dock_mode_signal() -> impl Signal<Item = DockMode> {
-    CONFIG_SYNC_DOMAIN.signal().map(|state| state.dock_mode).dedupe()
-}
 
 /// Get TreeView expanded state signal
 pub fn treeview_expanded_signal() -> impl Signal<Item = IndexSet<String>> {

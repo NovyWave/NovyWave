@@ -351,14 +351,10 @@ pub fn timeline_panel_height_signal() -> impl Signal<Item = u32> {
     crate::actors::global_domains::panel_layout_timeline_height_signal()
 }
 
-/// Get dock mode signal
-pub fn dock_mode_signal() -> impl Signal<Item = DockMode> {
-    crate::actors::global_domains::panel_layout_dock_mode_signal()
-}
 
 /// Get docked to bottom signal (derived for backward compatibility)  
 pub fn docked_to_bottom_signal() -> impl Signal<Item = bool> {
-    dock_mode_signal().map(|mode| matches!(mode, DockMode::Bottom))
+    crate::actors::global_domains::panel_layout_dock_mode_signal().map(|mode| matches!(mode, DockMode::Bottom))
 }
 
 /// Get dock transitioning signal

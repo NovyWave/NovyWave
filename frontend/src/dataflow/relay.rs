@@ -40,7 +40,7 @@ use std::sync::{Arc, OnceLock, Mutex};
 /// }
 /// ```
 #[derive(Clone, Debug)]
-pub struct Relay<T>
+pub struct Relay<T = ()>
 where
     T: Clone + Send + Sync + 'static,
 {

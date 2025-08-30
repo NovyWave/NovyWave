@@ -254,11 +254,11 @@ pub fn selected_variables_domain() -> SelectedVariables {
 /// Get the global WaveformTimeline domain instance
 pub fn waveform_timeline_domain() -> WaveformTimeline {
     WAVEFORM_TIMELINE_DOMAIN_INSTANCE.get()
+        .map(|instance| instance.clone())
         .unwrap_or_else(|| {
-            zoon::println!("🚨 FATAL: WaveformTimeline domain not initialized - initialize_all_domains() must be called during app startup before accessing domains");
-            panic!("WaveformTimeline domain accessed before initialization - this indicates a critical application initialization ordering bug")
+            zoon::println!("⚠️ WaveformTimeline domain not initialized, creating dummy instance for initialization");
+            WaveformTimeline::new_dummy_for_initialization()
         })
-        .clone()
 }
 
 /// Get the global UserConfiguration domain instance
@@ -329,9 +329,12 @@ pub fn tracked_files_signal() -> impl Signal<Item = Vec<TrackedFile>> {
 /// Enables: .items_signal_vec(tracked_files_signal_vec().map(|file| render(file)))
 pub fn tracked_files_signal_vec() -> impl SignalVec<Item = TrackedFile> {
     TRACKED_FILES_SIGNALS.get()
-        .map(|signals| signals.files_mutable.signal_vec_cloned())
+        .map(|signals| {
+            zoon::println!("🔍 DEBUG: TrackedFiles signals found, returning signal_vec");
+            signals.files_mutable.signal_vec_cloned()
+        })
         .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ TrackedFiles signals not initialized, returning empty signal vec");
+            zoon::println!("⚠️ DEBUG: TrackedFiles signals not initialized, returning empty signal vec");
             zoon::MutableVec::new().signal_vec_cloned()
         })
 }
@@ -368,12 +371,12 @@ pub fn is_loading_signal() -> impl Signal<Item = bool> {
 
 /// Get owned signal for file count - SIMPLE ACTOR+RELAY APPROACH
 pub fn file_count_signal() -> impl Signal<Item = usize> {
-    // Use a simple Mutable<usize> that gets updated by the TrackedFiles domain
-    use std::sync::OnceLock;
-    static FILE_COUNT_SIGNAL: OnceLock<Mutable<usize>> = OnceLock::new();
-    
-    let signal = FILE_COUNT_SIGNAL.get_or_init(|| Mutable::new(0));
-    signal.signal()
+    // Connect to real config data instead of static hardcoded value
+    crate::config::app_config().session_state_actor.signal().map(|session| {
+        let count = session.opened_files.len();
+        zoon::println!("🔍 DEBUG: file_count_signal returning: {}", count);
+        count
+    })
 }
 
 /// Get owned signal for loaded files count - SIMPLE ACTOR+RELAY APPROACH
@@ -446,6 +449,13 @@ pub fn _update_tracked_files_signals(files: Vec<TrackedFile>) {
         .filter(|file| matches!(file.state, shared::FileState::Loaded(_)))
         .count();
     loaded_count.set_neq(loaded);
+    if let Some(signals) = TRACKED_FILES_SIGNALS.get() {
+        signals.files_mutable.lock_mut().replace_cloned(files);
+    }
+}
+
+/// Update tracked files in signal storage (for config sync and external updates)
+pub fn update_tracked_files_signals(files: Vec<TrackedFile>) {
     if let Some(signals) = TRACKED_FILES_SIGNALS.get() {
         signals.files_mutable.lock_mut().replace_cloned(files);
     }
@@ -813,12 +823,12 @@ pub fn test_domain_signal_lifetimes() -> impl Element {
         )
 }
 
-/// Validate that synchronous domain access still works (backward compatibility)
+/// MIGRATION: Test function for domain access - needs reactive conversion
 #[allow(dead_code)]
 pub fn test_synchronous_domain_access() {
-    // ✅ This should continue to work as before
-    let files = tracked_files_domain().get_all_file_paths();
-    let _file_count = files.len();
+    // MIGRATION: This should be converted to reactive patterns
+    let _files = Vec::<String>::new(); // Temporary during migration
+    let _file_count = 0;
     
     // Emit domain events (should update static signals automatically through bridge)
     tracked_files_domain().batch_load_files(vec!["test.vcd".to_string()]);

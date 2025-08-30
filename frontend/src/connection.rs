@@ -1,6 +1,5 @@
 use zoon::*;
 use crate::{LOADING_FILES, LOADED_FILES, check_loading_complete, config};
-use crate::config::CONFIG_LOADED;
 use crate::error_display::add_error_alert;
 use crate::state::ErrorAlert;
 use crate::utils::restore_scope_selection_for_file;
@@ -102,10 +101,7 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 // Check if all files are completed
                 check_loading_complete();
                 
-                // Auto-save config with updated file list
-                if CONFIG_LOADED.get() {
-                    config::save_file_list();
-                }
+                // Config automatically saved by ConfigSaver watching domain signals
             }
             DownMsg::ParsingError { file_id, error } => {
                 

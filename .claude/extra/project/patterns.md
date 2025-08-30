@@ -113,35 +113,46 @@ let dialog_open = Atom::new(false);
 
 ### Event-Source Relay Naming (MANDATORY)
 
-**Pattern:** `{source}_{event}_relay`
+**CRITICAL RULE: Relay names must identify the source of events, not the destination or purpose**
 
-**✅ CORRECT:**
+**Pattern:** `{specific_source}_{event}_relay`
+
+**✅ CORRECT - Source identification:**
 ```rust
-// User interactions
-button_clicked_relay: Relay,
-input_changed_relay: Relay<String>,
-file_dropped_relay: Relay<Vec<PathBuf>>,
-menu_selected_relay: Relay<MenuOption>,
+// User interactions - identify WHO initiated the event
+theme_button_clicked_relay: Relay,           // Theme button clicked
+dock_button_clicked_relay: Relay,            // Dock mode button clicked  
+file_drop_area_dropped_relay: Relay<Vec<PathBuf>>, // Files dropped on drop area
+search_input_changed_relay: Relay<String>,   // Search input text changed
+variable_tree_item_clicked_relay: Relay<String>, // Tree item clicked
 
-// System events
-file_loaded_relay: Relay<PathBuf>,
-parse_completed_relay: Relay<ParseResult>,
-error_occurred_relay: Relay<String>,
-timeout_reached_relay: Relay,
+// System events - identify WHAT system component triggered
+file_parser_completed_relay: Relay<ParseResult>, // File parser finished
+network_error_occurred_relay: Relay<String>,     // Network component errored
+config_loader_finished_relay: Relay<Config>,     // Config loader completed
 
-// UI events
-dialog_opened_relay: Relay,
-panel_resized_relay: Relay<(f32, f32)>,
-scroll_changed_relay: Relay<f32>,
+// UI component events - identify WHICH component
+main_dialog_opened_relay: Relay,             // Main dialog opened
+timeline_panel_resized_relay: Relay<(f32, f32)>, // Timeline panel resized
 ```
 
-**❌ PROHIBITED:**
+**❌ PROHIBITED - Vague or command-like naming:**
 ```rust
-add_file: Relay<PathBuf>,       // Command-like
-remove_item: Relay<String>,     // Imperative  
-set_theme: Relay<Theme>,        // Action-oriented
-update_config: Relay<Config>,   // Command pattern
+// ❌ Generic "request" - doesn't identify source
+theme_toggle_requested_relay: Relay,         // WHO requested? Button? Keyboard? API?
+file_add_requested_relay: Relay<PathBuf>,    // WHERE did the request come from?
+
+// ❌ Command-like naming
+add_file: Relay<PathBuf>,                    // Sounds like imperative command
+remove_item: Relay<String>,                  // Action-oriented
+set_theme: Relay<Theme>,                     // Imperative verb
+update_config: Relay<Config>,                // Generic command
 ```
+
+**Key Principle: Single Source, Multiple Subscribers**
+- **One source location** can send events through a relay (e.g., only theme button sends theme_button_clicked events)
+- **Multiple subscribers** can listen to the same relay (UI updates, config saving, logging, etc.)
+- **Source identification** in the name makes debugging and code navigation easy
 
 ### Domain-Driven Design Patterns
 
@@ -305,6 +316,314 @@ let actor = ActorVec::new(vec![], async move |state| {
 - **Never use raw Mutables for caching** - defeats the architecture
 
 See [docs/actors_relays/moonzoon/api.md#critical-pattern-cache-current-values](../../docs/actors_relays/moonzoon/api.md#critical-pattern-cache-current-values) for detailed examples.
+
+### CRITICAL ANTIPATTERN: State Access Outside Actor Loops
+
+**❌ NEVER DO: get() + set() pattern**
+```rust
+// ANTIPATTERN 1: Race condition prone - value can change between get() and set()
+let current_theme = state.get();  // Read
+let new_theme = toggle_theme(current_theme);  // Compute
+state.set(new_theme);  // Write - but state may have changed!
+
+// ANTIPATTERN 2: Unnecessary cloning for every access
+fn toggle_theme() {
+    let theme = THEME_STATE.get();  // Always clones entire value
+    let new_theme = match theme {
+        Theme::Light => Theme::Dark,
+        Theme::Dark => Theme::Light,
+    };
+    THEME_STATE.set(new_theme);  // Another clone + signal emission
+}
+```
+
+**❌ EVEN WORSE: Internal caching to "optimize" get/set**
+```rust
+// ANTIPATTERN 3: Shadowing actor state with manual cache
+let mut cached_theme = Theme::Light;  // Manual cache outside Actor
+Task::start(THEME_STATE.signal().for_each_sync(move |theme| {
+    cached_theme = theme;  // Trying to "optimize" by caching
+}));
+
+// Now you have TWO sources of truth - recipe for bugs
+```
+
+**❌ ESCAPE HATCH ANTIPATTERNS: Breaking Actor+Relay Architecture**
+```rust
+// ANTIPATTERN 4: UI caching current values (violates Actor+Relay principles)
+pub fn current_theme_now() -> SharedTheme {
+    app_config().theme_actor.get()  // ❌ UI should never cache state
+}
+
+pub fn toggle_theme() {
+    let current = current_theme_now();  // ❌ Business logic in UI layer
+    let new_theme = match current {     // ❌ Race condition risk
+        SharedTheme::Light => SharedTheme::Dark,
+        SharedTheme::Dark => SharedTheme::Light,
+    };
+    app_config().theme_changed_relay.send(new_theme);
+}
+
+// ANTIPATTERN 5: "Convenience" functions that bypass architecture
+pub fn get_cursor_position() -> TimeNs {
+    TIMELINE_STATE.get()  // ❌ Direct state access outside Actor
+}
+
+pub fn current_variables() -> Vec<SelectedVariable> {
+    SELECTED_VARIABLES.get()  // ❌ Breaks reactive flow
+}
+```
+
+**CRITICAL RULE: NO ESCAPE HATCHES**
+- **NEVER create `current_X_now()` functions** - These break Actor+Relay architecture
+- **NEVER cache state outside Actor loops** - Only Actors can safely cache current values  
+- **NEVER use `.get()` methods in UI code** - Use signals exclusively
+- **NO convenience getters** - Every state access must be through proper signal chains
+
+**✅ CORRECT: Direct lock_mut() manipulation**
+```rust
+// ✅ ATOMIC: Single lock covers read+modify+write operation
+{
+    let mut theme = state.lock_mut();
+    let old_theme = *theme;  // Read current value
+    *theme = match *theme {  // Atomic modify
+        Theme::Light => Theme::Dark,
+        Theme::Dark => Theme::Light,
+    };
+    // Lock automatically dropped, signals fire atomically
+}
+```
+
+**Why lock_mut() is correct:**
+- **Atomic operations** - No race conditions between read and write
+- **No cloning** - Direct mutation of the actual state
+- **Single source of truth** - No shadow caches to get out of sync  
+- **Automatic signaling** - Changes immediately trigger reactive updates
+- **Lock scope control** - Explicit lifetime management with block scope
+
+**When this pattern applies:**
+- Toggle operations (theme, dock mode, checkboxes)
+- Increment/decrement counters  
+- State machines with transitions
+- Any read-modify-write sequence that should be atomic
+
+### UI Toggle Event Pattern (Successful Implementation)
+
+**CRITICAL: Proper separation of UI events from business logic**
+
+Based on successful Theme and Dock mode button implementation, this pattern prevents the UI Business Logic antipattern:
+
+#### ✅ Correct Implementation
+
+**1. Add Toggle Request Relays:**
+```rust
+pub struct AppConfig {
+    // Direct value changes (from config loading)
+    pub theme_changed_relay: Relay<SharedTheme>,
+    pub dock_mode_changed_relay: Relay<DockMode>,
+    
+    // Toggle requests (from UI buttons)
+    pub theme_toggle_requested_relay: Relay,
+    pub dock_mode_toggle_requested_relay: Relay,
+}
+```
+
+**2. UI Functions Only Emit Events:**
+```rust
+/// Request theme toggle - UI just emits event, Actor handles business logic
+pub fn toggle_theme_requested() {
+    app_config().theme_toggle_requested_relay.send(());
+}
+
+/// Request dock mode toggle - UI just emits event, Actor handles business logic  
+pub fn toggle_dock_mode_requested() {
+    app_config().dock_mode_toggle_requested_relay.send(());
+}
+```
+
+**3. Actors Handle Both Direct Changes and Toggle Logic:**
+```rust
+let theme_actor = Actor::new(SharedTheme::Light, async move |state| {
+    let mut theme_stream = theme_changed_stream.fuse();
+    let mut theme_toggle_stream = theme_toggle_requested_stream.fuse();
+    
+    // ✅ Cache current values as they flow through streams
+    let mut current_theme = SharedTheme::Light;
+    
+    loop {
+        select! {
+            new_theme = theme_stream.next() => {
+                if let Some(new_theme) = new_theme {
+                    current_theme = new_theme.clone();  // Update cache
+                    state.set_neq(new_theme);
+                }
+            }
+            toggle_request = theme_toggle_stream.next() => {
+                if let Some(()) = toggle_request {
+                    // ✅ Business logic inside Actor with cached state
+                    let new_theme = match current_theme {
+                        SharedTheme::Light => SharedTheme::Dark,
+                        SharedTheme::Dark => SharedTheme::Light,
+                    };
+                    current_theme = new_theme.clone();  // Update cache
+                    state.set_neq(new_theme);  // ✅ No race conditions
+                }
+            }
+        }
+    }
+});
+```
+
+**4. ConfigSaver Integration:**
+ConfigSaver automatically detects Actor signal changes and performs debounced saves:
+```
+UI Event → Actor Toggle Logic → ConfigSaver Detection → Debounced Save
+```
+
+#### Key Implementation Details
+
+**ConfigSaver Lifetime Management:**
+```rust
+// ✅ Proper storage using Arc<TaskHandle> and struct field
+#[derive(Debug, Clone)]
+struct ConfigSaver {
+    _task_handle: Arc<TaskHandle>,  // Arc allows proper Clone
+}
+
+pub struct AppConfig {
+    // Keep ConfigSaver alive in struct (not _config_saver = dropped immediately)
+    config_saver: ConfigSaver,
+}
+```
+
+**Benefits of This Pattern:**
+- ✅ UI only emits events (no business logic or state caching)
+- ✅ Race condition-free toggle logic inside Actor
+- ✅ Automatic persistence through ConfigSaver signal watching  
+- ✅ Clean separation of concerns
+- ✅ Proper Arc-based lifetime management (no global statics)
+
+**Common Pitfalls Avoided:**
+- ❌ `let _config_saver = ...` (underscore prefix causes immediate drop)
+- ❌ UI caching current values outside Actors (`current_theme_now()`)
+- ❌ Business logic in UI functions (toggle decisions) 
+- ❌ Global statics for lifetime management
+- ❌ Manual save triggers (ConfigSaver handles automatically)
+
+### Automatic Config Saving with ConfigSaver Actor
+
+**CRITICAL ARCHITECTURAL PATTERN: Signal-based automatic persistence**
+
+The ConfigSaver pattern eliminates manual save triggers by watching all config signals automatically:
+
+#### Core Architecture Principles
+
+**1. Default Relay Type Parameter:**
+```rust
+// ✅ Now possible: Clean syntax for common case
+pub struct AppConfig {
+    pub config_load_requested_relay: Relay,  // Instead of Relay<()>
+    pub theme_changed_relay: Relay<SharedTheme>,
+}
+
+// Implementation:
+#[derive(Clone, Debug)]
+pub struct Relay<T = ()>  // T defaults to () for clean syntax
+```
+
+**2. Signal vs Event Usage Pattern:**
+- **Relays for UI/user events** - Button clicks, file drops, user interactions
+- **Signals for internal state watching** - ConfigSaver monitors config changes automatically
+
+#### ConfigSaver Implementation
+
+**Automatic Persistence Actor:**
+```rust
+/// Watches all config signals and automatically saves with debouncing
+struct ConfigSaver {
+    _task_handle: TaskHandle,
+}
+
+impl ConfigSaver {
+    pub fn new(
+        theme_actor: Actor<SharedTheme>,
+        dock_mode_actor: Actor<DockMode>,
+        // ... all other config actors
+    ) -> Self {
+        let task_handle = Task::start_droppable(async move {
+            let mut debounce_task: Option<TaskHandle> = None;
+            
+            // Listen to ALL config actor signals
+            let mut theme_stream = theme_actor.signal().to_stream().fuse();
+            let mut dock_stream = dock_mode_actor.signal().to_stream().fuse();
+            // ... other streams
+            
+            loop {
+                select! {
+                    _ = theme_stream.next() => {
+                        Self::schedule_debounced_save(&mut debounce_task).await;
+                    }
+                    _ = dock_stream.next() => {
+                        Self::schedule_debounced_save(&mut debounce_task).await;
+                    }
+                    // ... other config changes
+                }
+            }
+        });
+        
+        Self { _task_handle: task_handle }
+    }
+    
+    async fn schedule_debounced_save(debounce_task: &mut Option<TaskHandle>) {
+        *debounce_task = None;  // Cancel previous save
+        
+        let handle = Task::start_droppable(async {
+            Timer::sleep(1000).await;  // 1-second debounce
+            save_config_to_backend().await;
+        });
+        
+        *debounce_task = Some(handle);
+    }
+}
+```
+
+#### Before vs After Architecture
+
+**❌ OLD: Manual coupling everywhere**
+```rust
+// UI code had to manually trigger saves
+theme_button.on_click(|| {
+    theme_changed_relay.send(new_theme);
+    config_save_requested_relay.send(());  // Manual coupling!
+});
+
+dock_button.on_click(|| {
+    dock_mode_changed_relay.send(new_mode);
+    config_save_requested_relay.send(());  // Repeated everywhere!
+});
+```
+
+**✅ NEW: Automatic decoupled persistence**
+```rust  
+// UI code only changes what it needs
+theme_button.on_click(|| {
+    theme_changed_relay.send(new_theme);  // ConfigSaver automatically saves
+});
+
+dock_button.on_click(|| {
+    dock_mode_changed_relay.send(new_mode);  // ConfigSaver automatically saves  
+});
+```
+
+#### Key Benefits
+
+1. **Eliminated Coupling**: No `config_save_requested()` calls scattered throughout UI code
+2. **Automatic Persistence**: ANY config change triggers save - no manual triggers needed
+3. **Debounced Efficiency**: 1-second debounce prevents excessive backend calls during rapid changes
+4. **Signal-Based Architecture**: Follows principle "Relays for events, signals for state watching"
+5. **Clean Syntax**: `Relay` instead of `Relay<()>` for common unit type case
+
+This pattern provides automatic, efficient, and decoupled configuration persistence while maintaining clean Actor+Relay architecture principles.
 
 ### Atom for Local UI Patterns
 

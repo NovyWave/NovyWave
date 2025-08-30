@@ -221,26 +221,6 @@ impl UnifiedTimelineService {
         UNIFIED_TIMELINE_CACHE.signal_ref(|_| ())
     }
     
-    /// Clean up data for specific variables (for compatibility with legacy API)
-    pub fn cleanup_variables(removed_signal_ids: &[String]) {
-        if removed_signal_ids.is_empty() {
-            return;
-        }
-        
-        let mut cache = UNIFIED_TIMELINE_CACHE.lock_mut();
-        
-        // Remove viewport data for removed variables
-        for signal_id in removed_signal_ids {
-            cache.viewport_data.remove(signal_id);
-            cache.cursor_values.remove(signal_id);
-            cache.raw_transitions.remove(signal_id);
-        }
-        
-        // Remove any active requests for these variables
-        cache.active_requests.retain(|_, request| {
-            !request.requested_signals.iter().any(|id| removed_signal_ids.contains(id))
-        });
-    }
     
     
     // ===== PRIVATE HELPERS =====

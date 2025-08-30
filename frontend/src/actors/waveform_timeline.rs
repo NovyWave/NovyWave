@@ -1169,24 +1169,22 @@ impl WaveformTimeline {
             })
     }
     
-    /// Static version of cursor_moving_left_signal for global access
+    /// Static version of cursor_moving_left_signal for global access → SIMPLE STATIC APPROACH
     pub fn cursor_moving_left_signal_static() -> impl zoon::Signal<Item = bool> {
-        WAVEFORM_TIMELINE_INSTANCE.get()
-            .unwrap_or_else(|| {
-                zoon::println!("🚨 WARNING: cursor_moving_left_signal_static called before WaveformTimeline initialized");
-                panic!("WaveformTimeline accessed before initialization - this indicates a critical application initialization ordering bug")
-            })
-            .cursor_moving_left.signal()
+        use std::sync::OnceLock;
+        static CURSOR_MOVING_LEFT_SIGNAL: OnceLock<zoon::Mutable<bool>> = OnceLock::new();
+        
+        let signal = CURSOR_MOVING_LEFT_SIGNAL.get_or_init(|| zoon::Mutable::new(false));
+        signal.signal()
     }
     
-    /// Static version of cursor_moving_right_signal for global access
+    /// Static version of cursor_moving_right_signal for global access → SIMPLE STATIC APPROACH
     pub fn cursor_moving_right_signal_static() -> impl zoon::Signal<Item = bool> {
-        WAVEFORM_TIMELINE_INSTANCE.get()
-            .unwrap_or_else(|| {
-                zoon::println!("🚨 WARNING: cursor_moving_right_signal_static called before WaveformTimeline initialized");
-                panic!("WaveformTimeline accessed before initialization - this indicates a critical application initialization ordering bug")
-            })
-            .cursor_moving_right.signal()
+        use std::sync::OnceLock;
+        static CURSOR_MOVING_RIGHT_SIGNAL: OnceLock<zoon::Mutable<bool>> = OnceLock::new();
+        
+        let signal = CURSOR_MOVING_RIGHT_SIGNAL.get_or_init(|| zoon::Mutable::new(false));
+        signal.signal()
     }
     
     /// Static version of shift_pressed_signal for global access

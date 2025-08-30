@@ -25,7 +25,7 @@ use connection::*;
 mod platform;
 
 mod config;
-use config::{CONFIG_LOADED, config_store, create_config_triggers, sync_theme_to_novyui};
+use shared;
 
 mod types;
 
@@ -129,48 +129,40 @@ pub fn main() {
         debug_utils::debug_conditional("Loading real config from backend");
         send_up_msg(UpMsg::LoadConfig);
         
-        // Wait for CONFIG_LOADED flag, then set up reactive system
+        // Default config is already initialized in AppConfig::new()
+        // UI will render with defaults, then update reactively when backend config loads
+        
+        // Wait for config loading, then set up reactive system
         Task::start(async {
             // Wait for config to actually load from backend
-            CONFIG_LOADED.signal().for_each_sync(|loaded| {
+            config::app_config().is_loaded_actor.signal().for_each_sync(|loaded| {
                 if loaded {
                 
                     
-                    // Initialize reactive config persistence system
-                    config::setup_reactive_config_persistence();
+                    // Config persistence, triggers and theme synchronization are now automatic through domain event handlers
                     
-                    // Initialize reactive triggers AFTER config is loaded and synced
-                    create_config_triggers();
-                    
-                    // Initialize theme synchronization from config store to NovyUI
-                    sync_theme_to_novyui();
-                    
-                    // Initialize theme system with unified config persistence  
-                    // NOTE: Access config_store() AFTER apply_config() has loaded real values
-                    let current_theme = config_store().ui.current_value().theme;
-                    let novyui_theme = match current_theme {
-                        config::Theme::Light => Theme::Light,
-                        config::Theme::Dark => Theme::Dark,
-                    };
-                    
-                    init_theme(
-                        Some(novyui_theme), // Use loaded theme, not default
-                        Some(Box::new(|novyui_theme| {
-                            // Convert NovyUI theme to config theme and update store
-                            let config_theme = match novyui_theme {
-                                Theme::Light => config::Theme::Light,
-                                Theme::Dark => config::Theme::Dark,
-                            };
-                            let mut ui = config_store().ui.current_value();
-                            ui.theme = config_theme;
-                            config_store().ui.set(ui);
-                            
-                            // Only save if initialization is complete to prevent startup overwrites
-                            if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
-                                config::save_config_to_backend();
-                            }
-                        }))
-                    );
+                    // Initialize theme system with reactive config persistence
+                    // Set up reactive theme initialization - theme updates automatically from signal
+                    Task::start(config::app_config().theme_actor.signal().for_each_sync(|current_theme| {
+                        let novyui_theme = match current_theme {
+                            shared::Theme::Light => Theme::Light,
+                            shared::Theme::Dark => Theme::Dark,
+                        };
+                        
+                        init_theme(
+                            Some(novyui_theme), // Use reactive theme
+                            Some(Box::new(|novyui_theme| {
+                                // Convert NovyUI theme to config theme and update domain
+                                let config_theme = match novyui_theme {
+                                    Theme::Light => shared::Theme::Light,
+                                    Theme::Dark => shared::Theme::Dark,
+                                };
+                                config::app_config().theme_loaded_relay.send(config_theme);
+                                
+                                // Config is automatically saved by ConfigSaver actor
+                            }))
+                        );
+                    }));
                     
                     
                     // NOW start the app after config is fully loaded and reactive system is set up
@@ -185,7 +177,7 @@ pub fn main() {
         // Query signal values when cursor movement stops (ENABLED - using domain signals)
         Task::start(async {
             // Wait for CONFIG_LOADED to avoid startup race conditions
-            CONFIG_LOADED.signal().for_each_sync(|loaded| {
+            config::app_config().is_loaded_actor.signal().for_each_sync(|loaded| {
                 if loaded {
                     let was_moving = Mutable::new(false);
                     
@@ -215,7 +207,7 @@ pub fn main() {
         // Direct cursor position handler (ENABLED - using domain signals)
         Task::start(async {
             // Wait for CONFIG_LOADED to avoid startup race conditions
-            CONFIG_LOADED.signal().for_each_sync(|loaded| {
+            config::app_config().is_loaded_actor.signal().for_each_sync(|loaded| {
                 if loaded {
                     Task::start(async move {
                         let last_position = Mutable::new(0.0);
@@ -283,25 +275,11 @@ async fn load_and_register_fonts() {
 
 /// Complete application initialization with proper phases to fix N/A bug
 async fn initialize_complete_app_flow() {
-    // Phase 1: Load restored files from config (if any)
-    let config_store = config_store();
-    let opened_files = config_store.session.current_value().opened_files.clone();
+    // Phase 1: This initialization happens once during startup
+    // For now, skip file loading during migration to pure reactive patterns
+    // TODO: Implement proper reactive file restoration when Actor+Relay migration is complete
     
-    if !opened_files.is_empty() {
-        // Start loading files
-        for file_path in &opened_files {
-            send_up_msg(UpMsg::LoadWaveformFile(file_path.clone()));
-        }
-        
-        // Wait for all files to complete loading
-        wait_for_files_loaded(&opened_files).await;
-    }
-    
-    // Phase 4: Variable data requests are handled automatically by signal handlers
-    // Config sync restores selected variables, which triggers signal handlers that request data
-    // No manual SignalDataService call needed here (prevents duplicate requests)
-    
-    // Phase 5: Mark initialization as complete
+    // Phase 5: Mark initialization as complete immediately during migration
     crate::CONFIG_INITIALIZATION_COMPLETE.set_neq(true);
 }
 
@@ -413,11 +391,7 @@ fn main_layout() -> impl Element {
             
             // TODO: Handle config saving when layout changes
             // This was previously done inline but should be handled via actor signals
-            if CONFIG_LOADED.get() && !is_dock_transitioning() {
-                // Check if any divider is dragging before saving
-                // This could be improved by making the actor handle config saving
-                config::save_panel_layout();
-            }
+            // Config loading checks and saving are now handled automatically by the ConfigSaver actor
         })
         .update_raw_el(move |raw_el| {
             raw_el.global_event_handler(move |event: zoon::events::KeyDown| {

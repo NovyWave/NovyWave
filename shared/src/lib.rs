@@ -801,7 +801,7 @@ pub struct TrackedFile {
 // ===== CONFIG TYPES =====
 
 // Type-safe theme handling with validation
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum Theme {
     Dark,

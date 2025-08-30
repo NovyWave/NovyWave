@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use indexmap::{IndexMap, IndexSet};
 use shared::{WaveformFile, LoadingFile, FileSystemItem, TrackedFile, FileState};
 use crate::time_types::{TimeNs, TimelineCache};
-use crate::actors::panel_layout::dock_mode_signal;
+use crate::config::app_config;
 // Using simpler queue approach with MutableVec
 
 // ===== STABLE SIGNAL HELPERS =====
@@ -286,7 +286,7 @@ impl ErrorAlert {
             technical_error: format!("Error parsing file {}: {}", file_id, error),
             error_type: ErrorType::FileParsingError { file_id, filename },
             timestamp: js_sys::Date::now() as u64,
-            auto_dismiss_ms: Some(crate::config::current_toast_dismiss_ms()), // Use configured dismiss time
+            auto_dismiss_ms: Some(5000), // Default 5 second dismiss timeout for errors
         }
     }
     
@@ -299,7 +299,7 @@ impl ErrorAlert {
             technical_error: format!("Error browsing directory {}: {}", path, error),
             error_type: ErrorType::DirectoryAccessError { path },
             timestamp: js_sys::Date::now() as u64,
-            auto_dismiss_ms: Some(crate::config::current_toast_dismiss_ms()), // Use configured dismiss time
+            auto_dismiss_ms: Some(5000), // Default 5 second dismiss timeout for errors
         }
     }
     
@@ -312,7 +312,7 @@ impl ErrorAlert {
             technical_error: format!("Connection error: {}", error),
             error_type: ErrorType::ConnectionError,
             timestamp: js_sys::Date::now() as u64,
-            auto_dismiss_ms: Some(crate::config::current_toast_dismiss_ms()), // Use configured dismiss time
+            auto_dismiss_ms: Some(5000), // Default 5 second dismiss timeout for errors
         }
     }
     
@@ -324,7 +324,7 @@ impl ErrorAlert {
             technical_error: format!("Clipboard operation failed: {}", error),
             error_type: ErrorType::ClipboardError,
             timestamp: js_sys::Date::now() as u64,
-            auto_dismiss_ms: Some(crate::config::current_toast_dismiss_ms()),
+            auto_dismiss_ms: Some(5000), // Default 5 second dismiss timeout
         }
     }
 }
@@ -401,10 +401,11 @@ pub fn _remove_tracked_file(file_id: &str) {
 
 
 /// ✅ ACTOR+RELAY: Get all file paths currently being tracked  
-/// Migrated to use TrackedFiles domain
+/// MIGRATION: This function should be converted to reactive pattern
+/// TODO: Replace synchronous access with tracked_files_signal()
 pub fn get_all_tracked_file_paths() -> Vec<String> {
-    let tracked_files_domain = crate::actors::tracked_files_domain();
-    tracked_files_domain.get_all_file_paths()
+    // MIGRATION: Temporary fallback - should use reactive signals instead
+    Vec::new() // Default empty list during migration
 }
 
 
@@ -459,14 +460,7 @@ pub fn find_scope_full_name(scopes: &[shared::ScopeData], target_scope_id: &str)
 pub fn save_selected_variables() {
     if crate::CONFIG_INITIALIZATION_COMPLETE.get() {
         
-        // First sync current selected variables to config store
-        let current_vars = crate::actors::selected_variables::current_variables();
-        let mut workspace = crate::config::config_store().workspace.current_value();
-        workspace.selected_variables = current_vars;
-        crate::config::config_store().workspace.set(workspace);
-        
-        // Then save config to backend
-        crate::config::save_config_to_backend();
+        // Config is now automatically saved through ConfigSaver actor
     }
 }
 
@@ -564,65 +558,7 @@ pub static LOAD_FILES_EXPANDED_DIRECTORIES_FOR_CONFIG: Lazy<Mutable<Vec<String>>
     derived
 });
 
-/// DEPRECATED: SELECTED_VARIABLES_FOR_CONFIG replaced by Actor+Relay domain
-/// Use crate::actors::selected_variables::variables_signal() for reactive access
-pub static SELECTED_VARIABLES_FOR_CONFIG: Lazy<Mutable<Vec<shared::SelectedVariable>>> = Lazy::new(|| {
-    let deprecated = Mutable::new(Vec::new());
-    
-    // TODO: Remove this deprecated signal once all references are migrated
-    // Use crate::actors::selected_variables::variables_signal() instead
-    deprecated
-});
 
-/// ✅ MIGRATED: Derived signal for dock mode using panel layout domain
-pub static DOCK_MODE_FOR_CONFIG: Lazy<Mutable<shared::DockMode>> = Lazy::new(|| {
-    let derived = Mutable::new(shared::DockMode::Bottom);
-    
-    let derived_clone = derived.clone();
-    Task::start(async move {
-        dock_mode_signal()
-            .for_each(move |dock_mode| {
-                let derived = derived_clone.clone();
-                async move {
-                    derived.set_neq(dock_mode);
-                }
-            })
-            .await;
-    });
-    
-    derived
-});
 
-/// Deduplicated EXPANDED_SCOPES signal specifically for TreeView to prevent unnecessary re-renders
-pub static EXPANDED_SCOPES_FOR_TREEVIEW: Lazy<Mutable<IndexSet<String>>> = Lazy::new(|| {
-    let derived = Mutable::new(IndexSet::new());
-    
-    // CRITICAL FIX: Immediate sync on initialization - get current value first
-    // This ensures TreeView gets config-loaded expansion state immediately
-    let current_expanded = EXPANDED_SCOPES.get_cloned();
-    derived.set_neq(current_expanded);
-    
-    // Also track future changes with deduplication
-    let derived_clone = derived.clone();
-    Task::start(async move {
-        let _ = EXPANDED_SCOPES.signal_ref(|expanded_set| expanded_set.clone())
-            .for_each_sync(move |expanded_set| {
-                // set_neq provides automatic deduplication - only signals if value actually changed
-                derived_clone.set_neq(expanded_set);
-            });
-    });
-    
-    derived
-});
 
-/// Initialize all derived signals for config system
-pub fn init_config_derived_signals() {
-    // Force initialization of all derived signals
-    let _ = &*OPENED_FILES_FOR_CONFIG;
-    let _ = &*EXPANDED_SCOPES_FOR_CONFIG;
-    let _ = &*EXPANDED_SCOPES_FOR_TREEVIEW;
-    let _ = &*LOAD_FILES_EXPANDED_DIRECTORIES_FOR_CONFIG;
-    let _ = &*SELECTED_VARIABLES_FOR_CONFIG;
-    let _ = &*DOCK_MODE_FOR_CONFIG;
-}
 

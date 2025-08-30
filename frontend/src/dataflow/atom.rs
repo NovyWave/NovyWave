@@ -204,22 +204,6 @@ where
         self.setter.send(AtomUpdate::SetNeq(value));
     }
 
-    /// Get the current value synchronously.
-    /// 
-    /// This method is provided for compatibility with legacy code that requires
-    /// synchronous access (like config serialization). For reactive access,
-    /// prefer using signal() or signal_ref().
-    /// 
-    /// # Examples
-    /// 
-    /// ```rust
-    /// let counter = Atom::new(42);
-    /// let current = counter.current_value(); // 42
-    /// ```
-    pub fn current_value(&self) -> T {
-        // Use Actor's synchronous access method
-        self.actor.current_value()
-    }
     
     // Note: update() and toggle() methods are not implemented.
     // These would require mutable closure access to internal state,

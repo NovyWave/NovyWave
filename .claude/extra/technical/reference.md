@@ -1153,5 +1153,50 @@ let result = tokio::spawn_blocking(move || expensive_blocking_operation(data)).a
 - **Signal type errors**: Convert `SignalVec` with `.to_signal_cloned()` for `map_ref!`
 - **Loop detection**: Add render counters, look for bidirectional reactive flows
 - **State preservation**: Check existing states before replacing during updates
+- **FusedFuture compilation errors**: Actor stream processing with `futures::select!` requires `.fuse()` on streams, not `tokio::select!`
+
+#### Actor Stream Processing Patterns
+
+**✅ CORRECT: FusedFuture-compatible stream selection**
+```rust
+let panel_dimensions_right_actor = Actor::new(PanelDimensions::default(), async move |state| {
+    let mut right_stream = panel_dimensions_right_changed_stream.fuse();
+    let mut resized_stream = panel_resized_stream.fuse();
+    
+    loop {
+        select! {
+            new_dims = right_stream.next() => {
+                if let Some(dims) = new_dims {
+                    state.set_neq(dims);
+                }
+            }
+            resized_dims = resized_stream.next() => {
+                if let Some(dims) = resized_dims {
+                    state.set_neq(dims);
+                }
+            }
+        }
+    }
+});
+```
+
+**❌ WRONG: tokio::select! causes compilation errors**
+```rust
+// ERROR: tokio::select! not available in WASM environment
+tokio::select! {
+    new_dims = right_stream.next() => { ... }
+}
+
+// ERROR: futures::select! requires FusedStream trait
+futures::select! {
+    new_dims = right_stream.next() => { ... }  // Stream doesn't implement FusedStream
+}
+```
+
+**Key Requirements:**
+- Use `futures::{StreamExt, select}` imports
+- Call `.fuse()` on all streams before using in `select!`
+- Use plain `select!` macro, not `tokio::select!` or `futures::select!`
+- Pattern works in both WASM and native environments
 
 For comprehensive reactive patterns, see: `.claude/extra/technical/reactive-patterns.md`

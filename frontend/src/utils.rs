@@ -41,8 +41,12 @@ pub fn restore_scope_selections_sequenced() {
         return;
     }
     
-    // Check if there's a saved selected_scope_id to restore
-    let scope_to_restore = crate::actors::selected_variables::current_selected_scope();
+    // MIGRATION NOTE: This function should be moved into an Actor event loop
+    // that caches current values and responds to file loading events reactively
+    
+    // Temporary: Get current scope from signal for migration compatibility
+    let _domain = crate::actors::global_domains::selected_variables_domain();
+    let scope_to_restore: Option<String> = None; // TODO: Replace with proper reactive pattern in Actor event loop
     
     if let Some(scope_id) = scope_to_restore {
         // Validate that the scope still exists in loaded files
@@ -94,8 +98,10 @@ pub fn restore_scope_selection_for_file(loaded_file: &shared::WaveformFile) {
         return;
     }
     
+    // MIGRATION NOTE: This function should be moved into an Actor event loop
     // Check if there's a saved selected_scope_id to restore
-    let scope_to_restore = crate::actors::selected_variables::current_selected_scope();
+    let _domain = crate::actors::global_domains::selected_variables_domain();
+    let scope_to_restore: Option<String> = None; // TODO: Replace with proper reactive pattern in Actor event loop
     
     if let Some(scope_id) = scope_to_restore {
         // Check if this specific file contains the scope we want to restore

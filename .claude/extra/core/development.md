@@ -43,6 +43,38 @@ zoon::println!("✅ Domain initialized successfully");
 - Standard `std::println!()` does nothing in WASM environments
 - Better error messages prevent cryptic "unreachable" WASM panics
 
+### Never Swallow Results with `let _ = `
+
+**❌ CRITICAL ANTIPATTERN: Swallowing errors with `let _ = `**
+```rust
+// WRONG: Silently ignores all errors including network failures, serialization errors, etc.
+let _ = CurrentPlatform::send_message(UpMsg::SaveConfig(config)).await;
+let _ = function_returning_result();
+```
+
+**✅ BETTER: Explicit error handling**
+```rust
+// Better: Handle or propagate errors properly
+if let Err(e) = CurrentPlatform::send_message(UpMsg::SaveConfig(config)).await {
+    zoon::eprintln!("🚨 Failed to save config: {}", e);
+}
+
+// Or if you must ignore but want to see failures in development:
+CurrentPlatform::send_message(UpMsg::SaveConfig(config)).await
+    .unwrap_or_else(|e| zoon::eprintln!("⚠️ Config save failed: {}", e));
+
+// Or use expect_throw for better WASM debugging:
+CurrentPlatform::send_message(UpMsg::SaveConfig(config)).await
+    .expect_throw("Critical: Config save must not fail");
+```
+
+**Why this matters:**
+- `let _ = result` **silently discards all errors** including critical failures
+- Network failures, serialization errors, and system issues become invisible
+- Makes debugging nearly impossible when things go wrong
+- Even `unwrap_throw()` is better because it shows **what** failed and **where**
+- Always prefer explicit error handling or at minimum error logging
+
 ### Modern Rust Formatting Syntax
 
 Use modern Rust formatting macros with inline expressions:
@@ -76,6 +108,106 @@ format!("{} is {} years old", name, age);
 - Less error-prone (no argument position mismatches)
 - Consistent with modern Rust style
 - Works with `println!`, `format!`, `zoon::println!`, `eprintln!`, etc.
+
+### Copy vs Clone for Simple Types
+
+**Prefer `Copy` trait for simple types that should have value semantics:**
+
+```rust
+// ✅ CORRECT: Simple enums should derive Copy
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
+pub enum Theme {
+    Dark,
+    Light,
+}
+
+// ✅ Then use dereference instead of clone
+let mut theme = state.lock_mut();
+let old_theme = *theme;  // Copy, not clone
+*theme = match *theme {  // Direct dereference
+    Theme::Light => Theme::Dark,
+    Theme::Dark => Theme::Light,
+};
+```
+
+**❌ AVOID: Using clone() when Copy is available**
+```rust
+let old_theme = theme.clone();  // Unnecessary allocation
+*theme = match &*theme {        // Unnecessary reference
+    Theme::Light => Theme::Dark,
+    Theme::Dark => Theme::Light,
+};
+```
+
+**When to use Copy:**
+- Simple enums with no data
+- Small structs with only Copy fields  
+- Numeric types, booleans, chars
+- Generally anything ≤ pointer size that should have value semantics
+
+**Benefits of Copy over Clone:**
+- No heap allocation
+- Cannot fail (no Result return)
+- Cleaner syntax with dereference
+- Compiler optimizations
+- Clear value semantics
+
+### Avoid Unnecessary Function Indirection
+
+**CRITICAL: Don't create wrapper functions for globals and readonly actors**
+
+```rust
+// ❌ UNNECESSARY: Wrapper function adds no value
+pub fn current_theme() -> impl Signal<Item = Theme> {
+    app_config().theme_actor.signal()  // Just delegates
+}
+
+pub fn dock_mode_signal() -> impl Signal<Item = DockMode> {
+    app_config().dock_mode_actor.signal()  // Just delegates  
+}
+
+// UI calls wrapper
+current_theme().map(|theme| render_themed_ui(theme))
+```
+
+```rust
+// ✅ CORRECT: Direct access to readonly actors
+// UI calls directly - no wrapper needed
+app_config().theme_actor.signal().map(|theme| render_themed_ui(theme))
+app_config().dock_mode_actor.signal().map(|mode| render_dock_mode(mode))
+```
+
+**Why indirection is wrong for actors:**
+- **Actors are readonly** - No risk of accidental mutations
+- **Globals should be accessible** - They exist to be used directly
+- **No added safety** - Wrapper doesn't prevent misuse
+- **Pure overhead** - Extra function call with zero benefit
+- **Code bloat** - More functions to maintain unnecessarily
+
+**When wrapper functions ARE justified:**
+- **Complex computation** - `calculate_timeline_position(time, zoom, viewport)`
+- **Error handling** - `safe_parse_config(raw_data)` with validation
+- **Multiple parameter coordination** - `create_waveform_query(start, end, signals, filters)`
+
+**When wrapper functions are WRONG:**
+- **Simple delegation** - `fn get_x() { GLOBAL.x }`  
+- **Readonly access** - `fn actor_signal() { ACTOR.signal() }`
+- **Global access** - `fn app_state() { &APP_STATE }`
+- **Zero logic added** - Just forwarding calls with no benefit
+
+**CRITICAL: Reject common "justifications" for unnecessary wrappers:**
+
+❌ **"API Stability"** - We're inside a Rust app, not a public library. Actors and Relays ARE our API. Let the compiler help with breaking changes instead of hiding them.
+
+❌ **"Future Logic"** - YAGNI (You Aren't Gonna Need It). Adding wrappers "in case we need logic later" creates code bloat. Add logic when you actually need it.
+
+❌ **"Type Simplification"** - Complex signal chains that "need" wrapper functions often indicate smelly code. Fix the underlying complexity instead of hiding it.
+
+**Rust Philosophy: Use the type system, not abstraction layers**
+- **Compiler catches breaking changes** - Better than runtime failures
+- **Direct actor access** - Cleaner, more explicit code  
+- **No premature abstraction** - Add complexity when actually needed
+- **Business code ≠ Library code** - Different abstraction needs
 
 ## Refactoring Rules
 
@@ -680,6 +812,40 @@ Before using Read/Glob/Grep tools, ask: "Could a subagent research this instead?
 - If searching for patterns → delegate to Task tool
 - If analyzing codebase structure → delegate to Task tool
 - Exception: Single specific files (configs, CLAUDE.md)
+
+## Work Integrity & Problem-Solving Ethics
+
+### No Shortcuts or Paper-Over Solutions
+
+**CRITICAL PRINCIPLE: Either do the work properly or be honest about limitations**
+
+- **Never create shortcuts** that paper over architectural problems without solving them
+- **Never add deprecation warnings** as a substitute for actual fixes
+- **Never claim to have "fixed" something** when you've only hidden the problem
+- **Be honest** when a task is too difficult, complex, or requires knowledge/tools you don't have
+- **Admit limitations** rather than delivering incomplete or cosmetic solutions
+
+**Examples of prohibited shortcuts:**
+```rust
+// ❌ SHORTCUT: Adding deprecated escape hatches instead of proper architecture
+#[deprecated(note = "Use signal() instead")]
+pub fn current_value(&self) -> T {
+    self.state.get_cloned()  // Still breaks architecture!
+}
+
+// ✅ PROPER: Implement actual Actor+Relay patterns or be honest about complexity
+// "This requires implementing proper caching inside Actor loops using the 
+// 'Cache Current Values' pattern, which is a significant architectural change
+// that needs careful analysis of all usage sites."
+```
+
+**Honest responses when work is too complex:**
+- "This requires a complete migration to reactive patterns across 15+ call sites"
+- "I don't have the tools to analyze all the reactive dependencies properly"  
+- "This architectural change needs careful design - let me break it into smaller steps"
+- "The serialization patterns need Actor-internal caching which is complex to implement correctly"
+
+**Quality over appearance:** Better to deliver partial but correct work than complete but broken work.
 
 ## Quality Assurance & Best Practices
 
