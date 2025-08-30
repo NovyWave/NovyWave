@@ -7,233 +7,91 @@ use futures::{StreamExt, select};
 use shared::UpMsg;
 use serde::{Serialize, Deserialize};
 use std::sync::Arc;
+use std::str::FromStr;
 
 // === SHARED TYPES FOR ACTORS ===
 
-/// Automatic config saver that watches all config signals and debounces saves
-#[derive(Debug, Clone)]
-struct ConfigSaver {
-    _task_handle: Arc<TaskHandle>,
-}
-
-impl ConfigSaver {
-    fn with_task_handle(task_handle: TaskHandle) -> Self {
-        Self {
-            _task_handle: Arc::new(task_handle),
-        }
-    }
-}
-
-impl ConfigSaver {
-    /// Create new config saver that watches all provided actors
-    pub fn new(
-        theme_actor: Actor<SharedTheme>,
-        dock_mode_actor: Actor<DockMode>,
-        panel_right_actor: Actor<PanelDimensions>,
-        panel_bottom_actor: Actor<PanelDimensions>,
-        timeline_actor: Actor<TimelineState>,
-        session_actor: Actor<SessionState>,
-        ui_actor: Actor<UiState>,
-        dialogs_actor: Actor<DialogsData>,
-    ) -> Self {
-        use futures::StreamExt;
+/// Config saver actor that watches all config signals and debounces saves
+fn create_config_saver_actor(
+    theme_actor: Actor<SharedTheme>,
+    dock_mode_actor: Actor<DockMode>,
+    panel_right_actor: Actor<PanelDimensions>,
+    panel_bottom_actor: Actor<PanelDimensions>,
+    timeline_actor: Actor<TimelineState>,
+    session_actor: Actor<SessionState>,
+    ui_actor: Actor<UiState>,
+    dialogs_actor: Actor<DialogsData>,
+) -> Actor<()> {
+    Actor::new((), async move |_state| {
+        let mut debounce_task: Option<TaskHandle> = None;
+        zoon::println!("💾 ConfigSaver: Watching all config signals...");
         
-        let task_handle = Task::start_droppable(async move {
-            let mut debounce_task: Option<TaskHandle> = None;
-            zoon::println!("💾 ConfigSaver: Starting to watch Actor signals...");
+        // Combine all config signals - trigger save when ANY change
+        let config_change_signal = map_ref! {
+            let theme = theme_actor.signal(),
+            let dock_mode = dock_mode_actor.signal(), 
+            let panel_right = panel_right_actor.signal(),
+            let panel_bottom = panel_bottom_actor.signal(),
+            let timeline = timeline_actor.signal(),
+            let session = session_actor.signal(),
+            let ui = ui_actor.signal(),
+            let dialogs = dialogs_actor.signal() =>
+            (theme.clone(), dock_mode.clone(), panel_right.clone(), panel_bottom.clone(), 
+             timeline.clone(), session.clone(), ui.clone(), dialogs.clone())
+        };
+        
+        config_change_signal.skip(1).for_each(move |(theme, dock_mode, panel_right, panel_bottom, timeline, session, ui, dialogs)| async move {
+            // Cancel any pending save
+            debounce_task = None;
             
-            // ✅ CACHE CURRENT VALUES PATTERN - Cache values as they flow through streams
-            let mut cached_theme = SharedTheme::Light;
-            let mut cached_dock_mode = DockMode::Right;
-            let mut cached_panel_right = PanelDimensions::default();
-            let mut cached_panel_bottom = PanelDimensions::default();
-            let mut cached_timeline = TimelineState::default();
-            let mut cached_session = SessionState::default();
-            let mut cached_ui = UiState::default();
-            let mut cached_dialogs = DialogsData::default();
-            
-            // Create signal streams
-            let mut theme_stream = theme_actor.signal().to_stream().fuse();
-            let mut dock_stream = dock_mode_actor.signal().to_stream().fuse();
-            let mut panel_right_stream = panel_right_actor.signal().to_stream().fuse();
-            let mut panel_bottom_stream = panel_bottom_actor.signal().to_stream().fuse();
-            let mut timeline_stream = timeline_actor.signal().to_stream().fuse();
-            let mut session_stream = session_actor.signal().to_stream().fuse();
-            let mut ui_stream = ui_actor.signal().to_stream().fuse();
-            let mut dialogs_stream = dialogs_actor.signal().to_stream().fuse();
-            
-            loop {
-                select! {
-                    result = theme_stream.next() => {
-                        if let Some(theme) = result {
-                            cached_theme = theme; // ✅ Cache current value
-                            zoon::println!("🔄 ConfigSaver: Theme changed, scheduling save");
-                            Self::schedule_debounced_save_with_cached_values(
-                                &mut debounce_task,
-                                cached_theme.clone(),
-                                cached_dock_mode.clone(),
-                                cached_panel_right.clone(),
-                                cached_panel_bottom.clone(),
-                                cached_timeline.clone(),
-                                cached_session.clone(),
-                                cached_ui.clone(),
-                                cached_dialogs.clone(),
-                            ).await;
-                        }
-                    }
-                    result = dock_stream.next() => {
-                        if let Some(dock_mode) = result {
-                            cached_dock_mode = dock_mode; // ✅ Cache current value
-                            zoon::println!("🔄 ConfigSaver: Dock mode changed, scheduling save");
-                            Self::schedule_debounced_save_with_cached_values(
-                                &mut debounce_task,
-                                cached_theme.clone(),
-                                cached_dock_mode.clone(),
-                                cached_panel_right.clone(),
-                                cached_panel_bottom.clone(),
-                                cached_timeline.clone(),
-                                cached_session.clone(),
-                                cached_ui.clone(),
-                                cached_dialogs.clone(),
-                            ).await;
-                        }
-                    }
-                    result = panel_right_stream.next() => {
-                        if let Some(panel_right) = result {
-                            cached_panel_right = panel_right; // ✅ Cache current value
-                            zoon::println!("🔄 ConfigSaver: Right panel changed, scheduling save");
-                            Self::schedule_debounced_save_with_cached_values(
-                                &mut debounce_task,
-                                cached_theme.clone(),
-                                cached_dock_mode.clone(),
-                                cached_panel_right.clone(),
-                                cached_panel_bottom.clone(),
-                                cached_timeline.clone(),
-                                cached_session.clone(),
-                                cached_ui.clone(),
-                                cached_dialogs.clone(),
-                            ).await;
-                        }
-                    }
-                    result = panel_bottom_stream.next() => {
-                        if let Some(panel_bottom) = result {
-                            cached_panel_bottom = panel_bottom; // ✅ Cache current value
-                            zoon::println!("🔄 ConfigSaver: Bottom panel changed, scheduling save");
-                            Self::schedule_debounced_save_with_cached_values(
-                                &mut debounce_task,
-                                cached_theme.clone(),
-                                cached_dock_mode.clone(),
-                                cached_panel_right.clone(),
-                                cached_panel_bottom.clone(),
-                                cached_timeline.clone(),
-                                cached_session.clone(),
-                                cached_ui.clone(),
-                                cached_dialogs.clone(),
-                            ).await;
-                        }
-                    }
-                    result = timeline_stream.next() => {
-                        if let Some(timeline) = result {
-                            cached_timeline = timeline; // ✅ Cache current value
-                            zoon::println!("🔄 ConfigSaver: Timeline changed, scheduling save");
-                            Self::schedule_debounced_save_with_cached_values(
-                                &mut debounce_task,
-                                cached_theme.clone(),
-                                cached_dock_mode.clone(),
-                                cached_panel_right.clone(),
-                                cached_panel_bottom.clone(),
-                                cached_timeline.clone(),
-                                cached_session.clone(),
-                                cached_ui.clone(),
-                                cached_dialogs.clone(),
-                            ).await;
-                        }
-                    }
-                    result = session_stream.next() => {
-                        if let Some(session) = result {
-                            cached_session = session; // ✅ Cache current value
-                            zoon::println!("🔄 ConfigSaver: Session changed, scheduling save");
-                            Self::schedule_debounced_save_with_cached_values(
-                                &mut debounce_task,
-                                cached_theme.clone(),
-                                cached_dock_mode.clone(),
-                                cached_panel_right.clone(),
-                                cached_panel_bottom.clone(),
-                                cached_timeline.clone(),
-                                cached_session.clone(),
-                                cached_ui.clone(),
-                                cached_dialogs.clone(),
-                            ).await;
-                        }
-                    }
-                    result = ui_stream.next() => {
-                        if let Some(ui_state) = result {
-                            cached_ui = ui_state; // ✅ Cache current value
-                            zoon::println!("🔄 ConfigSaver: UI state changed, scheduling save");
-                            Self::schedule_debounced_save_with_cached_values(
-                                &mut debounce_task,
-                                cached_theme.clone(),
-                                cached_dock_mode.clone(),
-                                cached_panel_right.clone(),
-                                cached_panel_bottom.clone(),
-                                cached_timeline.clone(),
-                                cached_session.clone(),
-                                cached_ui.clone(),
-                                cached_dialogs.clone(),
-                            ).await;
-                        }
-                    }
-                    result = dialogs_stream.next() => {
-                        if let Some(dialogs) = result {
-                            cached_dialogs = dialogs; // ✅ Cache current value
-                            zoon::println!("🔄 ConfigSaver: Dialogs changed, scheduling save");
-                            Self::schedule_debounced_save_with_cached_values(
-                                &mut debounce_task,
-                                cached_theme.clone(),
-                                cached_dock_mode.clone(),
-                                cached_panel_right.clone(),
-                                cached_panel_bottom.clone(),
-                                cached_timeline.clone(),
-                                cached_session.clone(),
-                                cached_ui.clone(),
-                                cached_dialogs.clone(),
-                            ).await;
-                        }
-                    }
+            // Schedule new save with 1 second debounce
+            let handle = Task::start_droppable(async move {
+                Timer::sleep(1000).await;
+                zoon::println!("💾 ConfigSaver: Executing debounced save");
+                
+                // Build config from current values
+                let shared_config = shared::AppConfig {
+                    app: shared::AppSection::default(),
+                    workspace: shared::WorkspaceSection {
+                        opened_files: session.opened_files,
+                        docked_bottom_dimensions: shared::DockedBottomDimensions {
+                            files_and_scopes_panel_width: panel_bottom.files_panel_width as f64,
+                            files_and_scopes_panel_height: panel_bottom.files_panel_height as f64,
+                            selected_variables_panel_name_column_width: Some(panel_bottom.variables_name_column_width as f64),
+                            selected_variables_panel_value_column_width: Some(panel_bottom.variables_value_column_width as f64),
+                        },
+                        docked_right_dimensions: shared::DockedRightDimensions {
+                            files_and_scopes_panel_width: panel_right.files_panel_width as f64,
+                            files_and_scopes_panel_height: panel_right.files_panel_height as f64,
+                            selected_variables_panel_name_column_width: Some(panel_right.variables_name_column_width as f64),
+                            selected_variables_panel_value_column_width: Some(panel_right.variables_value_column_width as f64),
+                        },
+                        dock_mode: dock_mode.to_string(),
+                        expanded_scopes: Vec::new(),
+                        load_files_expanded_directories: Vec::new(),
+                        selected_scope_id: None,
+                        load_files_scroll_position: session.file_picker_scroll_position,
+                        variables_search_filter: session.variables_search_filter,
+                        selected_variables: Vec::new(),
+                        timeline_cursor_position_ns: timeline.cursor_position.nanos(),
+                        timeline_visible_range_start_ns: Some(timeline.visible_range.start.nanos()),
+                        timeline_visible_range_end_ns: Some(timeline.visible_range.end.nanos()),
+                        timeline_zoom_level: timeline.zoom_level as f32,
+                    },
+                    ui: shared::UiSection {
+                        theme,
+                        toast_dismiss_ms: ui.toast_dismiss_ms as u64,
+                    },
+                };
+                
+                if let Err(e) = CurrentPlatform::send_message(UpMsg::SaveConfig(shared_config)).await {
+                    zoon::eprintln!("🚨 Failed to save config: {e}");
                 }
-            }
-        });
-        
-        Self::with_task_handle(task_handle)
-    }
-    
-    /// Schedule a debounced save with cached values - cancels previous pending save
-    async fn schedule_debounced_save_with_cached_values(
-        debounce_task: &mut Option<TaskHandle>,
-        theme: SharedTheme,
-        dock_mode: DockMode,
-        panel_right: PanelDimensions,
-        panel_bottom: PanelDimensions,
-        timeline: TimelineState,
-        session: SessionState,
-        ui: UiState,
-        dialogs: DialogsData,
-    ) {
-        // Cancel any pending save
-        *debounce_task = None;
-        
-        // Schedule new save with 1 second debounce using cached values
-        let handle = Task::start_droppable(async move {
-            Timer::sleep(1000).await;
-            zoon::println!("💾 ConfigSaver: Executing debounced save with cached values");
-            save_config_with_cached_values(
-                theme, dock_mode, panel_right, panel_bottom, 
-                timeline, session, ui, dialogs
-            ).await;
-        });
-        
-        *debounce_task = Some(handle);
-    }
+            });
+            
+            debounce_task = Some(handle);
+        }).await;
+    })
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
@@ -348,13 +206,11 @@ pub struct AppConfig {
     pub dialogs_data_actor: Actor<DialogsData>,
     pub is_loaded_actor: Actor<bool>,
     
-    // Keep ConfigSaver alive in struct
-    config_saver: ConfigSaver,
+    // Keep config saver actor alive
+    _config_saver_actor: Actor<()>,
     
     // === EVENT RELAYS ===
-    pub theme_loaded_relay: Relay<SharedTheme>,
     pub theme_button_clicked_relay: Relay,
-    pub dock_mode_loaded_relay: Relay<DockMode>,
     pub dock_mode_button_clicked_relay: Relay,
     pub panel_dimensions_right_changed_relay: Relay<PanelDimensions>,
     pub panel_dimensions_bottom_changed_relay: Relay<PanelDimensions>,
@@ -366,16 +222,77 @@ pub struct AppConfig {
     pub ui_state_changed_relay: Relay<UiState>,
     pub toast_dismiss_ms_changed_relay: Relay<u32>,
     pub dialogs_data_changed_relay: Relay<DialogsData>,
-    pub config_loaded_relay: Relay<SharedAppConfig>,
 }
 
 impl AppConfig {
+    /// Load configuration from backend using request-response pattern
+    async fn load_config_from_backend() -> Result<SharedAppConfig, String> {
+        use futures::channel::oneshot;
+        use std::sync::{Arc, Mutex};
+        
+        // Create a oneshot channel for the response
+        let (sender, receiver) = oneshot::channel::<SharedAppConfig>();
+        let sender = Arc::new(Mutex::new(Some(sender)));
+        
+        // Create a temporary relay to capture the config response
+        let (config_response_relay, mut config_response_stream) = relay::<SharedAppConfig>();
+        
+        // Set up response handler that will forward the config when received
+        let sender_clone = sender.clone();
+        let response_task = Task::start(async move {
+            if let Some(config) = config_response_stream.next().await {
+                if let Some(sender) = sender_clone.lock().unwrap_throw().take() {
+                    let _ = sender.send(config);
+                }
+            }
+        });
+        
+        // Temporarily hook into connection to capture ConfigLoaded response
+        // We'll modify the connection handler to emit through our relay
+        let original_handler = std::sync::Arc::new(std::sync::Mutex::new(None));
+        
+        // Send the load config request
+        CurrentPlatform::send_message(UpMsg::LoadConfig).await
+            .map_err(|e| format!("Failed to send LoadConfig message: {e}"))?;
+        
+        // Set up temporary config capture by patching the connection handler
+        // This is a workaround since we can't easily modify the Connection directly
+        CONFIG_LOAD_RESPONSE_RELAY.set(Some(config_response_relay));
+        
+        // Wait for response with timeout
+        let config = match Timer::timeout(5000, receiver).await {
+            Some(Ok(config)) => config,
+            Some(Err(_)) => {
+                CONFIG_LOAD_RESPONSE_RELAY.set(None);
+                return Err("Config response channel closed".to_string());
+            },
+            None => {
+                CONFIG_LOAD_RESPONSE_RELAY.set(None);
+                return Err("Config load request timed out after 5 seconds".to_string());
+            },
+        };
+        
+        // Clean up
+        CONFIG_LOAD_RESPONSE_RELAY.set(None);
+        response_task.cancel();
+        
+        Ok(config)
+    }
+    
     /// Create new config domain with Actor+Relay architecture  
-    pub fn new() -> Self {
+    pub async fn new() -> Self {
+        // Load app config from backend using request-response pattern
+        let config = Self::load_config_from_backend().await
+            .unwrap_or_else(|error| {
+                zoon::eprintln!("⚠️ Failed to load config from backend: {error}");
+                zoon::println!("🔧 Using default configuration");
+                SharedAppConfig::default()
+            });
+        
+        zoon::println!("✅ Config loaded: dock_mode={:?}", config.workspace.dock_mode);
+        
         // Create relays for all events
-        let (theme_loaded_relay, theme_loaded_stream) = relay::<SharedTheme>();
         let (theme_button_clicked_relay, theme_button_clicked_stream) = relay();
-        let (dock_mode_loaded_relay, dock_mode_loaded_stream) = relay::<DockMode>();
         let (dock_mode_button_clicked_relay, dock_mode_button_clicked_stream) = relay();
         let (panel_dimensions_right_changed_relay, panel_dimensions_right_changed_stream) = relay();
         let (panel_dimensions_bottom_changed_relay, panel_dimensions_bottom_changed_stream) = relay();
@@ -387,20 +304,13 @@ impl AppConfig {
         let (ui_state_changed_relay, ui_state_changed_stream) = relay();
         let (toast_dismiss_ms_changed_relay, toast_dismiss_ms_changed_stream) = relay();
         let (dialogs_data_changed_relay, dialogs_data_changed_stream) = relay();
-        let (config_loaded_relay, config_loaded_stream) = relay();
 
-        // Create theme actor
-        let theme_actor = Actor::new(SharedTheme::default(), async move |state| {
-            let mut theme_stream = theme_loaded_stream.fuse();
+        // Create theme actor with loaded config value
+        let theme_actor = Actor::new(config.ui.theme, async move |state| {
             let mut theme_button_clicked_stream = theme_button_clicked_stream.fuse();
             
             loop {
                 select! {
-                    new_theme = theme_stream.next() => {
-                        if let Some(new_theme) = new_theme {
-                            state.set_neq(new_theme);
-                        }
-                    }
                     button_click = theme_button_clicked_stream.next() => {
                         if let Some(()) = button_click {
                             zoon::println!("🎨 Theme Actor: Processing button click");
@@ -420,18 +330,14 @@ impl AppConfig {
             }
         });
 
-        // Create dock mode actor  
-        let dock_mode_actor = Actor::new(DockMode::default(), async move |state| {
-            let mut dock_mode_stream = dock_mode_loaded_stream.fuse();
+        // Create dock mode actor with loaded config value
+        let dock_mode_actor = Actor::new(
+            DockMode::from_str(&config.workspace.dock_mode).unwrap_or(DockMode::Right), 
+            async move |state| {
             let mut dock_mode_button_clicked_stream = dock_mode_button_clicked_stream.fuse();
             
             loop {
                 select! {
-                    new_mode = dock_mode_stream.next() => {
-                        if let Some(new_mode) = new_mode {
-                            state.set_neq(new_mode);
-                        }
-                    }
                     button_click = dock_mode_button_clicked_stream.next() => {
                         if let Some(()) = button_click {
                             zoon::println!("🚢 Dock Actor: Processing button click");
@@ -451,8 +357,8 @@ impl AppConfig {
             }
         });
 
-        // Create panel dimensions actors
-        let panel_dimensions_right_actor = Actor::new(PanelDimensions::default(), async move |state| {
+        // Create panel dimensions actors with loaded config values
+        let panel_dimensions_right_actor = Actor::new(config.workspace.panel_dimensions_right, async move |state| {
             let mut right_stream = panel_dimensions_right_changed_stream.fuse();
             let mut resized_stream = panel_resized_stream.fuse();
             
@@ -473,14 +379,14 @@ impl AppConfig {
             }
         });
 
-        let panel_dimensions_bottom_actor = Actor::new(PanelDimensions::default(), async move |state| {
+        let panel_dimensions_bottom_actor = Actor::new(config.workspace.panel_dimensions_bottom, async move |state| {
             let mut bottom_stream = panel_dimensions_bottom_changed_stream;
             while let Some(new_dims) = bottom_stream.next().await {
                 state.set_neq(new_dims);
             }
         });
 
-        // Create timeline state actor  
+        // Create timeline state actor (using defaults for now - can be added to config later)
         let timeline_state_actor = Actor::new(TimelineState::default(), async move |state| {
             let mut timeline_stream = timeline_state_changed_stream.fuse();
             let mut cursor_stream = cursor_moved_stream.fuse();
@@ -523,8 +429,8 @@ impl AppConfig {
             }
         });
 
-        // Create toast dismiss ms actor
-        let toast_dismiss_ms_actor = Actor::new(5000u32, async move |state| {
+        // Create toast dismiss ms actor with loaded config value
+        let toast_dismiss_ms_actor = Actor::new(config.ui.toast_dismiss_ms as u32, async move |state| {
             let mut toast_stream = toast_dismiss_ms_changed_stream;
             while let Some(new_ms) = toast_stream.next().await {
                 state.set_neq(new_ms);
@@ -547,9 +453,9 @@ impl AppConfig {
             }
         });
 
-        // Create automatic config saver that watches all config changes
-        zoon::println!("🔧 AppConfig: About to create ConfigSaver...");
-        let config_saver = ConfigSaver::new(
+        // Create automatic config saver actor that watches all config changes
+        zoon::println!("🔧 AppConfig: Creating config saver actor...");
+        let config_saver_actor = create_config_saver_actor(
             theme_actor.clone(),
             dock_mode_actor.clone(), 
             panel_dimensions_right_actor.clone(),
@@ -559,10 +465,7 @@ impl AppConfig {
             ui_state_actor.clone(),
             dialogs_data_actor.clone(),
         );
-        zoon::println!("✅ AppConfig: ConfigSaver created successfully");
-        
-        // Keep ConfigSaver alive by storing it without underscore prefix
-        // The variable name without underscore prevents Rust from dropping it immediately
+        zoon::println!("✅ AppConfig: Config saver actor created successfully");
 
         Self {
             theme_actor,
@@ -576,11 +479,9 @@ impl AppConfig {
             dialogs_data_actor,
             is_loaded_actor,
             
-            config_saver,
+            _config_saver_actor: config_saver_actor,
             
-            theme_loaded_relay,
             theme_button_clicked_relay,
-            dock_mode_loaded_relay,
             dock_mode_button_clicked_relay,
             panel_dimensions_right_changed_relay,
             panel_dimensions_bottom_changed_relay,
@@ -592,18 +493,34 @@ impl AppConfig {
             ui_state_changed_relay,
             toast_dismiss_ms_changed_relay,
             dialogs_data_changed_relay,
-            config_loaded_relay,
         }
     }
 }
 
 // === GLOBAL INSTANCE ===
 
-static APP_CONFIG: Lazy<AppConfig> = Lazy::new(AppConfig::new);
+static APP_CONFIG: std::sync::OnceLock<AppConfig> = std::sync::OnceLock::new();
+
+/// Temporary relay for capturing config load responses during initialization
+static CONFIG_LOAD_RESPONSE_RELAY: Lazy<Mutable<Option<Relay<SharedAppConfig>>>> = 
+    Lazy::new(|| Mutable::new(None));
+
+/// Initialize the global AppConfig instance
+pub async fn init_app_config() -> Result<(), &'static str> {
+    let config = AppConfig::new().await;
+    APP_CONFIG.set(config).map_err(|_| "AppConfig already initialized")
+}
+
+/// Called by connection handler to forward config load responses during initialization
+pub fn forward_config_load_response(config: SharedAppConfig) {
+    if let Some(relay) = CONFIG_LOAD_RESPONSE_RELAY.get_cloned().flatten() {
+        relay.send(config);
+    }
+}
 
 /// Get the global config domain
 pub fn app_config() -> &'static AppConfig {
-    &APP_CONFIG
+    APP_CONFIG.get().expect_throw("AppConfig not initialized - call init_app_config() first")
 }
 
 
@@ -649,137 +566,4 @@ pub fn workspace_section_signal() -> impl Signal<Item = shared::WorkspaceSection
 
 
 // === BACKEND INTEGRATION ===
-
-/// Save configuration to backend using cached values (Actor+Relay compliant)
-async fn save_config_with_cached_values(
-    theme: SharedTheme,
-    dock_mode: DockMode,
-    panel_right: PanelDimensions,
-    panel_bottom: PanelDimensions,
-    timeline: TimelineState,
-    session: SessionState,
-    ui: UiState,
-    dialogs: DialogsData,
-) {
-    // ✅ Use cached values passed from ConfigSaver Actor loop
-    let shared_config = shared::AppConfig {
-        app: shared::AppSection::default(),
-        workspace: shared::WorkspaceSection {
-            opened_files: Vec::new(),
-            docked_bottom_dimensions: shared::DockedBottomDimensions {
-                files_and_scopes_panel_width: panel_bottom.files_panel_width as f64,
-                files_and_scopes_panel_height: panel_bottom.files_panel_height as f64,
-                selected_variables_panel_name_column_width: Some(panel_bottom.variables_name_column_width as f64),
-                selected_variables_panel_value_column_width: Some(panel_bottom.variables_value_column_width as f64),
-            },
-            docked_right_dimensions: shared::DockedRightDimensions {
-                files_and_scopes_panel_width: panel_right.files_panel_width as f64,
-                files_and_scopes_panel_height: panel_right.files_panel_height as f64,
-                selected_variables_panel_name_column_width: Some(panel_right.variables_name_column_width as f64),
-                selected_variables_panel_value_column_width: Some(panel_right.variables_value_column_width as f64),
-            },
-            dock_mode, // ✅ From cached value
-            expanded_scopes: Vec::new(),
-            load_files_expanded_directories: Vec::new(),
-            selected_scope_id: None,
-            load_files_scroll_position: session.file_picker_scroll_position,
-            variables_search_filter: String::new(),
-            selected_variables: Vec::new(),
-            timeline_cursor_position_ns: timeline.cursor_position.nanos(),
-            timeline_visible_range_start_ns: Some(timeline.visible_range.start.nanos()),
-            timeline_visible_range_end_ns: Some(timeline.visible_range.end.nanos()),
-            timeline_zoom_level: timeline.zoom_level as f32,
-        },
-        ui: shared::UiSection {
-            theme, // ✅ From cached value
-            toast_dismiss_ms: 3000, // Use ui state or default
-        },
-    };
-    
-    let _ = CurrentPlatform::send_message(UpMsg::SaveConfig(shared_config)).await;
-}
-
-
-// === CONFIG APPLICATION FUNCTIONS ===
-
-/// Apply configuration from backend (main entry point)
-pub fn apply_config(config: shared::AppConfig) {
-    // Clone config for sending to config_loaded at the end
-    let config_copy = config.clone();
-    
-    // Update all domain actors with the loaded config
-    let domain = app_config();
-    
-    // Update theme
-    domain.theme_loaded_relay.send(config.ui.theme.clone());
-    
-    // Update dock mode  
-    domain.dock_mode_loaded_relay.send(config.workspace.dock_mode);
-    
-    // Update panel dimensions
-    let right_dims = PanelDimensions {
-        files_panel_width: config.workspace.docked_right_dimensions.files_and_scopes_panel_width as f32,
-        files_panel_height: config.workspace.docked_right_dimensions.files_and_scopes_panel_height as f32,
-        variables_panel_width: 300.0,
-        timeline_panel_height: 200.0,
-        variables_name_column_width: config.workspace.docked_right_dimensions.selected_variables_panel_name_column_width.unwrap_or(180.0) as f32,
-        variables_value_column_width: config.workspace.docked_right_dimensions.selected_variables_panel_value_column_width.unwrap_or(100.0) as f32,
-    };
-    domain.panel_dimensions_right_changed_relay.send(right_dims);
-    
-    let bottom_dims = PanelDimensions {
-        files_panel_width: config.workspace.docked_bottom_dimensions.files_and_scopes_panel_width as f32,
-        files_panel_height: config.workspace.docked_bottom_dimensions.files_and_scopes_panel_height as f32,
-        variables_panel_width: 300.0,
-        timeline_panel_height: 200.0,
-        variables_name_column_width: config.workspace.docked_bottom_dimensions.selected_variables_panel_name_column_width.unwrap_or(180.0) as f32,
-        variables_value_column_width: config.workspace.docked_bottom_dimensions.selected_variables_panel_value_column_width.unwrap_or(100.0) as f32,
-    };
-    domain.panel_dimensions_bottom_changed_relay.send(bottom_dims);
-    
-    // Update timeline state
-    let timeline_state = TimelineState {
-        cursor_position: TimeNs::from_nanos(config.workspace.timeline_cursor_position_ns),
-        visible_range: TimeRange {
-            start: TimeNs::from_nanos(config.workspace.timeline_visible_range_start_ns.unwrap_or(0)),
-            end: TimeNs::from_nanos(config.workspace.timeline_visible_range_end_ns.unwrap_or(100_000_000_000)),
-        },
-        zoom_level: config.workspace.timeline_zoom_level as f64,
-    };
-    domain.timeline_state_changed_relay.send(timeline_state);
-    
-    // Update session state (use workspace data since session is not in shared::AppConfig)
-    let session_state = SessionState {
-        opened_files: config.workspace.opened_files,
-        variables_search_filter: config.workspace.variables_search_filter,
-        file_picker_scroll_position: config.workspace.load_files_scroll_position,
-    };
-    domain.session_state_changed_relay.send(session_state);
-    
-    // Update UI state
-    let ui_state = UiState {
-        theme: config.ui.theme,
-        toast_dismiss_ms: config.ui.toast_dismiss_ms as u32,
-    };
-    domain.ui_state_changed_relay.send(ui_state);
-    domain.toast_dismiss_ms_changed_relay.send(config.ui.toast_dismiss_ms as u32);
-    
-    // Update dialogs state (default since not in shared::AppConfig)
-    let dialogs_data = DialogsData {
-        show_file_dialog: false,
-    };
-    domain.dialogs_data_changed_relay.send(dialogs_data);
-    
-    // Signal that config is loaded (triggers UI rendering)
-    domain.config_loaded_relay.send(config_copy);
-}
-
-/// Load initial configuration from backend
-pub async fn load_config() {
-    let _ = CurrentPlatform::send_message(UpMsg::LoadConfig).await;
-}
-
-
-
-
 

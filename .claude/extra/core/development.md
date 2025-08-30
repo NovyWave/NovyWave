@@ -109,6 +109,27 @@ format!("{} is {} years old", name, age);
 - Consistent with modern Rust style
 - Works with `println!`, `format!`, `zoon::println!`, `eprintln!`, etc.
 
+### WASM Error Logging Best Practice
+
+**✅ ALWAYS use `zoon::eprintln!` for errors with modern formatting:**
+```rust
+zoon::eprintln!("🚨 APP CONFIG INITIALIZATION FAILED: {error_msg}");
+zoon::eprintln!("⚠️ Config save failed: {error}");
+zoon::eprintln!("🚨 DOMAIN INITIALIZATION FAILED: {error_msg}");
+```
+
+**❌ AVOID: Old verbose formatting for errors:**
+```rust
+zoon::eprintln!("🚨 Failed: {}", error_msg);  // Verbose, unnecessary
+eprintln!("Error: {}", error);                // Wrong function for WASM
+```
+
+**Why this matters:**
+- `zoon::eprintln!` goes to `console.error()` in browser - properly categorized and filterable
+- Modern `{variable}` syntax is cleaner and less error-prone than `{}", variable`
+- Standard `eprintln!` does nothing in WASM environments
+- Error emojis (🚨⚠️) make errors easily visible in console logs
+
 ### Copy vs Clone for Simple Types
 
 **Prefer `Copy` trait for simple types that should have value semantics:**
@@ -151,6 +172,49 @@ let old_theme = theme.clone();  // Unnecessary allocation
 - Cleaner syntax with dereference
 - Compiler optimizations
 - Clear value semantics
+
+### Use Actor Instead of Manual Task Management
+
+**CRITICAL: Always use proper Actor pattern instead of manual TaskHandle management**
+
+```rust
+// ❌ WRONG: Manual task management anti-pattern
+#[derive(Debug, Clone)]
+struct MyService {
+    _task_handle: Arc<TaskHandle>,
+}
+
+impl MyService {
+    pub fn new() -> Self {
+        let task_handle = Task::start_droppable(async move {
+            // Service logic
+        });
+        Self { _task_handle: Arc::new(task_handle) }
+    }
+}
+```
+
+```rust
+// ✅ CORRECT: Proper Actor pattern
+fn create_my_service_actor() -> Actor<()> {
+    Actor::new((), async move |_state| {
+        // Service logic with proper Actor lifecycle
+    })
+}
+```
+
+**Why Actor pattern is better:**
+- **Automatic lifecycle management** - No manual TaskHandle wrappers
+- **Consistent architecture** - All state management uses Actor+Relay
+- **Cleaner ownership** - No need for `Arc<TaskHandle>` complexity
+- **Framework integration** - Actors work seamlessly with signal composition
+- **Better debugging** - Actor framework provides better error handling
+
+**When this applies:**
+- Background services (ConfigSaver, network watchers, etc.)
+- Signal processing workers
+- Any long-running background tasks
+- Service-like components that need lifecycle management
 
 ### Avoid Unnecessary Function Indirection
 

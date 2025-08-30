@@ -24,8 +24,8 @@ impl Platform for TauriPlatform {
                             // Convert JsValue to AppConfig and apply directly
                             if let Ok(config_str) = serde_wasm_bindgen::from_value::<String>(config_js) {
                                 if let Ok(config) = serde_json::from_str::<shared::AppConfig>(&config_str) {
-                                    // Apply config directly instead of going through DownMsg
-                                    crate::config::apply_config(config);
+                                    // Forward to initialization handler (same as web platform)
+                                    crate::config::forward_config_load_response(config);
                                 }
                             }
                             Ok(())

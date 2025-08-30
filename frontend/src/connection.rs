@@ -193,8 +193,10 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
             }
             DownMsg::ConfigLoaded(config) => {
                 crate::debug_utils::debug_conditional("RECEIVED ConfigLoaded message");
-                crate::config::apply_config(config);
-                crate::debug_utils::debug_conditional("Applied config successfully");
+                
+                // Forward to initialization handler if waiting for initial load
+                crate::config::forward_config_load_response(config);
+                crate::debug_utils::debug_conditional("Config forwarded to initialization handler");
             }
             DownMsg::ConfigSaved => {
                 // Config saved successfully

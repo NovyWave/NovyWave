@@ -71,6 +71,13 @@ pub fn main() {
     Task::start(async {
         load_and_register_fonts().await;
         
+        // Initialize AppConfig first
+        if let Err(error_msg) = config::init_app_config().await {
+            zoon::println!("🚨 APP CONFIG INITIALIZATION FAILED: {}", error_msg);
+            return;
+        }
+        zoon::println!("✅ AppConfig initialized successfully");
+        
         // Initialize Actor+Relay domain instances  
         if let Err(error_msg) = crate::actors::initialize_all_domains().await {
             zoon::println!("🚨 DOMAIN INITIALIZATION FAILED: {}", error_msg);
