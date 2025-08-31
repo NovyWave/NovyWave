@@ -44,7 +44,7 @@ use actors::waveform_timeline::{current_viewport};
 use dragging::{
     files_panel_width_signal, files_panel_height_signal, 
     variables_name_column_width_signal, variables_value_column_width_signal,
-    is_any_divider_dragging, process_drag_movement, DividerType
+    is_any_divider_dragging, active_divider_type_signal, process_drag_movement, DividerType
 };
 use config::app_config;
 use actors::dialog_manager::{dialog_visible_signal, file_picker_selected_signal};
@@ -315,7 +315,6 @@ fn drag_overlay() -> impl Element {
                     last_x.set_neq(current_x);
                     last_y.set_neq(current_y);
                     is_first_move.set_neq(false);
-                    zoon::println!("🎯 DRAG OVERLAY: First move at ({}, {})", current_x, current_y);
                 } else {
                     // Calculate deltas from absolute coordinates
                     let delta_x = current_x - last_x.get();
@@ -328,19 +327,13 @@ fn drag_overlay() -> impl Element {
                     last_x.set_neq(current_x);
                     last_y.set_neq(current_y);
                     
-                    // Debug: Log every 10th movement to avoid spam
-                    if (current_x as i32 % 10 == 0) {
-                        zoon::println!("🔄 DRAG OVERLAY: Δ({:.1}, {:.1}) at ({:.1}, {:.1})", delta_x, delta_y, current_x, current_y);
-                    }
                 }
             }
         })
         .on_pointer_up(|| {
-            zoon::println!("🎯 DRAG OVERLAY: Pointer up - ending drag");
             dragging::end_drag();
         })
         .on_pointer_leave(|| {
-            zoon::println!("🎯 DRAG OVERLAY: Pointer leave - ending drag");
             dragging::end_drag();
         })
 }
@@ -363,11 +356,13 @@ fn main_layout() -> impl Element {
             })
         )
         .s(Cursor::with_signal(
-            is_any_divider_dragging_2.map(|dragging| {
-                if dragging {
-                    Some(CursorIcon::ColumnResize)
-                } else {
-                    None
+            active_divider_type_signal().map(|active_divider| {
+                match active_divider {
+                    Some(DividerType::FilesPanelSecondary) => Some(CursorIcon::RowResize), // Vertical resize for height
+                    Some(DividerType::FilesPanelMain) => Some(CursorIcon::ColumnResize), // Horizontal resize for width
+                    Some(DividerType::VariablesNameColumn) => Some(CursorIcon::ColumnResize), // Horizontal resize for column width
+                    Some(DividerType::VariablesValueColumn) => Some(CursorIcon::ColumnResize), // Horizontal resize for column width
+                    None => None, // No dragging - default cursor
                 }
             })
         ))

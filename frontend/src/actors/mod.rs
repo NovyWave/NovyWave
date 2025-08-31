@@ -58,7 +58,7 @@ pub use tracked_files::TrackedFiles;
 pub use selected_variables::{SelectedVariables};
 pub use waveform_timeline::{WaveformTimeline};
 pub use user_configuration::{UserConfiguration};
-pub use panel_layout::{PanelLayout};
+// PanelLayout type removed - now uses direct config system
 pub use dialog_manager::{DialogManager};
 pub use error_manager::{ErrorManager};
 pub use global_domains::{

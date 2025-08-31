@@ -74,8 +74,6 @@ pub fn start_drag(divider_type: DividerType, _start_position: (f32, f32)) {
         
         state_clone.initial_value.set_neq(initial_value);
         
-        zoon::println!("🎯 Started dragging {:?} from initial value {}", 
-            divider_clone, initial_value);
     });
 }
 
@@ -90,7 +88,6 @@ pub fn process_drag_movement(current_position: (f32, f32)) {
         // If this is the first mouse move, capture the starting position
         if start_pos == (0.0, 0.0) {
             state.drag_start_position.set_neq(current_position);
-            zoon::println!("🎯 First mouse move - capturing start position: {:?}", current_position);
             return;
         }
         
@@ -126,8 +123,6 @@ pub fn process_drag_movement(current_position: (f32, f32)) {
         if delta.abs() > 1.0 {
             update_config_dimension(&divider_type, new_value);
             
-            zoon::println!("🔄 Dragging {:?}: {} -> {} (Δ{:.1})", 
-                divider_type, initial_value, new_value, delta);
         }
     }
 }
@@ -137,7 +132,6 @@ pub fn end_drag() {
     let state = dragging_state();
     
     if let Some(divider_type) = state.active_divider.get_cloned() {
-        zoon::println!("🏁 Finished dragging {:?}", divider_type);
     }
     
     state.active_divider.set_neq(None);
@@ -209,6 +203,11 @@ pub fn is_divider_dragging(divider_type: DividerType) -> impl Signal<Item = bool
     dragging_state().active_divider.signal_ref(move |active| {
         matches!(active, Some(active_type) if *active_type == divider_type)
     })
+}
+
+/// Get the currently active divider type
+pub fn active_divider_type_signal() -> impl Signal<Item = Option<DividerType>> {
+    dragging_state().active_divider.signal_cloned()
 }
 
 // === PANEL DIMENSION SIGNALS ===

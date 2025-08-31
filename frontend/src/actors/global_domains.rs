@@ -3,8 +3,8 @@
 //! Centralized instantiation and access to domain actors throughout the application.
 //! Replaces global mutables with domain-driven reactive state management.
 
-use crate::actors::{TrackedFiles, SelectedVariables, WaveformTimeline, UserConfiguration, PanelLayout, DialogManager, ErrorManager};
-use crate::actors::{panel_layout, dialog_manager, error_manager, config_sync};
+use crate::actors::{TrackedFiles, SelectedVariables, WaveformTimeline, UserConfiguration, DialogManager, ErrorManager};
+use crate::actors::{dialog_manager, error_manager, config_sync};
 use std::sync::OnceLock;
 use shared::{TrackedFile, LoadingFile, WaveformFile, SelectedVariable};
 use indexmap::{IndexSet, IndexMap};
@@ -22,8 +22,6 @@ static WAVEFORM_TIMELINE_DOMAIN_INSTANCE: OnceLock<WaveformTimeline> = OnceLock:
 /// Global UserConfiguration domain instance
 static USER_CONFIGURATION_DOMAIN_INSTANCE: OnceLock<UserConfiguration> = OnceLock::new();
 
-/// Global PanelLayout domain instance
-static PANEL_LAYOUT_DOMAIN_INSTANCE: OnceLock<PanelLayout> = OnceLock::new();
 
 /// Global DialogManager domain instance
 static DIALOG_MANAGER_DOMAIN_INSTANCE: OnceLock<DialogManager> = OnceLock::new();
@@ -81,41 +79,6 @@ impl SelectedVariablesSignalStorage {
 /// Global SelectedVariables signal storage
 static SELECTED_VARIABLES_SIGNALS: OnceLock<SelectedVariablesSignalStorage> = OnceLock::new();
 
-/// Static signal storage for PanelLayout domain
-pub struct PanelLayoutSignalStorage {
-    pub files_panel_width_mutable: Mutable<u32>,
-    pub files_panel_height_mutable: Mutable<u32>,
-    pub variables_name_column_width_mutable: Mutable<u32>,
-    pub variables_value_column_width_mutable: Mutable<u32>,
-    pub timeline_panel_height_mutable: Mutable<u32>,
-    pub dock_mode_mutable: Mutable<shared::DockMode>,
-    pub dock_transitioning_mutable: Mutable<bool>,
-    pub files_vertical_dragging_mutable: Mutable<bool>,
-    pub files_horizontal_dragging_mutable: Mutable<bool>,
-    pub name_divider_dragging_mutable: Mutable<bool>,
-    pub value_divider_dragging_mutable: Mutable<bool>,
-}
-
-impl PanelLayoutSignalStorage {
-    fn new() -> Self {
-        Self {
-            files_panel_width_mutable: Mutable::new(470),
-            files_panel_height_mutable: Mutable::new(300),
-            variables_name_column_width_mutable: Mutable::new(180),
-            variables_value_column_width_mutable: Mutable::new(100),
-            timeline_panel_height_mutable: Mutable::new(200),
-            dock_mode_mutable: Mutable::new(shared::DockMode::Right),
-            dock_transitioning_mutable: Mutable::new(false),
-            files_vertical_dragging_mutable: Mutable::new(false),
-            files_horizontal_dragging_mutable: Mutable::new(false),
-            name_divider_dragging_mutable: Mutable::new(false),
-            value_divider_dragging_mutable: Mutable::new(false),
-        }
-    }
-}
-
-/// Global PanelLayout signal storage
-pub static PANEL_LAYOUT_SIGNALS: OnceLock<PanelLayoutSignalStorage> = OnceLock::new();
 
 /// Static signal storage for DialogManager domain
 pub struct DialogManagerSignalStorage {
@@ -183,8 +146,6 @@ pub async fn initialize_all_domains() -> Result<(), &'static str> {
         .map_err(|_| "FATAL: TrackedFiles signal storage already initialized")?;
     SELECTED_VARIABLES_SIGNALS.set(SelectedVariablesSignalStorage::new())
         .map_err(|_| "FATAL: SelectedVariables signal storage already initialized")?;
-    PANEL_LAYOUT_SIGNALS.set(PanelLayoutSignalStorage::new())
-        .map_err(|_| "FATAL: PanelLayout signal storage already initialized")?;
     DIALOG_MANAGER_SIGNALS.set(DialogManagerSignalStorage::new())
         .map_err(|_| "FATAL: DialogManager signal storage already initialized")?;
     ERROR_MANAGER_SIGNALS.set(ErrorManagerSignalStorage::new())
@@ -192,12 +153,11 @@ pub async fn initialize_all_domains() -> Result<(), &'static str> {
     
     // PHASE 2: Initialize legacy domains in parallel for better startup performance
     // Creating domain instances
-    let (tracked_files, selected_variables, waveform_timeline, user_config, panel_layout, dialog_manager, error_manager) = futures::join!(
+    let (tracked_files, selected_variables, waveform_timeline, user_config, dialog_manager, error_manager) = futures::join!(
         TrackedFiles::new(),
         SelectedVariables::new(),
         WaveformTimeline::new(),
         UserConfiguration::new(),
-        PanelLayout::new(),
         DialogManager::new(),
         ErrorManager::new()
     );
@@ -213,15 +173,12 @@ pub async fn initialize_all_domains() -> Result<(), &'static str> {
         .map_err(|_| "FATAL: WaveformTimeline domain already initialized. This indicates initialize_all_domains() was called multiple times, which suggests a serious application initialization bug. The application must restart to recover.")?;
     USER_CONFIGURATION_DOMAIN_INSTANCE.set(user_config)
         .map_err(|_| "FATAL: UserConfiguration domain already initialized. This indicates initialize_all_domains() was called multiple times, which suggests a serious application initialization bug. The application must restart to recover.")?;
-    PANEL_LAYOUT_DOMAIN_INSTANCE.set(panel_layout)
-        .map_err(|_| "FATAL: PanelLayout domain already initialized. This indicates initialize_all_domains() was called multiple times, which suggests a serious application initialization bug. The application must restart to recover.")?;
     DIALOG_MANAGER_DOMAIN_INSTANCE.set(dialog_manager)
         .map_err(|_| "FATAL: DialogManager domain already initialized. This indicates initialize_all_domains() was called multiple times, which suggests a serious application initialization bug. The application must restart to recover.")?;
     ERROR_MANAGER_DOMAIN_INSTANCE.set(error_manager)
         .map_err(|_| "FATAL: ErrorManager domain already initialized. This indicates initialize_all_domains() was called multiple times, which suggests a serious application initialization bug. The application must restart to recover.")?;
     
     // Initialize Phase 2 domains (Lazy-initialized automatically on first access)
-    panel_layout::initialize();
     dialog_manager::initialize();
     error_manager::initialize();
     config_sync::initialize();
@@ -275,15 +232,6 @@ pub fn _user_configuration_domain() -> UserConfiguration {
         .clone()
 }
 
-/// Get the global PanelLayout domain instance
-pub fn panel_layout_domain() -> PanelLayout {
-    PANEL_LAYOUT_DOMAIN_INSTANCE.get()
-        .unwrap_or_else(|| {
-            zoon::println!("🚨 FATAL: PanelLayout domain not initialized - initialize_all_domains() must be called during app startup before accessing domains");
-            panic!("PanelLayout domain accessed before initialization - this indicates a critical application initialization ordering bug")
-        })
-        .clone()
-}
 
 /// Get the global DialogManager domain instance
 pub fn dialog_manager_domain() -> DialogManager {
@@ -311,7 +259,6 @@ pub fn _are_domains_initialized() -> bool {
     SELECTED_VARIABLES_DOMAIN_INSTANCE.get().is_some() && 
     WAVEFORM_TIMELINE_DOMAIN_INSTANCE.get().is_some() && 
     USER_CONFIGURATION_DOMAIN_INSTANCE.get().is_some() &&
-    PANEL_LAYOUT_DOMAIN_INSTANCE.get().is_some() &&
     DIALOG_MANAGER_DOMAIN_INSTANCE.get().is_some() &&
     ERROR_MANAGER_DOMAIN_INSTANCE.get().is_some()
 }
@@ -536,117 +483,6 @@ pub fn _update_search_filter_signals(search_filter: String) {
     }
 }
 
-// === PANEL LAYOUT SIGNAL ACCESS FUNCTIONS (LIFETIME-SAFE) ===
-
-/// Get owned signal for files panel width - LIFETIME SAFE
-pub fn panel_layout_files_width_signal() -> impl Signal<Item = u32> {
-    PANEL_LAYOUT_SIGNALS.get()
-        .map(|signals| signals.files_panel_width_mutable.signal())
-        .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ PanelLayout signals not initialized, returning default width signal");
-            Mutable::new(300u32).signal()
-        })
-}
-
-/// Get owned signal for files panel height - LIFETIME SAFE
-pub fn panel_layout_files_height_signal() -> impl Signal<Item = u32> {
-    PANEL_LAYOUT_SIGNALS.get()
-        .map(|signals| signals.files_panel_height_mutable.signal())
-        .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ PanelLayout signals not initialized, returning default height signal");
-            Mutable::new(200u32).signal()
-        })
-}
-
-/// Get owned signal for variables name column width - LIFETIME SAFE
-pub fn panel_layout_name_column_width_signal() -> impl Signal<Item = u32> {
-    PANEL_LAYOUT_SIGNALS.get()
-        .map(|signals| signals.variables_name_column_width_mutable.signal())
-        .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ PanelLayout signals not initialized, returning default name column width signal");
-            Mutable::new(150u32).signal()
-        })
-}
-
-/// Get owned signal for variables value column width - LIFETIME SAFE
-pub fn panel_layout_value_column_width_signal() -> impl Signal<Item = u32> {
-    PANEL_LAYOUT_SIGNALS.get()
-        .map(|signals| signals.variables_value_column_width_mutable.signal())
-        .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ PanelLayout signals not initialized, returning default value column width signal");
-            Mutable::new(100u32).signal()
-        })
-}
-
-/// Get owned signal for timeline panel height - LIFETIME SAFE
-pub fn panel_layout_timeline_height_signal() -> impl Signal<Item = u32> {
-    PANEL_LAYOUT_SIGNALS.get()
-        .map(|signals| signals.timeline_panel_height_mutable.signal())
-        .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ PanelLayout signals not initialized, returning default timeline height signal");
-            Mutable::new(300u32).signal()
-        })
-}
-
-/// Get owned signal for dock mode - LIFETIME SAFE
-pub fn panel_layout_dock_mode_signal() -> impl Signal<Item = shared::DockMode> {
-    PANEL_LAYOUT_SIGNALS.get()
-        .map(|signals| signals.dock_mode_mutable.signal_cloned())
-        .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ PanelLayout signals not initialized, returning default dock mode signal");
-            Mutable::new(shared::DockMode::Right).signal_cloned()
-        })
-}
-
-/// Get owned signal for dock transitioning state - LIFETIME SAFE
-pub fn panel_layout_dock_transitioning_signal() -> impl Signal<Item = bool> {
-    PANEL_LAYOUT_SIGNALS.get()
-        .map(|signals| signals.dock_transitioning_mutable.signal())
-        .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ PanelLayout signals not initialized, returning false dock transitioning signal");
-            Mutable::new(false).signal()
-        })
-}
-
-/// Get owned signal for files vertical dragging state - LIFETIME SAFE
-pub fn panel_layout_files_vertical_dragging_signal() -> impl Signal<Item = bool> {
-    PANEL_LAYOUT_SIGNALS.get()
-        .map(|signals| signals.files_vertical_dragging_mutable.signal())
-        .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ PanelLayout signals not initialized, returning false files vertical dragging signal");
-            Mutable::new(false).signal()
-        })
-}
-
-/// Get owned signal for files horizontal dragging state - LIFETIME SAFE
-pub fn panel_layout_files_horizontal_dragging_signal() -> impl Signal<Item = bool> {
-    PANEL_LAYOUT_SIGNALS.get()
-        .map(|signals| signals.files_horizontal_dragging_mutable.signal())
-        .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ PanelLayout signals not initialized, returning false files horizontal dragging signal");
-            Mutable::new(false).signal()
-        })
-}
-
-/// Get owned signal for name divider dragging state - LIFETIME SAFE
-pub fn panel_layout_name_divider_dragging_signal() -> impl Signal<Item = bool> {
-    PANEL_LAYOUT_SIGNALS.get()
-        .map(|signals| signals.name_divider_dragging_mutable.signal())
-        .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ PanelLayout signals not initialized, returning false name divider dragging signal");
-            Mutable::new(false).signal()
-        })
-}
-
-/// Get owned signal for value divider dragging state - LIFETIME SAFE
-pub fn panel_layout_value_divider_dragging_signal() -> impl Signal<Item = bool> {
-    PANEL_LAYOUT_SIGNALS.get()
-        .map(|signals| signals.value_divider_dragging_mutable.signal())
-        .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ PanelLayout signals not initialized, returning false value divider dragging signal");
-            Mutable::new(false).signal()
-        })
-}
 
 // === DIALOG MANAGER SIGNAL ACCESS FUNCTIONS (LIFETIME-SAFE) ===
 
@@ -810,87 +646,6 @@ pub fn error_manager_next_alert_id_signal() -> impl Signal<Item = u32> {
         })
 }
 
-// === PANEL LAYOUT SIGNAL SYNCHRONIZATION FUNCTIONS (INTERNAL) ===
-
-/// Set vertical dragging state
-pub fn set_files_vertical_dragging(is_dragging: bool) {
-    if let Some(signals) = PANEL_LAYOUT_SIGNALS.get() {
-        signals.files_vertical_dragging_mutable.set_neq(is_dragging);
-    }
-}
-
-/// Set horizontal dragging state
-pub fn set_files_horizontal_dragging(is_dragging: bool) {
-    if let Some(signals) = PANEL_LAYOUT_SIGNALS.get() {
-        signals.files_horizontal_dragging_mutable.set_neq(is_dragging);
-    }
-}
-
-/// Set name column divider dragging state
-pub fn set_name_divider_dragging(is_dragging: bool) {
-    if let Some(signals) = PANEL_LAYOUT_SIGNALS.get() {
-        signals.name_divider_dragging_mutable.set_neq(is_dragging);
-    }
-}
-
-/// Set value column divider dragging state
-pub fn set_value_divider_dragging(is_dragging: bool) {
-    if let Some(signals) = PANEL_LAYOUT_SIGNALS.get() {
-        signals.value_divider_dragging_mutable.set_neq(is_dragging);
-    }
-}
-
-/// Update panel layout signals when domain changes
-pub fn _update_panel_layout_signals(
-    files_width: u32,
-    files_height: u32,
-    name_column_width: u32,
-    value_column_width: u32,
-    timeline_height: u32,
-    dock_mode: shared::DockMode,
-    dock_transitioning: bool,
-    files_vertical_dragging: bool,
-    files_horizontal_dragging: bool,
-    name_divider_dragging: bool,
-    value_divider_dragging: bool,
-) {
-    if let Some(signals) = PANEL_LAYOUT_SIGNALS.get() {
-        signals.files_panel_width_mutable.set_neq(files_width);
-        signals.files_panel_height_mutable.set_neq(files_height);
-        signals.variables_name_column_width_mutable.set_neq(name_column_width);
-        signals.variables_value_column_width_mutable.set_neq(value_column_width);
-        signals.timeline_panel_height_mutable.set_neq(timeline_height);
-        signals.dock_mode_mutable.set_neq(dock_mode);
-        signals.dock_transitioning_mutable.set_neq(dock_transitioning);
-        signals.files_vertical_dragging_mutable.set_neq(files_vertical_dragging);
-        signals.files_horizontal_dragging_mutable.set_neq(files_horizontal_dragging);
-        signals.name_divider_dragging_mutable.set_neq(name_divider_dragging);
-        signals.value_divider_dragging_mutable.set_neq(value_divider_dragging);
-    }
-}
-
-// === BRIDGE SETTER FUNCTIONS: Actor → Old Mutable Signals ===
-
-/// Set files panel height in old mutable system (called from Actor bridge)
-pub fn set_files_panel_height(height: u32) {
-    if let Some(signals) = PANEL_LAYOUT_SIGNALS.get() {
-        signals.files_panel_height_mutable.set_neq(height);
-    }
-}
-
-/// Set variables name column width in old mutable system (called from Actor bridge)
-pub fn set_variables_name_column_width(width: u32) {
-    if let Some(signals) = PANEL_LAYOUT_SIGNALS.get() {
-        signals.variables_name_column_width_mutable.set_neq(width);
-    }
-}
-
-/// Set variables value column width in old mutable system (called from Actor bridge)
-pub fn set_variables_value_column_width(width: u32) {
-    if let Some(signals) = PANEL_LAYOUT_SIGNALS.get() {
-        signals.variables_value_column_width_mutable.set_neq(width);
-    }
-}
 
 // === VALIDATION FUNCTIONS FOR LIFETIME FIX ===
 

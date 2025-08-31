@@ -228,10 +228,6 @@ pub static FILE_PATHS: Lazy<Mutable<IndexMap<String, String>>> = lazy::default()
 
 pub static SELECTED_SCOPE_ID: Lazy<Mutable<Option<String>>> = Lazy::new(|| {
     let mutable = Mutable::new(None);
-    // Debug logging to track scope selection changes
-    Task::start(mutable.signal_cloned().for_each(|scope_id| async move {
-        zoon::println!("🎯 SELECTED_SCOPE_ID changed to: {:?}", scope_id);
-    }));
     mutable
 });
 pub static TREE_SELECTED_ITEMS: Lazy<Mutable<IndexSet<String>>> = lazy::default(); // UI state only - not persisted

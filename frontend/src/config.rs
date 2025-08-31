@@ -126,8 +126,8 @@ impl Default for PanelDimensions {
             files_panel_height: 300.0,
             variables_panel_width: 300.0,
             timeline_panel_height: 200.0,
-            variables_name_column_width: 180.0,
-            variables_value_column_width: 100.0,
+            variables_name_column_width: 190.0,
+            variables_value_column_width: 220.0,
         }
     }
 }
@@ -335,10 +335,10 @@ impl AppConfig {
                         if let Some(()) = button_click {
                             zoon::println!("🚢 Dock Actor: Processing button click - implementing proper dimension preservation");
                             
-                            // Get current panel dimensions from Actors BEFORE switching mode
-                            let current_files_height = crate::actors::panel_layout::current_files_panel_height();
-                            let current_name_width = crate::actors::panel_layout::current_variables_name_column_width();
-                            let current_value_width = crate::actors::panel_layout::current_variables_value_column_width();
+                            // Get current panel dimensions from DRAGGING SYSTEM BEFORE switching mode
+                            let current_files_height = crate::dragging::files_panel_height_signal().to_stream().next().await.unwrap_or(300.0) as u32;
+                            let current_name_width = crate::dragging::variables_name_column_width_signal().to_stream().next().await.unwrap_or(190.0) as u32;
+                            let current_value_width = crate::dragging::variables_value_column_width_signal().to_stream().next().await.unwrap_or(220.0) as u32;
                             
                             zoon::println!("💾 DOCK SWITCH: Current dimensions before switch: height={}, name={}, value={}", 
                                 current_files_height, current_name_width, current_value_width);
@@ -406,10 +406,7 @@ impl AppConfig {
                                                 zoon::println!("📂 DOCK SWITCH: Loading Right mode dimensions: height={}, name={}, value={}", 
                                                     dims.files_panel_height, dims.variables_name_column_width, dims.variables_value_column_width);
                                                 
-                                                // Force sync all Actors to Right mode values
-                                                crate::actors::panel_layout::set_files_panel_height(dims.files_panel_height as u32);
-                                                crate::actors::panel_layout::set_variables_name_column_width(dims.variables_name_column_width as u32);
-                                                crate::actors::panel_layout::set_variables_value_column_width(dims.variables_value_column_width as u32);
+                                                // Right mode dimensions are already loaded into the config actors - no need to force sync
                                             }
                                         }
                                         DockMode::Bottom => {
@@ -419,10 +416,7 @@ impl AppConfig {
                                                 zoon::println!("📂 DOCK SWITCH: Loading Bottom mode dimensions: height={}, name={}, value={}", 
                                                     dims.files_panel_height, dims.variables_name_column_width, dims.variables_value_column_width);
                                                 
-                                                // Force sync all Actors to Bottom mode values
-                                                crate::actors::panel_layout::set_files_panel_height(dims.files_panel_height as u32);
-                                                crate::actors::panel_layout::set_variables_name_column_width(dims.variables_name_column_width as u32);
-                                                crate::actors::panel_layout::set_variables_value_column_width(dims.variables_value_column_width as u32);
+                                                // Bottom mode dimensions are already loaded into the config actors - no need to force sync
                                             }
                                         }
                                     }
@@ -443,8 +437,8 @@ impl AppConfig {
             files_panel_height: config.workspace.docked_right_dimensions.files_and_scopes_panel_height as f32,
             variables_panel_width: 300.0, // Default values for missing fields
             timeline_panel_height: 200.0,
-            variables_name_column_width: config.workspace.docked_right_dimensions.selected_variables_panel_name_column_width.unwrap_or(150.0) as f32,
-            variables_value_column_width: config.workspace.docked_right_dimensions.selected_variables_panel_value_column_width.unwrap_or(150.0) as f32,
+            variables_name_column_width: config.workspace.docked_right_dimensions.selected_variables_panel_name_column_width.unwrap_or(190.0) as f32,
+            variables_value_column_width: config.workspace.docked_right_dimensions.selected_variables_panel_value_column_width.unwrap_or(220.0) as f32,
         }, async move |state| {
             let mut right_stream = panel_dimensions_right_changed_relay_clone.subscribe().fuse();
             let mut resized_stream = panel_resized_relay_clone.subscribe().fuse();
@@ -471,8 +465,8 @@ impl AppConfig {
             files_panel_height: config.workspace.docked_bottom_dimensions.files_and_scopes_panel_height as f32,
             variables_panel_width: 300.0, // Default values for missing fields
             timeline_panel_height: 200.0,
-            variables_name_column_width: config.workspace.docked_bottom_dimensions.selected_variables_panel_name_column_width.unwrap_or(150.0) as f32,
-            variables_value_column_width: config.workspace.docked_bottom_dimensions.selected_variables_panel_value_column_width.unwrap_or(150.0) as f32,
+            variables_name_column_width: config.workspace.docked_bottom_dimensions.selected_variables_panel_name_column_width.unwrap_or(190.0) as f32,
+            variables_value_column_width: config.workspace.docked_bottom_dimensions.selected_variables_panel_value_column_width.unwrap_or(220.0) as f32,
         }, async move |state| {
             let mut bottom_stream = panel_dimensions_bottom_changed_relay_clone.subscribe().fuse();
             
