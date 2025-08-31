@@ -146,6 +146,117 @@ Before every response, verify:
 
 **Never claim completion without proper verification.**
 
+## Task Management
+
+You have access to the TodoWrite and TodoRead tools to help you manage and plan tasks. Use these tools VERY frequently to ensure that you are tracking your tasks and giving the user visibility into your progress.
+
+### MANDATORY TODO USAGE
+- Create detailed todos for ALL multi-step tasks (3+ steps)
+- Update todo status in real-time as you work
+- Use specific, actionable todo descriptions
+- Mark todos completed immediately after finishing each task
+- Never batch multiple completions
+
+These tools are also EXTREMELY helpful for planning tasks, and for breaking down larger complex tasks into smaller steps. If you do not use this tool when planning, you may forget to do important tasks - and that is unacceptable.
+
+It is critical that you mark todos as completed as soon as you are done with a task. Do not batch up multiple tasks before marking them as completed.
+
+### Systematic Problem-Solving Process
+1. **Acknowledge & Analyze**: Never defend poor results, use TodoWrite to break down issues
+2. **Systematic Subagent Research**: Use Task tool subagents to analyze each issue separately
+3. **Methodical Implementation**: Apply fixes systematically, one issue at a time
+4. **Comprehensive Testing**: Use browser MCP to verify changes visually
+5. **Results Verification & Honesty**: Test each fix individually
+
+### Example Response Pattern for Poor Results
+```
+1/5 is not acceptable. Let me use subagents to systematically analyze and fix each issue:
+
+[Creates detailed todos for each problem]
+[Uses Task tool subagents to analyze each issue separately]  
+[Applies fixes methodically]
+[Verifies all fixes work properly]
+```
+
+## Subagent Delegation Strategy
+
+### Strategic Subagent Usage
+**Use Task tool subagents selectively** to preserve main session context while extending effective session length.
+
+### Delegate to Subagents
+- File analysis & research (instead of main session reading multiple files)
+- Implementation tasks (code changes, testing, debugging)
+- Investigation work (finding patterns, analyzing codebases)
+- Complex searches across many files
+
+### Implementor Agent Requirements
+**CRITICAL: Implementor agents MUST:**
+- Check dev_server.log after making changes (MANDATORY verification protocol)
+- Report compilation errors AND warnings found
+- Never claim "compilation successful" without verification
+- Use `tail -100 dev_server.log | grep -E "error\[E|warning:|Failed|panic|Frontend built"` to verify
+- Fix ALL errors before returning control to main session
+- Report any warnings that remain after fixes
+- **NEVER run `makers build`, `makers start`, or any compilation commands** - dev server auto-compiles
+- **NEVER use browser MCP tools** - that's exclusively for Validator agents
+- **ONLY make code changes and read logs** - no testing, no browser access
+
+### Validator Agent Requirements
+**CRITICAL: Validator agents are responsible for:**
+- 4-phase validation: Compilation → Visual → Functional → Console
+- Checking dev_server.log for compilation status
+- Using browser MCP tools for visual verification
+- Testing functionality after Implementor changes
+- Screenshot documentation of UI states
+- Reporting comprehensive validation results
+- **ONLY Validator agents can use browser MCP tools**
+- **NEVER make code changes** - only validate and test
+- **AUTOMATIC activation** after Implementor agents complete
+
+### Implementor-Validator Collaboration Pattern
+**MANDATORY WORKFLOW:**
+1. **Implementor Agent**: Makes code changes, checks dev_server.log for compilation
+2. **Main Session**: MUST run Validator agent immediately after Implementor completes
+3. **Validator Agent**: Performs 4-phase validation including browser testing
+4. **Main Session**: Decides next action based on Validator results (✅ PASS, ⚠️ WARN, ❌ FAIL)
+
+### Main Session Focus
+- High-level coordination & planning
+- User interaction & decision making
+- Architecture decisions & task delegation
+- Synthesis of subagent results
+- **MANDATORY: Run Validator agent after each Implementor agent completes**
+- **Orchestrate Implementor → Validator workflow for all changes**
+
+### Context Conservation Benefits
+- Subagents use their own context space, not main session's
+- Main session gets condensed summaries instead of raw file contents
+- Can parallelize multiple research/implementation tasks
+- Dramatically extends effective session length (2-3x longer)
+
+### Self-Reminder Checklist
+Before using Read/Glob/Grep tools, ask: "Could a subagent research this instead?"
+- If reading 2+ files → delegate to Task tool
+- If searching for patterns → delegate to Task tool
+- If analyzing codebase structure → delegate to Task tool
+- Exception: Single specific files (configs, CLAUDE.md)
+
+## Git Workflows
+
+### Critical Git Commit Rules
+- **NEVER add Claude attribution lines to commits**:
+  - ❌ NO: `🤖 Generated with [Claude Code](https://claude.ai/code)`
+  - ❌ NO: `Co-Authored-By: Claude <noreply@anthropic.com>`
+  - These lines should NEVER appear in any git commit message
+  - This is a permanent rule - do not add under any circumstances
+
+### Git Safety Rules
+- **CRITICAL: NEVER perform destructive git operations (reset, rebase, force push, branch deletion, stash drop) without explicit user confirmation**
+- **User lost hours of work from uncommitted changes - always confirm before any operation that could lose data**
+- Never use git commands with `-i` flag (interactive not supported)
+- DO NOT push to remote repository unless explicitly asked
+- **Only exceptions: `/core-checkpoint` and `/core-commit` commands where destruction is part of expected flow, but still be careful**
+
 ## Accountability & Systematic Problem-Solving
 
 **WHEN RESULTS ARE POOR OR INCOMPLETE:**

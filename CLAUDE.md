@@ -15,6 +15,9 @@ Core guidance for Claude Code when working with NovyWave.
 @.claude/extra/technical/reactive-antipatterns.md
 @.claude/extra/technical/lessons.md
 
+<!-- Architecture Patterns -->
+@.claude/extra/architecture/actor-relay-patterns.md
+
 ## Actor+Relay Architecture (MANDATORY)
 
 **CRITICAL: NovyWave uses Actor+Relay architecture - NO raw Mutables allowed**

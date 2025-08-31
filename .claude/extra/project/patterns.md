@@ -89,27 +89,7 @@ use shared::{LoadingFile, LoadingStatus, WaveformFile, Signal};
 
 **NO RAW MUTABLES:** All state must use Actor+Relay or Atom architecture.
 
-**❌ PROHIBITED:**
-```rust
-// Global mutables
-static TRACKED_FILES: Lazy<MutableVec<TrackedFile>> = lazy::default();
-static DIALOG_OPEN: Lazy<Mutable<bool>> = lazy::default();
-
-// Local mutables in components
-let loading_state = Mutable::new(false);
-```
-
-**✅ REQUIRED:**
-```rust
-// Domain-driven Actors
-struct TrackedFiles {
-    files: ActorVec<TrackedFile>,
-    file_dropped_relay: Relay<Vec<PathBuf>>,
-}
-
-// Atom for local UI
-let dialog_open = Atom::new(false);
-```
+**See CLAUDE.md for complete Actor+Relay vs raw Mutables examples.**
 
 ### Event-Source Relay Naming (MANDATORY)
 
@@ -644,56 +624,16 @@ tree_view().external_expanded(crate::state::EXPANDED_SCOPES.clone())  // Updates
 
 **Key Lesson:** When UI components need to both READ and WRITE state (bi-directional), they must reference the actual state, not copies. Creating local `Mutable` copies breaks the write-back mechanism.
 
-### Complete State Persistence Pattern (Actor+Relay Proper)
+### State Persistence & Local UI Patterns
 
-**Implementation within Actor+Relay domains:**
-1. **Domain Events:** Use event-source relays for user interactions
-2. **Actor State:** Manage persistence state within domain Actors  
-3. **Config Integration:** ConfigSaver monitors domain signals automatically
-4. **UI Integration:** Connect UI components to domain signals, not global state
+**State Persistence:**
+1. **Domain Events** through event-source relays for user interactions
+2. **Actor State** managed within domain Actors  
+3. **Config Integration** with ConfigSaver monitoring domain signals automatically
+4. **UI Integration** connecting components to domain signals, not global state
 
-**Key Principle:** Avoid global state patterns - use proper domain-driven Actor+Relay architecture instead.
-
-### Atom for Local UI Patterns
-
-**Replace all local Mutables with Atom:**
-```rust
-// Panel component
-struct PanelState {
-    width: Atom<f32>,
-    height: Atom<f32>,
-    is_collapsed: Atom<bool>,
-    is_hovered: Atom<bool>,
-}
-
-// Dialog component
-struct FileDialogState {
-    is_open: Atom<bool>,
-    filter_text: Atom<String>,
-    selected_files: Atom<Vec<PathBuf>>,
-    current_directory: Atom<PathBuf>,
-    error_message: Atom<Option<String>>,
-}
-
-// Search component
-struct SearchState {
-    filter_text: Atom<String>,
-    is_focused: Atom<bool>,
-    match_count: Atom<usize>,
-    selected_index: Atom<Option<usize>>,
-}
-
-impl Default for SearchState {
-    fn default() -> Self {
-        Self {
-            filter_text: Atom::new(String::new()),
-            is_focused: Atom::new(false),
-            match_count: Atom::new(0),
-            selected_index: Atom::new(None),
-        }
-    }
-}
-```
+**Local UI State:**
+Use Atom for simple UI state like panel dimensions, dialog visibility, search filters, hover effects, and other UI-only concerns. See verified examples in development.md.
 
 ### UI Integration Patterns
 

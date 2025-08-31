@@ -2,12 +2,7 @@
 
 ## WASM Development & Build Management
 
-### Critical Build Rules
-- **NEVER use `cargo build/check`** - Only mzoon handles WASM properly
-- **NEVER restart dev server** without permission - compilation takes minutes
-- Monitor: `makers start > dev_server.log 2>&1 &`
-- Check: `tail -f dev_server.log` for build status
-- Use: `makers kill` and `makers start` commands only
+**For complete build management rules, see development.md.**
 
 ### WASM Logging
 ```rust
@@ -75,18 +70,17 @@ pub struct PanelLayouts {
 
 ### Reactive Persistence & Initialization Order
 ```rust
-// Signal monitoring prevents overwrites with gate flag
+// Use await-based config loading in main for proper initialization order
 pub fn initialize_config() -> impl Future<Output = ()> {
     async move {
-        load_config().await;
-        CONFIG_LOADED.set_neq(true);  // Gate prevents startup overwrites
-        init_config_handlers();       // Start reactive triggers after load
+        load_config().await;  // Config guaranteed loaded before UI starts
+        init_config_handlers(); // Start reactive triggers after load
     }
 }
 
-// Example handler with gate check
+// Direct reactive save triggers without guards
 Task::start(current_theme().signal().for_each_sync(|_| {
-    if CONFIG_LOADED.get() { save_current_config(); }
+    save_current_config(); // No guard needed - config already loaded
 }));
 ```
 
@@ -338,7 +332,7 @@ Stripe::new()
 
 // Performance: dedupe + conditional gates
 TIMELINE_CURSOR_POSITION.signal().dedupe().for_each_sync(|pos| expensive_update(pos));
-if CONFIG_LOADED.get() { perform_config_operation(); }  // Prevent startup races
+perform_config_operation();  // No guard needed - proper initialization order
 
 // ❌ LEGACY: Collection patterns (use Actor+Relay instead)
 static ITEMS: Lazy<MutableVec<SelectedVariable>> = Lazy::new(MutableVec::new);
@@ -873,85 +867,7 @@ async fn test_file_loading_workflow() {
 }
 ```
 
-### Troubleshooting Guide
-
-**Common Issues:**
-
-1. **Event-Source Naming Violations:**
-```rust
-// ❌ WRONG: Manager naming
-pub fn file_manager() -> Relay<()> { ... }
-
-// ✅ CORRECT: Event naming
-pub fn add_file(path: String) -> Relay<TrackedFile> { ... }
-```
-
-2. **Enterprise Pattern Violations:**
-```rust
-// ❌ WRONG: Service/Controller patterns
-struct FileService;
-struct VariableController;
-
-// ✅ CORRECT: Domain actors
-struct TrackedFiles;
-struct SelectedVariables;
-```
-
-3. **Missing Signal Dependencies:**
-```rust
-// ❌ WRONG: Static data in reactive context
-.child_signal(always(some_data).map(|data| render(data)))
-
-// ✅ CORRECT: Reactive signal chain
-.child_signal(tracked_files().map(|files| render_files(files)))
-```
-
-4. **Improper State Access:**
-```rust
-// ❌ WRONG: Direct state access (testing anti-pattern)
-assert_eq!(TrackedFiles::get().files.len(), 1);  // No .get() method
-
-// ✅ CORRECT: Signal-based access
-let files = tracked_files().first().await;
-assert_eq!(files.len(), 1);
-```
-
-5. **Mixed State Management:**
-```rust
-// ❌ WRONG: Mixing Mutables with Actors
-static OLD_FILES: Lazy<MutableVec<File>> = ...;  // Don't mix patterns
-
-// ✅ CORRECT: Pure Actor approach
-// All file state goes through TrackedFiles actor
-```
-
-### Performance Considerations
-
-**Event Emission Patterns:**
-- Actors automatically batch related updates
-- Only emit events when state actually changes
-- Derived computations (like smart labels) happen once per event
-- No manual synchronization between related state pieces
-
-**Signal Chain Optimization:**
-```rust
-// ✅ EFFICIENT: Direct actor signal
-tracked_files().map(|files| render_file_list(files))
-
-// ❌ INEFFICIENT: Multiple signal sources
-map_ref! {
-    let files = TRACKED_FILES.signal_vec_cloned().to_signal_cloned(),
-    let labels = SMART_LABELS.signal() => {
-        combine_files_and_labels(files, labels)  // Manual synchronization
-    }
-}
-```
-
-**Memory Management:**
-- Actors own their complete domain state
-- No circular references between domain actors
-- Atom for ephemeral UI state
-- Automatic cleanup when actors go out of scope
+**See lessons.md for comprehensive troubleshooting guide and performance considerations.**
 
 ## Lock Management & Actor Model (Legacy)
 
@@ -1003,38 +919,6 @@ Task::start(async {
 // Use for: Shared state, complex interdependencies, reactive updates
 ```
 
-### Legacy Mutable Patterns
-```rust
-// Mutable types are Arc<RwLock<T>> internally - cheaply cloneable, never wrap in Arc again
-// Basic chains: Mutable<T> -> signal() -> map() -> for_each_sync()
-
-// Nested Mutables for lock-free individual updates
-static ITEMS: Lazy<MutableVec<Mutable<ItemType>>> = lazy::default();
-fn update_item(id: &str, data: ItemType) {
-    let items = ITEMS.lock_ref();
-    if let Some(item) = items.iter().find(|i| i.lock_ref().id == id) {
-        item.set(data);  // No parent lock needed
-    }
-}
-
-// Derived signals - automatic updates without manual refresh
-static COMPUTED: Lazy<Mutable<ComputedType>> = Lazy::new(|| {
-    let computed = Mutable::new(ComputedType::default());
-    Task::start(PARENT.signal_vec_cloned().for_each_sync(move |items| {
-        computed.set(compute(&items));
-    }));
-    computed
-});
-
-// Lock timing: Use explicit scopes {} to drop locks early
-let updated_items = { 
-    let items = ITEMS.lock_ref(); 
-    let mut new_items = items.clone(); 
-    new_items[0] = new_item; 
-    new_items 
-}; // Lock dropped here
-ITEMS.lock_mut().replace_cloned(updated_items); // Signals fire safely
-```
 
 ### Critical Rules (Both Patterns)
 1. Never hold locks across await points
@@ -1087,119 +971,4 @@ let clean: String = text.chars()
     .collect();
 ```
 
-## Memory Management & Troubleshooting
-
-### WASM Integration
-```rust
-// DOM element access + modern clipboard with fallback
-use wasm_bindgen::JsCast;
-let canvas_element = event.target().dyn_cast::<web_sys::Element>()
-    .expect("Event target is not an element");
-
-async fn copy_to_clipboard(text: &str) -> Result<(), JsValue> {
-    let window = web_sys::window().unwrap();
-    if let Some(clipboard) = window.navigator().clipboard() {
-        clipboard.write_text(text).await  // Modern API
-    } else {
-        /* execCommand fallback */  Ok(())
-    }
-}
-
-// Thread-blocking library integration
-let result = tokio::spawn_blocking(move || expensive_blocking_operation(data)).await?;
-```
-
-### Common Issues & Fixes
-
-#### Compilation Issues
-- **WASM changes not visible**: Check `tail -100 dev_server.log | grep -i "error"` first
-- **cargo vs mzoon differences**: Only trust mzoon output for WASM build status
-- **IconName errors**: Always use enum tokens: `button().left_icon(IconName::Check)` 
-- **Signal type mismatches**: Use `.into_element()` for type unification in match arms
-
-#### Layout Problems
-- **Height inheritance breaks**: Every container needs `Height::fill()` in the chain
-- **TreeView width issues**: Multi-level constraints - container `min-width: max-content`, item `width: 100%`
-- **Scrolling issues**: Add `min-height: 0` to parent containers to allow flex shrinking
-- **Dropdown height**: Filter invisible characters with `UnicodeWidthChar::width()`
-
-#### Event & Memory Issues  
-- **Event bubbling**: Use `event.pass_to_parent(false)` to prevent propagation
-- **Canvas coordinates**: Convert page coords with `event.client_x() - canvas_rect.left()`
-- **Modal keyboard**: Use global handlers with state guards: `if DIALOG_IS_OPEN.get()`
-- **Config races**: Load config first, then `CONFIG_LOADED.set_neq(true)` gate flag
-- **Storage limits**: Use separate log files for data >2KB to avoid session storage issues
-
-#### Performance Fixes
-- **Virtual list blanks**: Use stable element pools, update content only, never recreate DOM
-- **Directory scanning**: `jwalk::WalkDir` with `.parallelism(RayonNewPool(4))` for 4x improvement
-- **Debug spam**: `rg "println!" --type rust | wc -l` to count and remove excessive logging
-- **TreeView flickering**: Signal cascades causing 30+ renders - remove intermediate signals, add `.dedupe_cloned()`
-- **Duplicate service calls**: Multiple handlers for same signal - use mutually exclusive conditions
-- **Config restoration timing**: UI before sync - add immediate sync pattern: `derived.set_neq(current_state)`
-
-#### Persistence Issues
-- **Signal chain breaks**: Manual `save_config_to_backend()` trigger when reactive fails
-- **Dock mode overwrites**: Separate `panel_dimensions_right/bottom` instead of semantic overloading
-- **Scope selection lost**: Add fields to both `shared/lib.rs` and frontend for backend sync
-
-#### Reactive Issues & Debugging
-- **Broken signal dependencies**: When UI shows "Loading..." instead of data, check if signal actually updates when data changes
-- **Never-triggered signals**: Signals defined but never set break reactive chains silently (e.g. `FILE_LOADING_TRIGGER`)
-- **Working pattern for file dependencies**: Use `TRACKED_FILES.signal_vec_cloned().to_signal_cloned()` instead of custom triggers
-- **Debug method**: Compare working vs broken panels - identify signal chain differences between them
-- **Infinite rendering loops**: Check for circular signal dependencies, excessive console logging
-- **Missing UI updates**: Add missing signal dependencies (`_tracked_files` pattern)
-- **Integer overflow panics**: Use `saturating_sub()` instead of `-` for counts
-- **Checkbox state sync**: Use `label_signal` for dynamic checkbox recreation
-- **Initialization timing**: Use one-shot config loading, preserve existing states
-- **Signal type errors**: Convert `SignalVec` with `.to_signal_cloned()` for `map_ref!`
-- **Loop detection**: Add render counters, look for bidirectional reactive flows
-- **State preservation**: Check existing states before replacing during updates
-- **FusedFuture compilation errors**: Actor stream processing with `futures::select!` requires `.fuse()` on streams, not `tokio::select!`
-
-#### Actor Stream Processing Patterns
-
-**✅ CORRECT: FusedFuture-compatible stream selection**
-```rust
-let panel_dimensions_right_actor = Actor::new(PanelDimensions::default(), async move |state| {
-    let mut right_stream = panel_dimensions_right_changed_stream.fuse();
-    let mut resized_stream = panel_resized_stream.fuse();
-    
-    loop {
-        select! {
-            new_dims = right_stream.next() => {
-                if let Some(dims) = new_dims {
-                    state.set_neq(dims);
-                }
-            }
-            resized_dims = resized_stream.next() => {
-                if let Some(dims) = resized_dims {
-                    state.set_neq(dims);
-                }
-            }
-        }
-    }
-});
-```
-
-**❌ WRONG: tokio::select! causes compilation errors**
-```rust
-// ERROR: tokio::select! not available in WASM environment
-tokio::select! {
-    new_dims = right_stream.next() => { ... }
-}
-
-// ERROR: futures::select! requires FusedStream trait
-futures::select! {
-    new_dims = right_stream.next() => { ... }  // Stream doesn't implement FusedStream
-}
-```
-
-**Key Requirements:**
-- Use `futures::{StreamExt, select}` imports
-- Call `.fuse()` on all streams before using in `select!`
-- Use plain `select!` macro, not `tokio::select!` or `futures::select!`
-- Pattern works in both WASM and native environments
-
-For comprehensive reactive patterns, see: `.claude/extra/technical/reactive-patterns.md`
+**See lessons.md for complete WASM integration patterns and troubleshooting solutions.**

@@ -355,32 +355,7 @@ app_config().dock_mode_actor.signal().map(|mode| render_dock_mode(mode))
 
 **CRITICAL: NovyWave uses Actor+Relay architecture exclusively**
 
-**❌ PROHIBITED PATTERNS:**
-```rust
-// NEVER use raw global mutables
-static TRACKED_FILES: Lazy<MutableVec<TrackedFile>> = lazy::default();
-static DIALOG_OPEN: Lazy<Mutable<bool>> = lazy::default();
-static THEME_STATE: Lazy<Mutable<Theme>> = lazy::default();
-
-// NEVER use raw local mutables in components
-let loading_state = Mutable::new(false);  // Use Atom instead
-```
-
-**✅ REQUIRED PATTERNS:**
-```rust
-// Domain-driven Actor structs
-struct TrackedFiles {
-    files: ActorVec<TrackedFile>,
-    file_dropped_relay: Relay<Vec<PathBuf>>,
-    file_selected_relay: Relay<PathBuf>,
-}
-
-// Atom for local UI state - USE FOR ALL SIMPLE UI LOGIC
-let dialog_open = Atom::new(false);
-let filter_text = Atom::new(String::new());
-let is_hovering = Atom::new(false);  // Simple hover states
-let is_expanded = Atom::new(false);  // UI toggles
-```
+**CRITICAL: NovyWave uses Actor+Relay architecture exclusively. See CLAUDE.md for complete prohibition examples and required patterns.**
 
 ### NO Temporary Code Rule
 
@@ -531,28 +506,131 @@ TreeView::new()
 
 ### Actor+Relay Implementation Pattern
 
-**Modern relay() Pattern (REQUIRED):**
-```rust
-// Use relay() function for clean stream access
-let (file_dropped_relay, file_dropped_stream) = relay();
-let (parse_completed_relay, parse_completed_stream) = relay();
+**✅ VERIFIED WORKING PATTERN** (from chat_example.md):
 
-let files = ActorVec::new(vec![], async move |files_vec| {
-    loop {
-        select! {
-            Some(paths) = file_dropped_stream.next() => {
-                for path in paths {
-                    let tracked_file = TrackedFile::new(path);
-                    files_vec.lock_mut().push_cloned(tracked_file);
+```rust
+use futures::select;
+
+/// Clean Actor+Relay structure with proper separation of concerns
+#[derive(Clone)]
+struct ChatApp {
+    // State managed by Actors - each handles one specific concern
+    messages_actor: ActorVec<Message>,
+    username_actor: Actor<Username>,
+    message_text_actor: Actor<MessageText>,
+    
+    // Events - event-source based naming with single source per relay
+    enter_pressed_relay: Relay,
+    send_button_clicked_relay: Relay,
+    username_input_changed_relay: Relay<Username>,
+    message_input_changed_relay: Relay<MessageText>,
+    message_sent_relay: Relay,
+}
+
+impl Default for ChatApp {
+    fn default() -> Self {
+        // Create all relays with streams
+        let (enter_pressed_relay, mut enter_pressed_stream) = relay();
+        let (send_button_clicked_relay, mut send_button_clicked_stream) = relay();
+        let (username_input_changed_relay, mut username_input_changed_stream) = relay();
+        let (message_input_changed_relay, mut message_input_changed_stream) = relay();
+        let (message_sent_relay, mut message_sent_stream) = relay();
+        
+        // Simple actors for individual state
+        let username_actor = Actor::new(Username::from("DefaultUser"), async move |state| {
+            while let Some(name) = username_input_changed_stream.next().await {
+                state.set(name);
+            }
+        });
+        
+        let message_text_actor = Actor::new(MessageText::default(), async move |state| {
+            loop {
+                select! {
+                    Some(text) = message_input_changed_stream.next() => {
+                        state.set(text);
+                    }
+                    Some(()) = message_sent_stream.next() => {
+                        state.set(MessageText::default());  // Clear on send
+                    }
                 }
             }
-            Some(result) = parse_completed_stream.next() => {
-                // Handle parse completion
+        });
+        
+        // Messages collection with Cache Current Values pattern
+        let messages_actor = ActorVec::new(vec![], async move |messages_vec| {
+            // ✅ Cache current values as they flow through streams (ONLY in Actor loops)
+            let mut cached_username = Username::default();
+            let mut cached_message_text = MessageText::default();
+            
+            let send_trigger_stream = futures::stream::select(
+                enter_pressed_stream,
+                send_button_clicked_stream
+            );
+            
+            loop {
+                select! {
+                    // Update cached values when they change
+                    Some(username) = username_input_changed_stream.next() => {
+                        cached_username = username;
+                    }
+                    Some(text) = message_input_changed_stream.next() => {
+                        cached_message_text = text;
+                    }
+                    // Use cached values when responding to events
+                    Some(()) = send_trigger_stream.next() => {
+                        if !cached_message_text.trim().is_empty() {
+                            let message = Message { 
+                                username: (*cached_username).clone(),
+                                text: (*cached_message_text).clone()
+                            };
+                            messages_vec.lock_mut().push_cloned(message);
+                            message_sent_relay.send(()); // Triggers text clear
+                        }
+                    }
+                }
             }
+        });
+        
+        ChatApp {
+            messages_actor,
+            username_actor,
+            message_text_actor,
+            enter_pressed_relay,
+            send_button_clicked_relay,
+            username_input_changed_relay,
+            message_input_changed_relay,
+            message_sent_relay,
         }
     }
-});
+}
+
+// UI integration using signals, not direct state access
+impl ChatApp {
+    fn username_input(&self) -> impl Element {
+        TextInput::new()
+            .on_change({
+                let relay = self.username_input_changed_relay.clone();
+                move |username| { relay.send(Username::from(username)); }
+            })
+            .text_signal(self.username_actor.signal())  // ✅ Signal-based UI
+    }
+    
+    fn messages_list(&self) -> impl Element {
+        Column::new()
+            .items_signal_vec(
+                self.messages_actor.signal_vec_cloned()
+                    .map(|message| render_message(message))  // ✅ Use items_signal_vec
+            )
+    }
+}
 ```
+
+**Key Patterns Demonstrated:**
+1. **Event-source relay naming** - `username_input_changed_relay` not `set_username_relay`
+2. **Cache Current Values** - Only inside Actor loops, never in UI
+3. **Single concern per Actor** - Each Actor manages one piece of state
+4. **Signal-based UI** - UI reads from signals, writes through relays
+5. **Clean separation** - Business logic in Actors, UI logic in components
 
 ### Atom for Local UI State (REQUIRED)
 
@@ -752,7 +830,11 @@ Once I understand these details clearly, I'll implement all the improvements eff
 - If auto-compilation appears to not be working, **TELL THE DEVELOPER** to start the mzoon CLI
 - Backend/shared crate compilation takes DOZENS OF SECONDS TO MINUTES - this is normal
 - **WAIT ENFORCEMENT: Must wait for compilation to complete, no matter how long**
-- **NEVER use `cargo build` or similar** - only mzoon handles WASM compilation correctly
+- **NEVER use `cargo build/check`** - Only mzoon handles WASM properly
+- **NEVER restart dev server** without permission - compilation takes minutes
+- Monitor: `makers start > dev_server.log 2>&1 &`
+- Check: `tail -f dev_server.log` for build status
+- Use: `makers kill` and `makers start` commands only
 
 ### Log Monitoring Patterns
 ```bash
@@ -922,117 +1004,12 @@ async fn test_config_load_stability() {
 
 **See `.claude/extra/technical/reactive-patterns.md` for comprehensive patterns and examples.**
 
-## Task Management
+**See system.md for complete task management protocols.**
 
-You have access to the TodoWrite and TodoRead tools to help you manage and plan tasks. Use these tools VERY frequently to ensure that you are tracking your tasks and giving the user visibility into your progress.
-
-### MANDATORY TODO USAGE
-- Create detailed todos for ALL multi-step tasks (3+ steps)
-- Update todo status in real-time as you work
-- Use specific, actionable todo descriptions
-- Mark todos completed immediately after finishing each task
-- Never batch multiple completions
-
-These tools are also EXTREMELY helpful for planning tasks, and for breaking down larger complex tasks into smaller steps. If you do not use this tool when planning, you may forget to do important tasks - and that is unacceptable.
-
-It is critical that you mark todos as completed as soon as you are done with a task. Do not batch up multiple tasks before marking them as completed.
-
-### Systematic Problem-Solving Process
-1. **Acknowledge & Analyze**: Never defend poor results, use TodoWrite to break down issues
-2. **Systematic Subagent Research**: Use Task tool subagents to analyze each issue separately
-3. **Methodical Implementation**: Apply fixes systematically, one issue at a time
-4. **Comprehensive Testing**: Use browser MCP to verify changes visually
-5. **Results Verification & Honesty**: Test each fix individually
-
-### Example Response Pattern for Poor Results
-```
-1/5 is not acceptable. Let me use subagents to systematically analyze and fix each issue:
-
-[Creates detailed todos for each problem]
-[Uses Task tool subagents to analyze each issue separately]  
-[Applies fixes methodically]
-[Verifies all fixes work properly]
-```
-
-## Git Workflows
-
-### Critical Git Commit Rules
-- **NEVER add Claude attribution lines to commits**:
-  - ❌ NO: `🤖 Generated with [Claude Code](https://claude.ai/code)`
-  - ❌ NO: `Co-Authored-By: Claude <noreply@anthropic.com>`
-  - These lines should NEVER appear in any git commit message
-  - This is a permanent rule - do not add under any circumstances
-
-### Git Safety Rules
-- **CRITICAL: NEVER perform destructive git operations (reset, rebase, force push, branch deletion, stash drop) without explicit user confirmation**
-- **User lost hours of work from uncommitted changes - always confirm before any operation that could lose data**
-- Never use git commands with `-i` flag (interactive not supported)
-- DO NOT push to remote repository unless explicitly asked
-- **Only exceptions: `/core-checkpoint` and `/core-commit` commands where destruction is part of expected flow, but still be careful**
+**See system.md for git workflows and safety rules.**
 
 
-## Subagent Delegation Strategy
-
-### Strategic Subagent Usage
-**Use Task tool subagents selectively** to preserve main session context while extending effective session length.
-
-### Delegate to Subagents
-- File analysis & research (instead of main session reading multiple files)
-- Implementation tasks (code changes, testing, debugging)
-- Investigation work (finding patterns, analyzing codebases)
-- Complex searches across many files
-
-### Implementor Agent Requirements
-**CRITICAL: Implementor agents MUST:**
-- Check dev_server.log after making changes (MANDATORY verification protocol)
-- Report compilation errors AND warnings found
-- Never claim "compilation successful" without verification
-- Use `tail -100 dev_server.log | grep -E "error\[E|warning:|Failed|panic|Frontend built"` to verify
-- Fix ALL errors before returning control to main session
-- Report any warnings that remain after fixes
-- **NEVER run `makers build`, `makers start`, or any compilation commands** - dev server auto-compiles
-- **NEVER use browser MCP tools** - that's exclusively for Validator agents
-- **ONLY make code changes and read logs** - no testing, no browser access
-
-### Validator Agent Requirements
-**CRITICAL: Validator agents are responsible for:**
-- 4-phase validation: Compilation → Visual → Functional → Console
-- Checking dev_server.log for compilation status
-- Using browser MCP tools for visual verification
-- Testing functionality after Implementor changes
-- Screenshot documentation of UI states
-- Reporting comprehensive validation results
-- **ONLY Validator agents can use browser MCP tools**
-- **NEVER make code changes** - only validate and test
-- **AUTOMATIC activation** after Implementor agents complete
-
-### Implementor-Validator Collaboration Pattern
-**MANDATORY WORKFLOW:**
-1. **Implementor Agent**: Makes code changes, checks dev_server.log for compilation
-2. **Main Session**: MUST run Validator agent immediately after Implementor completes
-3. **Validator Agent**: Performs 4-phase validation including browser testing
-4. **Main Session**: Decides next action based on Validator results (✅ PASS, ⚠️ WARN, ❌ FAIL)
-
-### Main Session Focus
-- High-level coordination & planning
-- User interaction & decision making
-- Architecture decisions & task delegation
-- Synthesis of subagent results
-- **MANDATORY: Run Validator agent after each Implementor agent completes**
-- **Orchestrate Implementor → Validator workflow for all changes**
-
-### Context Conservation Benefits
-- Subagents use their own context space, not main session's
-- Main session gets condensed summaries instead of raw file contents
-- Can parallelize multiple research/implementation tasks
-- Dramatically extends effective session length (2-3x longer)
-
-### Self-Reminder Checklist
-Before using Read/Glob/Grep tools, ask: "Could a subagent research this instead?"
-- If reading 2+ files → delegate to Task tool
-- If searching for patterns → delegate to Task tool
-- If analyzing codebase structure → delegate to Task tool
-- Exception: Single specific files (configs, CLAUDE.md)
+**See system.md for complete subagent delegation strategies.**
 
 ## Work Integrity & Problem-Solving Ethics
 
