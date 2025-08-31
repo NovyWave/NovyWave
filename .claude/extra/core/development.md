@@ -13,6 +13,129 @@ When making changes to files, first understand the file's code conventions. Mimi
 
 - IMPORTANT: DO NOT ADD ***ANY*** COMMENTS unless asked
 
+### State Management Architecture Rules (CRITICAL)
+
+**NEVER use raw Mutables. Follow this hierarchy:**
+
+1. **Atoms for local UI state** - Simple component-level state (hover, focus, local toggles)
+2. **Actor+Relay for domain logic** - When Atoms become too limited
+3. **Actors instead of Tasks** - For structured async processing with state management
+
+```rust
+// ✅ CORRECT: Atoms for simple local state
+let is_hovered = Atom::new(false);
+let dialog_open = Atom::new(false);
+
+// ✅ CORRECT: Actor+Relay when Atoms are insufficient
+struct ToastManager {
+    toasts: ActorVec<Toast>,
+    toast_dismissed_relay: Relay<String>,
+}
+
+// ✅ CORRECT: Actors instead of raw Tasks
+let notification_actor = Actor::new(NotificationState::default(), async move |state| {
+    // Structured state management with Actor
+});
+
+// ❌ WRONG: Raw Mutables
+static GLOBAL_STATE: Lazy<Mutable<SomeState>> = Lazy::new(Mutable::new);
+
+// ❌ WRONG: Raw Tasks without state management  
+Task::start(async { /* unstructured async work */ });
+```
+
+**When to use each:**
+- **Atoms**: Button hover, dialog visibility, form inputs, progress bars
+- **Actor+Relay**: Cross-component coordination, persistent data, business logic
+- **Raw Tasks**: Only for pure utility functions without state
+
+### CRITICAL Architectural Antipatterns
+
+**NEVER create *Manager, *Service, *Controller, or *Handler modules:**
+
+```rust
+// ❌ WRONG: Manager modules that don't manage data
+struct ToastManager;      // Manages other components, not data
+struct DialogManager;     // Artificial abstraction layer
+struct StateService;      // Enterprise-style service pattern
+
+// ✅ CORRECT: Model actual domain entities
+struct Toasts;           // Collection of toast data
+struct DialogState;      // Dialog's actual state
+struct AppConfig;        // Configuration data
+```
+
+**Reason:** These patterns add unnecessary complexity through indirection. Objects should manage data, not other objects.
+
+### Signal Performance Antipattern (CRITICAL)
+
+**NEVER use `signal_vec().to_signal_vec()` - defeats SignalVec efficiency:**
+
+```rust
+// ❌ WRONG: Defeats SignalVec diff efficiency
+items.signal_vec().to_signal_vec().map(|items| {
+    // Converts efficient diffs back to full Vec snapshots
+    render_all_items(items)  // Re-renders everything on any change
+})
+
+// ✅ CORRECT: Use SignalVec directly for efficient updates
+items.signal_vec().map(|item| {
+    render_single_item(item)  // Only re-renders changed items
+})
+```
+
+**Reason:** SignalVec passes Vec diff changes efficiently. Converting to signal loses this optimization and causes full re-renders.
+
+### Required Imports (dataflow module)
+
+**ALWAYS use dataflow module imports over alternatives:**
+
+```rust
+// ✅ CORRECT: Use dataflow imports
+use crate::dataflow::{Actor, ActorVec, ActorMap, Relay, Atom};
+
+// ❌ AVOID: Raw zoon/moonzoon alternatives where dataflow exists
+use zoon::{Mutable, Task};  // Use Actor+Relay instead
+```
+
+### CRITICAL Actor Lifetime Management
+
+**NEVER use underscore prefix for Actors - they get dropped silently:**
+
+```rust
+// ❌ WRONG: Actor gets dropped immediately, stops working without errors
+let _toast_actor = Actor::new(state, async move |handle| {
+    // This will be dropped and never execute!
+});
+
+// ✅ CORRECT: Store Actor in element lifecycle
+let toast_actor = Actor::new(state, async move |handle| {
+    // Timer logic here
+});
+
+// Store in element to keep alive
+element.after_remove(move |_| drop(toast_actor))
+```
+
+**Why underscore prefix is dangerous:**
+- Rust allows unused variables with `_` prefix without warnings
+- Actors get silently dropped instead of running their async logic
+- No compilation errors, but functionality silently breaks
+- Especially critical for timer-based Actors that need to stay alive
+
+**Proper pattern for local Actors:**
+```rust
+let timer_actor = Actor::new(TimerState::default(), async move |state| {
+    loop {
+        Timer::sleep(1000).await;
+        // Timer logic
+    }
+});
+
+// Keep actor alive with element lifecycle
+el.after_remove(move |_| drop(timer_actor))
+```
+
 ### WASM Error Handling Best Practices
 
 **Use WASM-specific error handling methods for better debugging:**
@@ -96,6 +219,78 @@ let config = connection.exchange_message(UpMsg::LoadConfig).await?;
 - **Examples exist in MoonZoon repo** - always check there first
 - **Don't reinvent request-response** - use the framework's built-in solutions
 - **Saves complexity** - No manual channels, timeouts, or relay cleanup needed
+
+### Avoid _clone Variable Naming Pattern
+
+**❌ WRONG: Verbose _clone postfix variables**
+```rust
+let progress_atom_for_actor = progress_atom.clone();
+let alert_id_actor = alert_id.clone();
+let config_clone = config.clone();
+```
+
+**✅ CORRECT: Use clone! macro or block shadowing**
+```rust
+// Option 1: clone! macro (if available)
+clone!(progress_atom, alert_id => async move {
+    // Use progress_atom and alert_id directly
+});
+
+// Option 2: Block shadowing pattern
+{
+    let progress_atom = progress_atom.clone();
+    let alert_id = alert_id.clone();
+    async move {
+        // Use clean variable names without _clone suffix
+    }
+}
+
+// Option 3: Direct shadowing in closure
+move || {
+    let progress_atom = progress_atom.clone();
+    let alert_id = alert_id.clone();
+    // Clean names in scope
+}
+```
+
+**Key Benefits:**
+- **Cleaner variable names** - No verbose suffixes
+- **Clear ownership transfer** - Explicit about what gets cloned where
+- **Readable code** - Variables have their natural names in usage context
+
+### Rust Edition 2024: Explicit Capture Bounds with use<T>
+
+**Understanding `+ use<T>` syntax for fixing lifetime issues:**
+
+```rust
+// ✅ CORRECT: Atom.signal() already has proper capture bounds
+pub fn signal(&self) -> impl Signal<Item = T> + use<T> {
+    self.actor.signal()
+}
+
+// This means local atoms should work in signal chains:
+let progress_atom = Atom::new(100.0);
+.s(Width::percent_signal(progress_atom.signal().map(|p| p as f32)))
+```
+
+**What `+ use<T>` does:**
+- **Explicit capture bounds** - Only captures the specified generic parameters
+- **Prevents overcapturing** - Doesn't automatically capture all lifetimes in scope
+- **Enables `'static` usage** - Signal doesn't depend on local lifetimes when not needed
+- **Rust Edition 2024 feature** - Gives precise control over `impl Trait` captures
+
+**Why it solves lifetime errors:**
+```rust
+// OLD: Overcaptures lifetimes, requires 'static
+fn old_signal<'a>(data: &'a str) -> impl Signal<Item = String> {
+    // Implicitly captures 'a even if not used
+}
+
+// NEW: Explicit control over what gets captured  
+fn new_signal<'a>(data: &'a str) -> impl Signal<Item = String> + use<> {
+    // use<> = capture nothing, works in 'static contexts
+}
+```
 
 ### Modern Rust Formatting Syntax
 
@@ -243,6 +438,53 @@ let old_theme = theme.clone();  // Unnecessary allocation
 
 **CRITICAL: Always use proper Actor pattern instead of manual TaskHandle management**
 
+**CRITICAL ANTIPATTERN: Task::start for Event Handling**
+
+```rust
+// ❌ WRONG: Task::start for event handling anti-pattern
+Task::start({
+    let is_paused_toggle = is_paused.clone();
+    async move {
+        while let Some(()) = toast_clicked_stream.next().await {
+            let current_paused = is_paused_toggle.signal_ref(|p| *p).to_stream().next().await.unwrap_or(false);
+            is_paused_toggle.set(!current_paused);
+        }
+    }
+});
+
+Task::start({
+    let dismiss_alert_id = alert_id.clone();
+    async move {
+        while let Some(()) = dismiss_button_clicked_stream.next().await {
+            dismiss_error_alert(&dismiss_alert_id);
+        }
+    }
+});
+```
+
+```rust
+// ✅ CORRECT: Actor with event stream handling
+let toast_actor = Actor::new(ToastState::default(), async move |state| {
+    loop {
+        select! {
+            Some(()) = toast_clicked_stream.next() => {
+                // Handle click events with proper state management
+                let current_paused = state.lock_ref().is_paused;
+                state.lock_mut().is_paused = !current_paused;
+            }
+            Some(()) = dismiss_button_clicked_stream.next() => {
+                dismiss_error_alert(&alert_id);
+                break;
+            }
+            _ = timer_updates => {
+                // Handle timer logic
+            }
+        }
+    }
+});
+```
+
+**Manual Task Anti-Pattern:**
 ```rust
 // ❌ WRONG: Manual task management anti-pattern
 #[derive(Debug, Clone)]
@@ -270,6 +512,8 @@ fn create_my_service_actor() -> Actor<()> {
 ```
 
 **Why Actor pattern is better:**
+- **Centralized event handling** - Single Actor handles all related events
+- **State management** - Proper state encapsulation and atomic updates
 - **Automatic lifecycle management** - No manual TaskHandle wrappers
 - **Consistent architecture** - All state management uses Actor+Relay
 - **Cleaner ownership** - No need for `Arc<TaskHandle>` complexity
@@ -277,10 +521,13 @@ fn create_my_service_actor() -> Actor<()> {
 - **Better debugging** - Actor framework provides better error handling
 
 **When this applies:**
+- Event stream handling (clicks, user input, timers)
 - Background services (ConfigSaver, network watchers, etc.)
 - Signal processing workers
 - Any long-running background tasks
 - Service-like components that need lifecycle management
+
+**Key Rule: If you're using Task::start to handle event streams, use Actor instead.**
 
 ### Avoid Unnecessary Function Indirection
 
@@ -503,6 +750,38 @@ TreeView::new()
 ```
 
 **Key principle: Every object should manage concrete data, never other objects. This reduces complexity, eliminates indirection, and makes the code more maintainable.**
+
+### NO Hardcoded Values as Workarounds
+
+**CRITICAL: Never use hardcoded values when you cannot access the single source of truth**
+
+When facing challenges accessing configuration values, Actor signals, or other state:
+
+**❌ WRONG: Hardcoded workarounds**
+```rust
+// Don't do this when you can't access config properly
+let config_timeout_ms = 10000u64; // Hardcoded "default"
+let theme = Theme::Dark; // Hardcoded instead of reading actual config
+```
+
+**✅ CORRECT: Fix the architecture to access the real values**
+```rust
+// Either implement proper signal access or defer creation
+let config_timeout_ms = app_config().toast_dismiss_ms_actor.signal().get();
+// Or redesign to use signals properly throughout the chain
+```
+
+**Why hardcoded values are wrong:**
+- **Breaks single source of truth** - Config changes won't be reflected
+- **Creates maintenance debt** - Values drift from actual config over time  
+- **Hides architectural problems** - Should fix the root issue instead
+- **User confusion** - UI behavior doesn't match their config settings
+
+**Better approaches:**
+1. **Implement proper signal access patterns**
+2. **Defer error creation until config is available** 
+3. **Use reactive patterns that update with config changes**
+4. **Fix the underlying architecture issue that prevents access**
 
 ### Actor+Relay Implementation Pattern
 

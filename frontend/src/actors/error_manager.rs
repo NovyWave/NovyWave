@@ -12,7 +12,7 @@
 
 #![allow(dead_code)] // Actor+Relay API not yet fully integrated
 
-use crate::actors::{Actor, Relay, relay};
+use crate::actors::{Actor, ActorVec, Relay, relay};
 use crate::state::ErrorAlert; // Reuse existing ErrorAlert struct
 use zoon::*;
 use std::collections::HashMap;
@@ -28,10 +28,10 @@ pub struct ErrorManager {
     // === CORE STATE ACTORS (replacing error-related global mutables) ===
     
     /// Active error alerts → replaces ERROR_ALERTS
-    alerts: Actor<Vec<ErrorAlert>>,
+    alerts: ActorVec<ErrorAlert>,
     
     /// Toast notifications → replaces TOAST_NOTIFICATIONS  
-    notifications: Actor<Vec<ErrorAlert>>,
+    notifications: ActorVec<ErrorAlert>,
     
     /// Current file picker error → replaces FILE_PICKER_ERROR
     picker_error: Actor<Option<String>>,
@@ -118,10 +118,10 @@ impl ErrorManager {
         let (error_state_restored_relay, _error_state_restored_stream) = relay();
         
         // Use placeholder actors for now - will be properly implemented later
-        let alerts = Actor::new(Vec::new(), async move |_handle| {
+        let alerts = ActorVec::new(vec![], async move |_handle| {
             // TODO: Implement proper actor processor
         });
-        let notifications = Actor::new(Vec::new(), async move |_handle| {
+        let notifications = ActorVec::new(vec![], async move |_handle| {
             // TODO: Implement proper actor processor  
         });
         let picker_error = Actor::new(None, async move |_handle| {
@@ -346,21 +346,51 @@ pub fn current_error_cache() -> HashMap<String, String> {
 
 /// Migration helper: Add error alert (replaces ERROR_ALERTS.lock_mut().push_cloned())
 pub fn add_error_alert(alert: ErrorAlert) {
+    // TEMPORARY FIX: Directly update static signals since Actor+Relay system is incomplete
+    if let Some(signals) = crate::actors::global_domains::ERROR_MANAGER_SIGNALS.get() {
+        signals.alerts_mutable.lock_mut().push_cloned(alert.clone());
+    } else {
+        zoon::eprintln!("⚠️ ErrorManager signals not initialized - cannot add error alert");
+    }
+    
+    // Also send through relay for future compatibility when Actor+Relay is complete
     report_error(alert);
 }
 
 /// Migration helper: Add toast notification (replaces TOAST_NOTIFICATIONS.lock_mut().push_cloned())
 pub fn add_toast_notification(notification: ErrorAlert) {
+    // TEMPORARY FIX: Directly update static signals since Actor+Relay system is incomplete
+    if let Some(signals) = crate::actors::global_domains::ERROR_MANAGER_SIGNALS.get() {
+        signals.notifications_mutable.lock_mut().push_cloned(notification.clone());
+    } else {
+        zoon::eprintln!("⚠️ ErrorManager signals not initialized - cannot add toast notification");
+    }
+    
+    // Also send through relay for future compatibility when Actor+Relay is complete
     create_notification(notification);
 }
 
 /// Migration helper: Remove alert by ID (replaces manual vector operations)
 pub fn remove_error_alert(alert_id: String) {
+    // TEMPORARY FIX: Directly update static signals since Actor+Relay system is incomplete
+    if let Some(signals) = crate::actors::global_domains::ERROR_MANAGER_SIGNALS.get() {
+        let mut alerts = signals.alerts_mutable.lock_mut();
+        alerts.retain(|alert| alert.id != alert_id);
+    }
+    
+    // Also send through relay for future compatibility when Actor+Relay is complete
     dismiss_alert(alert_id);
 }
 
 /// Migration helper: Remove notification by ID (replaces manual vector operations)
 pub fn remove_toast_notification(notification_id: String) {
+    // TEMPORARY FIX: Directly update static signals since Actor+Relay system is incomplete
+    if let Some(signals) = crate::actors::global_domains::ERROR_MANAGER_SIGNALS.get() {
+        let mut notifications = signals.notifications_mutable.lock_mut();
+        notifications.retain(|notification| notification.id != notification_id);
+    }
+    
+    // Also send through relay for future compatibility when Actor+Relay is complete
     dismiss_notification(notification_id);
 }
 
@@ -390,9 +420,9 @@ pub fn error_alerts_signal() -> impl Signal<Item = Vec<ErrorAlert>> {
     alerts_signal()
 }
 
-/// Legacy signal compatibility: Get notifications signal (replaces TOAST_NOTIFICATIONS.signal_vec_cloned())
-pub fn toast_notifications_signal() -> impl Signal<Item = Vec<ErrorAlert>> {
-    notifications_signal()
+/// Get notifications SignalVec (efficient for items_signal_vec)
+pub fn toast_notifications_signal_vec() -> impl SignalVec<Item = ErrorAlert> {
+    crate::actors::global_domains::error_manager_notifications_signal_vec()
 }
 
 /// Legacy signal compatibility: Get picker error signal (replaces FILE_PICKER_ERROR.signal())

@@ -864,6 +864,23 @@ Use bright background colors on containers to visualize height inheritance:
 
 ### Component Usage Patterns
 
+#### Automatic String to Text Conversion
+
+**CONVENIENT: Strings automatically convert to Text elements**
+```rust
+// ✅ CLEAN: Direct string usage
+El::new().child("✕")                    // Becomes Text::new("✕") 
+El::new().child("Drop files here")       // Becomes Text::new("Drop files here")
+Column::new().item("Simple text")        // Becomes Text::new("Simple text")
+
+// ❌ VERBOSE: Manual Text wrapping (unnecessary)
+El::new().child(Text::new("✕"))
+El::new().child(Text::new("Drop files here"))
+Column::new().item(Text::new("Simple text"))
+```
+
+**Key Rule:** Any method expecting `impl IntoElement` automatically treats strings as `Text` elements, making code cleaner and more readable.
+
 #### Button Component
 ```rust
 button()

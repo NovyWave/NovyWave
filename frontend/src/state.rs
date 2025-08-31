@@ -263,7 +263,7 @@ pub struct ErrorAlert {
     pub error_type: ErrorType,
     #[allow(dead_code)]
     pub timestamp: u64,
-    pub auto_dismiss_ms: Option<u64>,
+    pub auto_dismiss_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -294,7 +294,7 @@ impl ErrorAlert {
             technical_error: format!("Error parsing file {}: {}", file_id, error),
             error_type: ErrorType::FileParsingError { file_id, filename },
             timestamp: js_sys::Date::now() as u64,
-            auto_dismiss_ms: Some(5000), // Default 5 second dismiss timeout for errors
+            auto_dismiss_ms: 5000, // Default 5s, will be overridden by config in error_display
         }
     }
     
@@ -307,7 +307,7 @@ impl ErrorAlert {
             technical_error: format!("Error browsing directory {}: {}", path, error),
             error_type: ErrorType::DirectoryAccessError { path },
             timestamp: js_sys::Date::now() as u64,
-            auto_dismiss_ms: Some(5000), // Default 5 second dismiss timeout for errors
+            auto_dismiss_ms: 5000, // Default 5s, will be overridden by config in error_display
         }
     }
     
@@ -320,7 +320,7 @@ impl ErrorAlert {
             technical_error: format!("Connection error: {}", error),
             error_type: ErrorType::ConnectionError,
             timestamp: js_sys::Date::now() as u64,
-            auto_dismiss_ms: Some(5000), // Default 5 second dismiss timeout for errors
+            auto_dismiss_ms: 5000, // Default 5s, will be overridden by config in error_display
         }
     }
     
@@ -332,7 +332,7 @@ impl ErrorAlert {
             technical_error: format!("Clipboard operation failed: {}", error),
             error_type: ErrorType::ClipboardError,
             timestamp: js_sys::Date::now() as u64,
-            auto_dismiss_ms: Some(5000), // Default 5 second dismiss timeout
+            auto_dismiss_ms: 5000, // Default 5s, will be overridden by config in error_display
         }
     }
 }

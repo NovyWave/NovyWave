@@ -93,7 +93,7 @@ pub fn main() {
                 technical_error: error_msg.to_string(),
                 error_type: crate::state::ErrorType::ConfigError,
                 timestamp: js_sys::Date::now() as u64,
-                auto_dismiss_ms: None, // Critical errors should not auto-dismiss
+                auto_dismiss_ms: 10000, // Critical errors get longer timeout
             });
             return; // Exit gracefully instead of panic
         }

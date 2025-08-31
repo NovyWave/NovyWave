@@ -1,9 +1,15 @@
 use zoon::*;
+use zoon::events::Click;
 use moonzoon_novyui::components::icon::{icon, IconName, IconSize, IconColor};
 use moonzoon_novyui::tokens::*;
 use crate::state::ErrorAlert;
-use crate::actors::error_manager::toast_notifications_signal;
+use crate::actors::error_manager::toast_notifications_signal_vec;
 use crate::error_display::dismiss_error_alert;
+use crate::dataflow::*;
+use futures::{select, stream::StreamExt};
+
+/// Progress percentage for toast auto-dismiss timer (0.0 to 100.0)
+type Progress = f32;
 
 
 /// Toast notifications container for auto-dismissing errors
@@ -30,74 +36,58 @@ pub fn toast_notifications_container() -> impl Element {
                     raw_el.style("pointer-events", "auto")  // Re-enable pointer events for toast content
                 })
                 .items_signal_vec(
-                    toast_notifications_signal().to_signal_vec().map(|alert| {
-                        create_toast_element(alert)
+                    toast_notifications_signal_vec().map(|alert| {
+                        toast_element(alert)
                     })
                 )
         )
 }
 
 
-/// Create a toast notification element with enhanced styling and progress bar countdown
-fn create_toast_element(alert: ErrorAlert) -> impl Element {
-    let alert_id = alert.id.clone();
-    let dismiss_alert_id = alert_id.clone();
+/// Create a toast notification element with proper Actor-based state management
+fn toast_element(alert: ErrorAlert) -> impl Element {
     
-    // Create progress signal for pausable progress bar animation
-    let is_progress_paused = Mutable::new(false);
-    let progress_signal = {
-        let auto_dismiss_ms = alert.auto_dismiss_ms.unwrap_or(10_000);
-        let update_interval_ms = 50; // Update every 50ms for smooth animation
-        let total_updates = auto_dismiss_ms / update_interval_ms;
-        
-        let progress = Mutable::new(100.0);
-        let progress_clone = progress.clone();
-        let is_paused_clone = is_progress_paused.clone();
-        
-        // Start pausable progress bar animation
-        Task::start(async move {
-            let mut current_update = 0;
-            while current_update <= total_updates {
-                // Only update progress bar AND increment counter if not paused
-                if !is_paused_clone.get() {
-                    let remaining_percent = 100.0 - (current_update as f64 / total_updates as f64 * 100.0);
-                    progress_clone.set(remaining_percent.max(0.0));
-                    current_update += 1;
-                }
-                Timer::sleep(update_interval_ms as u32).await;
-            }
-        });
-        
-        progress.signal()
-    };
+    let (toast_clicked_relay, mut toast_clicked_stream) = relay();
+    let (dismiss_button_clicked_relay, mut dismiss_button_clicked_stream) = relay();
+    let auto_dismiss_ms = alert.auto_dismiss_ms as f32;
     
-    // Auto-dismiss countdown that can be stopped by clicking
-    if alert.auto_dismiss_ms.is_some() {
-        let alert_id_dismiss = alert_id.clone();
-        let auto_dismiss_ms = alert.auto_dismiss_ms.unwrap_or(10_000);
-        let is_paused_dismiss = is_progress_paused.clone();
-        Task::start(async move {
-            let update_interval_ms = 50;
-            let total_updates = auto_dismiss_ms / update_interval_ms;
-            let mut current_update = 0;
-            
-            while current_update < total_updates {
-                // Check if paused - if so, wait until unpaused
-                if is_paused_dismiss.get() {
-                    Timer::sleep(update_interval_ms as u32).await;
-                    continue; // Wait and check again, don't increment counter
+    let toast_actor = Actor::new(100.0 as Progress, async move |state_handle| {
+        let mut elapsed_time = 0.0f32;
+        let mut is_paused = false;
+        let update_interval_ms = 50.0f32;
+        let mut toast_clicked_stream = toast_clicked_stream.fuse();
+        let mut dismiss_button_clicked_stream = dismiss_button_clicked_stream.fuse();
+        
+        loop {
+            select! {
+                _ = Timer::sleep(update_interval_ms as u32).fuse() => {
+                    if !is_paused {
+                        elapsed_time += update_interval_ms;
+                        
+                        let remaining_percent = 100.0 - (elapsed_time / auto_dismiss_ms * 100.0);
+                        let progress = remaining_percent.max(0.0);
+                        state_handle.set(progress);
+                        
+                        if elapsed_time >= auto_dismiss_ms {
+                            dismiss_error_alert(&alert.id);
+                            break;
+                        }
+                    }
                 }
-                
-                current_update += 1;
-                Timer::sleep(update_interval_ms as u32).await;
+                event = toast_clicked_stream.next() => {
+                    if let Some(()) = event {
+                        is_paused = !is_paused;
+                    }
+                }
+                event = dismiss_button_clicked_stream.next() => {
+                    if let Some(()) = event {
+                        dismiss_error_alert(&alert.id);
+                        break;
+                    }
+                }
             }
-            
-            // Only dismiss if countdown completed naturally (not paused)
-            if !is_paused_dismiss.get() {
-                dismiss_error_alert(&alert_id_dismiss);
-            }
-        });
-    }
+        }
+    });
     
     Column::new()
         .s(Width::fill())
@@ -112,24 +102,10 @@ fn create_toast_element(alert: ErrorAlert) -> impl Element {
                 .blur(8)
         ]))
         .s(Cursor::new(CursorIcon::Pointer))
-        .update_raw_el({
-            let is_paused_tooltip = is_progress_paused.clone();
-            move |raw_el| {
-                raw_el.attr_signal("title", is_paused_tooltip.signal().map(|is_paused| {
-                    if is_paused {
-                        "Click to resume auto-dismiss"
-                    } else {
-                        "Click to pause auto-dismiss"
-                    }
-                }))
-            }
+        .update_raw_el(|raw_el| {
+            raw_el.attr("title", "Click to pause/resume auto-dismiss")
         })
-        .on_click({
-            let is_paused_click = is_progress_paused.clone();
-            move || {
-                is_paused_click.set_neq(!is_paused_click.get());
-            }
-        })
+        .on_click(move || toast_clicked_relay.send(()))
         .item(
             // Main toast content
             Row::new()
@@ -156,7 +132,7 @@ fn create_toast_element(alert: ErrorAlert) -> impl Element {
                                     .weight(FontWeight::SemiBold)
                                     .color_signal(error_9())
                                 )
-                                .child(Text::new(&alert.title))
+                                .child(&alert.title)
                         )
                         .item(
                             El::new()
@@ -165,7 +141,7 @@ fn create_toast_element(alert: ErrorAlert) -> impl Element {
                                     .color_signal(error_8())
                                     .wrap_anywhere()
                                 )
-                                .child(Text::new(&alert.message))
+                                .child(&alert.message)
                         )
                 )
                 .item(
@@ -178,9 +154,12 @@ fn create_toast_element(alert: ErrorAlert) -> impl Element {
                         .s(Cursor::new(CursorIcon::Pointer))
                         .s(Padding::all(SPACING_4))
                         .s(RoundedCorners::all(CORNER_RADIUS_4))
-                        .child(Text::new("✕"))
-                        .on_click(move || {
-                            dismiss_error_alert(&dismiss_alert_id);
+                        .child("✕")
+                        .update_raw_el(move |raw_el| {
+                            raw_el.event_handler(move |event: Click| {
+                                event.stop_propagation();
+                                dismiss_button_clicked_relay.send(());
+                            })
                         })
                 )
         )
@@ -198,7 +177,7 @@ fn create_toast_element(alert: ErrorAlert) -> impl Element {
                     // Progress bar fill
                     El::new()
                         .s(Height::fill())
-                        .s(Width::with_signal_self(progress_signal.map(|progress| Width::percent(progress as u32))))
+                        .s(Width::percent_signal(toast_actor.signal()))
                         .s(Background::new().color_signal(error_7()))
                         .s(RoundedCorners::new()
                             .bottom_left(CORNER_RADIUS_8)
@@ -212,6 +191,9 @@ fn create_toast_element(alert: ErrorAlert) -> impl Element {
                         })
                 )
         )
+        .after_remove(move |_| {
+            drop(toast_actor);
+        })
 }
 
 

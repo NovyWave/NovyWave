@@ -126,7 +126,7 @@ where
     ///     counter.signal().map(|count| Text::new(&count.to_string()))
     /// )
     /// ```
-    pub fn signal(&self) -> impl Signal<Item = T> {
+    pub fn signal(&self) -> impl Signal<Item = T> + use<T> {
         self.state.signal_cloned()
     }
 

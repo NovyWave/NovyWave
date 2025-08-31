@@ -2,6 +2,92 @@
 
 General technical lessons learned during development that don't fit into specific reference categories.
 
+## Toast UI Architectural Simplification Pattern
+
+### Eliminating Bridge Patterns in Actor State Management
+
+When refactoring complex state management, look for opportunities to eliminate unnecessary bridge patterns:
+
+**❌ BEFORE: Complex bridge pattern**
+```rust
+// Wrapper struct for simple state
+#[derive(Clone, Debug)]
+struct ToastState {
+    elapsed_time: u64,
+    is_paused: bool,
+}
+
+// Actor manages struct, Atom bridges to UI
+let progress_atom = Atom::new(100.0);
+let toast_actor = Actor::new(ToastState::default(), async move |state| {
+    // Update progress Atom for UI reactivity
+    progress_atom.set(progress);
+});
+
+// UI reads from bridge atom
+.s(Width::percent_signal(progress_atom.signal().map(|p| p as f32)))
+```
+
+**✅ AFTER: Direct Actor state**
+```rust
+// Progress directly as Actor state
+type Progress = f32;
+
+// Internal variables in actor loop instead of struct fields
+let toast_actor = Actor::new(100.0 as Progress, async move |state_handle| {
+    let mut elapsed_time = 0.0f32;  // Internal variables
+    let mut is_paused = false;
+    
+    // Update Actor state directly
+    state_handle.set(progress);
+});
+
+// UI reads directly from actor
+.s(Width::percent_signal(toast_actor.signal()))
+```
+
+### Type Strategy for Timer-based Code
+
+**Pattern: f32 for calculations, cast only at API boundaries**
+
+```rust
+// ✅ OPTIMAL: f32 everywhere, single cast at API boundary
+let auto_dismiss_ms = alert.auto_dismiss_ms as f32;     // Once at start
+let mut elapsed_time = 0.0f32;
+let update_interval_ms = 50.0f32;
+
+_ = Timer::sleep(update_interval_ms as u32).fuse() => { // Single cast per cycle
+    elapsed_time += update_interval_ms;                  // No casting
+    let progress = 100.0 - (elapsed_time / auto_dismiss_ms * 100.0);  // No casting!
+}
+```
+
+**Why this works:**
+- **Optimizes for frequent operations** - progress calculation runs every 50ms
+- **Minimizes casting overhead** - only one f32→u32 cast per timer cycle
+- **Type consistency** - Progress is f32, so calculations stay in f32
+
+### Import Organization for Actor+Relay Code
+
+```rust
+// ✅ Clean imports for Actor/Relay heavy code
+use crate::dataflow::*;           // Actor, Relay, etc. used frequently
+use futures::{select, stream::StreamExt};  // Move to top level
+type Progress = f32;              // Type definitions with imports
+
+// Usage becomes cleaner
+let (relay, stream) = relay();    // vs crate::dataflow::relay()
+```
+
+### When to Apply This Pattern
+
+- **Wrapper structs with 1-2 simple fields** → Use direct type + internal variables
+- **Bridge Atoms between Actor and UI** → Connect UI directly to Actor signals  
+- **Complex casting chains** → Choose types that minimize casting in hot paths
+- **Frequent dataflow imports** → Use wildcard import `dataflow::*`
+
+**Key insight:** Simpler architecture often emerges by questioning whether intermediate layers add real value or just complexity.
+
 ## Signal Dependencies for Data Loading Timing
 
 ### Problem Pattern

@@ -158,7 +158,7 @@ where
     /// ```
     // Part of public Actor+Relay API - will be used when moved to standalone crate
     #[allow(dead_code)]
-    pub fn signal(&self) -> impl Signal<Item = T> {
+    pub fn signal(&self) -> impl Signal<Item = T> + use<T> {
         self.actor.signal()
     }
 

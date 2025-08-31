@@ -616,6 +616,16 @@ pub fn error_manager_notifications_signal() -> impl Signal<Item = Vec<crate::sta
         })
 }
 
+/// Get SignalVec for toast notifications - EFFICIENT for items_signal_vec
+pub fn error_manager_notifications_signal_vec() -> impl SignalVec<Item = crate::state::ErrorAlert> {
+    ERROR_MANAGER_SIGNALS.get()
+        .map(|signals| signals.notifications_mutable.signal_vec_cloned())
+        .unwrap_or_else(|| {
+            zoon::eprintln!("⚠️ ErrorManager signals not initialized, returning empty notifications SignalVec");
+            MutableVec::<crate::state::ErrorAlert>::new().signal_vec_cloned()
+        })
+}
+
 /// Get owned signal for file picker error - LIFETIME SAFE
 pub fn error_manager_picker_error_signal() -> impl Signal<Item = Option<String>> {
     ERROR_MANAGER_SIGNALS.get()
