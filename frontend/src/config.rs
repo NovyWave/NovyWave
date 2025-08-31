@@ -227,6 +227,7 @@ pub struct AppConfig {
     // === EVENT RELAYS ===
     pub theme_button_clicked_relay: Relay,
     pub dock_mode_button_clicked_relay: Relay,
+    pub variables_filter_changed_relay: Relay<String>,
     pub panel_dimensions_right_changed_relay: Relay<PanelDimensions>,
     pub panel_dimensions_bottom_changed_relay: Relay<PanelDimensions>,
     pub panel_resized_relay: Relay<PanelDimensions>,
@@ -260,6 +261,7 @@ impl AppConfig {
         // Create relays for all events
         let (theme_button_clicked_relay, theme_button_clicked_stream) = relay();
         let (dock_mode_button_clicked_relay, dock_mode_button_clicked_stream) = relay();
+        let (variables_filter_changed_relay, variables_filter_changed_stream) = relay();
         let (panel_dimensions_right_changed_relay, panel_dimensions_right_changed_stream) = relay();
         let (panel_dimensions_bottom_changed_relay, panel_dimensions_bottom_changed_stream) = relay();
         let (panel_resized_relay, panel_resized_stream) = relay();
@@ -417,9 +419,26 @@ impl AppConfig {
             file_picker_scroll_position: config.workspace.load_files_scroll_position,
             file_picker_expanded_directories: config.workspace.load_files_expanded_directories.clone(),
         }, async move |state| {
-            let mut session_stream = session_state_changed_stream;
-            while let Some(new_session) = session_stream.next().await {
-                state.set_neq(new_session);
+            let mut session_stream = session_state_changed_stream.fuse();
+            let mut variables_filter_stream = variables_filter_changed_stream.fuse();
+            
+            loop {
+                select! {
+                    session_change = session_stream.next() => {
+                        if let Some(new_session) = session_change {
+                            state.set_neq(new_session);
+                        }
+                    }
+                    filter_change = variables_filter_stream.next() => {
+                        if let Some(new_filter) = filter_change {
+                            // Update just the variables_search_filter field
+                            {
+                                let mut session = state.lock_mut();
+                                session.variables_search_filter = new_filter;
+                            }
+                        }
+                    }
+                }
             }
         });
 
@@ -592,6 +611,7 @@ impl AppConfig {
             
             theme_button_clicked_relay,
             dock_mode_button_clicked_relay,
+            variables_filter_changed_relay,
             panel_dimensions_right_changed_relay,
             panel_dimensions_bottom_changed_relay,
             panel_resized_relay,

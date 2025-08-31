@@ -92,13 +92,18 @@ impl TrackedFiles {
                     }
                     completed = completed_stream.next() => {
                         if let Some((file_id, new_state)) = completed {
-                            // zoon::println!("🔄 TrackedFiles: File load completed: {} state={:?}", file_id, new_state);
+                            // File load completed successfully
                             
                             // Update the specific file's state by replacing the entire vector
                             let mut files = files_handle.lock_ref().to_vec();
+                            // Update file state in collection
+                            // Found files list (debug info omitted for performance)
                             if let Some(file) = files.iter_mut().find(|f| f.id == file_id) {
+                                // File state updated successfully
                                 file.state = new_state;
                                 files_handle.lock_mut().replace_cloned(files);
+                            } else {
+                                zoon::println!("❌ TrackedFiles: File with id '{}' not found!", file_id);
                             }
                         }
                     }
@@ -164,7 +169,7 @@ impl TrackedFiles {
     pub fn file_count_signal(&self) -> impl Signal<Item = usize> {
         self.files_signal().map(|files| {
             let count = files.len();
-            zoon::println!("📊 TrackedFiles: Count signal returning: {}", count);
+            // Returning file count
             count
         })
     }

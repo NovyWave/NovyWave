@@ -6,8 +6,8 @@ use moonzoon_novyui::tokens::color::{neutral_1, neutral_2, neutral_4, neutral_8,
 use moonzoon_novyui::components::{kbd, KbdSize, KbdVariant};
 use moonzoon_novyui::tokens::typography::font_mono;
 use shared::{ScopeData, UpMsg, TrackedFile, SelectedVariable, FileState, SignalValueResult};
-use crate::types::{get_variables_from_tracked_files, filter_variables_with_context};
-use crate::virtual_list::virtual_variables_list;
+use crate::types::{get_variables_from_tracked_files, filter_variables_with_context, VariableWithContext};
+use crate::virtual_list::{virtual_variables_list, virtual_variables_list_pre_filtered};
 use crate::config::app_config;
 use crate::dataflow::Atom;
 use std::collections::{HashSet, HashMap};
@@ -1439,20 +1439,10 @@ pub fn variables_panel() -> impl Element {
                         El::new()
                             .s(Font::new().no_wrap().color_signal(neutral_8()).size(13))
                             .child_signal(
-                                map_ref! {
-                                    let selected_scope_id = selected_scope_signal(),
-                                    let search_filter = search_filter_signal(),
-                                    let _loaded_files_count = crate::state::loaded_files_count_signal() =>
-                                    {
-                                        if let Some(scope_id) = selected_scope_id {
-                                            let variables = get_variables_from_tracked_files(&scope_id);
-                                            let filtered_variables = filter_variables_with_context(&variables, &search_filter);
-                                            filtered_variables.len().to_string()
-                                        } else {
-                                            "0".to_string()
-                                        }
-                                    }
-                                }
+                                // ✅ PERFORMANCE FIX: Show filtered variable count, not total
+                                variables_display_signal().map(|filtered_variables| {
+                                    filtered_variables.len().to_string()
+                                })
                             )
                     )
                     .item(
@@ -1959,21 +1949,37 @@ fn simple_variables_content() -> impl Element {
                 .s(Height::fill())
                 .s(Width::fill())
                 .child_signal(
-                    map_ref! {
-                        let selected_scope_id = selected_scope_signal(),
-                        let search_filter = search_filter_signal(),
-                        let _loaded_files_count = crate::state::loaded_files_count_signal() =>
-                        {
-                            if let Some(scope_id) = selected_scope_id {
-                                let variables = get_variables_from_tracked_files(&scope_id);
-                                virtual_variables_list(variables, search_filter.clone()).into_element()
-                            } else {
-                                virtual_variables_list(Vec::new(), "Select a scope to view variables".to_string()).into_element()
-                            }
-                        }
-                    }
+                    // ✅ PERFORMANCE FIX: Signal-level filtering for instant response
+                    variables_display_signal().map(|filtered_variables| {
+                        virtual_variables_list_pre_filtered(filtered_variables).into_element()
+                    })
                 )
         )
+}
+
+/// ✅ PERFORMANCE: Load variables only when scope or files change (not filter)
+fn variables_loading_signal() -> impl Signal<Item = Vec<VariableWithContext>> {
+    map_ref! {
+        let selected_scope_id = selected_scope_signal(),
+        let _tracked_files = crate::actors::global_domains::tracked_files_signal() => {
+            if let Some(scope_id) = selected_scope_id {
+                get_variables_from_tracked_files(&scope_id)
+            } else {
+                Vec::new()
+            }
+        }
+    }
+}
+
+/// ✅ PERFORMANCE: Signal-level filtering for instant response
+fn variables_display_signal() -> impl Signal<Item = Vec<VariableWithContext>> {
+    map_ref! {
+        let variables = variables_loading_signal(),
+        let search_filter = search_filter_signal() => {
+            // Filter at signal level for maximum performance
+            filter_variables_with_context(&variables, &search_filter)
+        }
+    }
 }
 
 

@@ -47,6 +47,17 @@ pub fn virtual_variables_list(variables: Vec<VariableWithContext>, search_filter
     rust_virtual_variables_list_simple_fill(filtered_variables)
 }
 
+/// ✅ PERFORMANCE: Pre-filtered virtual list - no filtering inside, just rendering
+pub fn virtual_variables_list_pre_filtered(filtered_variables: Vec<VariableWithContext>) -> Column<column::EmptyFlagNotSet, RawHtmlEl> {
+    // Handle empty states efficiently
+    if filtered_variables.is_empty() {
+        return Column::new().item(empty_state_hint("No variables match search filter"));
+    }
+    
+    // Direct rendering - filtering already done at signal level
+    rust_virtual_variables_list_simple_fill(filtered_variables)
+}
+
 pub fn rust_virtual_variables_list_simple_fill(variables: Vec<VariableWithContext>) -> Column<column::EmptyFlagNotSet, RawHtmlEl> {
     // zoon::println!("RUST_VIRTUAL_VARIABLES_LIST_SIMPLE_FILL called with {} variables", variables.len());
     // DYNAMIC HEIGHT SOLUTION: Parent-child pattern with real viewport monitoring

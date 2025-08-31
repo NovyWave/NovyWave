@@ -23,24 +23,37 @@ pub fn filter_variables_with_context(variables: &[VariableWithContext], search_f
 
 
 
-/// Get variables from a specific scope using TRACKED_FILES (enables per-file loading)
+/// Get variables from a specific scope using actors (enables per-file loading)
 pub fn get_variables_from_tracked_files(selected_scope_id: &str) -> Vec<VariableWithContext> {
-    use crate::state::TRACKED_FILES;
     use shared::{FileState, find_variables_in_scope};
     
-    let tracked_files = TRACKED_FILES.lock_ref();
+    // Parse scope_ format correctly - it's needed for TreeView identification
+    // The scope ID format is: "scope_{file_path}|{scope_path}"
+    let scope_for_lookup = if selected_scope_id.starts_with("scope_") {
+        &selected_scope_id[6..] // Remove "scope_" prefix for file scope lookup
+    } else {
+        selected_scope_id
+    };
     
-    // Search through all loaded files in TRACKED_FILES
+    // Get tracked files from actor system
+    let tracked_files = if let Some(signals) = crate::actors::global_domains::TRACKED_FILES_SIGNALS.get() {
+        signals.files_mutable.lock_ref().to_vec()
+    } else {
+        Vec::new()
+    };
+    
+    // Find variables in any loaded file that matches the scope
     for tracked_file in tracked_files.iter() {
-        if let FileState::Loaded(waveform_file) = &tracked_file.state {
-            if let Some(variables) = find_variables_in_scope(&waveform_file.scopes, selected_scope_id) {
+        if let shared::FileState::Loaded(waveform_file) = &tracked_file.state {
+            if let Some(variables) = find_variables_in_scope(&waveform_file.scopes, scope_for_lookup) {
                 return variables.into_iter().map(|signal| VariableWithContext {
                     signal,
                     file_id: tracked_file.id.clone(),
-                    scope_id: selected_scope_id.to_string(),
+                    scope_id: scope_for_lookup.to_string(),
                 }).collect();
             }
         }
     }
+    // No variables found in any loaded file for this scope
     Vec::new()
 }

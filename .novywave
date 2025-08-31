@@ -10,11 +10,8 @@ toast_dismiss_ms = 5000
 
 [workspace]
 opened_files = [
-    "/home/martinkavik/repos/NovyWave/test_files/nested_dir/wave_27.fst",
-    "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst",
     "/home/martinkavik/repos/NovyWave/test_files/simple.vcd",
-    "/home/martinkavik/repos/NovyWave/test_files/big_3_GB.vcd",
-    "/home/martinkavik/repos/NovyWave/test_files/stress_test.vcd",
+    "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst",
 ]
 dock_mode = "right"
 expanded_scopes = [
@@ -24,6 +21,8 @@ expanded_scopes = [
     "/home/martinkavik/repos/NovyWave/test_files/nested_dir/wave_27.fst|TOP.VexiiRiscv",
     "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb",
     "/home/martinkavik/repos/NovyWave/test_files/complex.vcd|top",
+    "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst",
+    "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP",
 ]
 load_files_expanded_directories = [
     "/",

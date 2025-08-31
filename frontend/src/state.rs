@@ -226,7 +226,14 @@ pub static LOADING_FILES: Lazy<MutableVec<LoadingFile>> = lazy::default();
 pub static LOADED_FILES: Lazy<MutableVec<WaveformFile>> = lazy::default();
 pub static FILE_PATHS: Lazy<Mutable<IndexMap<String, String>>> = lazy::default();
 
-pub static SELECTED_SCOPE_ID: Lazy<Mutable<Option<String>>> = lazy::default();
+pub static SELECTED_SCOPE_ID: Lazy<Mutable<Option<String>>> = Lazy::new(|| {
+    let mutable = Mutable::new(None);
+    // Debug logging to track scope selection changes
+    Task::start(mutable.signal_cloned().for_each(|scope_id| async move {
+        zoon::println!("🎯 SELECTED_SCOPE_ID changed to: {:?}", scope_id);
+    }));
+    mutable
+});
 pub static TREE_SELECTED_ITEMS: Lazy<Mutable<IndexSet<String>>> = lazy::default(); // UI state only - not persisted
 pub static USER_CLEARED_SELECTION: Lazy<Mutable<bool>> = lazy::default(); // Flag to prevent unwanted restoration
 

@@ -20,6 +20,7 @@ use shared::SelectedVariable;
 use zoon::{SignalVecExt, MutableExt, MutableVecExt, SignalExt};
 use indexmap::IndexSet;
 use futures::{StreamExt, future::{select, Either}};
+use crate::state; // For SELECTED_SCOPE_ID access
 
 // Note: Using global_domains SELECTED_VARIABLES_DOMAIN_INSTANCE instead of local static
 
@@ -452,8 +453,8 @@ pub fn selection_cleared_relay() -> Relay<()> {
 
 /// User typed in variable filter/search box
 pub fn search_filter_changed_relay() -> Relay<String> {
-    use crate::actors::global_domains::selected_variables_domain;
-    selected_variables_domain().search_filter_changed_relay
+    // ✅ PROPER ACTOR+RELAY: Connect directly to app config for persistence
+    crate::config::app_config().variables_filter_changed_relay.clone()
 }
 
 /// Search input focus changed
@@ -504,13 +505,27 @@ pub fn variable_index_signal() -> impl zoon::Signal<Item = IndexSet<String>> {
     signal.signal_cloned()
 }
 
-/// Get reactive signal for selected scope → SIMPLE ACTOR+RELAY APPROACH
+/// Get reactive signal for selected scope → CONNECTED TO REAL SELECTED_SCOPE_ID
 pub fn selected_scope_signal() -> impl zoon::Signal<Item = Option<String>> {
+    // ✅ PROPER FIX: Create a signal that starts with current value and updates on changes
     use std::sync::OnceLock;
-    static SELECTED_SCOPE_SIGNAL: OnceLock<zoon::Mutable<Option<String>>> = OnceLock::new();
+    static SCOPE_SIGNAL: OnceLock<zoon::Mutable<Option<String>>> = OnceLock::new();
     
-    let signal = SELECTED_SCOPE_SIGNAL.get_or_init(|| zoon::Mutable::new(None));
-    signal.signal_cloned()
+    let scope_signal = SCOPE_SIGNAL.get_or_init(|| {
+        let initial_value = state::SELECTED_SCOPE_ID.get_cloned();
+        let signal = zoon::Mutable::new(initial_value);
+        
+        // Keep this signal in sync with SELECTED_SCOPE_ID changes
+        let signal_clone = signal.clone();
+        zoon::Task::start(state::SELECTED_SCOPE_ID.signal_cloned().for_each(move |new_value| {
+            signal_clone.set_neq(new_value);
+            async {}
+        }));
+        
+        signal
+    });
+    
+    scope_signal.signal_cloned()
 }
 
 /// Get reactive signal for tree selection → SIMPLE ACTOR+RELAY APPROACH

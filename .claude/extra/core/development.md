@@ -152,6 +152,50 @@ eprintln!("Error: {}", error);                // Wrong function for WASM
 - Standard `eprintln!` does nothing in WASM environments
 - Error emojis (🚨⚠️) make errors easily visible in console logs
 
+### CRITICAL: Avoid Logging Large Structs
+
+**❌ NEVER LOG LARGE STRUCTS WITH DEBUG FORMATTING:**
+```rust
+// ANTIPATTERN: Massive console spam
+zoon::println!("File loaded: {:?}", waveform_file);  // 970kb+ of output!
+zoon::println!("Config updated: {:?}", entire_config);  // Huge struct dump
+```
+
+**✅ CORRECT: Log minimal identifying information:**
+```rust
+// Only log essential identifying info
+zoon::println!("File loaded: {}", waveform_file.id);
+zoon::println!("File loaded: {} ({} scopes, {} variables)", 
+    file.id, file.scopes.len(), total_variables);
+zoon::println!("Config updated: {} fields changed", changed_fields.len());
+```
+
+**Why large struct logging is harmful:**
+- **Performance**: 970kb+ console output blocks browser rendering
+- **Manual debugging**: Massive logs make finding actual issues impossible
+- **Automated testing**: Breaks programmatic log parsing and testing tools
+- **Development experience**: Console becomes unusable, slows down iteration
+
+**Smart logging alternatives:**
+```rust
+// Custom Debug implementations for large structs
+impl fmt::Debug for WaveformFile {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "WaveformFile({}, {} scopes)", self.id, self.scopes.len())
+    }
+}
+
+// Selective field logging
+zoon::println!("WaveformFile loaded: id={}, format={:?}, scopes={}, time_range={:?}", 
+    file.id, file.format, file.scopes.len(), (file.min_time_ns, file.max_time_ns));
+
+// Use conditional debug logging
+#[cfg(debug_assertions)]
+if VERBOSE_LOGGING.get() {
+    zoon::println!("Full struct: {:?}", large_struct);  // Only when explicitly enabled
+}
+```
+
 ### Copy vs Clone for Simple Types
 
 **Prefer `Copy` trait for simple types that should have value semantics:**

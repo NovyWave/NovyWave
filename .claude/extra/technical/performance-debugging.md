@@ -103,3 +103,130 @@ Task::start(async move {
 - **Clean console**: Only essential initialization logs
 - **Responsive UI**: TreeView expansion works without lag
 - **Config restoration**: Saved expanded state visible on load
+
+## Variables Panel Filtering Performance Issues
+
+### Critical Performance Problem (Resolved)
+**Issue**: Filter input changes were triggering expensive file re-processing operations on every keystroke.
+
+### Symptoms
+- **Console spam**: 821,470+ tokens of debug logs from single filter change
+- **Expensive operations**: `get_variables_from_tracked_files()` called on every keystroke processing 5,371+ variables
+- **Verbose logging**: Entire WaveformFile structures dumped to console (970kb+ spam)
+- **Poor UX**: Sluggish filtering with noticeable delays
+
+### Root Cause Analysis
+```rust
+// ❌ WRONG: Filtering inside UI function triggers file processing
+map_ref! {
+    let variables = variables_loading_signal(),
+    let search_filter = search_filter_signal() => {
+        // This calls expensive file processing on every filter change!
+        virtual_variables_list(variables.clone(), search_filter.clone()).into_element()
+    }
+}
+```
+
+### Solution: Signal-Level Filtering Architecture
+```rust
+// ✅ CORRECT: Separate expensive loading from cheap filtering
+fn variables_loading_signal() -> impl Signal<Item = Vec<VariableWithContext>> {
+    // Only depends on scope/files - expensive operations
+    map_ref! {
+        let selected_scope_id = selected_scope_signal(),
+        let _tracked_files = tracked_files_signal() => {
+            get_variables_from_tracked_files(&scope_id) // Expensive - scope changes only
+        }
+    }
+}
+
+fn variables_display_signal() -> impl Signal<Item = Vec<VariableWithContext>> {
+    // Only depends on loaded variables + filter - cheap operations
+    map_ref! {
+        let variables = variables_loading_signal(),
+        let search_filter = search_filter_signal() => {
+            filter_variables_with_context(&variables, &search_filter) // Cheap filtering
+        }
+    }
+}
+
+// UI uses pre-filtered signal
+variables_display_signal().map(|filtered_variables| {
+    virtual_variables_list_pre_filtered(filtered_variables).into_element()
+})
+```
+
+### Performance Results
+- **Before**: 821,470+ console log tokens, file re-processing on every keystroke
+- **After**: Clean console logs, instant filtering of 5,371+ variables
+- **Dynamic count**: Variables count shows filtered results (5371 → 608 → 1)
+- **Config persistence**: Filter values properly saved and restored
+
+### Key Lessons
+1. **Separate concerns**: Expensive data loading vs cheap filtering operations
+2. **Signal-level operations**: Move filtering logic to signal level, not UI components
+3. **Clean up debug logs**: Remove excessive logging from hot paths
+4. **Unified state management**: Single signal source for both count and content
+
+## Critical Performance Antipattern: Accidental Recreation
+
+### The Problem
+**Recreating elements or datasets on every signal change** causes severe performance issues and poor UX.
+
+### Common Symptoms
+- **Flickering UI**: Elements disappear and reappear on every update
+- **Sluggish performance**: UI feels unresponsive during interactions
+- **Console spam**: Excessive rendering or processing logs
+- **Memory churn**: High allocation/deallocation patterns
+
+### Dangerous Patterns
+```rust
+// ❌ RECREATING ELEMENTS: New DOM elements on every signal change
+signal.map(|data| {
+    Column::new()
+        .items(data.iter().map(|item| create_element(item))) // NEW elements every time!
+})
+
+// ❌ RECREATING DATASETS: Expensive recomputation on every change
+signal.map(|raw_data| {
+    let processed = expensive_processing(raw_data); // Reprocesses everything!
+    render_data(processed)
+})
+
+// ❌ RECREATING SIGNAL CHAINS: New reactive chains on every update
+signal.map(|state| {
+    state.items.signal_vec_cloned().to_signal_cloned() // New signal chain!
+        .map(|items| render(items))
+})
+```
+
+### Solutions
+```rust
+// ✅ STABLE ELEMENTS: Update content, don't recreate DOM
+.items_signal_vec(
+    data.signal_vec().map(|item| {
+        update_existing_element(item) // Update existing element
+    })
+)
+
+// ✅ CACHED PROCESSING: Only recompute when input actually changes
+let processed_data = expensive_data.signal().dedupe().map(|raw| {
+    expensive_processing(raw) // Only when data actually changes
+});
+
+// ✅ STABLE SIGNAL CHAINS: Create signals once, update content
+let stable_signal = create_signal_once();
+stable_signal.map(|content| update_display(content))
+```
+
+### Prevention Strategies
+1. **Use `.dedupe()`** on signals to prevent unnecessary updates
+2. **Cache expensive computations** - only recompute when inputs change
+3. **Update existing elements** instead of recreating DOM nodes
+4. **Separate data loading from presentation** to avoid coupled recreation
+5. **Monitor console logs** for patterns indicating excessive recreation
+
+### Real-World Example
+The Variables panel filtering fix demonstrates this principle:
+- **Before**: Recreated filter logic on every keystroke → expensive file processing
+- **After**: Separated data loading (stable) from filtering (updates only when needed) → instant response

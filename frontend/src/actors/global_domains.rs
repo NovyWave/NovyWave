@@ -36,13 +36,13 @@ static ERROR_MANAGER_DOMAIN_INSTANCE: OnceLock<ErrorManager> = OnceLock::new();
 /// Static signal storage for TrackedFiles domain
 /// Enables UI components to use `tracked_files_signal().map(...)` patterns
 /// by providing owned signals that survive domain instance lifecycle
-struct TrackedFilesSignalStorage {
-    files_mutable: MutableVec<TrackedFile>,
-    loading_files_mutable: MutableVec<LoadingFile>, 
-    loaded_files_mutable: MutableVec<WaveformFile>,
-    is_loading_mutable: Mutable<bool>,
-    file_ids_mutable: Mutable<IndexSet<String>>,
-    file_paths_mutable: Mutable<IndexMap<String, String>>,
+pub struct TrackedFilesSignalStorage {
+    pub files_mutable: MutableVec<TrackedFile>,
+    pub loading_files_mutable: MutableVec<LoadingFile>, 
+    pub loaded_files_mutable: MutableVec<WaveformFile>,
+    pub is_loading_mutable: Mutable<bool>,
+    pub file_ids_mutable: Mutable<IndexSet<String>>,
+    pub file_paths_mutable: Mutable<IndexMap<String, String>>,
 }
 
 impl TrackedFilesSignalStorage {
@@ -59,7 +59,7 @@ impl TrackedFilesSignalStorage {
 }
 
 /// Global TrackedFiles signal storage
-static TRACKED_FILES_SIGNALS: OnceLock<TrackedFilesSignalStorage> = OnceLock::new();
+pub static TRACKED_FILES_SIGNALS: OnceLock<TrackedFilesSignalStorage> = OnceLock::new();
 
 /// Static signal storage for SelectedVariables domain  
 struct SelectedVariablesSignalStorage {
