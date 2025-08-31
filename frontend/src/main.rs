@@ -27,6 +27,8 @@ mod platform;
 mod config;
 use shared;
 
+mod dragging;
+
 mod types;
 
 mod time_types;
@@ -39,13 +41,12 @@ use views::*;
 mod state;
 use state::*;
 use actors::waveform_timeline::{current_viewport};
-use actors::panel_layout::{
-    files_width_signal, files_height_signal, vertical_dragging_signal, horizontal_dragging_signal,
-    name_divider_dragging_signal, value_divider_dragging_signal, docked_to_bottom_signal,
-    vertical_divider_dragged_relay, horizontal_divider_dragged_relay,
-    name_divider_dragged_relay, value_divider_dragged_relay,
-    mouse_moved_relay, is_dock_transitioning
+use dragging::{
+    files_panel_width_signal, files_panel_height_signal, 
+    variables_name_column_width_signal, variables_value_column_width_signal,
+    is_any_divider_dragging, process_drag_movement, DividerType
 };
+use config::app_config;
 use actors::dialog_manager::{dialog_visible_signal, file_picker_selected_signal};
 
 
@@ -284,21 +285,76 @@ fn root() -> impl Element {
 }
 
 
+fn drag_overlay() -> impl Element {
+    // Full-screen transparent overlay for consistent drag handling
+    // Similar to Load Files dialog overlay but transparent and for drag operations
+    El::new()
+        .s(Background::new().color("rgba(0, 0, 0, 0)")) // Completely transparent
+        .s(Width::fill())
+        .s(Height::fill())
+        .s(Align::center())
+        .update_raw_el(|raw_el| {
+            raw_el
+                .style("position", "fixed")
+                .style("top", "0")
+                .style("left", "0") 
+                .style("z-index", "999") // High z-index to capture events
+                .style("pointer-events", "auto") // Ensure it captures mouse events
+        })
+        .on_pointer_move_event({
+            let last_x = Mutable::new(0.0f32);
+            let last_y = Mutable::new(0.0f32);
+            let is_first_move = Mutable::new(true);
+            
+            move |event| {
+                let current_x = event.x() as f32;
+                let current_y = event.y() as f32;
+                
+                if is_first_move.get() {
+                    // First move - just store position, don't send delta
+                    last_x.set_neq(current_x);
+                    last_y.set_neq(current_y);
+                    is_first_move.set_neq(false);
+                    zoon::println!("🎯 DRAG OVERLAY: First move at ({}, {})", current_x, current_y);
+                } else {
+                    // Calculate deltas from absolute coordinates
+                    let delta_x = current_x - last_x.get();
+                    let delta_y = current_y - last_y.get();
+                    
+                    // Send absolute position to new dragging system
+                    process_drag_movement((current_x, current_y));
+                    
+                    // Update last position for next delta calculation
+                    last_x.set_neq(current_x);
+                    last_y.set_neq(current_y);
+                    
+                    // Debug: Log every 10th movement to avoid spam
+                    if (current_x as i32 % 10 == 0) {
+                        zoon::println!("🔄 DRAG OVERLAY: Δ({:.1}, {:.1}) at ({:.1}, {:.1})", delta_x, delta_y, current_x, current_y);
+                    }
+                }
+            }
+        })
+        .on_pointer_up(|| {
+            zoon::println!("🎯 DRAG OVERLAY: Pointer up - ending drag");
+            dragging::end_drag();
+        })
+        .on_pointer_leave(|| {
+            zoon::println!("🎯 DRAG OVERLAY: Pointer leave - ending drag");
+            dragging::end_drag();
+        })
+}
+
 fn main_layout() -> impl Element {
-    let is_any_divider_dragging = map_ref! {
-        let vertical = vertical_dragging_signal(),
-        let horizontal = horizontal_dragging_signal(),
-        let vars_name = name_divider_dragging_signal(),
-        let vars_value = value_divider_dragging_signal() =>
-        *vertical || *horizontal || *vars_name || *vars_value
-    };
+    let is_any_divider_dragging_1 = is_any_divider_dragging();
+    let is_any_divider_dragging_2 = is_any_divider_dragging();
 
     El::new()
         .s(Height::screen())
         .s(Width::fill())
         // TEST 3: Remove root container scrollbars
         .text_content_selecting_signal(
-            is_any_divider_dragging.map(|is_dragging| {
+            is_any_divider_dragging_1.map(|is_dragging| {
                 if is_dragging {
                     TextContentSelecting::none()
                 } else {
@@ -307,39 +363,19 @@ fn main_layout() -> impl Element {
             })
         )
         .s(Cursor::with_signal(
-            map_ref! {
-                let vertical = vertical_dragging_signal(),
-                let horizontal = horizontal_dragging_signal(),
-                let vars_name = name_divider_dragging_signal(),
-                let vars_value = value_divider_dragging_signal() =>
-                if *vertical || *vars_name || *vars_value {
+            is_any_divider_dragging_2.map(|dragging| {
+                if dragging {
                     Some(CursorIcon::ColumnResize)
-                } else if *horizontal {
-                    Some(CursorIcon::RowResize)
                 } else {
                     None
                 }
-            }
+            })
         ))
         .on_pointer_up(|| {
-            vertical_divider_dragged_relay().send(0.0);
-            horizontal_divider_dragged_relay().send(0.0);
-            name_divider_dragged_relay().send(0.0);
-            value_divider_dragged_relay().send(0.0);
+            dragging::end_drag();
         })
         .on_pointer_leave(|| {
-            vertical_divider_dragged_relay().send(0.0);
-            horizontal_divider_dragged_relay().send(0.0);
-            name_divider_dragged_relay().send(0.0);
-            value_divider_dragged_relay().send(0.0);
-        })
-        .on_pointer_move_event(|event| {
-            // Send mouse movement to panel layout domain to handle dragging
-            mouse_moved_relay().send((event.movement_x() as f32, event.movement_y() as f32));
-            
-            // TODO: Handle config saving when layout changes
-            // This was previously done inline but should be handled via actor signals
-            // Config loading checks and saving are now handled automatically by the ConfigSaver actor
+            dragging::end_drag();
         })
         .update_raw_el(move |raw_el| {
             raw_el.global_event_handler(move |event: zoon::events::KeyDown| {
@@ -477,7 +513,25 @@ fn main_layout() -> impl Element {
                 }
             })
         })
-        .child(docked_layout_wrapper())
+        .child(layout_with_drag_overlay())
+}
+
+// Layout with conditional drag overlay
+fn layout_with_drag_overlay() -> impl Element {
+    let is_any_divider_dragging = is_any_divider_dragging();
+
+    // Use Stack to layer the overlay over the main layout
+    Stack::new()
+        .s(Height::fill())
+        .s(Width::fill())
+        .layer(docked_layout_wrapper()) // Base layer: main layout
+        .layer_signal(is_any_divider_dragging.map(|is_dragging| {
+            if is_dragging {
+                Some(drag_overlay())
+            } else {
+                None
+            }
+        })) // Overlay layer: drag overlay when dragging
 }
 
 // Wrapper function that switches between docked and undocked layouts
@@ -486,7 +540,8 @@ fn docked_layout_wrapper() -> impl Element {
         .s(Height::screen())
         .s(Width::fill())
         // TEST 3: Remove root container scrollbars
-        .child_signal(docked_to_bottom_signal().map(|is_docked| {
+        .child_signal(crate::config::app_config().dock_mode_actor.signal().map(|dock_mode| {
+            let is_docked = matches!(dock_mode, shared::DockMode::Bottom);
             if is_docked {
                 // Docked to Bottom layout
                 El::new()
@@ -497,15 +552,15 @@ fn docked_layout_wrapper() -> impl Element {
                             .s(Width::fill())
                             .item(
                                 Row::new()
-                                    .s(Height::exact_signal(files_height_signal()))
+                                    .s(Height::exact_signal(files_panel_height_signal().map(|h| h as u32)))
                                     .s(Width::fill())
                                     .item(
                                         El::new()
-                                            .s(Width::exact_signal(files_width_signal()))
+                                            .s(Width::exact_signal(files_panel_width_signal().map(|w| w as u32)))
                                             .s(Height::fill())
                                             .child(files_panel_with_height())
                                     )
-                                    .item(vertical_divider(vertical_dragging_signal()))
+                                    .item(views::files_panel_vertical_divider())
                                     .item(
                                         El::new()
                                             .s(Width::fill())
@@ -513,7 +568,7 @@ fn docked_layout_wrapper() -> impl Element {
                                             .child(variables_panel_with_fill())
                                     )
                             )
-                            .item(horizontal_divider(horizontal_dragging_signal()))
+                            .item(views::files_panel_horizontal_divider())
                             .item(
                                 El::new()
                                     .s(Width::fill())
@@ -532,17 +587,17 @@ fn docked_layout_wrapper() -> impl Element {
                             .s(Width::fill())
                             .item(
                                 El::new()
-                                    .s(Width::exact_signal(files_width_signal()))
+                                    .s(Width::exact_signal(files_panel_width_signal().map(|w| w as u32)))
                                     .s(Height::fill())
                                     .child(
                                         Column::new()
                                             .s(Height::fill())
                                             .item(files_panel_with_height())
-                                            .item(horizontal_divider(horizontal_dragging_signal()))
+                                            .item(views::files_panel_horizontal_divider())
                                             .item(variables_panel_with_fill())
                                     )
                             )
-                            .item(vertical_divider(vertical_dragging_signal()))
+                            .item(views::files_panel_vertical_divider())
                             .item(
                                 El::new()
                                     .s(Width::fill())

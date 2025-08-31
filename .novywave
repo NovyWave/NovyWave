@@ -42,13 +42,13 @@ timeline_visible_range_start_ns = 0
 timeline_visible_range_end_ns = 100000000000
 
 [workspace.docked_bottom_dimensions]
-files_and_scopes_panel_width = 300.0
-files_and_scopes_panel_height = 250.0
-selected_variables_panel_name_column_width = 180.0
-selected_variables_panel_value_column_width = 100.0
+files_and_scopes_panel_width = 859.0
+files_and_scopes_panel_height = 609.0
+selected_variables_panel_name_column_width = 200.0
+selected_variables_panel_value_column_width = 400.0
 
 [workspace.docked_right_dimensions]
-files_and_scopes_panel_width = 300.0
-files_and_scopes_panel_height = 250.0
-selected_variables_panel_name_column_width = 180.0
-selected_variables_panel_value_column_width = 100.0
+files_and_scopes_panel_width = 510.0
+files_and_scopes_panel_height = 525.0
+selected_variables_panel_name_column_width = 200.0
+selected_variables_panel_value_column_width = 400.0

@@ -274,6 +274,11 @@ impl AppConfig {
         let (dialogs_data_changed_relay, dialogs_data_changed_stream) = relay();
         let (config_loaded_relay, config_loaded_stream) = relay::<SharedAppConfig>();
 
+        // Clone relays for use in multiple Actors to avoid move issues
+        let panel_dimensions_right_changed_relay_clone = panel_dimensions_right_changed_relay.clone();
+        let panel_dimensions_bottom_changed_relay_clone = panel_dimensions_bottom_changed_relay.clone();
+        let panel_resized_relay_clone = panel_resized_relay.clone();
+
         // Create theme actor with loaded config value
         let theme_actor = Actor::new(config.ui.theme, async move |state| {
             let mut theme_button_clicked_stream = theme_button_clicked_stream.fuse();
@@ -318,31 +323,121 @@ impl AppConfig {
         // Create dock mode actor with loaded config value
         let dock_mode_actor = Actor::new(
             config.workspace.dock_mode.clone(), 
-            async move |state| {
+            {
+                let panel_dimensions_right_changed_relay = panel_dimensions_right_changed_relay_clone.clone();
+                let panel_dimensions_bottom_changed_relay = panel_dimensions_bottom_changed_relay_clone.clone();
+                async move |state| {
             let mut dock_mode_button_clicked_stream = dock_mode_button_clicked_stream.fuse();
             
             loop {
                 select! {
                     button_click = dock_mode_button_clicked_stream.next() => {
                         if let Some(()) = button_click {
-                            zoon::println!("🚢 Dock Actor: Processing button click");
-                            // ✅ Read and modify state directly
-                            {
+                            zoon::println!("🚢 Dock Actor: Processing button click - implementing proper dimension preservation");
+                            
+                            // Get current panel dimensions from Actors BEFORE switching mode
+                            let current_files_height = crate::actors::panel_layout::current_files_panel_height();
+                            let current_name_width = crate::actors::panel_layout::current_variables_name_column_width();
+                            let current_value_width = crate::actors::panel_layout::current_variables_value_column_width();
+                            
+                            zoon::println!("💾 DOCK SWITCH: Current dimensions before switch: height={}, name={}, value={}", 
+                                current_files_height, current_name_width, current_value_width);
+                            
+                            // ✅ Read and modify dock mode
+                            let (old_mode, new_mode) = {
                                 let mut dock_mode = state.lock_mut();
                                 let old_mode = *dock_mode;
                                 *dock_mode = match *dock_mode {
                                     DockMode::Right => DockMode::Bottom,
                                     DockMode::Bottom => DockMode::Right,
                                 };
-                                zoon::println!("🚢 Dock Actor: Toggling from {:?} to {:?}", old_mode, *dock_mode);
+                                let new_mode = *dock_mode;
+                                (old_mode, new_mode)
+                            };
+                            
+                            zoon::println!("🚢 Dock Actor: Switching from {:?} to {:?}", old_mode, new_mode);
+                            
+                            // 📁 CRITICAL: Save current mode's dimensions before switching
+                            // ✅ FIX: Don't overwrite existing config values - only save current Actor values for ACTIVE dimensions
+                            match old_mode {
+                                DockMode::Right => {
+                                    // Update Right dock dimensions - keep existing values, only update what's currently active  
+                                    let current_dims = crate::config::app_config().panel_dimensions_right_actor.signal().to_stream().next().await.unwrap();
+                                    let updated_dims = PanelDimensions {
+                                        files_panel_width: current_dims.files_panel_width, // Keep existing
+                                        files_panel_height: current_dims.files_panel_height, // Keep existing - don't overwrite with shared Actor
+                                        variables_panel_width: current_dims.variables_panel_width, // Keep existing
+                                        timeline_panel_height: current_dims.timeline_panel_height, // Keep existing
+                                        variables_name_column_width: current_name_width as f32, // Update from Actor (this is actively used)
+                                        variables_value_column_width: current_value_width as f32, // Update from Actor (this is actively used)
+                                    };
+                                    panel_dimensions_right_changed_relay.send(updated_dims);
+                                    zoon::println!("💾 DOCK SWITCH: Preserved Right mode dimensions: height={} (kept), name={}, value={}", 
+                                        current_dims.files_panel_height, current_name_width, current_value_width);
+                                }
+                                DockMode::Bottom => {
+                                    // Update Bottom dock dimensions - keep existing values, only update what's currently active
+                                    let current_dims = crate::config::app_config().panel_dimensions_bottom_actor.signal().to_stream().next().await.unwrap();
+                                    let updated_dims = PanelDimensions {
+                                        files_panel_width: current_dims.files_panel_width, // Keep existing 
+                                        files_panel_height: current_dims.files_panel_height, // Keep existing - don't overwrite with shared Actor
+                                        variables_panel_width: current_dims.variables_panel_width, // Keep existing
+                                        timeline_panel_height: current_dims.timeline_panel_height, // Keep existing
+                                        variables_name_column_width: current_name_width as f32, // Update from Actor (this is actively used)
+                                        variables_value_column_width: current_value_width as f32, // Update from Actor (this is actively used)
+                                    };
+                                    panel_dimensions_bottom_changed_relay.send(updated_dims);
+                                    zoon::println!("💾 DOCK SWITCH: Preserved Bottom mode dimensions: height={} (kept), name={}, value={}", 
+                                        current_dims.files_panel_height, current_name_width, current_value_width);
+                                }
                             }
+                            
+                            // 📂 CRITICAL: Load new mode's saved dimensions to Actors
+                            Task::start({
+                                let new_mode = new_mode;
+                                async move {
+                                    Timer::sleep(50).await; // Small delay to ensure config actors are updated
+                                    
+                                    match new_mode {
+                                        DockMode::Right => {
+                                            // Load Right dock dimensions and update Actors
+                                            let right_config = crate::config::app_config().panel_dimensions_right_actor.signal().to_stream().next().await;
+                                            if let Some(dims) = right_config {
+                                                zoon::println!("📂 DOCK SWITCH: Loading Right mode dimensions: height={}, name={}, value={}", 
+                                                    dims.files_panel_height, dims.variables_name_column_width, dims.variables_value_column_width);
+                                                
+                                                // Force sync all Actors to Right mode values
+                                                crate::actors::panel_layout::set_files_panel_height(dims.files_panel_height as u32);
+                                                crate::actors::panel_layout::set_variables_name_column_width(dims.variables_name_column_width as u32);
+                                                crate::actors::panel_layout::set_variables_value_column_width(dims.variables_value_column_width as u32);
+                                            }
+                                        }
+                                        DockMode::Bottom => {
+                                            // Load Bottom dock dimensions and update Actors
+                                            let bottom_config = crate::config::app_config().panel_dimensions_bottom_actor.signal().to_stream().next().await;
+                                            if let Some(dims) = bottom_config {
+                                                zoon::println!("📂 DOCK SWITCH: Loading Bottom mode dimensions: height={}, name={}, value={}", 
+                                                    dims.files_panel_height, dims.variables_name_column_width, dims.variables_value_column_width);
+                                                
+                                                // Force sync all Actors to Bottom mode values
+                                                crate::actors::panel_layout::set_files_panel_height(dims.files_panel_height as u32);
+                                                crate::actors::panel_layout::set_variables_name_column_width(dims.variables_name_column_width as u32);
+                                                crate::actors::panel_layout::set_variables_value_column_width(dims.variables_value_column_width as u32);
+                                            }
+                                        }
+                                    }
+                                }
+                            });
+                            
+                            zoon::println!("✅ DOCK SWITCH: Complete - dimensions preserved independently for both modes");
                         }
                     }
                 }
             }
+            }
         });
 
-        // Create panel dimensions actors with loaded config values
+        // Create panel dimensions actors with loaded config values        
         let panel_dimensions_right_actor = Actor::new(PanelDimensions {
             files_panel_width: config.workspace.docked_right_dimensions.files_and_scopes_panel_width as f32,
             files_panel_height: config.workspace.docked_right_dimensions.files_and_scopes_panel_height as f32,
@@ -351,8 +446,8 @@ impl AppConfig {
             variables_name_column_width: config.workspace.docked_right_dimensions.selected_variables_panel_name_column_width.unwrap_or(150.0) as f32,
             variables_value_column_width: config.workspace.docked_right_dimensions.selected_variables_panel_value_column_width.unwrap_or(150.0) as f32,
         }, async move |state| {
-            let mut right_stream = panel_dimensions_right_changed_stream.fuse();
-            let mut resized_stream = panel_resized_stream.fuse();
+            let mut right_stream = panel_dimensions_right_changed_relay_clone.subscribe().fuse();
+            let mut resized_stream = panel_resized_relay_clone.subscribe().fuse();
             
             loop {
                 select! {
@@ -379,9 +474,16 @@ impl AppConfig {
             variables_name_column_width: config.workspace.docked_bottom_dimensions.selected_variables_panel_name_column_width.unwrap_or(150.0) as f32,
             variables_value_column_width: config.workspace.docked_bottom_dimensions.selected_variables_panel_value_column_width.unwrap_or(150.0) as f32,
         }, async move |state| {
-            let mut bottom_stream = panel_dimensions_bottom_changed_stream;
-            while let Some(new_dims) = bottom_stream.next().await {
-                state.set_neq(new_dims);
+            let mut bottom_stream = panel_dimensions_bottom_changed_relay_clone.subscribe().fuse();
+            
+            loop {
+                select! {
+                    new_dims = bottom_stream.next() => {
+                        if let Some(dims) = new_dims {
+                            state.set_neq(dims);
+                        }
+                    }
+                }
             }
         });
 

@@ -17,7 +17,9 @@
 
 use crate::actors::{Actor, Relay, relay};
 use shared::DockMode;
+use std::sync::OnceLock;
 use zoon::*;
+use futures::{StreamExt, select};
 
 // Note: Using global_domains PANEL_LAYOUT_DOMAIN_INSTANCE instead of local static
 
@@ -216,18 +218,533 @@ impl PanelLayout {
         let (viewport_resized_relay, _viewport_resized_stream) = relay();
         
         // Use placeholder actors for now - will be properly implemented later
-        let files_panel_width = Actor::new(470, async move |_handle| {
-            // TODO: Implement proper actor processor
-        });
-        let files_panel_height = Actor::new(300, async move |_handle| {
-            // TODO: Implement proper actor processor  
-        });
-        let variables_name_column_width = Actor::new(180, async move |_handle| {
-            // TODO: Implement proper actor processor
-        });
-        let variables_value_column_width = Actor::new(100, async move |_handle| {
-            // TODO: Implement proper actor processor
-        });
+        let files_panel_width = {
+            let drag_mouse_moved_relay_clone = drag_mouse_moved_relay.clone();
+            Actor::new(470, async move |handle| {
+                let mut drag_mouse_moved_stream = drag_mouse_moved_relay_clone.subscribe().fuse();
+            let mut files_vertical_dragging_stream = crate::actors::global_domains::panel_layout_files_vertical_dragging_signal().to_stream().fuse();
+            
+            let mut is_dragging = false;
+            zoon::println!("🚀 Files panel width Actor initialized");
+            
+            loop {
+                select! {
+                    dragging_event = files_vertical_dragging_stream.next() => {
+                        match dragging_event {
+                            Some(dragging_state) => {
+                                // Sync Actor state with current dock-specific width when dragging starts
+                                if dragging_state && !is_dragging {
+                                    let config = crate::config::app_config();
+                                    let config_clone = config.clone();
+                                    let handle_clone = handle.clone();
+                                    Task::start(async move {
+                                        let current_dock_mode = config_clone.dock_mode_actor.signal().to_stream().next().await;
+                                        let current_width = match current_dock_mode {
+                                            Some(shared::DockMode::Right) => {
+                                                if let Some(dims) = config_clone.panel_dimensions_right_actor.signal().to_stream().next().await {
+                                                    dims.files_panel_width as u32
+                                                } else { 470 }
+                                            }
+                                            Some(shared::DockMode::Bottom) => {
+                                                if let Some(dims) = config_clone.panel_dimensions_bottom_actor.signal().to_stream().next().await {
+                                                    dims.files_panel_width as u32
+                                                } else { 470 }
+                                            }
+                                            None => 470
+                                        };
+                                        handle_clone.set(current_width);
+                                        zoon::println!("🎯 Synced Actor width to current dock: {}", current_width);
+                                    });
+                                }
+                                is_dragging = dragging_state;
+                                zoon::println!("🎯 Files panel dragging state: {}", is_dragging);
+                            }
+                            None => break, // Stream ended
+                        }
+                    }
+                    mouse_event = drag_mouse_moved_stream.next() => {
+                        match mouse_event {
+                            Some((movement_x, _movement_y)) => {
+                                if is_dragging {
+                                    // Get current width and apply movement
+                                    let current_width = handle.get();
+                                    let movement_x: f32 = movement_x;  // Explicit type
+                                    let new_width_f32: f32 = (current_width as f32 + movement_x).max(200.0).min(800.0);
+                                    let new_width = new_width_f32 as u32;
+                                    
+                                    if new_width != current_width {
+                                        handle.set(new_width);
+                                        
+                                        // Update only the current dock mode's dimensions to preserve independence
+                                        let config = crate::config::app_config();
+                                        
+                                        // Get current dock mode - we need to check which mode is active
+                                        // Since we can't get sync values from Actor signals easily, let's use both
+                                        // and let the config system handle which one is currently active
+                                        
+                                        // Get current right dimensions and update just the width
+                                        let config_clone = config.clone();
+                                        Task::start(async move {
+                                            let current_dock_mode = config_clone.dock_mode_actor.signal().to_stream().next().await;
+                                            
+                                            match current_dock_mode {
+                                                Some(shared::DockMode::Right) => {
+                                                    if let Some(mut current_dims) = config_clone.panel_dimensions_right_actor.signal().to_stream().next().await {
+                                                        current_dims.files_panel_width = new_width as f32;
+                                                        config_clone.panel_dimensions_right_changed_relay.send(current_dims);
+                                                        zoon::println!("🔄 Updated RIGHT dock dimensions: width = {}", new_width);
+                                                    }
+                                                }
+                                                Some(shared::DockMode::Bottom) => {
+                                                    if let Some(mut current_dims) = config_clone.panel_dimensions_bottom_actor.signal().to_stream().next().await {
+                                                        current_dims.files_panel_width = new_width as f32;
+                                                        config_clone.panel_dimensions_bottom_changed_relay.send(current_dims);
+                                                        zoon::println!("🔄 Updated BOTTOM dock dimensions: width = {}", new_width);
+                                                    }
+                                                }
+                                                None => {
+                                                    zoon::eprintln!("⚠️ Could not determine dock mode for width update");
+                                                }
+                                            }
+                                        });
+                                        
+                                        zoon::println!("🔄 Panel width: {} -> {} (Δ{}) - Config updated", current_width, new_width, movement_x);
+                                    }
+                                }
+                            }
+                            None => break, // Stream ended
+                        }
+                    }
+                }
+            }
+        })
+        };
+        let files_panel_height = {
+            let drag_mouse_moved_relay_clone = drag_mouse_moved_relay.clone();
+            
+            // Use reasonable default - the bridge initialization will set the correct value
+            let initial_height = 400u32;
+            zoon::println!("🔧 INIT: files_panel_height Actor starting with default: {}", initial_height);
+            
+            Actor::new(initial_height, async move |handle| {
+                let mut drag_mouse_moved_stream = drag_mouse_moved_relay_clone.subscribe().fuse();
+            let mut files_horizontal_dragging_stream = crate::actors::global_domains::panel_layout_files_horizontal_dragging_signal().to_stream().fuse();
+            
+            let mut is_dragging = false;
+            zoon::println!("🚀 Files panel height Actor initialized");
+            
+            // Immediate startup sync to prevent jumping on first drag
+            {
+                let config = crate::config::app_config();
+                let config_clone = config.clone();
+                let handle_clone = handle.clone();
+                Task::start(async move {
+                    Timer::sleep(100).await; // Small delay to ensure config is loaded
+                    let current_dock_mode = config_clone.dock_mode_actor.signal().to_stream().next().await;
+                    zoon::println!("🔍 STARTUP SYNC: Current dock mode for height: {:?}", current_dock_mode);
+                    let current_height = match current_dock_mode {
+                        Some(shared::DockMode::Right) => {
+                            if let Some(dims) = config_clone.panel_dimensions_right_actor.signal().to_stream().next().await {
+                                zoon::println!("🔍 STARTUP SYNC: Right dock dims.files_panel_height = {}", dims.files_panel_height);
+                                dims.files_panel_height as u32
+                            } else { 
+                                zoon::println!("🔍 STARTUP SYNC: No right dock dimensions found, using default 300");
+                                300 
+                            }
+                        }
+                        Some(shared::DockMode::Bottom) => {
+                            if let Some(dims) = config_clone.panel_dimensions_bottom_actor.signal().to_stream().next().await {
+                                zoon::println!("🔍 STARTUP SYNC: Bottom dock dims.files_panel_height = {}", dims.files_panel_height);
+                                dims.files_panel_height as u32
+                            } else { 
+                                zoon::println!("🔍 STARTUP SYNC: No bottom dock dimensions found, using default 300");
+                                300 
+                            }
+                        }
+                        _ => {
+                            zoon::println!("🔍 STARTUP SYNC: Unknown dock mode, using default 300");
+                            300
+                        }
+                    };
+                    
+                    zoon::println!("🎯 STARTUP SYNC: Setting files panel height to: {}", current_height);
+                    handle_clone.set(current_height);
+                });
+            }
+            
+            loop {
+                select! {
+                    dragging_event = files_horizontal_dragging_stream.next() => {
+                        match dragging_event {
+                            Some(dragging_state) => {
+                                // Sync Actor state with current dock-specific height when dragging starts
+                                if dragging_state && !is_dragging {
+                                    let config = crate::config::app_config();
+                                    let config_clone = config.clone();
+                                    let handle_clone = handle.clone();
+                                    Task::start(async move {
+                                        let current_dock_mode = config_clone.dock_mode_actor.signal().to_stream().next().await;
+                                        zoon::println!("🔍 DEBUG: Current dock mode for height sync: {:?}", current_dock_mode);
+                                        let current_height = match current_dock_mode {
+                                            Some(shared::DockMode::Right) => {
+                                                if let Some(dims) = config_clone.panel_dimensions_right_actor.signal().to_stream().next().await {
+                                                    zoon::println!("🔍 DEBUG: Right dock dims.files_panel_height = {}", dims.files_panel_height);
+                                                    dims.files_panel_height as u32
+                                                } else { 
+                                                    zoon::println!("🔍 DEBUG: No right dock dimensions found, using default 300");
+                                                    300 
+                                                }
+                                            }
+                                            Some(shared::DockMode::Bottom) => {
+                                                if let Some(dims) = config_clone.panel_dimensions_bottom_actor.signal().to_stream().next().await {
+                                                    zoon::println!("🔍 DEBUG: Bottom dock dims.files_panel_height = {}", dims.files_panel_height);
+                                                    dims.files_panel_height as u32
+                                                } else { 
+                                                    zoon::println!("🔍 DEBUG: No bottom dock dimensions found, using default 300");
+                                                    300 
+                                                }
+                                            }
+                                            None => {
+                                                zoon::println!("🔍 DEBUG: No dock mode found, using default 300");
+                                                300
+                                            }
+                                        };
+                                        handle_clone.set(current_height);
+                                        zoon::println!("🎯 Synced files panel height to current dock: {}", current_height);
+                                    });
+                                }
+                                is_dragging = dragging_state;
+                                zoon::println!("🎯 Files panel horizontal dragging state: {}", is_dragging);
+                            }
+                            None => break,
+                        }
+                    }
+                    mouse_event = drag_mouse_moved_stream.next() => {
+                        match mouse_event {
+                            Some((_movement_x, movement_y)) => {
+                                if is_dragging {
+                                    let current_height = handle.get();
+                                    let movement_y: f32 = movement_y;
+                                    let new_height_f32: f32 = (current_height as f32 + movement_y).max(150.0).min(600.0);
+                                    let new_height = new_height_f32 as u32;
+                                    
+                                    if new_height != current_height {
+                                        handle.set(new_height);
+                                        
+                                        // Update dock-specific config for height
+                                        let config = crate::config::app_config();
+                                        let config_clone = config.clone();
+                                        Task::start(async move {
+                                            let current_dock_mode = config_clone.dock_mode_actor.signal().to_stream().next().await;
+                                            
+                                            match current_dock_mode {
+                                                Some(shared::DockMode::Right) => {
+                                                    if let Some(mut current_dims) = config_clone.panel_dimensions_right_actor.signal().to_stream().next().await {
+                                                        current_dims.files_panel_height = new_height as f32;
+                                                        config_clone.panel_dimensions_right_changed_relay.send(current_dims);
+                                                        zoon::println!("🔄 Updated RIGHT dock height: {}", new_height);
+                                                    }
+                                                }
+                                                Some(shared::DockMode::Bottom) => {
+                                                    if let Some(mut current_dims) = config_clone.panel_dimensions_bottom_actor.signal().to_stream().next().await {
+                                                        current_dims.files_panel_height = new_height as f32;
+                                                        config_clone.panel_dimensions_bottom_changed_relay.send(current_dims);
+                                                        zoon::println!("🔄 Updated BOTTOM dock height: {}", new_height);
+                                                    }
+                                                }
+                                                None => {
+                                                    zoon::eprintln!("⚠️ Could not determine dock mode for height update");
+                                                }
+                                            }
+                                        });
+                                        
+                                        zoon::println!("🔄 Panel height: {} -> {} (Δ{}) - Config updated", current_height, new_height, movement_y);
+                                    }
+                                }
+                            }
+                            None => break,
+                        }
+                    }
+                }
+            }
+        })
+        };
+        let variables_name_column_width = {
+            let drag_mouse_moved_relay_clone = drag_mouse_moved_relay.clone();
+            
+            // Use reasonable default - the bridge initialization will set the correct value
+            let initial_width = 200u32;
+            zoon::println!("🔧 INIT: name_column_width Actor starting with default: {}", initial_width);
+            
+            Actor::new(initial_width, async move |handle| {
+                let mut drag_mouse_moved_stream = drag_mouse_moved_relay_clone.subscribe().fuse();
+                let mut name_divider_dragging_stream = crate::actors::global_domains::panel_layout_name_divider_dragging_signal().to_stream().fuse();
+            
+            let mut is_dragging = false;
+            zoon::println!("🚀 Variables name column width Actor initialized");
+            
+            // Immediate startup sync to prevent jumping on first drag
+            {
+                let config = crate::config::app_config();
+                let config_clone = config.clone();
+                let handle_clone = handle.clone();
+                Task::start(async move {
+                    Timer::sleep(100).await; // Small delay to ensure config is loaded
+                    let current_dock_mode = config_clone.dock_mode_actor.signal().to_stream().next().await;
+                    zoon::println!("🔍 STARTUP SYNC: Current dock mode for name column: {:?}", current_dock_mode);
+                    let current_width = match current_dock_mode {
+                        Some(shared::DockMode::Right) => {
+                            if let Some(dims) = config_clone.panel_dimensions_right_actor.signal().to_stream().next().await {
+                                zoon::println!("🔍 STARTUP SYNC: Right dock dims.variables_name_column_width = {}", dims.variables_name_column_width);
+                                dims.variables_name_column_width as u32
+                            } else { 
+                                zoon::println!("🔍 STARTUP SYNC: No right dock dimensions found for name column, using default 150");
+                                150 
+                            }
+                        }
+                        Some(shared::DockMode::Bottom) => {
+                            if let Some(dims) = config_clone.panel_dimensions_bottom_actor.signal().to_stream().next().await {
+                                zoon::println!("🔍 STARTUP SYNC: Bottom dock dims.variables_name_column_width = {}", dims.variables_name_column_width);
+                                dims.variables_name_column_width as u32
+                            } else { 
+                                zoon::println!("🔍 STARTUP SYNC: No bottom dock dimensions found for name column, using default 150");
+                                150 
+                            }
+                        }
+                        _ => {
+                            zoon::println!("🔍 STARTUP SYNC: Unknown dock mode for name column, using default 150");
+                            150
+                        }
+                    };
+                    
+                    zoon::println!("🎯 STARTUP SYNC: Setting name column width to: {}", current_width);
+                    handle_clone.set(current_width);
+                });
+            }
+            
+            loop {
+                select! {
+                    dragging_event = name_divider_dragging_stream.next() => {
+                        match dragging_event {
+                            Some(dragging_state) => {
+                                // Sync Actor state with current dock-specific name column width when dragging starts
+                                if dragging_state && !is_dragging {
+                                    let config = crate::config::app_config();
+                                    let config_clone = config.clone();
+                                    let handle_clone = handle.clone();
+                                    Task::start(async move {
+                                        let current_dock_mode = config_clone.dock_mode_actor.signal().to_stream().next().await;
+                                        let current_width = match current_dock_mode {
+                                            Some(shared::DockMode::Right) => {
+                                                if let Some(dims) = config_clone.panel_dimensions_right_actor.signal().to_stream().next().await {
+                                                    dims.variables_name_column_width as u32
+                                                } else { 180 }
+                                            }
+                                            Some(shared::DockMode::Bottom) => {
+                                                if let Some(dims) = config_clone.panel_dimensions_bottom_actor.signal().to_stream().next().await {
+                                                    dims.variables_name_column_width as u32
+                                                } else { 180 }
+                                            }
+                                            None => 180
+                                        };
+                                        handle_clone.set(current_width);
+                                        zoon::println!("🎯 Synced name column width to current dock: {}", current_width);
+                                    });
+                                }
+                                is_dragging = dragging_state;
+                                zoon::println!("🎯 Name column dragging state: {}", is_dragging);
+                            }
+                            None => break,
+                        }
+                    }
+                    mouse_event = drag_mouse_moved_stream.next() => {
+                        match mouse_event {
+                            Some((movement_x, _movement_y)) => {
+                                if is_dragging {
+                                    let current_width = handle.get();
+                                    let movement_x: f32 = movement_x;
+                                    let new_width_f32: f32 = (current_width as f32 + movement_x).max(100.0).min(400.0);
+                                    let new_width = new_width_f32 as u32;
+                                    
+                                    if new_width != current_width {
+                                        handle.set(new_width);
+                                        
+                                        // Update dock-specific config for name column width
+                                        let config = crate::config::app_config();
+                                        let config_clone = config.clone();
+                                        Task::start(async move {
+                                            let current_dock_mode = config_clone.dock_mode_actor.signal().to_stream().next().await;
+                                            
+                                            match current_dock_mode {
+                                                Some(shared::DockMode::Right) => {
+                                                    if let Some(mut current_dims) = config_clone.panel_dimensions_right_actor.signal().to_stream().next().await {
+                                                        current_dims.variables_name_column_width = new_width as f32;
+                                                        config_clone.panel_dimensions_right_changed_relay.send(current_dims);
+                                                        zoon::println!("🔄 Updated RIGHT dock name column width: {}", new_width);
+                                                    }
+                                                }
+                                                Some(shared::DockMode::Bottom) => {
+                                                    if let Some(mut current_dims) = config_clone.panel_dimensions_bottom_actor.signal().to_stream().next().await {
+                                                        current_dims.variables_name_column_width = new_width as f32;
+                                                        config_clone.panel_dimensions_bottom_changed_relay.send(current_dims);
+                                                        zoon::println!("🔄 Updated BOTTOM dock name column width: {}", new_width);
+                                                    }
+                                                }
+                                                None => {
+                                                    zoon::eprintln!("⚠️ Could not determine dock mode for name column width update");
+                                                }
+                                            }
+                                        });
+                                        
+                                        zoon::println!("🔄 Name column width: {} -> {} (Δ{}) - Config updated", current_width, new_width, movement_x);
+                                    }
+                                }
+                            }
+                            None => break,
+                        }
+                    }
+                }
+            }
+        })
+        };
+        let variables_value_column_width = {
+            let drag_mouse_moved_relay_clone = drag_mouse_moved_relay.clone();
+            
+            // Use reasonable default - the bridge initialization will set the correct value
+            let initial_width = 150u32;
+            zoon::println!("🔧 INIT: value_column_width Actor starting with default: {}", initial_width);
+            
+            Actor::new(initial_width, async move |handle| {
+                let mut drag_mouse_moved_stream = drag_mouse_moved_relay_clone.subscribe().fuse();
+                let mut value_divider_dragging_stream = crate::actors::global_domains::panel_layout_value_divider_dragging_signal().to_stream().fuse();
+            
+            let mut is_dragging = false;
+            zoon::println!("🚀 Variables value column width Actor initialized");
+            
+            // Immediate startup sync to prevent jumping on first drag
+            {
+                let config = crate::config::app_config();
+                let config_clone = config.clone();
+                let handle_clone = handle.clone();
+                Task::start(async move {
+                    Timer::sleep(100).await; // Small delay to ensure config is loaded
+                    let current_dock_mode = config_clone.dock_mode_actor.signal().to_stream().next().await;
+                    zoon::println!("🔍 STARTUP SYNC: Current dock mode for value column: {:?}", current_dock_mode);
+                    let current_width = match current_dock_mode {
+                        Some(shared::DockMode::Right) => {
+                            if let Some(dims) = config_clone.panel_dimensions_right_actor.signal().to_stream().next().await {
+                                zoon::println!("🔍 STARTUP SYNC: Right dock dims.variables_value_column_width = {}", dims.variables_value_column_width);
+                                dims.variables_value_column_width as u32
+                            } else { 
+                                zoon::println!("🔍 STARTUP SYNC: No right dock dimensions found for value column, using default 100");
+                                100 
+                            }
+                        }
+                        Some(shared::DockMode::Bottom) => {
+                            if let Some(dims) = config_clone.panel_dimensions_bottom_actor.signal().to_stream().next().await {
+                                zoon::println!("🔍 STARTUP SYNC: Bottom dock dims.variables_value_column_width = {}", dims.variables_value_column_width);
+                                dims.variables_value_column_width as u32
+                            } else { 
+                                zoon::println!("🔍 STARTUP SYNC: No bottom dock dimensions found for value column, using default 100");
+                                100 
+                            }
+                        }
+                        _ => {
+                            zoon::println!("🔍 STARTUP SYNC: Unknown dock mode for value column, using default 100");
+                            100
+                        }
+                    };
+                    
+                    zoon::println!("🎯 STARTUP SYNC: Setting value column width to: {}", current_width);
+                    handle_clone.set(current_width);
+                });
+            }
+            
+            loop {
+                select! {
+                    dragging_event = value_divider_dragging_stream.next() => {
+                        match dragging_event {
+                            Some(dragging_state) => {
+                                // Sync Actor state with current dock-specific value column width when dragging starts
+                                if dragging_state && !is_dragging {
+                                    let config = crate::config::app_config();
+                                    let config_clone = config.clone();
+                                    let handle_clone = handle.clone();
+                                    Task::start(async move {
+                                        let current_dock_mode = config_clone.dock_mode_actor.signal().to_stream().next().await;
+                                        let current_width = match current_dock_mode {
+                                            Some(shared::DockMode::Right) => {
+                                                if let Some(dims) = config_clone.panel_dimensions_right_actor.signal().to_stream().next().await {
+                                                    dims.variables_value_column_width as u32
+                                                } else { 100 }
+                                            }
+                                            Some(shared::DockMode::Bottom) => {
+                                                if let Some(dims) = config_clone.panel_dimensions_bottom_actor.signal().to_stream().next().await {
+                                                    dims.variables_value_column_width as u32
+                                                } else { 100 }
+                                            }
+                                            None => 100
+                                        };
+                                        handle_clone.set(current_width);
+                                        zoon::println!("🎯 Synced value column width to current dock: {}", current_width);
+                                    });
+                                }
+                                is_dragging = dragging_state;
+                                zoon::println!("🎯 Value column dragging state: {}", is_dragging);
+                            }
+                            None => break,
+                        }
+                    }
+                    mouse_event = drag_mouse_moved_stream.next() => {
+                        match mouse_event {
+                            Some((movement_x, _movement_y)) => {
+                                if is_dragging {
+                                    let current_width = handle.get();
+                                    let movement_x: f32 = movement_x;
+                                    let new_width_f32: f32 = (current_width as f32 + movement_x).max(80.0).min(300.0);
+                                    let new_width = new_width_f32 as u32;
+                                    
+                                    if new_width != current_width {
+                                        handle.set(new_width);
+                                        
+                                        // Update dock-specific config for value column width
+                                        let config = crate::config::app_config();
+                                        let config_clone = config.clone();
+                                        Task::start(async move {
+                                            let current_dock_mode = config_clone.dock_mode_actor.signal().to_stream().next().await;
+                                            
+                                            match current_dock_mode {
+                                                Some(shared::DockMode::Right) => {
+                                                    if let Some(mut current_dims) = config_clone.panel_dimensions_right_actor.signal().to_stream().next().await {
+                                                        current_dims.variables_value_column_width = new_width as f32;
+                                                        config_clone.panel_dimensions_right_changed_relay.send(current_dims);
+                                                        zoon::println!("🔄 Updated RIGHT dock value column width: {}", new_width);
+                                                    }
+                                                }
+                                                Some(shared::DockMode::Bottom) => {
+                                                    if let Some(mut current_dims) = config_clone.panel_dimensions_bottom_actor.signal().to_stream().next().await {
+                                                        current_dims.variables_value_column_width = new_width as f32;
+                                                        config_clone.panel_dimensions_bottom_changed_relay.send(current_dims);
+                                                        zoon::println!("🔄 Updated BOTTOM dock value column width: {}", new_width);
+                                                    }
+                                                }
+                                                None => {
+                                                    zoon::eprintln!("⚠️ Could not determine dock mode for value column width update");
+                                                }
+                                            }
+                                        });
+                                        
+                                        zoon::println!("🔄 Value column width: {} -> {} (Δ{}) - Config updated", current_width, new_width, movement_x);
+                                    }
+                                }
+                            }
+                            None => break,
+                        }
+                    }
+                }
+            }
+        })
+        };
         let timeline_panel_height = Actor::new(200, async move |_handle| {
             // TODO: Implement proper actor processor
         });
@@ -252,6 +769,39 @@ impl PanelLayout {
         let dock_transitioning = Actor::new(false, async move |_handle| {
             // TODO: Implement proper actor processor
         });
+        
+        // ===== BRIDGE: Connect Actor signals to old mutable signals =====
+        // This bridges the new Actor system with the old mutable signals that the UI reads from
+        
+        // Bridge files_panel_height Actor to old mutable
+        {
+            let files_panel_height_clone = files_panel_height.clone();
+            Task::start(async move {
+                files_panel_height_clone.signal().for_each_sync(|height| {
+                    crate::actors::global_domains::set_files_panel_height(height.clone());
+                }).await;
+            });
+        }
+        
+        // Bridge variables_name_column_width Actor to old mutable
+        {
+            let name_column_width_clone = variables_name_column_width.clone();
+            Task::start(async move {
+                name_column_width_clone.signal().for_each_sync(|width| {
+                    crate::actors::global_domains::set_variables_name_column_width(width.clone());
+                }).await;
+            });
+        }
+        
+        // Bridge variables_value_column_width Actor to old mutable
+        {
+            let value_column_width_clone = variables_value_column_width.clone();
+            Task::start(async move {
+                value_column_width_clone.signal().for_each_sync(|width| {
+                    crate::actors::global_domains::set_variables_value_column_width(width.clone());
+                }).await;
+            });
+        }
         
         // Create domain instance with initialized actors
         Self {
@@ -316,7 +866,8 @@ impl PanelLayout {
     }
     
     async fn handle_drag_mouse_moved(&self, _position: (f32, f32)) {
-        // TODO: Implement proper Actor processing 
+        // This is now handled by the Actor stream processing above
+        // TODO: Remove this function and its call sites
     }
     
     async fn handle_viewport_resized(&self, _size: (f32, f32)) {
@@ -551,7 +1102,17 @@ pub fn set_docked_to_bottom(docked: bool) {
 
 /// Legacy signal compatibility: Get files panel width signal (replaces FILES_PANEL_WIDTH.signal())
 pub fn files_width_signal() -> impl Signal<Item = u32> {
-    files_panel_width_signal()
+    // Use dock mode aware dimensions from app_config instead of static panel_layout
+    map_ref! {
+        let dock_mode = crate::config::app_config().dock_mode_actor.signal(),
+        let right_dims = crate::config::app_config().panel_dimensions_right_actor.signal(),
+        let bottom_dims = crate::config::app_config().panel_dimensions_bottom_actor.signal() => {
+            match dock_mode {
+                shared::DockMode::Right => right_dims.files_panel_width as u32,
+                shared::DockMode::Bottom => bottom_dims.files_panel_width as u32,
+            }
+        }
+    }
 }
 
 /// Legacy signal compatibility: Get files panel height signal (replaces FILES_PANEL_HEIGHT.signal())
@@ -573,34 +1134,98 @@ pub fn value_column_width_signal() -> impl Signal<Item = u32> {
 
 // ===== LEGACY RELAY COMPATIBILITY (for existing imports) =====
 
-/// Legacy relay compatibility: Vertical divider dragged relay
+/// Legacy relay compatibility: Vertical divider dragged relay - Simple working approach
 pub fn vertical_divider_dragged_relay() -> Relay<f32> {
-    let (relay, _stream) = relay();
-    relay
+    static RELAY: std::sync::OnceLock<Relay<f32>> = std::sync::OnceLock::new();
+    
+    RELAY.get_or_init(|| {
+        let (relay, stream) = relay();
+        
+        // Simple: just update the dragging state and let the existing system handle it
+        Task::start(stream.for_each(move |drag_state| async move {
+            let is_dragging = drag_state > 0.0;
+            crate::actors::global_domains::set_files_vertical_dragging(is_dragging);
+            zoon::println!("🔄 Vertical drag state: {}", is_dragging);
+        }));
+        
+        relay
+    }).clone()
 }
 
 /// Legacy relay compatibility: Horizontal divider dragged relay
 pub fn horizontal_divider_dragged_relay() -> Relay<f32> {
-    let (relay, _stream) = relay();
-    relay
+    static CACHED_RELAY: OnceLock<Relay<f32>> = OnceLock::new();
+    CACHED_RELAY.get_or_init(|| {
+        let (relay, stream) = relay();
+        let mut stream = stream.fuse();
+        
+        // Task to handle horizontal dragging state changes
+        Task::start(async move {
+            while let Some(drag_amount) = stream.next().await {
+                let is_dragging = drag_amount > 0.0;
+                crate::actors::global_domains::set_files_horizontal_dragging(is_dragging);
+                zoon::println!("🔄 Horizontal drag state: {}", is_dragging);
+            }
+        });
+        
+        relay
+    }).clone()
 }
 
 /// Legacy relay compatibility: Name divider dragged relay  
 pub fn name_divider_dragged_relay() -> Relay<f32> {
-    let (relay, _stream) = relay();
-    relay
+    static CACHED_RELAY: OnceLock<Relay<f32>> = OnceLock::new();
+    CACHED_RELAY.get_or_init(|| {
+        let (relay, stream) = relay();
+        let mut stream = stream.fuse();
+        
+        // Task to handle name column dragging state changes
+        Task::start(async move {
+            while let Some(drag_amount) = stream.next().await {
+                let is_dragging = drag_amount > 0.0;
+                crate::actors::global_domains::set_name_divider_dragging(is_dragging);
+                zoon::println!("🔄 Name column drag state: {}", is_dragging);
+            }
+        });
+        
+        relay
+    }).clone()
 }
 
 /// Legacy relay compatibility: Value divider dragged relay
 pub fn value_divider_dragged_relay() -> Relay<f32> {
-    let (relay, _stream) = relay();
-    relay
+    static CACHED_RELAY: OnceLock<Relay<f32>> = OnceLock::new();
+    CACHED_RELAY.get_or_init(|| {
+        let (relay, stream) = relay();
+        let mut stream = stream.fuse();
+        
+        // Task to handle value column dragging state changes
+        Task::start(async move {
+            while let Some(drag_amount) = stream.next().await {
+                let is_dragging = drag_amount > 0.0;
+                crate::actors::global_domains::set_value_divider_dragging(is_dragging);
+                zoon::println!("🔄 Value column drag state: {}", is_dragging);
+            }
+        });
+        
+        relay
+    }).clone()
 }
 
 /// Legacy relay compatibility: Mouse moved relay
 pub fn mouse_moved_relay() -> Relay<(f32, f32)> {
-    let (relay, _stream) = relay();
-    relay
+    static RELAY: std::sync::OnceLock<Relay<(f32, f32)>> = std::sync::OnceLock::new();
+    
+    RELAY.get_or_init(|| {
+        let (relay, stream) = relay();
+        
+        // Connect to drag_mouse_moved function
+        Task::start(stream.for_each(move |position| async move {
+            drag_mouse_moved(position);
+        }));
+        
+        relay
+    }).clone()
 }
 
 /// Legacy signal compatibility: Vertical dragging signal

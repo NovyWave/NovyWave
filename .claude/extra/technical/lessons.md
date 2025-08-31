@@ -195,3 +195,165 @@ When encountering signal timing issues:
 5. **Remove workarounds** - Delete any artificial delays or periodic checks
 
 **Remember:** Reactive architecture should "just work" without artificial timing fixes.
+
+## Critical Signal Routing Debugging Pattern
+
+### Always Trace UI Signal Sources Before Updating State
+
+When implementing drag/resize functionality that updates correctly in logs but doesn't show visual changes, the problem is usually **updating the wrong signals**.
+
+**Debugging Steps:**
+1. **Trace from UI backwards**: Find what signal the UI actually reads from
+2. **Identify all signal systems**: Multiple width/state systems often exist in complex apps
+3. **Update the correct signal source**: Not just any related signal
+
+**Real Example - Panel Width Drag:**
+```rust
+// ❌ WRONG: Drag logic was perfect, but updating wrong signals
+if let Some(signals) = PANEL_LAYOUT_SIGNALS.get() {
+    signals.files_panel_width_mutable.set_neq(new_width);  // Legacy migration signal
+}
+
+// ✅ UI actually reads from config system via files_width_signal()
+// files_width_signal() → app_config().panel_dimensions_right_actor.signal()
+
+// ✅ CORRECT: Update the actual config signals UI reads from
+config.panel_dimensions_right_changed_relay.send(updated_dimensions);
+config.panel_dimensions_bottom_changed_relay.send(updated_dimensions);
+```
+
+**Common Signal System Confusion:**
+- **Config system**: `app_config().panel_dimensions_*` (what UI uses)
+- **Migration signals**: `PANEL_LAYOUT_SIGNALS.*_mutable` (legacy compatibility) 
+- **Actor internal state**: Actor's private state values
+- **Domain signals**: Business logic state separate from UI
+
+**Key Insight:** Perfect drag calculations + wrong signal updates = logs show changes but UI doesn't move.
+
+**Prevention:** Always `grep` for UI usage patterns like `Width::exact_signal(signal_name())` to trace the actual signal dependency chain before implementing updates.
+
+## Actor State Synchronization: Eliminating Drag Jump Issues
+
+### Problem Pattern
+Actor-based dragging systems can experience "jump" behavior when the Actor's internal state doesn't match the actual UI state at drag start.
+
+**Broken Pattern:**
+```rust
+// ❌ Actor initialized with hardcoded default
+let files_panel_width = Actor::new(470, async move |handle| {
+    loop {
+        select! {
+            Some((movement_x, _)) = mouse_moved_stream.next() => {
+                if is_dragging {
+                    let current_width = handle.get();  // Gets 470, not actual width!
+                    let new_width = current_width + movement_x;  // Jumps from 470
+                    handle.set(new_width);
+                }
+            }
+        }
+    }
+});
+```
+
+**Issue:** UI shows actual dock-specific width (600px for Right, 626px for Bottom) but Actor starts with hardcoded default (470px). When dragging starts, there's a visual jump from actual position to Actor's default position.
+
+### Solution Pattern
+Sync Actor state with current config-driven UI state when dragging starts:
+
+```rust
+// ✅ CORRECT: Sync Actor state with current dock-specific width on drag start
+let files_panel_width = Actor::new(470, async move |handle| {
+    let mut is_dragging = false;
+    
+    loop {
+        select! {
+            Some(dragging_state) = dragging_stream.next() => {
+                // Sync Actor state with current dock-specific width when dragging starts
+                if dragging_state && !is_dragging {
+                    let config = crate::config::app_config();
+                    let config_clone = config.clone();
+                    let handle_clone = handle.clone();
+                    Task::start(async move {
+                        let current_dock_mode = config_clone.dock_mode_actor.signal().to_stream().next().await;
+                        let current_width = match current_dock_mode {
+                            Some(shared::DockMode::Right) => {
+                                if let Some(dims) = config_clone.panel_dimensions_right_actor.signal().to_stream().next().await {
+                                    dims.files_panel_width as u32
+                                } else { 470 }
+                            }
+                            Some(shared::DockMode::Bottom) => {
+                                if let Some(dims) = config_clone.panel_dimensions_bottom_actor.signal().to_stream().next().await {
+                                    dims.files_panel_width as u32
+                                } else { 470 }
+                            }
+                            None => 470
+                        };
+                        handle_clone.set(current_width);  // Sync with actual UI state
+                        zoon::println!("🎯 Synced Actor width to current dock: {}", current_width);
+                    });
+                }
+                is_dragging = dragging_state;
+            }
+            Some((movement_x, _)) = mouse_moved_stream.next() => {
+                if is_dragging {
+                    let current_width = handle.get();  // Now gets synced width!
+                    let new_width = current_width + movement_x;  // Smooth from actual position
+                    handle.set(new_width);
+                }
+            }
+        }
+    }
+});
+```
+
+**Why This Works:**
+- **Detects drag start**: `dragging_state && !is_dragging` catches the transition to dragging
+- **Gets current dock-specific state**: Reads the actual width from config that UI is displaying
+- **Syncs Actor internal state**: Updates Actor's state to match UI before processing drag movements
+- **Eliminates jump**: Dragging starts from actual visual position, not hardcoded default
+
+### When to Use This Pattern
+- Actor-based dragging systems where UI state comes from external config
+- Dock-mode-specific dimensions that change independently
+- Any situation where Actor default state differs from actual UI state
+- Multi-mode layouts where same Actor handles different contexts
+
+### Key Principle
+**Always sync Actor internal state with external UI state before processing user interactions.** Don't assume Actor defaults match the actual visual state the user sees.
+
+## Dock Mode Dimension Syncing Fix
+
+### Problem
+When switching dock modes (Right ↔ Bottom), panel dimensions were being synced between modes instead of maintaining independent values. The issue occurred because dock switching logic used shared Actor state values and saved them to both dock configurations.
+
+### Root Cause
+```rust
+// ❌ WRONG: Using shared Actor values for both dock modes
+files_panel_height: current_files_height as f32,  // Same value saved to both configs
+```
+
+The `current_files_height` came from a shared panel_layout Actor, so when switching dock modes, this shared value overwrote the config for both Right and Bottom modes.
+
+### Solution
+Preserve existing config values instead of overwriting with shared Actor state:
+
+```rust
+// ✅ CORRECT: Keep existing config values during dock switch
+let updated_dims = PanelDimensions {
+    files_panel_width: current_dims.files_panel_width,     // Keep existing
+    files_panel_height: current_dims.files_panel_height,   // Keep existing - don't overwrite
+    variables_panel_width: current_dims.variables_panel_width,
+    timeline_panel_height: current_dims.timeline_panel_height,
+    variables_name_column_width: current_name_width as f32,  // Update from Actor (actively used)
+    variables_value_column_width: current_value_width as f32, // Update from Actor (actively used)
+};
+```
+
+### Key Insight
+Only update dimensions that are actively managed by the current dock mode. Preserve dimensions that aren't directly controlled by shared Actors to maintain independent dock mode storage.
+
+### Testing Pattern
+1. Set different values in config: Bottom `height=356`, Right `height=510`
+2. Switch modes repeatedly: Right→Bottom→Right
+3. Verify console logs show preserved values: "height=356 (kept)", "height=510"
+4. Confirm config file maintains independent values after switches

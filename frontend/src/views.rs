@@ -20,9 +20,8 @@ use crate::{
 use crate::actors::waveform_timeline::{ns_per_pixel_signal, cursor_position_seconds_signal};
 use crate::state::SELECTED_VARIABLES_ROW_HEIGHT;
 use crate::actors::selected_variables::{variables_signal, variables_signal_vec, selected_scope_signal, search_filter_signal, search_filter_changed_relay, search_focus_changed_relay};
-use crate::actors::panel_layout::{
-    name_column_width_signal, value_column_width_signal, name_divider_dragging_signal, value_divider_dragging_signal,
-    files_panel_height_signal
+use crate::dragging::{
+    variables_name_column_width_signal, variables_value_column_width_signal, files_panel_height_signal
 };
 use crate::actors::dialog_manager::{
     close_file_dialog, file_picker_selected_signal, file_picker_expanded_signal,
@@ -550,7 +549,7 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
                                         .child_signal(
                                             map_ref! {
                                                 let text = zoon::always(display_text.clone()),
-                                                let column_width = value_column_width_signal() => {
+                                                let column_width = variables_value_column_width_signal() => {
                                                     // Extract just the value part (before the format name)
                                                     let value_only = if let Some(space_pos) = text.rfind(' ') {
                                                         text[..space_pos].to_string()
@@ -981,8 +980,10 @@ fn update_signal_values_in_ui(results: &[SignalValueResult]) {
 }
 
 
-fn variables_name_vertical_divider(is_dragging_signal: impl Signal<Item = bool> + Unpin + 'static) -> impl Element {
-    use crate::actors::panel_layout::name_divider_dragged_relay;
+fn variables_name_vertical_divider() -> impl Element {
+    use crate::dragging::{start_drag, is_divider_dragging, DividerType};
+    
+    let is_dragging_signal = is_divider_dragging(DividerType::VariablesNameColumn);
     
     El::new()
         .s(Width::exact(4))
@@ -996,12 +997,14 @@ fn variables_name_vertical_divider(is_dragging_signal: impl Signal<Item = bool> 
         .s(Cursor::new(CursorIcon::ColumnResize))
         .s(Padding::all(0))
         .on_pointer_down(move || {
-            name_divider_dragged_relay().send(1.0);
+            start_drag(DividerType::VariablesNameColumn, (0.0, 0.0));
         })
 }
 
-fn variables_value_vertical_divider(is_dragging_signal: impl Signal<Item = bool> + Unpin + 'static) -> impl Element {
-    use crate::actors::panel_layout::value_divider_dragged_relay;
+fn variables_value_vertical_divider() -> impl Element {
+    use crate::dragging::{start_drag, is_divider_dragging, DividerType};
+    
+    let is_dragging_signal = is_divider_dragging(DividerType::VariablesValueColumn);
     
     El::new()
         .s(Width::exact(4))
@@ -1015,7 +1018,7 @@ fn variables_value_vertical_divider(is_dragging_signal: impl Signal<Item = bool>
         .s(Cursor::new(CursorIcon::ColumnResize))
         .s(Padding::all(0))
         .on_pointer_down(move || {
-            value_divider_dragged_relay().send(1.0);
+            start_drag(DividerType::VariablesValueColumn, (0.0, 0.0));
         })
 }
 
@@ -1523,7 +1526,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                     .item(
                                         // Column 1: Variable name (resizable) with footer
                                         Column::new()
-                                            .s(Width::exact_signal(name_column_width_signal()))
+                                            .s(Width::exact_signal(variables_name_column_width_signal().map(|w| w as u32)))
                                             .s(Height::fill())
                                             .s(Align::new().top())
                                             .s(Scrollbars::x_and_clip_y())
@@ -1644,11 +1647,11 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                     )
                                             )
                                     )
-                                    .item(variables_name_vertical_divider(name_divider_dragging_signal()))
+                                    .item(variables_name_vertical_divider())
                                     .item(
                                         // Column 2: Variable value (resizable) - HEIGHT FOLLOWER
                                         Column::new()
-                                            .s(Width::exact_signal(value_column_width_signal()))
+                                            .s(Width::exact_signal(variables_value_column_width_signal().map(|w| w as u32)))
                                             .s(Height::fill())
                                             .s(Align::new().top())
                                             .s(Scrollbars::x_and_clip_y())
@@ -1827,7 +1830,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                     )
                                             )
                                     )
-                                    .item(variables_value_vertical_divider(value_divider_dragging_signal()))
+                                    .item(variables_value_vertical_divider())
                                     .item(
                                         // Column 3: Unified waveform canvas (fills remaining space) - HEIGHT FOLLOWER
                                         El::new()
@@ -1849,7 +1852,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
 pub fn files_panel_with_height() -> impl Element {
     // TEST 2: Remove Scrollbars::both() from individual panels
     El::new()
-        .s(Height::exact_signal(files_panel_height_signal()))
+        .s(Height::exact_signal(files_panel_height_signal().map(|h| h as u32)))
         .s(Width::growable())
         .update_raw_el(|raw_el| {
             raw_el.style("scrollbar-width", "thin")
@@ -1870,7 +1873,7 @@ pub fn variables_panel_with_fill() -> impl Element {
                 // When docked to bottom, use files panel height signal for synchronized resizing
                 El::new()
                     .s(Width::fill())
-                    .s(Height::exact_signal(files_panel_height_signal()))
+                    .s(Height::exact_signal(files_panel_height_signal().map(|h| h as u32)))
                     .update_raw_el(|raw_el| {
                         raw_el.style("scrollbar-width", "thin")
                             .style_signal("scrollbar-color", primary_6().map(|thumb| primary_3().map(move |track| format!("{} {}", thumb, track))).flatten())
@@ -2608,8 +2611,10 @@ fn dock_toggle_button() -> impl Element {
         }))
 }
 
-pub fn vertical_divider(is_dragging_signal: impl Signal<Item = bool> + Unpin + 'static) -> impl Element {
-    use crate::actors::panel_layout::vertical_divider_dragged_relay;
+pub fn files_panel_vertical_divider() -> impl Element {
+    use crate::dragging::{start_drag, is_divider_dragging, DividerType};
+    
+    let is_dragging_signal = is_divider_dragging(DividerType::FilesPanelMain);
     
     El::new()
         .s(Width::exact(4))
@@ -2623,12 +2628,14 @@ pub fn vertical_divider(is_dragging_signal: impl Signal<Item = bool> + Unpin + '
         .s(Cursor::new(CursorIcon::ColumnResize))
         .s(Padding::all(0))
         .on_pointer_down(move || {
-            vertical_divider_dragged_relay().send(1.0);
+            start_drag(DividerType::FilesPanelMain, (0.0, 0.0));
         })
 }
 
-pub fn horizontal_divider(is_dragging_signal: impl Signal<Item = bool> + Unpin + 'static) -> impl Element {
-    use crate::actors::panel_layout::horizontal_divider_dragged_relay;
+pub fn files_panel_horizontal_divider() -> impl Element {
+    use crate::dragging::{start_drag, is_divider_dragging, DividerType};
+    
+    let is_dragging_signal = is_divider_dragging(DividerType::FilesPanelSecondary);
     
     El::new()
         .s(Width::fill())
@@ -2641,7 +2648,7 @@ pub fn horizontal_divider(is_dragging_signal: impl Signal<Item = bool> + Unpin +
         ))
         .s(Cursor::new(CursorIcon::RowResize))
         .on_pointer_down(move || {
-            horizontal_divider_dragged_relay().send(1.0);
+            start_drag(DividerType::FilesPanelSecondary, (0.0, 0.0));
         })
 }
 

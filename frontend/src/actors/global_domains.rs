@@ -812,6 +812,34 @@ pub fn error_manager_next_alert_id_signal() -> impl Signal<Item = u32> {
 
 // === PANEL LAYOUT SIGNAL SYNCHRONIZATION FUNCTIONS (INTERNAL) ===
 
+/// Set vertical dragging state
+pub fn set_files_vertical_dragging(is_dragging: bool) {
+    if let Some(signals) = PANEL_LAYOUT_SIGNALS.get() {
+        signals.files_vertical_dragging_mutable.set_neq(is_dragging);
+    }
+}
+
+/// Set horizontal dragging state
+pub fn set_files_horizontal_dragging(is_dragging: bool) {
+    if let Some(signals) = PANEL_LAYOUT_SIGNALS.get() {
+        signals.files_horizontal_dragging_mutable.set_neq(is_dragging);
+    }
+}
+
+/// Set name column divider dragging state
+pub fn set_name_divider_dragging(is_dragging: bool) {
+    if let Some(signals) = PANEL_LAYOUT_SIGNALS.get() {
+        signals.name_divider_dragging_mutable.set_neq(is_dragging);
+    }
+}
+
+/// Set value column divider dragging state
+pub fn set_value_divider_dragging(is_dragging: bool) {
+    if let Some(signals) = PANEL_LAYOUT_SIGNALS.get() {
+        signals.value_divider_dragging_mutable.set_neq(is_dragging);
+    }
+}
+
 /// Update panel layout signals when domain changes
 pub fn _update_panel_layout_signals(
     files_width: u32,
@@ -838,6 +866,29 @@ pub fn _update_panel_layout_signals(
         signals.files_horizontal_dragging_mutable.set_neq(files_horizontal_dragging);
         signals.name_divider_dragging_mutable.set_neq(name_divider_dragging);
         signals.value_divider_dragging_mutable.set_neq(value_divider_dragging);
+    }
+}
+
+// === BRIDGE SETTER FUNCTIONS: Actor → Old Mutable Signals ===
+
+/// Set files panel height in old mutable system (called from Actor bridge)
+pub fn set_files_panel_height(height: u32) {
+    if let Some(signals) = PANEL_LAYOUT_SIGNALS.get() {
+        signals.files_panel_height_mutable.set_neq(height);
+    }
+}
+
+/// Set variables name column width in old mutable system (called from Actor bridge)
+pub fn set_variables_name_column_width(width: u32) {
+    if let Some(signals) = PANEL_LAYOUT_SIGNALS.get() {
+        signals.variables_name_column_width_mutable.set_neq(width);
+    }
+}
+
+/// Set variables value column width in old mutable system (called from Actor bridge)
+pub fn set_variables_value_column_width(width: u32) {
+    if let Some(signals) = PANEL_LAYOUT_SIGNALS.get() {
+        signals.variables_value_column_width_mutable.set_neq(width);
     }
 }
 

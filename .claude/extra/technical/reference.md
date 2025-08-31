@@ -20,6 +20,9 @@ std::println!("Debug");   // ❌ Does nothing
 - **For console logs**: Use `mcp__browsermcp__browser_get_console_logs` tool
 - **For refresh**: Use `mcp__browsermcp__browser_navigate` to same URL instead of F5
 - **For DevTools**: Access logs programmatically rather than manual F12
+- **Cannot perform drag operations or scrolling** - browsermcp doesn't support mouse drag gestures or scroll wheel events
+- **For drag testing**: Verify drag event handlers trigger with `on_pointer_down`/`on_pointer_up` and check console logs for debug messages
+- **Manual testing required**: Always inform user/developer that actual drag functionality must be tested manually by them, as Claude can only verify event handlers fire but cannot test the full drag interaction
 
 ## Core Component Patterns
 
