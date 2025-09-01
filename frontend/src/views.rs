@@ -2225,24 +2225,26 @@ fn file_picker_content() -> impl Element {
             raw_el.style("scrollbar-width", "thin")
                 .style_signal("scrollbar-color", primary_6().map(|thumb| primary_3().map(move |track| format!("{} {}", thumb, track))).flatten())
         })
-        .child(simple_file_picker_tree())
+        .child_signal(simple_file_picker_tree().into_signal_option())
 }
 
-fn simple_file_picker_tree() -> impl Element {
+async fn simple_file_picker_tree() -> impl Element {
+    let scroll_position = crate::config::app_config()
+        .file_picker_scroll_position
+        .signal()
+        .to_stream()
+        .next()
+        .await;
     let (tree_view_rendering_relay, mut tree_view_rendering_stream) = relay();
-    let scroll_position_actor = Actor::new(0, |state| async move {
-        if let Some(scroll_position) = crate::config::app_config().file_picker_scroll_position.signal().to_stream().next().await {
-            if let Some(()) = tree_view_rendering_stream.next().await {
-                Task::next_macro_tick().await;
-                state.set_neq(scroll_position);
-            }
-        }
-    });
     El::new()
         .s(Height::fill())
         .s(Width::fill())
         .s(Scrollbars::both())
-        .viewport_y_signal(scroll_position_actor.signal())
+        .viewport_y_signal(signal::from_future(Box::pin(async move {
+            tree_view_rendering_stream.next().await;
+            Task::next_macro_tick().await;
+            scroll_position
+        })).map(|position| position.flatten().unwrap_or_default()))
         .on_viewport_location_change(|_scene, viewport| {
             crate::config::app_config().file_picker_scroll_position.set_neq(viewport.y);
         })
@@ -2253,7 +2255,6 @@ fn simple_file_picker_tree() -> impl Element {
                 .style("scrollbar-width", "thin")
                 .style_signal("scrollbar-color", primary_6().map(|thumb| primary_3().map(move |track| format!("{} {}", thumb, track))).flatten())
         })
-        .after_remove(move |_| drop(scroll_position_actor))
         .child_signal(
             map_ref! {
                 let tree_cache = FILE_TREE_CACHE.signal_cloned(),

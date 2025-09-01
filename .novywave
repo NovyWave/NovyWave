@@ -24,16 +24,16 @@ expanded_scopes = [
     "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP",
 ]
 load_files_expanded_directories = [
-    "/",
     "/home",
     "/home/martinkavik",
     "/home/martinkavik/repos",
     "/home/martinkavik/repos/NovyWave",
     "/home/martinkavik/repos/NovyWave/test_files",
+    "/",
     "/home/martinkavik/repos/NovyWave/test_files/nested_dir",
 ]
 selected_scope_id = "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s"
-load_files_scroll_position = 1092
+load_files_scroll_position = 924
 selected_variables = []
 timeline_cursor_position_ns = 0
 timeline_zoom_level = 1.0

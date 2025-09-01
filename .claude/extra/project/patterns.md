@@ -1004,3 +1004,47 @@ El::new()
 - Common issue: TreeView/component backgrounds don't extend to full content width in scrollable containers
 - Root cause: Multiple levels of width constraints (container → item → CSS)
 - Solution pattern: Container needs `Width::fill() + CSS min-width: max-content` + Items need `Width::fill()` + CSS needs `width: 100%`
+
+### Async Element Functions with Signal Integration
+
+**Remember:** `async fn -> impl Element` works together with `child_signal` + `.into_signal_option()` and you can create signals from futures.
+
+```rust
+// ✅ CORRECT: Real working pattern from NovyWave
+// Parent element using async Element with child_signal + into_signal_option()
+.child_signal(simple_file_picker_tree().into_signal_option())
+
+// ✅ CORRECT: Async element function with signal::from_future coordination
+async fn simple_file_picker_tree() -> impl Element {
+    // Await initial signal value
+    let scroll_position = crate::config::app_config()
+        .file_picker_scroll_position
+        .signal()
+        .to_stream()
+        .next()
+        .await;
+    
+    // Create relay for timing coordination
+    let (tree_view_rendering_relay, mut tree_view_rendering_stream) = relay();
+    
+    El::new()
+        .s(Height::fill())
+        .s(Width::fill())
+        .s(Scrollbars::both())
+        // ✅ signal::from_future with Box::pin for complex async coordination
+        .viewport_y_signal(signal::from_future(Box::pin(async move {
+            tree_view_rendering_stream.next().await;
+            Task::next_macro_tick().await;
+            scroll_position
+        })).map(|position| position.flatten().unwrap_or_default()))
+        // ... rest of element
+}
+```
+
+**Key Benefits:**
+- **Direct pattern**: `.child_signal(async_element_function().into_signal_option())`
+- **Await signal values**: `.signal().to_stream().next().await` to get initial values in async functions
+- **Relay coordination**: Create relays for timing coordination between async operations
+- **signal::from_future()**: `signal::from_future(Box::pin(async move { ... }))` for complex async signal creation
+- **Result handling**: `.map(|result| result.flatten().unwrap_or_default())` for Option unwrapping
+- **Proper timing**: Use stream waits + `Task::next_macro_tick().await` for UI coordination
