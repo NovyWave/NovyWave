@@ -227,10 +227,10 @@ impl WaveformTimeline {
         
         // Create cursor position actor with comprehensive event handling
         let cursor_position = Actor::new(TimeNs::ZERO, async move |cursor_handle| {
-            let mut cursor_clicked = cursor_clicked_stream.fuse();
-            let mut cursor_moved = cursor_moved_stream.fuse();
-            let mut left_key_pressed = left_key_pressed_stream.fuse();
-            let mut right_key_pressed = right_key_pressed_stream.fuse();
+            let mut cursor_clicked = cursor_clicked_stream;
+            let mut cursor_moved = cursor_moved_stream;
+            let mut left_key_pressed = left_key_pressed_stream;
+            let mut right_key_pressed = right_key_pressed_stream;
             
             loop {
                 select! {
@@ -273,9 +273,9 @@ impl WaveformTimeline {
         let viewport = Actor::new(
             Viewport::new(TimeNs::ZERO, TimeNs::from_external_seconds(100.0)), 
             async move |viewport_handle| {
-                let mut viewport_changed = _viewport_changed_stream.fuse();
-                let mut timeline_bounds_calculated = _timeline_bounds_calculated_stream.fuse();
-                let mut fit_all_clicked = fit_all_clicked_stream.fuse();
+                let mut viewport_changed = _viewport_changed_stream;
+                let mut timeline_bounds_calculated = _timeline_bounds_calculated_stream;
+                let mut fit_all_clicked = fit_all_clicked_stream;
                 
                 loop {
                     select! {
@@ -319,10 +319,10 @@ impl WaveformTimeline {
         
         // Create ns_per_pixel actor with zoom event handling
         let ns_per_pixel = Actor::new(NsPerPixel::MEDIUM_ZOOM, async move |ns_per_pixel_handle| {
-            let mut zoom_in_started = zoom_in_started_stream.fuse();
-            let mut zoom_out_started = zoom_out_started_stream.fuse();
-            let mut zoom_in_pressed = zoom_in_pressed_stream.fuse();
-            let mut zoom_out_pressed = zoom_out_pressed_stream.fuse();
+            let mut zoom_in_started = zoom_in_started_stream;
+            let mut zoom_out_started = zoom_out_started_stream;
+            let mut zoom_in_pressed = zoom_in_pressed_stream;
+            let mut zoom_out_pressed = zoom_out_pressed_stream;
             
             loop {
                 select! {
@@ -393,7 +393,7 @@ impl WaveformTimeline {
         });
         
         let panning_left = Actor::new(false, async move |panning_handle| {
-            let mut pan_left_started = pan_left_started_stream.fuse();
+            let mut pan_left_started = pan_left_started_stream;
             
             loop {
                 select! {
@@ -412,7 +412,7 @@ impl WaveformTimeline {
         });
         
         let panning_right = Actor::new(false, async move |panning_handle| {
-            let mut pan_right_started = pan_right_started_stream.fuse();
+            let mut pan_right_started = pan_right_started_stream;
             
             loop {
                 select! {
@@ -444,7 +444,7 @@ impl WaveformTimeline {
         
         // Mouse tracking actors
         let mouse_x = Actor::new(0.0_f32, async move |mouse_x_handle| {
-            let mut mouse_moved = mouse_moved_stream.fuse();
+            let mut mouse_moved = mouse_moved_stream;
             
             loop {
                 select! {
@@ -470,7 +470,7 @@ impl WaveformTimeline {
         
         // Canvas dimension actors
         let canvas_width = Actor::new(800.0_f32, async move |width_handle| {
-            let mut canvas_resized = canvas_resized_stream.fuse();
+            let mut canvas_resized = canvas_resized_stream;
             
             loop {
                 select! {
@@ -491,7 +491,7 @@ impl WaveformTimeline {
         
         // Signal values ActorMap
         let signal_values = ActorMap::new(BTreeMap::new(), async move |values_handle| {
-            let mut signal_values_updated = signal_values_updated_stream.fuse();
+            let mut signal_values_updated = signal_values_updated_stream;
             
             loop {
                 select! {
@@ -525,7 +525,7 @@ impl WaveformTimeline {
         });
         
         let force_redraw = Actor::new(0_u32, async move |redraw_handle| {
-            let mut redraw_requested = redraw_requested_stream.fuse();
+            let mut redraw_requested = redraw_requested_stream;
             
             loop {
                 select! {

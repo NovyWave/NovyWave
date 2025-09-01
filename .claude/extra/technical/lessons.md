@@ -429,15 +429,15 @@ let result = tokio::spawn_blocking(move || expensive_blocking_operation(data)).a
 - **Signal type errors**: Convert `SignalVec` with `.to_signal_cloned()` for `map_ref!`
 - **Loop detection**: Add render counters, look for bidirectional reactive flows
 - **State preservation**: Check existing states before replacing during updates
-- **FusedFuture compilation errors**: Actor stream processing with `futures::select!` requires `.fuse()` on streams, not `tokio::select!`
+- **FusedFuture compilation**: Actor stream processing with `futures::select!` works directly with our relay streams (no `.fuse()` needed)
 
 #### Actor Stream Processing Patterns
 
-**✅ CORRECT: FusedFuture-compatible stream selection**
+**✅ CORRECT: Direct stream usage (relay streams are already fused)**
 ```rust
 let panel_dimensions_right_actor = Actor::new(PanelDimensions::default(), async move |state| {
-    let mut right_stream = panel_dimensions_right_changed_stream.fuse();
-    let mut resized_stream = panel_resized_stream.fuse();
+    let mut right_stream = panel_dimensions_right_changed_stream; // No .fuse() needed!
+    let mut resized_stream = panel_resized_stream; // Already implements FusedStream
     
     loop {
         select! {
@@ -462,18 +462,39 @@ let panel_dimensions_right_actor = Actor::new(PanelDimensions::default(), async 
 tokio::select! {
     new_dims = right_stream.next() => { ... }
 }
+```
 
-// ERROR: futures::select! requires FusedStream trait
-futures::select! {
-    new_dims = right_stream.next() => { ... }  // Stream doesn't implement FusedStream
+**Key Requirements for Our Relay Streams:**
+- Use `futures::{StreamExt, select}` imports
+- Relay streams already implement `FusedStream` - no manual `.fuse()` needed
+- Use plain `select!` macro, not `tokio::select!`
+- Pattern works in both WASM and native environments
+- `UnboundedReceiver<T>` automatically implements `FusedStream`
+
+### Timer::sleep() Fusing Requirements (Temporary Issue)
+
+**❌ Timer::sleep() requires .fuse() workaround:**
+```rust
+loop {
+    select! {
+        // NOTE: .fuse() required due to broken FusedFuture in oneshot::Receiver
+        // See: https://github.com/rust-lang/futures-rs/issues/2455
+        //      https://github.com/rust-lang/futures-rs/issues/1989
+        //      https://github.com/rust-lang/futures-rs/issues/2207
+        _ = Timer::sleep(update_interval_ms as u32).fuse() => {
+            // Process timer events
+        }
+    }
 }
 ```
 
-**Key Requirements:**
-- Use `futures::{StreamExt, select}` imports
-- Call `.fuse()` on all streams before using in `select!`
-- Use plain `select!` macro, not `tokio::select!` or `futures::select!`
-- Pattern works in both WASM and native environments
+**Root Cause:**
+- `Timer::sleep()` uses `futures::channel::oneshot::Receiver` internally
+- `oneshot::Receiver` has broken `FusedFuture.is_terminated()` implementation
+- Returns `true` when sender is dropped (incorrect behavior for select!)
+- Affects all oneshot channels in select! loops
+
+**Status:** This is a known issue in the futures library. Once resolved upstream, the `.fuse()` calls can be removed from Timer::sleep() usage.
 
 ## Critical Signal Routing Debugging Pattern
 

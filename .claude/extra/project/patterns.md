@@ -424,8 +424,8 @@ pub fn toggle_dock_mode_requested() {
 **3. Actors Handle Both Direct Changes and Toggle Logic:**
 ```rust
 let theme_actor = Actor::new(SharedTheme::Light, async move |state| {
-    let mut theme_stream = theme_changed_stream.fuse();
-    let mut theme_toggle_stream = theme_toggle_requested_stream.fuse();
+    let mut theme_stream = theme_changed_stream; // No .fuse() needed - already implements FusedStream
+    let mut theme_toggle_stream = theme_toggle_requested_stream;
     
     // ✅ Cache current values as they flow through streams
     let mut current_theme = SharedTheme::Light;
@@ -534,8 +534,8 @@ impl ConfigSaver {
             let mut debounce_task: Option<TaskHandle> = None;
             
             // Listen to ALL config actor signals
-            let mut theme_stream = theme_actor.signal().to_stream().fuse();
-            let mut dock_stream = dock_mode_actor.signal().to_stream().fuse();
+            let mut theme_stream = theme_actor.signal().to_stream(); // Signal streams may need .fuse()
+            let mut dock_stream = dock_mode_actor.signal().to_stream(); // depending on implementation
             // ... other streams
             
             loop {

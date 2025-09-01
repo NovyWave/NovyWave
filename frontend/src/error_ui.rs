@@ -6,7 +6,7 @@ use crate::state::ErrorAlert;
 use crate::actors::error_manager::toast_notifications_signal_vec;
 use crate::error_display::dismiss_error_alert;
 use crate::dataflow::*;
-use futures::{select, stream::StreamExt};
+use futures::{select, stream::StreamExt, future::FusedFuture};
 
 /// Progress percentage for toast auto-dismiss timer (0.0 to 100.0)
 type Progress = f32;
@@ -55,11 +55,13 @@ fn toast_element(alert: ErrorAlert) -> impl Element {
         let mut elapsed_time = 0.0f32;
         let mut is_paused = false;
         let update_interval_ms = 50.0f32;
-        let mut toast_clicked_stream = toast_clicked_stream.fuse();
-        let mut dismiss_button_clicked_stream = dismiss_button_clicked_stream.fuse();
         
         loop {
             select! {
+                // NOTE: .fuse() required due to broken FusedFuture in oneshot::Receiver
+                // See: https://github.com/rust-lang/futures-rs/issues/2455
+                //      https://github.com/rust-lang/futures-rs/issues/1989
+                //      https://github.com/rust-lang/futures-rs/issues/2207
                 _ = Timer::sleep(update_interval_ms as u32).fuse() => {
                     if !is_paused {
                         elapsed_time += update_interval_ms;

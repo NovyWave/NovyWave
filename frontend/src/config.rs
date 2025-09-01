@@ -281,7 +281,6 @@ impl AppConfig {
 
         // Create theme actor with loaded config value
         let theme_actor = Actor::new(config.ui.theme, async move |state| {
-            let mut theme_button_clicked_stream = theme_button_clicked_stream.fuse();
             
             // Initialize NovyUI theme system with current theme
             let initial_novyui_theme = match config.ui.theme {
@@ -327,7 +326,6 @@ impl AppConfig {
                 let panel_dimensions_right_changed_relay = panel_dimensions_right_changed_relay_clone.clone();
                 let panel_dimensions_bottom_changed_relay = panel_dimensions_bottom_changed_relay_clone.clone();
                 async move |state| {
-            let mut dock_mode_button_clicked_stream = dock_mode_button_clicked_stream.fuse();
             
             loop {
                 select! {
@@ -440,8 +438,8 @@ impl AppConfig {
             variables_name_column_width: config.workspace.docked_right_dimensions.selected_variables_panel_name_column_width.unwrap_or(190.0) as f32,
             variables_value_column_width: config.workspace.docked_right_dimensions.selected_variables_panel_value_column_width.unwrap_or(220.0) as f32,
         }, async move |state| {
-            let mut right_stream = panel_dimensions_right_changed_relay_clone.subscribe().fuse();
-            let mut resized_stream = panel_resized_relay_clone.subscribe().fuse();
+            let mut right_stream = panel_dimensions_right_changed_relay_clone.subscribe();
+            let mut resized_stream = panel_resized_relay_clone.subscribe();
             
             loop {
                 select! {
@@ -468,7 +466,7 @@ impl AppConfig {
             variables_name_column_width: config.workspace.docked_bottom_dimensions.selected_variables_panel_name_column_width.unwrap_or(190.0) as f32,
             variables_value_column_width: config.workspace.docked_bottom_dimensions.selected_variables_panel_value_column_width.unwrap_or(220.0) as f32,
         }, async move |state| {
-            let mut bottom_stream = panel_dimensions_bottom_changed_relay_clone.subscribe().fuse();
+            let mut bottom_stream = panel_dimensions_bottom_changed_relay_clone.subscribe();
             
             loop {
                 select! {
@@ -483,9 +481,9 @@ impl AppConfig {
 
         // Create timeline state actor (using defaults for now - can be added to config later)
         let timeline_state_actor = Actor::new(TimelineState::default(), async move |state| {
-            let mut timeline_stream = timeline_state_changed_stream.fuse();
-            let mut cursor_stream = cursor_moved_stream.fuse();
-            let mut zoom_stream = zoom_changed_stream.fuse();
+            let mut timeline_stream = timeline_state_changed_stream;
+            let mut cursor_stream = cursor_moved_stream;
+            let mut zoom_stream = zoom_changed_stream;
             
             loop {
                 select! {
@@ -515,8 +513,8 @@ impl AppConfig {
             file_picker_scroll_position: config.workspace.load_files_scroll_position,
             file_picker_expanded_directories: config.workspace.load_files_expanded_directories.clone(),
         }, async move |state| {
-            let mut session_stream = session_state_changed_stream.fuse();
-            let mut variables_filter_stream = variables_filter_changed_stream.fuse();
+            let mut session_stream = session_state_changed_stream;
+            let mut variables_filter_stream = variables_filter_changed_stream;
             
             loop {
                 select! {
@@ -540,15 +538,13 @@ impl AppConfig {
 
         // Create UI state actor
         let ui_state_actor = Actor::new(UiState::default(), async move |state| {
-            let mut ui_stream = ui_state_changed_stream;
-            while let Some(new_ui) = ui_stream.next().await {
+            while let Some(new_ui) = ui_state_changed_stream.next().await {
                 state.set_neq(new_ui);
             }
         });
 
         // Create toast dismiss ms actor with loaded config value
         let toast_dismiss_ms_actor = Actor::new(config.ui.toast_dismiss_ms as u32, async move |state| {
-            let mut toast_stream = toast_dismiss_ms_changed_stream;
             while let Some(new_ms) = toast_stream.next().await {
                 state.set_neq(new_ms);
             }
@@ -556,7 +552,6 @@ impl AppConfig {
 
         // Create dialogs data actor
         let dialogs_data_actor = Actor::new(DialogsData::default(), async move |state| {
-            let mut dialogs_stream = dialogs_data_changed_stream;
             while let Some(new_dialogs) = dialogs_stream.next().await {
                 state.set_neq(new_dialogs);
             }
@@ -564,7 +559,6 @@ impl AppConfig {
 
         // Create is_loaded actor
         let is_loaded_actor = Actor::new(false, async move |state| {
-            let mut config_loaded_stream = config_loaded_stream;
             while let Some(_config) = config_loaded_stream.next().await {
                 state.set_neq(true);
             }

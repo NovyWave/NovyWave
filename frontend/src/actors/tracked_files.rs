@@ -37,15 +37,10 @@ impl TrackedFiles {
         
         // Create files ActorVec with event processing
         let files = ActorVec::new(vec![], async move |files_handle| {
-            let mut config_stream = config_files_loaded_stream.fuse();
-            let mut dropped_stream = files_dropped_stream.fuse();
-            let mut removed_stream = file_removed_stream.fuse();
-            let mut completed_stream = file_load_completed_stream.fuse();
-            let mut cleared_stream = all_files_cleared_stream.fuse();
             
             loop {
                 select! {
-                    config_files = config_stream.next() => {
+                    config_files = config_files_loaded_stream.next() => {
                         if let Some(file_paths) = config_files {
                             // TrackedFiles: Config loaded files
                             
@@ -62,7 +57,7 @@ impl TrackedFiles {
                             files_handle.lock_mut().replace_cloned(tracked_files);
                         }
                     }
-                    dropped_files = dropped_stream.next() => {
+                    dropped_files = files_dropped_stream.next() => {
                         if let Some(file_paths) = dropped_files {
                             zoon::println!("🔄 TrackedFiles: Files dropped: {:?}", file_paths);
                             
@@ -84,13 +79,13 @@ impl TrackedFiles {
                             }
                         }
                     }
-                    removed_file = removed_stream.next() => {
+                    removed_file = file_removed_stream.next() => {
                         if let Some(file_id) = removed_file {
                             zoon::println!("🔄 TrackedFiles: File removed: {}", file_id);
                             files_handle.lock_mut().retain(|f| f.id != file_id);
                         }
                     }
-                    completed = completed_stream.next() => {
+                    completed = file_load_completed_stream.next() => {
                         if let Some((file_id, new_state)) = completed {
                             // File load completed successfully
                             
@@ -107,7 +102,7 @@ impl TrackedFiles {
                             }
                         }
                     }
-                    cleared = cleared_stream.next() => {
+                    cleared = all_files_cleared_stream.next() => {
                         if cleared.is_some() {
                             zoon::println!("🔄 TrackedFiles: All files cleared");
                             files_handle.lock_mut().clear();
@@ -120,7 +115,6 @@ impl TrackedFiles {
         
         // Create expanded_scopes Actor
         let expanded_scopes = Actor::new(IndexSet::new(), async move |scopes_handle| {
-            let mut scope_stream = scope_toggled_stream.fuse();
             
             loop {
                 select! {

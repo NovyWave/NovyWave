@@ -4,7 +4,7 @@
 //! using simple unbounded channels instead of complex custom Stream implementation.
 
 use futures::channel::mpsc::{unbounded, UnboundedSender};
-use futures::stream::Stream;
+use futures::stream::{Stream, FusedStream};
 use std::sync::{Arc, OnceLock, Mutex};
 
 /// Type-safe event streaming relay for Actor+Relay architecture.
@@ -93,17 +93,26 @@ where
 
     /// Subscribe to receive events from this relay.
     /// 
-    /// Returns a stream that will receive all future events sent through this relay.
-    /// Multiple subscribers can be created from the same relay.
+    /// Returns a fused stream (implements FusedStream) that will receive all future 
+    /// events sent through this relay. Safe to use directly in futures::select! loops
+    /// without manual .fuse() calls. Multiple subscribers can be created from the same relay.
     /// 
     /// # Examples
     /// 
     /// ```rust
     /// let relay = Relay::new();
-    /// let mut stream1 = relay.subscribe();
-    /// let mut stream2 = relay.subscribe(); // Multiple subscribers
+    /// let mut stream1 = relay.subscribe(); // Already fused - no .fuse() needed!
+    /// let mut stream2 = relay.subscribe();
+    /// 
+    /// // Safe to use directly in select! loops
+    /// loop {
+    ///     select! {
+    ///         event1 = stream1.next() => { /* handle */ }
+    ///         event2 = stream2.next() => { /* handle */ }
+    ///     }
+    /// }
     /// ```
-    pub fn subscribe(&self) -> impl Stream<Item = T> + use<T> {
+    pub fn subscribe(&self) -> impl Stream<Item = T> + FusedStream + use<T> {
         let (sender, receiver) = unbounded();
         
         if let Ok(mut subscribers) = self.subscribers.lock() {
@@ -238,10 +247,12 @@ where
     }
 }
 
-/// Creates a new Relay with an associated stream, following Rust's channel pattern.
+/// Creates a new Relay with an associated fused stream, following Rust's channel pattern.
 /// 
 /// This is the idiomatic way to create a Relay for use with Actors,
 /// eliminating clone! macro boilerplate and providing direct stream access.
+/// The returned stream implements FusedStream and can be used directly in 
+/// futures::select! loops without manual .fuse() calls.
 /// 
 /// # Examples
 /// 
@@ -252,24 +263,24 @@ where
 /// // Just like Rust channels:
 /// // let (tx, rx) = channel();
 /// 
-/// // Actor+Relay pattern:
-/// let (increment_relay, mut increment_stream) = relay();
+/// // Actor+Relay pattern - streams are already fused:
+/// let (increment_relay, mut increment_stream) = relay(); // No .fuse() needed!
 /// let (decrement_relay, mut decrement_stream) = relay();
 /// 
 /// let counter = Actor::new(0, async move |state| {
 ///     loop {
 ///         select! {
-///             Some(amount) = increment_stream.next() => {
+///             Some(amount) = increment_stream.next() => { // Direct usage
 ///                 state.update(|n| n + amount);
 ///             }
-///             Some(amount) = decrement_stream.next() => {
+///             Some(amount) = decrement_stream.next() => { // No .fuse() needed
 ///                 state.update(|n| n.saturating_sub(amount));
 ///             }
 ///         }
 ///     }
 /// });
 /// ```
-pub fn relay<T>() -> (Relay<T>, impl Stream<Item = T>)
+pub fn relay<T>() -> (Relay<T>, impl Stream<Item = T> + FusedStream)
 where
     T: Clone + Send + Sync + 'static,
 {
