@@ -28,12 +28,12 @@ pub struct TrackedFiles {
 impl TrackedFiles {
     pub async fn new() -> Self {
         // Create relays
-        let (config_files_loaded_relay, config_files_loaded_stream) = relay::<Vec<String>>();
-        let (files_dropped_relay, files_dropped_stream) = relay::<Vec<std::path::PathBuf>>();
-        let (file_removed_relay, file_removed_stream) = relay::<String>();
-        let (scope_toggled_relay, scope_toggled_stream) = relay::<String>();
-        let (file_load_completed_relay, file_load_completed_stream) = relay::<(String, FileState)>();
-        let (all_files_cleared_relay, all_files_cleared_stream) = relay::<()>();
+        let (config_files_loaded_relay, mut config_files_loaded_stream) = relay::<Vec<String>>();
+        let (files_dropped_relay, mut files_dropped_stream) = relay::<Vec<std::path::PathBuf>>();
+        let (file_removed_relay, mut file_removed_stream) = relay::<String>();
+        let (scope_toggled_relay, mut scope_toggled_stream) = relay::<String>();
+        let (file_load_completed_relay, mut file_load_completed_stream) = relay::<(String, FileState)>();
+        let (all_files_cleared_relay, mut all_files_cleared_stream) = relay::<()>();
         
         // Create files ActorVec with event processing
         let files = ActorVec::new(vec![], async move |files_handle| {
@@ -118,7 +118,7 @@ impl TrackedFiles {
             
             loop {
                 select! {
-                    scope_id = scope_stream.next() => {
+                    scope_id = scope_toggled_stream.next() => {
                         if let Some(scope_id) = scope_id {
                             zoon::println!("🔄 TrackedFiles: Scope toggled: {}", scope_id);
                             

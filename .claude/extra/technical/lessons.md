@@ -281,6 +281,39 @@ When encountering signal timing issues:
 
 **Remember:** Reactive architecture should "just work" without artificial timing fixes.
 
+## Error Display UX: Console Logging vs. Toast Notifications
+
+### Lesson: Separate Developer Debugging from User Experience
+
+When implementing error handling during architectural migrations, distinguish between **developer needs** and **user experience**:
+
+**Problem Pattern**: Background operations (directory preloading, file parsing) show error toasts immediately on app startup, confusing users who didn't initiate those actions.
+
+**Solution**: `log_error_console_only()` function for background errors:
+
+```rust
+/// Log error to browser console only (no toast notification)  
+/// Use for background operations or non-user-initiated errors
+pub fn log_error_console_only(alert: ErrorAlert) {
+    zoon::eprintln!("{}", alert.technical_error);  // Console for developers
+    add_domain_alert(alert);  // Domain tracking without toast
+}
+
+// Usage for background operations
+DownMsg::DirectoryError { path, error } => {
+    log_error_console_only(ErrorAlert::new_directory_error(path, error));  // Console only
+    store_error_for_ui_display(path, error);  // Still show in dialog where relevant
+}
+```
+
+**Key Insight**: The simplest UX solution is often elimination, not conditional logic. Instead of "only show toast if dialog visible", better to show error directly where users need it (dialog tree) and log for developers (console).
+
+**Benefits:**
+- ✅ Developers get debugging info in browser console
+- ✅ Users get clean experience without confusing startup toasts  
+- ✅ Errors still visible in context (file dialog tree)
+- ✅ No complex conditional visibility logic needed
+
 ## Comprehensive Troubleshooting Guide
 
 ### Common Actor+Relay Issues

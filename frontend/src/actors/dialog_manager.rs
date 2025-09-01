@@ -493,7 +493,8 @@ pub fn file_picker_error_signal() -> impl Signal<Item = Option<String>> {
 
 /// Legacy signal compatibility: Get error cache signal (replaces FILE_PICKER_ERROR_CACHE.signal())
 pub fn file_picker_error_cache_signal() -> impl Signal<Item = HashMap<String, String>> {
-    error_cache_signal()
+    // Direct connection to working global cache during Actor+Relay migration
+    crate::state::FILE_PICKER_ERROR_CACHE.signal_cloned()
 }
 
 // ===== INITIALIZATION =====

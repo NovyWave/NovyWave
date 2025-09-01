@@ -10,10 +10,8 @@ toast_dismiss_ms = 5000
 
 [workspace]
 opened_files = [
-    "/home/martinkavik/repos/NovyWave/test_files/simple.vcd",
     "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst",
-    "/home/martinkavik/repos/NovyWave/test_files/fake.fst",
-    "/home/martinkavik/repos/NovyWave/test_files/corrupted.vcd",
+    "/home/martinkavik/repos/NovyWave/test_files/simple.vcd",
 ]
 dock_mode = "bottom"
 expanded_scopes = [
@@ -34,10 +32,9 @@ load_files_expanded_directories = [
     "/home/martinkavik/repos/NovyWave",
     "/home/martinkavik/repos/NovyWave/test_files",
     "/home/martinkavik/repos/NovyWave/test_files/nested_dir",
-    "/root",
 ]
 selected_scope_id = "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s"
-load_files_scroll_position = 954
+load_files_scroll_position = 912
 selected_variables = []
 timeline_cursor_position_ns = 0
 timeline_zoom_level = 1.0

@@ -1,6 +1,6 @@
 use zoon::*;
 use crate::{LOADING_FILES, LOADED_FILES, check_loading_complete, config};
-use crate::error_display::add_error_alert;
+use crate::error_display::{add_error_alert, log_error_console_only};
 use crate::state::ErrorAlert;
 use crate::utils::restore_scope_selection_for_file;
 use crate::views::is_cursor_within_variable_time_range;
@@ -180,11 +180,11 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 crate::FILE_PICKER_ERROR_CACHE.lock_mut().remove(&path);
             }
             DownMsg::DirectoryError { path, error } => {
-                // Create and display directory error alert (auto-dismisses)
+                // Log to console for debugging but don't show toast (UX redundancy)
                 let error_alert = ErrorAlert::new_directory_error(path.clone(), error.clone());
-                add_error_alert(error_alert);
+                log_error_console_only(error_alert);
                 
-                // Store error for this specific directory
+                // Store error for UI display in dialog tree
                 // TODO: Add domain function for error cache manipulation
                 crate::FILE_PICKER_ERROR_CACHE.lock_mut().insert(path.clone(), error);
                 
@@ -216,9 +216,11 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                             crate::FILE_PICKER_ERROR_CACHE.lock_mut().remove(&path);
                         }
                         Err(error) => {
-                            // Handle directory scan error
+                            // Log to console for debugging but don't show toast (UX redundancy)
                             let error_alert = crate::state::ErrorAlert::new_directory_error(path.clone(), error.clone());
-                            crate::error_display::add_error_alert(error_alert);
+                            log_error_console_only(error_alert);
+                            
+                            // Store directory scan error for UI display 
                             // TODO: Add domain function for error cache manipulation
                             crate::FILE_PICKER_ERROR_CACHE.lock_mut().insert(path.clone(), error);
                         }

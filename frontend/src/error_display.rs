@@ -23,6 +23,16 @@ pub fn add_error_alert(alert: ErrorAlert) {
     add_toast_notification(alert);
 }
 
+/// Log error to browser console only (no toast notification)
+/// Use for background operations or non-user-initiated errors
+pub fn log_error_console_only(alert: ErrorAlert) {
+    // Log technical error to console for developers/debugging
+    zoon::eprintln!("{}", alert.technical_error);
+    
+    // Add to domain for error tracking but don't show toast
+    add_domain_alert(alert);
+}
+
 /// Dismiss an error alert by ID
 pub fn dismiss_error_alert(id: &str) {
     remove_error_alert(id.to_string());

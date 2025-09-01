@@ -259,8 +259,8 @@ impl AppConfig {
         
         
         // Create relays for all events
-        let (theme_button_clicked_relay, theme_button_clicked_stream) = relay();
-        let (dock_mode_button_clicked_relay, dock_mode_button_clicked_stream) = relay();
+        let (theme_button_clicked_relay, mut theme_button_clicked_stream) = relay();
+        let (dock_mode_button_clicked_relay, mut dock_mode_button_clicked_stream) = relay();
         let (variables_filter_changed_relay, variables_filter_changed_stream) = relay();
         let (panel_dimensions_right_changed_relay, panel_dimensions_right_changed_stream) = relay();
         let (panel_dimensions_bottom_changed_relay, panel_dimensions_bottom_changed_stream) = relay();
@@ -269,10 +269,10 @@ impl AppConfig {
         let (cursor_moved_relay, cursor_moved_stream) = relay();
         let (zoom_changed_relay, zoom_changed_stream) = relay();
         let (session_state_changed_relay, session_state_changed_stream) = relay();
-        let (ui_state_changed_relay, ui_state_changed_stream) = relay();
-        let (toast_dismiss_ms_changed_relay, toast_dismiss_ms_changed_stream) = relay();
-        let (dialogs_data_changed_relay, dialogs_data_changed_stream) = relay();
-        let (config_loaded_relay, config_loaded_stream) = relay::<SharedAppConfig>();
+        let (ui_state_changed_relay, mut ui_state_changed_stream) = relay();
+        let (toast_dismiss_ms_changed_relay, mut toast_dismiss_ms_changed_stream) = relay();
+        let (dialogs_data_changed_relay, mut dialogs_data_changed_stream) = relay();
+        let (config_loaded_relay, mut config_loaded_stream) = relay::<SharedAppConfig>();
 
         // Clone relays for use in multiple Actors to avoid move issues
         let panel_dimensions_right_changed_relay_clone = panel_dimensions_right_changed_relay.clone();
@@ -545,14 +545,14 @@ impl AppConfig {
 
         // Create toast dismiss ms actor with loaded config value
         let toast_dismiss_ms_actor = Actor::new(config.ui.toast_dismiss_ms as u32, async move |state| {
-            while let Some(new_ms) = toast_stream.next().await {
+            while let Some(new_ms) = toast_dismiss_ms_changed_stream.next().await {
                 state.set_neq(new_ms);
             }
         });
 
         // Create dialogs data actor
         let dialogs_data_actor = Actor::new(DialogsData::default(), async move |state| {
-            while let Some(new_dialogs) = dialogs_stream.next().await {
+            while let Some(new_dialogs) = dialogs_data_changed_stream.next().await {
                 state.set_neq(new_dialogs);
             }
         });
