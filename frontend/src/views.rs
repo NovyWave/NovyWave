@@ -6,6 +6,7 @@ use moonzoon_novyui::tokens::color::{neutral_1, neutral_2, neutral_4, neutral_8,
 use moonzoon_novyui::components::{kbd, KbdSize, KbdVariant};
 use moonzoon_novyui::tokens::typography::font_mono;
 use shared::{ScopeData, UpMsg, TrackedFile, SelectedVariable, FileState, SignalValueResult};
+use crate::actors::{relay, Actor};
 use crate::types::{get_variables_from_tracked_files, filter_variables_with_context, VariableWithContext};
 use crate::virtual_list::{virtual_variables_list, virtual_variables_list_pre_filtered};
 use crate::config::app_config;
@@ -18,6 +19,7 @@ use crate::{
     TRACKED_FILES, state, clipboard
 };
 use crate::actors::waveform_timeline::{ns_per_pixel_signal, cursor_position_seconds_signal};
+
 use crate::state::SELECTED_VARIABLES_ROW_HEIGHT;
 use crate::actors::selected_variables::{variables_signal, variables_signal_vec, selected_scope_signal, search_filter_signal, search_filter_changed_relay, search_focus_changed_relay};
 use crate::dragging::{
@@ -2203,8 +2205,9 @@ fn load_files_picker_button() -> impl Element {
         .disabled_signal(
             map_ref! {
                 let is_loading = IS_LOADING.signal(),
-                let selected_count = file_picker_selected_signal().map(|files| files.len()) =>
+                let selected_count = file_picker_selected_signal().map(|files| files.len()) => {
                 *is_loading || *selected_count == 0
+                }
             }
         )
         .on_press(|| process_file_picker_selection())
@@ -2226,36 +2229,22 @@ fn file_picker_content() -> impl Element {
 }
 
 fn simple_file_picker_tree() -> impl Element {
-    // Note: Root directory "/" is already requested by show_file_paths_dialog()
-    // No need for duplicate request here
-    
+    let (tree_view_rendering_relay, mut tree_view_rendering_stream) = relay();
+    let scroll_position_actor = Actor::new(0, |state| async move {
+        if let Some(scroll_position) = crate::config::app_config().file_picker_scroll_position.signal().to_stream().next().await {
+            if let Some(()) = tree_view_rendering_stream.next().await {
+                Task::next_macro_tick().await;
+                state.set_neq(scroll_position);
+            }
+        }
+    });
     El::new()
         .s(Height::fill())
         .s(Width::fill())
         .s(Scrollbars::both())
-        .viewport_y_signal(
-            // Wait for FILE_TREE_CACHE to have data before restoring scroll position
-            map_ref! {
-                let tree_cache = FILE_TREE_CACHE.signal_cloned(),
-                let scroll_position = crate::config::app_config().file_picker_scroll_position.signal() => {
-                    // Only restore scroll position if tree data is loaded
-                    if tree_cache.contains_key("/") {
-                        *scroll_position
-                    } else {
-                        0 // Default position while loading
-                    }
-                }
-            }
-        )
+        .viewport_y_signal(scroll_position_actor.signal())
         .on_viewport_location_change(|_scene, viewport| {
-            // Update scroll position directly in AppConfig - triggers automatic config save
             crate::config::app_config().file_picker_scroll_position.set_neq(viewport.y);
-        })
-        .after_insert({
-            let scroll_position = crate::config::app_config().file_picker_scroll_position.get();
-            move |_element| {
-                crate::config::app_config().file_picker_scroll_position.set(scroll_position);
-            }
         })
         .update_raw_el(|raw_el| {
             raw_el
@@ -2264,12 +2253,15 @@ fn simple_file_picker_tree() -> impl Element {
                 .style("scrollbar-width", "thin")
                 .style_signal("scrollbar-color", primary_6().map(|thumb| primary_3().map(move |track| format!("{} {}", thumb, track))).flatten())
         })
+        .after_remove(move |_| drop(scroll_position_actor))
         .child_signal(
             map_ref! {
                 let tree_cache = FILE_TREE_CACHE.signal_cloned(),
                 let error_cache = file_picker_error_cache_signal(),
                 let expanded = file_picker_expanded_signal() =>
                 move {
+                    // Build tree view from cached data
+                    
                     monitor_directory_expansions(expanded.iter().cloned().collect::<HashSet<_>>());
                     
                     // Check if we have root directory data
@@ -2284,16 +2276,23 @@ fn simple_file_picker_tree() -> impl Element {
                         // 1. Icon clicking doesn't toggle file selection (only checkbox and label work)
                         // 2. Label clicking toggles file selection but doesn't update checkbox visual state
                         // Need NovyUI TreeView component API for full-row selection behavior
-                        tree_view()
-                            .data(tree_data)
-                            .size(TreeViewSize::Medium)
-                            .variant(TreeViewVariant::Basic)
-                            .show_icons(true)
-                            .show_checkboxes(true)
-                            .external_expanded(crate::config::app_config().file_picker_expanded_directories.clone())
-                            .external_selected_vec(crate::actors::global_domains::dialog_manager_selected_mutable())
-                            .build()
+                        El::new()
+                            .after_insert(clone!((tree_view_rendering_relay) move |_| {
+                                tree_view_rendering_relay.send(());
+                            }))
+                            .child(
+                                tree_view()
+                                    .data(tree_data)
+                                    .size(TreeViewSize::Medium)
+                                    .variant(TreeViewVariant::Basic)
+                                    .show_icons(true)
+                                    .show_checkboxes(true)
+                                    .external_expanded(crate::config::app_config().file_picker_expanded_directories.clone())
+                                    .external_selected_vec(crate::actors::global_domains::dialog_manager_selected_mutable())
+                                    .build()
+                            )
                             .unify()
+
                     } else {
                         empty_state_hint("Loading directory contents...")
                             .unify()
@@ -2439,6 +2438,7 @@ fn selected_files_display() -> impl Element {
         .s(Padding::all(4))
         .child_signal(
             file_picker_selected_signal().map(|selected_paths| {
+                
                 if selected_paths.is_empty() {
                     El::new()
                         .s(Font::new().italic().color_signal(neutral_8()))
@@ -2485,17 +2485,65 @@ fn process_file_picker_selection() {
     if !selected_files.is_empty() {
         IS_LOADING.set(true);
         
-        // ✅ ACTOR+RELAY MIGRATION: Use TrackedFiles domain events instead of direct state manipulation
-        // Convert String paths to PathBuf for the domain relay
+        // ✅ FILE RELOAD STRATEGY (Option B): Check for duplicates and implement reload
         use std::path::PathBuf;
-        let file_paths: Vec<PathBuf> = selected_files
-            .into_iter()
-            .map(|path| PathBuf::from(path))
-            .collect();
         
-        // Emit files_dropped event through TrackedFiles domain
+        // Get currently tracked files to check for duplicates
+        // Use the global domain signal storage for current files
+        let tracked_files_snapshot = {
+            if let Some(signals) = crate::actors::global_domains::TRACKED_FILES_SIGNALS.get() {
+                // Get current files from the signal storage
+                let files = signals.files_mutable.lock_ref().to_vec();
+                zoon::println!("🔍 DEBUG: Found {} files in global domain signals", files.len());
+                files
+            } else {
+                // Fallback to legacy system if signals not initialized
+                let files = state::TRACKED_FILES.lock_ref().to_vec();
+                zoon::println!("🔍 DEBUG: Using legacy system, found {} files", files.len());
+                files
+            }
+        };
+        
+        let mut new_files: Vec<PathBuf> = Vec::new();
+        let mut reload_files: Vec<String> = Vec::new();
+        
+        for selected_path in selected_files {
+            let selected_pathbuf = PathBuf::from(&selected_path);
+            
+            // DEBUG: Log path comparison details
+            zoon::println!("🔍 DEBUG: Checking selected_path: '{}'", selected_path);
+            for existing_file in &tracked_files_snapshot {
+                zoon::println!("  - Tracked file: id='{}', path='{}'", existing_file.id, existing_file.path);
+            }
+            
+            // Check if file is already tracked
+            if let Some(existing_file) = tracked_files_snapshot.iter().find(|f| f.id == selected_path || f.path == selected_path) {
+                zoon::println!("🔄 File already opened, will reload: {} (state: {:?})", selected_path, existing_file.state);
+                reload_files.push(existing_file.id.clone());
+            } else {
+                zoon::println!("📁 New file will be loaded: {}", selected_path);
+                new_files.push(selected_pathbuf);
+            }
+        }
+        
         let tracked_files = crate::actors::tracked_files_domain();
-        tracked_files.files_dropped_relay.send(file_paths);
+        
+        // Handle new files
+        if !new_files.is_empty() {
+            zoon::println!("📥 Loading {} new files", new_files.len());
+            tracked_files.files_dropped_relay.send(new_files);
+        }
+        
+        // Handle reload files - use direct reload calls for proper parsing
+        if !reload_files.is_empty() {
+            zoon::println!("🔄 Reloading {} existing files via reload relay", reload_files.len());
+            
+            // Use direct reload calls instead of remove→re-add pattern
+            // This ensures reload files go through full parsing pipeline
+            for file_id in reload_files {
+                tracked_files.reload_file(file_id);
+            }
+        }
         
         // Close dialog using domain function
         close_file_dialog();

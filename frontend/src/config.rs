@@ -54,7 +54,9 @@ fn create_config_saver_actor(
             // Schedule new save with 1 second debounce
             let handle = Task::start_droppable(async move {
                 Timer::sleep(1000).await;
+                
                 // ConfigSaver: Executing debounced save
+                let save_result = async move {
                 
                 // Build config from current values
                 let shared_config = shared::AppConfig {
@@ -91,11 +93,15 @@ fn create_config_saver_actor(
                     },
                 };
                 
-                if let Err(e) = CurrentPlatform::send_message(UpMsg::SaveConfig(shared_config)).await {
+                        CurrentPlatform::send_message(UpMsg::SaveConfig(shared_config)).await
+                }.await;
+                
+                if let Err(e) = save_result {
                     zoon::eprintln!("🚨 Failed to save config: {e}");
                 }
             });
             
+            // Store new task handle
             *debounce_task.lock().unwrap() = Some(handle);
                 }
             }

@@ -21,7 +21,6 @@ expanded_scopes = [
     "/home/martinkavik/repos/NovyWave/test_files/nested_dir/wave_27.fst|TOP.VexiiRiscv",
     "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb",
     "/home/martinkavik/repos/NovyWave/test_files/complex.vcd|top",
-    "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst",
     "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP",
 ]
 load_files_expanded_directories = [
@@ -34,7 +33,7 @@ load_files_expanded_directories = [
     "/home/martinkavik/repos/NovyWave/test_files/nested_dir",
 ]
 selected_scope_id = "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s"
-load_files_scroll_position = 912
+load_files_scroll_position = 1092
 selected_variables = []
 timeline_cursor_position_ns = 0
 timeline_zoom_level = 1.0

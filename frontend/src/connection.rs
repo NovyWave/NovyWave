@@ -151,6 +151,7 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
             }
             DownMsg::DirectoryContents { path, items } => {
                 // Cache directory contents
+                // File tree cache updated with directory contents
                 crate::FILE_TREE_CACHE.lock_mut().insert(path.clone(), items.clone());
                 
                 // Auto-expand home directory path and its parent directories
@@ -209,6 +210,7 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                     match result {
                         Ok(items) => {
                             // Update cache with successful directory scan
+                            // Bulk directory scan results cached
                             crate::FILE_TREE_CACHE.lock_mut().insert(path.clone(), items);
                             
                             // Clear any previous error for this directory

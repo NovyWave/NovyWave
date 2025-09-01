@@ -20,6 +20,7 @@ pub struct TrackedFiles {
     pub config_files_loaded_relay: Relay<Vec<String>>,
     pub files_dropped_relay: Relay<Vec<std::path::PathBuf>>,
     pub file_removed_relay: Relay<String>,
+    pub file_reload_requested_relay: Relay<String>,
     pub scope_toggled_relay: Relay<String>,
     pub file_load_completed_relay: Relay<(String, FileState)>,
     pub all_files_cleared_relay: Relay<()>,
@@ -31,6 +32,7 @@ impl TrackedFiles {
         let (config_files_loaded_relay, mut config_files_loaded_stream) = relay::<Vec<String>>();
         let (files_dropped_relay, mut files_dropped_stream) = relay::<Vec<std::path::PathBuf>>();
         let (file_removed_relay, mut file_removed_stream) = relay::<String>();
+        let (file_reload_requested_relay, mut file_reload_requested_stream) = relay::<String>();
         let (scope_toggled_relay, mut scope_toggled_stream) = relay::<String>();
         let (file_load_completed_relay, mut file_load_completed_stream) = relay::<(String, FileState)>();
         let (all_files_cleared_relay, mut all_files_cleared_stream) = relay::<()>();
@@ -83,6 +85,40 @@ impl TrackedFiles {
                         if let Some(file_id) = removed_file {
                             zoon::println!("🔄 TrackedFiles: File removed: {}", file_id);
                             files_handle.lock_mut().retain(|f| f.id != file_id);
+                        }
+                    }
+                    reload_requested = file_reload_requested_stream.next() => {
+                        if let Some(file_id) = reload_requested {
+                            zoon::println!("🔄 TrackedFiles: File reload requested: {}", file_id);
+                            
+                            // Find the existing file and perform atomic reload operation
+                            {
+                                let existing_file = files_handle.lock_ref().iter()
+                                    .find(|f| f.id == file_id).cloned();
+                                
+                                if let Some(existing_file) = existing_file {
+                                    zoon::println!("📄 TrackedFiles: Reloading file: {}", existing_file.path);
+                                    
+                                    // Create new file with Starting state to trigger full parsing
+                                    let new_file = create_tracked_file(
+                                        existing_file.path.clone(), 
+                                        FileState::Loading(LoadingStatus::Starting)
+                                    );
+                                    
+                                    // CRITICAL: Trigger parsing BEFORE modifying collection to avoid duplicate detection
+                                    zoon::println!("⚡ TrackedFiles: Triggering parsing for reload: {}", new_file.path);
+                                    trigger_file_parsing(new_file.path.clone());
+                                    
+                                    // ATOMIC: Single lock operation - remove old, add new  
+                                    {
+                                        let mut files = files_handle.lock_mut();
+                                        files.retain(|f| f.id != file_id);
+                                        files.push_cloned(new_file);
+                                    } // Lock released here
+                                } else {
+                                    zoon::println!("❌ TrackedFiles: File with id '{}' not found for reload", file_id);
+                                }
+                            } // Read lock scope ends here
                         }
                     }
                     completed = file_load_completed_stream.next() => {
@@ -141,6 +177,7 @@ impl TrackedFiles {
             config_files_loaded_relay,
             files_dropped_relay,
             file_removed_relay,
+            file_reload_requested_relay,
             scope_toggled_relay,
             file_load_completed_relay,
             all_files_cleared_relay,
@@ -188,6 +225,11 @@ impl TrackedFiles {
     /// Remove a file by ID (uses relay-based removal)
     pub fn remove_file(&self, file_id: String) {
         self.file_removed_relay.send(file_id);
+    }
+    
+    /// Reload a file by ID (uses relay-based reload with full parsing)
+    pub fn reload_file(&self, file_id: String) {
+        self.file_reload_requested_relay.send(file_id);
     }
     
     // === REMOVED: get_all_file_paths() escape hatch method ===
