@@ -99,16 +99,12 @@ pub fn main() {
             return; // Exit gracefully instead of panic
         }
         
-        zoon::println!("✅ All Actor+Relay domains initialized successfully - ready for UI creation");
 
         // ✅ RESTORE SELECTED VARIABLES FROM CONFIG (after domain initialization)
         let selected_variables = crate::state::SELECTED_VARIABLES_FOR_CONFIG.get_cloned();
         if !selected_variables.is_empty() {
-            zoon::println!("📁 CONFIG: Restoring {} selected variables from config", selected_variables.len());
             let variables_restored_relay = crate::actors::selected_variables::variables_restored_relay();
             variables_restored_relay.send(selected_variables);
-        } else {
-            zoon::println!("📁 CONFIG: No selected variables in config to restore");
         }
 
         // Start the app - domains are now guaranteed to be available for canvas operations

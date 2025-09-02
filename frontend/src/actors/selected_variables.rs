@@ -649,9 +649,7 @@ impl SelectedVariables {
         // Sync dedicated Vec signal after ActorVec change (no conversion antipattern)
         {
             let current_vars = variables_mutable.lock_ref().to_vec();
-            let len = current_vars.len();
             variables_vec_signal.set_neq(current_vars);
-            zoon::println!("📁 ACTOR: Restored {} variables from config - total selected: {}", restored_variables.len(), len);
         }
         
         // ✅ FIXED: Only update Actor state - no dual updates to prevent infinite loops

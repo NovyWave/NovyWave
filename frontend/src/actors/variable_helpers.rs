@@ -15,7 +15,6 @@ pub fn create_selected_variable(
     file_id: &str, 
     scope_id: &str
 ) -> Option<SelectedVariable> {
-    zoon::println!("🔍 Looking for file_id: '{}', scope_id: '{}'", file_id, scope_id);
     
     // Find context information from tracked files - USE SAME SOURCE AS Variables panel
     let tracked_files = if let Some(signals) = crate::actors::global_domains::TRACKED_FILES_SIGNALS.get() {
@@ -24,11 +23,6 @@ pub fn create_selected_variable(
         Vec::new()
     };
     
-    zoon::println!("📂 Available files: {}", tracked_files.len());
-    
-    for (i, f) in tracked_files.iter().enumerate() {
-        zoon::println!("  File {}: id='{}', path='{}'", i, f.id, f.path);
-    }
     
     let file = tracked_files.iter().find(|f| f.id == file_id);
     if file.is_none() {
@@ -39,7 +33,6 @@ pub fn create_selected_variable(
     
     // Find scope full name from the file state
     let scope_full_name = if let FileState::Loaded(waveform_file) = &file.state {
-        zoon::println!("✅ File is loaded, finding scope: '{}'", scope_id);
         find_scope_full_name(&waveform_file.scopes, scope_id)
             .unwrap_or_else(|| scope_id.to_string())
     } else {
@@ -54,7 +47,6 @@ pub fn create_selected_variable(
         scope_full_name,
     );
     
-    zoon::println!("✅ Created SelectedVariable: {}", selected_var.unique_id);
     Some(selected_var)
 }
 

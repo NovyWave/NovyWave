@@ -24,6 +24,7 @@ pub fn filter_variables_with_context(variables: &[VariableWithContext], search_f
 
 
 /// Get variables from a specific scope using actors (enables per-file loading)
+
 pub fn get_variables_from_tracked_files(selected_scope_id: &str) -> Vec<VariableWithContext> {
     use shared::{FileState, find_variables_in_scope};
     
@@ -46,10 +47,18 @@ pub fn get_variables_from_tracked_files(selected_scope_id: &str) -> Vec<Variable
     for tracked_file in tracked_files.iter() {
         if let shared::FileState::Loaded(waveform_file) = &tracked_file.state {
             if let Some(variables) = find_variables_in_scope(&waveform_file.scopes, scope_for_lookup) {
+                // Extract just the scope path from scope_for_lookup
+                // scope_for_lookup format: "/path/to/file|scope_path" - we want just "scope_path"
+                let scope_path = if let Some(pipe_pos) = scope_for_lookup.find('|') {
+                    &scope_for_lookup[pipe_pos + 1..]
+                } else {
+                    scope_for_lookup
+                };
+                
                 return variables.into_iter().map(|signal| VariableWithContext {
                     signal,
                     file_id: tracked_file.id.clone(),
-                    scope_id: scope_for_lookup.to_string(),
+                    scope_id: scope_path.to_string(),
                 }).collect();
             }
         }

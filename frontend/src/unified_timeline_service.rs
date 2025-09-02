@@ -148,8 +148,6 @@ impl UnifiedTimelineService {
 
     /// Initialize the unified timeline service
     pub fn initialize() {
-        zoon::println!("🚀 UNIFIED TIMELINE: Initializing with circuit breaker protection");
-        
         // Start cache cleanup and maintenance tasks
         Self::start_cache_maintenance();
         
@@ -209,8 +207,6 @@ impl UnifiedTimelineService {
         if !cache_misses.is_empty() {
             let request_id = Self::generate_request_id();
             
-            zoon::println!("🔄 CACHE: Requesting cursor values for {} variables (hits: {}, misses: {})", 
-                cache_misses.len(), cache_hits.len(), cache_misses.len());
             
             cache.active_requests.insert(request_id.clone(), CacheRequestState {
                 requested_signals: cache_misses.clone(),
@@ -303,9 +299,6 @@ impl UnifiedTimelineService {
         statistics: Option<shared::SignalStatistics>,
     ) {
         let mut cache = UNIFIED_TIMELINE_CACHE.lock_mut();
-        
-        zoon::println!("📥 CACHE: Received response for request {} - {} signal data, {} cursor values", 
-            request_id, signal_data.len(), cursor_values.len());
         
         // Track empty responses for circuit breaker logic
         if signal_data.is_empty() && cursor_values.is_empty() {
@@ -419,11 +412,8 @@ impl UnifiedTimelineService {
                 }
             }
             
-            zoon::println!("📊 CACHE: Smart invalidation - removed: {}, added: {}, total cache entries: {}", 
-                removed_variables.len(), added_variables.len(), cache.cursor_values.len());
         } else {
             // First time setup - no previous state
-            zoon::println!("🆕 CACHE: Initial variable selection with {} variables", current_ids.len());
         }
     }
     

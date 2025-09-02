@@ -319,7 +319,6 @@ impl AppConfig {
                                     SharedTheme::Dark => theme::Theme::Dark,
                                 };
                                 theme::set_theme(novyui_theme);
-                                zoon::println!("🎨 Theme Actor: Updated NovyUI theme to {:?}", novyui_theme);
                             }
                         }
                     }
@@ -339,15 +338,12 @@ impl AppConfig {
                 select! {
                     button_click = dock_mode_button_clicked_stream.next() => {
                         if let Some(()) = button_click {
-                            zoon::println!("🚢 Dock Actor: Processing button click - implementing proper dimension preservation");
                             
                             // Get current panel dimensions from DRAGGING SYSTEM BEFORE switching mode
                             let current_files_height = crate::dragging::files_panel_height_signal().to_stream().next().await.unwrap_or(300.0) as u32;
                             let current_name_width = crate::dragging::variables_name_column_width_signal().to_stream().next().await.unwrap_or(190.0) as u32;
                             let current_value_width = crate::dragging::variables_value_column_width_signal().to_stream().next().await.unwrap_or(220.0) as u32;
                             
-                            zoon::println!("💾 DOCK SWITCH: Current dimensions before switch: height={}, name={}, value={}", 
-                                current_files_height, current_name_width, current_value_width);
                             
                             // ✅ Read and modify dock mode
                             let (old_mode, new_mode) = {
@@ -361,7 +357,6 @@ impl AppConfig {
                                 (old_mode, new_mode)
                             };
                             
-                            zoon::println!("🚢 Dock Actor: Switching from {:?} to {:?}", old_mode, new_mode);
                             
                             // 📁 CRITICAL: Save current mode's dimensions before switching
                             // ✅ FIX: Don't overwrite existing config values - only save current Actor values for ACTIVE dimensions
@@ -378,8 +373,6 @@ impl AppConfig {
                                         variables_value_column_width: current_value_width as f32, // Update from Actor (this is actively used)
                                     };
                                     panel_dimensions_right_changed_relay.send(updated_dims);
-                                    zoon::println!("💾 DOCK SWITCH: Preserved Right mode dimensions: height={} (kept), name={}, value={}", 
-                                        current_dims.files_panel_height, current_name_width, current_value_width);
                                 }
                                 DockMode::Bottom => {
                                     // Update Bottom dock dimensions - keep existing values, only update what's currently active
@@ -393,8 +386,6 @@ impl AppConfig {
                                         variables_value_column_width: current_value_width as f32, // Update from Actor (this is actively used)
                                     };
                                     panel_dimensions_bottom_changed_relay.send(updated_dims);
-                                    zoon::println!("💾 DOCK SWITCH: Preserved Bottom mode dimensions: height={} (kept), name={}, value={}", 
-                                        current_dims.files_panel_height, current_name_width, current_value_width);
                                 }
                             }
                             
@@ -409,8 +400,6 @@ impl AppConfig {
                                             // Load Right dock dimensions and update Actors
                                             let right_config = crate::config::app_config().panel_dimensions_right_actor.signal().to_stream().next().await;
                                             if let Some(dims) = right_config {
-                                                zoon::println!("📂 DOCK SWITCH: Loading Right mode dimensions: height={}, name={}, value={}", 
-                                                    dims.files_panel_height, dims.variables_name_column_width, dims.variables_value_column_width);
                                                 
                                                 // Right mode dimensions are already loaded into the config actors - no need to force sync
                                             }
@@ -419,8 +408,6 @@ impl AppConfig {
                                             // Load Bottom dock dimensions and update Actors
                                             let bottom_config = crate::config::app_config().panel_dimensions_bottom_actor.signal().to_stream().next().await;
                                             if let Some(dims) = bottom_config {
-                                                zoon::println!("📂 DOCK SWITCH: Loading Bottom mode dimensions: height={}, name={}, value={}", 
-                                                    dims.files_panel_height, dims.variables_name_column_width, dims.variables_value_column_width);
                                                 
                                                 // Bottom mode dimensions are already loaded into the config actors - no need to force sync
                                             }
@@ -429,7 +416,6 @@ impl AppConfig {
                                 }
                             });
                             
-                            zoon::println!("✅ DOCK SWITCH: Complete - dimensions preserved independently for both modes");
                         }
                     }
                 }
@@ -647,11 +633,7 @@ impl AppConfig {
 
         // Load selected variables from config into SELECTED_VARIABLES_FOR_CONFIG
         if !config.workspace.selected_variables.is_empty() {
-            // Config: Loading selected variables from config
             crate::state::SELECTED_VARIABLES_FOR_CONFIG.set_neq(config.workspace.selected_variables.clone());
-            zoon::println!("📁 Config: Loaded {} selected variables into SELECTED_VARIABLES_FOR_CONFIG", config.workspace.selected_variables.len());
-        } else {
-            zoon::println!("📁 Config: No selected variables in config, SELECTED_VARIABLES_FOR_CONFIG remains empty");
         }
         
         // NOTE: Selected variables restoration moved to main.rs after domain initialization

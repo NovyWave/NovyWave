@@ -73,7 +73,6 @@ impl TrackedFiles {
                     }
                     dropped_files = files_dropped_stream.next() => {
                         if let Some(file_paths) = dropped_files {
-                            zoon::println!("🔄 TrackedFiles: Files dropped: {:?}", file_paths);
                             
                             let new_files: Vec<TrackedFile> = file_paths.into_iter()
                                 .map(|path| {
@@ -101,7 +100,6 @@ impl TrackedFiles {
                     }
                     removed_file = file_removed_stream.next() => {
                         if let Some(file_id) = removed_file {
-                            zoon::println!("🔄 TrackedFiles: File removed: {}", file_id);
                             files_handle.lock_mut().retain(|f| f.id != file_id);
                             
                             // Sync dedicated Vec signal after ActorVec change
@@ -113,7 +111,6 @@ impl TrackedFiles {
                     }
                     reload_requested = file_reload_requested_stream.next() => {
                         if let Some(file_id) = reload_requested {
-                            zoon::println!("🔄 TrackedFiles: File reload requested: {}", file_id);
                             
                             // Find the existing file and perform atomic reload operation
                             {
@@ -176,7 +173,6 @@ impl TrackedFiles {
                     }
                     cleared = all_files_cleared_stream.next() => {
                         if cleared.is_some() {
-                            zoon::println!("🔄 TrackedFiles: All files cleared");
                             files_handle.lock_mut().clear();
                             
                             // Sync dedicated Vec signal after ActorVec change
@@ -198,7 +194,6 @@ impl TrackedFiles {
                 select! {
                     scope_id = scope_toggled_stream.next() => {
                         if let Some(scope_id) = scope_id {
-                            zoon::println!("🔄 TrackedFiles: Scope toggled: {}", scope_id);
                             
                             let mut scopes = scopes_handle.lock_mut();
                             if scopes.contains(&scope_id) {

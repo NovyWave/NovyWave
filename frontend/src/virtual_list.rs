@@ -1,6 +1,6 @@
 use zoon::*;
 use moonzoon_novyui::*;
-use moonzoon_novyui::tokens::color::{neutral_2, neutral_4, neutral_8, neutral_11, primary_3, primary_6};
+use moonzoon_novyui::tokens::color::{neutral_1, neutral_2, neutral_4, neutral_8, neutral_11, primary_3, primary_6};
 use wasm_bindgen::JsCast;
 
 use crate::types::{VariableWithContext, filter_variables_with_context};
@@ -236,13 +236,20 @@ pub fn rust_virtual_variables_list_with_signal(
                     let mut batched_updates = Vec::with_capacity(pool.len());
                     
                     // ✅ OPTIMIZATION: Pre-compute selection lookup to reduce clone operations
-                    use crate::state::{TRACKED_FILES, find_scope_full_name};
-                    let tracked_files = TRACKED_FILES.lock_ref();
+                    use crate::state::{find_scope_full_name};
+                    
+                    // ✅ ACTOR+RELAY: Use proper Actor+Relay tracked files source
+                    let tracked_files = if let Some(signals) = crate::actors::global_domains::TRACKED_FILES_SIGNALS.get() {
+                        signals.files_mutable.lock_ref().to_vec()
+                    } else {
+                        Vec::new()
+                    };
                     
                     // ✅ REACTIVE: Build selection index from current selected variables
                     let selected_vars_index: std::collections::HashSet<String> = selected_vars.iter()
                         .map(|var| var.unique_id.clone())
                         .collect();
+                    
                     
                     // Collect all updates first (reduce lock contention)
                     for (pool_index, _element_state) in pool.iter().enumerate() {
@@ -271,14 +278,27 @@ pub fn rust_virtual_variables_list_with_signal(
                                 // Determine if this variable is selected (Actor+Relay compatible)
                                 let is_selected = if let Some(tracked_file) = tracked_files.iter().find(|f| &f.id == file_id) {
                                     if let shared::FileState::Loaded(waveform_file) = &tracked_file.state {
-                                        if let Some(scope_path) = find_scope_full_name(&waveform_file.scopes, scope_id) {
-                                            // Use proper unique_id format: "{file_path}|{scope_full_name}|{variable_name}"
-                                            let unique_id = format!("{}|{}|{}", tracked_file.path, scope_path, name);
+                                        
+                                        // Try to find scope by direct name match first
+                                        let scope_path = waveform_file.scopes.iter()
+                                            .find(|scope| scope.name == *scope_id)
+                                            .map(|scope| scope.name.clone())
+                                            .or_else(|| {
+                                                // If scope_id has a suffix like ".s", try without it
+                                                if let Some(dot_pos) = scope_id.rfind('.') {
+                                                    let scope_without_suffix = &scope_id[..dot_pos];
+                                                    waveform_file.scopes.iter()
+                                                        .find(|scope| scope.name == scope_without_suffix)
+                                                        .map(|scope| scope.name.clone())
+                                                } else {
+                                                    None
+                                                }
+                                            });
+                                            
+                                        if let Some(_found_scope_path) = scope_path {
+                                            // Use original scope_id to maintain format consistency with selected variables
+                                            let unique_id = format!("{}|{}|{}", tracked_file.path, scope_id, name);
                                             let selected = selected_vars_index.contains(&unique_id);
-                                            // DEBUG: Log selection state for first few variables  
-                                            if absolute_index < 3 {
-                                                zoon::println!("🎯 REACTIVE SELECTION: {} -> {} (idx: {}, total_selected: {})", unique_id, selected, absolute_index, selected_vars_index.len());
-                                            }
                                             selected
                                         } else { false }
                                     } else { false }
@@ -316,7 +336,7 @@ pub fn rust_virtual_variables_list_with_signal(
                         }
                     }
                     
-                    drop(tracked_files); // Release lock early
+                    // No need to drop - tracked_files is now a Vec, not a lock reference
                     
                     // ✅ OPTIMIZATION: Apply all batched updates in single pass
                     // This reduces DOM update frequency and improves Chrome performance
@@ -591,13 +611,14 @@ fn create_stable_variable_element_hybrid(state: VirtualElementState, hovered_ind
                 let primary_bg = primary_3(),
                 let hover_bg = neutral_4(),
                 let default_bg = neutral_2() => {
-                    if *is_selected {
+                    let color = if *is_selected {
                         *primary_bg
                     } else if hovered_idx.as_ref() == Some(absolute_idx) {
                         *hover_bg
                     } else {
                         *default_bg
-                    }
+                    };
+                    color
                 }
             }
         ))
@@ -761,7 +782,7 @@ fn create_variable_name_display(
                             } else {
                                 // No shared prefix, display normally with click handler
                                 Paragraph::new()
-                                    .s(Font::new().color_signal(neutral_11()))
+                                    .s(Font::new().color_signal(neutral_11())) // Normal text color
                                     .content(name.clone())
                                     .on_click({
                                         let file_id_signal = file_id_signal.clone();
