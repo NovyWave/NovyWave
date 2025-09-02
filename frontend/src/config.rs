@@ -38,14 +38,16 @@ fn create_config_saver_actor(
             let ui = ui_actor.signal(),
             let dialogs = dialogs_actor.signal(),
             let expanded_scopes = crate::state::EXPANDED_SCOPES_FOR_CONFIG.signal_cloned(),
-            let selected_scope_id = crate::state::SELECTED_SCOPE_ID_FOR_CONFIG.signal_cloned() =>
+            let selected_scope_id = crate::state::SELECTED_SCOPE_ID_FOR_CONFIG.signal_cloned(),
+            let selected_variables = crate::state::SELECTED_VARIABLES_FOR_CONFIG.signal_cloned() =>
             (theme.clone(), dock_mode.clone(), panel_right.clone(), panel_bottom.clone(), 
-             timeline.clone(), session.clone(), ui.clone(), dialogs.clone(), expanded_scopes.clone(), selected_scope_id.clone())
+             timeline.clone(), session.clone(), ui.clone(), dialogs.clone(), expanded_scopes.clone(), selected_scope_id.clone(), 
+             selected_variables.clone())
         };
         
         config_change_signal.to_stream().skip(1).for_each({
             let debounce_task = debounce_task.clone();
-            move |(theme, dock_mode, panel_right, panel_bottom, timeline, session, ui, _dialogs, _expanded_scopes, _selected_scope_id)| {
+            move |(theme, dock_mode, panel_right, panel_bottom, timeline, session, ui, _dialogs, _expanded_scopes, _selected_scope_id, selected_variables)| {
                 let debounce_task = debounce_task.clone();
                 async move {
                     // Cancel any pending save
@@ -81,7 +83,7 @@ fn create_config_saver_actor(
                         selected_scope_id: crate::state::SELECTED_SCOPE_ID_FOR_CONFIG.get_cloned(),
                         load_files_scroll_position: session.file_picker_scroll_position,
                         variables_search_filter: session.variables_search_filter,
-                        selected_variables: Vec::new(),
+                        selected_variables,
                         timeline_cursor_position_ns: timeline.cursor_position.nanos(),
                         timeline_visible_range_start_ns: Some(timeline.visible_range.start.nanos()),
                         timeline_visible_range_end_ns: Some(timeline.visible_range.end.nanos()),
@@ -643,6 +645,17 @@ impl AppConfig {
             // Config: No selected scope ID in config, leaving SELECTED_SCOPE_ID as None
         }
 
+        // Load selected variables from config into SELECTED_VARIABLES_FOR_CONFIG
+        if !config.workspace.selected_variables.is_empty() {
+            // Config: Loading selected variables from config
+            crate::state::SELECTED_VARIABLES_FOR_CONFIG.set_neq(config.workspace.selected_variables.clone());
+            zoon::println!("📁 Config: Loaded {} selected variables into SELECTED_VARIABLES_FOR_CONFIG", config.workspace.selected_variables.len());
+        } else {
+            zoon::println!("📁 Config: No selected variables in config, SELECTED_VARIABLES_FOR_CONFIG remains empty");
+        }
+        
+        // NOTE: Selected variables restoration moved to main.rs after domain initialization
+
         // Create file picker scroll position mutable with loaded config
         let file_picker_scroll_position = Mutable::new(config.workspace.load_files_scroll_position);
 
@@ -762,10 +775,10 @@ pub fn workspace_section_signal() -> impl Signal<Item = shared::WorkspaceSection
             dock_mode: *dock_mode,
             expanded_scopes: crate::state::EXPANDED_SCOPES_FOR_CONFIG.get_cloned(),
             load_files_expanded_directories: session.file_picker_expanded_directories.clone(),
-            selected_scope_id: None,
+            selected_scope_id: crate::state::SELECTED_SCOPE_ID_FOR_CONFIG.get_cloned(),
             load_files_scroll_position: session.file_picker_scroll_position,
             variables_search_filter: session.variables_search_filter.clone(),
-            selected_variables: Vec::new(),
+            selected_variables: crate::state::SELECTED_VARIABLES_FOR_CONFIG.get_cloned(),
             timeline_cursor_position_ns: timeline.cursor_position.nanos(),
             timeline_visible_range_start_ns: Some(timeline.visible_range.start.nanos()),
             timeline_visible_range_end_ns: Some(timeline.visible_range.end.nanos()),

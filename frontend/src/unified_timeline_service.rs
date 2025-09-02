@@ -11,7 +11,9 @@ use zoon::*;
 use shared::{UpMsg, SignalValue, SignalTransition};
 use crate::connection::send_up_msg;
 use crate::time_types::{TimeNs, TimelineCache, CacheRequestType, CacheRequestState};
+use std::collections::HashMap;
 use crate::state::UNIFIED_TIMELINE_CACHE;
+use zoon::Lazy;
 use crate::actors::waveform_timeline::{cursor_position_signal, viewport_signal};
 
 // ===== DATA STRUCTURES =====
@@ -19,14 +21,135 @@ use crate::actors::waveform_timeline::{cursor_position_signal, viewport_signal};
 // Re-export shared::UnifiedSignalRequest as SignalRequest for compatibility
 pub use shared::UnifiedSignalRequest as SignalRequest;
 
+/// Circuit breaker tracking for variables that consistently return empty responses
+#[derive(Clone, Debug)]
+struct RequestTracker {
+    consecutive_empty_responses: u32,
+    last_request_time: Option<TimeNs>,
+    backoff_delay_ms: u64,
+    is_circuit_open: bool,
+}
+
+impl Default for RequestTracker {
+    fn default() -> Self {
+        Self {
+            consecutive_empty_responses: 0,
+            last_request_time: None,
+            backoff_delay_ms: 500, // Start with 500ms
+            is_circuit_open: false,
+        }
+    }
+}
+
+/// Global circuit breaker state for preventing infinite request loops
+static CIRCUIT_BREAKER: Lazy<Mutable<HashMap<String, RequestTracker>>> = Lazy::new(|| {
+    Mutable::new(HashMap::new())
+});
+
+/// Cache for empty results to prevent retry storms
+static EMPTY_RESULT_CACHE: Lazy<Mutable<HashMap<String, TimeNs>>> = Lazy::new(|| {
+    Mutable::new(HashMap::new())
+});
+
 
 // ===== PUBLIC API =====
 
 pub struct UnifiedTimelineService;
 
 impl UnifiedTimelineService {
+    // ===== CIRCUIT BREAKER METHODS =====
+    
+    /// Check if circuit breaker should prevent request for this variable
+    fn should_apply_circuit_breaker(signal_id: &str) -> bool {
+        let now = TimeNs::from_external_seconds(js_sys::Date::now() / 1000.0);
+        let breaker_map = CIRCUIT_BREAKER.lock_ref();
+        
+        if let Some(tracker) = breaker_map.get(signal_id) {
+            // Check if circuit is open
+            if tracker.is_circuit_open {
+                zoon::println!("🚫 CIRCUIT: Circuit breaker OPEN for variable {} (consecutive empty: {})", 
+                    signal_id, tracker.consecutive_empty_responses);
+                return true;
+            }
+            
+            // Check backoff delay
+            if let Some(last_request) = tracker.last_request_time {
+                let backoff_duration = crate::time_types::DurationNs::from_external_seconds(tracker.backoff_delay_ms as f64 / 1000.0);
+                if now.duration_since(last_request) < backoff_duration {
+                    zoon::println!("⏸️ BACKOFF: Waiting {}ms before retry for variable {}", 
+                        tracker.backoff_delay_ms, signal_id);
+                    return true;
+                }
+            }
+        }
+        
+        // Check empty result cache
+        let empty_cache = EMPTY_RESULT_CACHE.lock_ref();
+        if let Some(cached_time) = empty_cache.get(signal_id) {
+            let cache_duration = crate::time_types::DurationNs::from_external_seconds(5.0); // 5 second cache
+            if now.duration_since(*cached_time) < cache_duration {
+                zoon::println!("💾 EMPTY CACHE: Using cached empty result for variable {}", signal_id);
+                return true;
+            }
+        }
+        
+        false
+    }
+    
+    /// Track empty response and update circuit breaker state
+    fn track_empty_response(signal_id: &str) {
+        let now = TimeNs::from_external_seconds(js_sys::Date::now() / 1000.0);
+        
+        // Update circuit breaker
+        let mut breaker_map = CIRCUIT_BREAKER.lock_mut();
+        let tracker = breaker_map.entry(signal_id.to_string()).or_default();
+        
+        tracker.consecutive_empty_responses += 1;
+        tracker.last_request_time = Some(now);
+        
+        // Apply exponential backoff (500ms, 1s, 2s, 4s, 5s max)
+        tracker.backoff_delay_ms = (tracker.backoff_delay_ms * 2).min(5000);
+        
+        // Open circuit after 3 consecutive empty responses
+        if tracker.consecutive_empty_responses >= 3 {
+            tracker.is_circuit_open = true;
+            zoon::println!("🚨 CIRCUIT: OPENED circuit breaker for variable {} after {} consecutive empty responses", 
+                signal_id, tracker.consecutive_empty_responses);
+        } else {
+            zoon::println!("⚠️ BACKOFF: Increased backoff to {}ms for variable {} (empty responses: {})", 
+                tracker.backoff_delay_ms, signal_id, tracker.consecutive_empty_responses);
+        }
+        
+        // Cache empty result
+        let mut empty_cache = EMPTY_RESULT_CACHE.lock_mut();
+        empty_cache.insert(signal_id.to_string(), now);
+    }
+    
+    /// Reset circuit breaker when variable gets successful response
+    fn reset_circuit_breaker(signal_id: &str) {
+        let mut breaker_map = CIRCUIT_BREAKER.lock_mut();
+        if breaker_map.contains_key(signal_id) {
+            zoon::println!("✅ CIRCUIT: RESET circuit breaker for variable {} after successful response", signal_id);
+            breaker_map.remove(signal_id);
+        }
+        
+        // Remove from empty cache
+        let mut empty_cache = EMPTY_RESULT_CACHE.lock_mut();
+        empty_cache.remove(signal_id);
+    }
+    
+    /// Cache empty result to prevent immediate retries
+    fn cache_empty_result(signal_id: &str) -> String {
+        let now = TimeNs::from_external_seconds(js_sys::Date::now() / 1000.0);
+        let mut empty_cache = EMPTY_RESULT_CACHE.lock_mut();
+        empty_cache.insert(signal_id.to_string(), now);
+        "N/A".to_string()
+    }
+
     /// Initialize the unified timeline service
     pub fn initialize() {
+        zoon::println!("🚀 UNIFIED TIMELINE: Initializing with circuit breaker protection");
+        
         // Start cache cleanup and maintenance tasks
         Self::start_cache_maintenance();
         
@@ -42,7 +165,16 @@ impl UnifiedTimelineService {
     ) {
         let mut cache = UNIFIED_TIMELINE_CACHE.lock_mut();
         
-        // Check for duplicate requests
+        // Enhanced duplicate request checking by variable set
+        let variable_set: std::collections::HashSet<String> = 
+            signal_ids.iter().cloned().collect();
+            
+        if Self::is_duplicate_request_by_set(&cache, &variable_set, CacheRequestType::CursorValues) {
+            zoon::println!("⚡ CACHE: Skipping duplicate cursor values request for {} variables", signal_ids.len());
+            return;
+        }
+        
+        // Also check individual signal duplicates for compatibility
         if cache.is_duplicate_request(&signal_ids, CacheRequestType::CursorValues) {
             return;
         }
@@ -73,9 +205,12 @@ impl UnifiedTimelineService {
             }
         }
         
-        // Request missing data from backend
+        // Request missing data from backend with performance logging
         if !cache_misses.is_empty() {
             let request_id = Self::generate_request_id();
+            
+            zoon::println!("🔄 CACHE: Requesting cursor values for {} variables (hits: {}, misses: {})", 
+                cache_misses.len(), cache_hits.len(), cache_misses.len());
             
             cache.active_requests.insert(request_id.clone(), CacheRequestState {
                 requested_signals: cache_misses.clone(),
@@ -142,6 +277,10 @@ impl UnifiedTimelineService {
                 else if Self::has_pending_request(&cache, &signal_id_cloned, CacheRequestType::CursorValues) {
                     "Loading...".to_string()
                 }
+                // Check circuit breaker before making new request
+                else if Self::should_apply_circuit_breaker(&signal_id_cloned) {
+                    Self::cache_empty_result(&signal_id_cloned)
+                }
                 // No data available - trigger request for cursor values
                 else {
                     // Trigger async request for cursor values outside viewport
@@ -165,6 +304,18 @@ impl UnifiedTimelineService {
     ) {
         let mut cache = UNIFIED_TIMELINE_CACHE.lock_mut();
         
+        zoon::println!("📥 CACHE: Received response for request {} - {} signal data, {} cursor values", 
+            request_id, signal_data.len(), cursor_values.len());
+        
+        // Track empty responses for circuit breaker logic
+        if signal_data.is_empty() && cursor_values.is_empty() {
+            if let Some(request) = cache.active_requests.get(&request_id) {
+                for signal_id in &request.requested_signals {
+                    Self::track_empty_response(signal_id);
+                }
+            }
+        }
+        
         // Get request info first to avoid borrow conflicts
         let request_info = cache.active_requests.get(&request_id).cloned();
         
@@ -174,6 +325,9 @@ impl UnifiedTimelineService {
                 // Always update raw transitions first (move signal.transitions here)
                 let raw_transitions = signal.transitions;
                 cache.raw_transitions.insert(signal.unique_id.clone(), raw_transitions.clone());
+                
+                // Reset circuit breaker on successful raw transitions
+                Self::reset_circuit_breaker(&signal.unique_id);
                 
                 if request.request_type == CacheRequestType::ViewportData {
                     let viewport_data = crate::time_types::ViewportSignalData {
@@ -185,7 +339,9 @@ impl UnifiedTimelineService {
         
         // Update cursor values
         for (signal_id, value) in cursor_values {
-            cache.cursor_values.insert(signal_id, value);
+            cache.cursor_values.insert(signal_id.clone(), value);
+            // Reset circuit breaker on successful data
+            Self::reset_circuit_breaker(&signal_id);
         }
         
         // Update statistics
@@ -222,6 +378,84 @@ impl UnifiedTimelineService {
     }
     
     
+    
+    // ===== CACHE OPTIMIZATION METHODS =====
+    
+    /// Smart cache invalidation - only clear cache for variables that changed
+    async fn smart_cache_invalidation(
+        previous_ids: Option<std::collections::HashSet<String>>, 
+        current_ids: std::collections::HashSet<String>
+    ) {
+        let mut cache = UNIFIED_TIMELINE_CACHE.lock_mut();
+        
+        if let Some(prev_ids) = previous_ids {
+            // Calculate which variables were removed or added
+            let removed_variables: std::collections::HashSet<_> = 
+                prev_ids.difference(&current_ids).collect();
+            let added_variables: std::collections::HashSet<_> = 
+                current_ids.difference(&prev_ids).collect();
+            
+            // Only clear cache for variables that actually changed
+            if !removed_variables.is_empty() {
+                zoon::println!("🗑️ CACHE: Clearing cache for {} removed variables", removed_variables.len());
+                for removed_var in &removed_variables {
+                    cache.cursor_values.remove(*removed_var);
+                    cache.viewport_data.remove(*removed_var);
+                    cache.raw_transitions.remove(*removed_var);
+                }
+            }
+            
+            if !added_variables.is_empty() {
+                zoon::println!("➕ CACHE: Added {} new variables to track", added_variables.len());
+                // New variables will naturally trigger cache misses and backend requests
+            }
+            
+            // Only invalidate validity flags if there were actual changes
+            if !removed_variables.is_empty() || !added_variables.is_empty() {
+                cache.metadata.validity.cursor_valid = false;
+                // Keep viewport data valid unless variables were removed
+                if !removed_variables.is_empty() {
+                    cache.metadata.validity.viewport_valid = false;
+                }
+            }
+            
+            zoon::println!("📊 CACHE: Smart invalidation - removed: {}, added: {}, total cache entries: {}", 
+                removed_variables.len(), added_variables.len(), cache.cursor_values.len());
+        } else {
+            // First time setup - no previous state
+            zoon::println!("🆕 CACHE: Initial variable selection with {} variables", current_ids.len());
+        }
+    }
+    
+    /// Enhanced duplicate request checking by variable set rather than individual IDs
+    fn is_duplicate_request_by_set(
+        cache: &crate::time_types::TimelineCache,
+        variable_set: &std::collections::HashSet<String>,
+        request_type: crate::time_types::CacheRequestType
+    ) -> bool {
+        let now = crate::time_types::TimeNs::from_external_seconds(js_sys::Date::now() / 1000.0);
+        let dedup_threshold = crate::time_types::DurationNs::from_external_seconds(0.5); // 500ms
+        
+        cache.active_requests.values().any(|request| {
+            if request.request_type != request_type || 
+               now.duration_since(request.timestamp_ns) >= dedup_threshold {
+                return false;
+            }
+            
+            // Check if this request covers the same variable set
+            let request_set: std::collections::HashSet<String> = 
+                request.requested_signals.iter().cloned().collect();
+            
+            // Consider it duplicate if there's significant overlap (>80%)
+            let intersection_size = variable_set.intersection(&request_set).count();
+            let union_size = variable_set.union(&request_set).count();
+            
+            if union_size == 0 { return false; }
+            
+            let overlap_ratio = intersection_size as f64 / union_size as f64;
+            overlap_ratio > 0.8 // 80% overlap threshold
+        })
+    }
     
     // ===== PRIVATE HELPERS =====
     
@@ -276,7 +510,40 @@ impl UnifiedTimelineService {
             loop {
                 Timer::sleep(30000).await; // Every 30 seconds
                 Self::cleanup_old_requests();
+                Self::cleanup_circuit_breakers();
             }
+        });
+    }
+    
+    fn cleanup_circuit_breakers() {
+        let now = TimeNs::from_external_seconds(js_sys::Date::now() / 1000.0);
+        
+        // Clean up old circuit breaker entries (older than 5 minutes)
+        let mut breaker_map = CIRCUIT_BREAKER.lock_mut();
+        let cutoff_duration = crate::time_types::DurationNs::from_external_seconds(300.0); // 5 minutes
+        
+        breaker_map.retain(|signal_id, tracker| {
+            if let Some(last_request) = tracker.last_request_time {
+                let should_keep = now.duration_since(last_request) < cutoff_duration;
+                if !should_keep {
+                    zoon::println!("🧹 CLEANUP: Removed stale circuit breaker for variable {}", signal_id);
+                }
+                should_keep
+            } else {
+                false // Remove trackers with no request time
+            }
+        });
+        
+        // Clean up old empty result cache entries
+        let mut empty_cache = EMPTY_RESULT_CACHE.lock_mut();
+        let cache_cutoff = crate::time_types::DurationNs::from_external_seconds(30.0); // 30 seconds
+        
+        empty_cache.retain(|signal_id, cached_time| {
+            let should_keep = now.duration_since(*cached_time) < cache_cutoff;
+            if !should_keep {
+                zoon::println!("🧹 CLEANUP: Removed stale empty cache for variable {}", signal_id);
+            }
+            should_keep
         });
     }
     
@@ -312,25 +579,37 @@ impl UnifiedTimelineService {
             }).await;
         });
         
-        // React to selected variables changes and clear related cache entries
+        // React to selected variables changes with smart cache invalidation
         Task::start(async {
-            crate::actors::selected_variables::variables_signal_vec().for_each(move |_selected_vars| {
+            use std::cell::RefCell;
+            use std::rc::Rc;
+            
+            let previous_variable_ids = Rc::new(RefCell::new(None::<std::collections::HashSet<String>>));
+            let debounce_task = Rc::new(RefCell::new(None::<zoon::TaskHandle>));
+            
+            crate::actors::selected_variables::variables_signal().dedupe_cloned().for_each(move |selected_vars| {
+                let current_variable_ids: std::collections::HashSet<String> = 
+                    selected_vars.iter().map(|v| v.unique_id.clone()).collect();
+                
+                let prev_ids = previous_variable_ids.borrow().clone();
+                let current_ids = current_variable_ids.clone();
+                let debounce_task_clone = debounce_task.clone();
+                let previous_variable_ids_clone = previous_variable_ids.clone();
+                
                 async move {
-                    // Clear cache when selected variables change significantly
-                    // This ensures we don't show stale data for newly selected or deselected variables
-                    let mut cache = UNIFIED_TIMELINE_CACHE.lock_mut();
-                    
-                    // Only clear if there's a significant change in selection
-                    // (Implementation could be optimized to only clear removed variables)
-                    if !cache.viewport_data.is_empty() || !cache.cursor_values.is_empty() {
-                        // For now, clear all cached values to ensure consistency
-                        cache.cursor_values.clear();
-                        cache.metadata.validity.cursor_valid = false;
-                        
-                        // Keep viewport data as it's expensive to reload
-                        // but mark as potentially stale
-                        cache.metadata.validity.viewport_valid = false;
+                    // Cancel previous debounce task to batch rapid changes
+                    if let Some(task) = debounce_task_clone.borrow_mut().take() {
+                        drop(task); // Drop immediately aborts the task
                     }
+                    
+                    // Debounce cache operations for 200ms to handle rapid selection changes
+                    let handle = zoon::Task::start_droppable(async move {
+                        zoon::Timer::sleep(200).await;
+                        Self::smart_cache_invalidation(prev_ids, current_ids).await;
+                    });
+                    
+                    *debounce_task_clone.borrow_mut() = Some(handle);
+                    *previous_variable_ids_clone.borrow_mut() = Some(current_variable_ids);
                 }
             }).await;
         });

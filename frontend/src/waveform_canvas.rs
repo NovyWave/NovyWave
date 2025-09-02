@@ -20,6 +20,7 @@ use crate::config::app_config;
 use shared::{SelectedVariable, UpMsg, SignalTransitionQuery, SignalTransition};
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use moonzoon_novyui::tokens::theme::Theme as NovyUITheme;
 use shared::Theme as SharedTheme;
 use wasm_bindgen::JsCast;
@@ -195,6 +196,19 @@ const TRANSITION_NAVIGATION_DEBOUNCE_MS: u64 = 100; // 100ms debounce
 
 // f64 precision tolerance for transition navigation (much more precise than f32)
 const F64_PRECISION_TOLERANCE: f64 = 1e-15;
+
+// PERFORMANCE FIX: Incremental Canvas Object Cache
+// Caches rendered objects by variable unique_id to avoid full recreation
+static VARIABLE_OBJECT_CACHE: Lazy<Mutable<HashMap<String, Vec<fast2d::Object2d>>>> = 
+    Lazy::new(|| Mutable::new(HashMap::new()));
+
+// Track last known variables to detect changes
+static LAST_VARIABLES_STATE: Lazy<Mutable<Vec<SelectedVariable>>> = 
+    Lazy::new(|| Mutable::new(Vec::new()));
+
+// Track last canvas dimensions for full redraw detection
+static LAST_CANVAS_DIMENSIONS: Lazy<Mutable<(f32, f32)>> = 
+    Lazy::new(|| Mutable::new((0.0, 0.0)));
 
 
 #[derive(Clone, Debug, PartialEq)]
@@ -495,7 +509,7 @@ async fn create_canvas_element() -> impl Element {
 
     // Add reactive updates when SELECTED_VARIABLES changes
     Task::start(async move {
-        crate::actors::selected_variables::variables_signal_vec().for_each(move |_| {
+        crate::actors::selected_variables::variables_signal().dedupe_cloned().for_each(move |vars| {
             let canvas_wrapper_for_signal = canvas_wrapper_for_signal.clone();
             async move {
                 canvas_wrapper_for_signal.borrow_mut().update_objects(|objects| {
@@ -511,7 +525,10 @@ async fn create_canvas_element() -> impl Element {
                     let cursor_pos = current_cursor_position_seconds();
                     // Get current theme from cache (updated by theme handler)
                     let novyui_theme = CURRENT_THEME_CACHE.get();
-                    *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &novyui_theme, cursor_pos);
+                    
+                    // PERFORMANCE FIX: Use incremental updates instead of full recreation
+                    // This was the main CPU killer - creating ALL objects from scratch on every variable change
+                    *objects = update_canvas_objects_incrementally(&selected_vars, canvas_width, canvas_height, &novyui_theme, cursor_pos);
                 });
             }
         }).await;
@@ -685,7 +702,7 @@ async fn create_canvas_element() -> impl Element {
                     set_viewport_if_changed(default_viewport);
                 }
             }
-        }.for_each_sync(|_| {}).await;
+        }.for_each(|_| async {}).await;
     });
 
     // Clear cache and redraw when timeline range changes (critical for zoom operations)
@@ -1775,6 +1792,238 @@ fn get_selected_variables_file_range() -> (f64, f64) {
     } else {
         (min_time, max_time)
     }
+}
+
+// PERFORMANCE FIX: Incremental canvas updates to prevent full object recreation
+fn detect_variable_changes(current_vars: &[SelectedVariable]) -> (Vec<String>, Vec<SelectedVariable>) {
+    let last_vars = LAST_VARIABLES_STATE.get_cloned();
+    
+    // Find variables that were removed
+    let mut removed_var_ids = Vec::new();
+    for old_var in &last_vars {
+        if !current_vars.iter().any(|v| v.unique_id == old_var.unique_id) {
+            removed_var_ids.push(old_var.unique_id.clone());
+        }
+    }
+    
+    // Find variables that were added or changed
+    let mut changed_vars = Vec::new();
+    for current_var in current_vars {
+        // Check if this is a new variable or if it changed
+        if let Some(old_var) = last_vars.iter().find(|v| v.unique_id == current_var.unique_id) {
+            // Check if variable properties changed (formatter, etc.)
+            if old_var.formatter != current_var.formatter {
+                changed_vars.push(current_var.clone());
+            }
+        } else {
+            // This is a new variable
+            changed_vars.push(current_var.clone());
+        }
+    }
+    
+    (removed_var_ids, changed_vars)
+}
+
+fn create_objects_for_single_variable(
+    var: &SelectedVariable,
+    var_index: usize,
+    canvas_width: f32,
+    canvas_height: f32,
+    theme: &NovyUITheme,
+    cursor_position: f64,
+    total_vars: usize
+) -> Vec<fast2d::Object2d> {
+    let mut objects = Vec::new();
+    
+    // Calculate row layout (same as original function)
+    let total_rows = total_vars + 1; // variables + timeline
+    let row_height = if total_rows > 0 { canvas_height / total_rows as f32 } else { canvas_height };
+    let y_position = var_index as f32 * row_height;
+    let is_even_row = var_index % 2 == 0;
+    
+    // Get theme colors
+    let theme_colors = get_current_theme_colors(theme);
+    let background_color = if is_even_row {
+        theme_colors.neutral_2
+    } else {
+        theme_colors.neutral_3
+    };
+    
+    // Create row background
+    objects.push(
+        fast2d::Rectangle::new()
+            .position(0.0, y_position)
+            .size(canvas_width, row_height)
+            .color(background_color.0, background_color.1, background_color.2, background_color.3)
+            .into()
+    );
+    
+    // Get time range and signal data (same logic as original)
+    let Some(current_time_range) = get_current_timeline_range() else {
+        return objects;
+    };
+    
+    let time_value_pairs = get_signal_transitions_for_variable(var, current_time_range);
+    let (min_time, max_time) = current_time_range;
+    
+    // Create value rectangles (same logic as original function)
+    for (rect_index, (start_time, signal_value)) in time_value_pairs.iter().enumerate() {
+        let end_time = if rect_index + 1 < time_value_pairs.len() {
+            time_value_pairs[rect_index + 1].0
+        } else {
+            max_time as f32
+        };
+        
+        if end_time <= min_time as f32 || *start_time >= max_time as f32 {
+            continue;
+        }
+        
+        let visible_start_time = start_time.max(min_time as f32);
+        let visible_end_time = end_time.min(max_time as f32);
+        let time_range = max_time - min_time;
+        
+        if time_range <= 0.0 || canvas_width <= 0.0 {
+            continue;
+        }
+        
+        let time_to_pixel_ratio = canvas_width as f64 / time_range;
+        let rect_start_x = (visible_start_time as f64 - min_time) * time_to_pixel_ratio;
+        let rect_end_x = (visible_end_time as f64 - min_time) * time_to_pixel_ratio;
+        let raw_rect_width = rect_end_x - rect_start_x;
+        
+        // Skip sub-pixel rectangles for performance
+        if raw_rect_width < 2.0 {
+            if rect_start_x < -10.0 || rect_start_x > canvas_width as f64 + 10.0 {
+                continue;
+            }
+            // Create transition line indicator using Rectangle (same as original)
+            let line_x = rect_start_x.max(0.0).min(canvas_width as f64 - 1.0);
+            objects.push(
+                fast2d::Rectangle::new()
+                    .position(line_x as f32, y_position)
+                    .size(1.0, row_height) // 1 pixel wide vertical line
+                    .color(theme_colors.cursor_color.0, theme_colors.cursor_color.1, theme_colors.cursor_color.2, 0.8)
+                    .into()
+            );
+            continue;
+        }
+        
+        // Create value rectangle with proper color encoding (using available theme colors)
+        let color = match signal_value {
+            shared::SignalValue::Present(_) => theme_colors.value_color_1,
+            shared::SignalValue::Missing => theme_colors.value_color_2,
+        };
+        
+        objects.push(
+            fast2d::Rectangle::new()
+                .position(rect_start_x as f32, y_position + row_height * 0.2)
+                .size(raw_rect_width as f32, row_height * 0.6)
+                .color(color.0, color.1, color.2, color.3)
+                .into()
+        );
+    }
+    
+    // Add cursor indicator if cursor is in this row's time range
+    let time_range = max_time - min_time;
+    if time_range > 0.0 && cursor_position >= min_time && cursor_position <= max_time {
+        let cursor_x = ((cursor_position - min_time) / time_range * canvas_width as f64) as f32;
+        // Use cursor_color from theme (same as original implementation)
+        objects.push(
+            fast2d::Rectangle::new()
+                .position(cursor_x - 1.0, y_position) // Center the 2px line
+                .size(2.0, row_height) // 2px thick line for this row
+                .color(theme_colors.cursor_color.0, theme_colors.cursor_color.1, theme_colors.cursor_color.2, 1.0)
+                .into()
+        );
+    }
+    
+    objects
+}
+
+fn update_canvas_objects_incrementally(
+    current_vars: &[SelectedVariable],
+    canvas_width: f32,
+    canvas_height: f32,
+    theme: &NovyUITheme,
+    cursor_position: f64
+) -> Vec<fast2d::Object2d> {
+    // Check if canvas dimensions changed - if so, force full redraw
+    let current_dims = (canvas_width, canvas_height);
+    let last_dims = LAST_CANVAS_DIMENSIONS.get();
+    let dimension_changed = current_dims != last_dims;
+    
+    if dimension_changed {
+        LAST_CANVAS_DIMENSIONS.set_neq(current_dims);
+        // Clear cache and force full redraw
+        VARIABLE_OBJECT_CACHE.lock_mut().clear();
+        return create_waveform_objects_with_dimensions_and_theme(
+            current_vars, canvas_width, canvas_height, theme, cursor_position
+        );
+    }
+    
+    // Detect variable changes
+    let (removed_var_ids, changed_vars) = detect_variable_changes(current_vars);
+    
+    // If no variables changed, return cached objects
+    if removed_var_ids.is_empty() && changed_vars.is_empty() {
+        let cache = VARIABLE_OBJECT_CACHE.lock_ref();
+        let mut all_objects = Vec::new();
+        
+        // Collect objects in proper order (by variable index)
+        for (_var_index, var) in current_vars.iter().enumerate() {
+            if let Some(var_objects) = cache.get(&var.unique_id) {
+                all_objects.extend(var_objects.clone());
+            } else {
+                // Variable not cached - need to create it
+                drop(cache);
+                return create_waveform_objects_with_dimensions_and_theme(
+                    current_vars, canvas_width, canvas_height, theme, cursor_position
+                );
+            }
+        }
+        
+        return all_objects;
+    }
+    
+    // Update cache for changed/removed variables
+    {
+        let mut cache = VARIABLE_OBJECT_CACHE.lock_mut();
+        
+        // Remove objects for deleted variables
+        for removed_id in &removed_var_ids {
+            cache.remove(removed_id);
+        }
+        
+        // Update objects for changed variables
+        for changed_var in &changed_vars {
+            let var_index = current_vars.iter().position(|v| v.unique_id == changed_var.unique_id).unwrap();
+            let var_objects = create_objects_for_single_variable(
+                changed_var,
+                var_index,
+                canvas_width,
+                canvas_height,
+                theme,
+                cursor_position,
+                current_vars.len()
+            );
+            cache.insert(changed_var.unique_id.clone(), var_objects);
+        }
+    }
+    
+    // Update last variables state
+    LAST_VARIABLES_STATE.set_neq(current_vars.to_vec());
+    
+    // Collect all objects in proper order
+    let cache = VARIABLE_OBJECT_CACHE.lock_ref();
+    let mut all_objects = Vec::new();
+    
+    for var in current_vars {
+        if let Some(var_objects) = cache.get(&var.unique_id) {
+            all_objects.extend(var_objects.clone());
+        }
+    }
+    
+    all_objects
 }
 
 fn create_waveform_objects_with_theme(selected_vars: &[SelectedVariable], theme: &NovyUITheme) -> Vec<fast2d::Object2d> {

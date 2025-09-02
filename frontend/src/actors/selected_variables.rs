@@ -17,7 +17,7 @@
 
 use crate::actors::{Actor, ActorVec, Relay, relay};
 use shared::SelectedVariable;
-use zoon::{SignalVecExt, MutableExt, MutableVecExt, SignalExt};
+use zoon::{SignalVecExt, MutableExt, SignalExt, Mutable};
 use indexmap::IndexSet;
 use futures::{StreamExt, future::{select, Either}};
 use crate::state; // For SELECTED_SCOPE_ID access
@@ -34,6 +34,9 @@ pub struct SelectedVariables {
     
     /// Selected variables collection → replaces SELECTED_VARIABLES
     variables: ActorVec<SelectedVariable>,
+    
+    /// Dedicated Vec signal for consumers that need full Vec updates (no SignalVec conversion)
+    variables_vec_signal: Mutable<Vec<SelectedVariable>>,
     
     /// Fast lookup index for selected variables → replaces SELECTED_VARIABLES_INDEX  
     variable_index: Actor<IndexSet<String>>,
@@ -93,19 +96,23 @@ impl SelectedVariables {
     /// Create a new comprehensive SelectedVariables domain with complete state management
     pub async fn new() -> Self {
         // Create all event-source relays
-        let (variable_clicked_relay, variable_clicked_stream) = relay();
-        let (variable_removed_relay, variable_removed_stream) = relay();
-        let (scope_selected_relay, scope_selected_stream) = relay();
-        let (scope_expanded_relay, scope_expanded_stream) = relay();
-        let (scope_collapsed_relay, scope_collapsed_stream) = relay();
-        let (selection_cleared_relay, selection_cleared_stream) = relay();
-        let (search_filter_changed_relay, search_filter_changed_stream) = relay();
-        let (search_focus_changed_relay, search_focus_changed_stream) = relay();
-        let (variables_restored_relay, variables_restored_stream) = relay();
-        let (tree_selection_changed_relay, tree_selection_changed_stream) = relay();
+        let (variable_clicked_relay, variable_clicked_stream) = relay::<String>();
+        let (variable_removed_relay, variable_removed_stream) = relay::<String>();
+        let (scope_selected_relay, scope_selected_stream) = relay::<Option<String>>();
+        let (scope_expanded_relay, scope_expanded_stream) = relay::<String>();
+        let (scope_collapsed_relay, scope_collapsed_stream) = relay::<String>();
+        let (selection_cleared_relay, selection_cleared_stream) = relay::<()>();
+        let (search_filter_changed_relay, search_filter_changed_stream) = relay::<String>();
+        let (search_focus_changed_relay, search_focus_changed_stream) = relay::<bool>();
+        let (variables_restored_relay, variables_restored_stream) = relay::<Vec<SelectedVariable>>();
+        let (tree_selection_changed_relay, tree_selection_changed_stream) = relay::<IndexSet<String>>();
+        
+        // Create dedicated Vec signal that syncs with ActorVec changes (no conversion antipattern)
+        let variables_vec_signal = Mutable::new(vec![]);
         
         // Create comprehensive variables actor with complete event handling
         let variables = ActorVec::new(vec![], {
+            let variables_vec_signal_clone = variables_vec_signal.clone();
             async move |variables| {
                 let mut variable_clicked = variable_clicked_stream;
                 let mut variable_removed = variable_removed_stream;
@@ -127,16 +134,22 @@ impl SelectedVariables {
                         )
                     ).await {
                         Either::Left((Either::Left((Some(variable_id), _)), _)) => {
-                            Self::handle_variable_clicked(&variables, variable_id).await;
+                            Self::handle_variable_clicked(&variables, &variables_vec_signal_clone, variable_id.clone()).await;
                         }
                         Either::Left((Either::Right((Some(variable_id), _)), _)) => {
-                            Self::handle_variable_removed(&variables, variable_id).await;
+                            // zoon::println!("🗑️ ACTOR RECEIVED REMOVAL EVENT: {}", variable_id);
+                            Self::handle_variable_removed(&variables, &variables_vec_signal_clone, variable_id.clone()).await;
+                            // zoon::println!("✅ ACTOR COMPLETED HANDLING REMOVAL: {}", variable_id);
                         }
                         Either::Right((Either::Left((Some(()), _)), _)) => {
-                            Self::handle_selection_cleared(&variables).await;
+                            // zoon::println!("🧹 ACTOR RECEIVED CLEAR ALL EVENT");
+                            Self::handle_selection_cleared(&variables, &variables_vec_signal_clone).await;
+                            // zoon::println!("✅ ACTOR COMPLETED HANDLING CLEAR ALL");
                         }
                         Either::Right((Either::Right((Some(restored_vars), _)), _)) => {
-                            Self::handle_variables_restored(&variables, restored_vars).await;
+                            // zoon::println!("📁 ACTOR RECEIVED RESTORE EVENT: {} variables", restored_vars.len());
+                            Self::handle_variables_restored(&variables, &variables_vec_signal_clone, restored_vars.clone()).await;
+                            // zoon::println!("✅ ACTOR COMPLETED HANDLING RESTORE: {} variables", restored_vars.len());
                         }
                         _ => break, // All streams closed
                     }
@@ -213,9 +226,12 @@ impl SelectedVariables {
             }
         });
         
+        // Note: variables_vec_signal gets updated manually in actor operations, not through conversion
+        
         Self {
             // State actors
             variables,
+            variables_vec_signal,
             variable_index,
             selected_scope,
             tree_selection,
@@ -241,8 +257,9 @@ impl SelectedVariables {
     // === COMPREHENSIVE REACTIVE SIGNAL ACCESS (replaces ALL 8 global mutables) ===
     
     /// Get reactive signal for all selected variables → replaces SELECTED_VARIABLES.signal_vec_cloned()
+    /// ✅ FIXED: Uses dedicated Vec signal, no SignalVec conversion antipattern
     pub fn variables_signal(&self) -> impl zoon::Signal<Item = Vec<SelectedVariable>> {
-        self.variables.signal_vec().to_signal_cloned()
+        self.variables_vec_signal.signal_cloned()
     }
     
     /// Get reactive signal for variables as signal vec (VecDiff updates)
@@ -302,7 +319,8 @@ impl SelectedVariables {
     /// Get variables from a specific file  
     pub fn file_variables_signal(&self, file_path: String) -> impl zoon::Signal<Item = Vec<SelectedVariable>> {
         use zoon::SignalExt;
-        self.variables.signal_vec().to_signal_cloned()
+        // ✅ FIXED: Use dedicated Vec signal instead of conversion antipattern
+        self.variables_vec_signal.signal_cloned()
             .map(move |vars| {
                 vars.iter()
                     .filter(|v| v.file_path().as_ref() == Some(&file_path))
@@ -319,7 +337,8 @@ impl SelectedVariables {
     /// Get filtered variables based on search text
     pub fn filtered_variables_signal(&self) -> impl zoon::Signal<Item = Vec<SelectedVariable>> {
         
-        let variables_signal = self.variables.signal_vec().to_signal_cloned();
+        // ✅ FIXED: Use dedicated Vec signal instead of conversion antipattern
+        let variables_signal = self.variables_vec_signal.signal_cloned();
         let filter_signal = self.search_filter.signal();
         
         use zoon::map_ref;
@@ -356,60 +375,286 @@ impl SelectedVariables {
 // === EVENT HANDLER IMPLEMENTATIONS ===
 
 impl SelectedVariables {
-    /// Handle user clicking a variable (toggle selection by variable ID)
+    /// Handle user clicking a variable in Variables panel (ADD-ONLY, no toggle)
     async fn handle_variable_clicked(
         variables_mutable: &zoon::MutableVec<SelectedVariable>,
+        variables_vec_signal: &zoon::Mutable<Vec<SelectedVariable>>,
         variable_id: String
     ) {
+        // zoon::println!("🎯 ACTOR START: Processing variable clicked event for: {}", variable_id);
+        
         // Check if variable is already selected by ID
-        let mut is_already_selected = false;
+        let is_already_selected = {
+            let vars = variables_mutable.lock_ref();
+            let already_selected = vars.iter().any(|v| v.unique_id == variable_id);
+            // zoon::println!("🔍 ACTOR: Checking selection state - already selected: {}", already_selected);
+            already_selected
+        };
         
-        // First, try to find and remove if already selected
-        variables_mutable.update_mut(|vars| {
-            if let Some(pos) = vars.iter().position(|v| v.unique_id == variable_id) {
-                vars.remove(pos);
-                is_already_selected = true;
-            }
-        });
+        // If already selected, do nothing (Variables panel is ADD-ONLY)
+        if is_already_selected {
+            // zoon::println!("⚠️ ACTOR: Variable already selected, ignoring click: {}", variable_id);
+            return;
+        }
         
-        // If not already selected, need to find the SelectedVariable from file data
-        if !is_already_selected {
-            // Note: In the actual implementation, this would need to look up
-            // the variable data from the loaded files to create a SelectedVariable.
-            // For now, we'll just track the logic structure.
-            zoon::println!("Would add variable with ID: {variable_id}");
+        // Add the variable (same working logic as before)
+        // Parse variable_id format: "file_path|scope_id|variable_name"
+        let parts: Vec<&str> = variable_id.split('|').collect();
+        if parts.len() >= 3 {
+            let file_id = parts[0];
+            let scope_id = parts[1];
+            let variable_name = parts[2];
             
-            // TODO: Implement variable lookup from tracked files
-            // let selected_var = create_selected_variable_from_id(variable_id);
-            // variables_mutable.lock_mut().push_cloned(selected_var);
+            // zoon::println!("🔄 Actor: Using helper function approach for file_id='{}', scope_id='{}', variable_name='{}'", file_id, scope_id, variable_name);
+            
+            // Use the same data source as the helper function
+            let tracked_files = if let Some(signals) = crate::actors::global_domains::TRACKED_FILES_SIGNALS.get() {
+                signals.files_mutable.lock_ref().to_vec()
+            } else {
+                Vec::new()
+            };
+            
+            // SIMPLIFIED: Just use the working helper function directly
+            // zoon::println!("🔄 Actor: Using simplified helper approach with full scope_id reconstruction");
+            
+            // The helper function expects the full scope_id, so reconstruct it from file_id + scope_id
+            let full_scope_id = format!("{}|{}", file_id, scope_id);
+            // zoon::println!("🎯 Actor: Reconstructed full_scope_id: '{}'", full_scope_id);
+            
+            // Try to find a matching signal by name across all available data (including child scopes)
+            for tracked_file in tracked_files.iter() {
+                if tracked_file.id == file_id {
+                    if let shared::FileState::Loaded(waveform_file) = &tracked_file.state {
+                        // Search recursively through all scopes and their children
+                        if let Some((found_signal, _found_scope_id)) = Self::find_signal_in_scopes(&waveform_file.scopes, variable_name) {
+                            // zoon::println!("✅ Actor: Found signal '{}' in scope '{}'", variable_name, found_scope_id);
+                            
+                            // Found a signal with matching name, use helper to create it
+                            if let Some(selected_var) = crate::actors::variable_helpers::create_selected_variable(
+                                found_signal.clone(),
+                                &tracked_file.id,
+                                &full_scope_id  // Use reconstructed scope ID
+                            ) {
+                                // zoon::println!("🚀 ACTOR: Adding variable to ActorVec: {}", variable_id);
+                                variables_mutable.lock_mut().push_cloned(selected_var.clone());
+                                // zoon::println!("📊 ACTOR: Variable list now contains {} items", variables_mutable.lock_ref().len());
+                                
+                                // Sync dedicated Vec signal after ActorVec change (no conversion antipattern)
+                                {
+                                    let current_vars = variables_mutable.lock_ref().to_vec();
+                                    let len = current_vars.len();
+                                    variables_vec_signal.set_neq(current_vars);
+                                    zoon::println!("✅ ACTOR: Added variable '{}' - total selected: {}", variable_id, len);
+                                }
+                                
+                                // ✅ FIXED: Only update Actor state - no dual updates to prevent infinite loops
+                                return;
+                            }
+                        } else {
+                            // zoon::println!("⚠️ Actor: Signal '{}' not found in any scope", variable_name);
+                        }
+                    }
+                    break;
+                }
+            }
+            // zoon::println!("⚠️ Actor: Could not find variable using helper approach: {}", variable_id);
+        } else {
+            // zoon::println!("⚠️ Invalid variable_id format: {}", variable_id);
         }
     }
+    
+    /// Find and create SelectedVariable from variable_id
+    async fn find_and_create_selected_variable(variable_id: &str, scope_id: &str) -> Option<SelectedVariable> {
+        // zoon::println!("🔍 Actor looking for variable: {}", variable_id);
+        
+        // Use same data source as Variables panel - TRACKED_FILES_SIGNALS
+        let tracked_files = if let Some(signals) = crate::actors::global_domains::TRACKED_FILES_SIGNALS.get() {
+            signals.files_mutable.lock_ref().to_vec()
+        } else {
+            // zoon::println!("❌ Actor: TRACKED_FILES_SIGNALS not available");
+            return None;
+        };
+        
+        // zoon::println!("📂 Actor: Available files: {}", tracked_files.len());
+        // for (i, f) in tracked_files.iter().enumerate() {
+        //     zoon::println!("  Actor File {}: id='{}', path='{}'", i, f.id, f.path);
+        // }
+        
+        // Parse variable_id: "file_path|scope_id|variable_name"  
+        let parts: Vec<&str> = variable_id.split('|').collect();
+        if parts.len() < 3 {
+            return None;
+        }
+        
+        let file_path = parts[0];
+        let variable_name = parts[2];
+        
+        // Parse scope_id to handle nested scopes like "simple_tb.s"
+        let scope_parts: Vec<&str> = scope_id.split('.').collect();
+        let root_scope = scope_parts[0]; // "simple_tb"
+        let sub_scope = if scope_parts.len() > 1 { Some(scope_parts[1]) } else { None }; // "s"
+        // zoon::println!("🔍 Actor: Parsed scope - root='{}', sub='{:?}'", root_scope, sub_scope);
+        
+        // Find the file and variable
+        for tracked_file in tracked_files.iter() {
+            // zoon::println!("🔍 Actor: Checking file '{}' against '{}'", tracked_file.path, file_path);
+            if tracked_file.path == file_path {
+                // zoon::println!("✅ Actor: Found matching file");
+                if let shared::FileState::Loaded(waveform_file) = &tracked_file.state {
+                    // zoon::println!("✅ Actor: File is loaded, checking {} scopes", waveform_file.scopes.len());
+                    // Find the scope (handle nested scopes like "simple_tb.s")
+                    for (i, scope_data) in waveform_file.scopes.iter().enumerate() {
+                        // zoon::println!("🔍 Actor: Scope {}: name='{}', id='{}' vs target='{}' | Comparing name='{}' with root='{}'", i, scope_data.name, scope_data.id, scope_id, scope_data.name, root_scope);
+                        
+                        // Check if this is the root scope we're looking for
+                        // zoon::println!("🔍 Actor: Comparing scope_data.name='{}' with root_scope='{}'", scope_data.name, root_scope);
+                        if scope_data.name == root_scope {
+                            // zoon::println!("✅ Actor: Found root scope '{}', checking for sub-scope", root_scope);
+                            
+                            // If we need a sub-scope, look in nested scopes
+                            if let Some(target_sub_scope) = sub_scope {
+                                // Look for sub-scope in nested scopes
+                                for (j, sub_scope_data) in scope_data.children.iter().enumerate() {
+                                    // zoon::println!("🔍 Actor: Sub-scope {}: name='{}', id='{}'", j, sub_scope_data.name, sub_scope_data.id);
+                                    if sub_scope_data.name == target_sub_scope {
+                                        // zoon::println!("✅ Actor: Found matching sub-scope, checking {} variables", sub_scope_data.variables.len());
+                                        // Find the variable in this sub-scope
+                                        for (k, signal) in sub_scope_data.variables.iter().enumerate() {
+                                            // zoon::println!("🔍 Actor: Variable {}: name='{}' vs target='{}'", k, signal.name, variable_name);
+                                            if signal.name == variable_name {
+                                                // zoon::println!("✅ Actor: Found matching variable in sub-scope!");
+                                                // Create SelectedVariable using the helper
+                                                return crate::actors::variable_helpers::create_selected_variable(
+                                                    signal.clone(),
+                                                    &tracked_file.id,
+                                                    &sub_scope_data.id
+                                                );
+                                            }
+                                        }
+                                        // zoon::println!("❌ Actor: Variable '{}' not found in sub-scope '{}'", variable_name, target_sub_scope);
+                                    }
+                                }
+                                // zoon::println!("❌ Actor: Sub-scope '{}' not found in root scope '{}'", target_sub_scope, root_scope);
+                            } else {
+                                // No sub-scope needed, look directly in root scope
+                                // zoon::println!("✅ Actor: Checking root scope variables directly, {} variables", scope_data.variables.len());
+                                for (j, signal) in scope_data.variables.iter().enumerate() {
+                                    // zoon::println!("🔍 Actor: Variable {}: name='{}' vs target='{}'", j, signal.name, variable_name);
+                                    if signal.name == variable_name {
+                                        // zoon::println!("✅ Actor: Found matching variable!");
+                                        // Create SelectedVariable using the helper
+                                        return crate::actors::variable_helpers::create_selected_variable(
+                                            signal.clone(),
+                                            &tracked_file.id,
+                                            &scope_data.id
+                                        );
+                                    }
+                                }
+                                // zoon::println!("❌ Actor: Variable '{}' not found in root scope", variable_name);
+                            }
+                        }
+                    }
+                    // zoon::println!("❌ Actor: Scope '{}' not found in file - should be looking for root='{}' and sub='{:?}'", scope_id, root_scope, sub_scope);
+                } else {
+                    // zoon::println!("❌ Actor: File not loaded");
+                }
+                break;
+            }
+        }
+        
+        None
+    }
+    
+    // ✅ REMOVED: update_global_signals_for_addition() - dual updates caused infinite loops
+    
+    /// Recursively search through scopes and their children for a signal by name
+    fn find_signal_in_scopes(scopes: &[shared::ScopeData], signal_name: &str) -> Option<(shared::Signal, String)> {
+        for scope in scopes {
+            // Check variables in this scope
+            for signal in &scope.variables {
+                if signal.name == signal_name {
+                    return Some((signal.clone(), scope.id.clone()));
+                }
+            }
+            
+            // Recursively check children scopes
+            if let Some(result) = Self::find_signal_in_scopes(&scope.children, signal_name) {
+                return Some(result);
+            }
+        }
+        None
+    }
+    
+    // ✅ REMOVED: update_global_signals_for_removal() - dual updates caused infinite loops
     
     /// Handle removing specific variable by ID
     async fn handle_variable_removed(
         variables_mutable: &zoon::MutableVec<SelectedVariable>,
+        variables_vec_signal: &zoon::Mutable<Vec<SelectedVariable>>,
         variable_id: String
     ) {
+        // zoon::println!("🗑️ ACTOR START: Processing variable removal for: {}", variable_id);
+        let _count_before = variables_mutable.lock_ref().len();
+        // zoon::println!("📊 ACTOR: Variable list contained {} items before removal", count_before);
+        
         variables_mutable.lock_mut().retain(|var| var.unique_id != variable_id);
+        
+        // Sync dedicated Vec signal after ActorVec change (no conversion antipattern)
+        {
+            let current_vars = variables_mutable.lock_ref().to_vec();
+            let len = current_vars.len();
+            variables_vec_signal.set_neq(current_vars);
+            zoon::println!("🗑️ ACTOR: Removed variable '{}' - total selected: {}", variable_id, len);
+        }
+        
+        // ✅ FIXED: Only update Actor state - no dual updates to prevent infinite loops
     }
     
     /// Handle clearing all selected variables
     async fn handle_selection_cleared(
-        variables_mutable: &zoon::MutableVec<SelectedVariable>
+        variables_mutable: &zoon::MutableVec<SelectedVariable>,
+        variables_vec_signal: &zoon::Mutable<Vec<SelectedVariable>>
     ) {
+        // zoon::println!("🧹 ACTOR START: Processing selection cleared event");
+        let _count_before = variables_mutable.lock_ref().len();
+        // zoon::println!("📊 ACTOR: Clearing {} selected variables", count_before);
+        
         variables_mutable.lock_mut().clear();
+        
+        // Sync dedicated Vec signal after ActorVec change (no conversion antipattern)
+        {
+            let current_vars = variables_mutable.lock_ref().to_vec();
+            let len = current_vars.len();
+            variables_vec_signal.set_neq(current_vars);
+            zoon::println!("🧹 ACTOR: Cleared all variables - total selected: {}", len);
+        }
+        
+        // ✅ FIXED: Only update Actor state - no dual updates to prevent infinite loops
     }
     
     /// Handle variables restored from configuration
     async fn handle_variables_restored(
         variables_mutable: &zoon::MutableVec<SelectedVariable>,
+        variables_vec_signal: &zoon::Mutable<Vec<SelectedVariable>>,
         restored_variables: Vec<SelectedVariable>
     ) {
-        // Clear existing and replace with restored
-        variables_mutable.lock_mut().clear();
-        for variable in restored_variables {
-            variables_mutable.lock_mut().push_cloned(variable);
+        // zoon::println!("📁 ACTOR START: Processing variables restored from config");
+        let _count_before = variables_mutable.lock_ref().len();
+        // zoon::println!("📊 ACTOR: Had {} variables before restoration", count_before);
+        // zoon::println!("📊 ACTOR: Restoring {} variables from config", restored_variables.len());
+        
+        // Replace all variables in single operation (prevents signal spam)
+        variables_mutable.lock_mut().replace_cloned(restored_variables.clone());
+        
+        // Sync dedicated Vec signal after ActorVec change (no conversion antipattern)
+        {
+            let current_vars = variables_mutable.lock_ref().to_vec();
+            let len = current_vars.len();
+            variables_vec_signal.set_neq(current_vars);
+            zoon::println!("📁 ACTOR: Restored {} variables from config - total selected: {}", restored_variables.len(), len);
         }
+        
+        // ✅ FIXED: Only update Actor state - no dual updates to prevent infinite loops
     }
 }
 
@@ -481,69 +726,54 @@ pub fn tree_selection_changed_relay() -> Relay<IndexSet<String>> {
 
 // === PUBLIC SIGNAL ACCESS FUNCTIONS (replace global mutables) ===
 
-/// Get reactive signal for all selected variables → CONNECT TO REAL CONFIG DATA
+/// Get reactive signal for all selected variables → FROM ACTOR STATE
 pub fn variables_signal() -> impl zoon::Signal<Item = Vec<SelectedVariable>> {
-    // Connect to real config data instead of static hardcoded empty vec
-    crate::config::workspace_section_signal().map(|workspace| workspace.selected_variables.clone())
+    // zoon::println!("🔗 GLOBAL: variables_signal() called - routing to global domains");
+    // Read from the Actor's state, not config (config gets updated BY Actor)
+    crate::actors::global_domains::selected_variables_signal()
+        .map(|vars| {
+            // zoon::println!("🌍 GLOBAL SIGNAL: Variables signal routed with {} items", vars.len());
+            vars
+        })
 }
 
-/// Get reactive signal vec for all selected variables → SIMPLE ACTOR+RELAY APPROACH
+/// Get reactive signal vec for all selected variables → CONNECTED TO GLOBAL SIGNALS
 pub fn variables_signal_vec() -> impl zoon::SignalVec<Item = SelectedVariable> {
-    use std::sync::OnceLock;
-    static VARIABLES_VEC_SIGNAL: OnceLock<zoon::MutableVec<SelectedVariable>> = OnceLock::new();
-    
-    let signal_vec = VARIABLES_VEC_SIGNAL.get_or_init(|| zoon::MutableVec::new());
-    signal_vec.signal_vec_cloned()
+    // Use the global signal storage that's connected to the Actor
+    crate::actors::global_domains::selected_variables_signal_vec()
 }
 
-/// Get reactive signal for variable index → SIMPLE ACTOR+RELAY APPROACH
+/// Get reactive signal for variable index → CONNECTED TO DOMAIN ACTOR
 pub fn variable_index_signal() -> impl zoon::Signal<Item = IndexSet<String>> {
-    use std::sync::OnceLock;
-    static VARIABLE_INDEX_SIGNAL: OnceLock<zoon::Mutable<IndexSet<String>>> = OnceLock::new();
-    
-    let signal = VARIABLE_INDEX_SIGNAL.get_or_init(|| zoon::Mutable::new(IndexSet::new()));
-    signal.signal_cloned()
+    // Connect to real domain - compute index from selected variables
+    variables_signal().map(|vars| {
+        vars.iter().map(|var| var.unique_id.clone()).collect::<IndexSet<String>>()
+    })
 }
 
-/// Get reactive signal for selected scope → CONNECTED TO REAL SELECTED_SCOPE_ID
+/// Get reactive signal for selected scope → DIRECT STATE ACCESS
 pub fn selected_scope_signal() -> impl zoon::Signal<Item = Option<String>> {
-    // ✅ PROPER FIX: Create a signal that starts with current value and updates on changes
-    use std::sync::OnceLock;
-    static SCOPE_SIGNAL: OnceLock<zoon::Mutable<Option<String>>> = OnceLock::new();
-    
-    let scope_signal = SCOPE_SIGNAL.get_or_init(|| {
-        let initial_value = state::SELECTED_SCOPE_ID.get_cloned();
-        let signal = zoon::Mutable::new(initial_value);
-        
-        // Keep this signal in sync with SELECTED_SCOPE_ID changes
-        let signal_clone = signal.clone();
-        zoon::Task::start(state::SELECTED_SCOPE_ID.signal_cloned().for_each(move |new_value| {
-            signal_clone.set_neq(new_value);
-            async {}
-        }));
-        
-        signal
-    });
-    
-    scope_signal.signal_cloned()
+    // ✅ CORRECT: Direct access to real state signal - no static caching needed
+    crate::state::SELECTED_SCOPE_ID.signal_cloned()
 }
 
-/// Get reactive signal for tree selection → SIMPLE ACTOR+RELAY APPROACH
+/// Get reactive signal for tree selection → CONNECTED TO DOMAIN ACTOR
 pub fn tree_selection_signal() -> impl zoon::Signal<Item = IndexSet<String>> {
-    use std::sync::OnceLock;
-    static TREE_SELECTION_SIGNAL: OnceLock<zoon::Mutable<IndexSet<String>>> = OnceLock::new();
-    
-    let signal = TREE_SELECTION_SIGNAL.get_or_init(|| zoon::Mutable::new(IndexSet::new()));
-    signal.signal_cloned()
+    // Tree selection should match variable selection for TreeView integration
+    variables_signal().map(|vars| {
+        vars.iter().map(|var| var.unique_id.clone()).collect::<IndexSet<String>>()
+    })
 }
 
-/// Get reactive signal for user cleared flag → SIMPLE ACTOR+RELAY APPROACH
+/// Get reactive signal for user cleared flag → CONNECTED TO DOMAIN EVENTS
 pub fn user_cleared_signal() -> impl zoon::Signal<Item = bool> {
-    use std::sync::OnceLock;
-    static USER_CLEARED_SIGNAL: OnceLock<zoon::Mutable<bool>> = OnceLock::new();
-    
-    let signal = USER_CLEARED_SIGNAL.get_or_init(|| zoon::Mutable::new(false));
-    signal.signal()
+    // User cleared when variables are empty and config has been loaded
+    zoon::map_ref! {
+        let vars = variables_signal(),
+        let config_loaded = crate::actors::config_sync::config_loaded_signal() => {
+            *config_loaded && vars.is_empty()
+        }
+    }
 }
 
 /// Get reactive signal for expanded scopes → CONNECT TO REAL CONFIG DATA
@@ -561,13 +791,11 @@ pub fn search_filter_signal() -> impl zoon::Signal<Item = String> {
     crate::config::app_config().session_state_actor.signal().map(|session| session.variables_search_filter.clone())
 }
 
-/// Get reactive signal for search focus → SIMPLE ACTOR+RELAY APPROACH
+/// Get reactive signal for search focus → SIMPLE UI STATE (use Atom in UI component)
 pub fn search_focused_signal() -> impl zoon::Signal<Item = bool> {
-    use std::sync::OnceLock;
-    static SEARCH_FOCUSED_SIGNAL: OnceLock<zoon::Mutable<bool>> = OnceLock::new();
-    
-    let signal = SEARCH_FOCUSED_SIGNAL.get_or_init(|| zoon::Mutable::new(false));
-    signal.signal()
+    // Search focus should be managed as local UI state with Atom in the search component
+    // This is ephemeral UI state, not domain logic
+    zoon::always(false) // Default - real focus state managed in UI component with Atom
 }
 
 // === SYNCHRONOUS ACCESS FUNCTIONS (for non-reactive contexts) ===
@@ -610,7 +838,11 @@ pub fn current_search_filter() -> String {
 
 /// MIGRATION: Temporary compatibility function - replace with variable_index_signal()
 pub fn current_variable_index() -> IndexSet<String> {
-    // MIGRATION: Should use reactive signals instead
-    IndexSet::new() // Default during migration
+    // Get current selected variables and build index 
+    // This is used by virtual list during synchronous updates
+    use crate::actors::global_domains::selected_variables_domain;
+    let domain = selected_variables_domain();
+    let vars = domain.variables_vec_signal.get_cloned();
+    vars.iter().map(|var| var.unique_id.clone()).collect::<IndexSet<String>>()
 }
 

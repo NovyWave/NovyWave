@@ -399,7 +399,11 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
         let selected_format = selected_format.clone();
         let previous_format = Mutable::new(format!("{:?}", current_format));
         
-        selected_format.signal_cloned().for_each_sync(move |new_format_str| {
+        async move {
+            selected_format.signal_cloned().for_each(move |new_format_str| {
+                let previous_format = previous_format.clone();
+                let unique_id = unique_id.clone();
+                async move {
             if new_format_str != previous_format.get_cloned() {
                 previous_format.set(new_format_str.clone());
                 
@@ -417,7 +421,9 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
                 
                 update_variable_format(&unique_id, new_format);
             }
-        })
+            }
+            }).await;
+        }
     });
     
     // Create custom dropdown that shows value+format with working dropdown menu
@@ -1693,46 +1699,46 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                                             })
                                                                             .child(
                                                                                 Text::with_signal(
-                                                                                    // Get maximum timeline range (min value) - reactive signal that updates when either LOADED_FILES or SELECTED_VARIABLES changes
-                                                                                    crate::state::LOADED_FILES.signal_vec_cloned().to_signal_cloned().map(|_loaded_files| {
-                                                                                        variables_signal().map(|_selected_vars| {
-                                                                                            if let Some((min_time, _max_time)) = crate::waveform_canvas::get_maximum_timeline_range() {
-                                                                                                // Smart time formatting that removes unnecessary decimals
-                                                                                                if !min_time.is_finite() || min_time <= 0.0 {
-                                                                                                    "0s".to_string()
-                                                                                                } else if min_time < 1e-6 {
-                                                                                                    let ns_val = min_time * 1e9;
-                                                                                                    if ns_val.fract() == 0.0 {
-                                                                                                        format!("{}ns", ns_val as i64)
-                                                                                                    } else {
-                                                                                                        format!("{:.1}ns", ns_val)
-                                                                                                    }
-                                                                                                } else if min_time < 1e-3 {
-                                                                                                    let us_val = min_time * 1e6;
-                                                                                                    if us_val.fract() == 0.0 {
-                                                                                                        format!("{}μs", us_val as i64)
-                                                                                                    } else {
-                                                                                                        format!("{:.1}μs", us_val)
-                                                                                                    }
-                                                                                                } else if min_time < 1.0 {
-                                                                                                    let ms_val = min_time * 1e3;
-                                                                                                    if ms_val.fract() == 0.0 {
-                                                                                                        format!("{}ms", ms_val as i64)
-                                                                                                    } else {
-                                                                                                        format!("{:.1}ms", ms_val)
-                                                                                                    }
+                                                                                    // Get maximum timeline range (min value) - single-level signal coordination prevents exponential multiplication
+                                                                                    map_ref! {
+                                                                                        let _loaded_files = crate::state::LOADED_FILES.signal_vec_cloned().to_signal_cloned(),
+                                                                                        let _selected_vars = variables_signal() =>
+                                                                                        if let Some((min_time, _max_time)) = crate::waveform_canvas::get_maximum_timeline_range() {
+                                                                                            // Smart time formatting that removes unnecessary decimals
+                                                                                            if !min_time.is_finite() || min_time <= 0.0 {
+                                                                                                "0s".to_string()
+                                                                                            } else if min_time < 1e-6 {
+                                                                                                let ns_val = min_time * 1e9;
+                                                                                                if ns_val.fract() == 0.0 {
+                                                                                                    format!("{}ns", ns_val as i64)
                                                                                                 } else {
-                                                                                                    if min_time.fract() == 0.0 {
-                                                                                                        format!("{}s", min_time as i64)
-                                                                                                    } else {
-                                                                                                        format!("{:.1}s", min_time)
-                                                                                                    }
+                                                                                                    format!("{:.1}ns", ns_val)
+                                                                                                }
+                                                                                            } else if min_time < 1e-3 {
+                                                                                                let us_val = min_time * 1e6;
+                                                                                                if us_val.fract() == 0.0 {
+                                                                                                    format!("{}μs", us_val as i64)
+                                                                                                } else {
+                                                                                                    format!("{:.1}μs", us_val)
+                                                                                                }
+                                                                                            } else if min_time < 1.0 {
+                                                                                                let ms_val = min_time * 1e3;
+                                                                                                if ms_val.fract() == 0.0 {
+                                                                                                    format!("{}ms", ms_val as i64)
+                                                                                                } else {
+                                                                                                    format!("{:.1}ms", ms_val)
                                                                                                 }
                                                                                             } else {
-                                                                                                "0s".to_string()
+                                                                                                if min_time.fract() == 0.0 {
+                                                                                                    format!("{}s", min_time as i64)
+                                                                                                } else {
+                                                                                                    format!("{:.1}s", min_time)
+                                                                                                }
                                                                                             }
-                                                                                        })
-                                                                                    }).flatten()
+                                                                                        } else {
+                                                                                            "0s".to_string()
+                                                                                        }
+                                                                                    }.dedupe_cloned()
                                                                                 )
                                                                             )
                                                                     )
@@ -1785,46 +1791,46 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                                             })
                                                                             .child(
                                                                                 Text::with_signal(
-                                                                                    // Get maximum timeline range (max value) - reactive signal that updates when either LOADED_FILES or SELECTED_VARIABLES changes
-                                                                                    crate::state::LOADED_FILES.signal_vec_cloned().to_signal_cloned().map(|_loaded_files| {
-                                                                                        variables_signal().map(|_selected_vars| {
-                                                                                            if let Some((_min_time, max_time)) = crate::waveform_canvas::get_maximum_timeline_range() {
-                                                                                                // Smart time formatting that removes unnecessary decimals
-                                                                                                if !max_time.is_finite() || max_time <= 0.0 {
-                                                                                                    "0s".to_string()
-                                                                                                } else if max_time < 1e-6 {
-                                                                                                    let ns_val = max_time * 1e9;
-                                                                                                    if ns_val.fract() == 0.0 {
-                                                                                                        format!("{}ns", ns_val as i64)
-                                                                                                    } else {
-                                                                                                        format!("{:.1}ns", ns_val)
-                                                                                                    }
-                                                                                                } else if max_time < 1e-3 {
-                                                                                                    let us_val = max_time * 1e6;
-                                                                                                    if us_val.fract() == 0.0 {
-                                                                                                        format!("{}μs", us_val as i64)
-                                                                                                    } else {
-                                                                                                        format!("{:.1}μs", us_val)
-                                                                                                    }
-                                                                                                } else if max_time < 1.0 {
-                                                                                                    let ms_val = max_time * 1e3;
-                                                                                                    if ms_val.fract() == 0.0 {
-                                                                                                        format!("{}ms", ms_val as i64)
-                                                                                                    } else {
-                                                                                                        format!("{:.1}ms", ms_val)
-                                                                                                    }
+                                                                                    // Get maximum timeline range (max value) - single-level signal coordination prevents exponential multiplication
+                                                                                    map_ref! {
+                                                                                        let _loaded_files = crate::state::LOADED_FILES.signal_vec_cloned().to_signal_cloned(),
+                                                                                        let _selected_vars = variables_signal() =>
+                                                                                        if let Some((_min_time, max_time)) = crate::waveform_canvas::get_maximum_timeline_range() {
+                                                                                            // Smart time formatting that removes unnecessary decimals
+                                                                                            if !max_time.is_finite() || max_time <= 0.0 {
+                                                                                                "0s".to_string()
+                                                                                            } else if max_time < 1e-6 {
+                                                                                                let ns_val = max_time * 1e9;
+                                                                                                if ns_val.fract() == 0.0 {
+                                                                                                    format!("{}ns", ns_val as i64)
                                                                                                 } else {
-                                                                                                    if max_time.fract() == 0.0 {
-                                                                                                        format!("{}s", max_time as i64)
-                                                                                                    } else {
-                                                                                                        format!("{:.1}s", max_time)
-                                                                                                    }
+                                                                                                    format!("{:.1}ns", ns_val)
+                                                                                                }
+                                                                                            } else if max_time < 1e-3 {
+                                                                                                let us_val = max_time * 1e6;
+                                                                                                if us_val.fract() == 0.0 {
+                                                                                                    format!("{}μs", us_val as i64)
+                                                                                                } else {
+                                                                                                    format!("{:.1}μs", us_val)
+                                                                                                }
+                                                                                            } else if max_time < 1.0 {
+                                                                                                let ms_val = max_time * 1e3;
+                                                                                                if ms_val.fract() == 0.0 {
+                                                                                                    format!("{}ms", ms_val as i64)
+                                                                                                } else {
+                                                                                                    format!("{:.1}ms", ms_val)
                                                                                                 }
                                                                                             } else {
-                                                                                                "100s".to_string()
+                                                                                                if max_time.fract() == 0.0 {
+                                                                                                    format!("{}s", max_time as i64)
+                                                                                                } else {
+                                                                                                    format!("{:.1}s", max_time)
+                                                                                                }
                                                                                             }
-                                                                                        })
-                                                                                    }).flatten()
+                                                                                        } else {
+                                                                                            "100s".to_string()
+                                                                                        }
+                                                                                    }.dedupe_cloned()
                                                                                 )
                                                                             )
                                                                     )
@@ -2495,12 +2501,12 @@ fn process_file_picker_selection() {
             if let Some(signals) = crate::actors::global_domains::TRACKED_FILES_SIGNALS.get() {
                 // Get current files from the signal storage
                 let files = signals.files_mutable.lock_ref().to_vec();
-                zoon::println!("🔍 DEBUG: Found {} files in global domain signals", files.len());
+                // zoon::println!("🔍 DEBUG: Found {} files in global domain signals", files.len());
                 files
             } else {
                 // Fallback to legacy system if signals not initialized
                 let files = state::TRACKED_FILES.lock_ref().to_vec();
-                zoon::println!("🔍 DEBUG: Using legacy system, found {} files", files.len());
+                // zoon::println!("🔍 DEBUG: Using legacy system, found {} files", files.len());
                 files
             }
         };
@@ -2512,17 +2518,17 @@ fn process_file_picker_selection() {
             let selected_pathbuf = PathBuf::from(&selected_path);
             
             // DEBUG: Log path comparison details
-            zoon::println!("🔍 DEBUG: Checking selected_path: '{}'", selected_path);
-            for existing_file in &tracked_files_snapshot {
-                zoon::println!("  - Tracked file: id='{}', path='{}'", existing_file.id, existing_file.path);
-            }
+            // zoon::println!("🔍 DEBUG: Checking selected_path: '{}'", selected_path);
+            // for existing_file in &tracked_files_snapshot {
+            //     zoon::println!("  - Tracked file: id='{}', path='{}'", existing_file.id, existing_file.path);
+            // }
             
             // Check if file is already tracked
             if let Some(existing_file) = tracked_files_snapshot.iter().find(|f| f.id == selected_path || f.path == selected_path) {
-                zoon::println!("🔄 File already opened, will reload: {} (state: {:?})", selected_path, existing_file.state);
+                // zoon::println!("🔄 File already opened, will reload: {} (state: {:?})", selected_path, existing_file.state);
                 reload_files.push(existing_file.id.clone());
             } else {
-                zoon::println!("📁 New file will be loaded: {}", selected_path);
+                // zoon::println!("📁 New file will be loaded: {}", selected_path);
                 new_files.push(selected_pathbuf);
             }
         }
@@ -2531,13 +2537,13 @@ fn process_file_picker_selection() {
         
         // Handle new files
         if !new_files.is_empty() {
-            zoon::println!("📥 Loading {} new files", new_files.len());
+            // zoon::println!("📥 Loading {} new files", new_files.len());
             tracked_files.files_dropped_relay.send(new_files);
         }
         
         // Handle reload files - use direct reload calls for proper parsing
         if !reload_files.is_empty() {
-            zoon::println!("🔄 Reloading {} existing files via reload relay", reload_files.len());
+            // zoon::println!("🔄 Reloading {} existing files via reload relay", reload_files.len());
             
             // Use direct reload calls instead of remove→re-add pattern
             // This ensures reload files go through full parsing pipeline

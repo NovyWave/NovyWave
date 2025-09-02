@@ -206,7 +206,7 @@ fn scope_contains_target(scopes: &[ScopeData], target_scope_id: &str) -> bool {
 pub fn init_signal_chains() {
     // Set up signal chain to clear completed files after completion is shown
     Task::start(async {
-        LOADING_COMPLETION_TRIGGER.signal().for_each_sync(move |_| {
+        LOADING_COMPLETION_TRIGGER.signal().for_each(move |_| async move {
             // Clear files after completion state is visually confirmed
             // Use signal coordination instead of arbitrary timer
             Task::start(async {

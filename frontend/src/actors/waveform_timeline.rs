@@ -68,9 +68,11 @@ pub struct WaveformTimeline {
     
     /// Current signal values at cursor position
     signal_values: ActorMap<String, format_utils::SignalValue>,
+    signal_values_hashmap_signal: zoon::Mutable<HashMap<String, format_utils::SignalValue>>,  // Dedicated signal for efficient HashMap access
     
     /// Format selections for selected variables
     variable_formats: ActorMap<String, VarFormat>,
+    variable_formats_hashmap_signal: zoon::Mutable<HashMap<String, VarFormat>>,  // Dedicated signal for efficient HashMap access
     
     // === CANVAS STATE (5 mutables from waveform_canvas.rs) ===
     /// Track pending backend requests
@@ -78,6 +80,7 @@ pub struct WaveformTimeline {
     
     /// Processed canvas cache for rendering optimization
     canvas_cache: ActorMap<String, Vec<(f32, SignalValue)>>,
+    canvas_cache_hashmap_signal: zoon::Mutable<HashMap<String, Vec<(f32, SignalValue)>>>,  // Dedicated signal for efficient HashMap access
     
     /// Force redraw counter for invalidation
     force_redraw: Actor<u32>,
@@ -489,8 +492,15 @@ impl WaveformTimeline {
             loop { futures::future::pending::<()>().await; }
         });
         
+        // Create dedicated signals for efficient access (no conversion antipatterns)
+        let signal_values_hashmap_signal = zoon::Mutable::new(HashMap::new());
+        let variable_formats_hashmap_signal = zoon::Mutable::new(HashMap::new());
+        let canvas_cache_hashmap_signal = zoon::Mutable::new(HashMap::new());
+        
         // Signal values ActorMap
-        let signal_values = ActorMap::new(BTreeMap::new(), async move |values_handle| {
+        let signal_values = ActorMap::new(BTreeMap::new(), {
+            let signal_values_sync = signal_values_hashmap_signal.clone();
+            async move |values_handle| {
             let mut signal_values_updated = signal_values_updated_stream;
             
             loop {
@@ -501,6 +511,14 @@ impl WaveformTimeline {
                                 for (signal_id, value) in updated_values {
                                     values_handle.lock_mut().insert_cloned(signal_id, value);
                                 }
+                                
+                                // Sync dedicated HashMap signal after ActorMap change
+                                {
+                                    let current_map: HashMap<String, format_utils::SignalValue> = values_handle.lock_ref().iter()
+                                        .map(|(k, v)| (k.clone(), v.clone()))
+                                        .collect();
+                                    signal_values_sync.set(current_map);
+                                }
                             }
                             None => break,
                         }
@@ -508,7 +526,7 @@ impl WaveformTimeline {
                     complete => break,
                 }
             }
-        });
+        }});
         
         // Variable formats ActorMap
         let variable_formats = ActorMap::new(BTreeMap::new(), async move |_formats_handle| {
@@ -582,11 +600,14 @@ impl WaveformTimeline {
             canvas_width,
             canvas_height,
             signal_values,
+            signal_values_hashmap_signal,
             variable_formats,
+            variable_formats_hashmap_signal,
             
             // Canvas state
             has_pending_request,
             canvas_cache,
+            canvas_cache_hashmap_signal,
             force_redraw,
             last_redraw_time,
             last_canvas_update,
@@ -733,18 +754,14 @@ impl WaveformTimeline {
     
     /// Get reactive signal for all signal values
     pub fn signal_values_signal(&self) -> impl zoon::Signal<Item = HashMap<String, format_utils::SignalValue>> {
-        use zoon::SignalExt;
-        self.signal_values.entries_signal_vec().to_signal_cloned().map(|entries| {
-            entries.into_iter().collect()
-        })
+        // ✅ FIXED: Use dedicated HashMap signal instead of conversion antipattern
+        self.signal_values_hashmap_signal.signal_cloned()
     }
     
     /// Get reactive signal for variable formats
     pub fn variable_formats_signal(&self) -> impl zoon::Signal<Item = HashMap<String, VarFormat>> {
-        use zoon::SignalExt;
-        self.variable_formats.entries_signal_vec().to_signal_cloned().map(|entries| {
-            entries.into_iter().collect()
-        })
+        // ✅ FIXED: Use dedicated HashMap signal instead of conversion antipattern
+        self.variable_formats_hashmap_signal.signal_cloned()
     }
     
     // === CANVAS STATE SIGNALS ===
@@ -756,10 +773,8 @@ impl WaveformTimeline {
     
     /// Get reactive signal for canvas cache
     pub fn canvas_cache_signal(&self) -> impl zoon::Signal<Item = HashMap<String, Vec<(f32, SignalValue)>>> {
-        use zoon::SignalExt;
-        self.canvas_cache.entries_signal_vec().to_signal_cloned().map(|entries| {
-            entries.into_iter().collect()
-        })
+        // ✅ FIXED: Use dedicated HashMap signal instead of conversion antipattern
+        self.canvas_cache_hashmap_signal.signal_cloned()
     }
     
     /// Get reactive signal for force redraw counter
@@ -921,17 +936,35 @@ impl WaveformTimeline {
             cursor_values_updated_relay,
             timeline_bounds_calculated_relay,
             viewport_changed_relay,
+            
+            // HashMap-backed signals for reactive access (dummy values for static approach)
+            canvas_cache_hashmap_signal: zoon::Mutable::new(HashMap::new()),
+            signal_values_hashmap_signal: zoon::Mutable::new(HashMap::new()),
+            variable_formats_hashmap_signal: zoon::Mutable::new(HashMap::new()),
         }
     }
 
     // === STATIC SIGNAL ACCESSORS FOR GLOBAL FUNCTIONS ===
     
-    /// Static version of variable_formats_signal for global access → SIMPLE STATIC APPROACH
+    /// Static version of variable_formats_signal for global access → CONNECTED TO DOMAIN SIGNAL
     pub fn variable_formats_signal_static() -> impl zoon::Signal<Item = HashMap<String, VarFormat>> {
         use std::sync::OnceLock;
         static VARIABLE_FORMATS_SIGNAL: OnceLock<zoon::Mutable<HashMap<String, VarFormat>>> = OnceLock::new();
         
-        let signal = VARIABLE_FORMATS_SIGNAL.get_or_init(|| zoon::Mutable::new(HashMap::new()));
+        let signal = VARIABLE_FORMATS_SIGNAL.get_or_init(|| {
+            let mutable = zoon::Mutable::new(HashMap::new());
+            
+            // Connect to real domain signal if available
+            if let Some(timeline) = WAVEFORM_TIMELINE_INSTANCE.get() {
+                let mutable_clone = mutable.clone();
+                zoon::Task::start(timeline.variable_formats_hashmap_signal.signal_cloned().for_each(move |value| {
+                    mutable_clone.set_neq(value);
+                    async {}
+                }));
+            }
+            
+            mutable
+        });
         signal.signal_cloned()
     }
     
@@ -947,93 +980,223 @@ impl WaveformTimeline {
             })
     }
     
-    /// Static version of canvas_cache_signal for global access → SIMPLE STATIC APPROACH
+    /// Static version of canvas_cache_signal for global access → CONNECTED TO DOMAIN SIGNAL
     pub fn canvas_cache_signal_static() -> impl zoon::Signal<Item = HashMap<String, Vec<(f32, SignalValue)>>> {
         use std::sync::OnceLock;
         static CANVAS_CACHE_SIGNAL: OnceLock<zoon::Mutable<HashMap<String, Vec<(f32, SignalValue)>>>> = OnceLock::new();
         
-        let signal = CANVAS_CACHE_SIGNAL.get_or_init(|| zoon::Mutable::new(HashMap::new()));
+        let signal = CANVAS_CACHE_SIGNAL.get_or_init(|| {
+            let mutable = zoon::Mutable::new(HashMap::new());
+            
+            // Connect to real domain signal if available
+            if let Some(timeline) = WAVEFORM_TIMELINE_INSTANCE.get() {
+                let mutable_clone = mutable.clone();
+                zoon::Task::start(timeline.canvas_cache_hashmap_signal.signal_cloned().for_each(move |value| {
+                    mutable_clone.set_neq(value);
+                    async {}
+                }));
+            }
+            
+            mutable
+        });
         signal.signal_cloned()
     }
     
-    /// Static version of force_redraw_signal for global access → SIMPLE STATIC APPROACH
+    /// Static version of force_redraw_signal for global access → CONNECTED TO DOMAIN ACTOR
     pub fn force_redraw_signal_static() -> impl zoon::Signal<Item = u32> {
         use std::sync::OnceLock;
         static FORCE_REDRAW_SIGNAL: OnceLock<zoon::Mutable<u32>> = OnceLock::new();
         
-        let signal = FORCE_REDRAW_SIGNAL.get_or_init(|| zoon::Mutable::new(0));
+        let signal = FORCE_REDRAW_SIGNAL.get_or_init(|| {
+            let mutable = zoon::Mutable::new(0);
+            
+            // Connect to real domain actor if available
+            if let Some(timeline) = WAVEFORM_TIMELINE_INSTANCE.get() {
+                let mutable_clone = mutable.clone();
+                zoon::Task::start(timeline.force_redraw.signal().for_each(move |value| {
+                    mutable_clone.set_neq(value);
+                    async {}
+                }));
+            }
+            
+            mutable
+        });
         signal.signal()
     }
     
-    /// Static version of last_redraw_time_signal for global access → SIMPLE STATIC APPROACH
+    /// Static version of last_redraw_time_signal for global access → CONNECTED TO DOMAIN ACTOR
     pub fn last_redraw_time_signal_static() -> impl zoon::Signal<Item = f64> {
         use std::sync::OnceLock;
         static LAST_REDRAW_TIME_SIGNAL: OnceLock<zoon::Mutable<f64>> = OnceLock::new();
         
-        let signal = LAST_REDRAW_TIME_SIGNAL.get_or_init(|| zoon::Mutable::new(0.0));
+        let signal = LAST_REDRAW_TIME_SIGNAL.get_or_init(|| {
+            let mutable = zoon::Mutable::new(0.0);
+            
+            // Connect to real domain actor if available
+            if let Some(timeline) = WAVEFORM_TIMELINE_INSTANCE.get() {
+                let mutable_clone = mutable.clone();
+                zoon::Task::start(timeline.last_redraw_time.signal().for_each(move |value| {
+                    mutable_clone.set_neq(value);
+                    async {}
+                }));
+            }
+            
+            mutable
+        });
         signal.signal()
     }
     
-    /// Static version of last_canvas_update_signal for global access → SIMPLE STATIC APPROACH
+    /// Static version of last_canvas_update_signal for global access → CONNECTED TO DOMAIN ACTOR
     pub fn last_canvas_update_signal_static() -> impl zoon::Signal<Item = u64> {
         use std::sync::OnceLock;
         static LAST_CANVAS_UPDATE_SIGNAL: OnceLock<zoon::Mutable<u64>> = OnceLock::new();
         
-        let signal = LAST_CANVAS_UPDATE_SIGNAL.get_or_init(|| zoon::Mutable::new(0));
+        let signal = LAST_CANVAS_UPDATE_SIGNAL.get_or_init(|| {
+            let mutable = zoon::Mutable::new(0);
+            
+            // Connect to real domain actor if available
+            if let Some(timeline) = WAVEFORM_TIMELINE_INSTANCE.get() {
+                let mutable_clone = mutable.clone();
+                zoon::Task::start(timeline.last_canvas_update.signal().for_each(move |value| {
+                    mutable_clone.set_neq(value);
+                    async {}
+                }));
+            }
+            
+            mutable
+        });
         signal.signal()
     }
     
-    /// Static version of mouse_x_signal for global access → SIMPLE STATIC APPROACH
+    /// Static version of mouse_x_signal for global access → CONNECTED TO DOMAIN ACTOR
     pub fn mouse_x_signal_static() -> impl zoon::Signal<Item = f32> {
         use std::sync::OnceLock;
         static MOUSE_X_SIGNAL: OnceLock<zoon::Mutable<f32>> = OnceLock::new();
         
-        let signal = MOUSE_X_SIGNAL.get_or_init(|| zoon::Mutable::new(0.0));
+        let signal = MOUSE_X_SIGNAL.get_or_init(|| {
+            let mutable = zoon::Mutable::new(0.0);
+            
+            // Connect to real domain actor if available
+            if let Some(timeline) = WAVEFORM_TIMELINE_INSTANCE.get() {
+                let mutable_clone = mutable.clone();
+                zoon::Task::start(timeline.mouse_x.signal().for_each(move |value| {
+                    mutable_clone.set_neq(value);
+                    async {}
+                }));
+            }
+            
+            mutable
+        });
         signal.signal()
     }
     
-    /// Static version of mouse_time_signal for global access → SIMPLE STATIC APPROACH
+    /// Static version of mouse_time_signal for global access → CONNECTED TO DOMAIN ACTOR
     pub fn mouse_time_signal_static() -> impl zoon::Signal<Item = TimeNs> {
         use std::sync::OnceLock;
         static MOUSE_TIME_SIGNAL: OnceLock<zoon::Mutable<TimeNs>> = OnceLock::new();
         
-        let signal = MOUSE_TIME_SIGNAL.get_or_init(|| zoon::Mutable::new(TimeNs::ZERO));
+        let signal = MOUSE_TIME_SIGNAL.get_or_init(|| {
+            let mutable = zoon::Mutable::new(TimeNs::ZERO);
+            
+            // Connect to real domain actor if available
+            if let Some(timeline) = WAVEFORM_TIMELINE_INSTANCE.get() {
+                let mutable_clone = mutable.clone();
+                zoon::Task::start(timeline.mouse_time.signal().for_each(move |value| {
+                    mutable_clone.set_neq(value);
+                    async {}
+                }));
+            }
+            
+            mutable
+        });
         signal.signal()
     }
     
-    /// Static version of zoom_center_signal for global access → SIMPLE STATIC APPROACH
+    /// Static version of zoom_center_signal for global access → CONNECTED TO DOMAIN ACTOR
     pub fn zoom_center_signal_static() -> impl zoon::Signal<Item = TimeNs> {
         use std::sync::OnceLock;
         static ZOOM_CENTER_SIGNAL: OnceLock<zoon::Mutable<TimeNs>> = OnceLock::new();
         
-        let signal = ZOOM_CENTER_SIGNAL.get_or_init(|| zoon::Mutable::new(TimeNs::ZERO));
+        let signal = ZOOM_CENTER_SIGNAL.get_or_init(|| {
+            let mutable = zoon::Mutable::new(TimeNs::ZERO);
+            
+            // Connect to real domain actor if available
+            if let Some(timeline) = WAVEFORM_TIMELINE_INSTANCE.get() {
+                let mutable_clone = mutable.clone();
+                zoon::Task::start(timeline.zoom_center.signal().for_each(move |value| {
+                    mutable_clone.set_neq(value);
+                    async {}
+                }));
+            }
+            
+            mutable
+        });
         signal.signal()
     }
     
-    /// Static version of canvas_width_signal for global access → SIMPLE STATIC APPROACH
+    /// Static version of canvas_width_signal for global access → CONNECTED TO DOMAIN ACTOR
     pub fn canvas_width_signal_static() -> impl zoon::Signal<Item = f32> {
         use std::sync::OnceLock;
         static CANVAS_WIDTH_SIGNAL: OnceLock<zoon::Mutable<f32>> = OnceLock::new();
         
-        let signal = CANVAS_WIDTH_SIGNAL.get_or_init(|| zoon::Mutable::new(800.0));
+        let signal = CANVAS_WIDTH_SIGNAL.get_or_init(|| {
+            let mutable = zoon::Mutable::new(800.0);
+            
+            // Connect to real domain actor if available
+            if let Some(timeline) = WAVEFORM_TIMELINE_INSTANCE.get() {
+                let mutable_clone = mutable.clone();
+                zoon::Task::start(timeline.canvas_width.signal().for_each(move |value| {
+                    mutable_clone.set_neq(value);
+                    async {}
+                }));
+            }
+            
+            mutable
+        });
         signal.signal()
     }
     
-    /// Static version of canvas_height_signal for global access → SIMPLE STATIC APPROACH
+    /// Static version of canvas_height_signal for global access → CONNECTED TO DOMAIN ACTOR
     pub fn canvas_height_signal_static() -> impl zoon::Signal<Item = f32> {
         use std::sync::OnceLock;
         static CANVAS_HEIGHT_SIGNAL: OnceLock<zoon::Mutable<f32>> = OnceLock::new();
         
-        let signal = CANVAS_HEIGHT_SIGNAL.get_or_init(|| zoon::Mutable::new(400.0));
+        let signal = CANVAS_HEIGHT_SIGNAL.get_or_init(|| {
+            let mutable = zoon::Mutable::new(400.0);
+            
+            // Connect to real domain actor if available
+            if let Some(timeline) = WAVEFORM_TIMELINE_INSTANCE.get() {
+                let mutable_clone = mutable.clone();
+                zoon::Task::start(timeline.canvas_height.signal().for_each(move |value| {
+                    mutable_clone.set_neq(value);
+                    async {}
+                }));
+            }
+            
+            mutable
+        });
         signal.signal()
     }
     
-    /// Static version of signal_values_signal for global access → SIMPLE STATIC APPROACH
+    /// Static version of signal_values_signal for global access → CONNECTED TO DOMAIN SIGNAL
     pub fn signal_values_signal_static() -> impl zoon::Signal<Item = HashMap<String, format_utils::SignalValue>> {
         use std::sync::OnceLock;
         static SIGNAL_VALUES_SIGNAL: OnceLock<zoon::Mutable<HashMap<String, format_utils::SignalValue>>> = OnceLock::new();
         
-        let signal = SIGNAL_VALUES_SIGNAL.get_or_init(|| zoon::Mutable::new(HashMap::new()));
+        let signal = SIGNAL_VALUES_SIGNAL.get_or_init(|| {
+            let mutable = zoon::Mutable::new(HashMap::new());
+            
+            // Connect to real domain signal if available
+            if let Some(timeline) = WAVEFORM_TIMELINE_INSTANCE.get() {
+                let mutable_clone = mutable.clone();
+                zoon::Task::start(timeline.signal_values_hashmap_signal.signal_cloned().for_each(move |value| {
+                    mutable_clone.set(value);  // Use set() since SignalValue doesn't implement PartialEq
+                    async {}
+                }));
+            }
+            
+            mutable
+        });
         signal.signal_cloned()
     }
 
@@ -1041,70 +1204,134 @@ impl WaveformTimeline {
     
     /// Static version of cursor_position_signal for global access
     pub fn cursor_position_signal_static() -> impl zoon::Signal<Item = TimeNs> {
-        // Use simple static Mutable that gets updated by domain
         use std::sync::OnceLock;
         static CURSOR_POSITION_SIGNAL: OnceLock<zoon::Mutable<TimeNs>> = OnceLock::new();
         
-        let signal = CURSOR_POSITION_SIGNAL.get_or_init(|| zoon::Mutable::new(TimeNs::ZERO));
+        let signal = CURSOR_POSITION_SIGNAL.get_or_init(|| {
+            let mutable = zoon::Mutable::new(TimeNs::ZERO);
+            
+            // Connect to real domain actor if available
+            if let Some(timeline) = WAVEFORM_TIMELINE_INSTANCE.get() {
+                let mutable_clone = mutable.clone();
+                zoon::Task::start(timeline.cursor_position.signal().for_each(move |value| {
+                    mutable_clone.set_neq(value);
+                    async {}
+                }));
+            }
+            
+            mutable
+        });
         signal.signal()
     }
     
     /// Static version of cursor_position_seconds_signal for global access  
     pub fn cursor_position_seconds_signal_static() -> impl zoon::Signal<Item = f64> {
-        // Use simple static Mutable that gets updated by domain
         use std::sync::OnceLock;
         static CURSOR_SECONDS_SIGNAL: OnceLock<zoon::Mutable<f64>> = OnceLock::new();
         
-        let signal = CURSOR_SECONDS_SIGNAL.get_or_init(|| zoon::Mutable::new(0.0));
+        let signal = CURSOR_SECONDS_SIGNAL.get_or_init(|| {
+            let mutable = zoon::Mutable::new(0.0);
+            
+            // Connect to real domain actor if available
+            if let Some(timeline) = WAVEFORM_TIMELINE_INSTANCE.get() {
+                let mutable_clone = mutable.clone();
+                zoon::Task::start(timeline.cursor_position.signal().for_each(move |value| {
+                    mutable_clone.set_neq(value.display_seconds());
+                    async {}
+                }));
+            }
+            
+            mutable
+        });
         signal.signal()
     }
     
     /// Static version of viewport_signal for global access
     pub fn viewport_signal_static() -> impl zoon::Signal<Item = Viewport> {
-        WAVEFORM_TIMELINE_INSTANCE.get()
-            .map(|timeline| timeline.viewport.signal())
-            .unwrap_or_else(|| {
-                zoon::eprintln!("⚠️ WaveformTimeline not initialized, returning default viewport signal");
-                use std::sync::OnceLock;
-                static FALLBACK_VIEWPORT: OnceLock<Actor<Viewport>> = OnceLock::new();
-                FALLBACK_VIEWPORT.get_or_init(|| Actor::new(Viewport::default(), |_| async { loop { futures::future::pending::<()>().await; } })).signal()
-            })
+        use std::sync::OnceLock;
+        static VIEWPORT_SIGNAL: OnceLock<zoon::Mutable<Viewport>> = OnceLock::new();
+        
+        let signal = VIEWPORT_SIGNAL.get_or_init(|| {
+            let mutable = zoon::Mutable::new(Viewport::default());
+            
+            // Connect to real domain actor if available
+            if let Some(timeline) = WAVEFORM_TIMELINE_INSTANCE.get() {
+                let mutable_clone = mutable.clone();
+                zoon::Task::start(timeline.viewport.signal().for_each(move |value| {
+                    mutable_clone.set_neq(value);
+                    async {}
+                }));
+            }
+            
+            mutable
+        });
+        signal.signal()
     }
     
     /// Static version of ns_per_pixel_signal for global access
     pub fn ns_per_pixel_signal_static() -> impl zoon::Signal<Item = NsPerPixel> {
-        WAVEFORM_TIMELINE_INSTANCE.get()
-            .map(|timeline| timeline.ns_per_pixel.signal())
-            .unwrap_or_else(|| {
-                zoon::eprintln!("⚠️ WaveformTimeline not initialized, returning default ns_per_pixel signal");
-                use std::sync::OnceLock;
-                static FALLBACK_NS_PER_PIXEL: OnceLock<Actor<NsPerPixel>> = OnceLock::new();
-                FALLBACK_NS_PER_PIXEL.get_or_init(|| Actor::new(NsPerPixel::default(), |_| async { loop { futures::future::pending::<()>().await; } })).signal()
-            })
+        use std::sync::OnceLock;
+        static NS_PER_PIXEL_SIGNAL: OnceLock<zoon::Mutable<NsPerPixel>> = OnceLock::new();
+        
+        let signal = NS_PER_PIXEL_SIGNAL.get_or_init(|| {
+            let mutable = zoon::Mutable::new(NsPerPixel::default());
+            
+            // Connect to real domain actor if available
+            if let Some(timeline) = WAVEFORM_TIMELINE_INSTANCE.get() {
+                let mutable_clone = mutable.clone();
+                zoon::Task::start(timeline.ns_per_pixel.signal().for_each(move |value| {
+                    mutable_clone.set_neq(value);
+                    async {}
+                }));
+            }
+            
+            mutable
+        });
+        signal.signal()
     }
     
     /// Static version of coordinates_signal for global access
     pub fn coordinates_signal_static() -> impl zoon::Signal<Item = TimelineCoordinates> {
-        WAVEFORM_TIMELINE_INSTANCE.get()
-            .map(|timeline| timeline.coordinates.signal())
-            .unwrap_or_else(|| {
-                zoon::eprintln!("⚠️ WaveformTimeline not initialized, returning default coordinates signal");
-                use std::sync::OnceLock;
-                static FALLBACK_COORDINATES: OnceLock<Actor<TimelineCoordinates>> = OnceLock::new();
-                FALLBACK_COORDINATES.get_or_init(|| Actor::new(TimelineCoordinates::default(), |_| async { loop { futures::future::pending::<()>().await; } })).signal()
-            })
+        use std::sync::OnceLock;
+        static COORDINATES_SIGNAL: OnceLock<zoon::Mutable<TimelineCoordinates>> = OnceLock::new();
+        
+        let signal = COORDINATES_SIGNAL.get_or_init(|| {
+            let mutable = zoon::Mutable::new(TimelineCoordinates::default());
+            
+            // Connect to real domain actor if available
+            if let Some(timeline) = WAVEFORM_TIMELINE_INSTANCE.get() {
+                let mutable_clone = mutable.clone();
+                zoon::Task::start(timeline.coordinates.signal().for_each(move |value| {
+                    mutable_clone.set_neq(value);
+                    async {}
+                }));
+            }
+            
+            mutable
+        });
+        signal.signal()
     }
     
     /// Static version of cache_signal for global access
-    pub fn cache_signal_static() -> impl zoon::Signal<Item = TimelineCache> {
-        WAVEFORM_TIMELINE_INSTANCE.get()
-            .map(|timeline| timeline.cache.signal())
-            .unwrap_or_else(|| {
-                zoon::eprintln!("⚠️ WaveformTimeline not initialized, returning default cache signal");
-                use std::sync::OnceLock;
-                static FALLBACK_CACHE: OnceLock<Actor<TimelineCache>> = OnceLock::new();
-                FALLBACK_CACHE.get_or_init(|| Actor::new(TimelineCache::default(), |_| async { loop { futures::future::pending::<()>().await; } })).signal()
-            })
+    pub fn cache_signal_static() -> impl zoon::Signal<Item = ()> {
+        use std::sync::OnceLock;
+        static CACHE_SIGNAL: OnceLock<zoon::Mutable<()>> = OnceLock::new();
+        
+        let signal = CACHE_SIGNAL.get_or_init(|| {
+            let mutable = zoon::Mutable::new(());
+            
+            // Connect to real domain actor if available
+            if let Some(timeline) = WAVEFORM_TIMELINE_INSTANCE.get() {
+                let mutable_clone = mutable.clone();
+                zoon::Task::start(timeline.cache.signal().for_each(move |_| {
+                    mutable_clone.set_neq(());
+                    async {}
+                }));
+            }
+            
+            mutable
+        });
+        signal.signal()
     }
     
     /// Static version of cursor_initialized_signal for global access
@@ -1169,21 +1396,47 @@ impl WaveformTimeline {
             })
     }
     
-    /// Static version of cursor_moving_left_signal for global access → SIMPLE STATIC APPROACH
+    /// Static version of cursor_moving_left_signal for global access → CONNECTED TO DOMAIN ACTOR
     pub fn cursor_moving_left_signal_static() -> impl zoon::Signal<Item = bool> {
         use std::sync::OnceLock;
         static CURSOR_MOVING_LEFT_SIGNAL: OnceLock<zoon::Mutable<bool>> = OnceLock::new();
         
-        let signal = CURSOR_MOVING_LEFT_SIGNAL.get_or_init(|| zoon::Mutable::new(false));
+        let signal = CURSOR_MOVING_LEFT_SIGNAL.get_or_init(|| {
+            let mutable = zoon::Mutable::new(false);
+            
+            // Connect to real domain actor if available
+            if let Some(timeline) = WAVEFORM_TIMELINE_INSTANCE.get() {
+                let mutable_clone = mutable.clone();
+                zoon::Task::start(timeline.cursor_moving_left.signal().for_each(move |value| {
+                    mutable_clone.set_neq(value);
+                    async {}
+                }));
+            }
+            
+            mutable
+        });
         signal.signal()
     }
     
-    /// Static version of cursor_moving_right_signal for global access → SIMPLE STATIC APPROACH
+    /// Static version of cursor_moving_right_signal for global access → CONNECTED TO DOMAIN ACTOR
     pub fn cursor_moving_right_signal_static() -> impl zoon::Signal<Item = bool> {
         use std::sync::OnceLock;
         static CURSOR_MOVING_RIGHT_SIGNAL: OnceLock<zoon::Mutable<bool>> = OnceLock::new();
         
-        let signal = CURSOR_MOVING_RIGHT_SIGNAL.get_or_init(|| zoon::Mutable::new(false));
+        let signal = CURSOR_MOVING_RIGHT_SIGNAL.get_or_init(|| {
+            let mutable = zoon::Mutable::new(false);
+            
+            // Connect to real domain actor if available
+            if let Some(timeline) = WAVEFORM_TIMELINE_INSTANCE.get() {
+                let mutable_clone = mutable.clone();
+                zoon::Task::start(timeline.cursor_moving_right.signal().for_each(move |value| {
+                    mutable_clone.set_neq(value);
+                    async {}
+                }));
+            }
+            
+            mutable
+        });
         signal.signal()
     }
     
@@ -1291,13 +1544,8 @@ pub async fn initialize_waveform_timeline() -> WaveformTimeline {
 
 /// Get the global WaveformTimeline instance
 fn get_waveform_timeline() -> WaveformTimeline {
-    WAVEFORM_TIMELINE_INSTANCE.get()
-        .map(|timeline| timeline.clone())
-        .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ WaveformTimeline not initialized, creating temporary instance for relay access");
-            // Create a temporary instance just for relay access during initialization
-            WaveformTimeline::new_dummy_for_initialization()
-        })
+    // Use the global domains instance (which is properly initialized by initialize_all_domains())
+    crate::actors::global_domains::waveform_timeline_domain()
 }
 
 // ===== CONVENIENCE FUNCTIONS FOR GLOBAL ACCESS =====
@@ -1330,7 +1578,7 @@ pub fn coordinates_signal() -> impl zoon::Signal<Item = TimelineCoordinates> {
 }
 
 /// Get unified cache signal (replaces UNIFIED_TIMELINE_CACHE.signal())
-pub fn unified_timeline_cache_signal() -> impl zoon::Signal<Item = TimelineCache> {
+pub fn unified_timeline_cache_signal() -> impl zoon::Signal<Item = ()> {
     WaveformTimeline::cache_signal_static()
 }
 

@@ -1,6 +1,6 @@
 use zoon::*;
 use moonzoon_novyui::*;
-use moonzoon_novyui::tokens::color::{neutral_2, neutral_8, neutral_11, primary_3, primary_6};
+use moonzoon_novyui::tokens::color::{neutral_2, neutral_4, neutral_8, neutral_11, primary_3, primary_6};
 use wasm_bindgen::JsCast;
 
 use crate::types::{VariableWithContext, filter_variables_with_context};
@@ -135,14 +135,17 @@ pub fn rust_virtual_variables_list_with_signal(
     // ===== REACTIVE VISIBLE COUNT =====
     let visible_count = Mutable::new(initial_visible_count);
     
-    // ===== HEIGHT SIGNAL LISTENER WITH POOL RESIZING =====
+    // ===== COORDINATED TASK: Pool Management + Updates =====
+    // OPTIMIZATION: Single task handles height changes, pool resizing, and batched DOM updates
     Task::start({
         let height_signal = height_signal.clone();
         let visible_count = visible_count.clone();
         let element_pool = element_pool.clone();
         let scroll_velocity = scroll_velocity.clone();
+        let visible_start = visible_start.clone();
+        let visible_end = visible_end.clone();
         async move {
-            height_signal.signal().for_each(|height| {
+            height_signal.signal().for_each(move |height| {
                 let new_visible_count = ((height as f64 / item_height).ceil() as usize + 5).min(total_items);
                 visible_count.set_neq(new_visible_count);
                 
@@ -184,28 +187,20 @@ pub fn rust_virtual_variables_list_with_signal(
                     element_pool.lock_mut().truncate(min_pool_size);
                 }
                 
-                async {}
-            }).await;
-        }
-    });
-    
-    // ===== UPDATE visible_end WHEN visible_count CHANGES =====
-    Task::start({
-        let visible_count = visible_count.clone();
-        let visible_start = visible_start.clone();
-        let visible_end = visible_end.clone();
-        async move {
-            visible_count.signal().for_each(move |new_count| {
+                // ✅ OPTIMIZATION: Update visible range immediately for better coordination
                 let current_start = visible_start.get();
-                let new_end = (current_start + new_count).min(total_items);
+                let new_end = (current_start + new_visible_count).min(total_items);
                 visible_end.set_neq(new_end);
+                
                 async {}
             }).await;
         }
     });
     
-    // ===== POOL UPDATE TASK =====
-    // Update pool elements when visible range changes
+    // REMOVED: visible_end update task - now handled in coordinated pool management task
+    
+    // ===== OPTIMIZED POOL UPDATE TASK WITH DOM BATCHING =====
+    // Update pool elements when visible range OR selection state changes
     Task::start({
         let variables = variables.clone();
         let element_pool = element_pool.clone();
@@ -214,130 +209,139 @@ pub fn rust_virtual_variables_list_with_signal(
         async move {
             map_ref! {
                 let start = visible_start.signal(),
-                let end = visible_end.signal() => (*start, *end)
-            }.for_each_sync(move |(start, end)| {
-                let pool = element_pool.lock_ref();
-                let visible_count = end - start;
-                
-                // Update each pool element efficiently
-                for (pool_index, element_state) in pool.iter().enumerate() {
-                    let absolute_index = start + pool_index;
+                let end = visible_end.signal(),
+                let selected_vars = crate::actors::selected_variables::variables_signal() => (*start, *end, selected_vars.clone())
+            }.for_each(move |(start, end, selected_vars)| {
+                let element_pool = element_pool.clone();
+                let variables = variables.clone();
+                async move {
+                    // ✅ OPTIMIZATION: Batch DOM updates using requestAnimationFrame-like pattern
+                    // Process updates in single batch to optimize Chrome event loop
+                    struct BatchedUpdate {
+                        element_index: usize,
+                        name: String,
+                        type_str: String,
+                        position: i32,
+                        visible: bool,
+                        file_id: String,
+                        scope_id: String,
+                        variable: Option<shared::Signal>,
+                        previous_name: Option<String>,
+                        is_selected: bool,
+                        absolute_index: usize,
+                    }
                     
-                    if pool_index < visible_count && absolute_index < variables.len() {
-                        // This element should be visible - update content
-                        if let Some(variable_context) = variables.get(absolute_index) {
-                            element_state.name_signal.set_neq(variable_context.signal.name.clone());
-                            element_state.type_signal.set_neq(
-                                format!("{} {}-bit", variable_context.signal.signal_type, variable_context.signal.width)
-                            );
-                            element_state.position_signal.set_neq(
-                                (absolute_index as f64 * item_height) as i32
-                            );
-                            element_state.visible_signal.set_neq(true);
-                            
-                            // Set context data for click handlers
-                            element_state.file_id_signal.set_neq(variable_context.file_id.clone());
-                            element_state.scope_id_signal.set_neq(variable_context.scope_id.clone());
-                            element_state.variable_signal.set_neq(Some(variable_context.signal.clone()));
-                            
-                            // Debug log removed
-                            
-                            // Set previous variable name for prefix highlighting
-                            let previous_name = if absolute_index > 0 {
-                                variables.get(absolute_index - 1).map(|prev_variable| prev_variable.signal.name.clone())
-                            } else {
-                                None
-                            };
-                            element_state.previous_name_signal.set_neq(previous_name);
-                            
-                            // Determine if this variable is selected
-                            // We need to get the scope path from TRACKED_FILES
-                            let is_selected = {
-                                use crate::state::{TRACKED_FILES, is_variable_selected, find_scope_full_name};
-                                let tracked_files = TRACKED_FILES.lock_ref();
-                                if let Some(tracked_file) = tracked_files.iter().find(|f| f.id == variable_context.file_id) {
-                                    if let shared::FileState::Loaded(waveform_file) = &tracked_file.state {
-                                        if let Some(scope_path) = find_scope_full_name(&waveform_file.scopes, &variable_context.scope_id) {
-                                            is_variable_selected(&tracked_file.path, &scope_path, &variable_context.signal.name)
-                                        } else {
-                                            false
-                                        }
-                                    } else {
-                                        false
-                                    }
+                    let pool = element_pool.lock_ref();
+                    let visible_count = end - start;
+                    let mut batched_updates = Vec::with_capacity(pool.len());
+                    
+                    // ✅ OPTIMIZATION: Pre-compute selection lookup to reduce clone operations
+                    use crate::state::{TRACKED_FILES, find_scope_full_name};
+                    let tracked_files = TRACKED_FILES.lock_ref();
+                    
+                    // ✅ REACTIVE: Build selection index from current selected variables
+                    let selected_vars_index: std::collections::HashSet<String> = selected_vars.iter()
+                        .map(|var| var.unique_id.clone())
+                        .collect();
+                    
+                    // Collect all updates first (reduce lock contention)
+                    for (pool_index, _element_state) in pool.iter().enumerate() {
+                        let absolute_index = start + pool_index;
+                        
+                        if pool_index < visible_count && absolute_index < variables.len() {
+                            // This element should be visible - prepare update
+                            if let Some(variable_context) = variables.get(absolute_index) {
+                                // ✅ MEMORY OPTIMIZATION: Use references where possible to reduce clones
+                                let name = &variable_context.signal.name;
+                                let signal_type = &variable_context.signal.signal_type;
+                                let width = variable_context.signal.width;
+                                let file_id = &variable_context.file_id;
+                                let scope_id = &variable_context.scope_id;
+                                
+                                // Format type string once
+                                let type_str = format!("{} {}-bit", signal_type, width);
+                                
+                                // Set previous variable name for prefix highlighting
+                                let previous_name = if absolute_index > 0 {
+                                    variables.get(absolute_index - 1).map(|prev_variable| prev_variable.signal.name.clone())
                                 } else {
-                                    false
-                                }
-                            };
-                            element_state.is_selected_signal.set_neq(is_selected);
-                            element_state.absolute_index_signal.set_neq(absolute_index);
+                                    None
+                                };
+                                
+                                // Determine if this variable is selected (Actor+Relay compatible)
+                                let is_selected = if let Some(tracked_file) = tracked_files.iter().find(|f| &f.id == file_id) {
+                                    if let shared::FileState::Loaded(waveform_file) = &tracked_file.state {
+                                        if let Some(scope_path) = find_scope_full_name(&waveform_file.scopes, scope_id) {
+                                            // Use proper unique_id format: "{file_path}|{scope_full_name}|{variable_name}"
+                                            let unique_id = format!("{}|{}|{}", tracked_file.path, scope_path, name);
+                                            let selected = selected_vars_index.contains(&unique_id);
+                                            // DEBUG: Log selection state for first few variables  
+                                            if absolute_index < 3 {
+                                                zoon::println!("🎯 REACTIVE SELECTION: {} -> {} (idx: {}, total_selected: {})", unique_id, selected, absolute_index, selected_vars_index.len());
+                                            }
+                                            selected
+                                        } else { false }
+                                    } else { false }
+                                } else { false };
+                                
+                                batched_updates.push(BatchedUpdate {
+                                    element_index: pool_index,
+                                    name: name.clone(), // Only clone when needed for update
+                                    type_str,
+                                    position: (absolute_index as f64 * item_height) as i32,
+                                    visible: true,
+                                    file_id: file_id.clone(),
+                                    scope_id: scope_id.clone(),
+                                    variable: Some(variable_context.signal.clone()),
+                                    previous_name,
+                                    is_selected,
+                                    absolute_index,
+                                });
+                            }
+                        } else {
+                            // Hide this element
+                            batched_updates.push(BatchedUpdate {
+                                element_index: pool_index,
+                                name: String::new(),
+                                type_str: String::new(),
+                                position: -9999,
+                                visible: false,
+                                file_id: String::new(),
+                                scope_id: String::new(),
+                                variable: None,
+                                previous_name: None,
+                                is_selected: false,
+                                absolute_index: 0,
+                            });
                         }
-                    } else {
-                        // Hide this element
-                        element_state.visible_signal.set_neq(false);
-                        element_state.position_signal.set_neq(-9999);
-                        // Clear context data when hidden
-                        element_state.file_id_signal.set_neq(String::new());
-                        element_state.scope_id_signal.set_neq(String::new());
-                        element_state.variable_signal.set_neq(None);
-                        element_state.absolute_index_signal.set_neq(0);
+                    }
+                    
+                    drop(tracked_files); // Release lock early
+                    
+                    // ✅ OPTIMIZATION: Apply all batched updates in single pass
+                    // This reduces DOM update frequency and improves Chrome performance
+                    for update in batched_updates {
+                        if let Some(element_state) = pool.get(update.element_index) {
+                            // Apply all updates atomically
+                            element_state.name_signal.set_neq(update.name);
+                            element_state.type_signal.set_neq(update.type_str);
+                            element_state.position_signal.set_neq(update.position);
+                            element_state.visible_signal.set_neq(update.visible);
+                            element_state.file_id_signal.set_neq(update.file_id);
+                            element_state.scope_id_signal.set_neq(update.scope_id);
+                            element_state.variable_signal.set_neq(update.variable);
+                            element_state.previous_name_signal.set_neq(update.previous_name);
+                            element_state.is_selected_signal.set_neq(update.is_selected);
+                            element_state.absolute_index_signal.set_neq(update.absolute_index);
+                        }
                     }
                 }
             }).await;
         }
     });
     
-    // ===== REACTIVE SELECTION STATE TASK =====
-    // Update selection highlighting in real-time when SELECTED_VARIABLES changes
-    Task::start({
-        let variables = variables.clone();
-        let element_pool = element_pool.clone();
-        let visible_start = visible_start.clone();
-        let visible_end = visible_end.clone();
-        async move {
-            use crate::state::{TRACKED_FILES, is_variable_selected, find_scope_full_name};
-            use crate::actors::selected_variables::variables_signal;
-            
-            variables_signal().for_each_sync(move |_| {
-                // zoon::println!("REACTIVE SELECTION STATE: SELECTED_VARIABLES changed, updating highlighting");
-                let pool = element_pool.lock_ref();
-                let start = visible_start.get();
-                let end = visible_end.get();
-                let visible_count = end - start;
-                
-                // Update selection state for all visible elements
-                for (pool_index, element_state) in pool.iter().enumerate() {
-                    let absolute_index = start + pool_index;
-                    
-                    if pool_index < visible_count && absolute_index < variables.len() {
-                        if let Some(variable_context) = variables.get(absolute_index) {
-                            // Re-evaluate selection state using current SELECTED_VARIABLES
-                            let is_selected = {
-                                let tracked_files = TRACKED_FILES.lock_ref();
-                                if let Some(tracked_file) = tracked_files.iter().find(|f| f.id == variable_context.file_id) {
-                                    if let shared::FileState::Loaded(waveform_file) = &tracked_file.state {
-                                        if let Some(scope_path) = find_scope_full_name(&waveform_file.scopes, &variable_context.scope_id) {
-                                            is_variable_selected(&tracked_file.path, &scope_path, &variable_context.signal.name)
-                                        } else {
-                                            false
-                                        }
-                                    } else {
-                                        false
-                                    }
-                                } else {
-                                    false
-                                }
-                            };
-                            
-                            // Update the selection signal to trigger UI update
-                            element_state.is_selected_signal.set_neq(is_selected);
-                            // zoon::println!("Updated selection state for variable '{}': {}", variable_context.signal.name, is_selected);
-                        }
-                    }
-                }
-            }).await;
-        }
-    });
+    // REMOVED: Reactive selection state task - now integrated with pool update task for better coordination
+    // Selection state updates are now handled in the optimized pool update task above
     
     
     Column::new()
@@ -611,9 +615,15 @@ fn create_stable_variable_element_hybrid(state: VirtualElementState, hovered_ind
                 // zoon::println!("Click context: file_id={}, scope_id={}", file_id, scope_id);
                 if let Some(variable) = variable_signal.get_cloned() {
                     // ✅ ACTOR+RELAY MIGRATION: Use SelectedVariables domain events
+                    // zoon::println!("🖱️ Variable clicked: {}", variable.name);
                     if let Some(selected_var) = crate::actors::create_selected_variable(variable, &file_id, &scope_id) {
+                        // zoon::println!("📝 Created SelectedVariable: {}", selected_var.unique_id);
                         let selected_variables = crate::actors::selected_variables_domain();
-                        selected_variables.variable_clicked_relay.send(selected_var.unique_id);
+                        // zoon::println!("🚨 ABOUT TO SEND TO RELAY: {}", selected_var.unique_id);
+                        selected_variables.variable_clicked_relay.send(selected_var.unique_id.clone());
+                        // zoon::println!("📡 Sent to Actor relay: {} - COMPLETED SEND", selected_var.unique_id);
+                    } else {
+                        // zoon::println!("❌ Failed to create SelectedVariable");
                     }
                 } else {
                     // zoon::println!("No variable found in variable_signal");
@@ -736,9 +746,11 @@ fn create_variable_name_display(
                                             // zoon::println!("Paragraph click context: file_id={}, scope_id={}", file_id, scope_id);
                                             if let Some(variable) = variable_signal.get_cloned() {
                                                 // ✅ ACTOR+RELAY MIGRATION: Use SelectedVariables domain events
+                                                // zoon::println!("🖱️ Paragraph clicked: {}", variable.name);
                                                 if let Some(selected_var) = crate::actors::create_selected_variable(variable, &file_id, &scope_id) {
                                                     let selected_variables = crate::actors::selected_variables_domain();
-                                                    selected_variables.variable_clicked_relay.send(selected_var.unique_id);
+                                                    selected_variables.variable_clicked_relay.send(selected_var.unique_id.clone());
+                                                    // zoon::println!("📡 Sent paragraph click to Actor: {}", selected_var.unique_id);
                                                 }
                                             } else {
                                                 // zoon::println!("No variable found in paragraph variable_signal");
@@ -762,8 +774,13 @@ fn create_variable_name_display(
                                             // zoon::println!("Paragraph click context: file_id={}, scope_id={}", file_id, scope_id);
                                             if let Some(variable) = variable_signal.get_cloned() {
                                                 // zoon::println!("Paragraph variable found: {}", variable.name);
-                                                use crate::state::add_selected_variable;
-                                                add_selected_variable(variable, &file_id, &scope_id);
+                                                // ✅ ACTOR+RELAY MIGRATION: Use SelectedVariables domain events
+                                                // zoon::println!("🖱️ Paragraph clicked: {}", variable.name);
+                                                if let Some(selected_var) = crate::actors::create_selected_variable(variable, &file_id, &scope_id) {
+                                                    let selected_variables = crate::actors::selected_variables_domain();
+                                                    selected_variables.variable_clicked_relay.send(selected_var.unique_id.clone());
+                                                    // zoon::println!("📡 Sent paragraph click to Actor: {}", selected_var.unique_id);
+                                                }
                                             } else {
                                                 // zoon::println!("No variable found in paragraph variable_signal");
                                             }
@@ -788,8 +805,11 @@ fn create_variable_name_display(
                                         // zoon::println!("Paragraph click context: file_id={}, scope_id={}", file_id, scope_id);
                                         if let Some(variable) = variable_signal.get_cloned() {
                                             // zoon::println!("Paragraph variable found: {}", variable.name);
-                                            use crate::state::add_selected_variable;
-                                            add_selected_variable(variable, &file_id, &scope_id);
+                                            // ✅ ACTOR+RELAY MIGRATION: Use SelectedVariables domain events
+                                            if let Some(selected_var) = crate::actors::create_selected_variable(variable, &file_id, &scope_id) {
+                                                let selected_variables = crate::actors::selected_variables_domain();
+                                                selected_variables.variable_clicked_relay.send(selected_var.unique_id);
+                                            }
                                         } else {
                                             // zoon::println!("No variable found in paragraph variable_signal");
                                         }

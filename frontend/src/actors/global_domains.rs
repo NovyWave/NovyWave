@@ -60,10 +60,10 @@ impl TrackedFilesSignalStorage {
 pub static TRACKED_FILES_SIGNALS: OnceLock<TrackedFilesSignalStorage> = OnceLock::new();
 
 /// Static signal storage for SelectedVariables domain  
-struct SelectedVariablesSignalStorage {
-    variables_mutable: MutableVec<SelectedVariable>,
-    expanded_scopes_mutable: Mutable<IndexSet<String>>,
-    search_filter_mutable: Mutable<String>,
+pub struct SelectedVariablesSignalStorage {
+    pub variables_mutable: MutableVec<SelectedVariable>,
+    pub expanded_scopes_mutable: Mutable<IndexSet<String>>,
+    pub search_filter_mutable: Mutable<String>,
 }
 
 impl SelectedVariablesSignalStorage {
@@ -77,7 +77,7 @@ impl SelectedVariablesSignalStorage {
 }
 
 /// Global SelectedVariables signal storage
-static SELECTED_VARIABLES_SIGNALS: OnceLock<SelectedVariablesSignalStorage> = OnceLock::new();
+pub static SELECTED_VARIABLES_SIGNALS: OnceLock<SelectedVariablesSignalStorage> = OnceLock::new();
 
 
 /// Static signal storage for DialogManager domain
@@ -217,8 +217,8 @@ pub fn waveform_timeline_domain() -> WaveformTimeline {
     WAVEFORM_TIMELINE_DOMAIN_INSTANCE.get()
         .map(|instance| instance.clone())
         .unwrap_or_else(|| {
-            zoon::println!("⚠️ WaveformTimeline domain not initialized, creating dummy instance for initialization");
-            WaveformTimeline::new_dummy_for_initialization()
+            zoon::eprintln!("🚨 FATAL: WaveformTimeline domain not initialized - initialize_all_domains() must be called during app startup before accessing domains");
+            panic!("WaveformTimeline domain accessed before initialization - this indicates a critical application initialization ordering bug")
         })
 }
 
@@ -372,22 +372,18 @@ pub fn loaded_files_count_signal() -> impl Signal<Item = usize> {
 /// Get owned signal for selected variables - LIFETIME SAFE
 /// Enables: selected_variables_signal().map(|vars| render(vars))
 pub fn selected_variables_signal() -> impl Signal<Item = Vec<SelectedVariable>> {
-    SELECTED_VARIABLES_SIGNALS.get()
-        .map(|signals| signals.variables_mutable.signal_vec_cloned().to_signal_cloned())
-        .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ SelectedVariables signals not initialized, returning empty signal");
-            MutableVec::<SelectedVariable>::new().signal_vec_cloned().to_signal_cloned()
-        })
+    // ✅ FIXED: Read from Actor's state directly (single source of truth)
+    SELECTED_VARIABLES_DOMAIN_INSTANCE.get()
+        .expect("SelectedVariables domain not initialized - initialize_all_domains() must be called first")
+        .variables_signal()
 }
 
 /// Get owned signal vec for selected variables - LIFETIME SAFE for items_signal_vec
 pub fn selected_variables_signal_vec() -> impl SignalVec<Item = SelectedVariable> {
-    SELECTED_VARIABLES_SIGNALS.get()
-        .map(|signals| signals.variables_mutable.signal_vec_cloned())
-        .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ SelectedVariables signals not initialized, returning empty signal vec");
-            zoon::MutableVec::new().signal_vec_cloned()
-        })
+    // ✅ FIXED: Read from Actor's state directly (single source of truth)
+    SELECTED_VARIABLES_DOMAIN_INSTANCE.get()
+        .expect("SelectedVariables domain not initialized - initialize_all_domains() must be called first")
+        .variables_signal_vec()
 }
 
 /// Get owned signal for expanded scopes - LIFETIME SAFE

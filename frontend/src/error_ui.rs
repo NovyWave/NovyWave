@@ -6,7 +6,7 @@ use crate::state::ErrorAlert;
 use crate::actors::error_manager::toast_notifications_signal_vec;
 use crate::error_display::dismiss_error_alert;
 use crate::dataflow::*;
-use futures::{select, stream::StreamExt, future::FusedFuture};
+use futures::{select, stream::StreamExt};
 
 /// Progress percentage for toast auto-dismiss timer (0.0 to 100.0)
 type Progress = f32;

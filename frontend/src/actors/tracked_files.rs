@@ -14,6 +14,7 @@ use zoon::*;
 pub struct TrackedFiles {
     // Core state
     files: ActorVec<TrackedFile>,
+    files_vec_signal: zoon::Mutable<Vec<TrackedFile>>,  // Dedicated signal for efficient Vec access
     expanded_scopes: Actor<IndexSet<String>>,
     
     // Event-source relays
@@ -37,8 +38,13 @@ impl TrackedFiles {
         let (file_load_completed_relay, mut file_load_completed_stream) = relay::<(String, FileState)>();
         let (all_files_cleared_relay, mut all_files_cleared_stream) = relay::<()>();
         
+        // Create dedicated Vec signal that syncs with ActorVec changes (no conversion antipattern)
+        let files_vec_signal = zoon::Mutable::new(vec![]);
+        
         // Create files ActorVec with event processing
-        let files = ActorVec::new(vec![], async move |files_handle| {
+        let files = ActorVec::new(vec![], {
+            let files_vec_signal_sync = files_vec_signal.clone();
+            async move |files_handle| {
             
             loop {
                 select! {
@@ -57,6 +63,12 @@ impl TrackedFiles {
                             }
                             
                             files_handle.lock_mut().replace_cloned(tracked_files);
+                            
+                            // Sync dedicated Vec signal after ActorVec change
+                            {
+                                let current_files = files_handle.lock_ref().to_vec();
+                                files_vec_signal_sync.set_neq(current_files);
+                            }
                         }
                     }
                     dropped_files = files_dropped_stream.next() => {
@@ -77,6 +89,12 @@ impl TrackedFiles {
                                     // TrackedFiles: Triggering parse for dropped file
                                     trigger_file_parsing(new_file.path.clone());
                                     files_handle.lock_mut().push_cloned(new_file);
+                                    
+                                    // Sync dedicated Vec signal after ActorVec change
+                                    {
+                                        let current_files = files_handle.lock_ref().to_vec();
+                                        files_vec_signal_sync.set_neq(current_files);
+                                    }
                                 }
                             }
                         }
@@ -85,6 +103,12 @@ impl TrackedFiles {
                         if let Some(file_id) = removed_file {
                             zoon::println!("🔄 TrackedFiles: File removed: {}", file_id);
                             files_handle.lock_mut().retain(|f| f.id != file_id);
+                            
+                            // Sync dedicated Vec signal after ActorVec change
+                            {
+                                let current_files = files_handle.lock_ref().to_vec();
+                                files_vec_signal_sync.set_neq(current_files);
+                            }
                         }
                     }
                     reload_requested = file_reload_requested_stream.next() => {
@@ -115,6 +139,12 @@ impl TrackedFiles {
                                         files.retain(|f| f.id != file_id);
                                         files.push_cloned(new_file);
                                     } // Lock released here
+                                    
+                                    // Sync dedicated Vec signal after ActorVec change
+                                    {
+                                        let current_files = files_handle.lock_ref().to_vec();
+                                        files_vec_signal_sync.set_neq(current_files);
+                                    }
                                 } else {
                                     zoon::println!("❌ TrackedFiles: File with id '{}' not found for reload", file_id);
                                 }
@@ -133,6 +163,12 @@ impl TrackedFiles {
                                 // File state updated successfully
                                 file.state = new_state;
                                 files_handle.lock_mut().replace_cloned(files);
+                                
+                                // Sync dedicated Vec signal after ActorVec change
+                                {
+                                    let current_files = files_handle.lock_ref().to_vec();
+                                    files_vec_signal_sync.set_neq(current_files);
+                                }
                             } else {
                                 zoon::println!("❌ TrackedFiles: File with id '{}' not found!", file_id);
                             }
@@ -142,12 +178,18 @@ impl TrackedFiles {
                         if cleared.is_some() {
                             zoon::println!("🔄 TrackedFiles: All files cleared");
                             files_handle.lock_mut().clear();
+                            
+                            // Sync dedicated Vec signal after ActorVec change
+                            {
+                                let current_files = files_handle.lock_ref().to_vec();
+                                files_vec_signal_sync.set_neq(current_files);
+                            }
                         }
                     }
                     complete => break, // All streams ended
                 }
             }
-        });
+        }});
         
         // Create expanded_scopes Actor
         let expanded_scopes = Actor::new(IndexSet::new(), async move |scopes_handle| {
@@ -173,6 +215,7 @@ impl TrackedFiles {
         
         Self {
             files,
+            files_vec_signal,
             expanded_scopes,
             config_files_loaded_relay,
             files_dropped_relay,
@@ -188,7 +231,8 @@ impl TrackedFiles {
     
     /// Get signal for all tracked files
     pub fn files_signal(&self) -> impl Signal<Item = Vec<TrackedFile>> {
-        self.files.signal_vec().to_signal_cloned()
+        // ✅ FIXED: Use dedicated Vec signal instead of conversion antipattern
+        self.files_vec_signal.signal_cloned()
     }
     
     /// Get signal vec for tracked files (for items_signal_vec usage)

@@ -589,6 +589,27 @@ pub static SELECTED_SCOPE_ID_FOR_CONFIG: Lazy<Mutable<Option<String>>> = Lazy::n
     derived
 });
 
+/// Derived signal that converts global selected variables to Vec<SelectedVariable> for config storage
+pub static SELECTED_VARIABLES_FOR_CONFIG: Lazy<Mutable<Vec<shared::SelectedVariable>>> = Lazy::new(|| {
+    let derived = Mutable::new(Vec::new());
+    
+    // ✅ FIXED: Connect to Actor's state directly (single source of truth)
+    let derived_clone = derived.clone();
+    Task::start(async move {
+        // Watch the Actor's state directly through global domain access
+        crate::actors::global_domains::selected_variables_signal()
+            .for_each(move |variables| {
+                let derived = derived_clone.clone();
+                async move {
+                    derived.set_neq(variables);
+                }
+            })
+            .await;
+    });
+    
+    derived
+});
+
 // =============================================================================
 // SELECTED SCOPE SYNCHRONIZATION - Bi-directional sync between UI and persistence
 // =============================================================================

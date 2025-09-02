@@ -83,7 +83,8 @@ pub fn main() {
         }
         // AppConfig initialized successfully
         
-        // Initialize Actor+Relay domain instances  
+        // Initialize Actor+Relay domain instances BEFORE UI creation
+        // This prevents canvas operations from triggering before domains are ready
         if let Err(error_msg) = crate::actors::initialize_all_domains().await {
             zoon::println!("🚨 DOMAIN INITIALIZATION FAILED: {}", error_msg);
             error_display::add_error_alert(crate::state::ErrorAlert {
@@ -97,8 +98,20 @@ pub fn main() {
             });
             return; // Exit gracefully instead of panic
         }
+        
+        zoon::println!("✅ All Actor+Relay domains initialized successfully - ready for UI creation");
 
-            // Start the app - config is already loaded with theme
+        // ✅ RESTORE SELECTED VARIABLES FROM CONFIG (after domain initialization)
+        let selected_variables = crate::state::SELECTED_VARIABLES_FOR_CONFIG.get_cloned();
+        if !selected_variables.is_empty() {
+            zoon::println!("📁 CONFIG: Restoring {} selected variables from config", selected_variables.len());
+            let variables_restored_relay = crate::actors::selected_variables::variables_restored_relay();
+            variables_restored_relay.send(selected_variables);
+        } else {
+            zoon::println!("📁 CONFIG: No selected variables in config to restore");
+        }
+
+        // Start the app - domains are now guaranteed to be available for canvas operations
         start_app("app", root);
 
         // Initialize value caching - domains are already initialized
@@ -139,7 +152,9 @@ pub fn main() {
                 *left || *right
             };
             
-            movement_signal.for_each_sync(move |is_moving| {
+            movement_signal.for_each(move |is_moving| {
+                let was_moving = was_moving.clone();
+                async move {
                 if is_moving {
                     // Movement started - just track state, don't query
                     was_moving.set(true);
@@ -147,6 +162,7 @@ pub fn main() {
                     // Movement just stopped - use unified caching logic with built-in range checking
                     crate::views::trigger_signal_value_queries();
                     was_moving.set(false);
+                }
                 }
             }).await;
         });
@@ -163,7 +179,9 @@ pub fn main() {
                 (*cursor_pos, *left || *right)
             };
             
-            movement_and_position_signal.for_each_sync(move |(cursor_pos, is_moving)| {
+            movement_and_position_signal.for_each(move |(cursor_pos, is_moving)| {
+                let last_position = last_position.clone();
+                async move {
                 // Only query for direct position changes (not during Q/E movement)
                 if !is_moving && (cursor_pos - last_position.get()).abs() > 0.001 {
                     // Use the unified caching logic with built-in range checking
@@ -171,6 +189,7 @@ pub fn main() {
                 }
                 
                 last_position.set(cursor_pos);
+                }
             }).await;
         });
     });

@@ -30,12 +30,15 @@ pub struct UserConfiguration {
     
     /// Recently opened file paths
     recent_files: ActorVec<String>,
+    recent_files_vec_signal: zoon::Mutable<Vec<String>>,  // Dedicated signal for efficient Vec access
     
     /// Default variable format preferences
     default_formats: ActorMap<String, VarFormat>,
+    default_formats_signal: zoon::Mutable<BTreeMap<String, VarFormat>>,  // Dedicated signal for efficient BTreeMap access
     
     /// Panel visibility settings
     panel_visibility: ActorMap<String, bool>,
+    panel_visibility_signal: zoon::Mutable<BTreeMap<String, bool>>,  // Dedicated signal for efficient BTreeMap access
     
     /// Configuration loading state
     is_config_loaded: Actor<bool>,
@@ -151,8 +154,15 @@ impl UserConfiguration {
             }
         );
         
+        // Create dedicated signals for efficient access (no conversion antipatterns)
+        let recent_files_vec_signal = zoon::Mutable::new(vec![]);
+        let default_formats_signal = zoon::Mutable::new(BTreeMap::new());
+        let panel_visibility_signal = zoon::Mutable::new(BTreeMap::new());
+        
         // Create recent files actor
-        let recent_files = ActorVec::new(vec![], async move |files| {
+        let recent_files = ActorVec::new(vec![], {
+            let recent_files_sync = recent_files_vec_signal.clone();
+            async move |files| {
             let mut file_added_to_recent = file_added_to_recent_stream;
             let mut recent_files_cleared = recent_files_cleared_stream;
             
@@ -171,31 +181,59 @@ impl UserConfiguration {
                             files.truncate(10);
                         }
                     });
+                    
+                    // Sync dedicated Vec signal after ActorVec change
+                    {
+                        let current_files = files.lock_ref().to_vec();
+                        recent_files_sync.set_neq(current_files);
+                    }
                 } else if let Some(()) = recent_files_cleared.next().await {
                     files.lock_mut().clear();
+                    
+                    // Sync dedicated Vec signal after ActorVec change
+                    {
+                        let current_files = files.lock_ref().to_vec();
+                        recent_files_sync.set_neq(current_files);
+                    }
                 } else {
                     break;
                 }
             }
-        });
+        }});
         
         // Create default formats map
-        let default_formats = ActorMap::new(BTreeMap::new(), async move |map| {
+        let default_formats = ActorMap::new(BTreeMap::new(), {
+            let default_formats_sync = default_formats_signal.clone();
+            async move |map| {
             let mut default_format_changed = default_format_changed_stream;
             
             while let Some((var_type, format)) = default_format_changed.next().await {
                 map.lock_mut().insert_cloned(var_type, format);
+                
+                // Sync dedicated BTreeMap signal after ActorMap change
+                {
+                    let current_map = map.lock_ref().clone();
+                    default_formats_sync.set_neq(current_map);
+                }
             }
-        });
+        }});
         
         // Create panel visibility map
-        let panel_visibility = ActorMap::new(BTreeMap::new(), async move |map| {
+        let panel_visibility = ActorMap::new(BTreeMap::new(), {
+            let panel_visibility_sync = panel_visibility_signal.clone();
+            async move |map| {
             let mut panel_visibility_toggled = panel_visibility_toggled_stream;
             
             while let Some((panel_name, is_visible)) = panel_visibility_toggled.next().await {
                 map.lock_mut().insert_cloned(panel_name, is_visible);
+                
+                // Sync dedicated BTreeMap signal after ActorMap change
+                {
+                    let current_map = map.lock_ref().clone();
+                    panel_visibility_sync.set_neq(current_map);
+                }
             }
-        });
+        }});
         
         // Create configuration state actors
         let is_config_loaded = Actor::new(false, async move |state| {
@@ -227,8 +265,11 @@ impl UserConfiguration {
             docked_right_dimensions,
             docked_bottom_dimensions,
             recent_files,
+            recent_files_vec_signal,
             default_formats,
+            default_formats_signal,
             panel_visibility,
+            panel_visibility_signal,
             is_config_loaded,
             is_config_saving,
             
@@ -274,23 +315,20 @@ impl UserConfiguration {
     
     /// Get reactive signal for recent files
     pub fn recent_files_signal(&self) -> impl zoon::Signal<Item = Vec<String>> {
-        self.recent_files.signal_vec().to_signal_cloned()
+        // ✅ FIXED: Use dedicated Vec signal instead of conversion antipattern
+        self.recent_files_vec_signal.signal_cloned()
     }
     
     /// Get reactive signal for default formats
     pub fn default_formats_signal(&self) -> impl zoon::Signal<Item = BTreeMap<String, VarFormat>> {
-        use zoon::SignalExt;
-        self.default_formats.entries_signal_vec().to_signal_cloned().map(|entries| {
-            entries.into_iter().collect()
-        })
+        // ✅ FIXED: Use dedicated BTreeMap signal instead of conversion antipattern
+        self.default_formats_signal.signal_cloned()
     }
     
     /// Get reactive signal for panel visibility
     pub fn panel_visibility_signal(&self) -> impl zoon::Signal<Item = BTreeMap<String, bool>> {
-        use zoon::SignalExt;
-        self.panel_visibility.entries_signal_vec().to_signal_cloned().map(|entries| {
-            entries.into_iter().collect()
-        })
+        // ✅ FIXED: Use dedicated BTreeMap signal instead of conversion antipattern
+        self.panel_visibility_signal.signal_cloned()
     }
     
     /// Get reactive signal for configuration loaded state
