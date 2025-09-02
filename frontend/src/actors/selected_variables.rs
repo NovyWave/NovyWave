@@ -90,6 +90,9 @@ pub struct SelectedVariables {
     
     /// Tree selection items changed (UI state)
     pub tree_selection_changed_relay: Relay<IndexSet<String>>,
+    
+    /// User changed the format for a specific variable
+    pub variable_format_changed_relay: Relay<(String, shared::VarFormat)>,
 }
 
 impl SelectedVariables {
@@ -106,6 +109,7 @@ impl SelectedVariables {
         let (search_focus_changed_relay, search_focus_changed_stream) = relay::<bool>();
         let (variables_restored_relay, variables_restored_stream) = relay::<Vec<SelectedVariable>>();
         let (tree_selection_changed_relay, tree_selection_changed_stream) = relay::<IndexSet<String>>();
+        let (variable_format_changed_relay, variable_format_changed_stream) = relay::<(String, shared::VarFormat)>();
         
         // Create dedicated Vec signal that syncs with ActorVec changes (no conversion antipattern)
         let variables_vec_signal = Mutable::new(vec![]);
@@ -118,6 +122,7 @@ impl SelectedVariables {
                 let mut variable_removed = variable_removed_stream;
                 let mut selection_cleared = selection_cleared_stream;
                 let mut variables_restored = variables_restored_stream;
+                let mut variable_format_changed = variable_format_changed_stream;
                 
                 loop {
                     use futures::future::select;
@@ -125,31 +130,38 @@ impl SelectedVariables {
                     
                     match select(
                         select(
-                            Box::pin(variable_clicked.next()),
-                            Box::pin(variable_removed.next())
+                            select(
+                                Box::pin(variable_clicked.next()),
+                                Box::pin(variable_removed.next())
+                            ),
+                            Box::pin(selection_cleared.next())
                         ),
                         select(
-                            Box::pin(selection_cleared.next()),
-                            Box::pin(variables_restored.next())
+                            Box::pin(variables_restored.next()),
+                            Box::pin(variable_format_changed.next())
                         )
                     ).await {
-                        Either::Left((Either::Left((Some(variable_id), _)), _)) => {
+                        Either::Left((Either::Left((Either::Left((Some(variable_id), _)), _)), _)) => {
                             Self::handle_variable_clicked(&variables, &variables_vec_signal_clone, variable_id.clone()).await;
                         }
-                        Either::Left((Either::Right((Some(variable_id), _)), _)) => {
+                        Either::Left((Either::Left((Either::Right((Some(variable_id), _)), _)), _)) => {
                             // zoon::println!("🗑️ ACTOR RECEIVED REMOVAL EVENT: {}", variable_id);
                             Self::handle_variable_removed(&variables, &variables_vec_signal_clone, variable_id.clone()).await;
                             // zoon::println!("✅ ACTOR COMPLETED HANDLING REMOVAL: {}", variable_id);
                         }
-                        Either::Right((Either::Left((Some(()), _)), _)) => {
+                        Either::Left((Either::Right((Some(()), _)), _)) => {
                             // zoon::println!("🧹 ACTOR RECEIVED CLEAR ALL EVENT");
                             Self::handle_selection_cleared(&variables, &variables_vec_signal_clone).await;
                             // zoon::println!("✅ ACTOR COMPLETED HANDLING CLEAR ALL");
                         }
-                        Either::Right((Either::Right((Some(restored_vars), _)), _)) => {
+                        Either::Right((Either::Left((Some(restored_vars), _)), _)) => {
                             // zoon::println!("📁 ACTOR RECEIVED RESTORE EVENT: {} variables", restored_vars.len());
                             Self::handle_variables_restored(&variables, &variables_vec_signal_clone, restored_vars.clone()).await;
                             // zoon::println!("✅ ACTOR COMPLETED HANDLING RESTORE: {} variables", restored_vars.len());
+                        }
+                        Either::Right((Either::Right((Some((variable_id, new_format)), _)), _)) => {
+                            // 🎯 FORMAT CHANGE EVENT
+                            Self::handle_variable_format_changed(&variables, &variables_vec_signal_clone, variable_id.clone(), new_format).await;
                         }
                         _ => break, // All streams closed
                     }
@@ -251,6 +263,7 @@ impl SelectedVariables {
             search_focus_changed_relay,
             variables_restored_relay,
             tree_selection_changed_relay,
+            variable_format_changed_relay,
         }
     }
     
@@ -654,6 +667,47 @@ impl SelectedVariables {
         
         // ✅ FIXED: Only update Actor state - no dual updates to prevent infinite loops
     }
+    
+    /// Handle variable format change event
+    async fn handle_variable_format_changed(
+        variables_mutable: &zoon::MutableVec<SelectedVariable>,
+        variables_vec_signal: &zoon::Mutable<Vec<SelectedVariable>>,
+        variable_id: String,
+        new_format: shared::VarFormat
+    ) {
+        zoon::println!("🎯 FORMAT CHANGED in Actor: {} -> {:?}", variable_id, new_format);
+        
+        // Update the specific variable's format
+        // Find the variable and update it using MutableVec approach
+        let variables = variables_mutable.lock_ref().to_vec();
+        let mut updated_variables = Vec::new();
+        let mut found = false;
+        
+        for mut var in variables {
+            if var.unique_id == variable_id {
+                var.formatter = Some(new_format);
+                found = true;
+                zoon::println!("✅ Updated variable formatter: {} -> {:?}", variable_id, new_format);
+            }
+            updated_variables.push(var);
+        }
+        
+        if !found {
+            zoon::println!("⚠️ Variable not found for format update: {}", variable_id);
+        }
+        
+        // Replace the entire vector with updated one
+        variables_mutable.lock_mut().replace_cloned(updated_variables);
+        
+        // Sync dedicated Vec signal after change
+        {
+            let current_vars = variables_mutable.lock_ref().to_vec();
+            variables_vec_signal.set_neq(current_vars);
+        }
+        
+        // Note: Config save happens automatically through ConfigSaver actor
+        // that watches config signals and saves with 1-second debouncing
+    }
 }
 
 // === PUBLIC API FUNCTIONS (Event-Source Relay Pattern) ===
@@ -716,6 +770,12 @@ pub fn variables_restored_relay() -> Relay<Vec<SelectedVariable>> {
 pub fn tree_selection_changed_relay() -> Relay<IndexSet<String>> {
     use crate::actors::global_domains::selected_variables_domain;
     selected_variables_domain().tree_selection_changed_relay
+}
+
+/// User changed the format for a specific variable
+pub fn variable_format_changed_relay() -> Relay<(String, shared::VarFormat)> {
+    use crate::actors::global_domains::selected_variables_domain;
+    selected_variables_domain().variable_format_changed_relay
 }
 
 // === GLOBAL DOMAINS ACCESS PATTERN ===
@@ -812,8 +872,9 @@ pub fn search_focused_signal() -> impl zoon::Signal<Item = bool> {
 
 /// MIGRATION: Temporary compatibility function - replace with variables_signal()
 pub fn current_variables() -> Vec<SelectedVariable> {
-    // MIGRATION: Should use reactive signals instead
-    Vec::new() // Default empty list during migration
+    // Get current selected variables from the config storage
+    // This reads the actual state that's connected to the Actor signals
+    crate::state::SELECTED_VARIABLES_FOR_CONFIG.get_cloned()
 }
 
 /// MIGRATION: Temporary compatibility function - replace with expanded_scopes_signal()

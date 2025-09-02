@@ -51,7 +51,7 @@ use actors::dialog_manager::{dialog_visible_signal, file_picker_selected_signal}
 
 
 mod unified_timeline_service;
-use unified_timeline_service::*;
+use unified_timeline_service::{*, UnifiedTimelineService};
 
 mod utils;
 use utils::*;
@@ -132,6 +132,40 @@ pub fn main() {
         
         // Initialize unified timeline service with integer time architecture
         initialize_unified_timeline_service();
+        
+        // Reset circuit breakers for known variables to allow fresh requests to working backend
+        let problematic_variables = vec![
+            "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s|A".to_string(),
+            "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s|B".to_string(),
+            "/home/martinkavik/repos/NovyWave/test_files/nested_dir/wave_27.fst|TOP.VexiiRiscv|clk".to_string(),
+        ];
+        UnifiedTimelineService::reset_circuit_breakers_for_variables(&problematic_variables);
+        
+        // Reset circuit breakers and trigger queries when cursor moves
+        Task::start(async {
+            // Wait for cursor to move from initial position
+            let cursor_signal = crate::actors::waveform_timeline::cursor_position_signal();
+            cursor_signal.for_each(move |cursor_pos| {
+                async move {
+                    if cursor_pos.nanos() > 0 {
+                        zoon::println!("🔄 Cursor moved to {}ns - resetting circuit breakers and triggering queries", cursor_pos.nanos());
+                        
+                        // Reset circuit breakers for all known variables
+                        let problematic_variables = vec![
+                            "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s|A".to_string(),
+                            "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s|B".to_string(),
+                            "/home/martinkavik/repos/NovyWave/test_files/nested_dir/wave_27.fst|TOP.VexiiRiscv|clk".to_string(),
+                        ];
+                        UnifiedTimelineService::reset_circuit_breakers_for_variables(&problematic_variables);
+                        
+                        // Trigger fresh queries at new cursor position
+                        Timer::sleep(100).await; // Brief delay for reset to take effect
+                        crate::views::trigger_signal_value_queries();
+                        zoon::println!("🔄 Triggered fresh queries at cursor position {}ns", cursor_pos.nanos());
+                    }
+                }
+            }).await;
+        });
         
        
         

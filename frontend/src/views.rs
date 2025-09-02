@@ -387,8 +387,14 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
     // Get signal type for format options and default
     let signal_type = get_signal_type_for_selected_variable(selected_var);
     
-    // Use the formatter exactly as set by user, or default to Hexadecimal
-    let current_format = selected_var.formatter.unwrap_or_default();
+    // Check if format is already saved in global formats
+    let saved_format = crate::state::SELECTED_VARIABLE_FORMATS.lock_ref().get(&unique_id).cloned();
+    let current_format = saved_format
+        .or(selected_var.formatter)
+        .unwrap_or_default();
+    
+    // 🔍 DEBUG: Initial format setup
+    zoon::println!("🔄 INIT FORMAT for {}: selected_var.formatter={:?}, saved_format={:?} -> current_format={:?}", unique_id, selected_var.formatter, saved_format, current_format);
     
     // Create reactive state for selection changes
     let selected_format = Mutable::new(format!("{:?}", current_format));
@@ -420,6 +426,9 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
                 };
                 
                 update_variable_format(&unique_id, new_format);
+                
+                // 🔍 DEBUG: Format change
+                zoon::println!("🔄 FORMAT CHANGED for {}: '{}' -> {:?}", unique_id, new_format_str, new_format);
             }
             }
             }).await;
@@ -455,7 +464,9 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
                         _ => shared::VarFormat::Hexadecimal,
                     };
                     
-                    // ✅ NEW: Convert string value back to format_utils::SignalValue for formatting
+                    // 🔍 DEBUG: Format debugging
+                    zoon::println!("🎯 FORMAT DEBUG for {}: format_state='{}' -> enum={:?}", unique_id_for_signal, format_state, current_format_enum);
+                    
                     let current_signal_value = if current_value == "N/A" {
                         crate::format_utils::SignalValue::missing()
                     } else if current_value == "Loading..." {
@@ -466,6 +477,9 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
                     
                     let full_display_text = current_signal_value.get_full_display_with_format(&current_format_enum);
                     let display_text = current_signal_value.get_truncated_display_with_format(&current_format_enum, 30);
+                    
+                    // 🔍 DEBUG: Display values
+                    zoon::println!("📺 DISPLAY for {}: current_value='{}' -> display_text='{}'", unique_id_for_signal, current_value, display_text);
                     
                     // Generate dropdown options with formatted values
                     let dropdown_options = crate::format_utils::generate_dropdown_options(&current_signal_value, &signal_type);
@@ -555,9 +569,10 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
                                                 .style("min-width", "0")
                                         })
                                         .child_signal(
-                                            map_ref! {
-                                                let text = zoon::always(display_text.clone()),
-                                                let column_width = variables_value_column_width_signal() => {
+                                            variables_value_column_width_signal().map({
+                                                let display_text_clone = display_text.clone();
+                                                move |column_width| {
+                                                    let text = display_text_clone.clone();
                                                     // Extract just the value part (before the format name)
                                                     let value_only = if let Some(space_pos) = text.rfind(' ') {
                                                         text[..space_pos].to_string()
@@ -585,7 +600,7 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
                                                     // Calculate available space for value text
                                                     let total_reserved_width = TRIGGER_PADDING_PX + ELEMENT_GAPS_PX + COPY_BUTTON_WIDTH_PX 
                                                         + FORMAT_TEXT_WIDTH_PX + CHEVRON_ICON_WIDTH_PX + LAYOUT_BUFFER_PX;
-                                                    let available_text_width = (*column_width as f32 - total_reserved_width).max(40.0);
+                                                    let available_text_width = (column_width as f32 - total_reserved_width).max(40.0);
                                                     
                                                     // Convert width to character count with minimum safety threshold
                                                     const MIN_VISIBLE_CHARS: usize = 6;
@@ -618,7 +633,7 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
                                                         })
                                                         .child(Text::new(&truncated_text))
                                                 }
-                                            }
+                                            })
                                         )
                                 )
                                 .item(
@@ -730,21 +745,22 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
         })
 }
 
-/// Update the format for a selected variable and trigger config save + query refresh
+/// Update the format for a selected variable using Actor+Relay architecture
 fn update_variable_format(unique_id: &str, new_format: shared::VarFormat) {
-    use crate::state::SELECTED_VARIABLE_FORMATS;
+    // ✅ ACTOR+RELAY: Send format change event to SelectedVariables Actor
+    use crate::actors::selected_variables::variable_format_changed_relay;
     
-    // Update the global format tracking
+    // Update the legacy format tracking for compatibility during transition
+    use crate::state::SELECTED_VARIABLE_FORMATS;
     let mut formats = SELECTED_VARIABLE_FORMATS.lock_mut();
     formats.insert(unique_id.to_string(), new_format);
     drop(formats);
     
-    // Note: In Actor+Relay architecture, the variable format updates would be handled
-    // through a relay event instead of directly mutating the variables collection.
-    // This is a temporary compatibility function during migration.
+    // Send event through proper Actor+Relay architecture
+    // This triggers format persistence and variable updates in the Actor
+    variable_format_changed_relay().send((unique_id.to_string(), new_format));
     
-    // TODO: Replace with variable_format_changed_relay(unique_id, new_format).send()
-    zoon::println!("Variable format update for {unique_id} - needs relay implementation");
+    zoon::println!("🎯 FORMAT RELAY: Sent format change for {} -> {:?}", unique_id, new_format);
 }
 
 /// Compute signal value from cached transitions at a specific time
@@ -1758,17 +1774,36 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                                             .child(
                                                                                 Text::with_signal(
                                                                                     cursor_position_seconds_signal().map(|cursor_pos| {
-                                                                                        // Use proper time formatting with appropriate units instead of rounding to seconds
-                                                                                        if !cursor_pos.is_finite() || cursor_pos < 0.0 {
+                                                                                        // Use same smart time formatting as timescale to ensure consistent units
+                                                                                        if !cursor_pos.is_finite() || cursor_pos <= 0.0 {
                                                                                             "0s".to_string()
                                                                                         } else if cursor_pos < 1e-6 {
-                                                                                            format!("{:.1}ns", cursor_pos * 1e9)
+                                                                                            let ns_val = cursor_pos * 1e9;
+                                                                                            if ns_val.fract() == 0.0 {
+                                                                                                format!("{}ns", ns_val as i64)
+                                                                                            } else {
+                                                                                                format!("{:.1}ns", ns_val)
+                                                                                            }
                                                                                         } else if cursor_pos < 1e-3 {
-                                                                                            format!("{:.1}μs", cursor_pos * 1e6)
+                                                                                            let us_val = cursor_pos * 1e6;
+                                                                                            if us_val.fract() == 0.0 {
+                                                                                                format!("{}μs", us_val as i64)
+                                                                                            } else {
+                                                                                                format!("{:.1}μs", us_val)
+                                                                                            }
                                                                                         } else if cursor_pos < 1.0 {
-                                                                                            format!("{:.1}ms", cursor_pos * 1e3)
+                                                                                            let ms_val = cursor_pos * 1e3;
+                                                                                            if ms_val.fract() == 0.0 {
+                                                                                                format!("{}ms", ms_val as i64)
+                                                                                            } else {
+                                                                                                format!("{:.1}ms", ms_val)
+                                                                                            }
                                                                                         } else {
-                                                                                            format!("{:.1}s", cursor_pos)
+                                                                                            if cursor_pos.fract() == 0.0 {
+                                                                                                format!("{}s", cursor_pos as i64)
+                                                                                            } else {
+                                                                                                format!("{:.1}s", cursor_pos)
+                                                                                            }
                                                                                         }
                                                                                     })
                                                                                 )

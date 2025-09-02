@@ -261,8 +261,10 @@ impl WaveformTimeline {
                     event = right_key_pressed.next() => {
                         match event {
                             Some(()) => cursor_handle.update_mut(|current| {
-                                let new_time = current.nanos().saturating_add(1_000); // Move right by 1μs
+                                let old_time = current.nanos();
+                                let new_time = old_time.saturating_add(1_000); // Move right by 1μs
                                 *current = TimeNs::from_nanos(new_time);
+                                zoon::println!("🎯 CURSOR: Right key pressed - moved from {}ns to {}ns", old_time, new_time);
                             }),
                             None => break,
                         }
@@ -488,8 +490,23 @@ impl WaveformTimeline {
             }
         });
         
-        let canvas_height = Actor::new(400.0_f32, async move |_height_handle| {
-            loop { futures::future::pending::<()>().await; }
+        let canvas_height = Actor::new(400.0_f32, {
+            let canvas_resized_relay_clone = canvas_resized_relay.clone();
+            async move |height_handle| {
+                let mut canvas_resized_stream = canvas_resized_relay_clone.subscribe();
+                
+                loop {
+                    select! {
+                        event = canvas_resized_stream.next() => {
+                            match event {
+                                Some((_width, height)) => height_handle.set(height),
+                                None => break,
+                            }
+                        }
+                        complete => break,
+                    }
+                }
+            }
         });
         
         // Create dedicated signals for efficient access (no conversion antipatterns)
@@ -1554,22 +1571,23 @@ fn get_waveform_timeline() -> WaveformTimeline {
 
 /// Get cursor position signal (replaces _TIMELINE_CURSOR_NS.signal())
 pub fn cursor_position_signal() -> impl zoon::Signal<Item = TimeNs> {
-    WaveformTimeline::cursor_position_signal_static()
+    crate::actors::global_domains::waveform_timeline_domain().cursor_position.signal()
 }
 
 /// Get cursor position in seconds signal (compatibility)
 pub fn cursor_position_seconds_signal() -> impl zoon::Signal<Item = f64> {
-    WaveformTimeline::cursor_position_seconds_signal_static()
+    crate::actors::global_domains::waveform_timeline_domain().cursor_position.signal()
+        .map(|time_ns| time_ns.display_seconds())
 }
 
 /// Get viewport signal (replaces _TIMELINE_VIEWPORT.signal())
 pub fn viewport_signal() -> impl zoon::Signal<Item = Viewport> {
-    WaveformTimeline::viewport_signal_static()
+    crate::actors::global_domains::waveform_timeline_domain().viewport.signal()
 }
 
 /// Get ns per pixel signal (replaces _TIMELINE_NS_PER_PIXEL.signal())
 pub fn ns_per_pixel_signal() -> impl zoon::Signal<Item = NsPerPixel> {
-    WaveformTimeline::ns_per_pixel_signal_static()
+    crate::actors::global_domains::waveform_timeline_domain().ns_per_pixel.signal()
 }
 
 /// Get coordinates signal (replaces _TIMELINE_COORDINATES.signal())
@@ -1937,7 +1955,9 @@ pub fn initialize_value_caching() {
     
     // Cache canvas dimensions as they flow through signals
     Task::start(async move {
-        canvas_width_signal()
+        // Connect directly to the real domain Actor signal from global_domains
+        let timeline = crate::actors::global_domains::waveform_timeline_domain();
+        timeline.canvas_width.signal()
             .for_each(move |width| {
                 // Cache the current value for synchronous access
                 let cached_width = static_cache_width();
@@ -1949,7 +1969,9 @@ pub fn initialize_value_caching() {
     });
     
     Task::start(async move {
-        canvas_height_signal()
+        // Connect directly to the real domain Actor signal from global_domains
+        let timeline = crate::actors::global_domains::waveform_timeline_domain();
+        timeline.canvas_height.signal()
             .for_each(move |height| {
                 // Cache the current value for synchronous access
                 let cached_height = static_cache_height();

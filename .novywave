@@ -21,6 +21,7 @@ expanded_scopes = [
     "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb",
     "/home/martinkavik/repos/NovyWave/test_files/complex.vcd|top",
     "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP",
+    "/home/martinkavik/repos/NovyWave/test_files/nested_dir/wave_27.fst|TOP.VexiiRiscv",
 ]
 load_files_expanded_directories = [
     "/home",
@@ -31,15 +32,16 @@ load_files_expanded_directories = [
     "/",
     "/home/martinkavik/repos/NovyWave/test_files/nested_dir",
 ]
-selected_scope_id = "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s"
+selected_scope_id = "/home/martinkavik/repos/NovyWave/test_files/nested_dir/wave_27.fst|TOP.VexiiRiscv"
 load_files_scroll_position = 924
+variables_search_filter = "clk"
 timeline_cursor_position_ns = 0
 timeline_zoom_level = 1.0
 timeline_visible_range_start_ns = 0
 timeline_visible_range_end_ns = 100000000000
 
 [workspace.docked_bottom_dimensions]
-files_and_scopes_panel_width = 844.0
+files_and_scopes_panel_width = 430.0
 files_and_scopes_panel_height = 375.0
 selected_variables_panel_name_column_width = 338.0
 selected_variables_panel_value_column_width = 247.0
@@ -52,6 +54,10 @@ selected_variables_panel_value_column_width = 201.0
 
 [[workspace.selected_variables]]
 unique_id = "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s|A"
+formatter = "Hexadecimal"
 
 [[workspace.selected_variables]]
 unique_id = "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s|B"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/nested_dir/wave_27.fst|TOP.VexiiRiscv|clk"

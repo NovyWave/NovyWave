@@ -1007,6 +1007,7 @@ fn get_signal_transitions_for_variable(var: &SelectedVariable, time_range: (f64,
     let scope_path = parts[1]; 
     let variable_name = parts[2];
     
+    
     // Create cache key for processed canvas data (includes time range for accurate caching)
     let processed_cache_key = format!("{}|{}|{}|{:.6}|{:.6}", file_path, scope_path, variable_name, time_range.0, time_range.1);
     
@@ -2042,6 +2043,7 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
     // Calculate row layout according to specs
     let total_rows = selected_vars.len() + 1; // variables + timeline
     let row_height = if total_rows > 0 { canvas_height / total_rows as f32 } else { canvas_height };
+    
     
     // Create alternating row backgrounds for variable rows
     for (index, var) in selected_vars.iter().enumerate() {

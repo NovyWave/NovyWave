@@ -123,6 +123,30 @@ element.after_remove(move |_| drop(toast_actor))
 - No compilation errors, but functionality silently breaks
 - Especially critical for timer-based Actors that need to stay alive
 
+**General Rule: Don't Use Underscore Prefixes for Unused Variables**
+```rust
+// ❌ WRONG: Hiding unused variables instead of fixing the issue
+if let Some(_unused_value) = some_option {
+    // Empty block - variable not actually needed
+}
+
+// ✅ CORRECT: Remove unused variables or fix the logic
+if some_option.is_some() {
+    // If you don't need the value, don't bind it
+}
+
+// ✅ CORRECT: Use the variable properly if it's needed
+if let Some(value) = some_option {
+    process_value(value);  // Actually use it
+}
+```
+
+**Why this matters:**
+- Underscore prefixes mask design issues instead of fixing them
+- Often indicates incomplete implementation or unnecessary code
+- Better to either use the variable properly or simplify the logic
+- Keeps code clean and intentional
+
 **Proper pattern for local Actors:**
 ```rust
 let timer_actor = Actor::new(TimerState::default(), async move |state| {
@@ -827,6 +851,69 @@ async fn test_config_load_stability() {
 
 
 **See system.md for complete subagent delegation strategies.**
+
+## CRITICAL: Never Hardcode Dynamic Values
+
+**MANDATORY RULE: Never hardcode any values that should be dynamic - you'll forget it and then debugging will be hell**
+
+### The Hardcoded Mock Data Nightmare
+
+**Real Example from NovyWave:** Signal formatting appeared completely broken across the entire frontend - all format options (Bin, Hex, Oct, etc.) showed wrong values. Hours of debugging frontend formatting logic, signal chains, and UI components revealed the real issue was hardcoded mock data in the backend:
+
+```rust
+// ❌ DISASTER: Hardcoded formatted values instead of raw data
+SignalTransition {
+    time_ns: 0,
+    value: "a".to_string(),        // Should be "1010" (binary) not "a" (formatted hex)
+},
+SignalTransition {
+    time_ns: 50_000_000_000,
+    value: "3".to_string(),        // Should be "11" (binary) not "3" (formatted decimal)
+},
+SignalTransition {
+    time_ns: 0,
+    value: "c".to_string(),        // Should be "1100" (binary) not "c" (formatted hex)
+},
+```
+
+### Why This Is Catastrophic
+
+1. **Debugging Misdirection**: Spend hours debugging complex frontend logic when the issue is trivial backend mock data
+2. **False Architectural Problems**: Assume signal formatting systems are broken when they work correctly
+3. **Wasted Development Time**: Multiple attempted fixes in wrong codebase areas
+4. **User Frustration**: Broken functionality with no apparent cause
+
+### Prevention Rules
+
+**✅ CORRECT: Dynamic data or clearly marked test data**
+```rust
+// ✅ GOOD: Use actual waveform parsing
+let value = waveform_signal.to_bit_string();  // Dynamic from real data
+
+// ✅ GOOD: If must use test data, make it obvious and correct
+SignalTransition {
+    time_ns: 0,
+    value: "1010".to_string(),    // ✅ Raw binary that frontend expects
+    // TODO: Replace with actual waveform parsing
+},
+```
+
+**❌ NEVER: Hidden hardcoded values**
+```rust
+// ❌ EVIL: Looks like real data but is hardcoded formatted output
+value: format_signal_for_display(&signal),  // Hardcoded result, not dynamic
+value: "calculated_result".to_string(),     // Fake "calculated" result
+value: some_complex_function_that_returns_hardcoded_value(), // Hidden hardcoding
+```
+
+### Enforcement Strategy
+
+1. **Search for hardcoded strings**: `rg '"[^"]*"\.to_string\(\)'` in data processing code
+2. **Question every "example" value**: Is this actually computed or just hardcoded?
+3. **Mark temporary test data**: Always add `TODO: Replace with real data` comments
+4. **Trace data flow**: Follow values from UI back to source - are they actually dynamic?
+
+**Remember: Hardcoded values that look dynamic are debugging time bombs that will waste hours of your life.**
 
 ## Work Integrity & Problem-Solving Ethics
 

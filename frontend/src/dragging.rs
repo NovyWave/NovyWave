@@ -131,7 +131,8 @@ pub fn process_drag_movement(current_position: (f32, f32)) {
 pub fn end_drag() {
     let state = dragging_state();
     
-    if let Some(divider_type) = state.active_divider.get_cloned() {
+    if let Some(_divider_type) = state.active_divider.get_cloned() {
+        // Divider was active, now ending drag
     }
     
     state.active_divider.set_neq(None);

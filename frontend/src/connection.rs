@@ -288,7 +288,22 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 }
             }
             DownMsg::UnifiedSignalResponse { request_id, signal_data, cursor_values, statistics, cached_time_range_ns: _ } => {
-                // Clone data for dual handling during transition period
+                // Debug: Log response details
+                zoon::println!("📨 FRONTEND: Received UnifiedSignalResponse - request_id: {}, signal_data: {} items, cursor_values: {} items", 
+                    request_id, signal_data.len(), cursor_values.len());
+                
+                // Log cursor values for debugging
+                for (signal_id, value) in &cursor_values {
+                    match value {
+                        shared::SignalValue::Present(data) => {
+                            zoon::println!("📊 CURSOR VALUE: {} = {}", signal_id, data);
+                        },
+                        shared::SignalValue::Missing => {
+                            zoon::println!("📊 CURSOR VALUE: {} = Missing", signal_id);
+                        }
+                    }
+                }
+                
                 // Handle unified signal response through the unified timeline service
                 crate::unified_timeline_service::UnifiedTimelineService::handle_unified_response(request_id, signal_data, cursor_values, statistics);
             }

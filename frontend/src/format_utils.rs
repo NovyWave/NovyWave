@@ -27,9 +27,9 @@ pub enum SignalValue {
 }
 
 impl SignalValue {
-    /// Create from real signal data
-    pub fn from_data(raw_binary: String) -> Self {
-        let formatted_values = Self::generate_all_formats(&raw_binary);
+    /// Create from real signal data (expects binary string from backend)
+    pub fn from_data(raw_data: String) -> Self {
+        let formatted_values = Self::generate_all_formats(&raw_data);
         Self::Data { formatted_values }
     }
 
@@ -37,6 +37,7 @@ impl SignalValue {
     pub fn missing() -> Self {
         Self::Missing
     }
+
 
 
     /// Generate formatted values for all VarFormat types
@@ -221,4 +222,5 @@ mod tests {
         let bin_option = options.iter().find(|opt| matches!(opt.format, VarFormat::Binary)).unwrap();
         assert_eq!(bin_option.display_text, "1010 Bin");
     }
+
 }

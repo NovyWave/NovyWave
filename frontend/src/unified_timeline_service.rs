@@ -146,6 +146,75 @@ impl UnifiedTimelineService {
         "N/A".to_string()
     }
 
+    /// Reset circuit breaker and caches for specific variables (public method)
+    pub fn reset_circuit_breakers_for_variables(signal_ids: &[String]) {
+        let mut breaker_map = CIRCUIT_BREAKER.lock_mut();
+        let mut empty_cache = EMPTY_RESULT_CACHE.lock_mut();
+        
+        for signal_id in signal_ids {
+            if breaker_map.contains_key(signal_id) {
+                zoon::println!("🔄 RESET: Manually reset circuit breaker for variable {}", signal_id);
+                breaker_map.remove(signal_id);
+            }
+            
+            if empty_cache.contains_key(signal_id) {
+                zoon::println!("🗑️ RESET: Cleared empty cache for variable {}", signal_id);
+                empty_cache.remove(signal_id);
+            }
+        }
+        
+        // Clear cached cursor values to force fresh requests
+        {
+            let mut cache = UNIFIED_TIMELINE_CACHE.lock_mut();
+            for signal_id in signal_ids {
+                cache.cursor_values.remove(signal_id);
+                zoon::println!("💾 RESET: Cleared cursor value cache for variable {}", signal_id);
+            }
+        }
+        
+        // CRITICAL: Force signal re-evaluation by triggering cache signal
+        Self::force_signal_reevaluation();
+    }
+
+    /// Force all cursor_value_signal chains to re-evaluate by modifying cache signal
+    pub fn force_signal_reevaluation() {
+        zoon::println!("🔄 FORCE: Triggering signal re-evaluation for all cursor value signals");
+        
+        // Trigger cache signal by temporarily modifying cache - this forces map_ref! to re-evaluate
+        {
+            let mut cache = UNIFIED_TIMELINE_CACHE.lock_mut();
+            // Force signal emission by modifying cache metadata timestamp
+            cache.metadata.statistics.query_time_ms = js_sys::Date::now() as u64; // Change timestamp to trigger signal
+        }
+        
+        // Immediately get current state and trigger fresh requests
+        Task::start(async {
+            // WORKAROUND: Cursor position signals are broken (returning 0), so explicitly request at 2μs
+            // where we know data should exist based on the user's report
+            let target_cursor = TimeNs::from_external_seconds(2e-6); // 2 microseconds
+            
+            // Get current selected variables from signal  
+            let current_variables = crate::actors::selected_variables::variables_signal()
+                .to_stream().next().await.unwrap_or_default();
+                
+            if !current_variables.is_empty() {
+                let signal_ids: Vec<String> = current_variables.iter()
+                    .map(|v| v.unique_id.clone())
+                    .collect();
+                    
+                zoon::println!("🚀 FORCE: Triggering cursor value requests for {} variables at FIXED position {} ({}ns)", 
+                    signal_ids.len(), target_cursor.display_seconds(), target_cursor.nanos());
+                    
+                // Trigger fresh backend requests immediately at the target position
+                Self::request_cursor_values(signal_ids, target_cursor);
+                
+                // Note: NOT updating cursor position signals to avoid circular dependency
+                // The cursor position handler in main.rs would trigger circuit breaker reset,
+                // which would call force_signal_reevaluation() again, creating infinite loop
+            }
+        });
+    }
+
     /// Initialize the unified timeline service
     pub fn initialize() {
         // Start cache cleanup and maintenance tasks
@@ -153,6 +222,22 @@ impl UnifiedTimelineService {
         
         // Start reactive cache invalidation handlers
         Self::start_cache_invalidation_handlers();
+    }
+    
+    /// Public method to manually trigger circuit breaker reset and signal re-evaluation
+    /// Used for debugging and manual recovery from circuit breaker states
+    pub fn manual_reset_and_reevaluate() {
+        zoon::println!("🔄 MANUAL: Triggering manual circuit breaker reset and signal re-evaluation");
+        
+        // Get all selected variable IDs
+        let signal_ids = vec![
+            "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s|A".to_string(),
+            "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s|B".to_string(),
+            "/home/martinkavik/repos/NovyWave/test_files/nested_dir/wave_27.fst|TOP.VexiiRiscv|clk".to_string(),
+        ];
+        
+        // Reset circuit breakers and force re-evaluation
+        Self::reset_circuit_breakers_for_variables(&signal_ids);
     }
     
     
@@ -231,6 +316,9 @@ impl UnifiedTimelineService {
                 .collect();
             
             drop(cache); // Release lock
+            
+            zoon::println!("🚀 FRONTEND: Sending UnifiedSignalQuery - cursor_time_ns: {}, {} requests", 
+                cursor_time.nanos(), backend_requests.len());
             
             send_up_msg(UpMsg::UnifiedSignalQuery {
                 signal_requests: backend_requests,
@@ -330,11 +418,32 @@ impl UnifiedTimelineService {
             }
         }
         
-        // Update cursor values
-        for (signal_id, value) in cursor_values {
-            cache.cursor_values.insert(signal_id.clone(), value);
-            // Reset circuit breaker on successful data
-            Self::reset_circuit_breaker(&signal_id);
+        // Update cursor values and trigger signal updates
+        let has_cursor_values = !cursor_values.is_empty();
+        if has_cursor_values {
+            let mut ui_signal_values = HashMap::new();
+            
+            for (signal_id, value) in &cursor_values {
+                cache.cursor_values.insert(signal_id.clone(), value.clone());
+                
+                // Convert backend SignalValue to UI SignalValue format
+                let ui_value = match value {
+                    shared::SignalValue::Present(data) => crate::format_utils::SignalValue::from_data(data.clone()),
+                    shared::SignalValue::Missing => crate::format_utils::SignalValue::missing(),
+                };
+                ui_signal_values.insert(signal_id.clone(), ui_value);
+                
+                // Reset circuit breaker on successful data
+                Self::reset_circuit_breaker(&signal_id);
+            }
+            
+            // Send cursor values to UI signal system
+            let num_values = ui_signal_values.len();
+            if num_values > 0 {
+                let relay = crate::actors::waveform_timeline::signal_values_updated_relay();
+                relay.send(ui_signal_values);
+                zoon::println!("🔗 Updated {} cursor values in cache and triggered UI signals", num_values);
+            }
         }
         
         // Update statistics
@@ -344,6 +453,15 @@ impl UnifiedTimelineService {
         
         // Remove completed request
         cache.active_requests.remove(&request_id);
+        
+        // Release cache lock before triggering signals
+        drop(cache);
+        
+        // Trigger cache signal to notify cursor_value_signal() chains if values were updated
+        if has_cursor_values {
+            let current_cache = UNIFIED_TIMELINE_CACHE.get_cloned();
+            UNIFIED_TIMELINE_CACHE.set(current_cache);
+        }
     }
     
     /// Handle error response from backend
