@@ -214,7 +214,8 @@ impl fmt::Display for NsPerPixel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.0 >= 1_000_000_000 {
             write!(f, "{:.1}s/px", self.0 as f64 / 1_000_000_000.0)
-        } else if self.0 >= 1_000_000 {
+        } else if self.0 >= 100_000 {
+            // Show ms/px for values >= 100 μs (0.1 ms) - more readable for longer timescales
             write!(f, "{:.1}ms/px", self.0 as f64 / 1_000_000.0)
         } else if self.0 >= 1_000 {
             write!(f, "{:.1}μs/px", self.0 as f64 / 1_000.0)
@@ -285,11 +286,8 @@ impl fmt::Display for Viewport {
     }
 }
 
-impl Default for Viewport {
-    fn default() -> Self {
-        Viewport::new(TimeNs::ZERO, TimeNs::from_nanos(1_000_000_000)) // 0-1 second default
-    }
-}
+// ✅ NO DEFAULT IMPLEMENTATION - Only create viewport when we have actual VCD file data
+// This prevents any fallback rendering until real timeline data is available
 
 /// Coordinate conversion utilities for timeline rendering - PURE INTEGER VERSION
 pub mod coordinates {
@@ -511,7 +509,9 @@ impl TimelineCache {
             raw_transitions: std::collections::HashMap::new(),
             active_requests: std::collections::HashMap::new(),
             metadata: CacheMetadata {
-                current_viewport: Viewport::new(TimeNs::ZERO, TimeNs::from_external_seconds(100.0)),
+                // 🎯 NON-INTERFERING DEFAULT: 10 seconds - large enough that fallback detection (<5s) won't trigger,
+                // but won't override real file data ranges
+                current_viewport: Viewport::new(TimeNs::ZERO, TimeNs::from_external_seconds(10.0)),
                 current_cursor: TimeNs::ZERO,
                 statistics: shared::SignalStatistics {
                     total_signals: 0,

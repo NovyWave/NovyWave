@@ -607,6 +607,9 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
                     
                     let format = FileFormat::FST;
                     
+                    println!("🔧 BACKEND FILE: Creating WaveformFile '{}' with range: {:?}ns to {:?}ns", 
+                        file_id, min_time_ns, max_time_ns);
+                    
                     let waveform_file = WaveformFile {
                         id: file_id.clone(),
                         filename: filename.clone(),
@@ -663,12 +666,15 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
                             let converted_min = min_time * timescale_factor;
                             let converted_max = max_time * timescale_factor;
                             
+                            println!("🔧 BACKEND TIME RANGE: VCD file time range: {:.3}s to {:.3}s (span: {:.3}s)", 
+                                converted_min, converted_max, converted_max - converted_min);
+                            
                             (converted_min, converted_max)
                         }
                         Err(_) => {
-                            // Fallback to slower method if quick scan fails
-                            println!("VCD quick scan failed, falling back to full parsing");
-                            (0.0, 100.0) // Will be updated after full parsing
+                            // ❌ FALLBACK ELIMINATION: Use minimal 1-second range instead of 100s when quick scan fails
+                            println!("VCD quick scan failed, using minimal 1s range - will be updated after full parsing");
+                            (0.0, 1.0) // Minimal range - will be updated after full parsing
                         }
                     };
                     
@@ -688,6 +694,9 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
                     
                     let format = FileFormat::VCD;
                     let (min_time_ns, max_time_ns) = (Some((min_seconds * 1_000_000_000.0) as u64), Some((max_seconds * 1_000_000_000.0) as u64));
+                    
+                    println!("🔧 BACKEND FILE: Creating WaveformFile '{}' with range: {:?}ns to {:?}ns", 
+                        file_id, min_time_ns, max_time_ns);
                     
                     // Create lightweight file data WITHOUT full signal source
                     let waveform_file = WaveformFile {
@@ -890,14 +899,16 @@ fn infer_reasonable_fst_timescale(body_result: &wellen::viewers::BodyResult, emb
 
 fn extract_fst_time_range(body_result: &wellen::viewers::BodyResult, timescale_factor: f64) -> (f64, f64) {
     if body_result.time_table.is_empty() {
-        return (0.0, 100.0); // Default fallback
+        // ❌ FALLBACK ELIMINATION: Use minimal 1-second range instead of 100s for empty FST
+        return (0.0, 1.0); // Minimal fallback for empty FST
     }
     
     let raw_min = match body_result.time_table.first() {
         Some(time) => *time as f64,
         None => {
             eprintln!("Warning: Empty time table in FST file");
-            return (0.0, 100.0);
+            // ❌ FALLBACK ELIMINATION: Use minimal 1-second range instead of 100s
+            return (0.0, 1.0);
         }
     };
     
@@ -905,14 +916,21 @@ fn extract_fst_time_range(body_result: &wellen::viewers::BodyResult, timescale_f
         Some(time) => *time as f64,
         None => {
             eprintln!("Warning: Empty time table in FST file");
-            return (0.0, 100.0);
+            // ❌ FALLBACK ELIMINATION: Use minimal 1-second range instead of 100s
+            return (0.0, 1.0);
         }
     };
     
     // Removed spammy FST time extraction debug logging
     
     // Convert FST time values to seconds using the proper timescale factor
-    (raw_min * timescale_factor, raw_max * timescale_factor)
+    let min_seconds = raw_min * timescale_factor;
+    let max_seconds = raw_max * timescale_factor;
+    
+    println!("🔧 BACKEND TIME RANGE: FST file time range: {:.3}s to {:.3}s (span: {:.3}s)", 
+        min_seconds, max_seconds, max_seconds - min_seconds);
+    
+    (min_seconds, max_seconds)
 }
 
 

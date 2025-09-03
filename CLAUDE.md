@@ -91,6 +91,31 @@ Core guidance for Claude Code when working with NovyWave.
    // ❌ NEVER cache values anywhere else - use signals instead
    ```
 
+5. **ABSOLUTELY NO FALLBACKS (CRITICAL):**
+   **NEVER return fallback values, defaults, or emergency ranges:**
+   
+   ```rust
+   // ❌ ABSOLUTELY PROHIBITED: Any kind of fallback values
+   if no_data_available {
+       return (0.0, 1.0);  // NO! Even "minimal" fallbacks are forbidden
+       return (0.0, 10.0); // NO! Emergency ranges are forbidden
+       return SomeDefault::reasonable(); // NO! No fallbacks ever
+   }
+   
+   // ✅ CORRECT: Show explicit loading state or return None
+   if no_data_available {
+       return None; // Let caller handle appropriately
+       // OR show placeholder UI: "Loading..." / "No data available"
+       // OR return empty result and let UI show proper state
+   }
+   ```
+   
+   **Why NO fallbacks:**
+   - User directive: "NO FALBACKKS!! just show placeholder text or error or whatever but NOOOO FALLBACKs ever"
+   - Fallbacks mask real data loading issues and create timing bugs
+   - Better to show explicit loading states than wrong data
+   - Fallbacks interfere with proper reactive data flow
+
 ### Migration Status: 74+ Mutables → Actor+Relay
 See `docs/actors_relays/novywave/migration_strategy.md` for complete migration plan.
 

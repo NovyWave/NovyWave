@@ -464,8 +464,7 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
                         _ => shared::VarFormat::Hexadecimal,
                     };
                     
-                    // 🔍 DEBUG: Format debugging
-                    zoon::println!("🎯 FORMAT DEBUG for {}: format_state='{}' -> enum={:?}", unique_id_for_signal, format_state, current_format_enum);
+                    // Debug logging removed to prevent console spam in hot signal path
                     
                     let current_signal_value = if current_value == "N/A" {
                         crate::format_utils::SignalValue::missing()
@@ -478,8 +477,7 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
                     let full_display_text = current_signal_value.get_full_display_with_format(&current_format_enum);
                     let display_text = current_signal_value.get_truncated_display_with_format(&current_format_enum, 30);
                     
-                    // 🔍 DEBUG: Display values
-                    zoon::println!("📺 DISPLAY for {}: current_value='{}' -> display_text='{}'", unique_id_for_signal, current_value, display_text);
+                    // Debug logging removed to prevent console spam in hot signal path
                     
                     // Generate dropdown options with formatted values
                     let dropdown_options = crate::format_utils::generate_dropdown_options(&current_signal_value, &signal_type);
@@ -1434,7 +1432,7 @@ fn create_stable_tree_view() -> impl Element {
                 })
                 .items_signal_vec(
                     map_ref! {
-                        let tracked_files = crate::actors::tracked_files::tracked_files_signal_vec().to_signal_cloned(),
+                        let tracked_files = crate::actors::tracked_files::tracked_files_signal_vec().to_signal_cloned().dedupe_cloned(),
                         let expanded_scopes = crate::state::EXPANDED_SCOPES.signal_cloned() => {
                             // When either tracked files OR expanded scopes change, re-render all TreeViews
                             // Pass current expanded scopes state to each TreeView
@@ -1538,7 +1536,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                 variables_signal().map(|vars| {
                                     // Add one extra row height for scrollbar (names/values) or footer/timeline (canvas)
                                     (vars.len() + 1) as u32 * SELECTED_VARIABLES_ROW_HEIGHT
-                                })
+                                }).dedupe()
                             ))
                             .s(Width::fill())
                             .s(Scrollbars::x_and_clip_y())
@@ -1656,6 +1654,8 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                                             .child(
                                                                                 Text::with_signal(
                                                                                     ns_per_pixel_signal().map(|ns_per_pixel| {
+                                                                                        // DEBUG: Log what UI zoom display receives
+                                                                                        zoon::println!("🖥️ UI ZOOM DISPLAY: Showing {} ({} raw ns)", ns_per_pixel, ns_per_pixel.nanos());
                                                                                         // Use NsPerPixel's built-in Display formatting
                                                                                         format!("{}", ns_per_pixel)
                                                                                     })
@@ -1666,8 +1666,15 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                             )
                                                             // Spacer to push right group apart
                                                             .item(El::new().s(Width::fill()))
-                                                            // Right group: R button
-                                                            .item(kbd("R").size(KbdSize::Small).variant(KbdVariant::Outlined).title("Reset zoom to 1x, fit all data, and center cursor").build())
+                                                            // Right group: R button (wrapped in clickable El)
+                                                            .item(
+                                                                El::new()
+                                                                    .on_click(|| {
+                                                                        zoon::println!("🚨 R BUTTON CLICKED: Triggering reset zoom directly");
+                                                                        crate::actors::waveform_timeline_domain().reset_zoom_pressed_relay.send(());
+                                                                    })
+                                                                    .child(kbd("R").size(KbdSize::Small).variant(KbdVariant::Outlined).title("Reset zoom to 1x, fit all data, and center cursor").build())
+                                                            )
                                                     )
                                             )
                                     )
@@ -1717,7 +1724,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                                                 Text::with_signal(
                                                                                     // Get maximum timeline range (min value) - single-level signal coordination prevents exponential multiplication
                                                                                     map_ref! {
-                                                                                        let _loaded_files = crate::state::LOADED_FILES.signal_vec_cloned().to_signal_cloned(),
+                                                                                        let _loaded_files = crate::state::LOADED_FILES.signal_vec_cloned().to_signal_cloned().dedupe_cloned(),
                                                                                         let _selected_vars = variables_signal() =>
                                                                                         if let Some((min_time, _max_time)) = crate::waveform_canvas::get_maximum_timeline_range() {
                                                                                             // Smart time formatting that removes unnecessary decimals
@@ -1828,7 +1835,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                                                 Text::with_signal(
                                                                                     // Get maximum timeline range (max value) - single-level signal coordination prevents exponential multiplication
                                                                                     map_ref! {
-                                                                                        let _loaded_files = crate::state::LOADED_FILES.signal_vec_cloned().to_signal_cloned(),
+                                                                                        let _loaded_files = crate::state::LOADED_FILES.signal_vec_cloned().to_signal_cloned().dedupe_cloned(),
                                                                                         let _selected_vars = variables_signal() =>
                                                                                         if let Some((_min_time, max_time)) = crate::waveform_canvas::get_maximum_timeline_range() {
                                                                                             // Smart time formatting that removes unnecessary decimals
@@ -1863,7 +1870,8 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                                                                 }
                                                                                             }
                                                                                         } else {
-                                                                                            "100s".to_string()
+                                                                                            // ❌ FALLBACK ELIMINATION: Show "No Data" instead of hardcoded "100s"
+                                                                                            "No Data".to_string()
                                                                                         }
                                                                                     }.dedupe_cloned()
                                                                                 )

@@ -153,7 +153,9 @@ impl Default for TimelineState {
             cursor_position: TimeNs::ZERO,
             visible_range: TimeRange {
                 start: TimeNs::ZERO,
-                end: TimeNs::from_nanos(100_000_000_000),
+                // 🎯 NON-INTERFERING DEFAULT: 10 seconds - large enough that fallback detection (<5s) won't trigger,
+                // but won't override real file data (0-250s range from VCD files)
+                end: TimeNs::from_nanos(10_000_000_000), // 10 seconds in nanoseconds
             },
             zoom_level: 1.0,
         }

@@ -319,6 +319,7 @@ async fn wait_for_files_loaded(file_paths: &[String]) {
 }
 
 fn root() -> impl Element {
+    
     // One-time Load Files dialog opening for development/debug
     
     Stack::new()
@@ -423,8 +424,13 @@ fn main_layout() -> impl Element {
         })
         .update_raw_el(move |raw_el| {
             raw_el.global_event_handler(move |event: zoon::events::KeyDown| {
+                // CRITICAL DEBUG: Check if search input focus is blocking keyboard events
+                let search_focused = state::VARIABLES_SEARCH_INPUT_FOCUSED.get();
+                zoon::println!("🔧 KEYBOARD: Key '{}' pressed, search_focused: {}", event.key(), search_focused);
+                
                 // Skip timeline controls if typing in search input
-                if state::VARIABLES_SEARCH_INPUT_FOCUSED.get() {
+                if search_focused {
+                    zoon::println!("🚨 KEYBOARD BLOCKED: Search input has focus, ignoring key '{}'", event.key());
                     return;
                 }
                 
@@ -498,12 +504,16 @@ fn main_layout() -> impl Element {
                         }
                     },
                     "r" | "R" => {
+                        zoon::println!("🔧 R KEY: User pressed R key - sending reset_zoom event");
+                        
                         // R: Reset zoom using WaveformTimeline domain
                         let waveform_timeline = crate::actors::waveform_timeline_domain();
                         waveform_timeline.reset_zoom_pressed_relay.send(());
                         
                         // Legacy function call for backward compatibility (will be removed)
                         crate::waveform_canvas::reset_zoom_to_fit_all();
+                        
+                        zoon::println!("🔧 R KEY: Reset zoom completed");
                     },
                     "z" | "Z" => {
                         // Z: Reset zoom center using WaveformTimeline domain

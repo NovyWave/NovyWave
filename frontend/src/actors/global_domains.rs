@@ -269,10 +269,10 @@ pub fn _are_domains_initialized() -> bool {
 /// Enables: tracked_files_signal().map(|files| render(files))
 pub fn tracked_files_signal() -> impl Signal<Item = Vec<TrackedFile>> {
     TRACKED_FILES_SIGNALS.get()
-        .map(|signals| signals.files_mutable.signal_vec_cloned().to_signal_cloned())
+        .map(|signals| signals.files_mutable.signal_vec_cloned().to_signal_cloned().dedupe_cloned())
         .unwrap_or_else(|| {
             zoon::eprintln!("⚠️ TrackedFiles signals not initialized, returning empty signal");
-            MutableVec::<TrackedFile>::new().signal_vec_cloned().to_signal_cloned()
+            MutableVec::<TrackedFile>::new().signal_vec_cloned().to_signal_cloned().dedupe_cloned()
         })
 }
 
@@ -322,20 +322,20 @@ pub fn tracked_files_signal_vec() -> impl SignalVec<Item = TrackedFile> {
 /// Get owned signal for loading files - LIFETIME SAFE
 pub fn loading_files_signal() -> impl Signal<Item = Vec<LoadingFile>> {
     TRACKED_FILES_SIGNALS.get()
-        .map(|signals| signals.loading_files_mutable.signal_vec_cloned().to_signal_cloned())
+        .map(|signals| signals.loading_files_mutable.signal_vec_cloned().to_signal_cloned().dedupe_cloned())
         .unwrap_or_else(|| {
             zoon::eprintln!("⚠️ TrackedFiles signals not initialized, returning empty loading files signal");
-            MutableVec::<LoadingFile>::new().signal_vec_cloned().to_signal_cloned()
+            MutableVec::<LoadingFile>::new().signal_vec_cloned().to_signal_cloned().dedupe_cloned()
         })
 }
 
 /// Get owned signal for loaded files - LIFETIME SAFE
 pub fn loaded_files_signal() -> impl Signal<Item = Vec<WaveformFile>> {
     TRACKED_FILES_SIGNALS.get()
-        .map(|signals| signals.loaded_files_mutable.signal_vec_cloned().to_signal_cloned())
+        .map(|signals| signals.loaded_files_mutable.signal_vec_cloned().to_signal_cloned().dedupe_cloned())
         .unwrap_or_else(|| {
             zoon::eprintln!("⚠️ TrackedFiles signals not initialized, returning empty loaded files signal");
-            MutableVec::<WaveformFile>::new().signal_vec_cloned().to_signal_cloned()
+            MutableVec::<WaveformFile>::new().signal_vec_cloned().to_signal_cloned().dedupe_cloned()
         })
 }
 
@@ -515,10 +515,10 @@ pub fn dialog_manager_expanded_directories_signal() -> impl Signal<Item = IndexS
 /// Get owned signal for selected files - LIFETIME SAFE
 pub fn dialog_manager_selected_files_signal() -> impl Signal<Item = Vec<String>> {
     DIALOG_MANAGER_SIGNALS.get()
-        .map(|signals| signals.selected_files_mutable.signal_vec_cloned().to_signal_cloned())
+        .map(|signals| signals.selected_files_mutable.signal_vec_cloned().to_signal_cloned().dedupe_cloned())
         .unwrap_or_else(|| {
             zoon::eprintln!("⚠️ DialogManager signals not initialized, returning empty selected files signal");
-            MutableVec::<String>::new().signal_vec_cloned().to_signal_cloned()
+            MutableVec::<String>::new().signal_vec_cloned().to_signal_cloned().dedupe_cloned()
         })
 }
 
@@ -595,20 +595,20 @@ pub fn dialog_manager_selected_mutable() -> MutableVec<String> {
 /// Get owned signal for error alerts - LIFETIME SAFE
 pub fn error_manager_alerts_signal() -> impl Signal<Item = Vec<crate::state::ErrorAlert>> {
     ERROR_MANAGER_SIGNALS.get()
-        .map(|signals| signals.alerts_mutable.signal_vec_cloned().to_signal_cloned())
+        .map(|signals| signals.alerts_mutable.signal_vec_cloned().to_signal_cloned().dedupe_cloned())
         .unwrap_or_else(|| {
             zoon::eprintln!("⚠️ ErrorManager signals not initialized, returning empty alerts signal");
-            MutableVec::<crate::state::ErrorAlert>::new().signal_vec_cloned().to_signal_cloned()
+            MutableVec::<crate::state::ErrorAlert>::new().signal_vec_cloned().to_signal_cloned().dedupe_cloned()
         })
 }
 
 /// Get owned signal for toast notifications - LIFETIME SAFE
 pub fn error_manager_notifications_signal() -> impl Signal<Item = Vec<crate::state::ErrorAlert>> {
     ERROR_MANAGER_SIGNALS.get()
-        .map(|signals| signals.notifications_mutable.signal_vec_cloned().to_signal_cloned())
+        .map(|signals| signals.notifications_mutable.signal_vec_cloned().to_signal_cloned().dedupe_cloned())
         .unwrap_or_else(|| {
             zoon::eprintln!("⚠️ ErrorManager signals not initialized, returning empty notifications signal");
-            MutableVec::<crate::state::ErrorAlert>::new().signal_vec_cloned().to_signal_cloned()
+            MutableVec::<crate::state::ErrorAlert>::new().signal_vec_cloned().to_signal_cloned().dedupe_cloned()
         })
 }
 

@@ -202,8 +202,7 @@ impl UnifiedTimelineService {
                     .map(|v| v.unique_id.clone())
                     .collect();
                     
-                zoon::println!("🚀 FORCE: Triggering cursor value requests for {} variables at FIXED position {} ({}ns)", 
-                    signal_ids.len(), target_cursor.display_seconds(), target_cursor.nanos());
+                // Debug logging removed to prevent console spam in hot path
                     
                 // Trigger fresh backend requests immediately at the target position
                 Self::request_cursor_values(signal_ids, target_cursor);
@@ -253,7 +252,7 @@ impl UnifiedTimelineService {
             signal_ids.iter().cloned().collect();
             
         if Self::is_duplicate_request_by_set(&cache, &variable_set, CacheRequestType::CursorValues) {
-            zoon::println!("⚡ CACHE: Skipping duplicate cursor values request for {} variables", signal_ids.len());
+            // Debug logging removed to prevent console spam in hot path
             return;
         }
         
@@ -317,8 +316,7 @@ impl UnifiedTimelineService {
             
             drop(cache); // Release lock
             
-            zoon::println!("🚀 FRONTEND: Sending UnifiedSignalQuery - cursor_time_ns: {}, {} requests", 
-                cursor_time.nanos(), backend_requests.len());
+            // Debug logging removed to prevent console spam in hot path
             
             send_up_msg(UpMsg::UnifiedSignalQuery {
                 signal_requests: backend_requests,
@@ -376,7 +374,7 @@ impl UnifiedTimelineService {
                     "Loading...".to_string()
                 }
             }
-        }
+        }.dedupe_cloned()
     }
     
     /// Handle unified response from backend
@@ -442,7 +440,7 @@ impl UnifiedTimelineService {
             if num_values > 0 {
                 let relay = crate::actors::waveform_timeline::signal_values_updated_relay();
                 relay.send(ui_signal_values);
-                zoon::println!("🔗 Updated {} cursor values in cache and triggered UI signals", num_values);
+                // Debug logging removed to prevent console spam in hot path
             }
         }
         

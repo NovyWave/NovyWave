@@ -971,6 +971,33 @@ pub fn current_value(&self) -> T {
 - ALWAYS prefer editing an existing file to creating a new one
 - NEVER proactively create documentation files (*.md) or README files unless explicitly requested
 
+### Autonomous Sustained Work Pattern
+
+When users request extended autonomous work (e.g. "I won't be here, work as long as possible"), use this proven pattern for sustained productivity:
+
+**Setup for Extended Sessions:**
+1. **Create comprehensive todo lists** - Break complex problems into 40+ specific actionable todos
+2. **Use TodoWrite proactively** - Track all progress in real-time, mark completed immediately 
+3. **Systematic problem-solving** - Use subagents for parallel analysis and implementation
+4. **Continuous progress validation** - Test fixes incrementally, never claim completion without verification
+
+**Key Success Factors:**
+- **Detailed planning prevents getting stuck** - Comprehensive todos provide clear next steps
+- **Real-time progress tracking** - TodoWrite keeps work organized and prevents losing focus
+- **Subagent delegation** - Extends effective working time by using separate context spaces
+- **Systematic approach** - Complete one issue fully before moving to next
+
+**Example Pattern from Successful Signal Loop Fix:**
+```
+1. Create 40+ todos covering: root cause analysis, systematic fixes, testing, verification
+2. Work through each systematically: investigate → fix → test → verify → mark complete
+3. Use subagents for: codebase analysis, pattern searching, comprehensive audits
+4. Continuous testing: browser console monitoring, compilation verification, UI testing
+5. Result: 14+ reactive antipatterns eliminated over extended session
+```
+
+This pattern enables sustained autonomous work while maintaining quality and preventing getting lost in complex problems.
+
 ### Planning Guidelines
 - Use the Task tool when you are in plan mode
 - Only use exit_plan_mode tool when planning implementation steps for code writing tasks

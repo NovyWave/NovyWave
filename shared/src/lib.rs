@@ -286,7 +286,7 @@ pub struct FileSystemItem {
 
 // ===== CORE DATA TYPES =====
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct LoadingFile {
     pub file_id: String,
     pub filename: String,
