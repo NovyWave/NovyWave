@@ -18,6 +18,7 @@ const DEBUG_SIGNAL_TRANSITIONS: bool = false;
 const DEBUG_REQUEST_DEDUPLICATION: bool = false;
 const DEBUG_TIMELINE_VALIDATION: bool = false;
 const DEBUG_CACHE_MISS: bool = false;
+const DEBUG_STARTUP_ZOOM_ANALYSIS: bool = true;
 
 /// Throttled debug logging - maximum 5 logs per second
 /// Use this instead of zoon::println! in high-frequency handlers
@@ -84,5 +85,18 @@ pub fn debug_cache_miss(message: &str) {
     if DEBUG_CACHE_MISS {
         zoon::println!("[CACHE MISS] {}", message);
     }
+}
+
+/// Startup zoom analysis debug logging
+/// Only prints when DEBUG_STARTUP_ZOOM_ANALYSIS is true
+pub fn debug_startup_zoom(message: &str) {
+    if DEBUG_STARTUP_ZOOM_ANALYSIS {
+        zoon::println!("{}", message);
+    }
+}
+
+/// Check if startup zoom debug is enabled
+pub fn is_startup_zoom_debug_enabled() -> bool {
+    DEBUG_STARTUP_ZOOM_ANALYSIS
 }
 

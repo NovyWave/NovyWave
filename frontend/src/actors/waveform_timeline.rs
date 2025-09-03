@@ -332,14 +332,18 @@ impl WaveformTimeline {
         );
         
         // Create ns_per_pixel actor with zoom event handling
-        let ns_per_pixel = Actor::new(NsPerPixel::MEDIUM_ZOOM, async move |ns_per_pixel_handle| {
-            let mut zoom_in_started = zoom_in_started_stream;
-            let mut zoom_out_started = zoom_out_started_stream;
-            let mut zoom_in_pressed = zoom_in_pressed_stream;
-            let mut zoom_out_pressed = zoom_out_pressed_stream;
-            let mut reset_zoom_pressed = reset_zoom_pressed_stream;
-            let mut reset_zoom_center_pressed = reset_zoom_center_pressed_stream;
-            let mut ns_per_pixel_changed = ns_per_pixel_changed_stream;
+        let ns_per_pixel = Actor::new(NsPerPixel::MEDIUM_ZOOM, {
+            let canvas_resized_relay_clone = canvas_resized_relay.clone();
+            let viewport_for_ns_per_pixel = viewport.clone();
+            async move |ns_per_pixel_handle| {
+                let mut zoom_in_started = zoom_in_started_stream;
+                let mut zoom_out_started = zoom_out_started_stream;
+                let mut zoom_in_pressed = zoom_in_pressed_stream;
+                let mut zoom_out_pressed = zoom_out_pressed_stream;
+                let mut reset_zoom_pressed = reset_zoom_pressed_stream;
+                let mut reset_zoom_center_pressed = reset_zoom_center_pressed_stream;
+                let mut ns_per_pixel_changed = ns_per_pixel_changed_stream;
+                let mut canvas_resized = canvas_resized_relay_clone.subscribe();
             
             loop {
                 select! {
@@ -390,13 +394,8 @@ impl WaveformTimeline {
                                 static R_KEY_COUNTER: AtomicU32 = AtomicU32::new(0);
                                 let r_count = R_KEY_COUNTER.fetch_add(1, Ordering::Relaxed);
                                 
-                                // ITERATION 7: Timing-based debug logging
-                                let start_time = std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .unwrap_or_default()
-                                    .as_millis();
-                                
-                                zoon::println!("🚨 R KEY DEBUG #{}: Starting contextual zoom calculation at {}ms", r_count, start_time);
+                                // ITERATION 7: Debug logging (removed SystemTime - not available in WASM)
+                                zoon::println!("🚨 R KEY DEBUG #{}: Starting contextual zoom calculation", r_count);
                                 
                                 // Debug current Actor state before calculation
                                 let current_ns_per_pixel = ns_per_pixel_handle.get();
@@ -440,11 +439,7 @@ impl WaveformTimeline {
                                     PREVIOUS_STATE = Some(current_state);
                                 }
                                 
-                                // ITERATION 7: Timing checkpoint 1 - Before canvas width calculation
-                                let checkpoint_1 = std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .unwrap_or_default()
-                                    .as_millis();
+                                // ITERATION 7: Debug checkpoint 1 - Before canvas width calculation
                                 
                                 // ITERATION 9 FIX: Use stable canvas width to prevent cycling
                                 // Problem: current_canvas_width() returns inconsistent values between R key presses
@@ -466,24 +461,19 @@ impl WaveformTimeline {
                                             *cached_width, raw_width, *cached_width);
                                     }
                                     
-                                    zoon::println!("🔧 CANVAS WIDTH: Using stable {}px for R key calculation [raw: {}px] [timing: {}ms]", 
-                                        *cached_width, raw_width, checkpoint_1 - start_time);
+                                    zoon::println!("🔧 CANVAS WIDTH: Using stable {}px for R key calculation [raw: {}px]", 
+                                        *cached_width, raw_width);
                                     
                                     *cached_width
                                 };
                                 
                                 if let Some((min_time, max_time)) = crate::waveform_canvas::get_maximum_timeline_range() {
-                                    // ITERATION 7: Timing checkpoint 2 - After timeline range calculation
-                                    let checkpoint_2 = std::time::SystemTime::now()
-                                        .duration_since(std::time::UNIX_EPOCH)
-                                        .unwrap_or_default()
-                                        .as_millis();
+                                    // ITERATION 7: Debug checkpoint 2 - After timeline range calculation
                                     
                                     let time_range_ns = ((max_time - min_time) * 1_000_000_000.0) as u64;
                                     let contextual_zoom = NsPerPixel(time_range_ns / canvas_width as u64);
                                     
-                                    zoon::println!("🚨 ITERATION 7 - TIMING: Timeline range calculated in {}ms", 
-                                        checkpoint_2 - checkpoint_1);
+                                    zoon::println!("🚨 ITERATION 7: Timeline range calculated");
                                     
                                     // ITERATION 6: Enhanced clamping logic debug
                                     let min_zoom = NsPerPixel(1_000); // 1μs/px (very zoomed in)
@@ -542,18 +532,9 @@ impl WaveformTimeline {
                                     
                                     ns_per_pixel_handle.set(clamped_zoom);
                                     
-                                    // ITERATION 7: Final timing checkpoint
-                                    let end_time = std::time::SystemTime::now()
-                                        .duration_since(std::time::UNIX_EPOCH)
-                                        .unwrap_or_default()
-                                        .as_millis();
+                                    // ITERATION 7: Final debug checkpoint
                                     
-                                    zoon::println!("🚨 ITERATION 7 - FINAL TIMING: Total R key calculation took {}ms", 
-                                        end_time - start_time);
-                                    zoon::println!("   Breakdown: State+Canvas={}ms, Timeline={}ms, Clamping={}ms", 
-                                        checkpoint_1 - start_time, 
-                                        checkpoint_2 - checkpoint_1, 
-                                        end_time - checkpoint_2);
+                                    zoon::println!("🚨 ITERATION 7 - FINAL: R key calculation completed successfully");
                                         
                                     // ITERATION 8: COMPREHENSIVE SUMMARY per R key press
                                     zoon::println!("═══════════════════════════════════════════════════════");
@@ -591,10 +572,46 @@ impl WaveformTimeline {
                             None => break,
                         }
                     }
+                    event = canvas_resized.next() => {
+                        match event {
+                            Some((new_width, _height)) => {
+                                // ✅ PROPER FIX: Get current viewport range from viewport actor signal
+                                if let Some(current_viewport) = viewport_for_ns_per_pixel.signal().to_stream().next().await {
+                                    let viewport_range_ns = current_viewport.end.nanos() - current_viewport.start.nanos();
+                                    let corrected_ns_per_pixel = NsPerPixel(viewport_range_ns / new_width as u64);
+                                    
+                                    zoon::println!("🔍 VIEWPORT DEBUG: Canvas resize detected");
+                                    zoon::println!("   Canvas width: {} px", new_width);
+                                    zoon::println!("   Viewport start: {} ns ({:.6}s)", current_viewport.start.nanos(), current_viewport.start.display_seconds());
+                                    zoon::println!("   Viewport end: {} ns ({:.6}s)", current_viewport.end.nanos(), current_viewport.end.display_seconds());
+                                    zoon::println!("   Viewport range: {} ns ({:.6}s)", viewport_range_ns, viewport_range_ns as f64 / 1_000_000_000.0);
+                                    zoon::println!("   Calculated zoom: {} ({:.3}ms/px)", corrected_ns_per_pixel, corrected_ns_per_pixel.nanos() as f64 / 1_000_000.0);
+                                    
+                                    zoon::println!("📏 CANVAS RESIZED: {} px width → recalculating zoom to {} (using actual viewport {:.3}s-{:.3}s)", 
+                                        new_width, corrected_ns_per_pixel, 
+                                        current_viewport.start.display_seconds(),
+                                        current_viewport.end.display_seconds());
+                                    
+                                    // Only update if the calculation produces a different value
+                                    let current_ns_per_pixel = ns_per_pixel_handle.get();
+                                    if corrected_ns_per_pixel != current_ns_per_pixel {
+                                        ns_per_pixel_handle.set_neq(corrected_ns_per_pixel);
+                                        zoon::println!("✅ Updated ns_per_pixel from {} to {} using viewport range {}ns", 
+                                            current_ns_per_pixel, corrected_ns_per_pixel, viewport_range_ns);
+                                    } else {
+                                        zoon::println!("⏸️ No change needed - zoom already correct for viewport range {}ns", viewport_range_ns);
+                                    }
+                                } else {
+                                    zoon::println!("⚠️ Could not get current viewport for canvas resize calculation");
+                                }
+                            }
+                            None => break,
+                        }
+                    }
                     complete => break,
                 }
             }
-        });
+        }});
         
         // Create coordinates actor for unified timeline coordinate system
         let coordinates = Actor::new(
@@ -710,8 +727,10 @@ impl WaveformTimeline {
         });
         
         // Canvas dimension actors
-        let canvas_width = Actor::new(800.0_f32, async move |width_handle| {
-            let mut canvas_resized = canvas_resized_stream;
+        let canvas_width = Actor::new(800.0_f32, {
+            let canvas_resized_relay_clone = canvas_resized_relay.clone();
+            async move |width_handle| {
+                let mut canvas_resized = canvas_resized_relay_clone.subscribe();
             
             loop {
                 select! {
@@ -726,7 +745,7 @@ impl WaveformTimeline {
                     complete => break,
                 }
             }
-        });
+        }});
         
         let canvas_height = Actor::new(400.0_f32, {
             let canvas_resized_relay_clone = canvas_resized_relay.clone();
@@ -1840,7 +1859,10 @@ pub fn viewport_signal() -> impl zoon::Signal<Item = Viewport> {
 
 /// Get ns per pixel signal (replaces _TIMELINE_NS_PER_PIXEL.signal())
 pub fn ns_per_pixel_signal() -> impl zoon::Signal<Item = NsPerPixel> {
-    crate::actors::global_domains::waveform_timeline_domain().ns_per_pixel.signal()
+    crate::actors::global_domains::waveform_timeline_domain().ns_per_pixel.signal().map(|value| {
+        zoon::println!("📊 UI NS_PER_PIXEL SIGNAL: Actor emitting {}", value);
+        value
+    })
 }
 
 /// Get coordinates signal (replaces _TIMELINE_COORDINATES.signal())
@@ -2139,10 +2161,34 @@ pub fn set_cursor_position_if_changed(time_ns: TimeNs) {
 pub fn set_viewport_if_changed(new_viewport: Viewport) {
     let current_viewport = current_viewport();
     
+    // DEBUG: Track all viewport change attempts to catch the 1s corruption
+    zoon::println!("🔍 SET_VIEWPORT_IF_CHANGED: Attempt to change viewport");
+    zoon::println!("   Current: {:.6}s to {:.6}s (span: {:.6}s)", 
+        current_viewport.start.display_seconds(), 
+        current_viewport.end.display_seconds(),
+        current_viewport.duration().display_seconds());
+    zoon::println!("   New:     {:.6}s to {:.6}s (span: {:.6}s)", 
+        new_viewport.start.display_seconds(), 
+        new_viewport.end.display_seconds(),
+        new_viewport.duration().display_seconds());
+    
+    if new_viewport.duration().display_seconds() <= 1.1 {
+        zoon::println!("🚨 VIEWPORT CORRUPTION BLOCKED: Attempted to set {}s viewport - violates NO FALLBACKS rule!", 
+            new_viewport.duration().display_seconds());
+        zoon::println!("   ✅ PRESERVING existing viewport: {:.6}s to {:.6}s", 
+            current_viewport.start.display_seconds(), current_viewport.end.display_seconds());
+        return; // Block the corruption, preserve current viewport
+    }
+    
     // Only emit event if value actually changed
     if current_viewport != new_viewport {
+        zoon::println!("   Status: CHANGING viewport from {:.6}s-{:.6}s to {:.6}s-{:.6}s", 
+            current_viewport.start.display_seconds(), current_viewport.end.display_seconds(),
+            new_viewport.start.display_seconds(), new_viewport.end.display_seconds());
         let viewport_tuple = (new_viewport.start.display_seconds(), new_viewport.end.display_seconds());
         viewport_changed_relay().send(viewport_tuple);
+    } else {
+        zoon::println!("   Status: No change needed");
     }
 }
 
@@ -2170,7 +2216,6 @@ pub fn set_ns_per_pixel_if_changed(new_ns_per_pixel: NsPerPixel) {
 
 /// Set canvas dimensions through domain event (replacement for bridge function)
 pub fn set_canvas_dimensions(width: f32, height: f32) {
-    zoon::println!("🔧 CANVAS: Sending resize event to Actor: {}x{} px", width, height);
     canvas_resized_relay().send((width, height));
 }
 

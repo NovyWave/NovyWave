@@ -250,11 +250,44 @@ Task::start(async move {
 - **Technical debt** - Makes codebase harder to understand and maintain
 - **Not reactive** - Defeats the purpose of reactive architecture
 
+### CRITICAL: No Artificial Timer::sleep Delays
+
+**❌ NEVER use Timer::sleep() for timing coordination:**
+```rust
+// ❌ PROHIBITED: Artificial timing delays
+zoon::Timer::sleep(10).await;  // "Fix" timing issues with delay
+Timer::sleep(1000).await;      // Wait for data to be available
+```
+
+**Why Timer::sleep() delays are wrong:**
+- **Error-prone**: Arbitrary delays don't guarantee data availability
+- **Fragile**: Hardware differences change timing requirements
+- **Non-deterministic**: Race conditions still exist, just harder to reproduce
+- **Maintenance nightmare**: Mysterious timing dependencies throughout codebase
+
 ### Proper Solutions
+
+**✅ CORRECT: Use proper async coordination:**
+```rust
+// ✅ Use Task::next_macro_tick() for event loop yielding
+Task::next_macro_tick().await;  // Yield to event loop properly
+
+// ✅ Use signal-based waiting for actual data availability
+let data = some_signal.to_stream().next().await.expect("Data should be available");
+
+// ✅ Use Actor model for proper state synchronization
+let actor = Actor::new(State::default(), async move |state| {
+    // Proper state management with event coordination
+});
+```
+
+**Core Principles:**
 1. **Fix signal initialization order** - Ensure signals emit initial values properly
 2. **Fix dependency chains** - Make sure all signal dependencies are correct
 3. **Proper Actor+Relay setup** - Connect signals to real state changes
 4. **Startup lifecycle management** - Load config before UI initialization
+5. **Use Task::next_macro_tick()** - For proper event loop coordination
+6. **Signal-based waiting** - Wait for actual conditions, not arbitrary time
 
 ```rust
 // ✅ CORRECT: Fix the root cause

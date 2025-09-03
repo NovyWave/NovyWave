@@ -148,29 +148,38 @@ impl UnifiedTimelineService {
 
     /// Reset circuit breaker and caches for specific variables (public method)
     pub fn reset_circuit_breakers_for_variables(signal_ids: &[String]) {
-        let mut breaker_map = CIRCUIT_BREAKER.lock_mut();
-        let mut empty_cache = EMPTY_RESULT_CACHE.lock_mut();
+        let mut breaker_reset_count = 0;
+        let mut empty_cache_reset_count = 0;
+        let mut cursor_cache_reset_count = 0;
         
-        for signal_id in signal_ids {
-            if breaker_map.contains_key(signal_id) {
-                zoon::println!("🔄 RESET: Manually reset circuit breaker for variable {}", signal_id);
-                breaker_map.remove(signal_id);
-            }
+        // Batch operations to reduce lock contention
+        {
+            let mut breaker_map = CIRCUIT_BREAKER.lock_mut();
+            let mut empty_cache = EMPTY_RESULT_CACHE.lock_mut();
             
-            if empty_cache.contains_key(signal_id) {
-                zoon::println!("🗑️ RESET: Cleared empty cache for variable {}", signal_id);
-                empty_cache.remove(signal_id);
+            for signal_id in signal_ids {
+                if breaker_map.remove(signal_id).is_some() {
+                    breaker_reset_count += 1;
+                }
+                if empty_cache.remove(signal_id).is_some() {
+                    empty_cache_reset_count += 1;
+                }
             }
         }
         
-        // Clear cached cursor values to force fresh requests
+        // Clear cached cursor values in separate lock scope
         {
             let mut cache = UNIFIED_TIMELINE_CACHE.lock_mut();
             for signal_id in signal_ids {
-                cache.cursor_values.remove(signal_id);
-                zoon::println!("💾 RESET: Cleared cursor value cache for variable {}", signal_id);
+                if cache.cursor_values.remove(signal_id).is_some() {
+                    cursor_cache_reset_count += 1;
+                }
             }
         }
+        
+        // Single summary log instead of per-variable spam
+        zoon::println!("🔄 CACHE RESET: Cleared {} circuit breakers, {} empty caches, {} cursor caches for {} variables", 
+            breaker_reset_count, empty_cache_reset_count, cursor_cache_reset_count, signal_ids.len());
         
         // CRITICAL: Force signal re-evaluation by triggering cache signal
         Self::force_signal_reevaluation();

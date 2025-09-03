@@ -915,6 +915,84 @@ value: some_complex_function_that_returns_hardcoded_value(), // Hidden hardcodin
 
 **Remember: Hardcoded values that look dynamic are debugging time bombs that will waste hours of your life.**
 
+### CRITICAL: NEVER Use Numeric Hardcoded Values
+
+**❌ ABSOLUTELY PROHIBITED: Numeric constants in business logic**
+```rust
+// ❌ DISASTER: Hardcoded numeric values create maintenance nightmares
+let stable_viewport_range_ns = 250_000_000_000_u64; // Hardcoded 250 seconds
+let default_canvas_width = 800.0; // Hardcoded canvas size
+let timeout_ms = 5000; // Hardcoded timeout
+
+// ❌ Even with "good" variable names, still hardcoded
+let TIMELINE_DURATION_NS = 250_000_000_000_u64; // Still hardcoded!
+```
+
+**✅ CORRECT: Use proper data sources**
+```rust
+// ✅ Get actual viewport range from Actor state
+let viewport_range_ns = viewport_actor.signal().map(|v| v.end.nanos() - v.start.nanos());
+
+// ✅ Get actual canvas dimensions from DOM/signals
+let canvas_width = current_canvas_width();
+
+// ✅ Get timeouts from configuration
+let timeout_ms = app_config().network_timeout_ms;
+```
+
+**ONLY Exception: Debug/temporary fixes with explicit TODO**
+```rust
+// TODO: REMOVE DEBUG HARDCODED VALUE once viewport actor signal access is fixed
+// CRITICAL: This 250s hardcode prevents viewport corruption during resize,
+// but must be replaced with proper viewport_actor.signal() access
+let stable_viewport_range_ns = 250_000_000_000_u64; // 250 seconds - DEBUG ONLY
+```
+
+**Why numeric hardcoding is catastrophic:**
+- **Data changes**: Real timelines aren't always 250s - FST files can be microseconds to hours
+- **Configuration drift**: Hardcoded values become stale when configs change
+- **Testing issues**: Unit tests with different data sizes break with hardcoded assumptions
+- **Maintenance hell**: Finding and updating scattered numeric constants across codebase
+
+### Conditional Logging Antipattern
+
+**❌ CRITICAL ANTIPATTERN: Hardcoded conditional logging thresholds**
+
+```rust
+// ❌ DISASTER: Hardcoded magic numbers in logging conditions
+if width > 520.0 || height > 100.0 {
+    zoon::println!("🔧 CANVAS: Resized to {}x{} px", width, height);
+}
+
+// ❌ Future debugging nightmare: What are 520.0 and 100.0?
+// - Are these canvas sizes? Screen dimensions? Arbitrary thresholds?
+// - Will break when debugging smaller screens or different layouts
+// - No context for why these specific numbers were chosen
+```
+
+**Why this is catastrophic:**
+- **Debugging blindness**: Silent failures when values fall below arbitrary thresholds
+- **Future developer confusion**: No context for why these specific numbers exist
+- **Layout dependency**: Breaks when UI layout changes (responsive design, different screen sizes)
+- **False debugging assumptions**: Developer assumes logging covers all cases
+
+**✅ CORRECT approaches:**
+```rust
+// Option 1: Log everything (if performance allows)
+zoon::println!("🔧 CANVAS: Resized to {}x{} px", width, height);
+
+// Option 2: Conditional logging with clear semantic meaning
+const CANVAS_MIN_LOGGABLE_SIZE: f32 = 100.0; // Document why this threshold exists
+if width >= CANVAS_MIN_LOGGABLE_SIZE {
+    zoon::println!("🔧 CANVAS: Resized to {}x{} px", width, height);
+}
+
+// Option 3: Remove logging entirely if it's not essential
+// (Often the best choice for frequent events like resize)
+```
+
+**Key principle:** If logging is causing performance issues, reduce by removing entire log categories, not by adding mysterious conditional thresholds.
+
 ## Work Integrity & Problem-Solving Ethics
 
 ### No Shortcuts or Paper-Over Solutions
