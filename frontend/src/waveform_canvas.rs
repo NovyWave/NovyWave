@@ -640,17 +640,17 @@ async fn create_canvas_element() -> impl Element {
         let timeline_domain = waveform_timeline_domain();
         map_ref! {
             let theme_value = app_config().theme_actor.signal(),
-            let _zoom_state = ns_per_pixel_signal(),
-            let _cursor_pos = timeline_domain.cursor_position_signal(),
-            let _zoom_center = zoom_center_ns_signal(),
+            let zoom_state = ns_per_pixel_signal(),
+            let cursor_pos = timeline_domain.cursor_position_signal(),
+            let zoom_center = timeline_domain.zoom_center_signal(),
             let _cache_trigger = crate::unified_timeline_service::UnifiedTimelineService::cache_signal(),
             let _hover_trigger = HOVER_INFO.signal_ref(|_| ()),
             let _force_redraw = crate::actors::waveform_timeline::force_redraw_signal(),
             let _variables_changed = crate::actors::selected_variables::variables_signal() => {
-                // Convert theme once for unified update
-                convert_theme(&theme_value)
+                // Return tuple of all values that should trigger canvas updates
+                (convert_theme(&theme_value), *zoom_state, *cursor_pos, *zoom_center)
             }
-        }.dedupe_cloned().for_each(move |novyui_theme| {
+        }.dedupe_cloned().for_each(move |(novyui_theme, _zoom_state, _cursor_pos, _zoom_center)| {
             let canvas_wrapper_unified = canvas_wrapper_unified.clone();
             async move {
                 // PROPER ASYNC COORDINATION: Yield to event loop to ensure data availability
@@ -964,6 +964,9 @@ async fn create_canvas_element() -> impl Element {
             let coords = current_coordinates();
             let mouse_time = coords.mouse_to_time(mouse_x as u32);
             waveform_timeline.mouse_moved_relay.send((mouse_x as f32, mouse_time));
+            
+            // Update zoom center to follow mouse position (blue vertical line)
+            crate::actors::waveform_timeline::set_zoom_center_follow_mouse(mouse_time);
             
             // TODO: Remove when domain handles all mouse tracking
             MOUSE_X_POSITION.set_neq(mouse_x as f32);

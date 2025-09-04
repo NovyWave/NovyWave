@@ -1694,7 +1694,12 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                                     .item(kbd("W").size(KbdSize::Small).variant(KbdVariant::Outlined).title("Zoom in • Shift+W: Zoom in faster").build())
                                                                     .item(
                                                                         El::new()
-                                                                            .s(Width::exact(45))
+                                                                            .update_raw_el(|raw_el| {
+                                                                                raw_el
+                                                                                    .style("min-width", "45px")
+                                                                                    .style("width", "fit-content")
+                                                                                    .style("max-width", "80px")
+                                                                            })
                                                                             .s(Font::new().color_signal(neutral_11()).center())
                                                                             .child(
                                                                                 Text::with_signal(
@@ -1789,7 +1794,12 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                                     .item(kbd("Q").size(KbdSize::Small).variant(KbdVariant::Outlined).title("Move cursor left • Shift+Q: Jump to previous transition").build())
                                                                     .item(
                                                                         El::new()
-                                                                            .s(Width::exact(45))
+                                                                            .update_raw_el(|raw_el| {
+                                                                                raw_el
+                                                                                    .style("min-width", "45px")
+                                                                                    .style("width", "fit-content")
+                                                                                    .style("max-width", "90px")
+                                                                            })
                                                                             .s(Font::new().color_signal(neutral_11()).center())
                                                                             .child(
                                                                                 Text::with_signal(

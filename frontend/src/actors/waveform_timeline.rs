@@ -157,6 +157,15 @@ pub struct WaveformTimeline {
     /// User pressed reset zoom center key
     pub reset_zoom_center_pressed_relay: Relay<()>,
     
+    /// Center timeline cursor at viewport center
+    pub cursor_center_at_viewport_relay: Relay<()>,
+    
+    /// Reset zoom center to 0s
+    pub zoom_center_reset_to_zero_relay: Relay<()>,
+    
+    /// Update zoom center to follow mouse position  
+    pub zoom_center_follow_mouse_relay: Relay<TimeNs>,
+    
     /// User clicked fit all button
     pub fit_all_clicked_relay: Relay<()>,
     
@@ -223,6 +232,9 @@ impl WaveformTimeline {
         let (jump_to_next_pressed_relay, _jump_to_next_pressed_stream) = relay::<()>();
         let (reset_zoom_pressed_relay, reset_zoom_pressed_stream) = relay::<()>();
         let (reset_zoom_center_pressed_relay, reset_zoom_center_pressed_stream) = relay::<()>();
+        let (cursor_center_at_viewport_relay, cursor_center_at_viewport_stream) = relay::<()>();
+        let (zoom_center_reset_to_zero_relay, zoom_center_reset_to_zero_stream) = relay::<()>();
+        let (zoom_center_follow_mouse_relay, zoom_center_follow_mouse_stream) = relay::<TimeNs>();
         let (fit_all_clicked_relay, fit_all_clicked_stream) = relay::<()>();
         
         // Create relays for system events
@@ -239,6 +251,7 @@ impl WaveformTimeline {
             let mut cursor_moved = cursor_moved_stream;
             let mut left_key_pressed = left_key_pressed_stream;
             let mut right_key_pressed = right_key_pressed_stream;
+            let mut cursor_center_at_viewport = cursor_center_at_viewport_stream;
             
             loop {
                 select! {
@@ -275,6 +288,20 @@ impl WaveformTimeline {
                                 *current = TimeNs::from_nanos(new_time);
                                 zoon::println!("🎯 CURSOR: Right key pressed - moved from {}ns to {}ns (step: {}ns)", old_time, new_time, step_size);
                             }),
+                            None => break,
+                        }
+                    }
+                    event = cursor_center_at_viewport.next() => {
+                        match event {
+                            Some(()) => {
+                                // Center cursor at viewport center
+                                let viewport = crate::actors::waveform_timeline::current_viewport();
+                                let center_time = TimeNs::from_external_seconds(
+                                    (viewport.start.display_seconds() + viewport.end.display_seconds()) / 2.0
+                                );
+                                cursor_handle.set(center_time);
+                                zoon::println!("🎯 CURSOR: Centered at viewport center: {}s", center_time.display_seconds());
+                            },
                             None => break,
                         }
                     }
@@ -335,6 +362,8 @@ impl WaveformTimeline {
         let ns_per_pixel = Actor::new(NsPerPixel::MEDIUM_ZOOM, {
             let canvas_resized_relay_clone = canvas_resized_relay.clone();
             let viewport_for_ns_per_pixel = viewport.clone();
+            let cursor_center_at_viewport_relay_clone = cursor_center_at_viewport_relay.clone();
+            let zoom_center_reset_to_zero_relay_clone = zoom_center_reset_to_zero_relay.clone();
             async move |ns_per_pixel_handle| {
                 let mut zoom_in_started = zoom_in_started_stream;
                 let mut zoom_out_started = zoom_out_started_stream;
@@ -532,6 +561,10 @@ impl WaveformTimeline {
                                     
                                     ns_per_pixel_handle.set(clamped_zoom);
                                     
+                                    // R key: Trigger cursor centering and zoom center reset
+                                    cursor_center_at_viewport_relay_clone.send(());
+                                    zoom_center_reset_to_zero_relay_clone.send(());
+                                    
                                     // ITERATION 7: Final debug checkpoint
                                     
                                     zoon::println!("🚨 ITERATION 7 - FINAL: R key calculation completed successfully");
@@ -557,8 +590,8 @@ impl WaveformTimeline {
                         match event {
                             Some(()) => {
                                 zoon::println!("🔧 Z KEY: Reset zoom center pressed (ns_per_pixel Actor)");
-                                // Note: Zoom center reset is handled by cursor_position Actor
-                                // This is just for logging/debugging
+                                // Z key: Trigger zoom center reset to 0s
+                                zoom_center_reset_to_zero_relay_clone.send(());
                             }
                             None => break,
                         }
@@ -722,8 +755,33 @@ impl WaveformTimeline {
         });
         
         // Zoom center actor
-        let zoom_center = Actor::new(TimeNs::ZERO, async move |_handle| {
-            loop { futures::future::pending::<()>().await; }
+        let zoom_center = Actor::new(TimeNs::ZERO, async move |zoom_center_handle| {
+            let mut zoom_center_reset_to_zero = zoom_center_reset_to_zero_stream;
+            let mut zoom_center_follow_mouse = zoom_center_follow_mouse_stream;
+            
+            loop {
+                select! {
+                    event = zoom_center_reset_to_zero.next() => {
+                        match event {
+                            Some(()) => {
+                                zoom_center_handle.set(TimeNs::ZERO);
+                                zoon::println!("🎯 ZOOM CENTER: Reset to 0s");
+                            },
+                            None => break,
+                        }
+                    }
+                    event = zoom_center_follow_mouse.next() => {
+                        match event {
+                            Some(time_ns) => {
+                                zoom_center_handle.set(time_ns);
+                                zoon::println!("🎯 ZOOM CENTER: Following mouse at {}s", time_ns.display_seconds());
+                            },
+                            None => break,
+                        }
+                    }
+                    complete => break,
+                }
+            }
         });
         
         // Canvas dimension actors
@@ -911,6 +969,9 @@ impl WaveformTimeline {
             jump_to_next_pressed_relay,
             reset_zoom_pressed_relay,
             reset_zoom_center_pressed_relay,
+            cursor_center_at_viewport_relay,
+            zoom_center_reset_to_zero_relay,
+            zoom_center_follow_mouse_relay,
             fit_all_clicked_relay,
             
             // System event relays
@@ -1159,6 +1220,9 @@ impl WaveformTimeline {
         let jump_to_next_pressed_relay = Relay::new();
         let reset_zoom_pressed_relay = Relay::new();
         let reset_zoom_center_pressed_relay = Relay::new();
+        let cursor_center_at_viewport_relay = Relay::new();
+        let zoom_center_reset_to_zero_relay = Relay::new();
+        let zoom_center_follow_mouse_relay = Relay::new();
         let fit_all_clicked_relay = Relay::new();
         let data_loaded_relay = Relay::new();
         let transitions_cached_relay = Relay::new();
@@ -1217,6 +1281,9 @@ impl WaveformTimeline {
             jump_to_next_pressed_relay,
             reset_zoom_pressed_relay,
             reset_zoom_center_pressed_relay,
+            cursor_center_at_viewport_relay,
+            zoom_center_reset_to_zero_relay,
+            zoom_center_follow_mouse_relay,
             fit_all_clicked_relay,
             data_loaded_relay,
             transitions_cached_relay,
@@ -2155,6 +2222,11 @@ pub fn set_cursor_position_if_changed(time_ns: TimeNs) {
     if current_ns != time_ns {
         cursor_moved_relay().send(time_ns);
     }
+}
+
+/// Update zoom center to follow mouse position (for blue vertical line)
+pub fn set_zoom_center_follow_mouse(time_ns: TimeNs) {
+    get_waveform_timeline().zoom_center_follow_mouse_relay.send(time_ns);
 }
 
 /// Set viewport if changed (replacement for bridge function)

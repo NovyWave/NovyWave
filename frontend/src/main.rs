@@ -506,22 +506,16 @@ fn main_layout() -> impl Element {
                     "r" | "R" => {
                         zoon::println!("🔧 R KEY: User pressed R key - sending reset_zoom event");
                         
-                        // R: Reset zoom using WaveformTimeline domain
+                        // R: Reset zoom using WaveformTimeline domain only
                         let waveform_timeline = crate::actors::waveform_timeline_domain();
                         waveform_timeline.reset_zoom_pressed_relay.send(());
-                        
-                        // Legacy function call for backward compatibility (will be removed)
-                        crate::waveform_canvas::reset_zoom_to_fit_all();
                         
                         zoon::println!("🔧 R KEY: Reset zoom completed");
                     },
                     "z" | "Z" => {
-                        // Z: Reset zoom center using WaveformTimeline domain
+                        // Z: Reset zoom center using WaveformTimeline domain only
                         let waveform_timeline = crate::actors::waveform_timeline_domain();
                         waveform_timeline.reset_zoom_center_pressed_relay.send(());
-                        
-                        // Legacy function call for backward compatibility (will be removed)
-                        crate::waveform_canvas::reset_zoom_center();
                     },
                     _ => {} // Ignore other keys
                 }
