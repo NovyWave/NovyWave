@@ -881,7 +881,12 @@ impl WaveformTimeline {
                 select! {
                     event = redraw_requested.next() => {
                         match event {
-                            Some(()) => redraw_handle.update_mut(|counter| *counter += 1),
+                            Some(()) => {
+                                redraw_handle.update_mut(|counter| {
+                                    *counter += 1;
+                                    zoon::println!("🎨 FORCE_REDRAW: Incremented counter to {} (triggered by redraw_requested_relay)", *counter);
+                                });
+                            },
                             None => break,
                         }
                     }
@@ -2037,7 +2042,8 @@ pub fn processed_canvas_cache_signal() -> impl zoon::Signal<Item = HashMap<Strin
 
 /// Get force redraw signal (replaces FORCE_REDRAW.signal())
 pub fn force_redraw_signal() -> impl zoon::Signal<Item = u32> {
-    WaveformTimeline::force_redraw_signal_static()
+    // Use real domain actor signal instead of static fallback
+    get_waveform_timeline().force_redraw.signal()
 }
 
 /// Get last redraw time signal (replaces LAST_REDRAW_TIME.signal())
@@ -2159,6 +2165,13 @@ pub fn current_cursor_position() -> TimeNs {
 /// Get current cursor position in seconds synchronously
 pub fn current_cursor_position_seconds() -> f64 {
     current_cursor_position().display_seconds()
+}
+
+/// Get current zoom center position in seconds synchronously
+pub fn current_zoom_center_seconds() -> f64 {
+    // TODO: Complete architecture migration - for now use legacy global
+    // Eventually this should use domain actor cache pattern like cursor
+    crate::state::ZOOM_CENTER_NS.get().display_seconds()
 }
 
 /// Get current viewport synchronously (replacement for bridge function)

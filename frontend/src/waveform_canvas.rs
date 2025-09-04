@@ -7,7 +7,7 @@ use crate::actors::waveform_timeline::{
 };
 // Most other functions removed as unused, but these are needed for zoom functionality
 // MIGRATED: Canvas dimensions, zoom/pan flags, mouse tracking now from actors/waveform_timeline.rs
-use crate::actors::waveform_timeline::{current_cursor_position, current_cursor_position_seconds, current_viewport,
+use crate::actors::waveform_timeline::{current_cursor_position, current_cursor_position_seconds, current_zoom_center_seconds, current_viewport,
     set_cursor_position, set_cursor_position_if_changed, set_cursor_position_seconds,
     set_viewport_if_changed, viewport_signal,
     current_ns_per_pixel, set_ns_per_pixel_if_changed, ns_per_pixel_signal,
@@ -686,8 +686,9 @@ async fn create_canvas_element() -> impl Element {
                     }
                     
                     let cursor_pos = current_cursor_position_seconds();
-                    // Use direct creation function for reliable rendering
-                    *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &novyui_theme, cursor_pos);
+                    // Use direct creation function for reliable rendering - now with domain zoom center
+                    let zoom_center_pos = _zoom_center.display_seconds(); // Use the domain actor zoom center signal
+                    *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &novyui_theme, cursor_pos, zoom_center_pos);
                 });
             }
         }).await;
@@ -756,7 +757,8 @@ async fn create_canvas_element() -> impl Element {
                     let canvas_width = current_canvas_width();
                     let canvas_height = current_canvas_height();
                     let novyui_theme = CURRENT_THEME_CACHE.get();
-                    *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &novyui_theme, cursor_pos);
+                    let zoom_center_pos = current_zoom_center_seconds();
+                    *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &novyui_theme, cursor_pos, zoom_center_pos);
                 });
             }
         }).await;
@@ -925,7 +927,8 @@ async fn create_canvas_element() -> impl Element {
                     canvas_wrapper_for_click.borrow_mut().update_objects(move |objects| {
                         let selected_vars = crate::actors::selected_variables::current_variables();
                         let novyui_theme = CURRENT_THEME_CACHE.get();
-                        *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &novyui_theme, clamped_time_seconds);
+                        let zoom_center_pos = current_zoom_center_seconds();
+                        *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &novyui_theme, clamped_time_seconds, zoom_center_pos);
                     });
                 }
             }
@@ -2275,7 +2278,7 @@ fn update_canvas_objects_incrementally(
         // Clear cache and force full redraw
         VARIABLE_OBJECT_CACHE.lock_mut().clear();
         return create_waveform_objects_with_dimensions_and_theme(
-            current_vars, canvas_width, canvas_height, theme, cursor_position
+            current_vars, canvas_width, canvas_height, theme, cursor_position, current_zoom_center_seconds()
         );
     }
     
@@ -2295,7 +2298,7 @@ fn update_canvas_objects_incrementally(
                 // Variable not cached - need to create it
                 drop(cache);
                 return create_waveform_objects_with_dimensions_and_theme(
-                    current_vars, canvas_width, canvas_height, theme, cursor_position
+                    current_vars, canvas_width, canvas_height, theme, cursor_position, current_zoom_center_seconds()
                 );
             }
         }
@@ -2348,10 +2351,11 @@ fn create_waveform_objects_with_theme(selected_vars: &[SelectedVariable], theme:
     let cursor_pos = current_cursor_position_seconds();
     let canvas_width = current_canvas_width();
     let canvas_height = current_canvas_height();
-    create_waveform_objects_with_dimensions_and_theme(selected_vars, canvas_width, canvas_height, theme, cursor_pos)
+    let zoom_center_pos = current_zoom_center_seconds();
+    create_waveform_objects_with_dimensions_and_theme(selected_vars, canvas_width, canvas_height, theme, cursor_pos, zoom_center_pos)
 }
 
-fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVariable], canvas_width: f32, canvas_height: f32, theme: &NovyUITheme, cursor_position: f64) -> Vec<fast2d::Object2d> {
+fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVariable], canvas_width: f32, canvas_height: f32, theme: &NovyUITheme, cursor_position: f64, zoom_center_position: f64) -> Vec<fast2d::Object2d> {
     let mut objects = Vec::new();
     
     // Canvas rendering starts
@@ -2687,9 +2691,7 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
         }
         
         // Add zoom center line spanning all rows (if different from cursor)  
-        // TODO: Replace with domain access
-        let zoom_center_ns = ZOOM_CENTER_NS.get();
-        let zoom_center_position = zoom_center_ns.display_seconds();
+        // ✅ FIXED: Now using domain actor zoom center instead of legacy global state
         if zoom_center_position >= min_time && zoom_center_position <= max_time && zoom_center_position != cursor_position {
             let zoom_center_x = ((zoom_center_position - min_time) / time_range) * canvas_width as f64;
             

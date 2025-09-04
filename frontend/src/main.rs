@@ -513,9 +513,13 @@ fn main_layout() -> impl Element {
                         zoon::println!("🔧 R KEY: Reset zoom completed");
                     },
                     "z" | "Z" => {
-                        // Z: Reset zoom center using WaveformTimeline domain only
+                        // Z: Reset zoom center and trigger timeline rerender using WaveformTimeline domain
                         let waveform_timeline = crate::actors::waveform_timeline_domain();
                         waveform_timeline.reset_zoom_center_pressed_relay.send(());
+                        
+                        // Also trigger timeline rerender to refresh the display
+                        waveform_timeline.redraw_requested_relay.send(());
+                        zoon::println!("🔧 Z KEY: Reset zoom center and triggered timeline rerender");
                     },
                     _ => {} // Ignore other keys
                 }
