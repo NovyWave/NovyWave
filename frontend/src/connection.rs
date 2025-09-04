@@ -77,6 +77,25 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                     // NEW: Immediately attempt per-file scope restoration
                     // This enables variable display as soon as each individual file loads
                     restore_scope_selection_for_file(loaded_file);
+                    
+                    // ✅ FIX: Send timeline bounds to WaveformTimeline Actor when file loads
+                    // Use get_maximum_timeline_range() to get actual file data, not current viewport
+                    if let Some((min_time, max_time)) = crate::waveform_canvas::get_maximum_timeline_range() {
+                        crate::actors::waveform_timeline::timeline_bounds_calculated_relay()
+                            .send((min_time, max_time));
+                        zoon::println!("🎯 FILE_LOADED: Sent timeline bounds to Actor: {:.6}s to {:.6}s (from actual file data)", min_time, max_time);
+                    } else {
+                        // Force timeline bounds calculation even when no variables selected
+                        zoon::println!("🎯 FILE_LOADED: get_maximum_timeline_range returned None, force-calculating bounds");
+                        let (file_min, file_max) = crate::waveform_canvas::get_full_file_range();
+                        if file_min < file_max && file_min.is_finite() && file_max.is_finite() {
+                            crate::actors::waveform_timeline::timeline_bounds_calculated_relay()
+                                .send((file_min, file_max));
+                            zoon::println!("🎯 FILE_LOADED: Force-sent timeline bounds to Actor: {:.6}s to {:.6}s (full file range)", file_min, file_max);
+                        } else {
+                            zoon::println!("🎯 FILE_LOADED: No valid file range available for timeline bounds");
+                        }
+                    }
                 }
                 
                 // Also maintain legacy LOADED_FILES for backward compatibility during transition
@@ -272,7 +291,7 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                         
                         // Check if cursor time is within this variable's file time range
                         let cursor_time = current_cursor_position_seconds();
-                        let within_time_range = is_cursor_within_variable_time_range(&unique_id, cursor_time);
+                        let within_time_range = is_cursor_within_variable_time_range(&unique_id, cursor_time.unwrap_or(0.0));
                         
                         let signal_value = if within_time_range {
                             if let Some(raw_binary) = result.raw_value {

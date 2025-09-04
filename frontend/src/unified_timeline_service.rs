@@ -689,7 +689,19 @@ impl UnifiedTimelineService {
                 let new_cursor = cursor_pos;
                 async move {
                     let mut cache = UNIFIED_TIMELINE_CACHE.lock_mut();
+                    let was_invalid_before = !cache.metadata.validity.cursor_valid;
                     cache.invalidate_cursor(new_cursor);
+                    let became_invalid = !cache.metadata.validity.cursor_valid;
+                    
+                    // Release lock before triggering signal
+                    drop(cache);
+                    
+                    // ✅ FIX: Trigger cache signal when cursor position changes to update variable values
+                    if (!was_invalid_before && became_invalid) || became_invalid {
+                        zoon::println!("🔄 CURSOR MOVED: Triggering cache signal to update variable values at {}s", new_cursor.display_seconds());
+                        let current_cache = UNIFIED_TIMELINE_CACHE.get_cloned();
+                        UNIFIED_TIMELINE_CACHE.set(current_cache);
+                    }
                 }
             }).await;
         });

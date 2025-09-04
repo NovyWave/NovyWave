@@ -149,7 +149,7 @@ pub fn main() {
             cursor_signal.for_each(move |cursor_pos| {
                 async move {
                     if cursor_pos.nanos() > 0 {
-                        zoon::println!("🔄 Cursor moved to {}ns - resetting circuit breakers and triggering queries", cursor_pos.nanos());
+                        // Cursor moved - triggering queries
                         
                         // Reset circuit breakers for all known variables
                         let problematic_variables = vec![
@@ -162,7 +162,7 @@ pub fn main() {
                         // Trigger fresh queries at new cursor position
                         Timer::sleep(100).await; // Brief delay for reset to take effect
                         crate::views::trigger_signal_value_queries();
-                        zoon::println!("🔄 Triggered fresh queries at cursor position {}ns", cursor_pos.nanos());
+                        // Fresh queries triggered at cursor position
                     }
                 }
             }).await;
@@ -230,9 +230,13 @@ pub fn main() {
 
 /// Check if cursor is within the currently visible timeline range
 pub fn is_cursor_in_visible_range(cursor_time: f64) -> bool {
-    let viewport = current_viewport();
-    let cursor_ns = crate::time_types::TimeNs::from_nanos((cursor_time * 1_000_000_000.0) as u64);
-    viewport.contains(cursor_ns)
+    match current_viewport() {
+        Some(viewport) => {
+            let cursor_ns = crate::time_types::TimeNs::from_nanos((cursor_time * 1_000_000_000.0) as u64);
+            viewport.contains(cursor_ns)
+        }
+        None => false // If viewport not initialized, cursor is not in visible range
+    }
 }
 
 
@@ -427,11 +431,11 @@ fn main_layout() -> impl Element {
             raw_el.global_event_handler(move |event: zoon::events::KeyDown| {
                 // CRITICAL DEBUG: Check if search input focus is blocking keyboard events
                 let search_focused = state::VARIABLES_SEARCH_INPUT_FOCUSED.get();
-                zoon::println!("🔧 KEYBOARD: Key '{}' pressed, search_focused: {}", event.key(), search_focused);
+                // Keyboard event captured
                 
                 // Skip timeline controls if typing in search input
                 if search_focused {
-                    zoon::println!("🚨 KEYBOARD BLOCKED: Search input has focus, ignoring key '{}'", event.key());
+                    // Keyboard blocked: search input has focus
                     return;
                 }
                 
@@ -441,27 +445,27 @@ fn main_layout() -> impl Element {
                         crate::state::IS_SHIFT_PRESSED.set_neq(true);
                     },
                     "w" | "W" => {
-                        zoon::println!("🔧 W KEY: Zoom in pressed - sending zoom_in event and triggering rerender");
+                        // W key: zoom in pressed
                         
                         // Zoom in using WaveformTimeline domain
                         let waveform_timeline = crate::actors::waveform_timeline_domain();
                         waveform_timeline.zoom_in_pressed_relay.send(());
                         waveform_timeline.redraw_requested_relay.send(()); // ✅ Trigger rerender like Z key
                         
-                        zoon::println!("🔧 W KEY: Zoom in completed");
+                        // Zoom in completed
                         
                         // ✅ FIXED: Removed legacy canvas call that was changing viewport range
                         // Legacy function removed: crate::waveform_canvas::start_smooth_zoom_in();
                     },
                     "s" | "S" => {
-                        zoon::println!("🔧 S KEY: Zoom out pressed - sending zoom_out event and triggering rerender");
+                        // S key: zoom out pressed
                         
                         // Zoom out using WaveformTimeline domain
                         let waveform_timeline = crate::actors::waveform_timeline_domain();
                         waveform_timeline.zoom_out_pressed_relay.send(());
                         waveform_timeline.redraw_requested_relay.send(()); // ✅ Trigger rerender like Z key
                         
-                        zoon::println!("🔧 S KEY: Zoom out completed");
+                        // Zoom out completed
                         
                         // ✅ FIXED: Removed legacy canvas call that was changing viewport range  
                         // Legacy function removed: crate::waveform_canvas::start_smooth_zoom_out();
@@ -515,29 +519,25 @@ fn main_layout() -> impl Element {
                         }
                     },
                     "r" | "R" => {
-                        zoon::println!("🔧 R KEY: User pressed R key - sending reset_zoom event");
+                        // R key: reset zoom pressed
                         
                         // R: Reset zoom using WaveformTimeline domain only
                         let waveform_timeline = crate::actors::waveform_timeline_domain();
                         waveform_timeline.reset_zoom_pressed_relay.send(());
                         
-                        zoon::println!("🔧 R KEY: Reset zoom completed");
+                        // Reset zoom completed
                     },
                     "z" | "Z" => {
-                        // Z: Reset cursor position to 0 AND zoom center to 0 using WaveformTimeline domain
+                        // Z: Move zoom center to 0 (keep cursor position unchanged)
                         let waveform_timeline = crate::actors::waveform_timeline_domain();
                         
-                        // ✅ CRITICAL FIX: Reset cursor position to 0 (this makes zoom center on time 0)
-                        zoon::println!("🔧 Z KEY: Sending cursor_clicked_relay with TimeNs::ZERO");
-                        waveform_timeline.cursor_clicked_relay.send(TimeNs::ZERO);
-                        zoon::println!("🔧 Z KEY: cursor_clicked_relay.send() completed");
+                        // ✅ CORRECT FIX: Reset ONLY zoom center to 0, do NOT move cursor
+                        // Z key: zoom center reset to 0
+                        waveform_timeline.zoom_center_reset_to_zero_relay.send(());
                         
-                        // Reset zoom center (though now redundant since cursor is the zoom center)
-                        waveform_timeline.reset_zoom_center_pressed_relay.send(());
-                        
-                        // Also trigger timeline rerender to refresh the display
+                        // Trigger timeline rerender to refresh the display
                         waveform_timeline.redraw_requested_relay.send(());
-                        zoon::println!("🔧 Z KEY: Reset cursor position to 0s and zoom center");
+                        // Zoom center reset completed
                     },
                     _ => {} // Ignore other keys
                 }

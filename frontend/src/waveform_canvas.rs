@@ -11,10 +11,11 @@ use crate::actors::waveform_timeline::{current_cursor_position, current_cursor_p
     set_cursor_position, set_cursor_position_if_changed, set_cursor_position_seconds,
     set_viewport_if_changed, viewport_signal,
     current_ns_per_pixel, set_ns_per_pixel_if_changed, ns_per_pixel_signal,
-    current_coordinates, current_canvas_width, current_canvas_height, set_canvas_dimensions};
+    current_coordinates, current_canvas_width, current_canvas_height, set_canvas_dimensions,
+    current_zoom_center_seconds};
 // MIGRATED: WaveformTimeline domain now initialized through actors/waveform_timeline.rs
 use crate::actors::global_domains::waveform_timeline_domain;
-use crate::time_types::{TimeNs, Viewport, NsPerPixel};
+use crate::time_types::{TimeNs, Viewport, NsPerPixel, TimelineCoordinates};
 use crate::platform::{Platform, CurrentPlatform};
 use crate::config::app_config;
 use shared::{SelectedVariable, UpMsg, SignalTransitionQuery, SignalTransition};
@@ -31,7 +32,8 @@ use palette::{Oklch, Srgb, IntoColor};
 // High-performance cursor movement constants
 const PIXELS_PER_FRAME: f64 = 20.0;      // Consistent 20-pixel movement per frame
 // Minimum range is now based on maximum zoom level (1 ns/pixel) 
-// For 800px canvas: minimum range = 800 ns
+// For any canvas: minimum range = MAX_ZOOM_IN * canvas_width
+// Example: 1000px canvas at 1ns/pixel = 1000ns minimum range
 fn get_min_valid_range_ns(canvas_width: u32) -> u64 {
     NsPerPixel::MAX_ZOOM_IN.nanos() * canvas_width as u64
 }
@@ -115,7 +117,10 @@ fn request_transitions_for_all_variables(time_range: Option<(f64, f64)>) {
     let signal_ids: Vec<String> = signal_requests.iter()
         .map(|req| format!("{}|{}|{}", req.file_path, req.scope_path, req.variable_name))
         .collect();
-    let cursor_time_ns = current_cursor_position();
+    let cursor_time_ns = match current_cursor_position() {
+        Some(cursor) => cursor,
+        None => return, // Timeline not initialized yet
+    };
     let _request_count = signal_requests.len(); // logging removed
     crate::unified_timeline_service::UnifiedTimelineService::request_cursor_values(signal_ids, cursor_time_ns);
     
@@ -337,16 +342,16 @@ fn get_theme_token_rgb(theme: &NovyUITheme, token: &str) -> (u8, u8, u8, f32) {
 pub fn clear_processed_signal_cache() {
     // ✅ CRITICAL FIX: Clear the processed canvas cache when zoom/viewport changes  
     // This forces fresh coordinate calculations with new zoom level/viewport
-    zoon::println!("🔄 CLEAR_PROCESSED_CACHE: Clearing canvas cache due to zoom/viewport change");
+    // Clearing canvas cache due to state change
     
     // Trigger a redraw using the proper relay - this forces canvas to re-render with fresh data
     crate::actors::waveform_timeline::redraw_requested_relay().send(());
-    zoon::println!("✅ CLEAR_PROCESSED_CACHE: Triggered redraw via relay");
+    // Canvas redraw triggered
     
     // Also manually force a data request for all currently selected variables with new viewport
     let current_range = get_current_timeline_range();
     request_transitions_for_all_variables(current_range);
-    zoon::println!("✅ CLEAR_PROCESSED_CACHE: Requested fresh data for viewport: {:?}", current_range);
+    // Viewport data refresh requested
 }
 
 // Convert shared theme to NovyUI theme
@@ -453,16 +458,26 @@ pub fn waveform_canvas() -> impl Element {
 /// Validate and recover initial timeline state on startup  
 fn validate_startup_state_with_canvas_width(actual_canvas_width: f32) {
     // Debug canvas width and zoom calculation - triggered by validation
-    let cursor_pos = current_cursor_position_seconds();
-    let ns_per_pixel = current_ns_per_pixel();
-    let viewport = current_viewport();
+    let cursor_pos = match current_cursor_position_seconds() {
+        Some(pos) => pos,
+        None => return, // Timeline not initialized yet
+    };
+    let ns_per_pixel = match current_ns_per_pixel() {
+        Some(ns_per_pixel) => ns_per_pixel,
+        None => return, // Timeline not initialized yet
+    };
+    let viewport = match current_viewport() {
+        Some(viewport) => viewport,
+        None => return, // Timeline not initialized yet
+    };
     let start = viewport.start.display_seconds();
     let end = viewport.end.display_seconds();
     
     // CRITICAL: Use actual canvas width from DOM, not cached Actor value  
     let canvas_width = actual_canvas_width as u32;
     let viewport_range_ns = viewport.end.nanos() - viewport.start.nanos();
-    let calculated_ns_per_pixel = NsPerPixel(viewport_range_ns / canvas_width as u64);
+    // Fix: Use proper rounding instead of truncated integer division
+    let calculated_ns_per_pixel = NsPerPixel((viewport_range_ns + canvas_width as u64 / 2) / canvas_width as u64);
     
     
     // Check if any values are invalid
@@ -471,25 +486,30 @@ fn validate_startup_state_with_canvas_width(actual_canvas_width: f32) {
        ns_per_pixel.nanos() == 0 || start >= end || (end - start) < min_valid_range {
         
         crate::debug_utils::debug_timeline_validation("STARTUP: Invalid timeline state detected, applying recovery");
-        zoon::println!("🚨 TIMELINE STARTUP 1: RECOVERY NEEDED - Invalid state detected");
+        // Timeline startup: Invalid state detected, attempting recovery
         
         // STARTUP FIX: Try to use actual file data instead of hardcoded 1s fallback
         let recovery_viewport = if let Some((file_min, file_max)) = get_current_timeline_range() {
             let file_span = file_max - file_min;
             if file_span > 10.0 {  // Substantial file data (VCD with 250s span)
-                zoon::println!("✅ STARTUP FIX: Using file data for recovery: {:.6}s to {:.6}s (span: {:.6}s)", 
-                    file_min, file_max, file_span);
+                // Recovery: Using available file data for timeline bounds
                 Viewport::new(
                     TimeNs::from_external_seconds(file_min), 
                     TimeNs::from_external_seconds(file_max)
                 )
             } else {
                 zoon::println!("⚠️ File data too small detected, but NO FALLBACKS rule - keeping existing viewport");
-                current_viewport() // Keep existing viewport instead of 1s fallback
+                match current_viewport() {
+                    Some(viewport) => viewport,
+                    None => return, // Can't recover without viewport - timeline not initialized
+                }
             }
         } else {
             zoon::println!("⚠️ No file data available detected, but NO FALLBACKS rule - keeping existing viewport");
-            current_viewport() // Keep existing viewport instead of 1s fallback
+            match current_viewport() {
+                Some(viewport) => viewport,
+                None => return, // Can't recover without viewport - timeline not initialized
+            }
         };
         
         set_viewport_if_changed(recovery_viewport);
@@ -500,7 +520,8 @@ fn validate_startup_state_with_canvas_width(actual_canvas_width: f32) {
         
         // Calculate proper zoom ratio based on viewport range and canvas width
         let viewport_range_ns = recovery_viewport.end.nanos() - recovery_viewport.start.nanos();
-        let calculated_ns_per_pixel = NsPerPixel(viewport_range_ns / canvas_width as u64);
+        // Fix: Use proper rounding instead of truncated integer division
+        let calculated_ns_per_pixel = NsPerPixel((viewport_range_ns + canvas_width as u64 / 2) / canvas_width as u64);
         zoon::println!("🔍 RECOVERY ZOOM CALCULATION:");
         zoon::println!("   viewport_range_ns: {} ns", viewport_range_ns);
         zoon::println!("   canvas_width: {} px", canvas_width);
@@ -511,54 +532,45 @@ fn validate_startup_state_with_canvas_width(actual_canvas_width: f32) {
         // Note: Timeline coordinates will be automatically updated through the domain bridge
         // as the cursor, viewport, and ns_per_pixel values are set above
         
-        // FIXED: Initialize zoom center to cursor position instead of hardcoded 50s
-        let cursor_position = current_cursor_position_seconds();
-        ZOOM_CENTER_NS.set_neq(TimeNs::from_external_seconds(cursor_position));
+        // FIXED: Initialize zoom center to cursor position using Actor+Relay system
+        let cursor_position = match current_cursor_position_seconds() {
+            Some(pos) => pos,
+            None => return, // Timeline not initialized yet
+        };
+        // Use Actor+Relay system instead of legacy ZOOM_CENTER_NS
+        crate::actors::waveform_timeline::set_zoom_center_follow_mouse(TimeNs::from_external_seconds(cursor_position));
     } else {
         crate::debug_utils::debug_timeline_validation("STARTUP: Timeline state validation passed");
         
         // Ensure zoom ratio is properly calculated even for valid state
-        let viewport = current_viewport();
+        let viewport = match current_viewport() {
+            Some(viewport) => viewport,
+            None => return, // Timeline not initialized yet
+        };
         let viewport_range_ns = viewport.end.nanos() - viewport.start.nanos();
-        let current_calculated_ns_per_pixel = NsPerPixel(viewport_range_ns / canvas_width as u64);
+        // Fix: Use proper rounding instead of truncated integer division
+        let current_calculated_ns_per_pixel = NsPerPixel((viewport_range_ns + canvas_width as u64 / 2) / canvas_width as u64);
         
         // ═══════════════════════════════════════════════════════════════════════════════════
         // TIMELINE STARTUP 1: Debug zoom calculation using wrong viewport range
         // ═══════════════════════════════════════════════════════════════════════════════════
         // Conditional startup zoom analysis - only when debug flag enabled  
         if crate::debug_utils::is_startup_zoom_debug_enabled() {
-            zoon::println!("🚨 TIMELINE STARTUP 1: CRITICAL ZOOM CALCULATION ANALYSIS");
-            zoon::println!("📋 EXPECTED VALUES (from VCD file analysis):");
-            zoon::println!("   📄 VCD file: test_files/simple.vcd has timescale=1s, events at #0, #50, #150, #250");  
-            zoon::println!("   📏 CORRECT timeline range should be: 0s to 250s (250 second span)");
-            zoon::println!("   🎯 CORRECT zoom should be: 250s ÷ 512px = 488.3ms/px = 488,300μs/px");
-            zoon::println!("   ❌ User sees WRONG: fallback timeline range instead of '0s-250s' VCD file range");
-            zoon::println!("");
-            
-            zoon::println!("🔍 STARTUP STATE ANALYSIS:");
-            zoon::println!("   📊 current_viewport(): {:.3}s to {:.3}s (span: {:.3}s)", 
-                viewport.start.display_seconds(), viewport.end.display_seconds(), 
-                viewport.end.display_seconds() - viewport.start.display_seconds());
-            zoon::println!("   📊 viewport_range_ns: {} ns", viewport_range_ns);
-            zoon::println!("   📊 canvas_width: {} px", canvas_width);
-            zoon::println!("   📊 calculated_ns_per_pixel: {} ns/px", current_calculated_ns_per_pixel.0);
-            zoon::println!("   📊 calculated_zoom_display: {}", current_calculated_ns_per_pixel);
-            zoon::println!("   📊 existing_ns_per_pixel: {} ns/px ({})", ns_per_pixel.0, ns_per_pixel);
+            // Analyzing startup zoom calculation state
             
             // Analyze the discrepancy
             let expected_range_s = 250.0;
             let expected_ns = (expected_range_s * 1_000_000_000.0) as u64;
-            let expected_zoom = NsPerPixel(expected_ns / canvas_width as u64);
-            zoon::println!("   🎯 EXPECTED for 250s file: {} ns/px ({})", expected_zoom.0, expected_zoom);
+            // Fix: Use proper rounding instead of truncated integer division
+            let expected_zoom = NsPerPixel((expected_ns + canvas_width as u64 / 2) / canvas_width as u64);
             
             if viewport.end.display_seconds() == 1.0 {
-                zoon::println!("   🚨 PROBLEM IDENTIFIED: Using minimal 1s fallback instead of 250s VCD file range!");
+                // Problem: Using minimal 1s fallback instead of VCD file range
                 
                 // STARTUP FIX: Replace 1s fallback viewport with actual file data
                 if let Some((file_min, file_max)) = get_current_timeline_range() {
                     let file_span = file_max - file_min;
                     if file_span > 10.0 {  // Substantial file data available
-                        zoon::println!("   ✅ STARTUP FIX: Replacing 1s fallback with file range: {:.6}s to {:.6}s", file_min, file_max);
                         let corrected_viewport = Viewport::new(
                             TimeNs::from_external_seconds(file_min), 
                             TimeNs::from_external_seconds(file_max)
@@ -572,19 +584,19 @@ fn validate_startup_state_with_canvas_width(actual_canvas_width: f32) {
                         // CRITICAL: Also update zoom ratio to match the new viewport range  
                         let canvas_width = actual_canvas_width as u32;
                         let corrected_viewport_range_ns = corrected_viewport.end.nanos() - corrected_viewport.start.nanos();
-                        let correct_ns_per_pixel = NsPerPixel(corrected_viewport_range_ns / canvas_width as u64);
+                        // Fix: Use proper rounding instead of truncated integer division
+                        let correct_ns_per_pixel = NsPerPixel((corrected_viewport_range_ns + canvas_width as u64 / 2) / canvas_width as u64);
                         set_ns_per_pixel_if_changed(correct_ns_per_pixel);
                         
-                        zoon::println!("   🎯 Updated viewport to show VCD timeline (0s-250s) immediately on startup!");
-                        zoon::println!("   📏 Corrected zoom ratio: {} (should show ~312.5ms/px for 250s range)", correct_ns_per_pixel);
+                        // Successfully updated viewport to show VCD timeline on startup
                     } else {
-                        zoon::println!("   ⚠️  File data too small to replace fallback");
+                        // File data too small to replace fallback
                     }
                 } else {
-                    zoon::println!("   ⚠️  No file data available to replace fallback");
+                    // No file data available to replace fallback
                 }
             } else if viewport.end.display_seconds() == 250.0 {
-                zoon::println!("   ✅ VIEWPORT CORRECT: Using proper 250s file range");
+                // Viewport correct: Using proper file range
             } else {
                 zoon::println!("   ⚠️  UNEXPECTED RANGE: Neither 1s fallback nor 250s file range");
             }
@@ -611,8 +623,8 @@ async fn create_canvas_element() -> impl Element {
     // Wait a moment and test our canvas width debugging
     
     let mut zoon_canvas = Canvas::new()
-        .width(800)  // Default reasonable width to prevent division by zero
-        .height(400) // Default reasonable height to prevent division by zero
+        .width(100)  // Minimal default - will be updated to actual container size
+        .height(100) // Minimal default - will be updated to actual container size
         .s(Width::fill())
         .s(Height::fill());
 
@@ -629,13 +641,15 @@ async fn create_canvas_element() -> impl Element {
     // Wrap canvas_wrapper in Rc<RefCell> for sharing
     let canvas_wrapper_shared = Rc::new(RefCell::new(canvas_wrapper));
     
-    // Initialize canvas dimensions to defaults
-    set_canvas_dimensions(800.0, 400.0);
+    // Canvas dimensions will be set dynamically when actual canvas is created
+    // No hardcoded dimensions - wait for real canvas size from DOM
 
     // Initialize direct cursor animation with current cursor position
     let current_cursor = current_cursor_position_seconds();
-    DIRECT_CURSOR_ANIMATION.lock_mut().current_position = current_cursor;
-    DIRECT_CURSOR_ANIMATION.lock_mut().target_position = current_cursor;
+    if let Some(cursor) = current_cursor {
+        DIRECT_CURSOR_ANIMATION.lock_mut().current_position = cursor;
+        DIRECT_CURSOR_ANIMATION.lock_mut().target_position = cursor;
+    }
     let canvas_wrapper_for_signal = canvas_wrapper_shared.clone();
 
 
@@ -667,7 +681,10 @@ async fn create_canvas_element() -> impl Element {
                 CURRENT_THEME_CACHE.set_neq(novyui_theme.clone());
                 
                 canvas_wrapper_unified.borrow_mut().update_objects(move |objects| {
-                    let canvas_width = current_canvas_width();
+                    let canvas_width = match current_canvas_width() {
+                        Some(width) => width,
+                        None => return, // Timeline not initialized yet
+                    };
                     let canvas_height = current_canvas_height();
                     
                     // Skip render if dimensions are invalid
@@ -691,8 +708,8 @@ async fn create_canvas_element() -> impl Element {
                         return;
                     }
                     
-                    let cursor_pos = current_cursor_position_seconds();
-                    // Use direct creation function for reliable rendering - now with domain zoom center
+                    // ✅ CRITICAL FIX: Use signal values from unified handler, not static cache
+                    let cursor_pos = _cursor_pos.display_seconds(); // Use the actual signal value
                     let zoom_center_pos = _zoom_center.display_seconds(); // Use the domain actor zoom center signal
                     *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &novyui_theme, cursor_pos, zoom_center_pos);
                 });
@@ -759,12 +776,19 @@ async fn create_canvas_element() -> impl Element {
                 
                 canvas_wrapper.borrow_mut().update_objects(move |objects| {
                     let selected_vars = crate::actors::selected_variables::current_variables();
-                    let cursor_pos = current_cursor_position_seconds();
-                    let canvas_width = current_canvas_width();
+                    let cursor_pos = match current_cursor_position_seconds() {
+                        Some(pos) => pos,
+                        None => return, // Timeline not initialized yet
+                    };
+                    let zoom_center_pos = current_zoom_center_seconds();
+                    let canvas_width = match current_canvas_width() {
+                        Some(width) => width,
+                        None => return, // Timeline not initialized yet
+                    };
                     let canvas_height = current_canvas_height();
                     let novyui_theme = CURRENT_THEME_CACHE.get();
-                    // FIXED: Use cursor position for both cursor and zoom center (cursor-centered zooming)
-                    *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &novyui_theme, cursor_pos, cursor_pos);
+                    // ✅ FIXED: Use separate cursor and zoom center positions
+                    *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &novyui_theme, cursor_pos, zoom_center_pos);
                 });
             }
         }).await;
@@ -789,21 +813,36 @@ async fn create_canvas_element() -> impl Element {
         // Canvas is now in DOM, get actual dimensions and validate timeline state
         let rect = dom_canvas_init.get_bounding_client_rect();
         if rect.width() > 0.0 && rect.height() > 0.0 {
-            zoon::println!("🔧 CANVAS: Initial size from DOM: {}x{} px", rect.width() as f32, rect.height() as f32);
-            set_canvas_dimensions(rect.width() as f32, rect.height() as f32);
+            let width = rect.width() as u32;
+            let height = rect.height() as u32;
+            
+            // Canvas initialized with DOM dimensions
+            
+            // Set canvas element attributes to match container size
+            dom_canvas_init.set_width(width);
+            dom_canvas_init.set_height(height);
+            
+            set_canvas_dimensions(width as f32, height as f32);
             
             // NOW validate timeline state with actual DOM canvas dimensions
-            validate_startup_state_with_canvas_width(rect.width() as f32);
+            validate_startup_state_with_canvas_width(width as f32);
             
             trigger_canvas_redraw();
         }
     });
 
     let canvas_wrapper_for_resize = canvas_wrapper_shared.clone();
+    let dom_canvas_resize = dom_canvas.clone();
     zoon_canvas.update_raw_el(move |raw_el| {
         raw_el.on_resize(move |width, height| {
             // Enhanced resize handler with validation
             if width > 0 && height > 0 {
+                // Canvas resized - triggering redraw
+                
+                // Set canvas element attributes to match new container size
+                dom_canvas_resize.set_width(width as u32);
+                dom_canvas_resize.set_height(height as u32);
+                
                 // Store canvas dimensions for click calculations
                 set_canvas_dimensions(width as f32, height as f32);
                 
@@ -817,110 +856,109 @@ async fn create_canvas_element() -> impl Element {
         .event_handler({
             let canvas_wrapper_for_click = canvas_wrapper_shared.clone();
             move |event: events::Click| {
-                // ═══════════════════════════════════════════════════════════════════════════════════
-                // MOUSE→CANVAS ITER 2: Enhanced click coordinate debugging with mismatch detection
-                // ═══════════════════════════════════════════════════════════════════════════════════
-                zoon::println!("🖱️ ITER 2: CLICK EVENT CAPTURED - COORDINATE TRANSFORMATION TEST");
-                
                 // Handle click to move cursor position using WaveformTimeline domain
                 let page_click_x = event.x();
                 let page_click_y = event.y();
-                zoon::println!("🖱️ ITER 1: Raw page coordinates: ({}, {})", page_click_x, page_click_y);
                 
                 // Get canvas element's position relative to page
                 let canvas_element = match event.target() {
                     Some(target) => target,
-                    None => {
-                        zoon::println!("⚠️ ITER 1 ERROR: Click event target is None - ignoring canvas click");
-                        return;
-                    }
+                    None => return,
                 };
                 let canvas_rect = match canvas_element.dyn_into::<web_sys::Element>() {
                     Ok(element) => element.get_bounding_client_rect(),
-                    Err(_) => {
-                        zoon::println!("⚠️ ITER 1 ERROR: Click target is not an HTML element - ignoring canvas click");
-                        return;
-                    }
+                    Err(_) => return,
                 };
                 let canvas_left = canvas_rect.left();
                 let canvas_top = canvas_rect.top();
                 let canvas_width_dom = canvas_rect.width();
                 let canvas_height_dom = canvas_rect.height();
-                zoon::println!("🖱️ ITER 1: Canvas DOM bounds: left={}, top={}, width={}, height={}", 
-                    canvas_left, canvas_top, canvas_width_dom, canvas_height_dom);
-                
                 // Calculate click position relative to canvas
                 let click_x = page_click_x as f64 - canvas_left;
                 let click_y = page_click_y as f64 - canvas_top;
-                zoon::println!("🖱️ ITER 1: Canvas-relative coordinates: ({}, {})", click_x, click_y);
                 
                 // Legacy code for backward compatibility (will be removed when migration complete)
                 // Use stored canvas width
-                let canvas_width = current_canvas_width();
+                let canvas_width = match current_canvas_width() {
+                    Some(width) => width,
+                    None => return, // Timeline not initialized yet
+                };
                 let canvas_height = current_canvas_height();
-                zoon::println!("🖱️ ITER 1: Current canvas dimensions from cache: {}x{}", canvas_width, canvas_height);
+                // Get cached canvas dimensions for coordinate calculation
                 
-                // Use cached coordinates for precise mouse-to-time conversion
-                let mut coords = current_coordinates();
-                zoon::println!("🖱️ ITER 1: Timeline coordinates BEFORE update:");
-                zoon::println!("   viewport_start_ns: {:.6}s", coords.viewport_start_ns.display_seconds());
-                zoon::println!("   ns_per_pixel: {:.3}", coords.ns_per_pixel.nanos());
-                zoon::println!("   canvas_width_pixels: {}", coords.canvas_width_pixels);
+                // Get coordinate system and validate timeline state
+                let coords = match current_coordinates() {
+                    Some(coords) => coords,
+                    None => return, // Timeline not initialized yet
+                };
+                
+                // Verify ns_per_pixel calculation accuracy
+                let viewport = match current_viewport() {
+                    Some(viewport) => viewport,
+                    None => return, // Timeline not initialized yet
+                };
+                let actual_span_ns = viewport.end.nanos() - viewport.start.nanos();
+                let actual_canvas_width = coords.canvas_width_pixels;
+                
+                // Calculate correct ns_per_pixel value
+                let correct_ns_per_pixel = (actual_span_ns + actual_canvas_width as u64 / 2) / actual_canvas_width as u64;
+                let current_ns_per_pixel = coords.ns_per_pixel.nanos();
+                
+                if current_ns_per_pixel != correct_ns_per_pixel {
+                    // Fix coordinate system precision issues
+                    set_ns_per_pixel_if_changed(NsPerPixel(correct_ns_per_pixel));
+                }
+                // Timeline coordinate calculation
+                zoon::println!("   ns_per_pixel: {:.3}ns/px (zoom={:.3}ms/px)", coords.ns_per_pixel.nanos(), coords.ns_per_pixel.nanos() as f64 / 1_000_000.0);
+                zoon::println!("   canvas_width_pixels: {}px", coords.canvas_width_pixels);
                 zoon::println!("   cursor_ns: {:.6}s", coords.cursor_ns.display_seconds());
                 
-                // Update canvas width locally for this conversion
-                coords.set_canvas_width(canvas_width as u32);
-                zoon::println!("🖱️ ITER 2: Timeline coordinates AFTER canvas width update:");
-                zoon::println!("   canvas_width_pixels: {} (updated from cache)", coords.canvas_width_pixels);
-                
-                // CRITICAL: Detect coordinate system mismatches  
+                // ✅ VALIDATION: Ensure canvas width consistency across systems
                 let dom_canvas_width = canvas_width_dom as u32;
                 let cached_canvas_width = canvas_width as u32;
                 if dom_canvas_width != cached_canvas_width {
-                    zoon::println!("   🚨 CANVAS WIDTH MISMATCH: DOM={} != CACHED={}", dom_canvas_width, cached_canvas_width);
+                    zoon::println!("   ⚠️ CANVAS WIDTH MISMATCH: DOM={} != CACHED={}", dom_canvas_width, cached_canvas_width);
                 }
                 if coords.canvas_width_pixels != cached_canvas_width {
-                    zoon::println!("   🚨 COORDINATE MISMATCH: coords.canvas_width={} != cached_width={}", 
+                    zoon::println!("   📏 COORDINATE WIDTH: {}px (reactive cache), {}px (canvas cache)", 
                         coords.canvas_width_pixels, cached_canvas_width);
                 }
                 
                 // Convert mouse position to timeline time using pure integer arithmetic
-                let clicked_time_ns = coords.mouse_to_time(click_x as u32);
-                zoon::println!("🖱️ ITER 2: Timeline time calculation:");
-                zoon::println!("   click_x as u32: {} pixels", click_x as u32);
-                zoon::println!("   clicked_time_ns: {:.6}s", clicked_time_ns.display_seconds());
-                zoon::println!("   calculation: {} pixels * {} ns/pixel = {} ns total", 
-                    click_x as u32, coords.ns_per_pixel.nanos(), (click_x as u32) as u64 * coords.ns_per_pixel.nanos());
-                zoon::println!("   final time: {:.6}s + {:.6}s = {:.6}s", 
-                    coords.viewport_start_ns.display_seconds(),
-                    ((click_x as u32) as u64 * coords.ns_per_pixel.nanos()) as f64 / 1_000_000_000.0,
-                    clicked_time_ns.display_seconds());
+                // ✅ CRITICAL FIX: Use corrected coordinates if ns_per_pixel was wrong
+                let corrected_coords = if current_ns_per_pixel != correct_ns_per_pixel {
+                    zoon::println!("   🔧 COORDINATE FIX: Using corrected ns_per_pixel {} instead of cached {}", correct_ns_per_pixel, current_ns_per_pixel);
+                    TimelineCoordinates::new(
+                        coords.cursor_ns,
+                        coords.viewport_start_ns,
+                        NsPerPixel(correct_ns_per_pixel),
+                        coords.canvas_width_pixels
+                    )
+                } else {
+                    coords
+                };
+                let clicked_time_ns = corrected_coords.mouse_to_time(click_x as u32);
+                let viewport = match current_viewport() {
+                    Some(viewport) => viewport,
+                    None => return, // Timeline not initialized yet
+                };
+                
+                // Essential coordinate calculation for cursor position
+                let zoom_level_ms_per_pixel = corrected_coords.ns_per_pixel.nanos() as f64 / 1_000_000.0;
                 
                 // Get file bounds for clamping
                 if let Some((file_min, file_max)) = get_current_timeline_range() {
                     let file_start_ns = TimeNs::from_external_seconds(file_min);
                     let file_end_ns = TimeNs::from_external_seconds(file_max);
-                    zoon::println!("🖱️ ITER 1: File bounds for clamping:");
-                    zoon::println!("   file_min: {:.6}s", file_min);
-                    zoon::println!("   file_max: {:.6}s", file_max);
-                    zoon::println!("   file_start_ns: {:.6}s", file_start_ns.display_seconds());
-                    zoon::println!("   file_end_ns: {:.6}s", file_end_ns.display_seconds());
-                    
                     // Clamp cursor to file bounds
                     let clamped_time_ns = TimeNs(clicked_time_ns.nanos().clamp(file_start_ns.nanos(), file_end_ns.nanos()));
-                    zoon::println!("🖱️ ITER 1: Time clamping result:");
-                    zoon::println!("   clicked_time_ns: {:.6}s", clicked_time_ns.display_seconds());
-                    zoon::println!("   clamped_time_ns: {:.6}s", clamped_time_ns.display_seconds());
-                    zoon::println!("   was_clamped: {}", clicked_time_ns.nanos() != clamped_time_ns.nanos());
                     
                     // Update global cursor position through domain
                     set_cursor_position(clamped_time_ns);
-                    zoon::println!("🖱️ ITER 1: Cursor position updated via set_cursor_position()");
                     
                     // Emit cursor clicked event to WaveformTimeline domain
                     let waveform_timeline = crate::actors::waveform_timeline_domain();
                     waveform_timeline.cursor_clicked_relay.send(clamped_time_ns);
-                    zoon::println!("🖱️ ITER 1: Cursor clicked event sent to WaveformTimeline domain");
                     
                     // Synchronize direct animation to prevent jumps  
                     let clamped_time_seconds = clamped_time_ns.display_seconds();
@@ -944,18 +982,18 @@ async fn create_canvas_element() -> impl Element {
             let page_mouse_x = event.x();
             let page_mouse_y = event.y();
             
+            // Mouse coordinates captured for timeline interaction
+            
             // Get canvas element's position relative to page
             let canvas_element = match event.target() {
                 Some(target) => target,
                 None => {
-                    zoon::println!("⚠️ Mouse move event target is None - ignoring canvas mouse move");
                     return;
                 }
             };
             let canvas_rect = match canvas_element.dyn_into::<web_sys::Element>() {
                 Ok(element) => element.get_bounding_client_rect(),
                 Err(_) => {
-                    zoon::println!("⚠️ Mouse move target is not an HTML element - ignoring canvas mouse move");
                     return;
                 }
             };
@@ -966,11 +1004,14 @@ async fn create_canvas_element() -> impl Element {
             let mouse_x = page_mouse_x as f64 - canvas_left;
             let mouse_y = page_mouse_y as f64 - canvas_top;
             
-            // Emit mouse move event to WaveformTimeline domain
+            // Emit mouse move event to WaveformTimeline domain and get actual Actor state
             let waveform_timeline = crate::actors::waveform_timeline_domain();
             
-            // Convert mouse X position to timeline time
-            let coords = current_coordinates();
+            // Convert mouse X position to timeline time - debug coordinate consistency
+            let coords = match current_coordinates() {
+                Some(coords) => coords,
+                None => return, // Timeline not initialized yet
+            };
             let mouse_time = coords.mouse_to_time(mouse_x as u32);
             waveform_timeline.mouse_moved_relay.send((mouse_x as f32, mouse_time));
             
@@ -981,11 +1022,14 @@ async fn create_canvas_element() -> impl Element {
             MOUSE_X_POSITION.set_neq(mouse_x as f32);
             
             // Convert mouse X to timeline time using TimelineCoordinates
-            let canvas_width = current_canvas_width();
+            let canvas_width = match current_canvas_width() {
+                Some(width) => width,
+                None => return, // Timeline not initialized yet, skip this hover
+            };
             let canvas_height = current_canvas_height();
             
-            // Use cached coordinates for precise mouse-to-time conversion
-            let coords = current_coordinates();
+            // Use the same Actor coordinates we calculated above for consistency
+            // (coords variable already contains the real Actor state)
             
             // Ensure mouse_x is within canvas bounds
             if mouse_x >= 0.0 && mouse_x <= canvas_width as f64 {
@@ -999,42 +1043,14 @@ async fn create_canvas_element() -> impl Element {
                     // Clamp mouse time to file bounds
                     let clamped_mouse_time_ns = TimeNs(mouse_time_ns.nanos().clamp(file_start_ns.nanos(), file_end_ns.nanos()));
                     
-                    // ═══════════════════════════════════════════════════════════════════════════════════
-                    // MOUSE→CANVAS ITER 2: Detailed coordinate transformation debugging  
-                    // ═══════════════════════════════════════════════════════════════════════════════════
+                    // Coordinate validation for tooltip calculation
                     use std::sync::atomic::{AtomicU32, Ordering};
                     static HOVER_DEBUG_COUNTER: AtomicU32 = AtomicU32::new(0);
                     let counter = HOVER_DEBUG_COUNTER.fetch_add(1, Ordering::Relaxed);
-                    if counter % 3 == 0 { // Every 3rd mouse move (more frequent for debugging)
-                        let coords = current_coordinates();
-                        zoon::println!("🖱️ ITER 2: COORDINATE TRANSFORMATION DEBUG (move #{}):", counter);
-                        zoon::println!("   📍 PAGE COORDS: page_mouse=({:.1}, {:.1}), canvas_offset=({:.1}, {:.1})", 
-                            page_mouse_x, page_mouse_y, canvas_left, canvas_top);
-                        zoon::println!("   📍 CANVAS COORDS: mouse=({:.1}, {:.1}), canvas_size=({:.1}x{:.1})", 
-                            mouse_x, mouse_y, canvas_width, canvas_height);
-                        zoon::println!("   ⏱️  CURRENT_COORDINATES(): viewport_start={:.6}s, ns_per_pixel={}, canvas_width={}px", 
-                            coords.viewport_start_ns.display_seconds(), coords.ns_per_pixel.nanos(), coords.canvas_width_pixels);
-                        zoon::println!("   🧮 CALCULATION: mouse_x({:.0}) * ns_per_pixel({}) + viewport_start({:.6}s) = {:.6}s", 
-                            mouse_x, coords.ns_per_pixel.nanos(), coords.viewport_start_ns.display_seconds(), mouse_time_ns.display_seconds());
-                        zoon::println!("   ✅ FINAL: time_raw={:.6}s, time_clamped={:.6}s, file_bounds=[{:.3}s-{:.3}s]", 
-                            mouse_time_ns.display_seconds(), clamped_mouse_time_ns.display_seconds(), file_min, file_max);
-                        
-                        // CRITICAL: Check if coordinates match actual timeline state
-                        let expected_canvas_width = canvas_width as u32;
-                        if coords.canvas_width_pixels != expected_canvas_width {
-                            zoon::println!("   🚨 COORDINATE MISMATCH: coords.canvas_width={} != actual_canvas_width={}", 
-                                coords.canvas_width_pixels, expected_canvas_width);
-                        }
-                        
-                        // Calculate expected time at right edge for verification
-                        let right_edge_time = coords.mouse_to_time(canvas_width as u32);
-                        zoon::println!("   🎯 RIGHT EDGE TEST: canvas_width={}px should map to {:.6}s", 
-                            canvas_width, right_edge_time.display_seconds());
-                    }
                     
                     // TODO: Replace with domain-only access
                     MOUSE_TIME_NS.set_neq(clamped_mouse_time_ns);
-                    ZOOM_CENTER_NS.set_neq(clamped_mouse_time_ns);
+                    // REMOVED: ZOOM_CENTER_NS.set_neq(clamped_mouse_time_ns); - Using Actor+Relay system instead
                     
                     // Calculate hover info for tooltip (within valid time range)
                     let selected_vars = crate::actors::selected_variables::current_variables();
@@ -1049,33 +1065,10 @@ async fn create_canvas_element() -> impl Element {
                         let var = &selected_vars[hover_row];
                         let variable_name = var.unique_id.split('|').last().unwrap_or("Unknown").to_string();
                         
-                        // ═══════════════════════════════════════════════════════════════════════════════════
-                        // MOUSE→CANVAS ITER 1: Debug tooltip value calculation (user reports "0s everywhere")
-                        // ═══════════════════════════════════════════════════════════════════════════════════
-                        if counter % 5 == 0 { // Same frequency as hover debug
-                            zoon::println!("🖱️ ITER 1: TOOLTIP VALUE CALCULATION:");
-                            zoon::println!("   Variable: {} (row {})", variable_name, hover_row);
-                            zoon::println!("   Variable unique_id: {}", var.unique_id);
-                            zoon::println!("   Row height: {:.1}px (canvas_height {} / {} total_rows)", row_height, canvas_height, total_rows);
-                            zoon::println!("   Mouse Y: {:.1}px → hover_row: {}", mouse_y, hover_row);
-                        }
                         
                         let time_value_pairs = get_signal_transitions_for_variable(var, (file_min, file_max));
                         let mouse_time_seconds = clamped_mouse_time_ns.display_seconds();
                         
-                        if counter % 5 == 0 { // Debug signal transitions
-                            zoon::println!("🖱️ ITER 1: SIGNAL TRANSITIONS for {}:", variable_name);
-                            zoon::println!("   Time range queried: {:.6}s to {:.6}s", file_min, file_max);
-                            zoon::println!("   Number of transitions: {}", time_value_pairs.len());
-                            if time_value_pairs.len() > 0 {
-                                zoon::println!("   First transition: time={:.6}s, value={:?}", time_value_pairs[0].0, time_value_pairs[0].1);
-                                if time_value_pairs.len() > 1 {
-                                    zoon::println!("   Last transition: time={:.6}s, value={:?}", 
-                                        time_value_pairs[time_value_pairs.len()-1].0, time_value_pairs[time_value_pairs.len()-1].1);
-                                }
-                            }
-                            zoon::println!("   Mouse time: {:.6}s", mouse_time_seconds);
-                        }
                         
                         // Find the value at the current mouse time
                         let mut current_value = shared::SignalValue::present("X"); // Default unknown
@@ -1089,26 +1082,17 @@ async fn create_canvas_element() -> impl Element {
                             }
                         }
                         
-                        if counter % 5 == 0 { // Debug value lookup
-                            zoon::println!("🖱️ ITER 1: VALUE LOOKUP RESULT:");
-                            zoon::println!("   Found transition at: {:?}s", found_transition_time);
-                            zoon::println!("   Current value: {:?}", current_value);
-                        }
                         
                         // Format the value using the variable's formatter
                         let formatted_value = match current_value {
                             shared::SignalValue::Present(ref value) => {
                                 let formatter = var.formatter.unwrap_or_default();
                                 let result = formatter.format(value);
-                                if counter % 5 == 0 {
-                                    zoon::println!("🖱️ ITER 1: FORMATTING: {:?} → '{}' (formatter: {:?})", value, result, formatter);
-                                }
+                                // Value formatting for tooltip
                                 result
                             },
                             shared::SignalValue::Missing => {
-                                if counter % 5 == 0 {
-                                    zoon::println!("🖱️ ITER 1: FORMATTING: Missing value → 'N/A'");
-                                }
+                                // Missing value handling
                                 "N/A".to_string()
                             }
                         };
@@ -1121,15 +1105,7 @@ async fn create_canvas_element() -> impl Element {
                             value: formatted_value.clone(),
                         };
                         
-                        if counter % 5 == 0 { // Debug final hover info
-                            zoon::println!("🖱️ ITER 1: FINAL HOVER_INFO:");
-                            zoon::println!("   mouse_x: {:.1}px", hover_info.mouse_x);
-                            zoon::println!("   mouse_y: {:.1}px", hover_info.mouse_y);  
-                            zoon::println!("   time: {:.6}s", hover_info.time);
-                            zoon::println!("   variable_name: '{}'", hover_info.variable_name);
-                            zoon::println!("   value: '{}'", hover_info.value);
-                            zoon::println!("🖱️ ITER 1: ═══════ END TOOLTIP DEBUG ═══════");
-                        }
+                        // Hover info calculated for tooltip display
                         
                         HOVER_INFO.set_neq(Some(hover_info));
                     } else {
@@ -1153,7 +1129,7 @@ async fn create_canvas_element() -> impl Element {
 
 // Get signal transitions for a variable within time range
 fn get_signal_transitions_for_variable(var: &SelectedVariable, time_range: (f64, f64)) -> Vec<(f32, shared::SignalValue)> {
-    zoon::println!("🔍 GET_SIGNAL_TRANSITIONS: Called for {} in range {:.3}s to {:.3}s", var.unique_id, time_range.0, time_range.1);
+    // Reduced debug logging for signal transitions
     
     // Parse unique_id: "/path/file.ext|scope|variable"
     let parts: Vec<&str> = var.unique_id.split('|').collect();
@@ -1176,7 +1152,7 @@ fn get_signal_transitions_for_variable(var: &SelectedVariable, time_range: (f64,
     let processed_cache: std::collections::HashMap<String, Vec<SignalTransition>> = std::collections::HashMap::new(); // Temporary placeholder
     if let Some(cached_transitions) = processed_cache.get(&processed_cache_key) {
         // HIT: Data already processed for this exact time range, convert to expected format
-        zoon::println!("📋 GET_SIGNAL_TRANSITIONS: Using processed cache with {} transitions", cached_transitions.len());
+        // Using processed cache
         return cached_transitions.iter()
             .map(|transition| ((transition.time_ns as f64 / 1_000_000_000.0) as f32, shared::SignalValue::present(transition.value.clone())))
             .collect();
@@ -1185,9 +1161,9 @@ fn get_signal_transitions_for_variable(var: &SelectedVariable, time_range: (f64,
     
     // Not in processed cache, check raw backend data cache
     let raw_cache_key = format!("{}|{}|{}", file_path, scope_path, variable_name);
-    zoon::println!("📋 GET_SIGNAL_TRANSITIONS: Checking raw cache with key: {}", raw_cache_key);
+    // Checking raw cache
     if let Some(transitions) = crate::unified_timeline_service::UnifiedTimelineService::get_raw_transitions(&raw_cache_key) {
-        zoon::println!("✅ GET_SIGNAL_TRANSITIONS: Found {} raw transitions in cache", transitions.len());
+        // Found raw transitions in cache
         
         // Convert real backend data to canvas format with proper waveform logic
         // Include ALL transitions to determine proper rectangle boundaries
@@ -1251,7 +1227,7 @@ fn get_signal_transitions_for_variable(var: &SelectedVariable, time_range: (f64,
         // TODO: Update canvas cache through WaveformTimeline actor
         // PROCESSED_CANVAS_CACHE.lock_mut().insert(processed_cache_key, canvas_transitions.clone());
         
-        zoon::println!("🎯 GET_SIGNAL_TRANSITIONS: Returning {} canvas transitions for {}", canvas_transitions.len(), variable_name);
+        // Removed signal transitions debug spam - called frequently during rendering
         return canvas_transitions;
     }
     
@@ -1349,37 +1325,54 @@ fn get_selected_variable_file_paths() -> std::collections::HashSet<String> {
 // ROCK-SOLID coordinate transformation system with zoom reliability
 // Returns None when no variables are selected (no timeline should be shown)
 pub fn get_current_timeline_range() -> Option<(f64, f64)> {
-    zoon::println!("🔍 GET_CURRENT_TIMELINE_RANGE: Function called");
-    let ns_per_pixel = current_ns_per_pixel();
+    // Removed debug spam - function called very frequently during rendering
+    let ns_per_pixel = match current_ns_per_pixel() {
+        Some(ns_per_pixel) => ns_per_pixel,
+        None => {
+            zoon::println!("🔍 GET_CURRENT_TIMELINE_RANGE: Timeline not yet initialized, returning None");
+            return None;
+        }
+    };
     
     // FIXED: Always use viewport range for waveform rendering (no zoom level threshold)
     // This ensures transition rectangles use proper viewport boundaries
-    let viewport = current_viewport();
+    let mut viewport = match current_viewport() {
+        Some(viewport) => viewport,
+        None => {
+            zoon::println!("🔍 GET_CURRENT_TIMELINE_RANGE: Viewport not yet initialized, returning None");
+            return None;
+        }
+    };
+    
+    // ✅ DEBUG: Log current viewport cache state
+    // Cache state debug info reduced
     let range_start = viewport.start.display_seconds();
     let range_end = viewport.end.display_seconds();
     
     // DEBUG: Log viewport range calculation
-    zoon::println!("🔍 VIEWPORT RANGE DEBUG: start={:.3}s, end={:.3}s, span={:.3}s", 
-        range_start, range_end, range_end - range_start);
+    // Viewport range debug info reduced
     
     // CRITICAL: Enforce minimum time range to prevent coordinate precision loss
-    let canvas_width = current_canvas_width() as u32;
+    let canvas_width = match current_canvas_width() {
+        Some(width) => width as u32,
+        None => {
+            zoon::println!("🔍 GET_CURRENT_TIMELINE_RANGE: Canvas width not yet initialized, returning None");
+            return None;
+        }
+    };
     let min_zoom_range = get_min_valid_range_ns(canvas_width) as f64 / 1_000_000_000.0; // NsPerPixel-based minimum
     let current_range = range_end - range_start;
     
     // Validate range is sensible and has sufficient precision
-    zoon::println!("🔍 VIEWPORT VALIDATION: range_start={:.6}s, range_end={:.6}s, current_range={:.6}s", 
-        range_start, range_end, current_range);
-    zoon::println!("   min_zoom_range={:.6}s, canvas_width={} px", min_zoom_range, canvas_width);
+    // Removed excessive viewport validation debug info
     
     if range_end > range_start && range_start >= 0.0 {
-        zoon::println!("   ✅ Basic range validation passed");
+        // Removed basic validation debug message
         // ENHANCED: Additional validation for finite values
         if range_start.is_finite() && range_end.is_finite() {
-            zoon::println!("   ✅ Finite values validation passed");
+            // Removed finite values debug message
             if current_range >= min_zoom_range {
-                zoon::println!("   ✅ USING VIEWPORT RANGE: current_range ({:.6}s) >= min_zoom_range ({:.6}s)", 
-                    current_range, min_zoom_range);
+                // Removed viewport range debug message
                 return Some((range_start, range_end));
             } else if current_range > 0.0 {
                 zoon::println!("   ⚠️  Current range too narrow, attempting expansion");
@@ -1450,8 +1443,7 @@ pub fn get_current_timeline_range() -> Option<(f64, f64)> {
     
     // If no variables are selected due to Actor+Relay migration issues, use all loaded files as fallback
     if selected_file_paths.is_empty() {
-        zoon::println!("🚨 TIMELINE RANGE REGRESSION FIX: No selected variables detected (Actor+Relay migration issue)");
-        zoon::println!("🔧 FALLBACK: Using all loaded files to recover timeline range (prioritizing VCD over FST)");
+        // FALLBACK: Use all loaded files when no variables are selected
         
         // Use ALL loaded files as fallback with same prioritization algorithm
         let mut file_candidates: Vec<_> = loaded_files.iter()
@@ -1471,27 +1463,12 @@ pub fn get_current_timeline_range() -> Option<(f64, f64)> {
         // Sort by span descending (longest first) to prioritize VCD files over FST files
         file_candidates.sort_by(|a, b| b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal));
         
-        zoon::println!("🔧 FALLBACK FILE PRIORITIZATION (sorted by time span descending):");
-        for (file, file_min, file_max, span) in &file_candidates {
-            zoon::println!("   📄 '{}': {:.6}s to {:.6}s (span: {:.6}s)", file.id, file_min, file_max, span);
-            if *span < 1.0 {
-                zoon::println!("      ⚠️  SHORT FILE (likely FST) - lower priority");
-            } else {
-                zoon::println!("      ✅ LONG FILE (likely VCD) - higher priority, should show 0s-250s range");
-            }
-        }
-        
         // Calculate range from prioritized files (VCD files influence result more than FST files)  
-        for (file, file_min, file_max, span) in file_candidates {
+        for (file, file_min, file_max, _span) in file_candidates {
             min_time = min_time.min(file_min);
             max_time = max_time.max(file_max);
             has_valid_files = true;
-            zoon::println!("🔧 FALLBACK: File '{}' contributes range: {:.6}s to {:.6}s (span: {:.6}s)", 
-                file.id, file_min, file_max, span);
         }
-        
-        zoon::println!("✅ FALLBACK CALCULATION: min_time = {:.6}s, max_time = {:.6}s, has_valid_files = {}", 
-            min_time, max_time, has_valid_files);
     } else {
         // 🔧 TIMELINE STARTUP 3 FIX: Use same file prioritization as get_selected_variables_file_range()
         // Sort files by time span (longest first) to prioritize VCD over FST files
@@ -1513,29 +1490,21 @@ pub fn get_current_timeline_range() -> Option<(f64, f64)> {
         // Sort by span descending (longest first) to prioritize VCD files over FST files
         file_candidates.sort_by(|a, b| b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal));
         
-        zoon::println!("🔧 TIMELINE STARTUP 3: FILE PRIORITIZATION (sorted by time span descending):");
-        for (file, file_min, file_max, span) in &file_candidates {
-            zoon::println!("   📄 '{}': {:.6}s to {:.6}s (span: {:.6}s)", file.id, file_min, file_max, span);
-            if *span < 1.0 {
-                zoon::println!("      ⚠️  SHORT FILE (likely FST) - lower priority");
-            } else {
-                zoon::println!("      ✅ LONG FILE (likely VCD) - higher priority");
-            }
-        }
+        // File prioritization: longer time spans get higher priority
+        // (This prioritizes VCD files over shorter FST files)
         
         // Calculate range from prioritized files (VCD files influence result more than FST files)  
         for (file, file_min, file_max, span) in file_candidates {
             min_time = min_time.min(file_min);
             max_time = max_time.max(file_max);
             has_valid_files = true;
-            zoon::println!("🔧 TIMELINE STARTUP 3: File '{}' contributes range: {:.6}s to {:.6}s (span: {:.6}s)", 
-                file.id, file_min, file_max, span);
+            // File contributes to timeline range calculation
         }
     }
     
     if !has_valid_files || min_time == max_time {
         // No valid files with selected variables - return None so timeline shows placeholder
-        zoon::println!("🔧 GET_CURRENT_TIMELINE_RANGE: RETURNING NONE - no valid files or min_time == max_time");
+        // No valid timeline range available
         return None;
     }
     
@@ -1547,8 +1516,12 @@ pub fn get_current_timeline_range() -> Option<(f64, f64)> {
     
     // Ensure minimum range for coordinate precision (but don't override valid microsecond ranges!)
     let file_range = max_time - min_time;
-    if file_range < get_min_valid_range_ns(current_canvas_width() as u32) as f64 / 1_000_000_000.0 {  // Only enforce minimum for truly tiny ranges (< 1 nanosecond)
-        let expanded_end = min_time + get_min_valid_range_ns(current_canvas_width() as u32) as f64 / 1_000_000_000.0;
+    let canvas_width = match current_canvas_width() {
+        Some(width) => width as u32,
+        None => return Some((min_time, max_time)), // Timeline not initialized, return basic range
+    };
+    if file_range < get_min_valid_range_ns(canvas_width) as f64 / 1_000_000_000.0 {  // Only enforce minimum for truly tiny ranges (< 1 nanosecond)
+        let expanded_end = min_time + get_min_valid_range_ns(canvas_width) as f64 / 1_000_000_000.0;
         if expanded_end.is_finite() {
             return Some((min_time, expanded_end));  // Minimum 1 nanosecond range
         } else {
@@ -1556,22 +1529,23 @@ pub fn get_current_timeline_range() -> Option<(f64, f64)> {
         }
     } else {
         let result = (min_time, max_time);
-        zoon::println!("🔧 GET_CURRENT_TIMELINE_RANGE: FINAL RESULT = ({:.6}s, {:.6}s), span = {:.6}s", result.0, result.1, result.1 - result.0);
+        // Final timeline range calculated from file data
         
         // 🔧 TIMELINE STARTUP 4: Validate timeline range consistency
-        let zoom_level_us = current_ns_per_pixel().nanos() as f64 / 1000.0; // Convert to microseconds/pixel
-        zoon::println!("✅ TIMELINE STARTUP 4: CONSISTENCY VALIDATION");
-        zoon::println!("   📊 Final Range: {:.3}s to {:.3}s (span: {:.3}s)", result.0, result.1, result.1 - result.0);
-        zoon::println!("   🔍 Zoom Level: {:.1}μs/px", zoom_level_us);
-        zoon::println!("   🎯 Expected: 0s-250s range should show ~312,500μs/px zoom (250s ÷ 800px)");
+        let zoom_level_us = if let Some(ns_per_pixel) = current_ns_per_pixel() {
+            ns_per_pixel.nanos() as f64 / 1000.0 // Convert to microseconds/pixel
+        } else {
+            1000.0 // Default to 1000 microseconds/pixel when timeline not initialized
+        };
+        // Timeline range validation for consistency
         
         // Check if this matches expected VCD file range
         if result.0 <= 1.0 && result.1 >= 240.0 {
-            zoon::println!("   ✅ SUCCESS: Range includes VCD timeline (0s-250s) - startup initialization working correctly!");
+            // Range validation successful: VCD timeline range detected
         } else if result.1 - result.0 < 10.0 {
-            zoon::println!("   ⚠️  WARNING: Short range detected - might be FST file influencing calculation");
+            // Warning: Short range detected from FST file
         } else {
-            zoon::println!("   🔧 INFO: Different range detected - validating against actual file data");
+            // Info: Different range detected during validation
         }
         
         return Some(result);  // Use actual range, even if it's microseconds
@@ -1592,9 +1566,17 @@ pub fn get_maximum_timeline_range() -> Option<(f64, f64)> {
     let mut max_time: f64 = f64::MIN;
     let mut has_valid_files = false;
     
-    // If no variables are selected, don't show timeline
+    // If no variables are selected, use full file range for viewport initialization
     if selected_file_paths.is_empty() {
-        return None;
+        zoon::println!("🎯 GET_MAXIMUM_TIMELINE_RANGE: No variables selected, using full file range for viewport");
+        let (file_min, file_max) = get_full_file_range();
+        if file_min < file_max && file_min.is_finite() && file_max.is_finite() {
+            zoon::println!("🎯 GET_MAXIMUM_TIMELINE_RANGE: Returning full range {:.6}s to {:.6}s", file_min, file_max);
+            return Some((file_min, file_max));
+        } else {
+            zoon::println!("🎯 GET_MAXIMUM_TIMELINE_RANGE: Invalid file range, returning None");
+            return None;
+        }
     } else {
         // Calculate range from only files that contain selected variables
         
@@ -1629,8 +1611,12 @@ pub fn get_maximum_timeline_range() -> Option<(f64, f64)> {
     
     // Ensure minimum range for coordinate precision (but don't override valid microsecond ranges!)
     let file_range = max_time - min_time;
-    if file_range < get_min_valid_range_ns(current_canvas_width() as u32) as f64 / 1_000_000_000.0 {  // Only enforce minimum for truly tiny ranges (< 1 nanosecond)
-        let expanded_end = min_time + get_min_valid_range_ns(current_canvas_width() as u32) as f64 / 1_000_000_000.0;
+    let canvas_width = match current_canvas_width() {
+        Some(width) => width as u32,
+        None => return Some((min_time, max_time)), // Timeline not initialized, return basic range
+    };
+    if file_range < get_min_valid_range_ns(canvas_width) as f64 / 1_000_000_000.0 {  // Only enforce minimum for truly tiny ranges (< 1 nanosecond)
+        let expanded_end = min_time + get_min_valid_range_ns(canvas_width) as f64 / 1_000_000_000.0;
         if expanded_end.is_finite() {
             return Some((min_time, expanded_end));  // Minimum 1 nanosecond range
         } else {
@@ -1646,7 +1632,7 @@ pub fn get_maximum_timeline_range() -> Option<(f64, f64)> {
 pub fn start_smooth_zoom_in() {
     // TODO: Replace with domain-only implementation
     // For now, keep legacy implementation and add domain relay
-    zoom_in_started_relay().send(current_cursor_position());
+    zoom_in_started_relay().send(TimeNs::from_external_seconds(current_zoom_center_seconds()));
     
     // Legacy zoom flag check - will be replaced when domain zoom handling is complete
     if !IS_ZOOMING_IN.get() {
@@ -1656,9 +1642,20 @@ pub fn start_smooth_zoom_in() {
                 // COMPLETELY REWRITTEN: Follow timeline simplification plan exactly
                 // Pure integer zoom algorithm with cursor-centered zooming
                 
-                let current_ns_per_pixel = current_ns_per_pixel().nanos();
-                let current_viewport = current_viewport();
-                let canvas_width = current_canvas_width() as u32;
+                let current_ns_per_pixel = if let Some(ns_per_pixel) = current_ns_per_pixel() {
+                    ns_per_pixel.nanos()
+                } else {
+                    break; // Timeline not initialized yet, stop zooming
+                };
+                let current_viewport = if let Some(viewport) = current_viewport() {
+                    viewport
+                } else {
+                    break; // Timeline not initialized yet, stop zooming
+                };
+                let canvas_width = match current_canvas_width() {
+                    Some(width) => width as u32,
+                    None => continue, // Timeline not initialized yet, skip this frame
+                };
                 
                 // Calculate new resolution using pure integer math (timeline plan approach)
                 let new_ns_per_pixel_value = if crate::state::IS_SHIFT_PRESSED.get() {
@@ -1672,22 +1669,22 @@ pub fn start_smooth_zoom_in() {
                 let new_ns_per_pixel = NsPerPixel(new_ns_per_pixel_value.max(1));
                 
                 if new_ns_per_pixel.nanos() != current_ns_per_pixel {
-                    // FIXED: Use cursor position for zoom center (not separate zoom center)
-                    let cursor_time_ns = current_cursor_position().nanos();
+                    // ✅ FIXED: Use zoom center for zoom calculations (not cursor position)
+                    let zoom_center_time_ns = TimeNs::from_external_seconds(current_zoom_center_seconds()).nanos();
                     
-                    // Calculate cursor position as pixels from viewport start
+                    // Calculate zoom center position as pixels from viewport start
                     let viewport_start_ns = current_viewport.start.nanos();
-                    let cursor_offset_ns = cursor_time_ns.saturating_sub(viewport_start_ns);
-                    let cursor_x_pixels = (cursor_offset_ns / current_ns_per_pixel) as u32;
-                    let cursor_x_pixels = cursor_x_pixels.min(canvas_width);
+                    let zoom_center_offset_ns = zoom_center_time_ns.saturating_sub(viewport_start_ns);
+                    let zoom_center_x_pixels = (zoom_center_offset_ns / current_ns_per_pixel) as u32;
+                    let zoom_center_x_pixels = zoom_center_x_pixels.min(canvas_width);
                     
-                    // Calculate new viewport centered on cursor (pure integer math)
-                    let ns_before_cursor = cursor_x_pixels as u64 * new_ns_per_pixel.nanos();
-                    let ns_after_cursor = (canvas_width.saturating_sub(cursor_x_pixels)) as u64 * new_ns_per_pixel.nanos();
+                    // Calculate new viewport centered on zoom center (pure integer math)
+                    let ns_before_zoom_center = zoom_center_x_pixels as u64 * new_ns_per_pixel.nanos();
+                    let ns_after_zoom_center = (canvas_width.saturating_sub(zoom_center_x_pixels)) as u64 * new_ns_per_pixel.nanos();
                     
                     let new_viewport = Viewport::new(
-                        TimeNs(cursor_time_ns.saturating_sub(ns_before_cursor)),
-                        TimeNs(cursor_time_ns.saturating_add(ns_after_cursor))
+                        TimeNs(zoom_center_time_ns.saturating_sub(ns_before_zoom_center)),
+                        TimeNs(zoom_center_time_ns.saturating_add(ns_after_zoom_center))
                     );
                     
                     set_ns_per_pixel_if_changed(new_ns_per_pixel);
@@ -1706,45 +1703,52 @@ pub fn start_smooth_zoom_out() {
         IS_ZOOMING_OUT.set_neq(true);
         Task::start(async move {
             while IS_ZOOMING_OUT.get() {
-                let current_ns_per_pixel = current_ns_per_pixel();
-                
-                // FIXED: Use pure integer math instead of floating-point factors
-                // Industry standard approach: increase ns_per_pixel by integer multiplication/division
-                let new_ns_per_pixel_value = if crate::state::IS_SHIFT_PRESSED.get() {
-                    // Fast zoom out: multiply by 1.2 (equivalent to multiply by 6/5)
-                    (current_ns_per_pixel.nanos() * 6) / 5  // 20% zoom out per frame
+                if let Some(current_ns_per_pixel_val) = current_ns_per_pixel() {
+                    // FIXED: Use pure integer math instead of floating-point factors
+                    // Industry standard approach: increase ns_per_pixel by integer multiplication/division
+                    let new_ns_per_pixel_value = if crate::state::IS_SHIFT_PRESSED.get() {
+                        // Fast zoom out: multiply by 1.2 (equivalent to multiply by 6/5)
+                        (current_ns_per_pixel_val.nanos() * 6) / 5  // 20% zoom out per frame
+                    } else {
+                        // Normal zoom out: multiply by 1.1 (equivalent to multiply by 11/10)
+                        (current_ns_per_pixel_val.nanos() * 11) / 10  // 10% zoom out per frame
+                    };
+                    
+                    let new_ns_per_pixel = NsPerPixel(new_ns_per_pixel_value);
+                    if new_ns_per_pixel != current_ns_per_pixel_val {
+                        // ✅ CORRECT: Use zoom center for zoom calculations (not cursor position)
+                        let zoom_center_time_ns = TimeNs::from_external_seconds(current_zoom_center_seconds()).nanos();
+                        if let Some(current_viewport) = current_viewport() {
+                            let canvas_width = match current_canvas_width() {
+                                Some(width) => width as u32,
+                                None => continue, // Timeline not initialized yet, skip this frame
+                            };
+                            
+                            // Calculate zoom center position as pixels from viewport start
+                            let viewport_start_ns = current_viewport.start.nanos();
+                            let zoom_center_offset_ns = zoom_center_time_ns.saturating_sub(viewport_start_ns);
+                            let zoom_center_x_pixels = (zoom_center_offset_ns / current_ns_per_pixel_val.nanos()) as u32;
+                            let zoom_center_x_pixels = zoom_center_x_pixels.min(canvas_width);
+                            
+                            // Calculate new viewport centered on zoom center (pure integer math)
+                            let ns_before_zoom_center = zoom_center_x_pixels as u64 * new_ns_per_pixel.nanos();
+                            let ns_after_zoom_center = (canvas_width.saturating_sub(zoom_center_x_pixels)) as u64 * new_ns_per_pixel.nanos();
+                            
+                            let new_viewport = Viewport::new(
+                                TimeNs(zoom_center_time_ns.saturating_sub(ns_before_zoom_center)),
+                                TimeNs(zoom_center_time_ns.saturating_add(ns_after_zoom_center))
+                            );
+                            
+                            set_ns_per_pixel_if_changed(new_ns_per_pixel);
+                            set_viewport_if_changed(new_viewport);
+                        } else {
+                            break; // Timeline not initialized yet, stop zooming
+                        }
+                    } else {
+                        break; // Hit zoom limit
+                    }
                 } else {
-                    // Normal zoom out: multiply by 1.1 (equivalent to multiply by 11/10)
-                    (current_ns_per_pixel.nanos() * 11) / 10  // 10% zoom out per frame
-                };
-                
-                let new_ns_per_pixel = NsPerPixel(new_ns_per_pixel_value);
-                
-                if new_ns_per_pixel != current_ns_per_pixel {
-                    // FIXED: Use cursor position for zoom center (same as zoom in)
-                    let cursor_time_ns = current_cursor_position().nanos();
-                    let current_viewport = current_viewport();
-                    let canvas_width = current_canvas_width() as u32;
-                    
-                    // Calculate cursor position as pixels from viewport start
-                    let viewport_start_ns = current_viewport.start.nanos();
-                    let cursor_offset_ns = cursor_time_ns.saturating_sub(viewport_start_ns);
-                    let cursor_x_pixels = (cursor_offset_ns / current_ns_per_pixel.nanos()) as u32;
-                    let cursor_x_pixels = cursor_x_pixels.min(canvas_width);
-                    
-                    // Calculate new viewport centered on cursor (pure integer math)
-                    let ns_before_cursor = cursor_x_pixels as u64 * new_ns_per_pixel.nanos();
-                    let ns_after_cursor = (canvas_width.saturating_sub(cursor_x_pixels)) as u64 * new_ns_per_pixel.nanos();
-                    
-                    let new_viewport = Viewport::new(
-                        TimeNs(cursor_time_ns.saturating_sub(ns_before_cursor)),
-                        TimeNs(cursor_time_ns.saturating_add(ns_after_cursor))
-                    );
-                    
-                    set_ns_per_pixel_if_changed(new_ns_per_pixel);
-                    set_viewport_if_changed(new_viewport);
-                } else {
-                    break; // Hit zoom limit
+                    break; // Timeline not initialized yet, stop zooming
                 }
                 Timer::sleep(16).await; // 60fps updates
             }
@@ -1769,37 +1773,44 @@ pub fn start_smooth_pan_left() {
                 let ns_per_pixel = current_ns_per_pixel();
                 // Allow panning when zoomed in OR when actively zooming in for simultaneous operation
                 // Lower ns_per_pixel means more zoomed in
-                if ns_per_pixel.nanos() < NsPerPixel::MEDIUM_ZOOM.nanos() || IS_ZOOMING_IN.get() {
-                    // Get current coordinates for pan computation
-                    let mut coords = current_coordinates();
-                    
-                    // Check for Shift key for turbo panning
-                    let pan_pixels = if crate::state::IS_SHIFT_PRESSED.get() {
-                        -10  // Turbo pan with Shift (10 pixels per frame)
-                    } else {
-                        -2   // Normal smooth pan (2 pixels per frame)
-                    };
-                    
-                    // Store original viewport start for comparison
-                    let original_start = coords.viewport_start_ns;
-                    
-                    // Pan by pixels (negative = pan left) using local coordinates
-                    coords.pan_by_pixels(pan_pixels);
-                    
-                    // Get file bounds and clamp viewport
-                    let (file_min, file_max) = get_full_file_range();
-                    let file_start_ns = TimeNs::from_external_seconds(file_min);
-                    let file_end_ns = TimeNs::from_external_seconds(file_max);
-                    coords.clamp_viewport(file_start_ns, file_end_ns);
-                    
-                    // Update global viewport state through domain
-                    let new_viewport = coords.viewport();
-                    set_viewport_if_changed(new_viewport);
-                    
-                    // Check if we actually moved (if not, we hit boundary)
-                    if coords.viewport_start_ns == original_start {
-                        break; // Hit left boundary
+                if let Some(ns_per_pixel_val) = ns_per_pixel {
+                    if ns_per_pixel_val.nanos() < NsPerPixel::MEDIUM_ZOOM.nanos() || IS_ZOOMING_IN.get() {
+                        // Get current coordinates for pan computation
+                        let mut coords = match current_coordinates() {
+                            Some(coords) => coords,
+                            None => break, // Timeline not initialized yet, stop panning
+                        };
+                        
+                        // Check for Shift key for turbo panning
+                        let pan_pixels = if crate::state::IS_SHIFT_PRESSED.get() {
+                            -10  // Turbo pan with Shift (10 pixels per frame)
+                        } else {
+                            -2   // Normal smooth pan (2 pixels per frame)
+                        };
+                        
+                        // Store original viewport start for comparison
+                        let original_start = coords.viewport_start_ns;
+                        
+                        // Pan by pixels (negative = pan left) using local coordinates
+                        coords.pan_by_pixels(pan_pixels);
+                        
+                        // Get file bounds and clamp viewport
+                        let (file_min, file_max) = get_full_file_range();
+                        let file_start_ns = TimeNs::from_external_seconds(file_min);
+                        let file_end_ns = TimeNs::from_external_seconds(file_max);
+                        coords.clamp_viewport(file_start_ns, file_end_ns);
+                        
+                        // Update global viewport state through domain
+                        let new_viewport = coords.viewport();
+                        set_viewport_if_changed(new_viewport);
+                        
+                        // Check if we actually moved (if not, we hit boundary)
+                        if coords.viewport_start_ns == original_start {
+                            break; // Hit left boundary
+                        }
                     }
+                } else {
+                    break; // Timeline not initialized yet, stop panning
                 }
                 Timer::sleep(16).await; // 60fps for smooth motion
             }
@@ -1815,37 +1826,44 @@ pub fn start_smooth_pan_right() {
                 let ns_per_pixel = current_ns_per_pixel();
                 // Allow panning when zoomed in OR when actively zooming in for simultaneous operation
                 // Lower ns_per_pixel means more zoomed in
-                if ns_per_pixel.nanos() < NsPerPixel::MEDIUM_ZOOM.nanos() || IS_ZOOMING_IN.get() {
-                    // Get current coordinates for pan computation
-                    let mut coords = current_coordinates();
-                    
-                    // Check for Shift key for turbo panning
-                    let pan_pixels = if crate::state::IS_SHIFT_PRESSED.get() {
-                        10   // Turbo pan with Shift (10 pixels per frame)
-                    } else {
-                        2    // Normal smooth pan (2 pixels per frame)
-                    };
-                    
-                    // Store original viewport start for comparison
-                    let original_start = coords.viewport_start_ns;
-                    
-                    // Pan by pixels (positive = pan right) using local coordinates
-                    coords.pan_by_pixels(pan_pixels);
-                    
-                    // Get file bounds and clamp viewport
-                    let (file_min, file_max) = get_full_file_range();
-                    let file_start_ns = TimeNs::from_external_seconds(file_min);
-                    let file_end_ns = TimeNs::from_external_seconds(file_max);
-                    coords.clamp_viewport(file_start_ns, file_end_ns);
-                    
-                    // Update global viewport state through domain
-                    let new_viewport = coords.viewport();
-                    set_viewport_if_changed(new_viewport);
-                    
-                    // Check if we actually moved (if not, we hit boundary)
-                    if coords.viewport_start_ns == original_start {
-                        break; // Hit right boundary
+                if let Some(ns_per_pixel_val) = ns_per_pixel {
+                    if ns_per_pixel_val.nanos() < NsPerPixel::MEDIUM_ZOOM.nanos() || IS_ZOOMING_IN.get() {
+                        // Get current coordinates for pan computation
+                        let mut coords = match current_coordinates() {
+                            Some(coords) => coords,
+                            None => break, // Timeline not initialized yet, stop panning
+                        };
+                        
+                        // Check for Shift key for turbo panning
+                        let pan_pixels = if crate::state::IS_SHIFT_PRESSED.get() {
+                            10   // Turbo pan with Shift (10 pixels per frame)
+                        } else {
+                            2    // Normal smooth pan (2 pixels per frame)
+                        };
+                        
+                        // Store original viewport start for comparison
+                        let original_start = coords.viewport_start_ns;
+                        
+                        // Pan by pixels (positive = pan right) using local coordinates
+                        coords.pan_by_pixels(pan_pixels);
+                        
+                        // Get file bounds and clamp viewport
+                        let (file_min, file_max) = get_full_file_range();
+                        let file_start_ns = TimeNs::from_external_seconds(file_min);
+                        let file_end_ns = TimeNs::from_external_seconds(file_max);
+                        coords.clamp_viewport(file_start_ns, file_end_ns);
+                        
+                        // Update global viewport state through domain
+                        let new_viewport = coords.viewport();
+                        set_viewport_if_changed(new_viewport);
+                        
+                        // Check if we actually moved (if not, we hit boundary)
+                        if coords.viewport_start_ns == original_start {
+                            break; // Hit right boundary
+                        }
                     }
+                } else {
+                    // Timeline not initialized yet - skip this pan frame
                 }
                 Timer::sleep(16).await; // 60fps for smooth motion
             }
@@ -1883,7 +1901,10 @@ fn validate_and_sanitize_range(start: f64, end: f64) -> (f64, f64) {
     
     // Enforce minimum viable range based on maximum zoom level
     let range = end - start;
-    let canvas_width = current_canvas_width() as u32;
+    let canvas_width = match current_canvas_width() {
+        Some(width) => width as u32,
+        None => return (start, end), // Timeline not initialized, return as-is
+    };
     let min_valid_range = get_min_valid_range_ns(canvas_width) as f64 / 1_000_000_000.0;
     if range < min_valid_range {
         crate::debug_utils::debug_timeline_validation(&format!("Range too small: {:.3e}s, enforcing minimum of {:.3e}s", range, min_valid_range));
@@ -1898,7 +1919,10 @@ fn validate_and_sanitize_range(start: f64, end: f64) -> (f64, f64) {
 
 /// Simple cursor movement using TimelineCoordinates - replaces complex fallback algorithms
 fn move_cursor_by_pixels(pixel_offset: i32, current_time_ns: TimeNs) -> Option<TimeNs> {
-    let coords = current_coordinates();
+    let coords = match current_coordinates() {
+        Some(coords) => coords,
+        None => return None, // Timeline not initialized yet
+    };
     
     // Convert current time to pixel position
     if let Some(current_pixel) = coords.time_to_pixel(current_time_ns) {
@@ -2000,7 +2024,7 @@ pub fn start_smooth_cursor_left() {
     let mut animation = DIRECT_CURSOR_ANIMATION.lock_mut();
     animation.direction = -1;
     animation.is_animating = true;
-    animation.current_position = current_cursor_position_seconds();
+    animation.current_position = current_cursor_position_seconds().unwrap_or(0.0);
     IS_CURSOR_MOVING_LEFT.set_neq(true);
 }
 
@@ -2008,7 +2032,7 @@ pub fn start_smooth_cursor_right() {
     let mut animation = DIRECT_CURSOR_ANIMATION.lock_mut();
     animation.direction = 1;
     animation.is_animating = true;
-    animation.current_position = current_cursor_position_seconds();
+    animation.current_position = current_cursor_position_seconds().unwrap_or(0.0);
     IS_CURSOR_MOVING_RIGHT.set_neq(true);
 }
 
@@ -2035,13 +2059,9 @@ pub fn stop_smooth_cursor_right() {
 
 
 
-fn get_full_file_range() -> (f64, f64) {
-    // TIMING BUG FIX: Use get_maximum_timeline_range() which works correctly
-    if let Some((max_min, max_max)) = get_maximum_timeline_range() {
-        return (max_min, max_max);
-    }
-    
-    // Fallback to original logic if no maximum range available
+pub fn get_full_file_range() -> (f64, f64) {
+    // ✅ FIXED: Break circular dependency with get_maximum_timeline_range()
+    // Calculate full file range directly from loaded files without selection dependency
 
     let loaded_files = LOADED_FILES.lock_ref();
     
@@ -2074,23 +2094,16 @@ fn get_full_file_range() -> (f64, f64) {
     
     // 🔧 FIX: Use ONLY the longest span file in get_full_file_range() too
     if let Some((file, file_min, file_max, span)) = file_candidates.first() {
-        zoon::println!("   ✅ USING LONGEST SPAN FILE '{}': {:.6}s to {:.6}s (span: {:.6}s)", file.id, file_min, file_max, span);
-        if *span > 100.0 {
-            zoon::println!("      ✅ LONG TIMELINE: This file will provide proper zoom levels");
-        } else if *span < 0.01 {
-            zoon::println!("      ⚠️  MICROSECOND FILE: Would cause precision issues if used alone");
-        }
+        // Use longest span file (debug: {:.6}s to {:.6}s, span: {:.6}s)
+        // Long timeline check: {} seconds
+        let _is_long_timeline = *span > 100.0;
         
         // Use ONLY the longest file's range, don't combine with others
         min_time = *file_min;
         max_time = *file_max;
         has_valid_files = true;
         
-        // Log skipped shorter files for debugging
-        for (skipped_file, skipped_min, skipped_max, skipped_span) in file_candidates.iter().skip(1) {
-            zoon::println!("   ⏭️  SKIPPED shorter file '{}': {:.6}s to {:.6}s (span: {:.6}s)", 
-                skipped_file.id, skipped_min, skipped_max, skipped_span);
-        }
+        // Skip shorter files (removed debug logging)
     }
     
     // Use validation system for final result with generous buffer
@@ -2274,8 +2287,10 @@ fn create_objects_for_single_variable(
         } else {
             // FIXED: Last rectangle extends only to current viewport end, not full timeline
             // This prevents massive rectangles when zoomed in
-            let current_viewport = current_viewport();
-            current_viewport.end.display_seconds() as f32
+            match current_viewport() {
+                Some(viewport) => viewport.end.display_seconds() as f32,
+                None => continue, // Skip rendering if viewport not initialized
+            }
         };
         
         if end_time <= min_time as f32 || *start_time >= max_time as f32 {
@@ -2360,9 +2375,10 @@ fn update_canvas_objects_incrementally(
         LAST_CANVAS_DIMENSIONS.set_neq(current_dims);
         // Clear cache and force full redraw
         VARIABLE_OBJECT_CACHE.lock_mut().clear();
-        // FIXED: Use cursor position for both cursor and zoom center (cursor-centered zooming)
+        // ✅ FIXED: Use separate cursor and zoom center positions
+        let zoom_center_position = current_zoom_center_seconds();
         return create_waveform_objects_with_dimensions_and_theme(
-            current_vars, canvas_width, canvas_height, theme, cursor_position, cursor_position
+            current_vars, canvas_width, canvas_height, theme, cursor_position, zoom_center_position
         );
     }
     
@@ -2381,9 +2397,10 @@ fn update_canvas_objects_incrementally(
             } else {
                 // Variable not cached - need to create it
                 drop(cache);
-                // FIXED: Use cursor position for both cursor and zoom center (cursor-centered zooming)
+                // ✅ FIXED: Use separate cursor and zoom center positions
+                let zoom_center_position = current_zoom_center_seconds();
                 return create_waveform_objects_with_dimensions_and_theme(
-                    current_vars, canvas_width, canvas_height, theme, cursor_position, cursor_position
+                    current_vars, canvas_width, canvas_height, theme, cursor_position, zoom_center_position
                 );
             }
         }
@@ -2433,11 +2450,18 @@ fn update_canvas_objects_incrementally(
 }
 
 fn create_waveform_objects_with_theme(selected_vars: &[SelectedVariable], theme: &NovyUITheme) -> Vec<fast2d::Object2d> {
-    let cursor_pos = current_cursor_position_seconds();
-    let canvas_width = current_canvas_width();
+    let cursor_pos = match current_cursor_position_seconds() {
+        Some(pos) => pos,
+        None => return Vec::new(), // Timeline not initialized yet, return empty objects
+    };
+    let zoom_center_pos = current_zoom_center_seconds();
+    let canvas_width = match current_canvas_width() {
+        Some(width) => width,
+        None => return Vec::new(), // Timeline not initialized yet, return empty objects
+    };
     let canvas_height = current_canvas_height();
-    // FIXED: Use cursor position for both cursor and zoom center (cursor-centered zooming)
-    create_waveform_objects_with_dimensions_and_theme(selected_vars, canvas_width, canvas_height, theme, cursor_pos, cursor_pos)
+    // ✅ FIXED: Use separate cursor and zoom center positions
+    create_waveform_objects_with_dimensions_and_theme(selected_vars, canvas_width, canvas_height, theme, cursor_pos, zoom_center_pos)
 }
 
 fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVariable], canvas_width: f32, canvas_height: f32, theme: &NovyUITheme, cursor_position: f64, zoom_center_position: f64) -> Vec<fast2d::Object2d> {
@@ -2445,17 +2469,15 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
     
     // Canvas rendering starts
     
-    // ✅ NO FALLBACKS: Only render when we have actual VCD file data
-    let maximum_range = get_maximum_timeline_range();
-    
-    // If we don't have real VCD data, don't render anything
-    if maximum_range.is_none() {
-        return objects; // Empty canvas until real data is loaded
+    // ✅ CRITICAL FIX: Use full file range for timeline scale, not current viewport
+    // The timeline scale should show markers spanning the COMPLETE file duration (0-250s)
+    // The viewport is just a zoom window within this full timeline
+    let (timeline_min, timeline_max) = get_full_file_range();
+    // Log occasionally to avoid spam
+    static RENDER_LOG_COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    if RENDER_LOG_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 10 == 0 {
+        // Canvas rendering with full timeline range
     }
-    
-    // ✅ Use ONLY real VCD data - no fallbacks at all
-    let (timeline_min, timeline_max) = maximum_range.unwrap(); // Safe because we checked above
-    zoon::println!("🔧 CANVAS RENDER: Using ONLY real VCD data: {:.3}s to {:.3}s", timeline_min, timeline_max);
     
     // Get current theme colors
     let theme_colors = get_current_theme_colors(theme);
@@ -2518,8 +2540,10 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
             } else {
                 // FIXED: Last rectangle extends only to current viewport end, not full timeline
                 // This prevents massive rectangles when zoomed in
-                let current_viewport = current_viewport();
-                current_viewport.end.display_seconds() as f32
+                match crate::actors::waveform_timeline::current_viewport() {
+                    Some(viewport) => viewport.end.display_seconds() as f32,
+                    None => continue, // Skip if viewport not initialized
+                }
             };
             
             // Skip rectangles completely outside visible range
@@ -2604,9 +2628,7 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
             };
             
             // Create value rectangle with actual time-based width
-            zoon::println!("🎨 CREATING WAVEFORM RECT: var={} x={:.1} y={:.1} w={:.1} h={:.1} color=({},{},{},{})", 
-                _variable_name, rect_start_x as f32, y_position + 2.0, rect_width as f32, row_height - 4.0,
-                rect_color.0, rect_color.1, rect_color.2, rect_color.3);
+            // Reduced waveform rect creation debug logs
             objects.push(
                 fast2d::Rectangle::new()
                     .position(rect_start_x as f32, y_position + 2.0)
@@ -2783,6 +2805,8 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
         
         // Add zoom center line spanning all rows (if different from cursor)  
         // ✅ FIXED: Now using domain actor zoom center instead of legacy global state
+        // Removed blue line debug spam - called frequently during rendering
+        // Removed blue line checks debug spam
         if zoom_center_position >= min_time && zoom_center_position <= max_time && zoom_center_position != cursor_position {
             let zoom_center_x = ((zoom_center_position - min_time) / time_range) * canvas_width as f64;
             
@@ -2884,7 +2908,7 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
         }
     }
     
-    zoon::println!("🎨 WAVEFORM OBJECTS: Created {} total Fast2D objects for rendering", objects.len());
+    // Debug: Waveform objects created (removed to prevent log spam)
     objects
 }
 
@@ -2956,7 +2980,7 @@ pub fn jump_to_previous_transition() {
     let mut previous_transition: Option<f64> = None;
     
     for &transition_time in transitions.iter() {
-        if transition_time < current_cursor - F64_PRECISION_TOLERANCE { // f64 precision tolerance
+        if transition_time < current_cursor.unwrap_or(0.0) - F64_PRECISION_TOLERANCE { // f64 precision tolerance
             previous_transition = Some(transition_time);
         } else {
             break; // Transitions are sorted, so we can stop here
@@ -3007,7 +3031,7 @@ pub fn jump_to_next_transition() {
     
     // Find the smallest transition time that's greater than current cursor
     let next_transition = transitions.iter()
-        .find(|&&transition_time| transition_time > current_cursor + F64_PRECISION_TOLERANCE) // f64 precision tolerance
+        .find(|&&transition_time| transition_time > current_cursor.unwrap_or(0.0) + F64_PRECISION_TOLERANCE) // f64 precision tolerance
         .copied();
     
     if let Some(next_time) = next_transition {
@@ -3071,8 +3095,9 @@ pub fn reset_zoom_to_fit_all() {
 
 /// Reset zoom center to 0 seconds
 pub fn reset_zoom_center() {
-    ZOOM_CENTER_NS.set_neq(TimeNs::ZERO);
+    // Use Actor+Relay system to reset zoom center
+    crate::actors::waveform_timeline::set_zoom_center_follow_mouse(TimeNs::ZERO);
     // Also update mouse time position for consistency with zoom behavior
     MOUSE_TIME_NS.set_neq(TimeNs::ZERO);
-    crate::debug_utils::debug_conditional("Zoom center reset to 0s");
+    crate::debug_utils::debug_conditional("Zoom center reset to 0s using Actor+Relay");
 }

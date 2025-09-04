@@ -9,7 +9,7 @@ use crate::actors::{Actor, ActorMap, Relay, relay};
 use crate::actors::global_domains::waveform_timeline_domain;
 use crate::time_types::{TimeNs, Viewport, NsPerPixel, TimelineCoordinates, TimelineCache};
 use shared::{SignalTransition, SignalValue, WaveformFile, VarFormat};
-use zoon::{MutableExt, SignalVecExt, SignalExt};
+use zoon::{SignalExt, SignalVecExt, MutableExt};
 use futures::{StreamExt, select};
 use std::collections::{BTreeMap, HashMap};
 use crate::format_utils;
@@ -31,8 +31,6 @@ pub struct WaveformTimeline {
     /// Timeline resolution (nanoseconds per pixel)
     ns_per_pixel: Actor<NsPerPixel>,
     
-    /// Unified timeline coordinates for integer-based calculations
-    coordinates: Actor<TimelineCoordinates>,
     
     /// Unified timeline cache - replaces 4 separate cache systems
     cache: Actor<TimelineCache>,
@@ -241,12 +239,30 @@ impl WaveformTimeline {
         let (data_loaded_relay, _data_loaded_stream) = relay::<(String, WaveformFile)>();
         let (transitions_cached_relay, _transitions_cached_stream) = relay::<(String, Vec<SignalTransition>)>();
         let (cursor_values_updated_relay, _cursor_values_updated_stream) = relay::<BTreeMap<String, SignalValue>>();
-        let (timeline_bounds_calculated_relay, _timeline_bounds_calculated_stream) = relay::<(f64, f64)>();
+        let (timeline_bounds_calculated_relay, timeline_bounds_calculated_stream) = relay::<(f64, f64)>();
         let (viewport_changed_relay, _viewport_changed_stream) = relay::<(f64, f64)>();
         let (ns_per_pixel_changed_relay, mut ns_per_pixel_changed_stream) = relay::<NsPerPixel>();
         
+        // Helper function to get initial cursor position
+        let get_initial_cursor_position = || {
+            if let Some((min_time, max_time)) = crate::waveform_canvas::get_current_timeline_range() {
+                let center_time = (min_time + max_time) / 2.0;
+                TimeNs::from_external_seconds(center_time)
+            } else {
+                TimeNs::ZERO
+            }
+        };
+        
         // Create cursor position actor with comprehensive event handling
-        let cursor_position = Actor::new(TimeNs::ZERO, async move |cursor_handle| {
+        // ✅ FIX: Initialize cursor at timeline center instead of 0
+        let initial_cursor_position = get_initial_cursor_position();
+        if initial_cursor_position != TimeNs::ZERO {
+            zoon::println!("🎯 CURSOR INIT: Starting at timeline center: {}s", initial_cursor_position.display_seconds());
+        } else {
+            zoon::println!("🎯 CURSOR INIT: No timeline range available, starting at 0s");
+        }
+        
+        let cursor_position = Actor::new(initial_cursor_position, async move |cursor_handle| {
             let mut cursor_clicked = cursor_clicked_stream;
             let mut cursor_moved = cursor_moved_stream;
             let mut left_key_pressed = left_key_pressed_stream;
@@ -299,11 +315,15 @@ impl WaveformTimeline {
                             Some(()) => {
                                 // Center cursor at viewport center
                                 let viewport = crate::actors::waveform_timeline::current_viewport();
-                                let center_time = TimeNs::from_external_seconds(
-                                    (viewport.start.display_seconds() + viewport.end.display_seconds()) / 2.0
-                                );
+                                let center_time = if let Some(vp) = viewport {
+                                    TimeNs::from_external_seconds(
+                                        (vp.start.display_seconds() + vp.end.display_seconds()) / 2.0
+                                    )
+                                } else {
+                                    TimeNs::ZERO
+                                };
                                 cursor_handle.set(center_time);
-                                zoon::println!("🎯 CURSOR: Centered at viewport center: {}s", center_time.display_seconds());
+                                zoon::println!("🎯 CURSOR: Centered at viewport center: {}s - signal should auto-update variable values", center_time.display_seconds());
                             },
                             None => break,
                         }
@@ -313,13 +333,36 @@ impl WaveformTimeline {
             }
         });
         
-        // Create viewport actor with comprehensive event handling
+        // Clone relays needed by multiple actors and struct field before moving
+        let cursor_center_at_viewport_relay_for_ns_per_pixel = cursor_center_at_viewport_relay.clone();
+        let cursor_center_at_viewport_relay_for_struct = cursor_center_at_viewport_relay.clone();
+        
+        // Helper function to get initial viewport from file data
+        let get_initial_viewport = || {
+            // Try to get file range from loaded files
+            if let Some((min_time, max_time)) = crate::waveform_canvas::get_maximum_timeline_range() {
+                let file_span = max_time - min_time;
+                if file_span > 1.0 {  // Use file data if span > 1 second
+                    zoon::println!("🎯 VIEWPORT INIT: Using file range: {:.3}s to {:.3}s (span: {:.3}s)", min_time, max_time, file_span);
+                    return Viewport::new(
+                        TimeNs::from_external_seconds(min_time),
+                        TimeNs::from_external_seconds(max_time)
+                    );
+                }
+            }
+            zoon::println!("🎯 VIEWPORT INIT: No file data available, using minimal fallback");
+            Viewport::new(TimeNs::ZERO, TimeNs::from_external_seconds(1.0))  // 1-second fallback
+        };
+
+        // Create viewport actor with comprehensive event handling  
+        let initial_viewport = get_initial_viewport();
         let viewport = Actor::new(
-            Viewport::new(TimeNs::ZERO, TimeNs::from_external_seconds(250.0)), 
+            initial_viewport, 
             async move |viewport_handle| {
-                let mut viewport_changed = _viewport_changed_stream;
-                let mut timeline_bounds_calculated = _timeline_bounds_calculated_stream;
-                let mut fit_all_clicked = fit_all_clicked_stream;
+                let cursor_center_at_viewport_relay_clone = cursor_center_at_viewport_relay.clone();
+                    let mut viewport_changed = _viewport_changed_stream;
+                    let mut timeline_bounds_calculated = timeline_bounds_calculated_stream;
+                    let mut fit_all_clicked = fit_all_clicked_stream;
                 
                 loop {
                     select! {
@@ -343,6 +386,16 @@ impl WaveformTimeline {
                                         TimeNs::from_external_seconds(max_time)
                                     );
                                     viewport_handle.set(new_viewport);
+                                    
+                                    // ✅ FIX: Trigger automatic fit-all zoom when timeline bounds are calculated (on file load)
+                                    // Use the same relay that R key uses for consistent behavior
+                                    zoon::println!("🎯 TIMELINE INIT: Auto-triggering fit-all zoom on file load (range: {:.3}s to {:.3}s)", min_time, max_time);
+                                    crate::actors::waveform_timeline_domain().reset_zoom_pressed_relay.send(());
+                                    
+                                    // ✅ FIX: Center cursor at viewport center when timeline bounds are calculated
+                                    let center_time = (min_time + max_time) / 2.0;
+                                    cursor_center_at_viewport_relay_clone.send(());
+                                    zoon::println!("🎯 TIMELINE INIT: Centering cursor at {}s when timeline bounds calculated", center_time);
                                 }
                                 None => break,
                             }
@@ -350,7 +403,43 @@ impl WaveformTimeline {
                         event = fit_all_clicked.next() => {
                             match event {
                                 Some(()) => {
-                                    // Will be updated by timeline bounds calculation
+                                    // ✅ FIX: Reset viewport to full timeline range using actual file data
+                                    if let Some((min_time, max_time)) = crate::waveform_canvas::get_maximum_timeline_range() {
+                                        let full_timeline_viewport = Viewport::new(
+                                            TimeNs::from_external_seconds(min_time),
+                                            TimeNs::from_external_seconds(max_time)
+                                        );
+                                        viewport_handle.set_neq(full_timeline_viewport);
+                                        zoon::println!("🔧 FIT_ALL: Reset viewport to full timeline {:.3}s-{:.3}s (from file data)", min_time, max_time);
+                                        
+                                        // ✅ CRITICAL: Update static cache immediately to prevent timing issues
+                                        let cached_viewport = static_cache_viewport();
+                                        if let Ok(mut cache) = cached_viewport.get_or_init(|| std::sync::Mutex::new(Viewport::new(TimeNs::ZERO, TimeNs::ZERO))).lock() {
+                                            *cache = full_timeline_viewport;
+                                            zoon::println!("✅ CACHE UPDATE: Immediately updated static cache with viewport {:.3}s-{:.3}s", min_time, max_time);
+                                        }
+                                    } else {
+                                        // Fallback to full file range if no variables selected
+                                        let (file_min, file_max) = crate::waveform_canvas::get_full_file_range();
+                                        if file_min < file_max && file_min.is_finite() && file_max.is_finite() {
+                                            let full_timeline_viewport = Viewport::new(
+                                                TimeNs::from_external_seconds(file_min),
+                                                TimeNs::from_external_seconds(file_max)
+                                            );
+                                            viewport_handle.set_neq(full_timeline_viewport);
+                                            zoon::println!("🔧 FIT_ALL: Reset viewport to full file range {:.3}s-{:.3}s (no variables selected)", file_min, file_max);
+                                            
+                                            // ✅ CRITICAL: Update static cache immediately to prevent timing issues
+                                            let cached_viewport = static_cache_viewport();
+                                            if let Ok(mut cache) = cached_viewport.get_or_init(|| std::sync::Mutex::new(Viewport::new(TimeNs::ZERO, TimeNs::ZERO))).lock() {
+                                                *cache = full_timeline_viewport;
+                                                zoon::println!("✅ CACHE UPDATE: Immediately updated static cache with viewport {:.3}s-{:.3}s", file_min, file_max);
+                                            }
+                                        }
+                                    }
+                                    
+                                    // Center cursor at viewport center
+                                    cursor_center_at_viewport_relay_clone.send(());
                                 }
                                 None => break,
                             }
@@ -362,12 +451,13 @@ impl WaveformTimeline {
         );
         
         // Create ns_per_pixel actor with zoom event handling
-        let ns_per_pixel = Actor::new(NsPerPixel::MEDIUM_ZOOM, {
+        let ns_per_pixel = Actor::new(NsPerPixel::default(), {
             let canvas_resized_relay_clone = canvas_resized_relay.clone();
             let viewport_for_ns_per_pixel = viewport.clone();
-            let cursor_center_at_viewport_relay_clone = cursor_center_at_viewport_relay.clone();
+            let cursor_center_at_viewport_relay_clone = cursor_center_at_viewport_relay_for_ns_per_pixel.clone();
             let zoom_center_reset_to_zero_relay_clone = zoom_center_reset_to_zero_relay.clone();
             let viewport_changed_relay_clone = viewport_changed_relay.clone();
+            let fit_all_clicked_relay_clone = fit_all_clicked_relay.clone();
             async move |ns_per_pixel_handle| {
                 let mut zoom_in_started = zoom_in_started_stream;
                 let mut zoom_out_started = zoom_out_started_stream;
@@ -401,37 +491,39 @@ impl WaveformTimeline {
                     event = zoom_in_pressed.next() => {
                         match event {
                             Some(()) => {
-                                zoon::println!("🔧 ZOOM_IN_PRESSED: Starting zoom in operation");
+                                // Zoom in operation starting
                                 let current_ns_per_pixel = ns_per_pixel_handle.get();
                                 let new_ns_per_pixel = current_ns_per_pixel.zoom_in_smooth(0.3);
                                 ns_per_pixel_handle.set_neq(new_ns_per_pixel);
                                 
                                 // ✅ CRITICAL FIX: Update viewport when zoom changes
                                 let current_viewport = viewport_for_ns_per_pixel.signal().to_stream().next().await.unwrap_or_else(|| {
-                                    Viewport::new(TimeNs::ZERO, TimeNs::from_external_seconds(250.0))
+                                    panic!("Canvas resize without valid file range - no data available")
                                 });
-                                let canvas_width = current_canvas_width(); // Use existing function
                                 
-                                // ✅ FIXED: Use cursor position as zoom center, not viewport center
-                                let center_time = crate::actors::waveform_timeline::current_cursor_position();
+                                // ✅ FIXED: Use actual current canvas width, not hardcoded values
+                                let canvas_width = match current_canvas_width() {
+                                    Some(width) => width,
+                                    None => continue, // Timeline not initialized yet, skip this frame
+                                };
                                 
-                                // Calculate new viewport range based on new zoom level
+                                // Using dynamic canvas width for zoom calculation
+                                
+                                // ✅ CORRECT: Use zoom center position (blue line), not cursor position (yellow line)
+                                let center_time = crate::actors::waveform_timeline::current_zoom_center_position();
+                                
+                                // Calculate new viewport range based on new zoom level and ACTUAL canvas width
                                 let half_range_ns = (new_ns_per_pixel.nanos() * canvas_width as u64) / 2;
                                 let new_start = TimeNs::from_nanos(center_time.nanos().saturating_sub(half_range_ns));
                                 let new_end = TimeNs::from_nanos(center_time.nanos() + half_range_ns);
                                 let new_viewport = Viewport::new(new_start, new_end);
                                 
-                                zoon::println!("🔧 ZOOM_IN_PRESSED: Updating viewport from {:.3}s-{:.3}s to {:.3}s-{:.3}s", 
-                                    current_viewport.start.display_seconds(),
-                                    current_viewport.end.display_seconds(),
-                                    new_viewport.start.display_seconds(), 
-                                    new_viewport.end.display_seconds()
-                                );
+                                // Viewport updated for zoom in operation
                                 
                                 // Use the viewport changed relay to update viewport
                                 let viewport_tuple = (new_viewport.start.display_seconds(), new_viewport.end.display_seconds());
                                 viewport_changed_relay_clone.send(viewport_tuple);
-                                zoon::println!("🔧 ZOOM_IN_PRESSED: Zoom in operation completed");
+                                // Zoom in completed
                             }
                             None => break,
                         }
@@ -439,19 +531,25 @@ impl WaveformTimeline {
                     event = zoom_out_pressed.next() => {
                         match event {
                             Some(()) => {
-                                zoon::println!("🔧 ZOOM_OUT_PRESSED: Starting zoom out operation");
+                                // Zoom out operation starting
                                 let current_ns_per_pixel = ns_per_pixel_handle.get();
                                 let new_ns_per_pixel = current_ns_per_pixel.zoom_out_smooth(0.3);
                                 ns_per_pixel_handle.set_neq(new_ns_per_pixel);
                                 
                                 // ✅ CRITICAL FIX: Update viewport when zoom changes
                                 let current_viewport = viewport_for_ns_per_pixel.signal().to_stream().next().await.unwrap_or_else(|| {
-                                    Viewport::new(TimeNs::ZERO, TimeNs::from_external_seconds(250.0))
+                                    panic!("Canvas resize without valid file range - no data available")
                                 });
-                                let canvas_width = current_canvas_width(); // Use existing function
+                                // ✅ FIXED: Use actual current canvas width, not hardcoded values
+                                let canvas_width = match current_canvas_width() {
+                                    Some(width) => width,
+                                    None => continue, // Timeline not initialized yet, skip this frame
+                                };
                                 
-                                // ✅ FIXED: Use cursor position as zoom center, not viewport center
-                                let center_time = crate::actors::waveform_timeline::current_cursor_position();
+                                // Using dynamic canvas width for zoom calculation
+                                
+                                // ✅ CORRECT: Use zoom center position (blue line), not cursor position (yellow line)
+                                let center_time = crate::actors::waveform_timeline::current_zoom_center_position();
                                 
                                 // Calculate new viewport range based on new zoom level
                                 let half_range_ns = (new_ns_per_pixel.nanos() * canvas_width as u64) / 2;
@@ -459,17 +557,12 @@ impl WaveformTimeline {
                                 let new_end = TimeNs::from_nanos(center_time.nanos() + half_range_ns);
                                 let new_viewport = Viewport::new(new_start, new_end);
                                 
-                                zoon::println!("🔧 ZOOM_OUT_PRESSED: Updating viewport from {:.3}s-{:.3}s to {:.3}s-{:.3}s", 
-                                    current_viewport.start.display_seconds(),
-                                    current_viewport.end.display_seconds(),
-                                    new_viewport.start.display_seconds(), 
-                                    new_viewport.end.display_seconds()
-                                );
+                                // Viewport updated for zoom out operation
                                 
                                 // Use the viewport changed relay to update viewport
                                 let viewport_tuple = (new_viewport.start.display_seconds(), new_viewport.end.display_seconds());
                                 viewport_changed_relay_clone.send(viewport_tuple);
-                                zoon::println!("🔧 ZOOM_OUT_PRESSED: Zoom out operation completed");
+                                // Zoom out completed
                             }
                             None => break,
                         }
@@ -477,33 +570,30 @@ impl WaveformTimeline {
                     event = reset_zoom_pressed.next() => {
                         match event {
                             Some(()) => {
-                                // MANDATORY DEBUG: Verify Actor is running and receiving events
-                                zoon::println!("🚨🚨🚨 WaveformTimeline Actor IS RUNNING: reset_zoom_pressed event received!");
+                                // Reset zoom operation starting
                                 
-                                // CRITICAL DEBUG: Track R key calculation cycling
-                                use std::sync::atomic::{AtomicU32, Ordering};
-                                static R_KEY_COUNTER: AtomicU32 = AtomicU32::new(0);
-                                let r_count = R_KEY_COUNTER.fetch_add(1, Ordering::Relaxed);
-                                
-                                // ITERATION 7: Debug logging (removed SystemTime - not available in WASM)
-                                zoon::println!("🚨 R KEY DEBUG #{}: Starting contextual zoom calculation", r_count);
+                                // R key should:
+                                // 1. Calculate fit-all zoom based on ACTUAL canvas width (not hardcoded 800px)
+                                // 2. Reset viewport to show entire timeline
+                                // 3. Reset zoom center to 0
+                                // 4. Center cursor in viewport
+                                // NOTE: This should only happen when user presses R, not continuously
                                 
                                 // Debug current Actor state before calculation
                                 let current_ns_per_pixel = ns_per_pixel_handle.get();
-                                let current_viewport = crate::actors::waveform_timeline::current_viewport();
-                                let current_coords = crate::actors::waveform_timeline::current_coordinates();
+                                let current_viewport = match crate::actors::waveform_timeline::current_viewport() {
+                                    Some(viewport) => viewport,
+                                    None => continue, // Timeline not initialized yet, skip this frame
+                                };
+                                let current_coords = match crate::actors::waveform_timeline::current_coordinates() {
+                                    Some(coords) => coords,
+                                    None => continue, // Timeline not initialized yet, skip this frame
+                                };
                                 
                                 // ITERATION 4: Additional Actor state consistency checks (using public signals since handles not in scope)
                                 // Note: We can only access ns_per_pixel_handle directly within this Actor
                                 
-                                zoon::println!("🚨 BEFORE CALCULATION:");
-                                zoon::println!("   Current ns_per_pixel: {} ({:.3}ms/px)", current_ns_per_pixel, current_ns_per_pixel.nanos() as f64 / 1_000_000.0);
-                                zoon::println!("   Current viewport: {:.3}s to {:.3}s", current_viewport.start.display_seconds(), current_viewport.end.display_seconds());
-                                zoon::println!("   Coords cache: viewport={:.3}s-{:.3}s, canvas_width={}px, ns_per_pixel={}", 
-                                    current_coords.viewport_start_ns.display_seconds(),
-                                    (current_coords.viewport_start_ns.nanos() + (current_coords.canvas_width_pixels as u64 * current_coords.ns_per_pixel.nanos())) as f64 / 1_000_000_000.0,
-                                    current_coords.canvas_width_pixels,
-                                    current_coords.ns_per_pixel);
+                                // Reset zoom calculation starting
                                     
                                 // ITERATION 4: Check Actor state consistency between calls (limited to available state)
                                 static mut PREVIOUS_STATE: Option<(u64, u64, u64, u32)> = None;
@@ -516,16 +606,12 @@ impl WaveformTimeline {
                                 unsafe {
                                     if let Some(prev) = PREVIOUS_STATE {
                                         if current_state != prev {
-                                            zoon::println!("🚨 ACTOR STATE CHANGED:");
-                                            if current_state.0 != prev.0 { zoon::println!("   ns_per_pixel: {} -> {} ({:.3}ms/px -> {:.3}ms/px)", prev.0, current_state.0, prev.0 as f64 / 1_000_000.0, current_state.0 as f64 / 1_000_000.0); }
-                                            if current_state.1 != prev.1 { zoon::println!("   viewport_start: {} -> {} ({:.6}s -> {:.6}s)", prev.1, current_state.1, prev.1 as f64 / 1_000_000_000.0, current_state.1 as f64 / 1_000_000_000.0); }
-                                            if current_state.2 != prev.2 { zoon::println!("   viewport_end: {} -> {} ({:.6}s -> {:.6}s)", prev.2, current_state.2, prev.2 as f64 / 1_000_000_000.0, current_state.2 as f64 / 1_000_000_000.0); }
-                                            if current_state.3 != prev.3 { zoon::println!("   canvas_width: {}px -> {}px", prev.3, current_state.3); }
+                                            // Actor state has changed
                                         } else {
-                                            zoon::println!("🚨 ACTOR STATE IDENTICAL to previous call");
+                                            // Actor state identical to previous call
                                         }
                                     } else {
-                                        zoon::println!("🚨 FIRST R KEY PRESS - saving initial state");
+                                        // First R key press - saving initial state
                                     }
                                     PREVIOUS_STATE = Some(current_state);
                                 }
@@ -538,7 +624,10 @@ impl WaveformTimeline {
                                 static STABLE_CANVAS_WIDTH: std::sync::OnceLock<std::sync::Mutex<u32>> = std::sync::OnceLock::new();
                                 
                                 let canvas_width = {
-                                    let raw_width = crate::actors::waveform_timeline::current_canvas_width() as u32;
+                                    let raw_width = match crate::actors::waveform_timeline::current_canvas_width() {
+                                        Some(width) => width as u32,
+                                        None => continue, // Timeline not initialized yet, skip this frame
+                                    };
                                     let mutex = STABLE_CANVAS_WIDTH.get_or_init(|| std::sync::Mutex::new(raw_width));
                                     let mut cached_width = mutex.lock().unwrap();
                                     
@@ -562,44 +651,36 @@ impl WaveformTimeline {
                                     // ITERATION 7: Debug checkpoint 2 - After timeline range calculation
                                     
                                     let time_range_ns = ((max_time - min_time) * 1_000_000_000.0) as u64;
-                                    let contextual_zoom = NsPerPixel(time_range_ns / canvas_width as u64);
+                                    // Fix: Use proper rounding instead of truncated integer division
+                                    let contextual_zoom = NsPerPixel((time_range_ns + canvas_width as u64 / 2) / canvas_width as u64);
                                     
-                                    zoon::println!("🚨 ITERATION 7: Timeline range calculated");
+                                    // Timeline range calculated from file data
                                     
                                     // ITERATION 6: Enhanced clamping logic debug
                                     let min_zoom = NsPerPixel(1_000); // 1μs/px (very zoomed in)
                                     let max_zoom = NsPerPixel(10_000_000_000); // 10s/px (very zoomed out)
                                     
-                                    zoon::println!("🚨 ITERATION 6 - CLAMPING DEBUG:");
-                                    zoon::println!("   Min zoom bound: {} ({:.3}ms/px)", min_zoom, min_zoom.nanos() as f64 / 1_000_000.0);
-                                    zoon::println!("   Max zoom bound: {} ({:.3}ms/px)", max_zoom, max_zoom.nanos() as f64 / 1_000_000.0);
-                                    zoon::println!("   Contextual zoom before clamp: {} ({:.3}ms/px)", contextual_zoom, contextual_zoom.nanos() as f64 / 1_000_000.0);
+                                    // Apply zoom bounds (1μs/px to 10s/px range)
                                     
                                     let raw_clamp = contextual_zoom.nanos().clamp(min_zoom.nanos(), max_zoom.nanos());
                                     let clamped_zoom = NsPerPixel(raw_clamp);
                                     
                                     // ITERATION 6: Track clamping behavior
                                     let was_clamped = raw_clamp != contextual_zoom.nanos();
-                                    zoon::println!("🚨 CLAMPING RESULT: {} -> {} (was_clamped: {})", 
-                                        contextual_zoom.nanos(), raw_clamp, was_clamped);
+                                    // Zoom clamping applied
                                     if was_clamped {
                                         if raw_clamp == min_zoom.nanos() {
-                                            zoon::println!("   CLAMPED TO MIN ZOOM (1μs/px)");
+                                            // Clamped to minimum zoom level
                                         } else if raw_clamp == max_zoom.nanos() {
-                                            zoon::println!("   CLAMPED TO MAX ZOOM (10s/px)");
+                                            // Clamped to maximum zoom level
                                         } else {
-                                            zoon::println!("   ERROR: Unexpected clamping result");
+                                            // Error: Unexpected clamping result
                                         }
                                     } else {
-                                        zoon::println!("   NO CLAMPING APPLIED - contextual zoom within bounds");
+                                        // No clamping applied - zoom within bounds
                                     }
                                     
-                                    zoon::println!("🚨 CALCULATION RESULTS:");
-                                    zoon::println!("   Timeline range: {:.6}s to {:.6}s (span: {:.6}s)", min_time, max_time, max_time - min_time);
-                                    zoon::println!("   Time range in ns: {} ns", time_range_ns);
-                                    zoon::println!("   Canvas width used: {}px (STABLE)", canvas_width);
-                                    zoon::println!("   Raw calculation: {} ns / {} px = {} ns/px", time_range_ns, canvas_width, time_range_ns / canvas_width as u64);
-                                    zoon::println!("   Contextual zoom: {} ({:.3}ms/px)", contextual_zoom, contextual_zoom.nanos() as f64 / 1_000_000.0);
+                                    // Zoom calculation results computed
                                     zoon::println!("   Final zoom: {} ({:.3}ms/px) (clamped)", clamped_zoom, clamped_zoom.nanos() as f64 / 1_000_000.0);
                                     
                                     // ITERATION 9 FIX VALIDATION: Track if stable canvas width prevents cycling
@@ -623,26 +704,26 @@ impl WaveformTimeline {
                                     
                                     ns_per_pixel_handle.set(clamped_zoom);
                                     
-                                    // R key: Trigger cursor centering and zoom center reset
+                                    // R key: Trigger viewport reset to full timeline, cursor centering, and zoom center reset
+                                    fit_all_clicked_relay_clone.send(()); // ✅ FIX: Reset viewport to full timeline
                                     cursor_center_at_viewport_relay_clone.send(());
                                     zoom_center_reset_to_zero_relay_clone.send(());
                                     
                                     // ITERATION 7: Final debug checkpoint
                                     
-                                    zoon::println!("🚨 ITERATION 7 - FINAL: R key calculation completed successfully");
+                                    // R key zoom reset calculation completed
                                         
                                     // ITERATION 8: COMPREHENSIVE SUMMARY per R key press
                                     zoon::println!("═══════════════════════════════════════════════════════");
-                                    zoon::println!("🔥 R KEY #{} SUMMARY:", r_count);
+                                    zoon::println!("🔥 R KEY FIT-ALL SUMMARY:");
                                     zoon::println!("   INPUT DATA:");
                                     zoon::println!("     Timeline: {:.6}s to {:.6}s (span: {:.6}s)", min_time, max_time, max_time - min_time);
                                     zoon::println!("     Canvas: {}px wide", canvas_width);
-                                    zoon::println!("   CALCULATION: {} ns ÷ {} px = {} ns/px", time_range_ns, canvas_width, time_range_ns / canvas_width as u64);
+                                    zoon::println!("   CALCULATION: {} ns ÷ {} px = {} ns/px (with rounding)", time_range_ns, canvas_width, (time_range_ns + canvas_width as u64 / 2) / canvas_width as u64);
                                     zoon::println!("   RESULT: {} ({:.3}ms/px) [clamped: {}]", clamped_zoom, clamped_zoom.nanos() as f64 / 1_000_000.0, was_clamped);
                                     zoon::println!("═══════════════════════════════════════════════════════");
                                 } else {
-                                    zoon::println!("🚨 R KEY: No timeline range available, using MEDIUM_ZOOM fallback");
-                                    ns_per_pixel_handle.set(NsPerPixel::MEDIUM_ZOOM);
+                                    panic!("R KEY: No timeline range available - Actor not properly initialized");
                                 }
                             }
                             None => break,
@@ -673,7 +754,8 @@ impl WaveformTimeline {
                                 // ✅ PROPER FIX: Get current viewport range from viewport actor signal
                                 if let Some(current_viewport) = viewport_for_ns_per_pixel.signal().to_stream().next().await {
                                     let viewport_range_ns = current_viewport.end.nanos() - current_viewport.start.nanos();
-                                    let corrected_ns_per_pixel = NsPerPixel(viewport_range_ns / new_width as u64);
+                                    // Fix: Use proper rounding instead of truncated integer division  
+                                    let corrected_ns_per_pixel = NsPerPixel((viewport_range_ns + new_width as u64 / 2) / new_width as u64);
                                     
                                     zoon::println!("🔍 VIEWPORT DEBUG: Canvas resize detected");
                                     zoon::println!("   Canvas width: {} px", new_width);
@@ -708,21 +790,6 @@ impl WaveformTimeline {
             }
         }});
         
-        // Create coordinates actor for unified timeline coordinate system
-        let coordinates = Actor::new(
-            TimelineCoordinates::new(
-                TimeNs::ZERO,               // cursor_ns
-                TimeNs::ZERO,               // viewport_start_ns  
-                NsPerPixel::MEDIUM_ZOOM,    // ns_per_pixel
-                800                         // canvas_width_pixels (initial)
-            ),
-            async move |_coords_handle| {
-                // Coordinates are updated by other actors
-                loop {
-                    futures::future::pending::<()>().await;
-                }
-            }
-        );
         
         // Create unified timeline cache actor
         let cache = Actor::new(TimelineCache::new(), async move |_cache_handle| {
@@ -827,6 +894,9 @@ impl WaveformTimeline {
                         match event {
                             Some(()) => {
                                 zoom_center_handle.set(TimeNs::ZERO);
+                                // Update static cache for synchronous access
+                                let cached_zoom_center = static_cache_zoom_center();
+                                *cached_zoom_center.get_or_init(|| std::sync::Mutex::new(TimeNs::ZERO)).lock().unwrap() = TimeNs::ZERO;
                                 zoon::println!("🎯 ZOOM CENTER: Reset to 0s");
                             },
                             None => break,
@@ -836,7 +906,9 @@ impl WaveformTimeline {
                         match event {
                             Some(time_ns) => {
                                 zoom_center_handle.set(time_ns);
-                                zoon::println!("🎯 ZOOM CENTER: Following mouse at {}s", time_ns.display_seconds());
+                                // Update static cache for synchronous access
+                                let cached_zoom_center = static_cache_zoom_center();
+                                *cached_zoom_center.get_or_init(|| std::sync::Mutex::new(TimeNs::ZERO)).lock().unwrap() = time_ns;
                             },
                             None => break,
                         }
@@ -847,7 +919,7 @@ impl WaveformTimeline {
         });
         
         // Canvas dimension actors
-        let canvas_width = Actor::new(800.0_f32, {
+        let canvas_width = Actor::new(0.0_f32, {
             let canvas_resized_relay_clone = canvas_resized_relay.clone();
             async move |width_handle| {
                 let mut canvas_resized = canvas_resized_relay_clone.subscribe();
@@ -946,7 +1018,7 @@ impl WaveformTimeline {
                             Some(()) => {
                                 redraw_handle.update_mut(|counter| {
                                     *counter += 1;
-                                    zoon::println!("🎨 FORCE_REDRAW: Incremented counter to {} (triggered by redraw_requested_relay)", *counter);
+                                    // Removed redraw counter debug spam
                                 });
                             },
                             None => break,
@@ -977,7 +1049,6 @@ impl WaveformTimeline {
             cursor_position,
             viewport,
             ns_per_pixel,
-            coordinates,
             cache,
             cursor_initialized,
             
@@ -1036,7 +1107,7 @@ impl WaveformTimeline {
             jump_to_next_pressed_relay,
             reset_zoom_pressed_relay,
             reset_zoom_center_pressed_relay,
-            cursor_center_at_viewport_relay,
+            cursor_center_at_viewport_relay: cursor_center_at_viewport_relay_for_struct,
             zoom_center_reset_to_zero_relay,
             zoom_center_follow_mouse_relay,
             fit_all_clicked_relay,
@@ -1303,7 +1374,6 @@ impl WaveformTimeline {
             cursor_position: Actor::new(TimeNs::ZERO, async |_| { loop { futures::future::pending::<()>().await; } }),
             viewport: Actor::new(Viewport::new(TimeNs::ZERO, TimeNs::from_nanos(1_000_000_000)), async |_| { loop { futures::future::pending::<()>().await; } }),
             ns_per_pixel: Actor::new(NsPerPixel::default(), async |_| { loop { futures::future::pending::<()>().await; } }),
-            coordinates: Actor::new(TimelineCoordinates::default(), async |_| { loop { futures::future::pending::<()>().await; } }),
             cache: Actor::new(TimelineCache::default(), async |_| { loop { futures::future::pending::<()>().await; } }),
             cursor_initialized: Actor::new(false, async |_| { loop { futures::future::pending::<()>().await; } }),
             zooming_in: Actor::new(false, async |_| { loop { futures::future::pending::<()>().await; } }),
@@ -1316,8 +1386,8 @@ impl WaveformTimeline {
             mouse_x: Actor::new(0.0, async |_| { loop { futures::future::pending::<()>().await; } }),
             mouse_time: Actor::new(TimeNs::ZERO, async |_| { loop { futures::future::pending::<()>().await; } }),
             zoom_center: Actor::new(TimeNs::ZERO, async |_| { loop { futures::future::pending::<()>().await; } }),
-            canvas_width: Actor::new(800.0, async |_| { loop { futures::future::pending::<()>().await; } }),
-            canvas_height: Actor::new(400.0, async |_| { loop { futures::future::pending::<()>().await; } }),
+            canvas_width: Actor::new(0.0, async |_| { loop { futures::future::pending::<()>().await; } }),
+            canvas_height: Actor::new(0.0, async |_| { loop { futures::future::pending::<()>().await; } }),
             signal_values: ActorMap::new(BTreeMap::new(), async |_| { loop { futures::future::pending::<()>().await; } }),
             variable_formats: ActorMap::new(BTreeMap::new(), async |_| { loop { futures::future::pending::<()>().await; } }),
             has_pending_request: Actor::new(false, async |_| { loop { futures::future::pending::<()>().await; } }),
@@ -1562,7 +1632,7 @@ impl WaveformTimeline {
         static CANVAS_WIDTH_SIGNAL: OnceLock<zoon::Mutable<f32>> = OnceLock::new();
         
         let signal = CANVAS_WIDTH_SIGNAL.get_or_init(|| {
-            let mutable = zoon::Mutable::new(800.0);
+            let mutable = zoon::Mutable::new(0.0);
             
             // Connect to real domain actor if available
             if let Some(timeline) = WAVEFORM_TIMELINE_INSTANCE.get() {
@@ -1988,7 +2058,12 @@ pub fn cursor_position_seconds_signal() -> impl zoon::Signal<Item = f64> {
 
 /// Get viewport signal (replaces _TIMELINE_VIEWPORT.signal())
 pub fn viewport_signal() -> impl zoon::Signal<Item = Viewport> {
-    crate::actors::global_domains::waveform_timeline_domain().viewport.signal()
+    WaveformTimeline::viewport_signal_static().map(|opt_viewport| {
+        opt_viewport.unwrap_or_else(|| {
+            // Timeline not initialized yet - using default viewport (normal during startup)
+            Viewport::new(TimeNs::ZERO, TimeNs::from_external_seconds(1.0))
+        })
+    })
 }
 
 /// Get ns per pixel signal (replaces _TIMELINE_NS_PER_PIXEL.signal())
@@ -2218,74 +2293,138 @@ pub fn timeline_bounds_calculated_relay() -> Relay<(f64, f64)> {
 
 // === SYNCHRONOUS ACCESS FUNCTIONS (Cache Current Values Pattern) ===
 
+/// Get initial cursor position (timeline center or 0 as fallback)
+fn get_initial_cursor_position() -> TimeNs {
+    if let Some((min_time, max_time)) = crate::waveform_canvas::get_current_timeline_range() {
+        let center_time = (min_time + max_time) / 2.0;
+        zoon::println!("🎯 CURSOR CACHE INIT: Using timeline center: {}s (range: {}s-{}s)", center_time, min_time, max_time);
+        TimeNs::from_external_seconds(center_time)
+    } else {
+        zoon::println!("🎯 CURSOR CACHE INIT: No timeline range available, using 0s");
+        TimeNs::ZERO
+    }
+}
+
 /// Get current cursor position synchronously (replacement for bridge function)
-pub fn current_cursor_position() -> TimeNs {
+pub fn current_cursor_position() -> Option<TimeNs> {
+    // Use Cache Current Values pattern - access from static cache
+    let cached_coordinates = static_cache_coordinates();
+    if let Some(coordinates_mutex) = cached_coordinates.get() {
+        let coordinates = coordinates_mutex.lock().unwrap();
+        Some(coordinates.cursor_ns)
+    } else {
+        None // Timeline not yet initialized
+    }
+}
+
+/// Get current cursor position in seconds synchronously  
+pub fn current_cursor_position_seconds() -> Option<f64> {
+    current_cursor_position().map(|pos| pos.display_seconds())
+}
+
+/// Get current zoom center position synchronously (replacement for bridge function)  
+pub fn current_zoom_center_position() -> TimeNs {
     // Use cached value pattern - the Timeline Actor caches current values
-    *static_cache_cursor().get_or_init(|| std::sync::Mutex::new(TimeNs::ZERO)).lock().unwrap()
+    *static_cache_zoom_center().get_or_init(|| std::sync::Mutex::new(TimeNs::ZERO)).lock().unwrap()
 }
 
-/// Get current cursor position in seconds synchronously
-pub fn current_cursor_position_seconds() -> f64 {
-    current_cursor_position().display_seconds()
-}
-
-/// DEPRECATED: Zoom center concept removed in favor of cursor-centered zooming
-#[allow(dead_code)]
+/// Get current zoom center position in seconds from the cached value
 pub fn current_zoom_center_seconds() -> f64 {
-    // This function is no longer used - zoom now centers on cursor position
-    // Keeping for compatibility during transition, but should be removed
-    crate::state::ZOOM_CENTER_NS.get().display_seconds()
+    current_zoom_center_position().display_seconds()
 }
 
-/// Get current viewport synchronously (replacement for bridge function)
-pub fn current_viewport() -> Viewport {
-    // ✅ FIXED: Use cached viewport value updated by signal handler
-    // This ensures the viewport reflects the current zoom/pan state
-    *static_cache_viewport().get_or_init(|| {
-        std::sync::Mutex::new(Viewport::new(
-            TimeNs::ZERO, 
-            TimeNs::from_external_seconds(250.0)
-        ))
-    }).lock().unwrap()
+/// Get current viewport synchronously (replacement for bridge function)  
+/// Returns None if timeline system not yet initialized
+pub fn current_viewport() -> Option<Viewport> {
+    // Use the static cache viewport that's properly connected to WAVEFORM_TIMELINE_INSTANCE
+    let cached_viewport = static_cache_viewport();
+    if let Some(viewport_mutex) = cached_viewport.get() {
+        Some(viewport_mutex.lock().unwrap().clone())
+    } else {
+        None // Timeline not yet initialized
+    }
 }
 
 /// Static cache for current viewport - updated by signal handler
-fn static_cache_viewport() -> &'static std::sync::OnceLock<std::sync::Mutex<Viewport>> {
+pub fn static_cache_viewport() -> &'static std::sync::OnceLock<std::sync::Mutex<Viewport>> {
     static VIEWPORT_CACHE: std::sync::OnceLock<std::sync::Mutex<Viewport>> = std::sync::OnceLock::new();
     &VIEWPORT_CACHE
 }
 
 /// Get current ns_per_pixel synchronously (replacement for bridge function)
-pub fn current_ns_per_pixel() -> NsPerPixel {
-    *static_cache_ns_per_pixel().get_or_init(|| std::sync::Mutex::new(NsPerPixel::MEDIUM_ZOOM)).lock().unwrap()
+/// Returns None if timeline system not yet initialized
+pub fn current_ns_per_pixel() -> Option<NsPerPixel> {
+    // Use Cache Current Values pattern - access from static cache
+    let cached_coordinates = static_cache_coordinates();
+    if let Some(coordinates_mutex) = cached_coordinates.get() {
+        let coordinates = coordinates_mutex.lock().unwrap();
+        Some(coordinates.ns_per_pixel)
+    } else {
+        None // Timeline not yet initialized
+    }
 }
 
 /// Get current timeline coordinates synchronously (replacement for bridge function)
-pub fn current_coordinates() -> TimelineCoordinates {
-    // ✅ COORDINATE TRANSFORMATION FIX: Use actual timeline state instead of hardcoded values
-    let cursor_ns = current_cursor_position();
-    let viewport = current_viewport();
-    let ns_per_pixel = current_ns_per_pixel();
-    let canvas_width = current_canvas_width() as u32;
+pub fn current_coordinates() -> Option<TimelineCoordinates> {
+    // Use Cache Current Values pattern inside the Actor loop for coordinate access
+    // This follows CLAUDE.md guidelines for proper Actor+Relay architecture
     
-    TimelineCoordinates::new(
-        cursor_ns,
-        viewport.start,        // Use actual viewport start, not hardcoded ZERO
-        ns_per_pixel,         // Use actual zoom level, not hardcoded MEDIUM_ZOOM
-        canvas_width          // Use actual canvas width, not hardcoded 800
-    )
+    // Use Cache Current Values pattern - access from static cache
+    let cached_coordinates = static_cache_coordinates();
+    if let Some(coordinates_mutex) = cached_coordinates.get() {
+        Some(*coordinates_mutex.lock().unwrap())
+    } else {
+        None // Timeline not yet initialized
+    }
 }
 
 /// Get current canvas width synchronously (replacement for bridge function)
-pub fn current_canvas_width() -> f32 {
-    // Use cached value pattern - cache is updated by initialize_value_caching() from real signals
-    *static_cache_width().get_or_init(|| std::sync::Mutex::new(800.0)).lock().unwrap()
+pub fn current_canvas_width() -> Option<f32> {
+    // ✅ FIXED: Use static signal pattern like other functions in this file
+    static CANVAS_WIDTH_CACHE: std::sync::OnceLock<std::sync::Arc<std::sync::Mutex<f32>>> = std::sync::OnceLock::new();
+    
+    let cache = CANVAS_WIDTH_CACHE.get_or_init(|| {
+        let cache = std::sync::Arc::new(std::sync::Mutex::new(0.0));
+        
+        // Connect to actual Actor signal
+        let timeline = waveform_timeline_domain();
+        let cache_clone = cache.clone();
+        zoon::Task::start(timeline.canvas_width.signal().for_each(move |width| {
+            *cache_clone.lock().unwrap() = width;
+            async {}
+        }));
+        
+        cache
+    });
+    
+    let current_width = *cache.lock().unwrap();
+    if current_width > 0.0 {
+        Some(current_width)
+    } else {
+        None // Canvas not yet resized with actual dimensions
+    }
 }
 
 /// Get current canvas height synchronously (replacement for bridge function)
 pub fn current_canvas_height() -> f32 {
-    // Use cached value pattern - cache is updated by initialize_value_caching() from real signals
-    *static_cache_height().get_or_init(|| std::sync::Mutex::new(400.0)).lock().unwrap()
+    // ✅ FIXED: Use static signal pattern like other functions in this file
+    static CANVAS_HEIGHT_CACHE: std::sync::OnceLock<std::sync::Arc<std::sync::Mutex<f32>>> = std::sync::OnceLock::new();
+    
+    let cache = CANVAS_HEIGHT_CACHE.get_or_init(|| {
+        let cache = std::sync::Arc::new(std::sync::Mutex::new(400.0)); // Reasonable default
+        
+        // Connect to actual Actor signal
+        let timeline = waveform_timeline_domain();
+        let cache_clone = cache.clone();
+        zoon::Task::start(timeline.canvas_height.signal().for_each(move |height| {
+            *cache_clone.lock().unwrap() = height;
+            async {}
+        }));
+        
+        cache
+    });
+    
+    *cache.lock().unwrap()
 }
 
 /// Set cursor position through domain event (replacement for bridge function)
@@ -2304,7 +2443,7 @@ pub fn set_cursor_position_if_changed(time_ns: TimeNs) {
     let current_ns = current_cursor_position();
     
     // Only emit event if value actually changed
-    if current_ns != time_ns {
+    if current_ns != Some(time_ns) {
         cursor_moved_relay().send(time_ns);
     }
 }
@@ -2320,10 +2459,14 @@ pub fn set_viewport_if_changed(new_viewport: Viewport) {
     
     // DEBUG: Track all viewport change attempts to catch the 1s corruption
     zoon::println!("🔍 SET_VIEWPORT_IF_CHANGED: Attempt to change viewport");
-    zoon::println!("   Current: {:.6}s to {:.6}s (span: {:.6}s)", 
-        current_viewport.start.display_seconds(), 
-        current_viewport.end.display_seconds(),
-        current_viewport.duration().display_seconds());
+    if let Some(vp) = current_viewport {
+        zoon::println!("   Current: {:.6}s to {:.6}s (span: {:.6}s)", 
+            vp.start.display_seconds(), 
+            vp.end.display_seconds(),
+            vp.duration().display_seconds());
+    } else {
+        zoon::println!("   Current: Not initialized");
+    }
     zoon::println!("   New:     {:.6}s to {:.6}s (span: {:.6}s)", 
         new_viewport.start.display_seconds(), 
         new_viewport.end.display_seconds(),
@@ -2332,16 +2475,25 @@ pub fn set_viewport_if_changed(new_viewport: Viewport) {
     if new_viewport.duration().display_seconds() <= 1.1 {
         zoon::println!("🚨 VIEWPORT CORRUPTION BLOCKED: Attempted to set {}s viewport - violates NO FALLBACKS rule!", 
             new_viewport.duration().display_seconds());
-        zoon::println!("   ✅ PRESERVING existing viewport: {:.6}s to {:.6}s", 
-            current_viewport.start.display_seconds(), current_viewport.end.display_seconds());
+        if let Some(vp) = current_viewport {
+            zoon::println!("   ✅ PRESERVING existing viewport: {:.6}s to {:.6}s", 
+                vp.start.display_seconds(), vp.end.display_seconds());
+        } else {
+            zoon::println!("   ⚠️ No existing viewport to preserve");
+        }
         return; // Block the corruption, preserve current viewport
     }
     
     // Only emit event if value actually changed
-    if current_viewport != new_viewport {
-        zoon::println!("   Status: CHANGING viewport from {:.6}s-{:.6}s to {:.6}s-{:.6}s", 
-            current_viewport.start.display_seconds(), current_viewport.end.display_seconds(),
-            new_viewport.start.display_seconds(), new_viewport.end.display_seconds());
+    if current_viewport != Some(new_viewport) {
+        if let Some(vp) = current_viewport {
+            zoon::println!("   Status: CHANGING viewport from {:.6}s-{:.6}s to {:.6}s-{:.6}s", 
+                vp.start.display_seconds(), vp.end.display_seconds(),
+                new_viewport.start.display_seconds(), new_viewport.end.display_seconds());
+        } else {
+            zoon::println!("   Status: SETTING initial viewport to {:.6}s-{:.6}s", 
+                new_viewport.start.display_seconds(), new_viewport.end.display_seconds());
+        }
         let viewport_tuple = (new_viewport.start.display_seconds(), new_viewport.end.display_seconds());
         viewport_changed_relay().send(viewport_tuple);
     } else {
@@ -2354,8 +2506,8 @@ pub fn set_ns_per_pixel_if_changed(new_ns_per_pixel: NsPerPixel) {
     let current_ns_per_pixel = current_ns_per_pixel();
     
     // Only emit event if value actually changed
-    if current_ns_per_pixel != new_ns_per_pixel {
-        zoon::println!("🔄 SET_NS_PER_PIXEL: Updating from {} to {}", current_ns_per_pixel, new_ns_per_pixel);
+    if current_ns_per_pixel != Some(new_ns_per_pixel) {
+        zoon::println!("🔄 SET_NS_PER_PIXEL: Updating from {:?} to {}", current_ns_per_pixel, new_ns_per_pixel);
         
         // CRITICAL FIX: Use proper Actor+Relay pattern - send ns_per_pixel update event
         let domain = waveform_timeline_domain();
@@ -2364,9 +2516,9 @@ pub fn set_ns_per_pixel_if_changed(new_ns_per_pixel: NsPerPixel) {
         
         // Update cached value for synchronous access  
         let cached_ns_per_pixel = static_cache_ns_per_pixel();
-        *cached_ns_per_pixel.get_or_init(|| std::sync::Mutex::new(NsPerPixel::MEDIUM_ZOOM)).lock().unwrap() = new_ns_per_pixel;
+        *cached_ns_per_pixel.get_or_init(|| std::sync::Mutex::new(NsPerPixel::default())).lock().unwrap() = new_ns_per_pixel;
         
-        let zoom_center = current_cursor_position();
+        let zoom_center = current_zoom_center_position();
         zoom_in_started_relay().send(zoom_center);
     }
 }
@@ -2400,7 +2552,7 @@ pub fn initialize_value_caching() {
             .for_each(move |viewport| {
                 // Cache the current value for synchronous access
                 let cached_viewport = static_cache_viewport();
-                *cached_viewport.get_or_init(|| std::sync::Mutex::new(Viewport::new(TimeNs::ZERO, TimeNs::from_external_seconds(250.0)))).lock().unwrap() = viewport;
+                *cached_viewport.get_or_init(|| std::sync::Mutex::new(Viewport::new(TimeNs::ZERO, TimeNs::ZERO))).lock().unwrap() = viewport;
                 
                 async {}
             })
@@ -2413,7 +2565,7 @@ pub fn initialize_value_caching() {
             .for_each(move |ns_per_pixel| {
                 // Cache the current value for synchronous access
                 let cached_ns_per_pixel = static_cache_ns_per_pixel();
-                *cached_ns_per_pixel.get_or_init(|| std::sync::Mutex::new(NsPerPixel::MEDIUM_ZOOM)).lock().unwrap() = ns_per_pixel;
+                *cached_ns_per_pixel.get_or_init(|| std::sync::Mutex::new(NsPerPixel::default())).lock().unwrap() = ns_per_pixel;
                 
                 async {}
             })
@@ -2426,7 +2578,7 @@ pub fn initialize_value_caching() {
             .for_each(move |coordinates| {
                 // Cache the current value for synchronous access
                 let cached_coordinates = static_cache_coordinates();
-                *cached_coordinates.get_or_init(|| std::sync::Mutex::new(TimelineCoordinates::new(TimeNs::ZERO, TimeNs::ZERO, NsPerPixel::MEDIUM_ZOOM, 800))).lock().unwrap() = coordinates;
+                *cached_coordinates.get_or_init(|| std::sync::Mutex::new(TimelineCoordinates::new(TimeNs::ZERO, TimeNs::ZERO, NsPerPixel::default(), 0))).lock().unwrap() = coordinates;
                 
                 async {}
             })
@@ -2441,7 +2593,7 @@ pub fn initialize_value_caching() {
             .for_each(move |width| {
                 // Cache the current value for synchronous access
                 let cached_width = static_cache_width();
-                *cached_width.get_or_init(|| std::sync::Mutex::new(800.0)).lock().unwrap() = width;
+                *cached_width.get_or_init(|| std::sync::Mutex::new(0.0)).lock().unwrap() = width;
                 
                 async {}
             })
@@ -2469,6 +2621,11 @@ fn static_cache_cursor() -> &'static std::sync::OnceLock<std::sync::Mutex<TimeNs
     &CACHED_CURSOR
 }
 
+fn static_cache_zoom_center() -> &'static std::sync::OnceLock<std::sync::Mutex<TimeNs>> {
+    static CACHED_ZOOM_CENTER: std::sync::OnceLock<std::sync::Mutex<TimeNs>> = std::sync::OnceLock::new();
+    &CACHED_ZOOM_CENTER
+}
+
 
 fn static_cache_ns_per_pixel() -> &'static std::sync::OnceLock<std::sync::Mutex<NsPerPixel>> {
     static CACHED_NS_PER_PIXEL: std::sync::OnceLock<std::sync::Mutex<NsPerPixel>> = std::sync::OnceLock::new();
@@ -2494,7 +2651,11 @@ fn static_cache_height() -> &'static std::sync::OnceLock<std::sync::Mutex<f32>> 
 /// Returns step size in nanoseconds based on visible time range
 fn calculate_adaptive_cursor_step() -> u64 {
     let viewport = current_viewport();
-    let visible_range_ns = viewport.end.nanos() - viewport.start.nanos();
+    let visible_range_ns = if let Some(vp) = viewport {
+        vp.end.nanos() - vp.start.nanos()
+    } else {
+        1_000_000_000 // Default 1 second range if not initialized
+    };
     
     // Step size should be approximately 1% of visible range, with reasonable bounds
     let base_step = visible_range_ns / 100; // 1% of visible range

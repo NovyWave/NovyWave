@@ -173,7 +173,8 @@ impl NsPerPixel {
     #[allow(dead_code)]
     pub fn from_viewport(viewport: Viewport, canvas_width_pixels: u32) -> Self {
         let duration_ns = viewport.duration().nanos();
-        let ns_per_pixel = duration_ns / canvas_width_pixels as u64;
+        // Fix: Use proper rounding instead of truncated integer division
+        let ns_per_pixel = (duration_ns + canvas_width_pixels as u64 / 2) / canvas_width_pixels as u64;
         NsPerPixel(ns_per_pixel.max(1)) // Ensure minimum 1 ns/pixel
     }
     
@@ -696,7 +697,7 @@ impl Default for TimelineCoordinates {
             cursor_ns: TimeNs::ZERO,
             viewport_start_ns: TimeNs::ZERO,
             ns_per_pixel: NsPerPixel::default(),
-            canvas_width_pixels: 800, // Reasonable default width
+            canvas_width_pixels: 640, // Reasonable default width (updated to actual when canvas loads)
         }
     }
 }

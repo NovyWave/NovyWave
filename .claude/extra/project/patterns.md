@@ -25,6 +25,38 @@ novyui/       - Custom UI component library
 public/       - Static assets
 ```
 
+### Timeline Visual Elements (CRITICAL)
+
+**MANDATORY: Understand the visual distinction between timeline elements:**
+
+- **BLUE VERTICAL LINE (Zoom Center)**: 
+  - Default position: 0 (timeline start)
+  - Behavior: Follows mouse cursor on mouse hover over canvas
+  - Controls: Reset to 0 on Z press OR R press (full reset)
+  - Purpose: Determines center point for all zoom operations
+  - **THIS IS WHERE ZOOM OPERATIONS FOCUS**
+
+- **YELLOW VERTICAL LINE (Timeline Cursor)**:
+  - Default position: Center of timeline viewport (like when app loads)
+  - Position: Shows selected time on timeline  
+  - Controls: 
+    - **Click on canvas**: Jumps to clicked position
+    - **Q/E keys**: Move left/right continuously
+    - **Shift+Q/E keys**: Jump to nearest signal transitions (start/end)
+  - Reset: Goes to timeline center on R press (same as app load)
+  - Purpose: Pure visual indicator of "current time" selection
+  - **DOES NOT follow mouse hover** - only jumps on click
+  - **DOES NOT affect timeline rendering, zooming, or panning** (only renders the line itself)
+
+**Reset Key Behaviors:**
+- **Z Key**: Only resets blue zoom center to 0 (quick zoom center reset)
+- **R Key**: Full reset - resets zoom ratio to show full timeline AND moves blue zoom center to 0 AND moves yellow timeline cursor to viewport center
+
+**Key Rule: Zoom center (blue) ≠ Timeline cursor (yellow)**
+- Zoom operations must center on BLUE LINE position, never YELLOW LINE
+- Timeline cursor is purely for time selection display
+- These are completely independent systems
+
 ### Key Dependencies
 
 - MoonZoon pinned to git revision `7c5178d891cf4afbc2bbbe864ca63588b6c10f2a`
