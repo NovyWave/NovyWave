@@ -1,6 +1,7 @@
 use zoon::{*, futures_util::future::try_join_all};
 use moonzoon_novyui::tokens::theme::{Theme, init_theme};
 use moonzoon_novyui::tokens::color::{neutral_1};
+use crate::time_types::TimeNs;
 
 mod dataflow;
 mod actors;
@@ -440,20 +441,30 @@ fn main_layout() -> impl Element {
                         crate::state::IS_SHIFT_PRESSED.set_neq(true);
                     },
                     "w" | "W" => {
+                        zoon::println!("🔧 W KEY: Zoom in pressed - sending zoom_in event and triggering rerender");
+                        
                         // Zoom in using WaveformTimeline domain
                         let waveform_timeline = crate::actors::waveform_timeline_domain();
                         waveform_timeline.zoom_in_pressed_relay.send(());
+                        waveform_timeline.redraw_requested_relay.send(()); // ✅ Trigger rerender like Z key
                         
-                        // Legacy function call for backward compatibility (will be removed)
-                        crate::waveform_canvas::start_smooth_zoom_in();
+                        zoon::println!("🔧 W KEY: Zoom in completed");
+                        
+                        // ✅ FIXED: Removed legacy canvas call that was changing viewport range
+                        // Legacy function removed: crate::waveform_canvas::start_smooth_zoom_in();
                     },
                     "s" | "S" => {
+                        zoon::println!("🔧 S KEY: Zoom out pressed - sending zoom_out event and triggering rerender");
+                        
                         // Zoom out using WaveformTimeline domain
                         let waveform_timeline = crate::actors::waveform_timeline_domain();
                         waveform_timeline.zoom_out_pressed_relay.send(());
+                        waveform_timeline.redraw_requested_relay.send(()); // ✅ Trigger rerender like Z key
                         
-                        // Legacy function call for backward compatibility (will be removed)
-                        crate::waveform_canvas::start_smooth_zoom_out();
+                        zoon::println!("🔧 S KEY: Zoom out completed");
+                        
+                        // ✅ FIXED: Removed legacy canvas call that was changing viewport range  
+                        // Legacy function removed: crate::waveform_canvas::start_smooth_zoom_out();
                     },
                     "a" | "A" => {
                         // Pan left using WaveformTimeline domain
@@ -513,13 +524,20 @@ fn main_layout() -> impl Element {
                         zoon::println!("🔧 R KEY: Reset zoom completed");
                     },
                     "z" | "Z" => {
-                        // Z: Reset zoom center and trigger timeline rerender using WaveformTimeline domain
+                        // Z: Reset cursor position to 0 AND zoom center to 0 using WaveformTimeline domain
                         let waveform_timeline = crate::actors::waveform_timeline_domain();
+                        
+                        // ✅ CRITICAL FIX: Reset cursor position to 0 (this makes zoom center on time 0)
+                        zoon::println!("🔧 Z KEY: Sending cursor_clicked_relay with TimeNs::ZERO");
+                        waveform_timeline.cursor_clicked_relay.send(TimeNs::ZERO);
+                        zoon::println!("🔧 Z KEY: cursor_clicked_relay.send() completed");
+                        
+                        // Reset zoom center (though now redundant since cursor is the zoom center)
                         waveform_timeline.reset_zoom_center_pressed_relay.send(());
                         
                         // Also trigger timeline rerender to refresh the display
                         waveform_timeline.redraw_requested_relay.send(());
-                        zoon::println!("🔧 Z KEY: Reset zoom center and triggered timeline rerender");
+                        zoon::println!("🔧 Z KEY: Reset cursor position to 0s and zoom center");
                     },
                     _ => {} // Ignore other keys
                 }
@@ -536,12 +554,12 @@ fn main_layout() -> impl Element {
                         crate::state::IS_SHIFT_PRESSED.set_neq(false);
                     },
                     "w" | "W" => {
-                        // Stop smooth zoom in
-                        crate::waveform_canvas::stop_smooth_zoom_in();
+                        // ✅ FIXED: No legacy zoom animation to stop - domain actor handles zoom instantly
+                        // Removed: crate::waveform_canvas::stop_smooth_zoom_in();
                     },
                     "s" | "S" => {
-                        // Stop smooth zoom out
-                        crate::waveform_canvas::stop_smooth_zoom_out();
+                        // ✅ FIXED: No legacy zoom animation to stop - domain actor handles zoom instantly
+                        // Removed: crate::waveform_canvas::stop_smooth_zoom_out();
                     },
                     "a" | "A" => {
                         // Stop smooth pan left

@@ -58,3 +58,6 @@ formatter = "Hexadecimal"
 
 [[workspace.selected_variables]]
 unique_id = "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s|B"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/nested_dir/wave_27.fst|TOP.VexiiRiscv|clk"

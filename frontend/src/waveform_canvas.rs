@@ -7,7 +7,7 @@ use crate::actors::waveform_timeline::{
 };
 // Most other functions removed as unused, but these are needed for zoom functionality
 // MIGRATED: Canvas dimensions, zoom/pan flags, mouse tracking now from actors/waveform_timeline.rs
-use crate::actors::waveform_timeline::{current_cursor_position, current_cursor_position_seconds, current_zoom_center_seconds, current_viewport,
+use crate::actors::waveform_timeline::{current_cursor_position, current_cursor_position_seconds, current_viewport,
     set_cursor_position, set_cursor_position_if_changed, set_cursor_position_seconds,
     set_viewport_if_changed, viewport_signal,
     current_ns_per_pixel, set_ns_per_pixel_if_changed, ns_per_pixel_signal,
@@ -335,13 +335,18 @@ fn get_theme_token_rgb(theme: &NovyUITheme, token: &str) -> (u8, u8, u8, f32) {
 
 // Clear processed signal cache to force fresh calculation for timeline changes
 pub fn clear_processed_signal_cache() {
-    // CRITICAL FIX: Don't clear the raw backend data cache!
-    // The raw backend data should persist - we only need to force reprocessing
-    // For now, we'll remove the cache clearing since the reactive canvas updates
-    // already handle timeline changes properly
+    // ✅ CRITICAL FIX: Clear the processed canvas cache when zoom/viewport changes  
+    // This forces fresh coordinate calculations with new zoom level/viewport
+    zoon::println!("🔄 CLEAR_PROCESSED_CACHE: Clearing canvas cache due to zoom/viewport change");
     
-    // TODO: Implement a proper processed data cache separate from raw backend data
-    // Raw backend data is now stored in unified_timeline_service and should NOT be cleared
+    // Trigger a redraw using the proper relay - this forces canvas to re-render with fresh data
+    crate::actors::waveform_timeline::redraw_requested_relay().send(());
+    zoon::println!("✅ CLEAR_PROCESSED_CACHE: Triggered redraw via relay");
+    
+    // Also manually force a data request for all currently selected variables with new viewport
+    let current_range = get_current_timeline_range();
+    request_transitions_for_all_variables(current_range);
+    zoon::println!("✅ CLEAR_PROCESSED_CACHE: Requested fresh data for viewport: {:?}", current_range);
 }
 
 // Convert shared theme to NovyUI theme
@@ -506,8 +511,9 @@ fn validate_startup_state_with_canvas_width(actual_canvas_width: f32) {
         // Note: Timeline coordinates will be automatically updated through the domain bridge
         // as the cursor, viewport, and ns_per_pixel values are set above
         
-        // TODO: Replace with proper domain event relay for zoom center
-        ZOOM_CENTER_NS.set_neq(TimeNs::from_external_seconds(50.0));
+        // FIXED: Initialize zoom center to cursor position instead of hardcoded 50s
+        let cursor_position = current_cursor_position_seconds();
+        ZOOM_CENTER_NS.set_neq(TimeNs::from_external_seconds(cursor_position));
     } else {
         crate::debug_utils::debug_timeline_validation("STARTUP: Timeline state validation passed");
         
@@ -757,8 +763,8 @@ async fn create_canvas_element() -> impl Element {
                     let canvas_width = current_canvas_width();
                     let canvas_height = current_canvas_height();
                     let novyui_theme = CURRENT_THEME_CACHE.get();
-                    let zoom_center_pos = current_zoom_center_seconds();
-                    *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &novyui_theme, cursor_pos, zoom_center_pos);
+                    // FIXED: Use cursor position for both cursor and zoom center (cursor-centered zooming)
+                    *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &novyui_theme, cursor_pos, cursor_pos);
                 });
             }
         }).await;
@@ -927,8 +933,8 @@ async fn create_canvas_element() -> impl Element {
                     canvas_wrapper_for_click.borrow_mut().update_objects(move |objects| {
                         let selected_vars = crate::actors::selected_variables::current_variables();
                         let novyui_theme = CURRENT_THEME_CACHE.get();
-                        let zoom_center_pos = current_zoom_center_seconds();
-                        *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &novyui_theme, clamped_time_seconds, zoom_center_pos);
+                        // FIXED: Use cursor position for both cursor and zoom center (cursor-centered zooming)
+                        *objects = create_waveform_objects_with_dimensions_and_theme(&selected_vars, canvas_width, canvas_height, &novyui_theme, clamped_time_seconds, clamped_time_seconds);
                     });
                 }
             }
@@ -1147,9 +1153,12 @@ async fn create_canvas_element() -> impl Element {
 
 // Get signal transitions for a variable within time range
 fn get_signal_transitions_for_variable(var: &SelectedVariable, time_range: (f64, f64)) -> Vec<(f32, shared::SignalValue)> {
+    zoon::println!("🔍 GET_SIGNAL_TRANSITIONS: Called for {} in range {:.3}s to {:.3}s", var.unique_id, time_range.0, time_range.1);
+    
     // Parse unique_id: "/path/file.ext|scope|variable"
     let parts: Vec<&str> = var.unique_id.split('|').collect();
     if parts.len() < 3 {
+        zoon::println!("❌ GET_SIGNAL_TRANSITIONS: Invalid unique_id format: {}", var.unique_id);
         return vec![(time_range.0 as f32, shared::SignalValue::present("0"))];
     }
     
@@ -1167,6 +1176,7 @@ fn get_signal_transitions_for_variable(var: &SelectedVariable, time_range: (f64,
     let processed_cache: std::collections::HashMap<String, Vec<SignalTransition>> = std::collections::HashMap::new(); // Temporary placeholder
     if let Some(cached_transitions) = processed_cache.get(&processed_cache_key) {
         // HIT: Data already processed for this exact time range, convert to expected format
+        zoon::println!("📋 GET_SIGNAL_TRANSITIONS: Using processed cache with {} transitions", cached_transitions.len());
         return cached_transitions.iter()
             .map(|transition| ((transition.time_ns as f64 / 1_000_000_000.0) as f32, shared::SignalValue::present(transition.value.clone())))
             .collect();
@@ -1175,7 +1185,9 @@ fn get_signal_transitions_for_variable(var: &SelectedVariable, time_range: (f64,
     
     // Not in processed cache, check raw backend data cache
     let raw_cache_key = format!("{}|{}|{}", file_path, scope_path, variable_name);
+    zoon::println!("📋 GET_SIGNAL_TRANSITIONS: Checking raw cache with key: {}", raw_cache_key);
     if let Some(transitions) = crate::unified_timeline_service::UnifiedTimelineService::get_raw_transitions(&raw_cache_key) {
+        zoon::println!("✅ GET_SIGNAL_TRANSITIONS: Found {} raw transitions in cache", transitions.len());
         
         // Convert real backend data to canvas format with proper waveform logic
         // Include ALL transitions to determine proper rectangle boundaries
@@ -1239,6 +1251,7 @@ fn get_signal_transitions_for_variable(var: &SelectedVariable, time_range: (f64,
         // TODO: Update canvas cache through WaveformTimeline actor
         // PROCESSED_CANVAS_CACHE.lock_mut().insert(processed_cache_key, canvas_transitions.clone());
         
+        zoon::println!("🎯 GET_SIGNAL_TRANSITIONS: Returning {} canvas transitions for {}", canvas_transitions.len(), variable_name);
         return canvas_transitions;
     }
     
@@ -1248,6 +1261,7 @@ fn get_signal_transitions_for_variable(var: &SelectedVariable, time_range: (f64,
     
     // Return empty data while waiting for real backend response
     // This prevents premature filler rectangles from covering actual values
+    zoon::println!("❌ GET_SIGNAL_TRANSITIONS: No cached data found, returning empty vec for {}", variable_name);
     vec![]
 }
 
@@ -1335,47 +1349,63 @@ fn get_selected_variable_file_paths() -> std::collections::HashSet<String> {
 // ROCK-SOLID coordinate transformation system with zoom reliability
 // Returns None when no variables are selected (no timeline should be shown)
 pub fn get_current_timeline_range() -> Option<(f64, f64)> {
+    zoon::println!("🔍 GET_CURRENT_TIMELINE_RANGE: Function called");
     let ns_per_pixel = current_ns_per_pixel();
     
-    // If zoomed in, return the visible range with validation
-    // Lower ns_per_pixel means more zoomed in
-    if ns_per_pixel.nanos() < NsPerPixel::MEDIUM_ZOOM.nanos() {
-        let viewport = current_viewport();
-        let range_start = viewport.start.display_seconds();
-        let range_end = viewport.end.display_seconds();
-        
-        // CRITICAL: Enforce minimum time range to prevent coordinate precision loss
-        let canvas_width = current_canvas_width() as u32;
-        let min_zoom_range = get_min_valid_range_ns(canvas_width) as f64 / 1_000_000_000.0; // NsPerPixel-based minimum
-        let current_range = range_end - range_start;
-        
-        // Validate range is sensible and has sufficient precision
-        if range_end > range_start && range_start >= 0.0 && current_range >= min_zoom_range {
-            // ENHANCED: Additional validation for finite values
-            if range_start.is_finite() && range_end.is_finite() {
+    // FIXED: Always use viewport range for waveform rendering (no zoom level threshold)
+    // This ensures transition rectangles use proper viewport boundaries
+    let viewport = current_viewport();
+    let range_start = viewport.start.display_seconds();
+    let range_end = viewport.end.display_seconds();
+    
+    // DEBUG: Log viewport range calculation
+    zoon::println!("🔍 VIEWPORT RANGE DEBUG: start={:.3}s, end={:.3}s, span={:.3}s", 
+        range_start, range_end, range_end - range_start);
+    
+    // CRITICAL: Enforce minimum time range to prevent coordinate precision loss
+    let canvas_width = current_canvas_width() as u32;
+    let min_zoom_range = get_min_valid_range_ns(canvas_width) as f64 / 1_000_000_000.0; // NsPerPixel-based minimum
+    let current_range = range_end - range_start;
+    
+    // Validate range is sensible and has sufficient precision
+    zoon::println!("🔍 VIEWPORT VALIDATION: range_start={:.6}s, range_end={:.6}s, current_range={:.6}s", 
+        range_start, range_end, current_range);
+    zoon::println!("   min_zoom_range={:.6}s, canvas_width={} px", min_zoom_range, canvas_width);
+    
+    if range_end > range_start && range_start >= 0.0 {
+        zoon::println!("   ✅ Basic range validation passed");
+        // ENHANCED: Additional validation for finite values
+        if range_start.is_finite() && range_end.is_finite() {
+            zoon::println!("   ✅ Finite values validation passed");
+            if current_range >= min_zoom_range {
+                zoon::println!("   ✅ USING VIEWPORT RANGE: current_range ({:.6}s) >= min_zoom_range ({:.6}s)", 
+                    current_range, min_zoom_range);
                 return Some((range_start, range_end));
+            } else if current_range > 0.0 {
+                zoon::println!("   ⚠️  Current range too narrow, attempting expansion");
+                // If zoom range is too narrow, expand it to minimum viable range
+                let range_center = (range_start + range_end) / 2.0;
+                let half_min_range = min_zoom_range / 2.0;
+                let expanded_start = (range_center - half_min_range).max(0.0);
+                let expanded_end = range_center + half_min_range;
+                
+                // ENHANCED: Validate expanded range is finite
+                if expanded_start.is_finite() && expanded_end.is_finite() && expanded_end > expanded_start {
+                    crate::debug_utils::debug_timeline_validation(&format!("Expanded narrow range from {:.12} to [{:.12}, {:.12}]", current_range, expanded_start, expanded_end));
+                    return Some((expanded_start, expanded_end));
+                } else {
+                    crate::debug_utils::debug_timeline_validation(&format!("WARNING: Failed to expand range - center: {}, half_range: {}", range_center, half_min_range));
+                }
             } else {
-                crate::debug_utils::debug_timeline_validation(&format!("WARNING: Timeline range not finite - start: {}, end: {}", range_start, range_end));
+                zoon::println!("   ❌ Current range <= 0: {:.6}s", current_range);
             }
+        } else {
+            zoon::println!("   ❌ Non-finite values: start.is_finite()={}, end.is_finite()={}", 
+                range_start.is_finite(), range_end.is_finite());
         }
-        
-        // If zoom range is too narrow, expand it to minimum viable range
-        if current_range > 0.0 && current_range < min_zoom_range {
-            let range_center = (range_start + range_end) / 2.0;
-            let half_min_range = min_zoom_range / 2.0;
-            let expanded_start = (range_center - half_min_range).max(0.0);
-            let expanded_end = range_center + half_min_range;
-            
-            // ENHANCED: Validate expanded range is finite
-            if expanded_start.is_finite() && expanded_end.is_finite() && expanded_end > expanded_start {
-                crate::debug_utils::debug_timeline_validation(&format!("Expanded narrow range from {:.12} to [{:.12}, {:.12}]", current_range, expanded_start, expanded_end));
-                return Some((expanded_start, expanded_end));
-            } else {
-                crate::debug_utils::debug_timeline_validation(&format!("WARNING: Failed to expand range - center: {}, half_range: {}", range_center, half_min_range));
-            }
-        }
-        
-        // Fall through to full range if zoom range is invalid
+    } else {
+        zoon::println!("   ❌ Basic validation failed: range_end > range_start = {}, range_start >= 0.0 = {}", 
+            range_end > range_start, range_start >= 0.0);
     }
     
     // ✅ STARTUP FIX: Prioritize actual file data when available, even if no variables selected
@@ -1387,9 +1417,13 @@ pub fn get_current_timeline_range() -> Option<(f64, f64)> {
         let (full_file_min, full_file_max) = get_full_file_range();
         let file_span = full_file_max - full_file_min;
         
+        zoon::println!("🔍 GET_CURRENT_TIMELINE_RANGE DEBUG: Fallback section reached");
+        zoon::println!("   Loaded files: {} files", loaded_files.len());
+        zoon::println!("   Full file range: {:.3}s to {:.3}s (span: {:.3}s)", full_file_min, full_file_max, file_span);
         
         // If we have substantial file data (not just microsecond ranges), use it immediately
         if file_span > 10.0 {  // More than 10 seconds suggests VCD file with real timeline data
+            zoon::println!("   ✅ USING FULL FILE RANGE: file_span ({:.3}s) > 10.0s threshold", file_span);
             return Some((full_file_min, full_file_max));
         }
     }
@@ -1619,20 +1653,44 @@ pub fn start_smooth_zoom_in() {
         IS_ZOOMING_IN.set_neq(true);
         Task::start(async move {
             while IS_ZOOMING_IN.get() {
-                let current = current_ns_per_pixel();
-                // Check for Shift key for fast zoom
-                let zoom_factor = if crate::state::IS_SHIFT_PRESSED.get() {
-                    0.10  // Fast zoom with Shift (10% zoom in per frame)
+                // COMPLETELY REWRITTEN: Follow timeline simplification plan exactly
+                // Pure integer zoom algorithm with cursor-centered zooming
+                
+                let current_ns_per_pixel = current_ns_per_pixel().nanos();
+                let current_viewport = current_viewport();
+                let canvas_width = current_canvas_width() as u32;
+                
+                // Calculate new resolution using pure integer math (timeline plan approach)
+                let new_ns_per_pixel_value = if crate::state::IS_SHIFT_PRESSED.get() {
+                    // Fast zoom: 90% of previous (10% zoom in per frame)
+                    (current_ns_per_pixel * 9) / 10
                 } else {
-                    0.02  // Normal smooth zoom (2% zoom in per frame)
+                    // Normal zoom: 95% of previous (5% zoom in per frame)  
+                    (current_ns_per_pixel * 19) / 20
                 };
-                let new_ns_per_pixel = current.zoom_in_smooth(zoom_factor);
-                if new_ns_per_pixel != current {
+                
+                let new_ns_per_pixel = NsPerPixel(new_ns_per_pixel_value.max(1));
+                
+                if new_ns_per_pixel.nanos() != current_ns_per_pixel {
+                    // FIXED: Use cursor position for zoom center (not separate zoom center)
+                    let cursor_time_ns = current_cursor_position().nanos();
+                    
+                    // Calculate cursor position as pixels from viewport start
+                    let viewport_start_ns = current_viewport.start.nanos();
+                    let cursor_offset_ns = cursor_time_ns.saturating_sub(viewport_start_ns);
+                    let cursor_x_pixels = (cursor_offset_ns / current_ns_per_pixel) as u32;
+                    let cursor_x_pixels = cursor_x_pixels.min(canvas_width);
+                    
+                    // Calculate new viewport centered on cursor (pure integer math)
+                    let ns_before_cursor = cursor_x_pixels as u64 * new_ns_per_pixel.nanos();
+                    let ns_after_cursor = (canvas_width.saturating_sub(cursor_x_pixels)) as u64 * new_ns_per_pixel.nanos();
+                    
+                    let new_viewport = Viewport::new(
+                        TimeNs(cursor_time_ns.saturating_sub(ns_before_cursor)),
+                        TimeNs(cursor_time_ns.saturating_add(ns_after_cursor))
+                    );
+                    
                     set_ns_per_pixel_if_changed(new_ns_per_pixel);
-                    let zoom_center_ns = ZOOM_CENTER_NS.get();
-                    let current_viewport = current_viewport();
-                    let canvas_width = current_canvas_width() as u32;
-                    let new_viewport = current_viewport.zoom_to(new_ns_per_pixel, zoom_center_ns, canvas_width);
                     set_viewport_if_changed(new_viewport);
                 } else {
                     break; // Hit zoom limit
@@ -1648,20 +1706,42 @@ pub fn start_smooth_zoom_out() {
         IS_ZOOMING_OUT.set_neq(true);
         Task::start(async move {
             while IS_ZOOMING_OUT.get() {
-                let current = current_ns_per_pixel();
-                // Check for Shift key for fast zoom
-                let zoom_factor = if crate::state::IS_SHIFT_PRESSED.get() {
-                    0.10  // Fast zoom with Shift (10% zoom out per frame)
+                let current_ns_per_pixel = current_ns_per_pixel();
+                
+                // FIXED: Use pure integer math instead of floating-point factors
+                // Industry standard approach: increase ns_per_pixel by integer multiplication/division
+                let new_ns_per_pixel_value = if crate::state::IS_SHIFT_PRESSED.get() {
+                    // Fast zoom out: multiply by 1.2 (equivalent to multiply by 6/5)
+                    (current_ns_per_pixel.nanos() * 6) / 5  // 20% zoom out per frame
                 } else {
-                    0.02  // Normal smooth zoom (2% zoom out per frame)
+                    // Normal zoom out: multiply by 1.1 (equivalent to multiply by 11/10)
+                    (current_ns_per_pixel.nanos() * 11) / 10  // 10% zoom out per frame
                 };
-                let new_ns_per_pixel = current.zoom_out_smooth(zoom_factor);
-                if new_ns_per_pixel != current {
-                    set_ns_per_pixel_if_changed(new_ns_per_pixel);
-                    let zoom_center_ns = ZOOM_CENTER_NS.get();
+                
+                let new_ns_per_pixel = NsPerPixel(new_ns_per_pixel_value);
+                
+                if new_ns_per_pixel != current_ns_per_pixel {
+                    // FIXED: Use cursor position for zoom center (same as zoom in)
+                    let cursor_time_ns = current_cursor_position().nanos();
                     let current_viewport = current_viewport();
                     let canvas_width = current_canvas_width() as u32;
-                    let new_viewport = current_viewport.zoom_to(new_ns_per_pixel, zoom_center_ns, canvas_width);
+                    
+                    // Calculate cursor position as pixels from viewport start
+                    let viewport_start_ns = current_viewport.start.nanos();
+                    let cursor_offset_ns = cursor_time_ns.saturating_sub(viewport_start_ns);
+                    let cursor_x_pixels = (cursor_offset_ns / current_ns_per_pixel.nanos()) as u32;
+                    let cursor_x_pixels = cursor_x_pixels.min(canvas_width);
+                    
+                    // Calculate new viewport centered on cursor (pure integer math)
+                    let ns_before_cursor = cursor_x_pixels as u64 * new_ns_per_pixel.nanos();
+                    let ns_after_cursor = (canvas_width.saturating_sub(cursor_x_pixels)) as u64 * new_ns_per_pixel.nanos();
+                    
+                    let new_viewport = Viewport::new(
+                        TimeNs(cursor_time_ns.saturating_sub(ns_before_cursor)),
+                        TimeNs(cursor_time_ns.saturating_add(ns_after_cursor))
+                    );
+                    
+                    set_ns_per_pixel_if_changed(new_ns_per_pixel);
                     set_viewport_if_changed(new_viewport);
                 } else {
                     break; // Hit zoom limit
@@ -2192,7 +2272,10 @@ fn create_objects_for_single_variable(
         let end_time = if rect_index + 1 < time_value_pairs.len() {
             time_value_pairs[rect_index + 1].0
         } else {
-            max_time as f32
+            // FIXED: Last rectangle extends only to current viewport end, not full timeline
+            // This prevents massive rectangles when zoomed in
+            let current_viewport = current_viewport();
+            current_viewport.end.display_seconds() as f32
         };
         
         if end_time <= min_time as f32 || *start_time >= max_time as f32 {
@@ -2277,8 +2360,9 @@ fn update_canvas_objects_incrementally(
         LAST_CANVAS_DIMENSIONS.set_neq(current_dims);
         // Clear cache and force full redraw
         VARIABLE_OBJECT_CACHE.lock_mut().clear();
+        // FIXED: Use cursor position for both cursor and zoom center (cursor-centered zooming)
         return create_waveform_objects_with_dimensions_and_theme(
-            current_vars, canvas_width, canvas_height, theme, cursor_position, current_zoom_center_seconds()
+            current_vars, canvas_width, canvas_height, theme, cursor_position, cursor_position
         );
     }
     
@@ -2297,8 +2381,9 @@ fn update_canvas_objects_incrementally(
             } else {
                 // Variable not cached - need to create it
                 drop(cache);
+                // FIXED: Use cursor position for both cursor and zoom center (cursor-centered zooming)
                 return create_waveform_objects_with_dimensions_and_theme(
-                    current_vars, canvas_width, canvas_height, theme, cursor_position, current_zoom_center_seconds()
+                    current_vars, canvas_width, canvas_height, theme, cursor_position, cursor_position
                 );
             }
         }
@@ -2351,8 +2436,8 @@ fn create_waveform_objects_with_theme(selected_vars: &[SelectedVariable], theme:
     let cursor_pos = current_cursor_position_seconds();
     let canvas_width = current_canvas_width();
     let canvas_height = current_canvas_height();
-    let zoom_center_pos = current_zoom_center_seconds();
-    create_waveform_objects_with_dimensions_and_theme(selected_vars, canvas_width, canvas_height, theme, cursor_pos, zoom_center_pos)
+    // FIXED: Use cursor position for both cursor and zoom center (cursor-centered zooming)
+    create_waveform_objects_with_dimensions_and_theme(selected_vars, canvas_width, canvas_height, theme, cursor_pos, cursor_pos)
 }
 
 fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVariable], canvas_width: f32, canvas_height: f32, theme: &NovyUITheme, cursor_position: f64, zoom_center_position: f64) -> Vec<fast2d::Object2d> {
@@ -2431,9 +2516,10 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
             let end_time = if rect_index + 1 < time_value_pairs.len() {
                 time_value_pairs[rect_index + 1].0 // Next transition time
             } else {
-                // Last rectangle: extend to view window end for proper visual coverage
-                // Backend provides proper filler transitions, so this is safe
-                max_time as f32
+                // FIXED: Last rectangle extends only to current viewport end, not full timeline
+                // This prevents massive rectangles when zoomed in
+                let current_viewport = current_viewport();
+                current_viewport.end.display_seconds() as f32
             };
             
             // Skip rectangles completely outside visible range
@@ -2453,7 +2539,9 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
                 continue; // Skip rendering in degenerate cases
             }
             
-            // High-precision coordinate calculation with explicit bounds checking
+            // FIXED: Use canvas-width-based coordinate calculation for full width coverage
+            // This ensures rectangles span the full canvas width correctly
+            let time_range = max_time - min_time;
             let time_to_pixel_ratio = canvas_width as f64 / time_range;
             let rect_start_x = (visible_start_time as f64 - min_time) * time_to_pixel_ratio;
             let rect_end_x = (visible_end_time as f64 - min_time) * time_to_pixel_ratio;
@@ -2516,6 +2604,9 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
             };
             
             // Create value rectangle with actual time-based width
+            zoon::println!("🎨 CREATING WAVEFORM RECT: var={} x={:.1} y={:.1} w={:.1} h={:.1} color=({},{},{},{})", 
+                _variable_name, rect_start_x as f32, y_position + 2.0, rect_width as f32, row_height - 4.0,
+                rect_color.0, rect_color.1, rect_color.2, rect_color.3);
             objects.push(
                 fast2d::Rectangle::new()
                     .position(rect_start_x as f32, y_position + 2.0)
@@ -2793,6 +2884,7 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
         }
     }
     
+    zoon::println!("🎨 WAVEFORM OBJECTS: Created {} total Fast2D objects for rendering", objects.len());
     objects
 }
 

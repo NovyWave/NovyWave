@@ -257,7 +257,10 @@ impl WaveformTimeline {
                 select! {
                     event = cursor_clicked.next() => {
                         match event {
-                            Some(time_ns) => cursor_handle.set(time_ns),
+                            Some(time_ns) => {
+                                zoon::println!("🎯 CURSOR_CLICKED: Setting cursor to {}s ({}ns)", time_ns.display_seconds(), time_ns.nanos());
+                                cursor_handle.set(time_ns);
+                            },
                             None => break,
                         }
                     }
@@ -364,6 +367,7 @@ impl WaveformTimeline {
             let viewport_for_ns_per_pixel = viewport.clone();
             let cursor_center_at_viewport_relay_clone = cursor_center_at_viewport_relay.clone();
             let zoom_center_reset_to_zero_relay_clone = zoom_center_reset_to_zero_relay.clone();
+            let viewport_changed_relay_clone = viewport_changed_relay.clone();
             async move |ns_per_pixel_handle| {
                 let mut zoom_in_started = zoom_in_started_stream;
                 let mut zoom_out_started = zoom_out_started_stream;
@@ -397,8 +401,37 @@ impl WaveformTimeline {
                     event = zoom_in_pressed.next() => {
                         match event {
                             Some(()) => {
-                                let current = ns_per_pixel_handle.get();
-                                ns_per_pixel_handle.set_neq(current.zoom_in_smooth(0.3));
+                                zoon::println!("🔧 ZOOM_IN_PRESSED: Starting zoom in operation");
+                                let current_ns_per_pixel = ns_per_pixel_handle.get();
+                                let new_ns_per_pixel = current_ns_per_pixel.zoom_in_smooth(0.3);
+                                ns_per_pixel_handle.set_neq(new_ns_per_pixel);
+                                
+                                // ✅ CRITICAL FIX: Update viewport when zoom changes
+                                let current_viewport = viewport_for_ns_per_pixel.signal().to_stream().next().await.unwrap_or_else(|| {
+                                    Viewport::new(TimeNs::ZERO, TimeNs::from_external_seconds(250.0))
+                                });
+                                let canvas_width = current_canvas_width(); // Use existing function
+                                
+                                // ✅ FIXED: Use cursor position as zoom center, not viewport center
+                                let center_time = crate::actors::waveform_timeline::current_cursor_position();
+                                
+                                // Calculate new viewport range based on new zoom level
+                                let half_range_ns = (new_ns_per_pixel.nanos() * canvas_width as u64) / 2;
+                                let new_start = TimeNs::from_nanos(center_time.nanos().saturating_sub(half_range_ns));
+                                let new_end = TimeNs::from_nanos(center_time.nanos() + half_range_ns);
+                                let new_viewport = Viewport::new(new_start, new_end);
+                                
+                                zoon::println!("🔧 ZOOM_IN_PRESSED: Updating viewport from {:.3}s-{:.3}s to {:.3}s-{:.3}s", 
+                                    current_viewport.start.display_seconds(),
+                                    current_viewport.end.display_seconds(),
+                                    new_viewport.start.display_seconds(), 
+                                    new_viewport.end.display_seconds()
+                                );
+                                
+                                // Use the viewport changed relay to update viewport
+                                let viewport_tuple = (new_viewport.start.display_seconds(), new_viewport.end.display_seconds());
+                                viewport_changed_relay_clone.send(viewport_tuple);
+                                zoon::println!("🔧 ZOOM_IN_PRESSED: Zoom in operation completed");
                             }
                             None => break,
                         }
@@ -406,8 +439,37 @@ impl WaveformTimeline {
                     event = zoom_out_pressed.next() => {
                         match event {
                             Some(()) => {
-                                let current = ns_per_pixel_handle.get();
-                                ns_per_pixel_handle.set_neq(current.zoom_out_smooth(0.3));
+                                zoon::println!("🔧 ZOOM_OUT_PRESSED: Starting zoom out operation");
+                                let current_ns_per_pixel = ns_per_pixel_handle.get();
+                                let new_ns_per_pixel = current_ns_per_pixel.zoom_out_smooth(0.3);
+                                ns_per_pixel_handle.set_neq(new_ns_per_pixel);
+                                
+                                // ✅ CRITICAL FIX: Update viewport when zoom changes
+                                let current_viewport = viewport_for_ns_per_pixel.signal().to_stream().next().await.unwrap_or_else(|| {
+                                    Viewport::new(TimeNs::ZERO, TimeNs::from_external_seconds(250.0))
+                                });
+                                let canvas_width = current_canvas_width(); // Use existing function
+                                
+                                // ✅ FIXED: Use cursor position as zoom center, not viewport center
+                                let center_time = crate::actors::waveform_timeline::current_cursor_position();
+                                
+                                // Calculate new viewport range based on new zoom level
+                                let half_range_ns = (new_ns_per_pixel.nanos() * canvas_width as u64) / 2;
+                                let new_start = TimeNs::from_nanos(center_time.nanos().saturating_sub(half_range_ns));
+                                let new_end = TimeNs::from_nanos(center_time.nanos() + half_range_ns);
+                                let new_viewport = Viewport::new(new_start, new_end);
+                                
+                                zoon::println!("🔧 ZOOM_OUT_PRESSED: Updating viewport from {:.3}s-{:.3}s to {:.3}s-{:.3}s", 
+                                    current_viewport.start.display_seconds(),
+                                    current_viewport.end.display_seconds(),
+                                    new_viewport.start.display_seconds(), 
+                                    new_viewport.end.display_seconds()
+                                );
+                                
+                                // Use the viewport changed relay to update viewport
+                                let viewport_tuple = (new_viewport.start.display_seconds(), new_viewport.end.display_seconds());
+                                viewport_changed_relay_clone.send(viewport_tuple);
+                                zoon::println!("🔧 ZOOM_OUT_PRESSED: Zoom out operation completed");
                             }
                             None => break,
                         }
@@ -2167,20 +2229,30 @@ pub fn current_cursor_position_seconds() -> f64 {
     current_cursor_position().display_seconds()
 }
 
-/// Get current zoom center position in seconds synchronously
+/// DEPRECATED: Zoom center concept removed in favor of cursor-centered zooming
+#[allow(dead_code)]
 pub fn current_zoom_center_seconds() -> f64 {
-    // TODO: Complete architecture migration - for now use legacy global
-    // Eventually this should use domain actor cache pattern like cursor
+    // This function is no longer used - zoom now centers on cursor position
+    // Keeping for compatibility during transition, but should be removed
     crate::state::ZOOM_CENTER_NS.get().display_seconds()
 }
 
 /// Get current viewport synchronously (replacement for bridge function)
 pub fn current_viewport() -> Viewport {
-    // ✅ CRITICAL FIX: Use larger default range to prevent microsecond zoom display
-    // 250s range matches the actual waveform data and ensures proper zoom ratio calculation
-    *static_cache_viewport().get_or_init(|| std::sync::Mutex::new(
-        Viewport::new(TimeNs::ZERO, TimeNs::from_external_seconds(250.0))
-    )).lock().unwrap()
+    // ✅ FIXED: Use cached viewport value updated by signal handler
+    // This ensures the viewport reflects the current zoom/pan state
+    *static_cache_viewport().get_or_init(|| {
+        std::sync::Mutex::new(Viewport::new(
+            TimeNs::ZERO, 
+            TimeNs::from_external_seconds(250.0)
+        ))
+    }).lock().unwrap()
+}
+
+/// Static cache for current viewport - updated by signal handler
+fn static_cache_viewport() -> &'static std::sync::OnceLock<std::sync::Mutex<Viewport>> {
+    static VIEWPORT_CACHE: std::sync::OnceLock<std::sync::Mutex<Viewport>> = std::sync::OnceLock::new();
+    &VIEWPORT_CACHE
 }
 
 /// Get current ns_per_pixel synchronously (replacement for bridge function)
@@ -2397,10 +2469,6 @@ fn static_cache_cursor() -> &'static std::sync::OnceLock<std::sync::Mutex<TimeNs
     &CACHED_CURSOR
 }
 
-fn static_cache_viewport() -> &'static std::sync::OnceLock<std::sync::Mutex<Viewport>> {
-    static CACHED_VIEWPORT: std::sync::OnceLock<std::sync::Mutex<Viewport>> = std::sync::OnceLock::new();
-    &CACHED_VIEWPORT
-}
 
 fn static_cache_ns_per_pixel() -> &'static std::sync::OnceLock<std::sync::Mutex<NsPerPixel>> {
     static CACHED_NS_PER_PIXEL: std::sync::OnceLock<std::sync::Mutex<NsPerPixel>> = std::sync::OnceLock::new();
