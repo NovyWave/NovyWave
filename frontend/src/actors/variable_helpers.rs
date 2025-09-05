@@ -16,12 +16,8 @@ pub fn create_selected_variable(
     scope_id: &str
 ) -> Option<SelectedVariable> {
     
-    // Find context information from tracked files - USE SAME SOURCE AS Variables panel
-    let tracked_files = if let Some(signals) = crate::actors::global_domains::TRACKED_FILES_SIGNALS.get() {
-        signals.files_mutable.lock_ref().to_vec()
-    } else {
-        Vec::new()
-    };
+    // ✅ ACTOR+RELAY: Get tracked files from TrackedFiles domain  
+    let tracked_files = crate::actors::global_domains::get_current_tracked_files();
     
     
     let file = tracked_files.iter().find(|f| f.id == file_id);

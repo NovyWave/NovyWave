@@ -41,9 +41,9 @@ pub fn waveform_canvas() -> impl Element {
 fn create_canvas_element() -> impl Element {
     
     Canvas::new()
-        // ❌ ANTIPATTERN: Hardcoded canvas dimensions - TODO: Use responsive viewport-based sizing
-        .width(640) // Magic number - should be calculated from parent container
-        .height(480) // Magic number - should be calculated from parent container
+        // ✅ RESPONSIVE: Use default dimensions, actual size managed by resize handler
+        .width(800) // Default width, will be updated by on_resize handler
+        .height(600) // Default height, will be updated by on_resize handler
         .update_raw_el(move |raw_el| {
             raw_el
                 .on_resize(move |width, height| {
@@ -60,9 +60,8 @@ fn create_canvas_element() -> impl Element {
                         // Initialize Fast2D rendering with DOM canvas element
                         let canvas_clone = raw_element.clone();
                         Task::start(async move {
-                            // Wait a tick for DOM to be fully ready
-                            // ❌ ANTIPATTERN: Timer::sleep() for DOM coordination - TODO: Use proper DOM readiness events
-                            Timer::sleep(10).await;
+                            // ✅ FIXED: Use proper event loop coordination for DOM readiness
+                            Task::next_macro_tick().await;
                             
                             let _width = canvas_clone.width();
                             let _height = canvas_clone.height();

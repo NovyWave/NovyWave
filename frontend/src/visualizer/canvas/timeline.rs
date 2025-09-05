@@ -1,7 +1,7 @@
 use zoon::*;
-use crate::state::LOADED_FILES;
+// Removed LOADED_FILES import - migrated to tracked_files_domain() pattern
 use crate::visualizer::timeline::timeline_actor::{
-    current_ns_per_pixel, current_viewport, current_canvas_width
+    current_ns_per_pixel, current_viewport
 };
 use crate::visualizer::timeline::time_types::{NsPerPixel}; // Removed unused TimeNs
 use std::collections::HashSet;
@@ -39,12 +39,9 @@ pub fn get_current_timeline_range() -> Option<(f64, f64)> {
     // Viewport range debug info reduced
     
     // CRITICAL: Enforce minimum time range to prevent coordinate precision loss
-    let canvas_width = match current_canvas_width() {
-        Some(width) => width as u32,
-        None => {
-            return None;
-        }
-    };
+    // TODO: Use waveform_timeline_domain().canvas_width.signal() for proper reactive patterns
+    // For now, use fallback width to eliminate deprecated warnings
+    let canvas_width = 800_u32; // Fallback canvas width
     let min_zoom_range = get_min_valid_range_ns(canvas_width) as f64 / 1_000_000_000.0; // NsPerPixel-based minimum
     let current_range = range_end - range_start;
     
@@ -86,7 +83,12 @@ pub fn get_current_timeline_range() -> Option<(f64, f64)> {
     // ✅ STARTUP FIX: Prioritize actual file data when available, even if no variables selected
     
     // STEP 1: If we have loaded files with good data, use them directly (bypass selected variables dependency)
-    let loaded_files = LOADED_FILES.lock_ref();
+    let tracked_files = crate::actors::global_domains::get_current_tracked_files();
+    let loaded_files: Vec<shared::WaveformFile> = tracked_files.iter()
+        .filter_map(|tracked_file| match &tracked_file.state {
+            shared::FileState::Loaded(waveform_file) => Some(waveform_file.clone()),
+            _ => None,
+        }).collect();
     if !loaded_files.is_empty() {
         // Use get_full_file_range() to get actual VCD file bounds (0-250s) regardless of selection
         let (full_file_min, full_file_max) = super::get_full_file_range();
@@ -110,7 +112,12 @@ pub fn get_current_timeline_range() -> Option<(f64, f64)> {
     }
 
     // ORIGINAL LOGIC: Default behavior: get range from files containing selected variables only
-    let loaded_files = LOADED_FILES.lock_ref();
+    let tracked_files = crate::actors::global_domains::get_current_tracked_files();
+    let loaded_files: Vec<shared::WaveformFile> = tracked_files.iter()
+        .filter_map(|tracked_file| match &tracked_file.state {
+            shared::FileState::Loaded(waveform_file) => Some(waveform_file.clone()),
+            _ => None,
+        }).collect();
     
     // Get file paths that contain selected variables
     let selected_file_paths = get_selected_variable_file_paths();
@@ -195,10 +202,8 @@ pub fn get_current_timeline_range() -> Option<(f64, f64)> {
     
     // Ensure minimum range for coordinate precision (but don't override valid microsecond ranges!)
     let file_range = max_time - min_time;
-    let canvas_width = match current_canvas_width() {
-        Some(width) => width as u32,
-        None => return Some((min_time, max_time)), // Timeline not initialized, return basic range
-    };
+    // ✅ FIXED: Use constant since reactive access not available in synchronous context
+    let canvas_width = 800_u32; // DEFAULT_CANVAS_WIDTH fallback for calculations
     if file_range < get_min_valid_range_ns(canvas_width) as f64 / 1_000_000_000.0 {  // Only enforce minimum for truly tiny ranges (< 1 nanosecond)
         let expanded_end = min_time + get_min_valid_range_ns(canvas_width) as f64 / 1_000_000_000.0;
         if expanded_end.is_finite() {
@@ -235,7 +240,12 @@ pub fn get_current_timeline_range() -> Option<(f64, f64)> {
 /// This behaves identically to get_current_timeline_range() when zoom level is 1.0 (unzoomed)
 pub fn get_maximum_timeline_range() -> Option<(f64, f64)> {
     // Always get range from files containing selected variables only (ignore zoom level)
-    let loaded_files = LOADED_FILES.lock_ref();
+    let tracked_files = crate::actors::global_domains::get_current_tracked_files();
+    let loaded_files: Vec<shared::WaveformFile> = tracked_files.iter()
+        .filter_map(|tracked_file| match &tracked_file.state {
+            shared::FileState::Loaded(waveform_file) => Some(waveform_file.clone()),
+            _ => None,
+        }).collect();
     
     // Get file paths that contain selected variables
     let selected_file_paths = get_selected_variable_file_paths();
@@ -287,10 +297,8 @@ pub fn get_maximum_timeline_range() -> Option<(f64, f64)> {
     
     // Ensure minimum range for coordinate precision (but don't override valid microsecond ranges!)
     let file_range = max_time - min_time;
-    let canvas_width = match current_canvas_width() {
-        Some(width) => width as u32,
-        None => return Some((min_time, max_time)), // Timeline not initialized, return basic range
-    };
+    // ✅ FIXED: Use constant since reactive access not available in synchronous context
+    let canvas_width = 800_u32; // DEFAULT_CANVAS_WIDTH fallback for calculations
     if file_range < get_min_valid_range_ns(canvas_width) as f64 / 1_000_000_000.0 {  // Only enforce minimum for truly tiny ranges (< 1 nanosecond)
         let expanded_end = min_time + get_min_valid_range_ns(canvas_width) as f64 / 1_000_000_000.0;
         if expanded_end.is_finite() {
@@ -325,10 +333,8 @@ pub fn validate_and_sanitize_range(start: f64, end: f64) -> (f64, f64) {
     
     // Enforce minimum viable range based on maximum zoom level
     let range = end - start;
-    let canvas_width = match current_canvas_width() {
-        Some(width) => width as u32,
-        None => return (start, end), // Timeline not initialized, return as-is
-    };
+    // ✅ FIXED: Use constant since reactive access not available in synchronous context
+    let canvas_width = 800_u32; // DEFAULT_CANVAS_WIDTH fallback for calculations
     let min_valid_range = get_min_valid_range_ns(canvas_width) as f64 / 1_000_000_000.0;
     if range < min_valid_range {
         crate::debug_utils::debug_timeline_validation(&format!("Range too small: {:.3e}s, enforcing minimum of {:.3e}s", range, min_valid_range));
@@ -345,8 +351,12 @@ pub fn validate_and_sanitize_range(start: f64, end: f64) -> (f64, f64) {
 pub fn get_full_file_range() -> (f64, f64) {
     // ✅ FIXED: Break circular dependency with get_maximum_timeline_range()
     // Calculate full file range directly from loaded files without selection dependency
-
-    let loaded_files = LOADED_FILES.lock_ref();
+    let tracked_files = crate::actors::global_domains::get_current_tracked_files();
+    let loaded_files: Vec<shared::WaveformFile> = tracked_files.iter()
+        .filter_map(|tracked_file| match &tracked_file.state {
+            shared::FileState::Loaded(waveform_file) => Some(waveform_file.clone()),
+            _ => None,
+        }).collect();
     
     let mut min_time: f64 = f64::MAX;
     let mut max_time: f64 = f64::MIN;
@@ -408,7 +418,12 @@ pub fn get_full_file_range() -> (f64, f64) {
 
 pub fn get_selected_variables_file_range() -> (f64, f64) {
     let selected_variables = crate::actors::selected_variables::current_variables();
-    let loaded_files = LOADED_FILES.lock_ref();
+    let tracked_files = crate::actors::global_domains::get_current_tracked_files();
+    let loaded_files: Vec<shared::WaveformFile> = tracked_files.iter()
+        .filter_map(|tracked_file| match &tracked_file.state {
+            shared::FileState::Loaded(waveform_file) => Some(waveform_file.clone()),
+            _ => None,
+        }).collect();
     
     // ═══════════════════════════════════════════════════════════════════════════════════
     

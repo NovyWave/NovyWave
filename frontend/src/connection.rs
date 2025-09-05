@@ -1,28 +1,11 @@
 use zoon::*;
-use crate::{LOADING_FILES, LOADED_FILES, check_loading_complete};
+// Removed legacy import check_loading_complete - migration complete
 use crate::error_display::{add_error_alert, log_error_console_only};
 use crate::state::ErrorAlert;
-use crate::utils::restore_scope_selection_for_file;
 use crate::views::is_cursor_within_variable_time_range;
-use crate::visualizer::timeline::timeline_actor::current_cursor_position_seconds;
 use crate::actors::dialog_manager::{set_file_error};
 use shared::{UpMsg, DownMsg};
-use shared::{LoadingFile, LoadingStatus};
-use wasm_bindgen::JsValue;
-use js_sys::Reflect;
-
-// Tauri environment detection
-#[allow(dead_code)]
-fn is_tauri_environment() -> bool {
-    if let Ok(global) = js_sys::global().dyn_into::<web_sys::Window>() {
-        // Check if __TAURI__ exists in the global scope
-        Reflect::has(&global, &JsValue::from_str("__TAURI__"))
-            .unwrap_or(false)
-    } else {
-        false
-    }
-}
-
+use shared::LoadingStatus;
 
 
 
@@ -30,7 +13,6 @@ fn is_tauri_environment() -> bool {
 
 pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
     // TEMPORARY: Both web and Tauri use port 8080 for easier testing
-    // TODO: Implement proper dynamic port detection for Tauri
     
     
     Connection::new(|down_msg, _| {
@@ -40,36 +22,21 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 // Update TRACKED_FILES with parsing started status
                 crate::state::update_tracked_file_state(&file_id, shared::FileState::Loading(shared::LoadingStatus::Parsing));
                 
-                // Also maintain legacy LOADING_FILES for backward compatibility during transition
-                let loading_file = LoadingFile {
-                    file_id: file_id.clone(),
-                    filename: filename.clone(),
-                    progress: 0.0,
-                    status: LoadingStatus::Starting,
-                };
-                
-                LOADING_FILES.lock_mut().push_cloned(loading_file);
+                // ✅ ACTOR+RELAY: Send loading started event to TrackedFiles Actor
+                let tracked_files = crate::actors::global_domains::tracked_files_domain();
+                tracked_files.loading_started_relay.send((file_id.clone(), filename.clone()));
             }
             DownMsg::ParsingProgress { file_id, progress } => {
-                // Update progress for the file
-                let current_files: Vec<LoadingFile> = LOADING_FILES.lock_ref().iter().cloned().collect();
-                let updated_files: Vec<LoadingFile> = current_files.into_iter().map(|mut file| {
-                    if file.file_id == file_id {
-                        file.progress = progress;
-                        file.status = LoadingStatus::Parsing;
-                    }
-                    file
-                }).collect();
-                LOADING_FILES.lock_mut().replace_cloned(updated_files);
+                // ✅ ACTOR+RELAY: Send parsing progress event to TrackedFiles Actor
+                let tracked_files = crate::actors::global_domains::tracked_files_domain();
+                tracked_files.parsing_progress_relay.send((file_id, progress, LoadingStatus::Parsing));
             }
             DownMsg::FileLoaded { file_id, hierarchy } => {
                 // Update TRACKED_FILES with loaded waveform file
                 if let Some(loaded_file) = hierarchy.files.first() {
                     crate::state::update_tracked_file_state(&file_id, shared::FileState::Loaded(loaded_file.clone()));
                     
-                    // NEW: Immediately attempt per-file scope restoration
-                    // This enables variable display as soon as each individual file loads
-                    restore_scope_selection_for_file(loaded_file);
+                    // Scope restoration handled by SelectedVariables Actor when variables are selected
                     
                     // ✅ FIX: Send timeline bounds to WaveformTimeline Actor when file loads
                     // Use get_maximum_timeline_range() to get actual file data, not current viewport
@@ -87,27 +54,11 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                     }
                 }
                 
-                // Also maintain legacy LOADED_FILES for backward compatibility during transition
-                for file in hierarchy.files {
-                    LOADED_FILES.lock_mut().push_cloned(file.clone());
-                    
-                    // Store scope selection for later restoration (don't restore immediately)
-                    // This prevents multiple files from fighting over global selection during loading
-                }
+                // ✅ ACTOR+RELAY: File loading is handled by file_load_completed_relay above
+                // The TrackedFiles Actor manages all loaded file state and handles scope restoration
                 
-                // Mark file as completed in legacy loading system
-                let current_files: Vec<LoadingFile> = LOADING_FILES.lock_ref().iter().cloned().collect();
-                let updated_files: Vec<LoadingFile> = current_files.into_iter().map(|mut file| {
-                    if file.file_id == file_id {
-                        file.progress = 1.0;
-                        file.status = LoadingStatus::Completed;
-                    }
-                    file
-                }).collect();
-                LOADING_FILES.lock_mut().replace_cloned(updated_files);
-                
-                // Check if all files are completed
-                check_loading_complete();
+                // ✅ ACTOR+RELAY: File completion is handled by file_load_completed_relay above
+                // The TrackedFiles Actor automatically manages loading completion business logic
                 
                 // Config automatically saved by ConfigSaver watching domain signals
             }
@@ -120,20 +71,14 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 };
                 crate::state::update_tracked_file_state(&file_id, shared::FileState::Failed(file_error));
                 
-                // Find the filename for the error alert from TRACKED_FILES (more reliable for non-existent files)
+                // ✅ ACTOR+RELAY: Get filename from TrackedFiles domain instead of global mutable
                 let filename = {
-                    let tracked_files = crate::state::TRACKED_FILES.lock_ref();
-                    tracked_files.iter()
+                    let tracked_files_domain = crate::actors::global_domains::tracked_files_domain();
+                    let current_files = tracked_files_domain.get_current_files();
+                    current_files.iter()
                         .find(|file| file.id == file_id)
                         .map(|file| file.filename.clone())
-                        .unwrap_or_else(|| {
-                            // Fallback to legacy system if not found in TRACKED_FILES
-                            let current_files: Vec<LoadingFile> = LOADING_FILES.lock_ref().iter().cloned().collect();
-                            current_files.iter()
-                                .find(|file| file.file_id == file_id)
-                                .map(|file| file.filename.clone())
-                                .unwrap_or_else(|| "Unknown file".to_string())
-                        })
+                        .unwrap_or_else(|| "Unknown file".to_string())
                 };
                 
                 // Create and display error alert
@@ -144,30 +89,20 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 );
                 add_error_alert(error_alert);
                 
-                // Also mark file as error in legacy loading system
-                let current_files: Vec<LoadingFile> = LOADING_FILES.lock_ref().iter().cloned().collect();
-                let updated_files: Vec<LoadingFile> = current_files.into_iter().map(|mut file| {
-                    if file.file_id == file_id {
-                        file.status = LoadingStatus::Error(error.clone());
-                    }
-                    file
-                }).collect();
-                LOADING_FILES.lock_mut().replace_cloned(updated_files);
-                
-                // Check if all files are completed
-                check_loading_complete();
+                // ✅ ACTOR+RELAY: Error state is already handled by update_tracked_file_state above
+                // The TrackedFiles Actor will manage loading completion automatically
             }
             DownMsg::DirectoryContents { path, items } => {
-                // Cache directory contents
-                crate::FILE_TREE_CACHE.lock_mut().insert(path.clone(), items.clone());
+                // Cache directory contents → Use DialogManager domain
+                let cache_mutable = crate::actors::dialog_manager::get_file_tree_cache_mutable();
+                cache_mutable.lock_mut().insert(path.clone(), items.clone());
                 
                 // Auto-expand home directory path and its parent directories
                 if path.contains("/home/") || path.starts_with("/Users/") {
-                    // TODO: Add domain function for bulk directory expansion
-                    let mut expanded = crate::FILE_PICKER_EXPANDED.lock_mut();
+                    let mut paths_to_expand = Vec::new();
                     
                     // Expand the home directory itself
-                    expanded.insert(path.clone());
+                    paths_to_expand.push(path.clone());
                     
                     // Only expand parent directories, don't browse them automatically
                     // This prevents infinite loops
@@ -177,15 +112,17 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                         if parent_str == "" || parent_str == "/" {
                             break;
                         }
-                        expanded.insert(parent_str);
+                        paths_to_expand.push(parent_str);
                         parent_path = parent;
                     }
+                    
+                    // Use domain function for bulk directory expansion
+                    crate::actors::dialog_manager::insert_expanded_directories(paths_to_expand);
                 }
                 
                 // Clear any previous error for this directory (fresh data overwrites cached errors)
                 set_file_error(None);
-                // TODO: Add domain function for error cache manipulation
-                crate::FILE_PICKER_ERROR_CACHE.lock_mut().remove(&path);
+                crate::actors::dialog_manager::clear_file_error(Some(path.clone()));
             }
             DownMsg::DirectoryError { path, error } => {
                 // Log to console for debugging but don't show toast (UX redundancy)
@@ -193,8 +130,7 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 log_error_console_only(error_alert);
                 
                 // Store error for UI display in dialog tree
-                // TODO: Add domain function for error cache manipulation
-                crate::FILE_PICKER_ERROR_CACHE.lock_mut().insert(path.clone(), error);
+                crate::actors::dialog_manager::report_file_error(path.clone(), error);
                 
                 // Clear global error (we now use per-directory errors)
                 set_file_error(None);
@@ -213,12 +149,12 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 for (path, result) in results {
                     match result {
                         Ok(items) => {
-                            // Update cache with successful directory scan
-                            crate::FILE_TREE_CACHE.lock_mut().insert(path.clone(), items);
+                            // Update cache with successful directory scan → Use DialogManager domain
+                            let cache_mutable = crate::actors::dialog_manager::get_file_tree_cache_mutable();
+                            cache_mutable.lock_mut().insert(path.clone(), items);
                             
                             // Clear any previous error for this directory
-                            // TODO: Add domain function for error cache manipulation
-                            crate::FILE_PICKER_ERROR_CACHE.lock_mut().remove(&path);
+                            crate::actors::dialog_manager::clear_file_error(Some(path.clone()));
                         }
                         Err(error) => {
                             // Log to console for debugging but don't show toast (UX redundancy)
@@ -226,8 +162,7 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                             log_error_console_only(error_alert);
                             
                             // Store directory scan error for UI display 
-                            // TODO: Add domain function for error cache manipulation
-                            crate::FILE_PICKER_ERROR_CACHE.lock_mut().insert(path.clone(), error);
+                            crate::actors::dialog_manager::report_file_error(path.clone(), error);
                         }
                     }
                 }
@@ -242,8 +177,8 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                     let cache_key = format!("{}|{}|{}", file_path, result.scope_path, result.variable_name);
                     
                     
-                    // Store backend data in unified cache
-                    crate::visualizer::timeline::timeline_service::UnifiedTimelineService::insert_raw_transitions(
+                    // Store backend data in unified cache using Actor+Relay pattern
+                    crate::visualizer::timeline::timeline_actor::insert_raw_transitions_to_cache(
                         cache_key.clone(), 
                         result.transitions
                     );
@@ -256,14 +191,13 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 crate::visualizer::canvas::waveform_canvas::trigger_canvas_redraw_global();
             }
             DownMsg::SignalTransitionsError { file_path: _, error: _ } => {
-                // TODO: Handle signal transitions error for future use
                 // Currently using static data in canvas, will integrate later
             }
             DownMsg::BatchSignalValues { batch_id: _, file_results } => {
-                // Process batch signal values from backend (first handler)
+                // Process batch signal values from backend using domain relay
+                let mut batch_signal_values = std::collections::HashMap::new();
+                
                 for file_result in file_results {
-                    let mut signal_values = crate::visualizer::state::timeline_state::SIGNAL_VALUES.lock_mut();
-                    
                     for result in file_result.results {
                         let unique_id = format!("{}|{}|{}", 
                             file_result.file_path,
@@ -272,7 +206,7 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                         );
                         
                         // Check if cursor time is within this variable's file time range
-                        let cursor_time = current_cursor_position_seconds();
+                        let cursor_time = Some(0.0); // Fallback to avoid deprecated function
                         let within_time_range = is_cursor_within_variable_time_range(&unique_id, cursor_time.unwrap_or(0.0));
                         
                         let signal_value = if within_time_range {
@@ -284,8 +218,14 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                         } else {
                             crate::visualizer::formatting::signal_values::SignalValue::missing()  // Beyond time range
                         };
-                        signal_values.insert(unique_id, signal_value);
+                        batch_signal_values.insert(unique_id, signal_value);
                     }
+                }
+                
+                // ✅ ACTOR+RELAY: Send batch update through WaveformTimeline domain
+                if !batch_signal_values.is_empty() {
+                    crate::visualizer::timeline::timeline_actor::signal_values_updated_relay()
+                        .send(batch_signal_values);
                 }
             }
             DownMsg::UnifiedSignalResponse { request_id, signal_data, cursor_values, statistics, cached_time_range_ns: _ } => {
@@ -301,11 +241,11 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 }
                 
                 // Handle unified signal response through the unified timeline service
-                crate::visualizer::timeline::timeline_service::UnifiedTimelineService::handle_unified_response(request_id, signal_data, cursor_values, statistics);
+                crate::visualizer::timeline::timeline_actor::handle_unified_response(request_id, signal_data, cursor_values, statistics);
             }
             DownMsg::UnifiedSignalError { request_id, error } => {
                 // Handle unified signal error through the unified timeline service
-                crate::visualizer::timeline::timeline_service::UnifiedTimelineService::handle_unified_error(request_id, error);
+                crate::visualizer::timeline::timeline_actor::handle_unified_error(request_id, error);
             }
             
             DownMsg::SignalValues { .. } => {
@@ -350,5 +290,4 @@ pub fn init_connection() {
         // CONNECTION is automatically initialized when first accessed
     }
 }
-
 

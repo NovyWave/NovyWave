@@ -419,7 +419,124 @@ TreeView::new()
 
 **Key principle: Every object should manage concrete data, never other objects. This reduces complexity, eliminates indirection, and makes the code more maintainable.**
 
-### 2. NO Temporary Code Rule
+### 2. Public Field Architecture (MANDATORY)
+
+**CRITICAL: Use public Relay and Actor fields directly - helper functions are antipatterns**
+
+```rust
+// ✅ CORRECT: Direct public field access
+struct TrackedFiles {
+    pub files: ActorVec<TrackedFile>,                    // Direct access
+    pub file_dropped_relay: Relay<Vec<PathBuf>>,        // Public relay field
+    pub parse_completed_relay: Relay<(String, ParseResult)>,  // Public relay field
+}
+
+// ✅ CORRECT: Direct usage without helper functions
+tracked_files.file_dropped_relay.send(vec![path]);
+let files_signal = tracked_files.files.signal_vec_cloned();
+```
+
+**❌ ANTIPATTERN: Helper functions wrapping field access**
+```rust
+// ❌ WRONG: Helper functions create unnecessary indirection
+impl TrackedFiles {
+    pub fn send_file_dropped(&self, files: Vec<PathBuf>) {  // Unnecessary wrapper
+        self.file_dropped_relay.send(files);
+    }
+    
+    pub fn get_files_signal(&self) -> impl Signal {         // Unnecessary getter
+        self.files.signal_vec_cloned()
+    }
+}
+
+// ❌ WRONG: Indirect usage through helpers
+tracked_files.send_file_dropped(vec![path]);  // Extra indirection
+```
+
+**Why helper functions are antipatterns:**
+- **Unnecessary complexity** - Direct field access is clearer
+- **Cognitive overhead** - Developers must learn both fields AND functions
+- **API explosion** - Every field gets multiple wrapper functions
+- **Violates Actor+Relay principles** - Relays are designed for direct access
+
+### 3. zoon::Task Prohibition (CRITICAL)
+
+**CRITICAL: NEVER use zoon::Task - use Actors instead for all event handling**
+
+```rust
+// ❌ ANTIPATTERN: zoon::Task for event handling
+zoon::Task::start(async move {
+    some_signal.for_each(|value| {
+        process_value(value);
+        async {}
+    }).await;
+});
+
+// ❌ ANTIPATTERN: zoon::Task for bi-directional sync
+zoon::Task::start(async move {
+    actor_signal.for_each(|data| {
+        mutable.set_neq(data);
+        async {}
+    }).await;
+});
+```
+
+**✅ CORRECT: Use Actors for all event processing**
+```rust
+// ✅ CORRECT: Actor handles event processing
+let processing_actor = Actor::new(State::default(), async move |state| {
+    loop {
+        select! {
+            Some(value) = value_stream.next() => {
+                // Process in proper Actor context
+                process_value_with_state(value, &mut state);
+            }
+        }
+    }
+});
+
+// ✅ CORRECT: Actors handle bi-directional sync
+struct SyncActor {
+    mutable: Mutable<Data>,
+    actor: Actor<Data>,
+}
+```
+
+**Key Rule: If you're using zoon::Task for anything other than one-off operations (like debounced saves), use Actor instead.**
+
+### 4. Atom for Local UI State (MANDATORY)
+
+**CRITICAL: Use Atom for local view state, Actor+Relay for domain state**
+
+```rust
+// ✅ CORRECT: Atom for local UI concerns
+struct DialogState {
+    pub is_open: Atom<bool>,              // Local UI state
+    pub filter_text: Atom<String>,        // Local UI state
+    pub hover_index: Atom<Option<usize>>, // Local UI state
+}
+
+// ✅ CORRECT: Actor+Relay for domain concerns
+struct TrackedFiles {
+    pub files: ActorVec<TrackedFile>,     // Domain data
+    pub file_dropped_relay: Relay<Vec<PathBuf>>,  // Domain events
+}
+
+// ✅ CORRECT: Usage pattern
+let dialog_state = DialogState::default();
+dialog_state.is_open.set(true);  // Direct Atom usage
+
+tracked_files.file_dropped_relay.send(files);  // Direct Relay usage
+```
+
+**Local UI State Examples:**
+- Dialog visibility, panel collapse state
+- Hover effects, focus states  
+- Search filters, sort order
+- Animation states, loading spinners
+- Form input values (before submission)
+
+### 5. NO Temporary Code Rule
 
 **CRITICAL: Never create temporary solutions or bridge code**
 

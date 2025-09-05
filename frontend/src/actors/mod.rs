@@ -63,7 +63,6 @@ pub use dialog_manager::{DialogManager};
 pub use error_manager::{ErrorManager};
 pub use global_domains::{
     initialize_all_domains, 
-    tracked_files_domain, 
     selected_variables_domain,
     // waveform_timeline_domain, // MOVED to visualizer
     // Domain signal functions (only used ones)

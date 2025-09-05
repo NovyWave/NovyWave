@@ -1,6 +1,40 @@
 use std::fmt;
 use std::ops::{Add, Sub};
 
+// ===== TIME CONVERSION CONSTANTS =====
+// Centralized constants to replace hardcoded magic numbers throughout timeline system
+
+/// Nanoseconds per second conversion factor
+pub const NS_PER_SECOND: f64 = 1_000_000_000.0;
+
+/// Nanoseconds per millisecond conversion factor  
+pub const NS_PER_MILLISECOND: f64 = 1_000_000.0;
+
+/// Nanoseconds per microsecond conversion factor
+pub const NS_PER_MICROSECOND: f64 = 1_000.0;
+
+
+/// Default timeline range in nanoseconds (1 second)
+pub const DEFAULT_TIMELINE_RANGE_NS: u64 = 1_000_000_000;
+
+/// Maximum zoom level (10 seconds per pixel) in nanoseconds per pixel
+pub const MAX_ZOOM_NS_PER_PIXEL: u64 = 10_000_000_000;
+
+/// Minimum zoom level (1 microsecond per pixel) in nanoseconds per pixel
+pub const MIN_ZOOM_NS_PER_PIXEL: u64 = 1_000;
+
+/// Minimum cursor movement step (1 millisecond) in nanoseconds
+pub const MIN_CURSOR_STEP_NS: u64 = 1_000_000;
+
+/// Maximum cursor movement step (1 second) in nanoseconds  
+pub const MAX_CURSOR_STEP_NS: u64 = 1_000_000_000;
+
+/// Display threshold for milliseconds in formatting (100 microseconds)
+pub const MS_DISPLAY_THRESHOLD_NS: u64 = 100_000;
+
+/// Display threshold for microseconds in formatting (1 microsecond in nanoseconds)  
+pub const US_DISPLAY_THRESHOLD_NS: u64 = 1_000;
+
 /// Represents a point in time as nanoseconds since the start of a waveform file.
 /// 
 /// Uses u64 internally to provide:
@@ -23,7 +57,7 @@ impl TimeNs {
     /// This should only be used when converting from external sources like JS timestamps,
     /// animation positions, or file metadata - NOT for API boundaries
     pub fn from_external_seconds(seconds: f64) -> Self {
-        TimeNs((seconds * 1_000_000_000.0) as u64)
+        TimeNs((seconds * NS_PER_SECOND) as u64)
     }
     
     
@@ -35,17 +69,17 @@ impl TimeNs {
     /// Convert to seconds for display purposes only
     /// This is only for human-readable output, NOT for API boundaries
     pub fn display_seconds(self) -> f64 {
-        self.0 as f64 / 1_000_000_000.0
+        self.0 as f64 / NS_PER_SECOND
     }
     
     /// Convert to milliseconds for display purposes only
     pub fn display_millis(self) -> f64 {
-        self.0 as f64 / 1_000_000.0
+        self.0 as f64 / NS_PER_MILLISECOND
     }
     
     /// Convert to microseconds for display purposes only
     pub fn display_micros(self) -> f64 {
-        self.0 as f64 / 1_000.0
+        self.0 as f64 / NS_PER_MICROSECOND
     }
     
     /// Safely subtract two time points, returning a duration
@@ -91,7 +125,7 @@ impl DurationNs {
     /// This should only be used when converting from external sources like JS timestamps,
     /// animation durations, or thresholds - NOT for API boundaries
     pub fn from_external_seconds(seconds: f64) -> Self {
-        DurationNs((seconds * 1_000_000_000.0) as u64)
+        DurationNs((seconds * NS_PER_SECOND) as u64)
     }
     
     
@@ -103,7 +137,7 @@ impl DurationNs {
     /// Convert to seconds for display purposes only
     /// This is only for human-readable output, NOT for API boundaries
     pub fn display_seconds(self) -> f64 {
-        self.0 as f64 / 1_000_000_000.0
+        self.0 as f64 / NS_PER_SECOND
     }
     
 }
@@ -114,9 +148,9 @@ impl fmt::Display for DurationNs {
         if seconds >= 1.0 {
             write!(f, "{:.3}s", seconds)
         } else if seconds >= 0.001 {
-            write!(f, "{:.3}ms", self.0 as f64 / 1_000_000.0)
+            write!(f, "{:.3}ms", self.0 as f64 / NS_PER_MILLISECOND)
         } else if seconds >= 0.000001 {
-            write!(f, "{:.3}μs", self.0 as f64 / 1_000.0)
+            write!(f, "{:.3}μs", self.0 as f64 / NS_PER_MICROSECOND)
         } else {
             write!(f, "{}ns", self.0)
         }
@@ -156,7 +190,7 @@ pub struct NsPerPixel(pub u64);
 
 impl NsPerPixel {
     pub const MAX_ZOOM_IN: NsPerPixel = NsPerPixel(1);      // 1 ns/pixel (finest resolution)
-    pub const MEDIUM_ZOOM: NsPerPixel = NsPerPixel(1_000_000); // 1 ms/pixel  
+    pub const MEDIUM_ZOOM: NsPerPixel = NsPerPixel(MIN_CURSOR_STEP_NS); // 1 ms/pixel  
     
     /// Create a new NsPerPixel from nanoseconds
     #[allow(dead_code)]
@@ -185,6 +219,7 @@ impl NsPerPixel {
     }
     
     /// Calculate viewport duration for given canvas width (pure integer)
+    #[allow(dead_code)] // Timeline API method - may be used in future features
     pub fn viewport_duration(self, canvas_width_pixels: u32) -> DurationNs {
         DurationNs(self.0 * canvas_width_pixels as u64)
     }
@@ -208,13 +243,13 @@ impl NsPerPixel {
 
 impl fmt::Display for NsPerPixel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.0 >= 1_000_000_000 {
-            write!(f, "{:.1}s/px", self.0 as f64 / 1_000_000_000.0)
-        } else if self.0 >= 100_000 {
+        if self.0 >= DEFAULT_TIMELINE_RANGE_NS {
+            write!(f, "{:.1}s/px", self.0 as f64 / NS_PER_SECOND)
+        } else if self.0 >= MS_DISPLAY_THRESHOLD_NS {
             // Show ms/px for values >= 100 μs (0.1 ms) - more readable for longer timescales
-            write!(f, "{:.1}ms/px", self.0 as f64 / 1_000_000.0)
-        } else if self.0 >= 1_000 {
-            write!(f, "{:.1}μs/px", self.0 as f64 / 1_000.0)
+            write!(f, "{:.1}ms/px", self.0 as f64 / NS_PER_MILLISECOND)
+        } else if self.0 >= US_DISPLAY_THRESHOLD_NS {
+            write!(f, "{:.1}μs/px", self.0 as f64 / NS_PER_MICROSECOND)
         } else {
             write!(f, "{}ns/px", self.0)
         }
@@ -304,9 +339,9 @@ mod tests {
     #[test]
     fn test_time_ns_creation() {
         let time1 = TimeNs::from_external_seconds(1.5);
-        assert_eq!(time1.nanos(), 1_500_000_000);
+        assert_eq!(time1.nanos(), (1.5 * NS_PER_SECOND) as u64);
         
-        let time2 = TimeNs::from_nanos(2_000_000_000);
+        let time2 = TimeNs::from_nanos((2.0 * NS_PER_SECOND) as u64);
         assert_eq!(time2.display_seconds(), 2.0);
     }
     
@@ -597,17 +632,20 @@ impl TimelineCoordinates {
     
     
     /// Get current viewport end time
+    #[allow(dead_code)] // Timeline API method - may be used in future features
     pub fn viewport_end_ns(&self) -> TimeNs {
         let viewport_duration = self.ns_per_pixel.viewport_duration(self.canvas_width_pixels);
         self.viewport_start_ns.add_duration(viewport_duration)
     }
     
     /// Get current viewport as Viewport struct
+    #[allow(dead_code)] // Timeline API method - may be used in future features
     pub fn viewport(&self) -> Viewport {
         Viewport::new(self.viewport_start_ns, self.viewport_end_ns())
     }
     
     /// Pan by pixel distance (positive = pan right, negative = pan left)
+    #[allow(dead_code)] // Timeline API method - may be used in future features
     pub fn pan_by_pixels(&mut self, pixels: i32) {
         let delta_ns = (pixels.abs() as u64) * self.ns_per_pixel.nanos();
         if pixels < 0 {
@@ -629,6 +667,7 @@ impl TimelineCoordinates {
     
     
     /// Clamp viewport to be within file bounds
+    #[allow(dead_code)] // Timeline API method - may be used in future features
     pub fn clamp_viewport(&mut self, file_start: TimeNs, file_end: TimeNs) {
         let viewport_end = self.viewport_end_ns();
         let viewport_duration = viewport_end.nanos().saturating_sub(self.viewport_start_ns.nanos());

@@ -5,15 +5,14 @@
 
 use zoon::*;
 use futures::StreamExt;
-use crate::config::app_config;
+use crate::config::{app_config, PanelDimensions};
 use shared::DockMode;
 
 // === DRAGGING STATE ===
 
-/// Global dragging state for all dividers
-// ❌ ANTIPATTERN: OnceLock global state - TODO: Convert to proper Actor+Relay domain with event-driven dragging
-#[deprecated(note = "Replace OnceLock pattern with Actor+Relay PanelLayout domain using event-source relay naming")]
-static DRAGGING_STATE: std::sync::OnceLock<DraggerState> = std::sync::OnceLock::new();
+/// Global dragging state for all dividers using Atom (local UI state pattern)
+/// ✅ FIXED: Replaced OnceLock with Atom for local UI state management
+static DRAGGING_STATE: std::sync::LazyLock<DraggerState> = std::sync::LazyLock::new(DraggerState::default);
 
 #[derive(Clone)]
 pub struct DraggerState {
@@ -48,7 +47,7 @@ impl Default for DraggerState {
 }
 
 fn dragging_state() -> &'static DraggerState {
-    DRAGGING_STATE.get_or_init(DraggerState::default)
+    &DRAGGING_STATE
 }
 
 // === DRAGGING LOGIC ===
@@ -68,10 +67,10 @@ pub fn start_drag(divider_type: DividerType, _start_position: (f32, f32)) {
     Task::start(async move {
         // Get initial value from the corresponding signal
         let initial_value = match &divider_clone {
-            DividerType::FilesPanelMain => files_panel_width_signal().to_stream().next().await.unwrap_or(470.0),
-            DividerType::FilesPanelSecondary => files_panel_height_signal().to_stream().next().await.unwrap_or(300.0),
-            DividerType::VariablesNameColumn => variables_name_column_width_signal().to_stream().next().await.unwrap_or(180.0),
-            DividerType::VariablesValueColumn => variables_value_column_width_signal().to_stream().next().await.unwrap_or(100.0),
+            DividerType::FilesPanelMain => files_panel_width_signal().to_stream().next().await.unwrap_or(crate::config::PanelDimensions::responsive_panel_width()),
+            DividerType::FilesPanelSecondary => files_panel_height_signal().to_stream().next().await.unwrap_or(crate::config::PanelDimensions::responsive_panel_height()),
+            DividerType::VariablesNameColumn => variables_name_column_width_signal().to_stream().next().await.unwrap_or(crate::config::PanelDimensions::responsive_name_column_width()),
+            DividerType::VariablesValueColumn => variables_value_column_width_signal().to_stream().next().await.unwrap_or(crate::config::PanelDimensions::responsive_value_column_width()),
         };
         
         state_clone.initial_value.set_neq(initial_value);
@@ -98,25 +97,37 @@ pub fn process_drag_movement(current_position: (f32, f32)) {
             DividerType::FilesPanelMain => {
                 // Files panel width - horizontal movement
                 let delta_x = current_position.0 - start_pos.0;
-                let new_width = (initial_value + delta_x).clamp(200.0, 1200.0);
+                let new_width = (initial_value + delta_x).clamp(
+                    PanelDimensions::min_files_panel_width(),
+                    PanelDimensions::max_files_panel_width()
+                );
                 (delta_x, new_width)
             }
             DividerType::FilesPanelSecondary => {
                 // Files panel height - vertical movement
                 let delta_y = current_position.1 - start_pos.1;
-                let new_height = (initial_value + delta_y).clamp(150.0, 800.0);
+                let new_height = (initial_value + delta_y).clamp(
+                    PanelDimensions::min_panel_height(),
+                    PanelDimensions::max_panel_height()
+                );
                 (delta_y, new_height)
             }
             DividerType::VariablesNameColumn => {
                 // Name column width - horizontal movement
                 let delta_x = current_position.0 - start_pos.0;
-                let new_width = (initial_value + delta_x).clamp(100.0, 400.0);
+                let new_width = (initial_value + delta_x).clamp(
+                    PanelDimensions::min_column_width(),
+                    PanelDimensions::max_column_width()
+                );
                 (delta_x, new_width)
             }
             DividerType::VariablesValueColumn => {
                 // Value column width - horizontal movement
                 let delta_x = current_position.0 - start_pos.0;
-                let new_width = (initial_value + delta_x).clamp(80.0, 300.0);
+                let new_width = (initial_value + delta_x).clamp(
+                    PanelDimensions::min_column_width(),
+                    PanelDimensions::max_column_width()
+                );
                 (delta_x, new_width)
             }
         };

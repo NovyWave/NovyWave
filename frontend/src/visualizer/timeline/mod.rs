@@ -14,7 +14,7 @@ pub mod timeline_service;
 
 // Re-export the global domain function with compatible name
 pub fn timeline_actor_domain() -> timeline_actor::WaveformTimeline {
-    crate::actors::global_domains::waveform_timeline_domain()
+    crate::actors::global_domains::waveform_timeline_domain().clone()
 }
 
 // Future coordinate calculation utilities

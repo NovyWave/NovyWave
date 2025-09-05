@@ -12,6 +12,42 @@ When making changes to files, first understand the file's code conventions. Mimi
 ## Code Style
 
 - IMPORTANT: DO NOT ADD ***ANY*** COMMENTS unless asked
+- **NEVER use `#[allow(dead_code)]` or similar warning suppressors** - Remove unused code instead of hiding warnings
+  - **EXCEPTION**: Dataflow module APIs (`frontend/src/dataflow/`) can use `#[allow(dead_code)]` for public methods that will be extracted to standalone crate
+
+### UI Hardcoded Values Exception
+
+**Design system tokens are preferred** for UI spacing, colors, and dimensions, but **hardcoded values are acceptable within UI functions for locality**:
+
+```rust
+// ✅ ACCEPTABLE: Hardcoded values within UI function for locality
+fn dropdown_component() -> impl Element {
+    let item_height = 28.0;  // Local to this component
+    let border_width = 1.0;  // Component-specific styling
+    
+    Column::new()
+        .s(Height::exact(item_height as u32))
+        .s(Borders::all(Border::new().width(border_width as u32)))
+}
+
+// ✅ PREFERRED: Design system tokens when available
+fn button_component() -> impl Element {
+    Button::new()
+        .s(Padding::all(SPACING_12))
+        .s(Gap::new().x(SPACING_8))
+}
+```
+
+**Key principle**: UI locality trumps global consistency - hardcoded values within UI functions are acceptable when they improve code readability and component cohesion.
+
+## Dataflow API Protection
+
+**CRITICAL: Do not modify the dataflow module API without explicit confirmation**
+
+- **NEVER modify Actor/Relay API** - The `pub state` field will NOT be part of the public API
+- **Ask for confirmation** before any changes to `frontend/src/dataflow/` module
+- **Preserve API boundaries** - Internal implementation changes only, no public interface modifications  
+- **Use existing patterns** - Work within current Actor+Relay constraints rather than extending API
 
 ## Code Style & Patterns
 

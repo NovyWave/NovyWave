@@ -216,6 +216,81 @@ When performance is bad, acknowledge it and investigate systematically rather th
 
 This experience provided invaluable insights into MoonZone/Zoon reactive patterns and performance debugging methodology.
 
+### 8. **Actor.get() Compilation Errors (CRITICAL FIX PATTERN)**
+
+**❌ ANTIPATTERN: Attempting synchronous state access in Actor+Relay architecture**
+
+```rust
+// COMPILATION ERROR: no method named `get` found for struct `actor::Actor`
+let current_theme = theme_actor.get();  // ❌ Doesn't exist by design
+let cursor_pos = timeline.cursor_position.get();  // ❌ Enforces reactive patterns
+```
+
+**Why `.get()` doesn't exist:**
+- **Intentional omission** - Actor+Relay architecture enforces reactive patterns
+- **No synchronous access** - All state access must go through signals
+- **WASM constraints** - `block_on` and sync bridges don't work in WASM
+- **Race condition prevention** - Eliminates get/set race conditions
+
+**✅ CORRECT COMPILATION ERROR FIXES:**
+
+```rust
+// ✅ Option 1: Signal streams in async contexts
+async fn some_function() {
+    let current_theme = theme_actor.signal().to_stream().next().await.unwrap_or_default();
+    // Use current_theme...
+}
+
+// ✅ Option 2: Include signals in reactive composition
+.child_signal(
+    map_ref! {
+        let theme = theme_actor.signal(),
+        let other_data = other_signal() => {
+            render_with_theme(theme, other_data)
+        }
+    }
+)
+
+// ✅ Option 3: Cache Current Values pattern (ONLY inside Actor loops)
+let actor = Actor::new(State::default(), async move |state| {
+    let mut cached_theme = SharedTheme::default();  // Cache inside Actor
+    
+    loop {
+        select! {
+            Some(theme) = theme_stream.next() => {
+                cached_theme = theme;  // Update cache
+            }
+            Some(()) = action_stream.next() => {
+                // Use cached_theme for business logic
+                process_with_theme(cached_theme);
+            }
+        }
+    }
+});
+```
+
+**❌ NEVER DO: Sync bridges or hacks**
+```rust
+// ❌ PROHIBITED: Sync bridges don't work in WASM
+pub fn get_sync(&self) -> T {
+    futures::executor::block_on(self.signal().to_stream().next())  // Fails in WASM
+}
+
+// ❌ PROHIBITED: Temporary shortcuts
+#[deprecated(note = "Use signal() instead")]
+pub fn current_value(&self) -> T {
+    // Any synchronous access violates architecture
+}
+```
+
+**Key Lesson:** When fixing Actor.get() compilation errors, the solution is ALWAYS to:
+1. Convert sync functions to signal-based patterns
+2. Use `.signal().to_stream().next().await` in async contexts  
+3. Include signals in `map_ref!` chains for reactive composition
+4. Remove synchronous bridge functions entirely
+
+Never introduce `block_on` or sync-async bridges as they don't work in WASM and violate reactive architecture principles.
+
 ## 🚨 NEW ANTIPATTERNS DISCOVERED (2025-08-30)
 
 ### 4. **Static Mutable Signal Bypass (Compilation Shortcut)**

@@ -1,13 +1,19 @@
 use zoon::*;
 use moonzoon_novyui::*;
 use moonzoon_novyui::tokens::color::{neutral_2, neutral_4, neutral_8, neutral_11, primary_3, primary_6};
+// Removed unused import: moonzoon_novyui::tokens::*
 use wasm_bindgen::JsCast;
 
 use crate::types::{VariableWithContext, filter_variables_with_context};
 
+// Virtual list performance constants - extracted from hardcoded values
+const FALLBACK_CONTAINER_HEIGHT: f64 = 400.0;  // Typical panel height for initial calculations
+const FAST_SCROLL_VELOCITY_THRESHOLD: f64 = 800.0;  // Threshold for dynamic buffer adjustment
+const FAST_SCROLL_BUFFER_SIZE: usize = 15;  // Additional buffer elements for fast scrolling
+
 fn empty_state_hint(text: &str) -> impl Element {
     El::new()
-        .s(Padding::all(20))
+        .s(Padding::all(SPACING_20))
         .s(Font::new().color_signal(neutral_8()).italic())
         .child(text)
 }
@@ -92,8 +98,10 @@ pub fn rust_virtual_variables_list_with_signal(
     let total_items = variables.len();
     let item_height = 24.0;
     
-    // Get initial visible count for scroll handler  
-    let initial_visible_count = ((400.0_f64 / item_height).ceil() as usize + 5).min(total_items);
+    // Get initial visible count for scroll handler - use fallback height until container renders
+    // Using fallback height for initial calculations before container renders
+    let initial_container_height = FALLBACK_CONTAINER_HEIGHT; // Fallback: typical panel height
+    let initial_visible_count = ((initial_container_height / item_height).ceil() as usize + 5).min(total_items);
     
     // ===== VIRTUAL SCROLLING STATE =====
     let scroll_top = Mutable::new(0.0);
@@ -235,12 +243,8 @@ pub fn rust_virtual_variables_list_with_signal(
                     // ✅ OPTIMIZATION: Pre-compute selection lookup to reduce clone operations
                     // use crate::state::{find_scope_full_name}; // Unused
                     
-                    // ✅ ACTOR+RELAY: Use proper Actor+Relay tracked files source
-                    let tracked_files = if let Some(signals) = crate::actors::global_domains::TRACKED_FILES_SIGNALS.get() {
-                        signals.files_mutable.lock_ref().to_vec()
-                    } else {
-                        Vec::new()
-                    };
+                    // ✅ ACTOR+RELAY: Get tracked files from TrackedFiles domain
+                    let tracked_files = crate::actors::global_domains::get_current_tracked_files();
                     
                     // ✅ REACTIVE: Build selection index from current selected variables
                     let selected_vars_index: std::collections::HashSet<String> = selected_vars.iter()
@@ -422,9 +426,9 @@ pub fn rust_virtual_variables_list_with_signal(
                                                 scroll_velocity.set_neq(new_velocity);
                                                 
                                                 // ===== DYNAMIC POOL ADJUSTMENT ON FAST SCROLL =====
-                                                if new_velocity > 800.0 {
+                                                if new_velocity > FAST_SCROLL_VELOCITY_THRESHOLD {
                                                     let current_pool_size = element_pool.lock_ref().len();
-                                                    let needed_size = visible_count.get() + 15; // Fast scroll: larger buffer
+                                                    let needed_size = visible_count.get() + FAST_SCROLL_BUFFER_SIZE; // Fast scroll: larger buffer
                                                     
                                                     if needed_size > current_pool_size {
                                                         let additional_elements: Vec<VirtualElementState> = (current_pool_size..needed_size).map(|_| {
@@ -583,7 +587,7 @@ struct VirtualElementState {
 // Optimized version for the hybrid MutableVec approach
 fn create_stable_variable_element_hybrid(state: VirtualElementState, hovered_index: Mutable<Option<usize>>) -> impl Element {
     Row::new()
-        .s(Gap::new().x(8))
+        .s(Gap::new().x(SPACING_8))
         .s(Width::fill())
         .s(Height::exact(24))
         .s(Transform::with_signal_self(
@@ -598,7 +602,7 @@ fn create_stable_variable_element_hybrid(state: VirtualElementState, hovered_ind
                 }
             }
         ))
-        .s(Padding::new().x(12).y(2))
+        .s(Padding::new().x(SPACING_12).y(SPACING_2))
         .s(Background::new().color_signal(
             map_ref! {
                 let is_selected = state.is_selected_signal.signal(),

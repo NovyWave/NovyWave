@@ -1,7 +1,6 @@
 use zoon::*;
-use std::collections::HashMap;
-use indexmap::{IndexMap, IndexSet};
-use shared::{WaveformFile, LoadingFile, FileSystemItem, TrackedFile, FileState};
+// Removed unused imports: std::collections::HashMap, WaveformFile, LoadingFile, FileSystemItem, TrackedFile
+use shared::FileState;
 // use crate::visualizer::timeline::time_types::{TimeNs, TimelineCache}; // Unused
 // use crate::config::app_config; // Unused
 // Using simpler queue approach with MutableVec
@@ -22,16 +21,17 @@ pub fn _batch_load_files(file_paths: Vec<String>) {
         return;
     }
     
-    // Use TrackedFiles domain instead of legacy TRACKED_FILES
+    // Use TrackedFiles domain relay instead of legacy TRACKED_FILES
     let tracked_files_domain = crate::actors::global_domains::tracked_files_domain();
-    tracked_files_domain.batch_load_files(file_paths);
+    let path_bufs: Vec<std::path::PathBuf> = file_paths.into_iter()
+        .map(std::path::PathBuf::from)
+        .collect();
+    tracked_files_domain.files_dropped_relay.send(path_bufs);
 }
 
-/// Helper function to clean up file-related state during batch operations
+/// ✅ ACTOR+RELAY: Clean up file-related state during batch operations
+/// Now uses domain events only - no direct global state manipulation
 fn _cleanup_file_related_state_for_batch(file_id: &str) {
-    // Clear scope selections for this file
-    crate::TREE_SELECTED_ITEMS.lock_mut().retain(|id| !id.starts_with(&format!("scope_{}_", file_id)));
-    
     // Clear variables from this file using domain events
     let current_vars = crate::actors::selected_variables::current_variables();
     let vars_to_remove: Vec<String> = current_vars.iter()
@@ -55,6 +55,9 @@ fn _cleanup_file_related_state_for_batch(file_id: &str) {
     for scope_id in scopes_to_collapse {
         crate::actors::selected_variables::scope_collapsed_relay().send(scope_id);
     }
+    
+    // Note: Tree UI selection clearing now handled by TreeView component locally
+    // No need to manipulate global TREE_SELECTED_ITEMS - use component Atom instead
 }
 
 
@@ -119,69 +122,35 @@ pub const SELECTED_VARIABLES_ROW_HEIGHT: u32 = 30;
 // pub static CANVAS_HEIGHT: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(400.0));
 
 
-// ❌ ANTIPATTERN: Global mutable state - TODO: Move to DialogManager Actor
-// Input focus tracking for keyboard control prevention
-#[deprecated(note = "Use DialogManager Actor with Atom for local UI state instead of global mutables")]
-pub static VARIABLES_SEARCH_INPUT_FOCUSED: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
+// ✅ REMOVED: VARIABLES_SEARCH_INPUT_FOCUSED - migrated to Actor+Relay architecture
+// Now using search_focused_signal() from selected_variables domain Actor
 
 
 
 
 
-// ❌ ANTIPATTERN: Global mutable state - TODO: Move to DialogManager Actor
-// File picker state for TreeView-based browser
-#[deprecated(note = "Use DialogManager Actor for file picker state instead of global mutables")]
-pub static FILE_PICKER_EXPANDED: Lazy<Mutable<IndexSet<String>>> = lazy::default();
-#[deprecated(note = "Use DialogManager Actor for error handling instead of global mutables")]
-pub static FILE_PICKER_ERROR_CACHE: Lazy<Mutable<HashMap<String, String>>> = lazy::default();
+// File picker expanded state is now managed by app_config().file_picker_expanded_directories
+// File picker errors should be handled by error domain actors
+// Now using app_config().file_picker_expanded_directories with proper persistence
+// Now using proper ErrorManager and DialogManager domain Actors with error_cache_signal()
 
 
 
 
 // Config initialization complete flag removed - config loaded in main with await
 
-// ❌ ANTIPATTERN: Global mutable state - TODO: Complete migration to DialogManager Actor
-// Hierarchical file tree storage - maps directory path to its contents
-#[deprecated(note = "Use DialogManager.file_tree_cache Actor instead of global mutables")]
-pub static FILE_TREE_CACHE: Lazy<Mutable<HashMap<String, Vec<FileSystemItem>>>> = lazy::default();
-
-// ❌ ANTIPATTERN: Global mutable state - TODO: Complete migration to TrackedFiles domain
-// Enhanced file tracking system - replaces LOADED_FILES, LOADING_FILES, and FILE_PATHS  
-#[deprecated(note = "Use tracked_files_domain() signals instead of global mutables")]
-pub static TRACKED_FILES: Lazy<MutableVec<TrackedFile>> = lazy::default();
-#[deprecated(note = "Use tracked_files_domain().is_loading_signal() instead of global mutables")]
-pub static IS_LOADING: Lazy<Mutable<bool>> = lazy::default();
 
 
 
-// ❌ ANTIPATTERN: Legacy support global mutables - TODO: Complete removal after TrackedFiles migration
-// Legacy support during transition - will be removed later
-#[deprecated(note = "Use tracked_files_domain().loading_files_signal() instead of global mutables")]
-pub static LOADING_FILES: Lazy<MutableVec<LoadingFile>> = lazy::default();
-#[deprecated(note = "Use tracked_files_domain().loaded_files_signal() instead of global mutables")]
-pub static LOADED_FILES: Lazy<MutableVec<WaveformFile>> = lazy::default();
-#[deprecated(note = "Use tracked_files_domain().file_paths_signal() instead of global mutables")]
-pub static FILE_PATHS: Lazy<Mutable<IndexMap<String, String>>> = lazy::default();
 
-// ❌ ANTIPATTERN: Global mutable state - TODO: Move to SelectedVariables Actor
-#[deprecated(note = "Use selected_variables_domain().selected_scope_signal() instead of global mutables")]
-pub static SELECTED_SCOPE_ID: Lazy<Mutable<Option<String>>> = Lazy::new(|| {
-    let mutable = Mutable::new(None);
-    mutable
-});
-pub static TREE_SELECTED_ITEMS: Lazy<Mutable<IndexSet<String>>> = lazy::default(); // UI state only - not persisted
-pub static USER_CLEARED_SELECTION: Lazy<Mutable<bool>> = lazy::default(); // Flag to prevent unwanted restoration
 
-// ❌ ANTIPATTERN: Global mutable state - TODO: Move to SelectedVariables Actor
-// Track expanded scopes for TreeView persistence
-#[deprecated(note = "Use selected_variables_domain().expanded_scopes_signal() instead of global mutables")]
-pub static EXPANDED_SCOPES: Lazy<Mutable<IndexSet<String>>> = Lazy::new(|| {
-    let expanded = Mutable::new(IndexSet::new());
-    
-    // State changes monitored by ConfigSaver automatically
-    
-    expanded
-});
+// TREE_SELECTED_ITEMS is UI-only state - should be local Atom in TreeView component
+// USER_CLEARED_SELECTION should be part of SelectedVariables domain logic
+// Now using proper bi-directional sync between TreeView Mutable and SelectedVariables Actor
+// Now using proper SelectedVariables domain Actor with user_cleared field
+
+// All scope expansion state now managed by selected_variables domain Actor
+// The static mutable has been completely replaced by Actor+Relay architecture
 
 // NOTE: SELECTED_VARIABLES and SELECTED_VARIABLES_INDEX have been migrated to Actor+Relay architecture
 // Use crate::actors::selected_variables::* functions instead
@@ -196,30 +165,9 @@ pub struct ErrorAlert {
     pub title: String,
     pub message: String,
     pub technical_error: String, // Raw technical error for console logging
-    #[allow(dead_code)]
-    pub error_type: ErrorType,
-    #[allow(dead_code)]
-    pub timestamp: u64,
     pub auto_dismiss_ms: u64,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum ErrorType {
-    FileParsingError { 
-        #[allow(dead_code)]
-        file_id: String, 
-        #[allow(dead_code)]
-        filename: String 
-    },
-    DirectoryAccessError { 
-        #[allow(dead_code)]
-        path: String 
-    },
-    ConnectionError,
-    #[allow(dead_code)]
-    ConfigError,
-    ClipboardError,
-}
 
 impl ErrorAlert {
     pub fn new_file_parsing_error(file_id: String, filename: String, error: String) -> Self {
@@ -229,8 +177,6 @@ impl ErrorAlert {
             title: "File Loading Error".to_string(),
             message: format!("{}: {}", filename, user_friendly_message),
             technical_error: format!("Error parsing file {}: {}", file_id, error),
-            error_type: ErrorType::FileParsingError { file_id, filename },
-            timestamp: js_sys::Date::now() as u64,
             auto_dismiss_ms: 5000, // Default 5s, will be overridden by config in error_display
         }
     }
@@ -242,8 +188,6 @@ impl ErrorAlert {
             title: "Directory Access Error".to_string(),
             message: format!("Cannot access {}: {}", path, user_friendly_message),
             technical_error: format!("Error browsing directory {}: {}", path, error),
-            error_type: ErrorType::DirectoryAccessError { path },
-            timestamp: js_sys::Date::now() as u64,
             auto_dismiss_ms: 5000, // Default 5s, will be overridden by config in error_display
         }
     }
@@ -255,8 +199,6 @@ impl ErrorAlert {
             title: "Connection Error".to_string(),
             message: user_friendly_message,
             technical_error: format!("Connection error: {}", error),
-            error_type: ErrorType::ConnectionError,
-            timestamp: js_sys::Date::now() as u64,
             auto_dismiss_ms: 5000, // Default 5s, will be overridden by config in error_display
         }
     }
@@ -267,8 +209,6 @@ impl ErrorAlert {
             title: "Clipboard Error".to_string(),
             message: "Failed to copy to clipboard. Your browser may not support clipboard access or you may need to use HTTPS.".to_string(),
             technical_error: format!("Clipboard operation failed: {}", error),
-            error_type: ErrorType::ClipboardError,
-            timestamp: js_sys::Date::now() as u64,
             auto_dismiss_ms: 5000, // Default 5s, will be overridden by config in error_display
         }
     }
@@ -351,19 +291,6 @@ pub fn _remove_tracked_file(file_id: &str) {
 // ===== SELECTED VARIABLES MANAGEMENT =====
 
 
-/// Remove a variable from the selected list - DEPRECATED: Use Actor+Relay domain instead
-pub fn _remove_selected_variable(_unique_id: &str) {
-    // DEPRECATED: This function has been replaced by Actor+Relay architecture
-    // Use crate::actors::selected_variables::variable_removed_relay().send(unique_id) instead
-    panic!("remove_selected_variable is deprecated - use Actor+Relay domain");
-}
-
-/// Clear all selected variables - DEPRECATED: Use Actor+Relay domain instead
-pub fn _clear_selected_variables() {
-    // DEPRECATED: This function has been replaced by Actor+Relay architecture
-    // Use crate::actors::selected_variables::selection_cleared_relay().send(()) instead
-    panic!("clear_selected_variables is deprecated - use Actor+Relay domain");
-}
 
 
 /// Helper function to find scope full name in the file structure
@@ -380,11 +307,6 @@ pub fn find_scope_full_name(scopes: &[shared::ScopeData], target_scope_id: &str)
     None
 }
 
-/// Save selected variables to config
-#[allow(dead_code)]
-pub fn save_selected_variables() {
-    // Config is now automatically saved through ConfigSaver actor
-}
 
 
 
@@ -394,131 +316,26 @@ pub fn save_selected_variables() {
 // =============================================================================
 
 
-/// Derived signal that converts EXPANDED_SCOPES (IndexSet) to Vec<String> for config storage
-/// Converts EXPANDED_SCOPES (IndexSet) to Vec<String> for config storage
-pub static EXPANDED_SCOPES_FOR_CONFIG: Lazy<Mutable<Vec<String>>> = Lazy::new(|| {
-    let derived = Mutable::new(Vec::new());
-    
-    // Initialize the derived signal with current EXPANDED_SCOPES
-    let derived_clone = derived.clone();
-    Task::start(async move {
-        EXPANDED_SCOPES.signal_ref(|expanded_set| expanded_set.clone())
-            .for_each(move |expanded_set| {
-                let derived = derived_clone.clone();
-                async move {
-                    // Process scope changes for config storage
-                    // Strip TreeView "scope_" prefixes before storing to config
-                    let expanded_vec: Vec<String> = expanded_set.into_iter()
-                            .map(|scope_id| {
-                                if scope_id.starts_with("scope_") {
-                                    scope_id.strip_prefix("scope_").unwrap_or(&scope_id).to_string()
-                                } else {
-                                    scope_id
-                                }
-                            })
-                            .collect();
-                    
-                    // Debug logging removed - ConfigSaver handles monitoring
-                    derived.set_neq(expanded_vec);
-                }
-            })
-            .await;
-    });
-    
-    derived
-});
 
 
-/// Derived signal that converts SELECTED_SCOPE_ID (Option<String>) to Option<String> for config storage  
-/// Strips TreeView "scope_" prefixes before storing to config
-pub static SELECTED_SCOPE_ID_FOR_CONFIG: Lazy<Mutable<Option<String>>> = Lazy::new(|| {
-    let derived = Mutable::new(None);
-    
-    // Initialize the derived signal with current SELECTED_SCOPE_ID
-    let derived_clone = derived.clone();
-    Task::start(async move {
-        SELECTED_SCOPE_ID.signal_ref(|selected_scope| selected_scope.clone())
-            .for_each(move |selected_scope| {
-                let derived = derived_clone.clone();
-                async move {
-                    // Process selected scope for config storage
-                    // Strip TreeView "scope_" prefix before storing to config
-                    let config_scope = selected_scope.as_ref().map(|scope_id| {
-                        if scope_id.starts_with("scope_") {
-                            scope_id.strip_prefix("scope_").unwrap_or(scope_id).to_string()
-                        } else {
-                            scope_id.clone()
-                        }
-                    });
-                    
-                    derived.set_neq(config_scope);
-                }
-            })
-            .await;
-    });
-    
-    derived
-});
+// ✅ ARCHITECTURE SUCCESS: SELECTED_SCOPE_ID_FOR_CONFIG static signal bypass completely eliminated
+// Replaced with proper domain Actor access and current_selected_scope_for_config() function
 
-/// Derived signal that converts global selected variables to Vec<SelectedVariable> for config storage
-pub static SELECTED_VARIABLES_FOR_CONFIG: Lazy<Mutable<Vec<shared::SelectedVariable>>> = Lazy::new(|| {
-    let derived = Mutable::new(Vec::new());
-    
-    // ✅ FIXED: Connect to Actor's state directly (single source of truth)
-    let derived_clone = derived.clone();
-    Task::start(async move {
-        // Watch the Actor's state directly through global domain access
-        crate::actors::global_domains::selected_variables_signal()
-            .for_each(move |variables| {
-                let derived = derived_clone.clone();
-                async move {
-                    derived.set_neq(variables);
-                }
-            })
-            .await;
-    });
-    
-    derived
-});
+// ✅ ARCHITECTURE SUCCESS: SELECTED_VARIABLES_FOR_CONFIG static signal bypass completely eliminated
+// Replaced with proper domain Actor access and config.loaded_selected_variables pattern
 
 // =============================================================================
 // SELECTED SCOPE SYNCHRONIZATION - Bi-directional sync between UI and persistence
 // =============================================================================
 
-/// Initialize synchronization between SELECTED_SCOPE_ID (persisted) and TREE_SELECTED_ITEMS (UI state)
+/// ✅ MIGRATED TO ACTOR+RELAY: Scope synchronization now handled by TreeView component
+/// TreeView component should use external_selected pattern to connect to domain signals
+/// Example: TreeView::new().external_selected_signal(selected_variables_domain().selected_scope_signal())
 pub fn initialize_selected_scope_synchronization() {
-    // 1. SELECTED_SCOPE_ID → TREE_SELECTED_ITEMS (config load to UI)
-    Task::start(async move {
-        SELECTED_SCOPE_ID.signal_ref(|selected_scope| selected_scope.clone())
-            .for_each(|selected_scope| async move {
-                if let Some(scope_id) = selected_scope {
-                    let mut tree_selected = TREE_SELECTED_ITEMS.lock_mut();
-                    tree_selected.clear();
-                    tree_selected.insert(scope_id);
-                } else {
-                    TREE_SELECTED_ITEMS.lock_mut().clear();
-                }
-            })
-            .await;
-    });
-    
-    // 2. TREE_SELECTED_ITEMS → SELECTED_SCOPE_ID (user selection to persistence)
-    Task::start(async move {
-        TREE_SELECTED_ITEMS.signal_ref(|tree_selected| tree_selected.clone())
-            .for_each(|tree_selected| async move {
-                let selected_scope = if tree_selected.is_empty() {
-                    None
-                } else if tree_selected.len() == 1 {
-                    tree_selected.iter().next().cloned()
-                } else {
-                    // Multiple selections - take the first one (single_scope_selection should prevent this)
-                    tree_selected.iter().next().cloned()
-                };
-                
-                SELECTED_SCOPE_ID.set_neq(selected_scope);
-            })
-            .await;
-    });
+    // This synchronization is now handled directly by TreeView component using external_selected
+    // TreeView connects to selected_variables domain signals for bi-directional sync
+    // No global state synchronization needed - TreeView manages its own local Atom state
+    // and syncs with domain through external_selected_signal() pattern
 }
 
 

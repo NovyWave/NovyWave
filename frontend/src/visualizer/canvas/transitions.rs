@@ -1,5 +1,5 @@
 use zoon::*;
-use crate::state::LOADED_FILES;
+// Removed LOADED_FILES import - not used in this file
 use crate::platform::{Platform, CurrentPlatform};
 use shared::{UpMsg, SignalTransitionQuery}; // Removed unused: SelectedVariable, SignalTransition
 // use std::collections::HashSet; // Unused
@@ -21,7 +21,12 @@ pub fn request_signal_transitions_from_backend(file_path: &str, scope_path: &str
     // Request wider time range to get transitions that affect visible area
     // Include entire file range to get proper rectangle boundaries
     let (file_min, file_max) = {
-        let loaded_files = LOADED_FILES.lock_ref();
+        let tracked_files = crate::actors::global_domains::get_current_tracked_files();
+        let loaded_files: Vec<shared::WaveformFile> = tracked_files.iter()
+            .filter_map(|tracked_file| match &tracked_file.state {
+                shared::FileState::Loaded(waveform_file) => Some(waveform_file.clone()),
+                _ => None,
+            }).collect();
         if let Some(loaded_file) = loaded_files.iter().find(|f| f.id == file_path || file_path.ends_with(&f.filename)) {
             (
                 loaded_file.min_time_ns.map(|ns| ns as f64 / 1_000_000_000.0).unwrap_or(0.0),
@@ -59,12 +64,7 @@ pub fn get_selected_variable_file_paths() -> std::collections::HashSet<String> {
     let selected_vars = crate::actors::selected_variables::current_variables();
     let mut file_paths = std::collections::HashSet::new();
     
-    // ITERATION 5: Track file path consistency between calls (simplified approach)
-    use std::sync::OnceLock;
-    // ❌ ANTIPATTERN: Static state tracking - TODO: Use Cache Current Values pattern in Actor loop
-    #[deprecated(note = "Replace static file path tracking with Cache Current Values pattern inside Actor loop")]
-    static PREVIOUS_FILE_PATHS: OnceLock<std::sync::Mutex<Option<std::collections::HashSet<String>>>> = OnceLock::new();
-    
+    // ✅ SIMPLIFIED: Direct file path extraction without deprecated static tracking
     for var in selected_vars.iter() {
         // Parse unique_id: "file_path|scope|variable"
         if let Some(file_path) = var.unique_id.split('|').next() {
@@ -72,19 +72,7 @@ pub fn get_selected_variable_file_paths() -> std::collections::HashSet<String> {
         }
     }
     
-    // ITERATION 5: Check if file paths changed from previous call
-    let _file_paths_vec: Vec<String> = file_paths.iter().cloned().collect();
-    
-    let mutex = PREVIOUS_FILE_PATHS.get_or_init(|| std::sync::Mutex::new(None));
-    if let Ok(mut prev) = mutex.lock() {
-        if let Some(prev_paths) = &*prev {
-            if file_paths != *prev_paths {
-            } else {
-            }
-        } else {
-        }
-        *prev = Some(file_paths.clone());
-    }
+    // ✅ REMOVED: PREVIOUS_FILE_PATHS static tracking - empty logic replaced with direct processing
     
     file_paths
 }

@@ -26,6 +26,8 @@ pub struct TrackedFiles {
     #[allow(dead_code)] // Actor+Relay event relay - preserved for completeness
     pub scope_toggled_relay: Relay<String>,
     pub file_load_completed_relay: Relay<(String, FileState)>,
+    pub parsing_progress_relay: Relay<(String, f32, LoadingStatus)>,
+    pub loading_started_relay: Relay<(String, String)>, // (file_id, filename)
     pub all_files_cleared_relay: Relay<()>,
 }
 
@@ -38,15 +40,21 @@ impl TrackedFiles {
         let (file_reload_requested_relay, mut file_reload_requested_stream) = relay::<String>();
         let (scope_toggled_relay, mut scope_toggled_stream) = relay::<String>();
         let (file_load_completed_relay, mut file_load_completed_stream) = relay::<(String, FileState)>();
+        let (parsing_progress_relay, mut parsing_progress_stream) = relay::<(String, f32, LoadingStatus)>();
+        let (loading_started_relay, mut loading_started_stream) = relay::<(String, String)>();
         let (all_files_cleared_relay, mut all_files_cleared_stream) = relay::<()>();
         
         // Create dedicated Vec signal that syncs with ActorVec changes (no conversion antipattern)
         let files_vec_signal = zoon::Mutable::new(vec![]);
         
-        // Create files ActorVec with event processing
+        // Create files ActorVec with event processing including business logic
         let files = ActorVec::new(vec![], {
             let files_vec_signal_sync = files_vec_signal.clone();
             async move |files_handle| {
+            
+            // ✅ Cache Current Values pattern - maintain state for business logic
+            let mut cached_loading_states: std::collections::HashMap<String, FileState> = std::collections::HashMap::new();
+            let mut all_files_loaded_signaled = false;
             
             loop {
                 select! {
@@ -149,7 +157,8 @@ impl TrackedFiles {
                     }
                     completed = file_load_completed_stream.next() => {
                         if let Some((file_id, new_state)) = completed {
-                            // File load completed successfully
+                            // ✅ Cache Current Values: Update cached loading states for business logic
+                            cached_loading_states.insert(file_id.clone(), new_state.clone());
                             
                             // Update the specific file's state by replacing the entire vector
                             let mut files = files_handle.lock_ref().to_vec();
@@ -165,8 +174,76 @@ impl TrackedFiles {
                                     let current_files = files_handle.lock_ref().to_vec();
                                     files_vec_signal_sync.set_neq(current_files);
                                 }
+                                
+                                // ✅ BUSINESS LOGIC: Check if all files are loaded using cached values
+                                let current_files = files_handle.lock_ref();
+                                let all_done = current_files.iter().all(|f| {
+                                    matches!(f.state, shared::FileState::Loaded(_) | shared::FileState::Failed(_))
+                                });
+                                
+                                if all_done && !all_files_loaded_signaled {
+                                    all_files_loaded_signaled = true;
+                                    
+                                    // ✅ BUSINESS LOGIC: Trigger scope restoration and value queries
+                                    zoon::Task::start({
+                                        async move {
+                                            // Restore scope selections using SelectedVariables Actor method
+                                            crate::actors::selected_variables::SelectedVariables::restore_scope_selections_reactive().await;
+                                            
+                                            // Trigger signal value queries after loading completes
+                                            crate::views::trigger_signal_value_queries();
+                                        }
+                                    });
+                                }
                             } else {
                             }
+                        }
+                    }
+                    parsing_progress = parsing_progress_stream.next() => {
+                        if let Some((file_id, _progress, status)) = parsing_progress {
+                            // Update existing file's loading state by recreating the files vector
+                            let current_files = files_handle.lock_ref().to_vec();
+                            let updated_files: Vec<TrackedFile> = current_files.into_iter().map(|mut file| {
+                                if file.id == file_id {
+                                    file.state = FileState::Loading(status.clone());
+                                }
+                                file
+                            }).collect();
+                            
+                            files_handle.lock_mut().replace_cloned(updated_files);
+                            
+                            // Sync dedicated Vec signal after ActorVec change
+                            let current_files = files_handle.lock_ref().to_vec();
+                            files_vec_signal_sync.set_neq(current_files);
+                        }
+                    }
+                    loading_started = loading_started_stream.next() => {
+                        if let Some((file_id, filename)) = loading_started {
+                            // Create new loading file
+                            let loading_file = create_tracked_file(filename, FileState::Loading(LoadingStatus::Starting));
+                            
+                            // Check if file already exists, update or add
+                            let current_files = files_handle.lock_ref().to_vec();
+                            let existing_index = current_files.iter().position(|f| f.id == file_id);
+                            
+                            if let Some(_index) = existing_index {
+                                // Update existing file
+                                let updated_files: Vec<TrackedFile> = current_files.into_iter().map(|file| {
+                                    if file.id == file_id {
+                                        loading_file.clone()
+                                    } else {
+                                        file
+                                    }
+                                }).collect();
+                                files_handle.lock_mut().replace_cloned(updated_files);
+                            } else {
+                                // Add new file
+                                files_handle.lock_mut().push_cloned(loading_file);
+                            }
+                            
+                            // Sync dedicated Vec signal after ActorVec change
+                            let current_files = files_handle.lock_ref().to_vec();
+                            files_vec_signal_sync.set_neq(current_files);
                         }
                     }
                     cleared = all_files_cleared_stream.next() => {
@@ -216,6 +293,8 @@ impl TrackedFiles {
             file_reload_requested_relay,
             scope_toggled_relay,
             file_load_completed_relay,
+            parsing_progress_relay,
+            loading_started_relay,
             all_files_cleared_relay,
         }
     }
@@ -270,6 +349,12 @@ impl TrackedFiles {
         self.files_signal().map(|files| !files.is_empty())
     }
     
+    /// Get current files (escape hatch for imperative usage during migration)
+    /// NOTE: This breaks Actor+Relay principles but is needed for gradual migration
+    pub fn get_current_files(&self) -> Vec<TrackedFile> {
+        self.files_vec_signal.get_cloned()
+    }
+    
     // ===== COMPATIBILITY METHODS =====
     
     /// Remove a file by ID (uses relay-based removal)
@@ -291,41 +376,37 @@ impl TrackedFiles {
     // NEW: Use tracked_files_signal() reactive pattern:
     //   tracked_files_signal().map(|files| files.iter().map(|f| f.path.clone()).collect())
     
-    /// Batch load files (compatibility method - should use relays instead)
-    pub fn batch_load_files(&self, file_paths: Vec<String>) {
-        // Convert to PathBuf and emit through relay
-        let path_bufs: Vec<std::path::PathBuf> = file_paths.into_iter()
-            .map(std::path::PathBuf::from)
-            .collect();
-        self.files_dropped_relay.send(path_bufs);
-    }
     
     /// Update file state (compatibility method - should use relays instead)
     pub fn update_file_state(&self, file_id: String, new_state: FileState) {
         // Send the full FileState to preserve all parsed data
         self.file_load_completed_relay.send((file_id, new_state));
     }
+    
 }
 
 // ===== GLOBAL INSTANCE =====
 
-static TRACKED_FILES_INSTANCE: std::sync::OnceLock<TrackedFiles> = std::sync::OnceLock::new();
+// ✅ ELIMINATED: TRACKED_FILES_INSTANCE duplicate - use global_domains::tracked_files_domain() instead
 
 /// Initialize TrackedFiles domain (call once at startup)
 /// NOTE: This is unused - the real initialization happens in global_domains.rs
 #[allow(dead_code)]
+/// Initialize tracked files - use global_domains::initialize_all_domains() instead
+#[deprecated(note = "Use global_domains::initialize_all_domains() instead")]
+#[allow(dead_code)]
 async fn initialize_tracked_files() -> TrackedFiles {
-    let tracked_files = TrackedFiles::new().await;
-    if TRACKED_FILES_INSTANCE.set(tracked_files.clone()).is_err() {
-    }
-    tracked_files
+    // ❌ ELIMINATED: TRACKED_FILES_INSTANCE - use global_domains system
+    TrackedFiles::new().await
 }
 
 /// Get the global TrackedFiles instance  
 /// NOTE: This is unused - use global_domains::tracked_files_domain() instead
+#[deprecated(note = "Use global_domains::tracked_files_domain() instead")]
 #[allow(dead_code)]
 fn tracked_files_domain() -> Option<&'static TrackedFiles> {
-    TRACKED_FILES_INSTANCE.get()
+    // ❌ ELIMINATED: TRACKED_FILES_INSTANCE - use global_domains system
+    None
 }
 
 // ===== PUBLIC API FUNCTIONS =====
@@ -336,57 +417,36 @@ fn tracked_files_domain() -> Option<&'static TrackedFiles> {
 fn initialize_from_config(config_file_paths: Vec<String>) {
     // TrackedFiles: Initializing with files from config
     
-    if let Some(domain) = tracked_files_domain() {
-        domain.config_files_loaded_relay.send(config_file_paths);
-    } else {
-    }
+    let domain = crate::actors::global_domains::tracked_files_domain();
+    domain.config_files_loaded_relay.send(config_file_paths);
 }
 
 /// Get signal for all tracked files (convenience function)
 /// NOTE: This is unused - use global_domains::tracked_files_signal() instead
 #[allow(dead_code)]
 fn tracked_files_signal() -> impl Signal<Item = Vec<TrackedFile>> {
-    if let Some(domain) = tracked_files_domain() {
-        domain.files_signal().boxed_local()
-    } else {
-        zoon::always(Vec::new()).boxed_local()
-    }
+    let domain = crate::actors::global_domains::tracked_files_domain();
+    domain.files_signal().boxed_local()
 }
 
-/// Get signal vec for tracked files (convenience function)
-pub fn tracked_files_signal_vec() -> impl SignalVec<Item = TrackedFile> {
-    // tracked_files_signal_vec() called - using global_domains
-    // Use the global_domains version instead of the local TRACKED_FILES_INSTANCE
-    // TrackedFiles signal_vec found via global_domains
-    crate::actors::global_domains::tracked_files_signal_vec()
-}
+// ✅ ELIMINATED: tracked_files_signal_vec() - unused convenience function, use crate::actors::global_domains::tracked_files_signal_vec() directly
 
-/// Get signal for file count (convenience function)
-pub fn tracked_files_count_signal() -> impl Signal<Item = usize> {
-    // Use the signal access function from global_domains
-    crate::actors::global_domains::file_count_signal()
-}
+// ✅ ELIMINATED: tracked_files_count_signal() - Use crate::actors::global_domains::file_count_signal() directly
 
 /// Get signal for expanded scopes (convenience function) 
 /// NOTE: This is unused - use global_domains::expanded_scopes_signal() instead
 #[allow(dead_code)]
 fn expanded_scopes_signal() -> impl Signal<Item = IndexSet<String>> {
-    if let Some(domain) = tracked_files_domain() {
-        domain.expanded_scopes_signal().boxed_local()
-    } else {
-        zoon::always(IndexSet::new()).boxed_local()
-    }
+    let domain = crate::actors::global_domains::tracked_files_domain();
+    domain.expanded_scopes_signal().boxed_local()
 }
 
 /// Get signal for smart labels (convenience function)
 /// NOTE: This is unused - use global_domains functions instead  
 #[allow(dead_code)]
 fn smart_labels_signal() -> impl Signal<Item = Vec<String>> {
-    if let Some(domain) = tracked_files_domain() {
-        domain.smart_labels_signal().boxed_local()
-    } else {
-        zoon::always(Vec::new()).boxed_local()
-    }
+    let domain = crate::actors::global_domains::tracked_files_domain();
+    domain.smart_labels_signal().boxed_local()
 }
 
 /// Create smart labels that disambiguate duplicate filenames

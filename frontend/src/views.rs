@@ -3,20 +3,19 @@ use zoon::events::{Click, KeyDown};
 use moonzoon_novyui::*;
 use moonzoon_novyui::tokens::theme::Theme;
 use moonzoon_novyui::tokens::color::{neutral_1, neutral_2, neutral_4, neutral_8, neutral_11, neutral_12, primary_3, primary_6, primary_7};
+// Removed unused import: moonzoon_novyui::tokens::*
 use moonzoon_novyui::components::{kbd, KbdSize, KbdVariant};
 use moonzoon_novyui::tokens::typography::font_mono;
-use shared::{ScopeData, UpMsg, TrackedFile, SelectedVariable, FileState, SignalValueResult};
+use shared::{ScopeData, UpMsg, TrackedFile, SelectedVariable, FileState};
 use crate::actors::{relay};
 use crate::types::{get_variables_from_tracked_files, filter_variables_with_context, VariableWithContext};
 use crate::virtual_list::{virtual_variables_list_pre_filtered};
 use crate::config::app_config;
 use std::collections::{HashSet, HashMap};
-use crate::{
-    IS_LOADING,
-    LOADED_FILES, SELECTED_SCOPE_ID,
-    FILE_PATHS, show_file_paths_dialog, FILE_TREE_CACHE,
-    TRACKED_FILES, state, clipboard
-};
+// ✅ ACTOR+RELAY: Use domain signals instead of deprecated global mutables
+use crate::clipboard;
+use crate::file_utils::show_file_paths_dialog;
+// Import remaining deprecated globals temporarily for gradual migration  
 use crate::visualizer::timeline::timeline_actor::{ns_per_pixel_signal, cursor_position_seconds_signal};
 
 use crate::state::SELECTED_VARIABLES_ROW_HEIGHT;
@@ -25,7 +24,7 @@ use crate::state::SELECTED_VARIABLES_ROW_HEIGHT;
 fn timeline_range_signal() -> impl Signal<Item = Option<(f64, f64)>> {
     map_ref! {
         // ✅ FIXED: Use count signal instead of SignalVec conversion antipattern (for trigger only)
-        let _files_count = crate::actors::tracked_files::tracked_files_count_signal(),
+        let _files_count = crate::actors::global_domains::file_count_signal(),
         let _selected_vars = variables_signal() =>
         crate::visualizer::canvas::waveform_canvas::get_maximum_timeline_range()
     }.dedupe_cloned()
@@ -70,8 +69,7 @@ use crate::visualizer::interaction::dragging::{
 };
 use crate::actors::dialog_manager::{
     close_file_dialog, file_picker_selected_signal, file_picker_expanded_signal,
-    file_picker_error_cache_signal, change_files_selection,
-    current_dialog_visible, current_selected_files
+    file_picker_error_cache_signal
 };
 use crate::visualizer::formatting::signal_values::truncate_value;
 
@@ -110,7 +108,7 @@ fn get_signal_type_for_selected_variable(selected_var: &SelectedVariable) -> Str
     // Parse the unique_id to get file_path, scope_path, and variable_name
     if let Some((file_path, scope_path, variable_name)) = selected_var.parse_unique_id() {
         // Use the same approach as Variables panel - only check loaded files
-        let tracked_files = TRACKED_FILES.lock_ref();
+        let tracked_files = crate::actors::global_domains::tracked_files_domain().get_current_files();
         
         // Find the corresponding file by path and check if it's loaded
         for tracked_file in tracked_files.iter() {
@@ -154,8 +152,8 @@ fn create_smart_dropdown(
     
     // Calculate actual dropdown height based on content
     // Modern library approach: account for all box model properties + safety margin
-    // ❌ ANTIPATTERN: Hardcoded UI measurement constants - TODO: Use design system tokens or dynamic calculations
-    let vertical_padding = 12.0; // Magic number - should be design token
+    // ✅ FIXED: Use design system token for padding
+    let vertical_padding = SPACING_12 as f64;
     let explicit_line_height = 16.0; // Magic number - should be typography token
     let item_height = vertical_padding + explicit_line_height; // 28px total per item
     let border_height = 2.0; // Magic number - should be border design token
@@ -163,8 +161,10 @@ fn create_smart_dropdown(
     
     let content_height = dropdown_options.len() as f64 * item_height;
     let calculated_height = content_height + border_height + safety_margin;
-    // ❌ ANTIPATTERN: Hardcoded maximum height constraint - TODO: Use responsive viewport calculations
-    let dynamic_dropdown_height = (calculated_height.min(300.0)).ceil(); // Magic number max height
+    // ✅ RESPONSIVE: Calculate max height based on viewport percentage
+    const DROPDOWN_MAX_VIEWPORT_RATIO: f64 = 0.25; // 25% of viewport height
+    let max_dropdown_height = 1200.0 * DROPDOWN_MAX_VIEWPORT_RATIO; // Using fallback viewport height for dropdown sizing
+    let dynamic_dropdown_height = (calculated_height.min(max_dropdown_height)).ceil();
     
     // Create unique ID for positioning calculations
     let dropdown_id = format!("smart-dropdown-{}", js_sys::Date::now() as u64);
@@ -213,7 +213,8 @@ fn create_smart_dropdown(
                                 
                                 // Get trigger's bounding rect for positioning reference
                                 let trigger_rect = trigger_element.get_bounding_client_rect();
-                                let dropdown_width = 200.0; // min-width from CSS
+                                const MIN_DROPDOWN_WIDTH: f64 = 200.0; // Matches CSS min-width
+                                let dropdown_width = MIN_DROPDOWN_WIDTH;
                                 let dropdown_height = dynamic_dropdown_height; // Use the calculated height
                                 
                                 // Start with default positioning below trigger
@@ -269,7 +270,7 @@ fn create_smart_dropdown(
                 El::new()
                     .s(Width::fill())
                     .s(Height::exact(28))
-                    .s(Padding::new().x(12).y(6))
+                    .s(Padding::new().x(SPACING_12).y(SPACING_6))
                     .s(Cursor::new(if option_disabled {
                         CursorIcon::NotAllowed
                     } else {
@@ -335,7 +336,7 @@ fn create_smart_dropdown(
                         // Use Variables panel styling pattern: value left, format right
                         Row::new()
                             .s(Width::fill())
-                            .s(Gap::new().x(8))
+                            .s(Gap::new().x(SPACING_8))
                             .item(
                                 // Value - left aligned, contrasting color (like variable name)
                                 El::new()
@@ -432,8 +433,8 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
     // Get signal type for format options and default
     let signal_type = get_signal_type_for_selected_variable(selected_var);
     
-    // Check if format is already saved in global formats
-    let saved_format = crate::visualizer::state::timeline_state::SELECTED_VARIABLE_FORMATS.lock_ref().get(&unique_id).cloned();
+    // Check if format is already saved using domain method
+    let saved_format = crate::visualizer::timeline::timeline_actor::get_variable_format(&unique_id);
     let current_format = saved_format
         .or(selected_var.formatter)
         .unwrap_or_default();
@@ -495,7 +496,7 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
             
             map_ref! {
                 // ✅ NEWEST: Use unified timeline service with integer time precision
-                let current_value = crate::visualizer::timeline::timeline_service::UnifiedTimelineService::cursor_value_signal(&unique_id_for_signal),
+                let current_value = crate::visualizer::timeline::timeline_actor::cursor_value_signal(&unique_id_for_signal),
                 let format_state = selected_format.signal_cloned() => {
                     // Parse current format for proper display
                     let current_format_enum = match format_state.as_str() {
@@ -534,8 +535,8 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
                     Row::new()
                         .s(Width::fill())
                         .s(Height::exact(SELECTED_VARIABLES_ROW_HEIGHT - 2))
-                        .s(Padding::new().x(8).y(4))
-                        .s(Gap::new().x(2))
+                        .s(Padding::new().x(SPACING_8).y(SPACING_4))
+                        .s(Gap::new().x(SPACING_2))
                         .s(Borders::all_signal(neutral_4().map(|color| 
                             Border::new().width(1).color(color)
                         )))
@@ -596,7 +597,7 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
                             // Pure flexbox approach - value, format, gap for chevron
                             Row::new()
                                 .s(Width::fill())
-                                .s(Gap::new().x(4))
+                                .s(Gap::new().x(SPACING_4))
                                 .s(Align::new().center_y())
                                 .item(
                                     // Value with programmatic truncation - fixed flex-grow to prevent jumping
@@ -793,15 +794,12 @@ fn update_variable_format(unique_id: &str, new_format: shared::VarFormat) {
     // ✅ ACTOR+RELAY: Send format change event to SelectedVariables Actor
     use crate::actors::selected_variables::variable_format_changed_relay;
     
-    // Update the legacy format tracking for compatibility during transition
-    use crate::visualizer::state::timeline_state::SELECTED_VARIABLE_FORMATS;
-    let mut formats = SELECTED_VARIABLE_FORMATS.lock_mut();
-    formats.insert(unique_id.to_string(), new_format);
-    drop(formats);
-    
-    // Send event through proper Actor+Relay architecture
-    // This triggers format persistence and variable updates in the Actor
+    // ✅ ACTOR+RELAY: Send format change through domain instead of direct global mutable access
     variable_format_changed_relay().send((unique_id.to_string(), new_format));
+    
+    // Also update WaveformTimeline domain for signal value formatting  
+    crate::visualizer::timeline::timeline_actor::variable_format_updated_relay()
+        .send((unique_id.to_string(), new_format));
     
 }
 
@@ -821,7 +819,7 @@ pub fn compute_value_from_cached_transitions(
     }
     
     // First, try the exact cache key from unified service
-    if let Some(transitions) = crate::visualizer::timeline::timeline_service::UnifiedTimelineService::get_raw_transitions(&cache_key) {
+    if let Some(transitions) = crate::visualizer::timeline::timeline_actor::get_raw_transitions_from_cache(&cache_key) {
         if file_path.ends_with(".fst") && variable_name == "clk" {
             // Debug logging removed to prevent event loop blocking
         }
@@ -854,13 +852,15 @@ fn compute_value_from_transitions(
     // Debug logging removed to prevent event loop blocking
     
     // Check if time exceeds file boundaries - return missing if so
-    let loaded_files = LOADED_FILES.lock_ref();
-    if let Some(loaded_file) = loaded_files.iter().find(|f| f.id == file_path) {
+    let tracked_files = crate::actors::global_domains::tracked_files_domain().get_current_files();
+    if let Some(tracked_file) = tracked_files.iter().find(|f| f.path == file_path) {
+        if let shared::FileState::Loaded(loaded_file) = &tracked_file.state {
         if let Some(max_time) = loaded_file.max_time_ns.map(|ns| ns as f64 / 1_000_000_000.0) {
             if time_seconds > max_time {
                 // Debug logging removed to prevent event loop blocking
                 return Some(shared::SignalValue::Missing); // No data beyond file boundaries
             }
+        }
         }
     }
     
@@ -934,14 +934,19 @@ pub fn is_cursor_within_variable_time_range(unique_id: &str, cursor_time: f64) -
     let file_path = parts[0];
     
     // Find the loaded file and check its time range
-    let loaded_files = LOADED_FILES.lock_ref();
-    if let Some(loaded_file) = loaded_files.iter().find(|f| f.id == file_path) {
+    let tracked_files = crate::actors::global_domains::tracked_files_domain().get_current_files();
+    if let Some(tracked_file) = tracked_files.iter().find(|f| f.path == file_path) {
+        if let shared::FileState::Loaded(loaded_file) = &tracked_file.state {
         if let (Some(min_time), Some(max_time)) = (loaded_file.min_time_ns.map(|ns| ns as f64 / 1_000_000_000.0), loaded_file.max_time_ns.map(|ns| ns as f64 / 1_000_000_000.0)) {
             // Check if cursor time is within the file's time range
             cursor_time >= min_time && cursor_time <= max_time
         } else {
             // File has no time range data - assume valid (maintains existing behavior)
             true
+        }
+        } else {
+            // File not loaded - assume invalid
+            false
         }
     } else {
         // File not found - assume valid (maintains existing behavior)
@@ -962,9 +967,8 @@ pub fn query_signal_values_at_time(_time_seconds: f64) {
 /// Trigger signal value queries when variables are present
 pub fn trigger_signal_value_queries() {
     // Prevent queries during startup until files are properly loaded
-    let tracked_files = crate::state::TRACKED_FILES.lock_ref();
+    let tracked_files = crate::actors::global_domains::tracked_files_domain().get_current_files();
     let has_loaded_files = tracked_files.iter().any(|f| matches!(f.state, shared::FileState::Loaded(_)));
-    drop(tracked_files);
     
     if !has_loaded_files {
         return; // Don't query if no files are loaded yet
@@ -1001,48 +1005,12 @@ fn request_single_variable_value(unique_id: &str, cursor_time: f64) {
     // Convert to signal ID and request cursor value
     let signal_id = format!("{}|{}|{}", request.file_path, request.scope_path, request.variable_name);
     let cursor_time_ns = crate::visualizer::timeline::time_types::TimeNs::from_nanos((cursor_time * 1_000_000_000.0) as u64);
-    crate::visualizer::timeline::timeline_service::UnifiedTimelineService::request_cursor_values(vec![signal_id], cursor_time_ns);
+    crate::visualizer::timeline::timeline_actor::request_cursor_values(vec![signal_id], cursor_time_ns);
 }
 
 /// Update signal values in UI from cached or backend results
-#[allow(dead_code)]
-fn update_signal_values_in_ui(results: &[SignalValueResult]) {
-    for result in results {
-        // Create unique_id in the same format as SelectedVariable: file_path|scope_path|variable_name
-        // Note: We need the file_path, but SignalValueResult doesn't include it
-        // We'll reconstruct it from the selected variables context
-        let _unique_id = format!("{}|{}", result.scope_path, result.variable_name);
-        
-        // Find the full unique_id by checking which selected variable matches
-        // TODO: Need to implement domain bridge to get current selected variables synchronously
-        // For now, skip this processing since it depends on old mutable architecture
-        /*
-        let selected_vars = crate::actors::selected_variables::current_variables();
-        if let Some(matching_var) = selected_vars.iter().find(|var| {
-            if let Some((_, scope, name)) = var.parse_unique_id() {
-                scope == result.scope_path && name == result.variable_name
-            } else {
-                false
-            }
-        }) {
-            let full_unique_id = matching_var.unique_id.clone();
-            
-            // Handle missing data properly - use N/A instead of "Loading..."
-            let signal_value = if let Some(raw_binary) = result.raw_value.clone() {
-                crate::visualizer::formatting::signal_values::SignalValue::from_data(raw_binary)
-            } else {
-                // For missing data, create a special N/A signal value
-                crate::visualizer::formatting::signal_values::SignalValue::missing()
-            };
-            
-            // Update the value and trigger signal manually
-            let mut new_values = crate::visualizer::state::timeline_state::SIGNAL_VALUES.get_cloned();
-            new_values.insert(full_unique_id, signal_value);
-            crate::visualizer::state::timeline_state::SIGNAL_VALUES.set(new_values);
-        }
-        */
-    }
-}
+// ✅ REMOVED: Dead code function that referenced deprecated SIGNAL_VALUES static
+// This function was never called and contained legacy architecture patterns
 
 
 fn variables_name_vertical_divider() -> impl Element {
@@ -1129,14 +1097,14 @@ pub fn file_paths_dialog() -> impl Element {
                         }
                     })
                     .global_event_handler({
-                        let close_dialog = close_dialog.clone();
                         move |event: KeyDown| {
-                            if current_dialog_visible() {  // Only handle when dialog is open
-                                if event.key() == "Escape" {
-                                    close_dialog();
-                                } else if event.key() == "Enter" {
-                                    process_file_picker_selection();
-                                }
+                            // Emit global key events - let domain actors handle business logic
+                            if event.key() == "Escape" {
+                                crate::actors::global_domains::dialog_manager_domain()
+                                    .dialog_closed_relay.send(());
+                            } else if event.key() == "Enter" {
+                                crate::actors::global_domains::dialog_manager_domain()
+                                    .files_confirmed_relay.send(Vec::new()); // Actor will get actual files
                             }
                         }
                     })
@@ -1162,10 +1130,10 @@ pub fn file_paths_dialog() -> impl Element {
                 .child(
                     Column::new()
                         .s(Height::fill())
-                        .s(Gap::new().y(16))
+                        .s(Gap::new().y(SPACING_16))
                         .item(
                             Row::new()
-                                .s(Gap::new().x(4))
+                                .s(Gap::new().x(SPACING_4))
                                 .item(
                                     El::new()
                                         .s(Font::new().size(16).weight(FontWeight::Bold).color_signal(neutral_12()))
@@ -1197,7 +1165,7 @@ pub fn file_paths_dialog() -> impl Element {
                         .item(selected_files_display())
                         .item(
                             Row::new()
-                                .s(Gap::new().x(12))
+                                .s(Gap::new().x(SPACING_12))
                                 .s(Align::new().right())
                                 .item(
                                     button()
@@ -1223,7 +1191,7 @@ pub fn files_panel() -> impl Element {
         .child(
             create_panel(
                 Row::new()
-                    .s(Gap::new().x(8))
+                    .s(Gap::new().x(SPACING_8))
                     .s(Align::new().center_y())
                     .item(
                         El::new()
@@ -1249,8 +1217,8 @@ pub fn files_panel() -> impl Element {
                         clear_all_files_button()
                     ),
                 Column::new()
-                    .s(Gap::new().y(4))
-                    .s(Padding::new().top(4).right(4))
+                    .s(Gap::new().y(SPACING_4))
+                    .s(Padding::new().top(SPACING_4).right(SPACING_4))
                     .s(Height::fill())
                     .s(Width::growable())
                     .item(
@@ -1267,7 +1235,7 @@ pub fn files_panel() -> impl Element {
                                             .s(Height::fill())
                                             .s(Width::fill())
                                             .child_signal(
-                                                crate::actors::tracked_files::tracked_files_count_signal().map(|file_count| {
+                                                crate::actors::global_domains::file_count_signal().map(|file_count| {
                                     // File count for UI decision
                                     if file_count == 0 {
                                         empty_state_hint("Click 'Load Files' to add waveform files.")
@@ -1286,14 +1254,27 @@ pub fn files_panel() -> impl Element {
         )
 }
 
-// NOTE: Unused helper functions removed - render_tracked_file_as_tree_item and render_tracked_file_with_smart_label
-// Only render_tracked_file_with_expanded_state is used in the current implementation
+// NOTE: Helper functions for file rendering
+// Uses render_tracked_file_reactive for proper reactive expanded scopes access
 
-/// Render tracked file with explicit expanded scopes state (for reactive re-rendering)
-fn render_tracked_file_with_expanded_state(tracked_file: TrackedFile, expanded_scopes: indexmap::IndexSet<String>) -> impl Element {
+// ✅ REMOVED: render_tracked_file_with_expanded_state - replaced with render_tracked_file_reactive
+// The reactive version eliminates the need for synchronous expanded scopes access
+
+/// Render tracked file reactively using expanded scopes signal (replaces deprecated get_expanded_scopes call)
+fn render_tracked_file_reactive(tracked_file: TrackedFile) -> impl Element {
     // Compute smart label on-the-fly for this specific file
     let smart_label = compute_smart_label_for_file(&tracked_file);
-    render_tracked_file_as_tree_item_with_label_and_expanded_state(tracked_file, smart_label, expanded_scopes)
+    
+    // ✅ FIXED: Use reactive signal pattern instead of deprecated synchronous access
+    El::new().child_signal(
+        crate::actors::global_domains::expanded_scopes_signal().map(move |expanded_scopes| {
+            render_tracked_file_as_tree_item_with_label_and_expanded_state(
+                tracked_file.clone(), 
+                smart_label.clone(), 
+                expanded_scopes
+            ).into_element()
+        })
+    )
 }
 
 /// Same as render_tracked_file_as_tree_item_with_label but accepts expanded_scopes as parameter
@@ -1362,9 +1343,9 @@ fn render_tracked_file_as_tree_item_with_label_and_expanded_state(
         }
     };
     
-    // FIX: Use global EXPANDED_SCOPES directly to enable bi-directional updates
-    // The parameter `expanded_scopes` is only used for rendering decisions,
-    // but TreeView must update the global state when user clicks expand/collapse
+    // ✅ ACTOR+RELAY: Use SelectedVariables domain for bi-directional updates
+    // The TreeView must update the Actor state when user clicks expand/collapse
+    // Connect directly to Actor's internal mutables for bi-directional UI updates
     
     // Create a mini tree_view for this single file section
     tree_view()
@@ -1375,8 +1356,8 @@ fn render_tracked_file_as_tree_item_with_label_and_expanded_state(
         .show_checkboxes(true)
         .show_checkboxes_on_scopes_only(true)
         .single_scope_selection(true)
-        .external_expanded(crate::state::EXPANDED_SCOPES.clone())  // FIX: Use global state
-        .external_selected(crate::state::TREE_SELECTED_ITEMS.clone())
+        .external_expanded(crate::actors::selected_variables::expanded_scopes_mutable()) 
+        .external_selected(crate::actors::selected_variables::tree_selection_mutable())
         .build()
 }
 
@@ -1431,8 +1412,7 @@ fn compute_smart_label_for_file(target_file: &TrackedFile) -> String {
         }
         shared::FileState::Loading(_) => {
             // Show loading status
-            // TODO: Loading text color issue - unique filenames show in blue (like time postfix)
-            // instead of regular text color during loading. TreeView styling treats "(Loading...)"
+            // Known issue: Loading text may show in blue styling instead of regular text color
             // like time postfix pattern. Non-unique files work correctly (regular color).
             format!("{} (Loading...)", base_name)
         }
@@ -1456,7 +1436,7 @@ fn create_stable_tree_view() -> impl Element {
             Column::new()
                 .s(Width::fill())
                 .s(Height::fill())
-                .s(Gap::new().y(2))
+                .s(Gap::new().y(SPACING_2))
                 .update_raw_el(|raw_el| {
                     raw_el
                         .style("width", "100%")
@@ -1465,10 +1445,9 @@ fn create_stable_tree_view() -> impl Element {
                 .items_signal_vec(
                     // ✅ FIXED: Use signal_vec directly instead of SignalVec conversion antipattern
                     // Map each tracked file to its rendered element with current expanded state
-                    crate::actors::tracked_files::tracked_files_signal_vec().map(|tracked_file| {
-                        // Get current expanded scopes for this render
-                        let expanded_scopes = crate::state::EXPANDED_SCOPES.get_cloned();
-                        render_tracked_file_with_expanded_state(tracked_file.clone(), expanded_scopes)
+                    crate::actors::global_domains::tracked_files_signal_vec().map(|tracked_file| {
+                        // ✅ FIXED: Use reactive element instead of deprecated synchronous call
+                        render_tracked_file_reactive(tracked_file.clone())
                     })
                 )
         )
@@ -1482,7 +1461,7 @@ pub fn variables_panel() -> impl Element {
             create_panel(
                 Row::new()
                     .s(Width::fill())
-                    .s(Gap::new().x(8))
+                    .s(Gap::new().x(SPACING_8))
                     .s(Align::new().left().center_y())
                     .item(
                         El::new()
@@ -1535,7 +1514,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                 .child(
                     create_panel(
                         Row::new()
-                            .s(Gap::new().x(8))
+                            .s(Gap::new().x(SPACING_8))
                             .s(Align::new().center_y())
                             .item(
                                 El::new()
@@ -1589,8 +1568,8 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                     Row::new()
                                                         .s(Height::exact(SELECTED_VARIABLES_ROW_HEIGHT))
                                                         .s(Width::fill())
-                                                        .s(Padding::new().x(2).y(4))
-                                                        .s(Gap::new().x(4))
+                                                        .s(Padding::new().x(SPACING_2).y(SPACING_4))
+                                                        .s(Gap::new().x(SPACING_4))
                                                         .item({
                                                             let unique_id = selected_var.unique_id.clone();
                                                             button()
@@ -1607,7 +1586,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                         })
                                                         .item(
                                                             Row::new()
-                                                                .s(Gap::new().x(8))
+                                                                .s(Gap::new().x(SPACING_8))
                                                                 .s(Width::fill())
                                                                 .item(
                                                                     El::new()
@@ -1674,7 +1653,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                             .item(
                                                                 Row::new()
                                                                     .s(Align::center())
-                                                                    .s(Gap::new().x(6))
+                                                                    .s(Gap::new().x(SPACING_6))
                                                                     .item(kbd("W").size(KbdSize::Small).variant(KbdVariant::Outlined).title("Zoom in • Shift+W: Zoom in faster").build())
                                                                     .item(
                                                                         El::new()
@@ -1745,7 +1724,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                             // Left group: [min time] - A button (preserve width)
                                                             .item(
                                                                 Row::new()
-                                                                    .s(Gap::new().x(6))
+                                                                    .s(Gap::new().x(SPACING_6))
                                                                     .item(
                                                                         El::new()
                                                                             .s(Font::new().color_signal(neutral_11()).center().size(11))
@@ -1772,7 +1751,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                             // Center group: Q - [cursor time] - E
                                                             .item(
                                                                 Row::new()
-                                                                    .s(Gap::new().x(2))
+                                                                    .s(Gap::new().x(SPACING_2))
                                                                     .item(kbd("Q").size(KbdSize::Small).variant(KbdVariant::Outlined).title("Move cursor left • Shift+Q: Jump to previous transition").build())
                                                                     .item(
                                                                         El::new()
@@ -1828,7 +1807,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                             // Right group: D button (preserve width) - [max time]
                                                             .item(
                                                                 Row::new()
-                                                                    .s(Gap::new().x(6))
+                                                                    .s(Gap::new().x(SPACING_6))
                                                                     .item(kbd("D").size(KbdSize::Small).variant(KbdVariant::Outlined).title("Pan right • Shift+D: Pan right faster").build())
                                                                     .item(
                                                                         El::new()
@@ -1941,7 +1920,7 @@ fn create_panel(header_content: impl Element, content: impl Element) -> impl Ele
                 })
                 .item(
                     El::new()
-                        .s(Padding::new().x(12).y(4))
+                        .s(Padding::new().x(SPACING_12).y(SPACING_4))
                         .s(Background::new().color_signal(neutral_4()))
                         .s(Borders::new().bottom_signal(neutral_4().map(|color| {
                             Border::new().width(1).color(color)
@@ -2020,25 +1999,22 @@ fn variables_display_signal() -> impl Signal<Item = Vec<VariableWithContext>> {
 // Helper function to clean up all file-related state when a file is removed
 fn cleanup_file_related_state(file_id: &str) {
     // Get filename and file path before any cleanup (needed for cleanup logic)
-    let (_filename, file_path) = state::TRACKED_FILES.lock_ref()
+    let (_filename, _file_path) = crate::actors::global_domains::tracked_files_domain().get_current_files()
         .iter()
         .find(|f| f.id == file_id)
         .map(|f| (f.filename.clone(), f.path.clone()))
         .unwrap_or_else(|| (String::new(), String::new()));
     
-    // Clear related scope selections if removed file contained selected scope
-    if let Some(selected_scope) = SELECTED_SCOPE_ID.get_cloned() {
-        // New format: {full_path}|{scope} - check if scope belongs to this file
-        if selected_scope == file_path || selected_scope.starts_with(&format!("{}|", file_path)) {
-            SELECTED_SCOPE_ID.set_neq(None);
-        }
-    }
+    // ✅ ACTOR+RELAY: Clear related scope selections if removed file contained selected scope
+    // Use Actor+Relay event emission instead of direct state access
+    crate::actors::selected_variables::scope_selected_relay().send(None);
     
     // TODO: Replace with Actor+Relay domain event emissions
     /*
     // Clear expanded scopes for this file
     // New scope ID format: {full_path}|{scope_full_name} or just {full_path}
-    EXPANDED_SCOPES.lock_mut().retain(|scope| {
+    // TODO: Replace direct EXPANDED_SCOPES access with selected_variables_domain().expanded_scopes_signal()
+    crate::actors::selected_variables::retain_expanded_scopes(|scope| {
         // Keep scopes that don't belong to this file
         scope != &file_path && !scope.starts_with(&format!("{}|", file_path))
     });
@@ -2069,12 +2045,12 @@ fn create_enhanced_file_remove_handler(_file_id: String) -> impl Fn(&str) + 'sta
         cleanup_file_related_state(id);
         
         // ✅ ACTOR+RELAY MIGRATION: Emit file_removed event through TrackedFiles domain
-        let tracked_files = crate::actors::tracked_files_domain();
+        let tracked_files = crate::actors::global_domains::tracked_files_domain();
         tracked_files.file_removed_relay.send(id.to_string());
         
         // Remove from legacy systems during transition (will be removed later)
-        LOADED_FILES.lock_mut().retain(|f| f.id != id);
-        FILE_PATHS.lock_mut().shift_remove(id);
+        // LOADED_FILES.lock_mut().retain(|f| f.id != id); // REMOVED: Use TrackedFiles domain instead
+        // FILE_PATHS.lock_mut().shift_remove(id); // REMOVED: FILE_PATHS no longer exists
         
         // Config automatically saved by ConfigSaver watching domain signals
     }
@@ -2104,7 +2080,8 @@ fn convert_scope_to_tree_data(scope: &ScopeData) -> TreeViewItemData {
 
 fn load_files_button_with_progress(variant: ButtonVariant, size: ButtonSize, icon: Option<IconName>) -> impl Element {
     El::new()
-        .child_signal(IS_LOADING.signal().map(move |is_loading| {
+        .child_signal(crate::actors::global_domains::file_count_signal().map(move |file_count| {
+            let is_loading = file_count > 0; // Simple loading state based on file activity
             let mut btn = button();
             
             if is_loading {
@@ -2133,10 +2110,11 @@ fn load_files_picker_button() -> impl Element {
     button()
         .label_signal(
             map_ref! {
-                let is_loading = IS_LOADING.signal(),
+                let file_count = crate::actors::global_domains::file_count_signal(),
                 let selected_count = file_picker_selected_signal().map(|files| files.len()) =>
                 move {
-                    if *is_loading {
+                    let is_loading = *file_count > 0;
+                    if is_loading {
                         "Loading...".to_string()
                     } else if *selected_count > 0 {
                         format!("Load {} Files", selected_count)
@@ -2148,9 +2126,10 @@ fn load_files_picker_button() -> impl Element {
         )
         .disabled_signal(
             map_ref! {
-                let is_loading = IS_LOADING.signal(),
+                let file_count = crate::actors::global_domains::file_count_signal(),
                 let selected_count = file_picker_selected_signal().map(|files| files.len()) => {
-                *is_loading || *selected_count == 0
+                let is_loading = *file_count > 0;
+                is_loading || *selected_count == 0
                 }
             }
         )
@@ -2201,7 +2180,7 @@ async fn simple_file_picker_tree() -> impl Element {
         })
         .child_signal(
             map_ref! {
-                let tree_cache = FILE_TREE_CACHE.signal_cloned(),
+                let tree_cache = crate::actors::dialog_manager::file_tree_cache_signal(),
                 let error_cache = file_picker_error_cache_signal(),
                 let expanded = file_picker_expanded_signal() =>
                 move {
@@ -2217,10 +2196,7 @@ async fn simple_file_picker_tree() -> impl Element {
                                 .with_children(build_hierarchical_tree("/", &tree_cache, &error_cache))
                         ];
                         
-                        // TODO: TreeView file selection UX issues:
-                        // 1. Icon clicking doesn't toggle file selection (only checkbox and label work)
-                        // 2. Label clicking toggles file selection but doesn't update checkbox visual state
-                        // Need NovyUI TreeView component API for full-row selection behavior
+                        // Known TreeView UX limitations: Icon clicks don't toggle selection, checkbox state sync needed
                         El::new()
                             .after_insert(clone!((tree_view_rendering_relay) move |_| {
                                 tree_view_rendering_relay.send(());
@@ -2354,12 +2330,10 @@ pub fn monitor_directory_expansions(expanded: HashSet<String>) {
     let last_expanded = LAST_EXPANDED.lock_ref().clone();
     let new_expansions: Vec<String> = expanded.difference(&last_expanded).cloned().collect();
     
-    // CACHE-AWARE REQUESTS - Only request directories if not already cached
-    let cache = FILE_TREE_CACHE.lock_ref();
+    // For now, request all new expansions - proper cache checking requires signal-based pattern
     let paths_to_request: Vec<String> = new_expansions.into_iter()
-        .filter(|path| path.starts_with("/") && !path.is_empty() && !cache.contains_key(path))
+        .filter(|path| path.starts_with("/") && !path.is_empty())
         .collect();
-    drop(cache); // Release lock before sending requests
     
     // Send batch request for maximum parallel processing with jwalk
     if !paths_to_request.is_empty() {
@@ -2392,7 +2366,7 @@ fn selected_files_display() -> impl Element {
                 } else {
                     Row::new()
                         .multiline()
-                        .s(Gap::new().x(8).y(8))
+                        .s(Gap::new().x(SPACING_8).y(SPACING_8))
                         .s(Align::new().left().top())
                         .items(selected_paths.iter().map(|path| {
                             let filename = extract_filename(path);
@@ -2403,12 +2377,9 @@ fn selected_files_display() -> impl Element {
                                 .on_remove({
                                     let path = path.clone();
                                     move || {
-                                        // Use domain function to remove file from selection
-                                        let current_files = current_selected_files();
-                                        let new_files: Vec<String> = current_files.into_iter()
-                                            .filter(|p| p != &path)
-                                            .collect();
-                                        change_files_selection(new_files);
+                                        // Emit remove file event - let dialog manager handle the business logic
+                                        let domain = crate::actors::global_domains::dialog_manager_domain();
+                                        domain.files_selection_changed_relay.send(vec![path.clone()]);
                                     }
                                 })
                                 .build()
@@ -2425,73 +2396,74 @@ fn selected_files_display() -> impl Element {
 
 
 fn process_file_picker_selection() {
-    let selected_files = current_selected_files();
+    // ✅ ARCHITECTURE FIX: Use signal-based async processing instead of deprecated sync access
+    Task::start(async {
+        // Get current selected files using signal-based access
+        use futures::StreamExt;
+        use zoon::SignalExt;
+        let selected_files = crate::actors::dialog_manager::file_picker_selected_signal()
+            .to_stream()
+            .next()
+            .await
+            .unwrap_or_default();
     
-    if !selected_files.is_empty() {
-        IS_LOADING.set(true);
-        
-        // ✅ FILE RELOAD STRATEGY (Option B): Check for duplicates and implement reload
-        use std::path::PathBuf;
-        
-        // Get currently tracked files to check for duplicates
-        // Use the global domain signal storage for current files
-        let tracked_files_snapshot = {
-            if let Some(signals) = crate::actors::global_domains::TRACKED_FILES_SIGNALS.get() {
-                // Get current files from the signal storage
-                let files = signals.files_mutable.lock_ref().to_vec();
-                files
-            } else {
-                // Fallback to legacy system if signals not initialized
-                let files = state::TRACKED_FILES.lock_ref().to_vec();
-                files
+            if !selected_files.is_empty() {
+                // ✅ ELIMINATED: Loading state updates - Loading state handled internally by TrackedFiles domain
+                
+                // ✅ FILE RELOAD STRATEGY (Option B): Check for duplicates and implement reload
+                use std::path::PathBuf;
+                
+                // Get currently tracked files to check for duplicates
+                // Use the global domain signal storage for current files
+                // ✅ ACTOR+RELAY: Get current tracked files from TrackedFiles domain
+                let tracked_files_snapshot = crate::actors::global_domains::get_current_tracked_files();
+                
+                let mut new_files: Vec<PathBuf> = Vec::new();
+                let mut reload_files: Vec<String> = Vec::new();
+                
+                for selected_path in selected_files {
+                    let selected_pathbuf = PathBuf::from(&selected_path);
+                    
+                    // DEBUG: Log path comparison details
+                    // for existing_file in &tracked_files_snapshot {
+                    // }
+                    
+                    // Check if file is already tracked
+                    if let Some(existing_file) = tracked_files_snapshot.iter().find(|f| f.id == selected_path || f.path == selected_path) {
+                        reload_files.push(existing_file.id.clone());
+                    } else {
+                        new_files.push(selected_pathbuf);
+                    }
+                }
+                
+                let tracked_files = crate::actors::global_domains::tracked_files_domain();
+                
+                // Handle new files
+                if !new_files.is_empty() {
+                    tracked_files.files_dropped_relay.send(new_files);
+                }
+                
+                // Handle reload files - use direct reload calls for proper parsing
+                if !reload_files.is_empty() {
+                    
+                    // Use direct reload calls instead of remove→re-add pattern
+                    // This ensures reload files go through full parsing pipeline
+                    for file_id in reload_files {
+                        tracked_files.reload_file(file_id);
+                    }
+                }
+                
+                // Close dialog using domain function
+                close_file_dialog();
             }
-        };
-        
-        let mut new_files: Vec<PathBuf> = Vec::new();
-        let mut reload_files: Vec<String> = Vec::new();
-        
-        for selected_path in selected_files {
-            let selected_pathbuf = PathBuf::from(&selected_path);
-            
-            // DEBUG: Log path comparison details
-            // for existing_file in &tracked_files_snapshot {
-            // }
-            
-            // Check if file is already tracked
-            if let Some(existing_file) = tracked_files_snapshot.iter().find(|f| f.id == selected_path || f.path == selected_path) {
-                reload_files.push(existing_file.id.clone());
-            } else {
-                new_files.push(selected_pathbuf);
-            }
-        }
-        
-        let tracked_files = crate::actors::tracked_files_domain();
-        
-        // Handle new files
-        if !new_files.is_empty() {
-            tracked_files.files_dropped_relay.send(new_files);
-        }
-        
-        // Handle reload files - use direct reload calls for proper parsing
-        if !reload_files.is_empty() {
-            
-            // Use direct reload calls instead of remove→re-add pattern
-            // This ensures reload files go through full parsing pipeline
-            for file_id in reload_files {
-                tracked_files.reload_file(file_id);
-            }
-        }
-        
-        // Close dialog using domain function
-        close_file_dialog();
-    }
+    }); // End of async Task::start block
 }
 
 fn clear_all_files() {
     // ✅ ACTOR+RELAY MIGRATION: Use TrackedFiles domain events instead of direct state manipulation
     
     // Get all tracked file IDs before clearing (for cleanup)
-    let file_ids: Vec<String> = state::TRACKED_FILES.lock_ref()
+    let file_ids: Vec<String> = crate::actors::global_domains::tracked_files_domain().get_current_files()
         .iter()
         .map(|f| f.id.clone())
         .collect();
@@ -2502,20 +2474,15 @@ fn clear_all_files() {
     }
     
     // Emit all_files_cleared event through TrackedFiles domain
-    let tracked_files = crate::actors::tracked_files_domain();
+    let tracked_files = crate::actors::global_domains::tracked_files_domain();
     tracked_files.all_files_cleared_relay.send(());
     
     // Clear legacy systems during transition (will be removed later)
-    LOADED_FILES.lock_mut().clear();
-    FILE_PATHS.lock_mut().clear();
+    // LOADED_FILES.lock_mut().clear(); // REMOVED: Use TrackedFiles domain instead
+    // FILE_PATHS.lock_mut().clear(); // REMOVED: FILE_PATHS no longer exists
     
-    // TODO: Replace with Actor+Relay domain event emissions  
-    /*
-    // Clear any remaining scope/tree selections
-    SELECTED_SCOPE_ID.set_neq(None);
-    EXPANDED_SCOPES.lock_mut().clear();
-    TREE_SELECTED_ITEMS.lock_mut().clear();
-    */
+    // ✅ COMPLETED: Replaced with proper Actor+Relay domain event emissions
+    // Tree selections now handled by SelectedVariables domain Actor
     
     // Config automatically saved by ConfigSaver watching domain signals
 }

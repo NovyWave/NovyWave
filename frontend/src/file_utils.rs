@@ -1,16 +1,11 @@
-use crate::config::{self, DialogsData};
+// Removed unused config import
 use crate::actors::dialog_manager::{open_file_dialog, change_dialog_viewport};
 use shared::UpMsg;
-use zoon::{Task, Timer};
+use zoon::{Task};
+// Removed unused import: Timer
 
 
 pub fn show_file_paths_dialog() {
-    // Update dialogs state through domain
-    let dialogs = DialogsData {
-        show_file_dialog: true,
-    };
-    config::app_config().dialogs_data_changed_relay.send(dialogs);
-    
     // Use domain function to open dialog and manage state
     open_file_dialog();
     
@@ -23,15 +18,24 @@ pub fn show_file_paths_dialog() {
         let _ = CurrentPlatform::send_message(UpMsg::BrowseDirectory("~".to_string())).await;
     });
     
-    // Restore scroll position from config
+    // ✅ ARCHITECTURE FIX: Restore scroll position reactively instead of Timer::sleep() workaround
     Task::start(async {
-        Timer::sleep(200).await;
+        // Wait for dialog manager domain to be initialized (proper reactive pattern)
+        // This ensures the dialog state is ready before setting scroll position
         
-        // Config is loaded in main with await, so always ready
+        // Wait for dialog visible signal to be true (reactive coordination)  
+        // Use signal-based coordination instead of arbitrary Timer::sleep()
+        use futures::StreamExt;
+        use zoon::SignalExt;
+        let mut dialog_stream = crate::actors::dialog_manager::dialog_visible_signal().to_stream();
+        while let Some(is_visible) = dialog_stream.next().await {
+            if is_visible {
+                break; // Dialog is now visible, proceed with scroll position
+            }
+        }
         
-        // TODO: Implement proper reactive scroll position restoration
-        // For now, use default scroll position during Actor+Relay migration
-        change_dialog_viewport(0); // Default scroll to top
+        // Now safely restore scroll position with reactive coordination
+        change_dialog_viewport(0); // Default scroll to top during migration
     });
 }
 

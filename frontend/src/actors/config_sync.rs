@@ -53,10 +53,10 @@ impl Default for ConfigSyncState {
 // Global domain instance
 static CONFIG_SYNC_DOMAIN: Lazy<Actor<ConfigSyncState>> = Lazy::new(|| {
     Actor::new(ConfigSyncState::default(), |_state| async move {
-        // Simple Actor that just holds state - no event processing needed for now
-        loop {
-            Timer::sleep(1000).await;
-        }
+        // ✅ FIXED: Use pending future instead of Timer::sleep() coordination delays
+        // Actor holds state and stays alive without artificial delays
+        use futures::future;
+        future::pending::<()>().await;  // Stays alive indefinitely without polling
     })
 });
 
