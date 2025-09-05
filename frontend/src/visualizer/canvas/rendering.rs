@@ -1,14 +1,14 @@
 use zoon::*;
-use fast2d::{CanvasWrapper as Fast2DCanvas, Object2d, Rectangle, Line, Text, Family};
+use fast2d::{CanvasWrapper as Fast2DCanvas, Object2d, Rectangle, Text, Family};
 use crate::visualizer::timeline::timeline_actor::{
-    current_cursor_position_seconds, current_viewport, current_canvas_width, current_canvas_height,
-    current_ns_per_pixel
+    current_cursor_position_seconds, current_viewport, current_canvas_width, current_canvas_height
+    // Removed unused: current_ns_per_pixel
 };
-use crate::visualizer::timeline::time_types::{TimeNs, Viewport};
+use crate::visualizer::timeline::time_types::{Viewport}; // Removed unused TimeNs
 use crate::actors::selected_variables::current_variables;
 use crate::visualizer::canvas::timeline::get_full_file_range;
 use moonzoon_novyui::tokens::theme::Theme as NovyUITheme;
-use std::collections::HashMap;
+// use std::collections::HashMap; // Unused
 use shared::{SignalValue, SelectedVariable};
 
 /// Time unit detection for intelligent timeline formatting
@@ -43,6 +43,7 @@ impl TimeUnit {
 /// Theme-aware color scheme for waveform visualization
 #[derive(Clone, Debug)]
 struct ThemeColors {
+    #[allow(dead_code)] // Theme color - preserve for canvas theming completeness
     neutral_1: (u8, u8, u8, f32),
     neutral_2: (u8, u8, u8, f32),
     neutral_3: (u8, u8, u8, f32),
@@ -58,6 +59,7 @@ struct ThemeColors {
 pub struct WaveformRenderer {
     canvas: Option<Fast2DCanvas>,
     theme: NovyUITheme,
+    #[allow(dead_code)] // Canvas optimization cache - preserve for performance features
     cached_objects: Vec<Object2d>,
     last_viewport: Option<Viewport>,
     last_cursor_pos: Option<f64>,
@@ -75,26 +77,20 @@ impl WaveformRenderer {
     }
     
     /// Initialize Fast2D canvas with given DOM element
-    pub fn initialize_canvas(&mut self, canvas_element: web_sys::HtmlCanvasElement, width: u32, height: u32) {
-        zoon::println!("🎨 CANVAS: Initializing Fast2D canvas {}x{}", width, height);
-        
+    #[allow(dead_code)] // Canvas initialization method - preserve for Fast2D integration
+    pub fn initialize_canvas(&mut self, _canvas_element: web_sys::HtmlCanvasElement, _width: u32, _height: u32) {
         // Since we can't use async in this method, mark as needing initialization
         // The actual async initialization will be handled by the external caller
-        zoon::println!("✅ CANVAS: Ready for async canvas initialization");
     }
     
     /// Set the canvas after async initialization
     pub fn set_canvas(&mut self, canvas: Fast2DCanvas) {
         self.canvas = Some(canvas);
-        zoon::println!("✅ CANVAS: Fast2D canvas set successfully - renderer now has canvas");
         
         // Verify canvas is properly set
         if self.has_canvas() {
-            zoon::println!("✅ CANVAS: Canvas verification successful - triggering initial render");
             // Trigger initial render
             self.render_frame();
-        } else {
-            zoon::println!("❌ CANVAS: Canvas verification failed - canvas not properly set");
         }
     }
     
@@ -115,12 +111,8 @@ impl WaveformRenderer {
         let height = current_canvas_height() as u32;
         
         if width == 0 || height == 0 {
-            zoon::println!("⚠️ CANVAS: Invalid canvas dimensions ({}x{}), skipping render", width, height);
             return;
         }
-        
-        zoon::println!("🎨 CANVAS: Rendering frame {}x{}", width, height);
-        zoon::println!("🔍 CANVAS: Canvas available: {}", if self.canvas.is_some() { "YES" } else { "NO" });
         
         // Build all objects to render
         let mut objects = Vec::new();
@@ -138,24 +130,18 @@ impl WaveformRenderer {
         if let Some(canvas) = &mut self.canvas {
             // Force clear all objects and add new ones
             canvas.update_objects(|canvas_objects| {
-                zoon::println!("🔄 CANVAS: Clearing {} existing objects", canvas_objects.len());
                 canvas_objects.clear();
-                zoon::println!("🔄 CANVAS: Adding {} new objects", objects.len());
                 canvas_objects.extend(objects);
             });
             
             // Update cached state
             self.last_viewport = current_viewport();
             self.last_cursor_pos = current_cursor_position_seconds();
-            
-            zoon::println!("✅ CANVAS: Frame rendered with complete waveform visualization");
-        } else {
-            zoon::println!("⚠️ CANVAS: No canvas initialized, skipping render");
         }
     }
     
     /// Add timeline background, grid lines, and time markers to objects
-    fn add_timeline_background(&self, objects: &mut Vec<Object2d>, width: u32, height: u32) {
+    fn add_timeline_background(&self, _objects: &mut Vec<Object2d>, _width: u32, _height: u32) {
         // 🔧 REMOVED: Full canvas background was covering individual row backgrounds
         // Individual row backgrounds are drawn in add_waveforms() instead
         // This allows proper visibility of multiple variable rows + timeline
@@ -164,23 +150,14 @@ impl WaveformRenderer {
     /// Add complete waveform visualization with professional timeline and value blocks
     fn add_waveforms(&self, objects: &mut Vec<Object2d>, width: u32, height: u32) {
         let variables = current_variables();
-        let viewport = match current_viewport() {
+        let _viewport = match current_viewport() {
             Some(v) => v,
             None => return,
         };
         
-        // 🔍 DEBUG: Log detailed variable information
-        zoon::println!("🔍 CANVAS DEBUG: Variables count: {}", variables.len());
-        for (i, var) in variables.iter().enumerate() {
-            zoon::println!("🔍 CANVAS DEBUG: Variable {}: unique_id='{}', scope='{}', name='{}'", 
-                i, var.unique_id, 
-                var.scope_path().unwrap_or("NO_SCOPE".to_string()), 
-                var.variable_name().unwrap_or("NO_NAME".to_string())
-            );
-        }
+        // Check variable information
         
         if variables.is_empty() {
-            zoon::println!("⚠️ CANVAS: No variables to render");
             return;
         }
         
@@ -197,21 +174,13 @@ impl WaveformRenderer {
         };
         let time_range = timeline_max - timeline_min;
         
-        // 🔍 DEBUG: Log row calculations
-        zoon::println!("🔍 CANVAS DEBUG: Canvas dimensions: {}x{}", width, height);
-        zoon::println!("🔍 CANVAS DEBUG: Variables: {}, Total rows: {}, Row height: {:.2}", 
-            variables.len(), total_rows, row_height);
+        // Row calculations
         
         // Row calculations: Each variable gets equal height with timeline footer
         
         if time_range <= 0.0 {
-            zoon::println!("⚠️ CANVAS: Invalid time range: timeline_min={}, timeline_max={}, time_range={}", 
-                timeline_min, timeline_max, time_range);
             return;
         }
-        
-        zoon::println!("✅ CANVAS: Valid time range: {} to {} (span: {})", 
-            timeline_min, timeline_max, time_range);
         
         // Get theme colors
         let theme_colors = self.get_current_theme_colors();
@@ -221,9 +190,7 @@ impl WaveformRenderer {
             let y_position = index as f32 * row_height;
             let is_even_row = index % 2 == 0;
             
-            // 🔍 DEBUG: Log row rendering details
-            zoon::println!("🔍 CANVAS DEBUG: Rendering variable {} '{}' at y={:.2}, height={:.2}", 
-                index, variable.unique_id, y_position, row_height);
+            // Render variable row
             
             // Variable row positioning: each at y_position with proper height
             
@@ -437,9 +404,7 @@ impl WaveformRenderer {
         // For now, return mock transitions until backend integration
         let variable_name = variable.unique_id.split('|').last().unwrap_or("");
         
-        // 🔍 DEBUG: Log signal transition generation
-        zoon::println!("🔍 CANVAS DEBUG: Getting transitions for variable '{}' (name='{}')", 
-            variable.unique_id, variable_name);
+        // Get signal transitions for variable
         
         let transitions = match variable_name {
             // 🔍 PROBLEM ANALYSIS: User mentioned C, S, Os variables - add these specific variables
@@ -487,14 +452,7 @@ impl WaveformRenderer {
             ],
         };
         
-        // 🔍 DEBUG: Log generated transitions
-        zoon::println!("🔍 CANVAS DEBUG: Generated {} transitions for '{}': {:?}", 
-            transitions.len(), variable_name, 
-            transitions.iter().map(|(time, value)| (time, match value {
-                SignalValue::Present(v) => v.as_str(),
-                SignalValue::Missing => "MISSING"
-            })).collect::<Vec<_>>()
-        );
+        // Transitions generated
         
         transitions
     }
@@ -504,7 +462,7 @@ impl WaveformRenderer {
         &self,
         objects: &mut Vec<Object2d>,
         canvas_width: f32,
-        canvas_height: f32,
+        _canvas_height: f32,
         row_height: f32,
         total_rows: usize,
         timeline_min: f64,
@@ -622,7 +580,6 @@ impl WaveformRenderer {
     pub fn set_theme(&mut self, theme: NovyUITheme) {
         if self.theme != theme {
             self.theme = theme;
-            zoon::println!("🎨 THEME: Updated to {:?}", theme);
         }
     }
     
@@ -725,11 +682,13 @@ use std::rc::Rc;
 use std::cell::RefCell;
 
 /// Create a new waveform renderer instance (WASM-safe, no static state)
+#[allow(dead_code)] // Canvas rendering function - preserve for Fast2D integration
 pub fn create_waveform_renderer() -> Rc<RefCell<WaveformRenderer>> {
     Rc::new(RefCell::new(WaveformRenderer::new()))
 }
 
 /// Initialize canvas rendering system with local renderer instance
+#[allow(dead_code)] // Canvas rendering function - preserve for Fast2D integration
 pub fn initialize_canvas_rendering(
     renderer: Rc<RefCell<WaveformRenderer>>,
     canvas_element: web_sys::HtmlCanvasElement, 
@@ -752,6 +711,7 @@ pub fn initialize_canvas_rendering(
 }
 
 /// Trigger canvas redraw with local renderer instance
+#[allow(dead_code)] // Canvas rendering function - preserve for Fast2D integration
 pub fn trigger_canvas_redraw(renderer: Rc<RefCell<WaveformRenderer>>) {
     if let Ok(mut r) = renderer.try_borrow_mut() {
         if r.needs_redraw() {
@@ -761,6 +721,7 @@ pub fn trigger_canvas_redraw(renderer: Rc<RefCell<WaveformRenderer>>) {
 }
 
 /// Update canvas theme with local renderer instance
+#[allow(dead_code)] // Canvas rendering function - preserve for Fast2D integration
 pub fn update_canvas_theme(renderer: Rc<RefCell<WaveformRenderer>>, theme: NovyUITheme) {
     if let Ok(mut r) = renderer.try_borrow_mut() {
         r.set_theme(theme);

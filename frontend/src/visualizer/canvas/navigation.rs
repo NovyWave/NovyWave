@@ -1,7 +1,7 @@
 use zoon::*;
 use crate::visualizer::timeline::timeline_actor::{
     current_cursor_position_seconds, set_cursor_position_seconds, 
-    set_ns_per_pixel_if_changed, set_viewport_if_changed, set_zoom_center_follow_mouse
+    set_ns_per_pixel_if_changed, set_viewport_if_changed
 };
 use crate::visualizer::timeline::time_types::{TimeNs, NsPerPixel, Viewport};
 use crate::visualizer::state::canvas_state::{DIRECT_CURSOR_ANIMATION, LAST_TRANSITION_NAVIGATION_TIME};
@@ -97,7 +97,7 @@ pub fn jump_to_previous_transition() {
         let mut animation = DIRECT_CURSOR_ANIMATION.lock_mut();
         animation.current_position = prev_time;
         animation.target_position = prev_time;
-        crate::debug_utils::debug_conditional(&format!("Jumped to previous transition at {:.9}s", prev_time));
+        // Jumped to previous transition
     } else if !transitions.is_empty() {
         // If no previous transition, wrap to the last transition
         let last_transition = transitions[transitions.len() - 1];
@@ -106,7 +106,7 @@ pub fn jump_to_previous_transition() {
         let mut animation = DIRECT_CURSOR_ANIMATION.lock_mut();
         animation.current_position = last_transition;
         animation.target_position = last_transition;
-        crate::debug_utils::debug_conditional(&format!("Wrapped to last transition at {:.9}s", last_transition));
+        // Wrapped to last transition
     }
 }
 
@@ -144,7 +144,7 @@ pub fn jump_to_next_transition() {
         let mut animation = DIRECT_CURSOR_ANIMATION.lock_mut();
         animation.current_position = next_time;
         animation.target_position = next_time;
-        crate::debug_utils::debug_conditional(&format!("Jumped to next transition at {:.9}s", next_time));
+        // Jumped to next transition
     } else if !transitions.is_empty() {
         // If no next transition, wrap to the first transition
         let first_transition = transitions[0];
@@ -153,13 +153,13 @@ pub fn jump_to_next_transition() {
         let mut animation = DIRECT_CURSOR_ANIMATION.lock_mut();
         animation.current_position = first_transition;
         animation.target_position = first_transition;
-        crate::debug_utils::debug_conditional(&format!("Wrapped to first transition at {:.9}s", first_transition));
+        // Wrapped to first transition
     }
 }
 
 /// Reset zoom to fit all data in view (recovery function for broken zoom states)
+#[allow(dead_code)] // Navigation function - preserve for timeline reset functionality
 pub fn reset_zoom_to_fit_all() {
-    zoon::println!("🔧 RESET_ZOOM_TO_FIT_ALL called - analyzing mixed file ranges...");
     
     // Reset zoom to 1x
     set_ns_per_pixel_if_changed(NsPerPixel::MEDIUM_ZOOM);
@@ -167,8 +167,8 @@ pub fn reset_zoom_to_fit_all() {
     // Get range for files with selected variables only
     let (file_min, file_max) = crate::visualizer::canvas::timeline::get_selected_variables_file_range();
     
-    // 🔧 DEBUG: Check for mixed file ranges affecting zoom
-    let span = file_max - file_min;
+    // Check for mixed file ranges affecting zoom
+    let _span = file_max - file_min; // Prefix with underscore - used for debug analysis
     
     let viewport = Viewport::new(
         TimeNs::from_external_seconds(file_min),
@@ -185,14 +185,6 @@ pub fn reset_zoom_to_fit_all() {
     animation.current_position = middle_time as f64;
     animation.target_position = middle_time as f64;
     
-    // Debug logging to verify correct range calculation
-    let selected_variables = crate::actors::selected_variables::current_variables();
-    crate::debug_utils::debug_conditional("=== ZOOM RESET DEBUG ===");
-    crate::debug_utils::debug_conditional(&format!("Selected variables count: {}", selected_variables.len()));
-    for var in selected_variables.iter() {
-        crate::debug_utils::debug_conditional(&format!("  Variable: {}", var.unique_id));
-    }
-    crate::debug_utils::debug_conditional(&format!("Reset range: {:.9}s to {:.9}s (span: {:.9}s)", file_min, file_max, file_max - file_min));
-    crate::debug_utils::debug_conditional(&format!("Cursor positioned at: {:.9}s", middle_time));
+    // Range calculation completed
 }
 

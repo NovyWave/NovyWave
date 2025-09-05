@@ -1,15 +1,15 @@
 use zoon::*;
 use crate::state::LOADED_FILES;
 use crate::platform::{Platform, CurrentPlatform};
-use shared::{SelectedVariable, UpMsg, SignalTransitionQuery, SignalTransition};
-use std::collections::HashSet;
+use shared::{UpMsg, SignalTransitionQuery}; // Removed unused: SelectedVariable, SignalTransition
+// use std::collections::HashSet; // Unused
 
 
 
 
 /// Request real signal transitions from backend
+#[allow(dead_code)] // Backend communication function - preserve for future backend integration
 pub fn request_signal_transitions_from_backend(file_path: &str, scope_path: &str, variable_name: &str, _time_range: (f32, f32)) {
-    let _ = _time_range; // Suppress unused variable warning
     
     crate::debug_utils::debug_conditional(&format!("Requesting signal transitions for {}/{}", scope_path, variable_name));
     
@@ -47,12 +47,14 @@ pub fn request_signal_transitions_from_backend(file_path: &str, scope_path: &str
 }
 
 /// Trigger canvas redraw when new signal data arrives
+#[allow(dead_code)] // Canvas trigger function - preserve for canvas integration
 pub fn trigger_canvas_redraw() {
     // Call the global wrapper that has access to the renderer instance
     crate::visualizer::canvas::waveform_canvas::trigger_canvas_redraw_global();
 }
 
 /// Extract unique file paths from selected variables
+#[allow(dead_code)] // Helper function - preserve for variable path processing
 pub fn get_selected_variable_file_paths() -> std::collections::HashSet<String> {
     let selected_vars = crate::actors::selected_variables::current_variables();
     let mut file_paths = std::collections::HashSet::new();
@@ -69,7 +71,7 @@ pub fn get_selected_variable_file_paths() -> std::collections::HashSet<String> {
     }
     
     // ITERATION 5: Check if file paths changed from previous call
-    let file_paths_vec: Vec<String> = file_paths.iter().cloned().collect();
+    let _file_paths_vec: Vec<String> = file_paths.iter().cloned().collect();
     
     let mutex = PREVIOUS_FILE_PATHS.get_or_init(|| std::sync::Mutex::new(None));
     if let Ok(mut prev) = mutex.lock() {

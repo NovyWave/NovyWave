@@ -1,7 +1,7 @@
 use zoon::{*, futures_util::future::try_join_all};
-use moonzoon_novyui::tokens::theme::{Theme, init_theme};
+// Removed unused imports: Theme, init_theme
 use moonzoon_novyui::tokens::color::{neutral_1};
-use crate::visualizer::timeline::time_types::TimeNs;
+// Removed unused import: TimeNs
 
 mod dataflow;
 mod actors;
@@ -34,7 +34,6 @@ mod types;
 
 mod visualizer;
 
-use shared::{UpMsg};
 
 mod views;
 use views::*;
@@ -44,10 +43,9 @@ use state::*;
 use crate::visualizer::timeline::timeline_actor::{current_viewport};
 use crate::visualizer::interaction::dragging::{
     files_panel_width_signal, files_panel_height_signal, 
-    variables_name_column_width_signal, variables_value_column_width_signal,
     is_any_divider_dragging, active_divider_type_signal, process_drag_movement, DividerType
 };
-use config::app_config;
+// use config::app_config; // Unused
 use actors::dialog_manager::{dialog_visible_signal, file_picker_selected_signal};
 
 
@@ -78,7 +76,6 @@ pub fn main() {
         // Initialize AppConfig first
         let app_config = config::AppConfig::new().await;
         if config::APP_CONFIG.set(app_config).is_err() {
-            zoon::println!("🚨 APP CONFIG INITIALIZATION FAILED: AppConfig already initialized");
             return;
         }
         // AppConfig initialized successfully
@@ -86,7 +83,6 @@ pub fn main() {
         // Initialize Actor+Relay domain instances BEFORE UI creation
         // This prevents canvas operations from triggering before domains are ready
         if let Err(error_msg) = crate::actors::initialize_all_domains().await {
-            zoon::println!("🚨 DOMAIN INITIALIZATION FAILED: {}", error_msg);
             error_display::add_error_alert(crate::state::ErrorAlert {
                 id: "domain_init_failure".to_string(),
                 title: "Domain Initialization Failed".to_string(),
@@ -102,10 +98,6 @@ pub fn main() {
 
         // ✅ RESTORE SELECTED VARIABLES FROM CONFIG (after domain initialization)
         let selected_variables = crate::state::SELECTED_VARIABLES_FOR_CONFIG.get_cloned();
-        zoon::println!("🔍 MAIN: Config restoration - {} variables to restore", selected_variables.len());
-        for (i, var) in selected_variables.iter().enumerate() {
-            zoon::println!("🔍 MAIN: Variable {}: {}", i, var.unique_id);
-        }
         if !selected_variables.is_empty() {
             let variables_restored_relay = crate::actors::selected_variables::variables_restored_relay();
             variables_restored_relay.send(selected_variables);
@@ -280,51 +272,6 @@ async fn load_and_register_fonts() {
 }
 
 
-/// Complete application initialization with proper phases to fix N/A bug
-async fn initialize_complete_app_flow() {
-    // Phase 1: This initialization happens once during startup
-    // For now, skip file loading during migration to pure reactive patterns
-    // TODO: Implement proper reactive file restoration when Actor+Relay migration is complete
-    
-    // Config initialization complete - loaded with await in main
-}
-
-/// Wait for specific files to finish loading
-async fn wait_for_files_loaded(file_paths: &[String]) {
-    if file_paths.is_empty() {
-        return;
-    }
-    
-    // Wait until all files are either loaded or failed
-    let mut check_count = 0;
-    let max_checks = 300; // 30 seconds timeout (100ms * 300)
-    
-    loop {
-        // Check if all files are finished loading - minimize lock time
-        let all_finished = {
-            let tracked_files = crate::state::TRACKED_FILES.lock_ref();
-            file_paths.iter().all(|file_path| {
-                tracked_files.iter().any(|tracked| {
-                    tracked.path == *file_path && 
-                    matches!(tracked.state, shared::FileState::Loaded(_) | shared::FileState::Failed(_))
-                })
-            })
-        }; // Lock is released here
-        
-        if all_finished {
-            break;
-        }
-        
-        check_count += 1;
-        if check_count >= max_checks {
-            break;
-        }
-        
-        // Yield to allow queue processor to run, then wait
-        Task::next_macro_tick().await;
-        Timer::sleep(100).await; // Check every 100ms
-    }
-}
 
 fn root() -> impl Element {
     
@@ -374,10 +321,6 @@ fn drag_overlay() -> impl Element {
                     last_y.set_neq(current_y);
                     is_first_move.set_neq(false);
                 } else {
-                    // Calculate deltas from absolute coordinates
-                    let delta_x = current_x - last_x.get();
-                    let delta_y = current_y - last_y.get();
-                    
                     // Send absolute position to new dragging system
                     process_drag_movement((current_x, current_y));
                     
@@ -398,7 +341,6 @@ fn drag_overlay() -> impl Element {
 
 fn main_layout() -> impl Element {
     let is_any_divider_dragging_1 = is_any_divider_dragging();
-    let is_any_divider_dragging_2 = is_any_divider_dragging();
 
     El::new()
         .s(Height::screen())
@@ -432,9 +374,7 @@ fn main_layout() -> impl Element {
         })
         .update_raw_el(move |raw_el| {
             raw_el.global_event_handler(move |event: zoon::events::KeyDown| {
-                // CRITICAL DEBUG: Check if search input focus is blocking keyboard events
                 let search_focused = state::VARIABLES_SEARCH_INPUT_FOCUSED.get();
-                // Keyboard event captured
                 
                 // Skip timeline controls if typing in search input
                 if search_focused {

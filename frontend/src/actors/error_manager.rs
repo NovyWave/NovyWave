@@ -309,7 +309,6 @@ pub fn current_alerts() -> Vec<ErrorAlert> {
     crate::actors::global_domains::ERROR_MANAGER_SIGNALS.get()
         .map(|signals| signals.alerts_mutable.lock_ref().to_vec())
         .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ ErrorManager signals not initialized, returning empty alerts");
             Vec::new()
         })
 }
@@ -319,7 +318,6 @@ pub fn current_notifications() -> Vec<ErrorAlert> {
     crate::actors::global_domains::ERROR_MANAGER_SIGNALS.get()
         .map(|signals| signals.notifications_mutable.lock_ref().to_vec())
         .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ ErrorManager signals not initialized, returning empty notifications");
             Vec::new()
         })
 }
@@ -329,7 +327,6 @@ pub fn current_picker_error() -> Option<String> {
     crate::actors::global_domains::ERROR_MANAGER_SIGNALS.get()
         .map(|signals| signals.picker_error_mutable.get_cloned())
         .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ ErrorManager signals not initialized, returning None picker error");
             None
         })
 }
@@ -339,7 +336,6 @@ pub fn current_error_cache() -> HashMap<String, String> {
     crate::actors::global_domains::ERROR_MANAGER_SIGNALS.get()
         .map(|signals| signals.error_cache_mutable.get_cloned())
         .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ ErrorManager signals not initialized, returning empty error cache");
             HashMap::new()
         })
 }
@@ -350,7 +346,6 @@ pub fn add_error_alert(alert: ErrorAlert) {
     if let Some(signals) = crate::actors::global_domains::ERROR_MANAGER_SIGNALS.get() {
         signals.alerts_mutable.lock_mut().push_cloned(alert.clone());
     } else {
-        zoon::eprintln!("⚠️ ErrorManager signals not initialized - cannot add error alert");
     }
     
     // Also send through relay for future compatibility when Actor+Relay is complete
@@ -363,7 +358,6 @@ pub fn add_toast_notification(notification: ErrorAlert) {
     if let Some(signals) = crate::actors::global_domains::ERROR_MANAGER_SIGNALS.get() {
         signals.notifications_mutable.lock_mut().push_cloned(notification.clone());
     } else {
-        zoon::eprintln!("⚠️ ErrorManager signals not initialized - cannot add toast notification");
     }
     
     // Also send through relay for future compatibility when Actor+Relay is complete

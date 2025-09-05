@@ -67,8 +67,6 @@ impl UnifiedTimelineService {
         if let Some(tracker) = breaker_map.get(signal_id) {
             // Check if circuit is open
             if tracker.is_circuit_open {
-                zoon::println!("🚫 CIRCUIT: Circuit breaker OPEN for variable {} (consecutive empty: {})", 
-                    signal_id, tracker.consecutive_empty_responses);
                 return true;
             }
             
@@ -76,8 +74,6 @@ impl UnifiedTimelineService {
             if let Some(last_request) = tracker.last_request_time {
                 let backoff_duration = super::time_types::DurationNs::from_external_seconds(tracker.backoff_delay_ms as f64 / 1000.0);
                 if now.duration_since(last_request) < backoff_duration {
-                    zoon::println!("⏸️ BACKOFF: Waiting {}ms before retry for variable {}", 
-                        tracker.backoff_delay_ms, signal_id);
                     return true;
                 }
             }
@@ -88,7 +84,6 @@ impl UnifiedTimelineService {
         if let Some(cached_time) = empty_cache.get(signal_id) {
             let cache_duration = super::time_types::DurationNs::from_external_seconds(5.0); // 5 second cache
             if now.duration_since(*cached_time) < cache_duration {
-                zoon::println!("💾 EMPTY CACHE: Using cached empty result for variable {}", signal_id);
                 return true;
             }
         }
@@ -113,11 +108,6 @@ impl UnifiedTimelineService {
         // Open circuit after 3 consecutive empty responses
         if tracker.consecutive_empty_responses >= 3 {
             tracker.is_circuit_open = true;
-            zoon::println!("🚨 CIRCUIT: OPENED circuit breaker for variable {} after {} consecutive empty responses", 
-                signal_id, tracker.consecutive_empty_responses);
-        } else {
-            zoon::println!("⚠️ BACKOFF: Increased backoff to {}ms for variable {} (empty responses: {})", 
-                tracker.backoff_delay_ms, signal_id, tracker.consecutive_empty_responses);
         }
         
         // Cache empty result
@@ -129,7 +119,6 @@ impl UnifiedTimelineService {
     fn reset_circuit_breaker(signal_id: &str) {
         let mut breaker_map = CIRCUIT_BREAKER.lock_mut();
         if breaker_map.contains_key(signal_id) {
-            zoon::println!("✅ CIRCUIT: RESET circuit breaker for variable {} after successful response", signal_id);
             breaker_map.remove(signal_id);
         }
         
@@ -148,9 +137,9 @@ impl UnifiedTimelineService {
 
     /// Reset circuit breaker and caches for specific variables (public method)
     pub fn reset_circuit_breakers_for_variables(signal_ids: &[String]) {
-        let mut breaker_reset_count = 0;
-        let mut empty_cache_reset_count = 0;
-        let mut cursor_cache_reset_count = 0;
+        let mut _breaker_reset_count = 0;
+        let mut _empty_cache_reset_count = 0;
+        let mut _cursor_cache_reset_count = 0;
         
         // Batch operations to reduce lock contention
         {
@@ -159,10 +148,10 @@ impl UnifiedTimelineService {
             
             for signal_id in signal_ids {
                 if breaker_map.remove(signal_id).is_some() {
-                    breaker_reset_count += 1;
+                    _breaker_reset_count += 1;
                 }
                 if empty_cache.remove(signal_id).is_some() {
-                    empty_cache_reset_count += 1;
+                    _empty_cache_reset_count += 1;
                 }
             }
         }
@@ -172,14 +161,12 @@ impl UnifiedTimelineService {
             let mut cache = UNIFIED_TIMELINE_CACHE.lock_mut();
             for signal_id in signal_ids {
                 if cache.cursor_values.remove(signal_id).is_some() {
-                    cursor_cache_reset_count += 1;
+                    _cursor_cache_reset_count += 1;
                 }
             }
         }
         
-        // Single summary log instead of per-variable spam
-        zoon::println!("🔄 CACHE RESET: Cleared {} circuit breakers, {} empty caches, {} cursor caches for {} variables", 
-            breaker_reset_count, empty_cache_reset_count, cursor_cache_reset_count, signal_ids.len());
+        // Cache reset completed silently
         
         // CRITICAL: Force signal re-evaluation by triggering cache signal
         Self::force_signal_reevaluation();
@@ -187,7 +174,6 @@ impl UnifiedTimelineService {
 
     /// Force all cursor_value_signal chains to re-evaluate by modifying cache signal
     pub fn force_signal_reevaluation() {
-        zoon::println!("🔄 FORCE: Triggering signal re-evaluation for all cursor value signals");
         
         // Trigger cache signal by temporarily modifying cache - this forces map_ref! to re-evaluate
         {
@@ -234,8 +220,8 @@ impl UnifiedTimelineService {
     
     /// Public method to manually trigger circuit breaker reset and signal re-evaluation
     /// Used for debugging and manual recovery from circuit breaker states
+    #[allow(dead_code)] // Timeline service method - preserve for debugging features
     pub fn manual_reset_and_reevaluate() {
-        zoon::println!("🔄 MANUAL: Triggering manual circuit breaker reset and signal re-evaluation");
         
         // Get all selected variable IDs
         let signal_ids = vec![
@@ -491,6 +477,7 @@ impl UnifiedTimelineService {
     }
     
     /// Get signal for cache changes (public accessor for reactivity)
+    #[allow(dead_code)] // Timeline service method - preserve for cache reactivity
     pub fn cache_signal() -> impl Signal<Item = ()> + use<> {
         UNIFIED_TIMELINE_CACHE.signal_ref(|_| ())
     }
@@ -515,7 +502,6 @@ impl UnifiedTimelineService {
             
             // Only clear cache for variables that actually changed
             if !removed_variables.is_empty() {
-                zoon::println!("🗑️ CACHE: Clearing cache for {} removed variables", removed_variables.len());
                 for removed_var in &removed_variables {
                     cache.cursor_values.remove(*removed_var);
                     cache.viewport_data.remove(*removed_var);
@@ -524,7 +510,6 @@ impl UnifiedTimelineService {
             }
             
             if !added_variables.is_empty() {
-                zoon::println!("➕ CACHE: Added {} new variables to track", added_variables.len());
                 // New variables will naturally trigger cache misses and backend requests
             }
             
@@ -637,13 +622,9 @@ impl UnifiedTimelineService {
         let mut breaker_map = CIRCUIT_BREAKER.lock_mut();
         let cutoff_duration = super::time_types::DurationNs::from_external_seconds(300.0); // 5 minutes
         
-        breaker_map.retain(|signal_id, tracker| {
+        breaker_map.retain(|_, tracker| {
             if let Some(last_request) = tracker.last_request_time {
-                let should_keep = now.duration_since(last_request) < cutoff_duration;
-                if !should_keep {
-                    zoon::println!("🧹 CLEANUP: Removed stale circuit breaker for variable {}", signal_id);
-                }
-                should_keep
+                now.duration_since(last_request) < cutoff_duration
             } else {
                 false // Remove trackers with no request time
             }
@@ -653,12 +634,8 @@ impl UnifiedTimelineService {
         let mut empty_cache = EMPTY_RESULT_CACHE.lock_mut();
         let cache_cutoff = super::time_types::DurationNs::from_external_seconds(30.0); // 30 seconds
         
-        empty_cache.retain(|signal_id, cached_time| {
-            let should_keep = now.duration_since(*cached_time) < cache_cutoff;
-            if !should_keep {
-                zoon::println!("🧹 CLEANUP: Removed stale empty cache for variable {}", signal_id);
-            }
-            should_keep
+        empty_cache.retain(|_, cached_time| {
+            now.duration_since(*cached_time) < cache_cutoff
         });
     }
     
@@ -698,7 +675,6 @@ impl UnifiedTimelineService {
                     
                     // ✅ FIX: Trigger cache signal when cursor position changes to update variable values
                     if (!was_invalid_before && became_invalid) || became_invalid {
-                        zoon::println!("🔄 CURSOR MOVED: Triggering cache signal to update variable values at {}s", new_cursor.display_seconds());
                         let current_cache = UNIFIED_TIMELINE_CACHE.get_cloned();
                         UNIFIED_TIMELINE_CACHE.set(current_cache);
                     }

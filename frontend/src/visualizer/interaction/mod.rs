@@ -4,7 +4,7 @@
 pub mod dragging;
 
 // Re-exports for API compatibility
-pub use dragging::*;
+// pub use dragging::*; // Unused re-export
 
 // Future interaction modules (will be extracted from various files)
 // pub mod keyboard;

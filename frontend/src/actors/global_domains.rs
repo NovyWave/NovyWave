@@ -40,7 +40,9 @@ pub struct TrackedFilesSignalStorage {
     pub loading_files_mutable: MutableVec<LoadingFile>, 
     pub loaded_files_mutable: MutableVec<WaveformFile>,
     pub is_loading_mutable: Mutable<bool>,
+    #[allow(dead_code)] // Migration signal storage - preserve for actor transition
     pub file_ids_mutable: Mutable<IndexSet<String>>,
+    #[allow(dead_code)] // Migration signal storage - preserve for actor transition
     pub file_paths_mutable: Mutable<IndexMap<String, String>>,
 }
 
@@ -62,8 +64,11 @@ pub static TRACKED_FILES_SIGNALS: OnceLock<TrackedFilesSignalStorage> = OnceLock
 
 /// Static signal storage for SelectedVariables domain  
 pub struct SelectedVariablesSignalStorage {
+    #[allow(dead_code)] // Migration signal storage - preserve for actor transition
     pub variables_mutable: MutableVec<SelectedVariable>,
+    #[allow(dead_code)] // Migration signal storage - preserve for actor transition
     pub expanded_scopes_mutable: Mutable<IndexSet<String>>,
+    #[allow(dead_code)] // Migration signal storage - preserve for actor transition
     pub search_filter_mutable: Mutable<String>,
 }
 
@@ -139,10 +144,7 @@ pub static ERROR_MANAGER_SIGNALS: OnceLock<ErrorManagerSignalStorage> = OnceLock
 
 /// Initialize all domain instances - call once on app startup
 pub async fn initialize_all_domains() -> Result<(), &'static str> {
-    // Starting Actor+Relay domain initialization
-    
     // PHASE 1: Initialize static signal storage first
-    // Initializing static signal storage
     TRACKED_FILES_SIGNALS.set(TrackedFilesSignalStorage::new())
         .map_err(|_| "FATAL: TrackedFiles signal storage already initialized")?;
     SELECTED_VARIABLES_SIGNALS.set(SelectedVariablesSignalStorage::new())
@@ -153,7 +155,6 @@ pub async fn initialize_all_domains() -> Result<(), &'static str> {
         .map_err(|_| "FATAL: ErrorManager signal storage already initialized")?;
     
     // PHASE 2: Initialize legacy domains in parallel for better startup performance
-    // Creating domain instances
     let (tracked_files, selected_variables, waveform_timeline, user_config, dialog_manager, error_manager) = futures::join!(
         TrackedFiles::new(),
         SelectedVariables::new(),
@@ -162,8 +163,6 @@ pub async fn initialize_all_domains() -> Result<(), &'static str> {
         DialogManager::new(),
         ErrorManager::new()
     );
-    
-    // Domain constructors completed, storing instances
     
     // Store legacy instances for global access
     TRACKED_FILES_DOMAIN_INSTANCE.set(tracked_files)
@@ -185,11 +184,8 @@ pub async fn initialize_all_domains() -> Result<(), &'static str> {
     config_sync::initialize();
     
     // PHASE 3: Connect TrackedFiles domain to config persistence
-    // Setting up TrackedFiles ↔ Config persistence bridge
     setup_tracked_files_config_bridge().await;
     
-    // All Actor+Relay domains initialized successfully
-    // All Actor+Relay domains initialized successfully
     Ok(())
 }
 
@@ -197,7 +193,6 @@ pub async fn initialize_all_domains() -> Result<(), &'static str> {
 pub fn tracked_files_domain() -> TrackedFiles {
     TRACKED_FILES_DOMAIN_INSTANCE.get()
         .unwrap_or_else(|| {
-            zoon::println!("🚨 FATAL: TrackedFiles domain not initialized - initialize_all_domains() must be called during app startup before accessing domains");
             panic!("TrackedFiles domain accessed before initialization - this indicates a critical application initialization ordering bug")
         })
         .clone()
@@ -207,7 +202,6 @@ pub fn tracked_files_domain() -> TrackedFiles {
 pub fn selected_variables_domain() -> SelectedVariables {
     SELECTED_VARIABLES_DOMAIN_INSTANCE.get()
         .unwrap_or_else(|| {
-            zoon::println!("🚨 FATAL: SelectedVariables domain not initialized - initialize_all_domains() must be called during app startup before accessing domains");
             panic!("SelectedVariables domain accessed before initialization - this indicates a critical application initialization ordering bug")
         })
         .clone()
@@ -218,7 +212,6 @@ pub fn waveform_timeline_domain() -> WaveformTimeline {
     WAVEFORM_TIMELINE_DOMAIN_INSTANCE.get()
         .map(|instance| instance.clone())
         .unwrap_or_else(|| {
-            zoon::eprintln!("🚨 FATAL: WaveformTimeline domain not initialized - initialize_all_domains() must be called during app startup before accessing domains");
             panic!("WaveformTimeline domain accessed before initialization - this indicates a critical application initialization ordering bug")
         })
 }
@@ -227,7 +220,6 @@ pub fn waveform_timeline_domain() -> WaveformTimeline {
 pub fn _user_configuration_domain() -> UserConfiguration {
     USER_CONFIGURATION_DOMAIN_INSTANCE.get()
         .unwrap_or_else(|| {
-            zoon::println!("🚨 FATAL: UserConfiguration domain not initialized - initialize_all_domains() must be called during app startup before accessing domains");
             panic!("UserConfiguration domain accessed before initialization - this indicates a critical application initialization ordering bug")
         })
         .clone()
@@ -238,7 +230,6 @@ pub fn _user_configuration_domain() -> UserConfiguration {
 pub fn dialog_manager_domain() -> DialogManager {
     DIALOG_MANAGER_DOMAIN_INSTANCE.get()
         .unwrap_or_else(|| {
-            zoon::println!("🚨 FATAL: DialogManager domain not initialized - initialize_all_domains() must be called during app startup before accessing domains");
             panic!("DialogManager domain accessed before initialization - this indicates a critical application initialization ordering bug")
         })
         .clone()
@@ -248,7 +239,6 @@ pub fn dialog_manager_domain() -> DialogManager {
 pub fn error_manager_domain() -> ErrorManager {
     ERROR_MANAGER_DOMAIN_INSTANCE.get()
         .unwrap_or_else(|| {
-            zoon::println!("🚨 FATAL: ErrorManager domain not initialized - initialize_all_domains() must be called during app startup before accessing domains");
             panic!("ErrorManager domain accessed before initialization - this indicates a critical application initialization ordering bug")
         })
         .clone()
@@ -272,7 +262,6 @@ pub fn tracked_files_signal() -> impl Signal<Item = Vec<TrackedFile>> {
     TRACKED_FILES_SIGNALS.get()
         .map(|signals| signals.files_mutable.signal_vec_cloned().to_signal_cloned().dedupe_cloned())
         .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ TrackedFiles signals not initialized, returning empty signal");
             MutableVec::<TrackedFile>::new().signal_vec_cloned().to_signal_cloned().dedupe_cloned()
         })
 }
@@ -311,31 +300,29 @@ fn compare_tracked_files(a: &shared::TrackedFile, b: &shared::TrackedFile) -> st
 pub fn tracked_files_signal_vec() -> impl SignalVec<Item = TrackedFile> {
     TRACKED_FILES_SIGNALS.get()
         .map(|signals| {
-            // TrackedFiles signals found, returning sorted signal_vec
             signals.files_mutable.signal_vec_cloned().sort_by_cloned(compare_tracked_files)
         })
         .unwrap_or_else(|| {
-            zoon::println!("⚠️ DEBUG: TrackedFiles signals not initialized, returning empty signal vec");
             zoon::MutableVec::new().signal_vec_cloned().sort_by_cloned(compare_tracked_files)
         })
 }
 
 /// Get owned signal for loading files - LIFETIME SAFE
+#[allow(dead_code)]
 pub fn loading_files_signal() -> impl Signal<Item = Vec<LoadingFile>> {
     TRACKED_FILES_SIGNALS.get()
         .map(|signals| signals.loading_files_mutable.signal_vec_cloned().to_signal_cloned().dedupe_cloned())
         .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ TrackedFiles signals not initialized, returning empty loading files signal");
             MutableVec::<LoadingFile>::new().signal_vec_cloned().to_signal_cloned().dedupe_cloned()
         })
 }
 
 /// Get owned signal for loaded files - LIFETIME SAFE
+#[allow(dead_code)]
 pub fn loaded_files_signal() -> impl Signal<Item = Vec<WaveformFile>> {
     TRACKED_FILES_SIGNALS.get()
         .map(|signals| signals.loaded_files_mutable.signal_vec_cloned().to_signal_cloned().dedupe_cloned())
         .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ TrackedFiles signals not initialized, returning empty loaded files signal");
             MutableVec::<WaveformFile>::new().signal_vec_cloned().to_signal_cloned().dedupe_cloned()
         })
 }
@@ -345,7 +332,6 @@ pub fn is_loading_signal() -> impl Signal<Item = bool> {
     TRACKED_FILES_SIGNALS.get()
         .map(|signals| signals.is_loading_mutable.signal())
         .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ TrackedFiles signals not initialized, returning false loading signal");
             Mutable::new(false).signal()
         })
 }
@@ -355,12 +341,12 @@ pub fn file_count_signal() -> impl Signal<Item = usize> {
     // For now, use config directly until TrackedFiles domain is fully integrated
     crate::config::app_config().session_state_actor.signal().map(|session| {
         let count = session.opened_files.len();
-        // file_count_signal returning count
         count
     })
 }
 
 /// Get owned signal for loaded files count - SIMPLE ACTOR+RELAY APPROACH
+#[allow(dead_code)]
 pub fn loaded_files_count_signal() -> impl Signal<Item = usize> {
     // Use a simple Mutable<usize> that gets updated by the TrackedFiles domain
     use std::sync::OnceLock;
@@ -388,21 +374,21 @@ pub fn selected_variables_signal_vec() -> impl SignalVec<Item = SelectedVariable
 }
 
 /// Get owned signal for expanded scopes - LIFETIME SAFE
+#[allow(dead_code)] // Actor+Relay API function - preserve for completeness
 pub fn expanded_scopes_signal() -> impl Signal<Item = IndexSet<String>> {
     SELECTED_VARIABLES_SIGNALS.get()
         .map(|signals| signals.expanded_scopes_mutable.signal_cloned())
         .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ SelectedVariables signals not initialized, returning empty expanded scopes signal");
             Mutable::new(IndexSet::<String>::new()).signal_cloned()
         })
 }
 
 /// Get owned signal for search filter - LIFETIME SAFE
+#[allow(dead_code)] // Actor+Relay API function - preserve for completeness
 pub fn search_filter_signal() -> impl Signal<Item = String> {
     SELECTED_VARIABLES_SIGNALS.get()
         .map(|signals| signals.search_filter_mutable.signal_cloned())
         .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ SelectedVariables signals not initialized, returning empty search filter signal");
             Mutable::new(String::new()).signal_cloned()
         })
 }
@@ -488,7 +474,6 @@ pub fn dialog_manager_visible_signal() -> impl Signal<Item = bool> {
     DIALOG_MANAGER_SIGNALS.get()
         .map(|signals| signals.dialog_visible_mutable.signal())
         .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ DialogManager signals not initialized, returning false dialog visible signal");
             Mutable::new(false).signal()
         })
 }
@@ -498,7 +483,6 @@ pub fn dialog_manager_paths_input_signal() -> impl Signal<Item = String> {
     DIALOG_MANAGER_SIGNALS.get()
         .map(|signals| signals.paths_input_mutable.signal_cloned())
         .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ DialogManager signals not initialized, returning empty paths input signal");
             Mutable::new(String::new()).signal_cloned()
         })
 }
@@ -508,7 +492,6 @@ pub fn dialog_manager_expanded_directories_signal() -> impl Signal<Item = IndexS
     DIALOG_MANAGER_SIGNALS.get()
         .map(|signals| signals.expanded_directories_mutable.signal_cloned())
         .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ DialogManager signals not initialized, returning empty expanded directories signal");
             Mutable::new(IndexSet::<String>::new()).signal_cloned()
         })
 }
@@ -518,7 +501,6 @@ pub fn dialog_manager_selected_files_signal() -> impl Signal<Item = Vec<String>>
     DIALOG_MANAGER_SIGNALS.get()
         .map(|signals| signals.selected_files_mutable.signal_vec_cloned().to_signal_cloned().dedupe_cloned())
         .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ DialogManager signals not initialized, returning empty selected files signal");
             MutableVec::<String>::new().signal_vec_cloned().to_signal_cloned().dedupe_cloned()
         })
 }
@@ -528,7 +510,6 @@ pub fn dialog_manager_current_error_signal() -> impl Signal<Item = Option<String
     DIALOG_MANAGER_SIGNALS.get()
         .map(|signals| signals.current_error_mutable.signal_cloned())
         .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ DialogManager signals not initialized, returning None current error signal");
             Mutable::new(None::<String>).signal_cloned()
         })
 }
@@ -538,7 +519,6 @@ pub fn dialog_manager_error_cache_signal() -> impl Signal<Item = std::collection
     DIALOG_MANAGER_SIGNALS.get()
         .map(|signals| signals.error_cache_mutable.signal_cloned())
         .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ DialogManager signals not initialized, returning empty error cache signal");
             Mutable::new(std::collections::HashMap::<String, String>::new()).signal_cloned()
         })
 }
@@ -548,7 +528,6 @@ pub fn dialog_manager_viewport_y_signal() -> impl Signal<Item = i32> {
     DIALOG_MANAGER_SIGNALS.get()
         .map(|signals| signals.viewport_y_mutable.signal())
         .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ DialogManager signals not initialized, returning 0 viewport y signal");
             Mutable::new(0i32).signal()
         })
 }
@@ -558,7 +537,6 @@ pub fn dialog_manager_scroll_position_signal() -> impl Signal<Item = i32> {
     DIALOG_MANAGER_SIGNALS.get()
         .map(|signals| signals.scroll_position_mutable.signal())
         .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ DialogManager signals not initialized, returning 0 scroll position signal");
             Mutable::new(0i32).signal()
         })
 }
@@ -568,17 +546,16 @@ pub fn dialog_manager_last_expanded_signal() -> impl Signal<Item = std::collecti
     DIALOG_MANAGER_SIGNALS.get()
         .map(|signals| signals.last_expanded_mutable.signal_cloned())
         .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ DialogManager signals not initialized, returning empty last expanded signal");
             Mutable::new(std::collections::HashSet::<String>::new()).signal_cloned()
         })
 }
 
 /// Get expanded directories mutable for TreeView external_expanded - LIFETIME SAFE
+#[allow(dead_code)]
 pub fn dialog_manager_expanded_mutable() -> Mutable<IndexSet<String>> {
     DIALOG_MANAGER_SIGNALS.get()
         .map(|signals| signals.expanded_directories_mutable.clone())
         .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ DialogManager signals not initialized, returning new empty expanded directories mutable");
             Mutable::new(IndexSet::<String>::new())
         })
 }
@@ -588,7 +565,6 @@ pub fn dialog_manager_selected_mutable() -> MutableVec<String> {
     DIALOG_MANAGER_SIGNALS.get()
         .map(|signals| signals.selected_files_mutable.clone())
         .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ DialogManager signals not initialized, returning new empty selected files mutable");
             MutableVec::<String>::new()
         })
 }
@@ -598,7 +574,6 @@ pub fn error_manager_alerts_signal() -> impl Signal<Item = Vec<crate::state::Err
     ERROR_MANAGER_SIGNALS.get()
         .map(|signals| signals.alerts_mutable.signal_vec_cloned().to_signal_cloned().dedupe_cloned())
         .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ ErrorManager signals not initialized, returning empty alerts signal");
             MutableVec::<crate::state::ErrorAlert>::new().signal_vec_cloned().to_signal_cloned().dedupe_cloned()
         })
 }
@@ -608,7 +583,6 @@ pub fn error_manager_notifications_signal() -> impl Signal<Item = Vec<crate::sta
     ERROR_MANAGER_SIGNALS.get()
         .map(|signals| signals.notifications_mutable.signal_vec_cloned().to_signal_cloned().dedupe_cloned())
         .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ ErrorManager signals not initialized, returning empty notifications signal");
             MutableVec::<crate::state::ErrorAlert>::new().signal_vec_cloned().to_signal_cloned().dedupe_cloned()
         })
 }
@@ -618,7 +592,6 @@ pub fn error_manager_notifications_signal_vec() -> impl SignalVec<Item = crate::
     ERROR_MANAGER_SIGNALS.get()
         .map(|signals| signals.notifications_mutable.signal_vec_cloned())
         .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ ErrorManager signals not initialized, returning empty notifications SignalVec");
             MutableVec::<crate::state::ErrorAlert>::new().signal_vec_cloned()
         })
 }
@@ -628,7 +601,6 @@ pub fn error_manager_picker_error_signal() -> impl Signal<Item = Option<String>>
     ERROR_MANAGER_SIGNALS.get()
         .map(|signals| signals.picker_error_mutable.signal_cloned())
         .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ ErrorManager signals not initialized, returning None picker error signal");
             Mutable::new(None::<String>).signal_cloned()
         })
 }
@@ -638,17 +610,16 @@ pub fn error_manager_error_cache_signal() -> impl Signal<Item = std::collections
     ERROR_MANAGER_SIGNALS.get()
         .map(|signals| signals.error_cache_mutable.signal_cloned())
         .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ ErrorManager signals not initialized, returning empty error cache signal");
             Mutable::new(std::collections::HashMap::<String, String>::new()).signal_cloned()
         })
 }
 
 /// Get owned signal for next alert ID - LIFETIME SAFE  
+#[allow(dead_code)]
 pub fn error_manager_next_alert_id_signal() -> impl Signal<Item = u32> {
     ERROR_MANAGER_SIGNALS.get()
         .map(|signals| signals.next_alert_id_mutable.signal())
         .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ ErrorManager signals not initialized, creating default mutable with 1");
             zoon::Mutable::new(1).signal()
         })
 }
@@ -706,7 +677,6 @@ pub fn test_synchronous_domain_access() {
 /// Set up bridge between TrackedFiles domain and config persistence
 /// Similar to how expanded directories work with direct config connection
 async fn setup_tracked_files_config_bridge() {
-    // TrackedFiles: Setting up config bridge
     
     // Step 1: Load files from config into TrackedFiles domain
     let app_config = crate::config::app_config();
@@ -714,7 +684,6 @@ async fn setup_tracked_files_config_bridge() {
     
     if let Some(session_state) = initial_files {
         if !session_state.opened_files.is_empty() {
-            // TrackedFiles: Loading files from config
             let tracked_files_domain = tracked_files_domain();
             tracked_files_domain.config_files_loaded_relay.send(session_state.opened_files);
         }
@@ -745,12 +714,10 @@ async fn setup_tracked_files_config_bridge() {
                         
                         // Trigger config save through session state change
                         session_relay.send(session_state);
-                        zoon::println!("💾 TrackedFiles: Synced {} files to config → automatic save triggered", file_paths.len());
                     }
                 }
             }
         }).await;
     });
     
-    // TrackedFiles ↔ Config bridge established
 }

@@ -26,7 +26,7 @@ pub fn filter_variables_with_context(variables: &[VariableWithContext], search_f
 /// Get variables from a specific scope using actors (enables per-file loading)
 
 pub fn get_variables_from_tracked_files(selected_scope_id: &str) -> Vec<VariableWithContext> {
-    use shared::{FileState, find_variables_in_scope};
+    use shared::{find_variables_in_scope}; // Removed unused FileState
     
     // Parse scope_ format correctly - it's needed for TreeView identification
     // The scope ID format is: "scope_{file_path}|{scope_path}"

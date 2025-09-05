@@ -25,6 +25,7 @@ pub static IS_CURSOR_MOVING_RIGHT: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::n
 pub static IS_SHIFT_PRESSED: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
 
 // MIGRATED: Mouse tracking → use mouse_x_position_signal() / mouse_time_ns_signal() from waveform_timeline
+#[allow(dead_code)] // Migration state - preserve during Actor+Relay transition
 pub static MOUSE_TIME_NS: Lazy<Mutable<TimeNs>> = Lazy::new(|| Mutable::new(TimeNs::ZERO));
 
 // MIGRATED: Zoom center → use zoom_center_ns_signal() from waveform_timeline

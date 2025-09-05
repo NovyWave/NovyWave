@@ -5,7 +5,7 @@
 
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use futures::stream::{Stream, FusedStream};
-use std::sync::{Arc, OnceLock, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// Type-safe event streaming relay for Actor+Relay architecture.
 /// 
@@ -36,7 +36,6 @@ use std::sync::{Arc, OnceLock, Mutex};
 /// 
 /// // Process events in Actor
 /// while let Some(paths) = stream.next().await {
-///     println!("Files dropped: {:?}", paths);
 /// }
 /// ```
 #[derive(Clone, Debug)]
@@ -180,10 +179,7 @@ where
     /// 
     /// ```rust
     /// match relay.try_send(event) {
-    ///     Ok(()) => println!("Event sent successfully"),
-    ///     Err(RelayError::ChannelClosed) => println!("No subscribers"),
     ///     #[cfg(debug_assertions)]
-    ///     Err(RelayError::MultipleEmitters { .. }) => println!("Multiple sources"),
     /// }
     /// ```
     #[track_caller]

@@ -36,11 +36,11 @@ pub mod testing;
 // Integration with main app
 pub mod integration;
 
-// Re-export commonly used types for convenience
-pub use timeline::time_types::*;
-pub use timeline::timeline_service::*;
-pub use formatting::signal_values::*;
-pub use canvas::waveform_canvas::*;
-pub use interaction::dragging::*;
+// Re-export commonly used types for convenience  
+// pub use timeline::time_types::*;        // Unused re-export
+// pub use timeline::timeline_service::*;  // Unused re-export
+// pub use formatting::signal_values::*;   // Unused re-export
+// pub use canvas::waveform_canvas::*;     // Unused re-export
+// pub use interaction::dragging::*;       // Unused re-export
 // Future re-exports:
 // pub use state::{timeline_state::*, canvas_state::*};

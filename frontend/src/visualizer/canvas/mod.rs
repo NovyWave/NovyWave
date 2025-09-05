@@ -12,8 +12,8 @@ pub mod navigation;     // Transition jumping and reset functions
 
 // Re-exports for API compatibility
 pub use waveform_canvas::*;
-pub use animation::*;
-pub use rendering::*;
-pub use timeline::*;
-pub use transitions::*;
-pub use navigation::*;
+// pub use animation::*;    // Unused - functions accessed through waveform_canvas
+// pub use rendering::*;    // Unused - functions accessed through waveform_canvas
+// pub use timeline::*;     // Unused - functions accessed through waveform_canvas
+// pub use transitions::*;  // Unused - functions accessed through waveform_canvas
+// pub use navigation::*;   // Unused - functions accessed through waveform_canvas

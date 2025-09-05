@@ -2,8 +2,8 @@ use zoon::*;
 use std::collections::HashMap;
 use indexmap::{IndexMap, IndexSet};
 use shared::{WaveformFile, LoadingFile, FileSystemItem, TrackedFile, FileState};
-use crate::visualizer::timeline::time_types::{TimeNs, TimelineCache};
-use crate::config::app_config;
+// use crate::visualizer::timeline::time_types::{TimeNs, TimelineCache}; // Unused
+// use crate::config::app_config; // Unused
 // Using simpler queue approach with MutableVec
 
 // ===== STABLE SIGNAL HELPERS =====

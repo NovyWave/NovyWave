@@ -385,7 +385,7 @@ impl WaveformTimeline {
                                     crate::visualizer::timeline::timeline_actor_domain().reset_zoom_pressed_relay.send(());
                                     
                                     // ✅ FIX: Center cursor at viewport center when timeline bounds are calculated
-                                    let _center_time = (min_time + max_time) / 2.0;
+                                    let center_time = (min_time + max_time) / 2.0;
                                     cursor_center_at_viewport_relay_clone.send(());
                                 }
                                 None => break,
@@ -620,13 +620,13 @@ impl WaveformTimeline {
                                     
                                     // Only update cached width if it's significantly different (not minor fluctuations)
                                     if *cached_width == 0 || (raw_width as i32 - *cached_width as i32).abs() > 50 {
-                                        // Significant width change - update cached width
+                                            *cached_width, raw_width);
                                         *cached_width = raw_width;
                                     } else if raw_width != *cached_width {
-                                        // Minor width difference - no cache update needed
+                                            *cached_width, raw_width, *cached_width);
                                     }
                                     
-                                    // Width cached for optimization
+                                        *cached_width, raw_width);
                                     
                                     *cached_width
                                 };
@@ -674,12 +674,11 @@ impl WaveformTimeline {
                                     
                                     if let Some(prev_zoom) = *previous_zoom {
                                         if (zoom_ms_per_pixel - prev_zoom).abs() < 0.1 {
-                                            // Zoom level unchanged - no debug needed
+                                                zoom_ms_per_pixel, prev_zoom);
                                         } else {
-                                            // Zoom level changed significantly
+                                                prev_zoom, zoom_ms_per_pixel);
                                         }
                                     } else {
-                                        // Initial zoom level - no previous value to compare
                                     }
                                     *previous_zoom = Some(zoom_ms_per_pixel);
                                     
@@ -729,11 +728,18 @@ impl WaveformTimeline {
                                     let corrected_ns_per_pixel = NsPerPixel((viewport_range_ns + new_width as u64 / 2) / new_width as u64);
                                     
                                     
+                                        new_width, corrected_ns_per_pixel, 
+                                        current_viewport.start.display_seconds(),
+                                        current_viewport.end.display_seconds());
+                                    
                                     // Only update if the calculation produces a different value
                                     let current_ns_per_pixel = ns_per_pixel_handle.get();
                                     if corrected_ns_per_pixel != current_ns_per_pixel {
                                         ns_per_pixel_handle.set_neq(corrected_ns_per_pixel);
+                                            current_ns_per_pixel, corrected_ns_per_pixel, viewport_range_ns);
+                                    } else {
                                     }
+                                } else {
                                 }
                             }
                             None => break,
@@ -2152,26 +2158,20 @@ pub fn set_viewport_if_changed(new_viewport: Viewport) {
     
     // DEBUG: Track all viewport change attempts to catch the 1s corruption
     if let Some(vp) = current_viewport {
-        zoon::println!("🔍 Current viewport: {:.3}s - {:.3}s (duration: {:.3}s)", 
             vp.start.display_seconds(), 
             vp.end.display_seconds(),
             vp.duration().display_seconds());
     } else {
-        zoon::println!("🔍 Current viewport: None");
     }
-    zoon::println!("🔍 New viewport: {:.3}s - {:.3}s (duration: {:.3}s)", 
         new_viewport.start.display_seconds(), 
         new_viewport.end.display_seconds(),
         new_viewport.duration().display_seconds());
     
     if new_viewport.duration().display_seconds() <= 1.1 {
-        zoon::println!("🚨 BLOCKING viewport corruption: duration {:.3}s is too small", 
             new_viewport.duration().display_seconds());
         if let Some(vp) = current_viewport {
-            zoon::println!("🔒 Preserving current viewport: {:.3}s - {:.3}s", 
                 vp.start.display_seconds(), vp.end.display_seconds());
         } else {
-            zoon::println!("🔒 No current viewport to preserve");
         }
         return; // Block the corruption, preserve current viewport
     }
@@ -2179,17 +2179,14 @@ pub fn set_viewport_if_changed(new_viewport: Viewport) {
     // Only emit event if value actually changed
     if current_viewport != Some(new_viewport) {
         if let Some(vp) = current_viewport {
-            zoon::println!("✅ Viewport changed: {:.3}s-{:.3}s → {:.3}s-{:.3}s", 
                 vp.start.display_seconds(), vp.end.display_seconds(),
                 new_viewport.start.display_seconds(), new_viewport.end.display_seconds());
         } else {
-            zoon::println!("✅ Viewport set from None to {:.3}s-{:.3}s", 
                 new_viewport.start.display_seconds(), new_viewport.end.display_seconds());
         }
         let viewport_tuple = (new_viewport.start.display_seconds(), new_viewport.end.display_seconds());
         viewport_changed_relay().send(viewport_tuple);
     } else {
-        zoon::println!("📝 Viewport unchanged, not sending signal");
     }
 }
 

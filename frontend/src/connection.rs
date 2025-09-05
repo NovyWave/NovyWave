@@ -1,5 +1,5 @@
 use zoon::*;
-use crate::{LOADING_FILES, LOADED_FILES, check_loading_complete, config};
+use crate::{LOADING_FILES, LOADED_FILES, check_loading_complete};
 use crate::error_display::{add_error_alert, log_error_console_only};
 use crate::state::ErrorAlert;
 use crate::utils::restore_scope_selection_for_file;
@@ -12,6 +12,7 @@ use wasm_bindgen::JsValue;
 use js_sys::Reflect;
 
 // Tauri environment detection
+#[allow(dead_code)]
 fn is_tauri_environment() -> bool {
     if let Ok(global) = js_sys::global().dyn_into::<web_sys::Window>() {
         // Check if __TAURI__ exists in the global scope
@@ -30,15 +31,7 @@ fn is_tauri_environment() -> bool {
 pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
     // TEMPORARY: Both web and Tauri use port 8080 for easier testing
     // TODO: Implement proper dynamic port detection for Tauri
-    crate::debug_utils::debug_conditional("CONNECTION: Initializing with standard port 8080");
     
-    // DEBUG: Log environment and connection details
-    if is_tauri_environment() {
-        crate::debug_utils::debug_conditional("CONNECTION: Running in Tauri environment - SSE may fail due to protocol mismatch");
-        crate::debug_utils::debug_conditional("CONNECTION: Tauri origin is likely 'tauri://localhost', backend is 'http://localhost:8080'");
-    } else {
-        crate::debug_utils::debug_conditional("CONNECTION: Running in web environment - standard SSE should work");
-    }
     
     Connection::new(|down_msg, _| {
         // DownMsg logging disabled - causes CLI overflow with large files
@@ -83,17 +76,13 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                     if let Some((min_time, max_time)) = crate::visualizer::canvas::waveform_canvas::get_maximum_timeline_range() {
                         crate::visualizer::timeline::timeline_actor::timeline_bounds_calculated_relay()
                             .send((min_time, max_time));
-                        zoon::println!("🎯 FILE_LOADED: Sent timeline bounds to Actor: {:.6}s to {:.6}s (from actual file data)", min_time, max_time);
                     } else {
                         // Force timeline bounds calculation even when no variables selected
-                        zoon::println!("🎯 FILE_LOADED: get_maximum_timeline_range returned None, force-calculating bounds");
                         let (file_min, file_max) = crate::visualizer::canvas::waveform_canvas::get_full_file_range();
                         if file_min < file_max && file_min.is_finite() && file_max.is_finite() {
                             crate::visualizer::timeline::timeline_actor::timeline_bounds_calculated_relay()
                                 .send((file_min, file_max));
-                            zoon::println!("🎯 FILE_LOADED: Force-sent timeline bounds to Actor: {:.6}s to {:.6}s (full file range)", file_min, file_max);
                         } else {
-                            zoon::println!("🎯 FILE_LOADED: No valid file range available for timeline bounds");
                         }
                     }
                 }
@@ -170,7 +159,6 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
             }
             DownMsg::DirectoryContents { path, items } => {
                 // Cache directory contents
-                // File tree cache updated with directory contents
                 crate::FILE_TREE_CACHE.lock_mut().insert(path.clone(), items.clone());
                 
                 // Auto-expand home directory path and its parent directories
@@ -212,10 +200,7 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 set_file_error(None);
             }
             DownMsg::ConfigLoaded(_config) => {
-                crate::debug_utils::debug_conditional("RECEIVED ConfigLoaded message");
-                
                 // Config response now handled directly by exchange_msgs in load_config_from_backend
-                crate::debug_utils::debug_conditional("Config response received - handled by exchange_msgs");
             }
             DownMsg::ConfigSaved => {
                 // Config saved successfully
@@ -229,7 +214,6 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                     match result {
                         Ok(items) => {
                             // Update cache with successful directory scan
-                            // Bulk directory scan results cached
                             crate::FILE_TREE_CACHE.lock_mut().insert(path.clone(), items);
                             
                             // Clear any previous error for this directory
@@ -252,13 +236,11 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 set_file_error(None);
             }
             DownMsg::SignalTransitions { file_path, results } => {
-                crate::debug_utils::debug_signal_transitions(&format!("Received {} transitions for {}", results.len(), file_path));
                 
                 // Process signal transitions from backend - UPDATE CACHE
                 for result in results {
                     let cache_key = format!("{}|{}|{}", file_path, result.scope_path, result.variable_name);
                     
-                    // zoon::println!("=== INSERTING TO CACHE: {} with {} transitions ===", cache_key, result.transitions.len());
                     
                     // Store backend data in unified cache
                     crate::visualizer::timeline::timeline_service::UnifiedTimelineService::insert_raw_transitions(
@@ -307,18 +289,13 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 }
             }
             DownMsg::UnifiedSignalResponse { request_id, signal_data, cursor_values, statistics, cached_time_range_ns: _ } => {
-                // Debug: Log response details
-                zoon::println!("📨 FRONTEND: Received UnifiedSignalResponse - request_id: {}, signal_data: {} items, cursor_values: {} items", 
-                    request_id, signal_data.len(), cursor_values.len());
                 
                 // Log cursor values for debugging
-                for (signal_id, value) in &cursor_values {
+                for (_signal_id, value) in &cursor_values {
                     match value {
-                        shared::SignalValue::Present(data) => {
-                            zoon::println!("📊 CURSOR VALUE: {} = {}", signal_id, data);
+                        shared::SignalValue::Present(_data) => {
                         },
                         shared::SignalValue::Missing => {
-                            zoon::println!("📊 CURSOR VALUE: {} = Missing", signal_id);
                         }
                     }
                 }
@@ -333,12 +310,10 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
             
             DownMsg::SignalValues { .. } => {
                 // Handle legacy SignalValues message (deprecated in favor of UnifiedSignalResponse)
-                crate::debug_utils::debug_conditional("Received deprecated SignalValues message");
             }
             
             DownMsg::SignalValuesError { .. } => {
                 // Handle legacy SignalValuesError message (deprecated in favor of UnifiedSignalError)
-                crate::debug_utils::debug_conditional("Received deprecated SignalValuesError message");
             }
         }
     })
@@ -346,14 +321,10 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
 
 pub fn send_up_msg(up_msg: UpMsg) {
     Task::start(async move {
-        // DEBUG: Log message sending attempt
-        // DEBUG: Log message sending attempt (commented out to reduce noise)
-        // zoon::println!("=== SEND_UP_MSG: Attempting to send {:?} ===", std::mem::discriminant(&up_msg));
         
         // Use the raw MoonZoon connection directly to avoid infinite recursion
         match CONNECTION.send_up_msg(up_msg).await {
             Ok(_) => {
-                // zoon::println!("=== SEND_UP_MSG: Message sent successfully via raw connection ===");
             }
             Err(error) => {
                 // Create and display connection error alert
@@ -366,19 +337,16 @@ pub fn send_up_msg(up_msg: UpMsg) {
 
 
 pub fn init_connection() {
-    crate::debug_utils::debug_conditional("Connection init starting");
     
     // Initialize platform-specific connection handling
     // Platform-specific initialization would go here if needed
     #[cfg(NOVYWAVE_PLATFORM = "TAURI")]
     {
-        crate::debug_utils::debug_conditional("Tauri platform integration not yet implemented");
     }
     
     // For web mode, CONNECTION static already handles messages - no additional setup needed
     #[cfg(NOVYWAVE_PLATFORM = "WEB")]
     {
-        crate::debug_utils::debug_conditional("Web mode: using CONNECTION static for message handling");
         // CONNECTION is automatically initialized when first accessed
     }
 }

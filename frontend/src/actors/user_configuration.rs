@@ -5,7 +5,7 @@
 
 use crate::actors::{Actor, ActorVec, ActorMap, Relay, relay};
 use shared::{Theme, DockMode, DockedRightDimensions, DockedBottomDimensions, VarFormat, AppConfig, AppSection, UiSection, WorkspaceSection};
-use zoon::{SignalVecExt, MutableVecExt};
+use zoon::{MutableVecExt}; // Removed unused SignalVecExt
 use futures::StreamExt;
 use std::collections::BTreeMap;
 
@@ -437,7 +437,6 @@ static _USER_CONFIGURATION_INSTANCE: std::sync::OnceLock<UserConfiguration> = st
 pub async fn initialize_user_configuration() -> UserConfiguration {
     let user_configuration = UserConfiguration::new().await;
     if let Err(_) = _USER_CONFIGURATION_INSTANCE.set(user_configuration.clone()) {
-        zoon::eprintln!("⚠️ UserConfiguration already initialized - ignoring duplicate initialization");
     }
     user_configuration
 }

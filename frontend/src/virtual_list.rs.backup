@@ -14,6 +14,7 @@ fn empty_state_hint(text: &str) -> impl Element {
 
 // ===== CORE VIRTUAL LIST FUNCTIONS =====
 // 
+// WARNING: Avoid excessive // zoon::println! logging in virtual lists and viewport handlers.
 // Virtual lists trigger frequent resize/scroll events that can generate thousands of log
 // entries per second, corrupting dev_server.log with multi-gigabyte binary data and
 // making compilation errors impossible to see.
@@ -24,6 +25,7 @@ fn empty_state_hint(text: &str) -> impl Element {
 
 #[allow(dead_code)] // Migration legacy function - preserve during Actor+Relay transition
 pub fn virtual_variables_list(variables: Vec<VariableWithContext>, search_filter: String) -> Column<column::EmptyFlagNotSet, RawHtmlEl> {
+    // zoon::println!("VIRTUAL_VARIABLES_LIST called with {} variables, filter: '{}'", variables.len(), search_filter);
     // Handle special cases first (empty states)
     if variables.is_empty() && search_filter.starts_with("Select a scope") {
         return Column::new().item(empty_state_hint(&search_filter));
@@ -58,6 +60,7 @@ pub fn virtual_variables_list_pre_filtered(filtered_variables: Vec<VariableWithC
 }
 
 pub fn rust_virtual_variables_list_simple_fill(variables: Vec<VariableWithContext>) -> Column<column::EmptyFlagNotSet, RawHtmlEl> {
+    // zoon::println!("RUST_VIRTUAL_VARIABLES_LIST_SIMPLE_FILL called with {} variables", variables.len());
     // DYNAMIC HEIGHT SOLUTION: Parent-child pattern with real viewport monitoring
     let height_mutable = Mutable::new(400u32); // Start with reasonable default
     let virtual_list_height = Broadcaster::new(height_mutable.signal());
@@ -89,6 +92,7 @@ pub fn rust_virtual_variables_list_with_signal(
     variables: Vec<VariableWithContext>,
     height_signal: Broadcaster<MutableSignal<u32>>
 ) -> Column<column::EmptyFlagNotSet, RawHtmlEl> {
+    // zoon::println!("RUST_VIRTUAL_VARIABLES_LIST_WITH_SIGNAL called with {} variables", variables.len());
     let total_items = variables.len();
     let item_height = 24.0;
     
@@ -582,6 +586,7 @@ struct VirtualElementState {
 // ===== HYBRID STABLE ELEMENT =====
 // Optimized version for the hybrid MutableVec approach
 fn create_stable_variable_element_hybrid(state: VirtualElementState, hovered_index: Mutable<Option<usize>>) -> impl Element {
+    // zoon::println!("CREATE_STABLE_VARIABLE_ELEMENT_HYBRID called");
     Row::new()
         .s(Gap::new().x(8))
         .s(Width::fill())
@@ -626,16 +631,24 @@ fn create_stable_variable_element_hybrid(state: VirtualElementState, hovered_ind
             let scope_id_signal = state.scope_id_signal.clone();
             let variable_signal = state.variable_signal.clone();
             move || {
+                // zoon::println!("CLICK HANDLER TRIGGERED!");
                 let file_id = file_id_signal.get_cloned();
                 let scope_id = scope_id_signal.get_cloned();
+                // zoon::println!("Click context: file_id={}, scope_id={}", file_id, scope_id);
                 if let Some(variable) = variable_signal.get_cloned() {
                     // ✅ ACTOR+RELAY MIGRATION: Use SelectedVariables domain events
+                    // zoon::println!("🖱️ Variable clicked: {}", variable.name);
                     if let Some(selected_var) = crate::actors::create_selected_variable(variable, &file_id, &scope_id) {
+                        // zoon::println!("📝 Created SelectedVariable: {}", selected_var.unique_id);
                         let selected_variables = crate::actors::selected_variables_domain();
+                        // zoon::println!("🚨 ABOUT TO SEND TO RELAY: {}", selected_var.unique_id);
                         selected_variables.variable_clicked_relay.send(selected_var.unique_id.clone());
+                        // zoon::println!("📡 Sent to Actor relay: {} - COMPLETED SEND", selected_var.unique_id);
                     } else {
+                        // zoon::println!("❌ Failed to create SelectedVariable");
                     }
                 } else {
+                    // zoon::println!("No variable found in variable_signal");
                 }
             }
         })
@@ -749,15 +762,20 @@ fn create_variable_name_display(
                                         let scope_id_signal = scope_id_signal.clone();
                                         let variable_signal = variable_signal.clone();
                                         move || {
+                                            // zoon::println!("PARAGRAPH CLICK HANDLER TRIGGERED!");
                                             let file_id = file_id_signal.get_cloned();
                                             let scope_id = scope_id_signal.get_cloned();
+                                            // zoon::println!("Paragraph click context: file_id={}, scope_id={}", file_id, scope_id);
                                             if let Some(variable) = variable_signal.get_cloned() {
                                                 // ✅ ACTOR+RELAY MIGRATION: Use SelectedVariables domain events
+                                                // zoon::println!("🖱️ Paragraph clicked: {}", variable.name);
                                                 if let Some(selected_var) = crate::actors::create_selected_variable(variable, &file_id, &scope_id) {
                                                     let selected_variables = crate::actors::selected_variables_domain();
                                                     selected_variables.variable_clicked_relay.send(selected_var.unique_id.clone());
+                                                    // zoon::println!("📡 Sent paragraph click to Actor: {}", selected_var.unique_id);
                                                 }
                                             } else {
+                                                // zoon::println!("No variable found in paragraph variable_signal");
                                             }
                                         }
                                     })
@@ -772,15 +790,21 @@ fn create_variable_name_display(
                                         let scope_id_signal = scope_id_signal.clone();
                                         let variable_signal = variable_signal.clone();
                                         move || {
+                                            // zoon::println!("PARAGRAPH CLICK HANDLER TRIGGERED (no prefix)!");
                                             let file_id = file_id_signal.get_cloned();
                                             let scope_id = scope_id_signal.get_cloned();
+                                            // zoon::println!("Paragraph click context: file_id={}, scope_id={}", file_id, scope_id);
                                             if let Some(variable) = variable_signal.get_cloned() {
+                                                // zoon::println!("Paragraph variable found: {}", variable.name);
                                                 // ✅ ACTOR+RELAY MIGRATION: Use SelectedVariables domain events
+                                                // zoon::println!("🖱️ Paragraph clicked: {}", variable.name);
                                                 if let Some(selected_var) = crate::actors::create_selected_variable(variable, &file_id, &scope_id) {
                                                     let selected_variables = crate::actors::selected_variables_domain();
                                                     selected_variables.variable_clicked_relay.send(selected_var.unique_id.clone());
+                                                    // zoon::println!("📡 Sent paragraph click to Actor: {}", selected_var.unique_id);
                                                 }
                                             } else {
+                                                // zoon::println!("No variable found in paragraph variable_signal");
                                             }
                                         }
                                     })
@@ -797,15 +821,19 @@ fn create_variable_name_display(
                                     let scope_id_signal = scope_id_signal.clone();
                                     let variable_signal = variable_signal.clone();
                                     move || {
+                                        // zoon::println!("PARAGRAPH CLICK HANDLER TRIGGERED (first item)!");
                                         let file_id = file_id_signal.get_cloned();
                                         let scope_id = scope_id_signal.get_cloned();
+                                        // zoon::println!("Paragraph click context: file_id={}, scope_id={}", file_id, scope_id);
                                         if let Some(variable) = variable_signal.get_cloned() {
+                                            // zoon::println!("Paragraph variable found: {}", variable.name);
                                             // ✅ ACTOR+RELAY MIGRATION: Use SelectedVariables domain events
                                             if let Some(selected_var) = crate::actors::create_selected_variable(variable, &file_id, &scope_id) {
                                                 let selected_variables = crate::actors::selected_variables_domain();
                                                 selected_variables.variable_clicked_relay.send(selected_var.unique_id);
                                             }
                                         } else {
+                                            // zoon::println!("No variable found in paragraph variable_signal");
                                         }
                                     }
                                 })

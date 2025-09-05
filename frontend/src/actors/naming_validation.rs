@@ -129,13 +129,10 @@ mod naming_compliance_tests {
 
 /// Manual validation helper for development
 pub fn _validate_current_relay_naming() {
-    println!("🔍 Scanning for relay naming compliance...");
     
     // This will be called during development to check naming patterns
     // The actual validation logic is in the tests above
     
-    println!("✅ Run `cargo test naming_compliance` to validate relay naming");
-    println!("📖 See docs/actors_relays/novywave/event_source_naming_guide.md for guidance");
 }
 
 /// Get examples of correct event-source relay naming for each domain

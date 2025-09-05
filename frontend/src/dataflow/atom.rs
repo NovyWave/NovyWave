@@ -11,6 +11,7 @@ use futures::StreamExt;
 /// Internal update type for Atom operations
 #[derive(Clone, Debug)]
 enum AtomUpdate<T> {
+    #[allow(dead_code)] // Actor+Relay API - part of complete Atom implementation
     Set(T),
     // Part of public Actor+Relay API - will be used when moved to standalone crate
     #[allow(dead_code)]
@@ -131,6 +132,7 @@ where
     /// let message = Atom::new(String::new());
     /// message.set("Hello World".to_string());
     /// ```
+    #[allow(dead_code)] // Actor+Relay API method - preserve for completeness
     pub fn set(&self, value: T) {
         self.setter.send(AtomUpdate::Set(value));
     }
@@ -175,6 +177,7 @@ where
     /// // Compute length without cloning the vector
     /// large_list.signal_ref(|list| list.len())
     /// ```
+    #[allow(dead_code)] // Actor+Relay API method - preserve for completeness
     pub fn signal_ref<U>(&self, f: impl Fn(&T) -> U + Send + Sync + 'static) -> impl Signal<Item = U>
     where
         U: PartialEq + Send + Sync + 'static,

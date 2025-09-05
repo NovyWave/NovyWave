@@ -14,7 +14,6 @@ static TOAST_DISMISS_MS: Lazy<Mutable<u64>> = Lazy::new(|| Mutable::new(5000));
 /// - Shows user-friendly toast notification (for users)
 pub fn add_error_alert(alert: ErrorAlert) {
     // Log technical error to console for developers
-    zoon::eprintln!("{}", alert.technical_error);
     
     // Add new alert using domain function
     add_domain_alert(alert.clone());
@@ -27,7 +26,6 @@ pub fn add_error_alert(alert: ErrorAlert) {
 /// Use for background operations or non-user-initiated errors
 pub fn log_error_console_only(alert: ErrorAlert) {
     // Log technical error to console for developers/debugging
-    zoon::eprintln!("{}", alert.technical_error);
     
     // Add to domain for error tracking but don't show toast
     add_domain_alert(alert);

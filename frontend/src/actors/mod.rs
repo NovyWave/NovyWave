@@ -67,8 +67,6 @@ pub use global_domains::{
     selected_variables_domain,
     // waveform_timeline_domain, // MOVED to visualizer
     // Domain signal functions (only used ones)
-    tracked_files_signal,
-    file_count_signal,
-    loaded_files_count_signal
+    tracked_files_signal
 };
 pub use variable_helpers::{create_selected_variable};

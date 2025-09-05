@@ -455,6 +455,7 @@ pub mod dev_testing {
             };
             
             self.events.lock().unwrap().push(event);
+            zoon::println!("🔍 [{}] {}: {}", actor_name, event_type, data);
         }
         
         /// Get all recorded events
@@ -476,7 +477,9 @@ pub mod dev_testing {
                 *actor_counts.entry(event.actor_name.clone()).or_insert(0) += 1;
             }
             
-            for (_actor, _count) in actor_counts {
+            zoon::println!("📊 Actor Event Summary:");
+            for (actor, count) in actor_counts {
+                zoon::println!("  {}: {} events", actor, count);
             }
         }
     }
@@ -570,7 +573,7 @@ pub mod performance_tests {
         assert!(processing_time < Duration::from_millis(500), 
                "Processing too slow: {:?}", processing_time);
         
-        println!("✅ Performance test passed: {} cursor emissions, {} viewport emissions, {:?} processing time", 
+        zoon::println!("🚀 Performance test: {} cursor signals, {} viewport signals in {:?}", 
                       cursor_emissions.len(), viewport_emissions.len(), processing_time);
     }
 }

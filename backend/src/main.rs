@@ -7,6 +7,23 @@ use rayon::prelude::*;
 use std::fs;
 use jwalk::WalkDir;
 
+// ===== CENTRALIZED DEBUG FLAGS =====
+const DEBUG_BACKEND: bool = false;      // Backend request/response debugging
+const DEBUG_PARSE: bool = false;        // File parsing debugging
+const DEBUG_SIGNAL_CACHE: bool = false; // Signal cache hit/miss debugging
+const DEBUG_CURSOR: bool = false;       // Cursor value computation debugging
+const DEBUG_WAVEFORM_STORE: bool = false; // Waveform data storage debugging
+const DEBUG_EXTRACT: bool = false;      // Signal transition extraction debugging
+
+// Debug macro for easy toggling
+macro_rules! debug_log {
+    ($flag:expr, $($arg:tt)*) => {
+        if $flag {
+            println!($($arg)*);
+        }
+    };
+}
+
 async fn frontend() -> Frontend {
     Frontend::new()
         .title("NovyWave ")
@@ -106,14 +123,14 @@ impl SignalCacheManager {
     /// Get signal data from cache or load from waveform files
     fn get_or_load_signal_data(&self, request: &UnifiedSignalRequest) -> Result<UnifiedSignalData, String> {
         let unique_id = format!("{}|{}|{}", request.file_path, request.scope_path, request.variable_name);
-        println!("🔍 SIGNAL_CACHE_MANAGER: Looking for signal: '{}'", unique_id);
+        debug_log!(DEBUG_SIGNAL_CACHE, "🔍 SIGNAL_CACHE_MANAGER: Looking for signal: '{}'", unique_id);
         
         // Check cache first
         {
             let cache = self.transition_cache.read().unwrap();
-            println!("🔍 SIGNAL_CACHE_MANAGER: Cache contains {} entries", cache.len());
+            debug_log!(DEBUG_SIGNAL_CACHE, "🔍 SIGNAL_CACHE_MANAGER: Cache contains {} entries", cache.len());
             if let Some(transitions) = cache.get(&unique_id) {
-                println!("🔍 SIGNAL_CACHE_MANAGER: Cache HIT for '{}'", unique_id);
+                debug_log!(DEBUG_SIGNAL_CACHE, "🔍 SIGNAL_CACHE_MANAGER: Cache HIT for '{}'", unique_id);
                 let mut stats = self.cache_stats.write().unwrap();
                 stats.cache_hits += 1;
                 
@@ -147,7 +164,7 @@ impl SignalCacheManager {
         }
         
         // Cache miss - load from waveform data
-        println!("🔍 SIGNAL_CACHE_MANAGER: Cache MISS for '{}' - loading from waveform", unique_id);
+        debug_log!(DEBUG_SIGNAL_CACHE, "🔍 SIGNAL_CACHE_MANAGER: Cache MISS for '{}' - loading from waveform", unique_id);
         self.load_signal_from_waveform(request, &unique_id)
     }
     
@@ -157,15 +174,15 @@ impl SignalCacheManager {
         stats.cache_misses += 1;
         
         let waveform_store = WAVEFORM_DATA_STORE.lock().unwrap();
-        println!("🔍 WAVEFORM_STORE: Checking for file '{}' in store with {} files", request.file_path, waveform_store.len());
+        debug_log!(DEBUG_WAVEFORM_STORE, "🔍 WAVEFORM_STORE: Checking for file '{}' in store with {} files", request.file_path, waveform_store.len());
         if let Some(waveform_data) = waveform_store.get(&request.file_path) {
-            println!("🔍 WAVEFORM_STORE: Found file '{}' with {} signals", request.file_path, waveform_data.signals.len());
+            debug_log!(DEBUG_WAVEFORM_STORE, "🔍 WAVEFORM_STORE: Found file '{}' with {} signals", request.file_path, waveform_data.signals.len());
             // Load transitions from wellen data
             let signal_key = format!("{}|{}", request.scope_path, request.variable_name);
-            println!("🔍 WAVEFORM_STORE: Looking for signal key '{}' in {} available signals", signal_key, waveform_data.signals.len());
-            println!("🔍 WAVEFORM_STORE: Available signal keys: {:?}", waveform_data.signals.keys().collect::<Vec<_>>());
+            debug_log!(DEBUG_WAVEFORM_STORE, "🔍 WAVEFORM_STORE: Looking for signal key '{}' in {} available signals", signal_key, waveform_data.signals.len());
+            debug_log!(DEBUG_WAVEFORM_STORE, "🔍 WAVEFORM_STORE: Available signal keys: {:?}", waveform_data.signals.keys().collect::<Vec<_>>());
             if let Some(signal_ref) = waveform_data.signals.get(&signal_key) {
-                println!("🔍 WAVEFORM_STORE: Found signal '{}' - extracting transitions", signal_key);
+                debug_log!(DEBUG_WAVEFORM_STORE, "🔍 WAVEFORM_STORE: Found signal '{}' - extracting transitions", signal_key);
                 let transitions = self.extract_transitions_from_wellen(waveform_data, signal_ref, &request.format, &signal_key)?;
                 
                 // Cache the loaded data
@@ -200,10 +217,10 @@ impl SignalCacheManager {
                     actual_time_range_ns: self.compute_time_range(&transitions),
                 });
             } else {
-                println!("🔍 WAVEFORM_STORE: Signal key '{}' NOT FOUND in waveform data", signal_key);
+                debug_log!(DEBUG_WAVEFORM_STORE, "🔍 WAVEFORM_STORE: Signal key '{}' NOT FOUND in waveform data", signal_key);
             }
         } else {
-            println!("🔍 WAVEFORM_STORE: File '{}' NOT FOUND in waveform data store", request.file_path);
+            debug_log!(DEBUG_WAVEFORM_STORE, "🔍 WAVEFORM_STORE: File '{}' NOT FOUND in waveform data store", request.file_path);
         }
         
         Err(format!("Signal data not found: {}", unique_id))
@@ -213,13 +230,13 @@ impl SignalCacheManager {
     /// TEMPORARY IMPLEMENTATION: Return hardcoded simple.vcd data for testing
     fn extract_transitions_from_wellen(
         &self,
-        waveform_data: &WaveformData,
-        signal_ref: &wellen::SignalRef,
+        _waveform_data: &WaveformData,
+        _signal_ref: &wellen::SignalRef,
         _format: &shared::VarFormat,
         signal_key: &str,
     ) -> Result<Vec<SignalTransition>, String> {
         // Use signal_key to differentiate between A and B
-        println!("🔍 EXTRACT_TRANSITIONS: TEMPORARY - Processing signal_key: {}", signal_key);
+        debug_log!(DEBUG_EXTRACT, "🔍 EXTRACT_TRANSITIONS: TEMPORARY - Processing signal_key: {}", signal_key);
         
         // Based on simple.vcd analysis:
         // #0: A=b1010, B=b11 
@@ -270,9 +287,9 @@ impl SignalCacheManager {
             ]
         };
         
-        println!("🔍 EXTRACT_TRANSITIONS: Returning {} transitions for signal", transitions.len());
+        debug_log!(DEBUG_EXTRACT, "🔍 EXTRACT_TRANSITIONS: Returning {} transitions for signal", transitions.len());
         for t in &transitions {
-            println!("🔍 EXTRACT_TRANSITIONS: Transition at {}ns = {}", t.time_ns, t.value);
+            debug_log!(DEBUG_EXTRACT, "🔍 EXTRACT_TRANSITIONS: Transition at {}ns = {}", t.time_ns, t.value);
         }
         
         Ok(transitions)
@@ -282,7 +299,7 @@ impl SignalCacheManager {
     fn compute_cursor_values(&self, signal_data: &[UnifiedSignalData], cursor_time: u64) -> BTreeMap<String, SignalValue> {
         let mut cursor_values = BTreeMap::new();
         
-        println!("🔍 CURSOR: Computing cursor values at time {}ns for {} signals", cursor_time, signal_data.len());
+        debug_log!(DEBUG_CURSOR, "🔍 CURSOR: Computing cursor values at time {}ns for {} signals", cursor_time, signal_data.len());
         
         for signal in signal_data {
             // Find the most recent transition at or before cursor time
@@ -290,11 +307,11 @@ impl SignalCacheManager {
                 .filter(|t| t.time_ns <= cursor_time)
                 .collect();
                 
-            println!("🔍 CURSOR: Signal '{}' has {} transitions <= {}ns", 
+            debug_log!(DEBUG_CURSOR, "🔍 CURSOR: Signal '{}' has {} transitions <= {}ns", 
                 signal.unique_id, matching_transitions.len(), cursor_time);
             
             if let Some(latest_transition) = matching_transitions.last() {
-                println!("🔍 CURSOR: Latest transition at {}ns = '{}'", 
+                debug_log!(DEBUG_CURSOR, "🔍 CURSOR: Latest transition at {}ns = '{}'", 
                     latest_transition.time_ns, latest_transition.value);
             }
             
@@ -341,13 +358,13 @@ async fn up_msg_handler(req: UpMsgRequest<UpMsg>) {
     let (session_id, cor_id) = (req.session_id, req.cor_id);
     
     // Log all incoming requests for debugging - with error handling wrapper
-    println!("🔍 BACKEND: Received request type: {:?}", std::mem::discriminant(&req.up_msg));
+    debug_log!(DEBUG_BACKEND, "🔍 BACKEND: Received request type: {:?}", std::mem::discriminant(&req.up_msg));
     
     match &req.up_msg {
         UpMsg::LoadWaveformFile(file_path) => {
-            println!("🔍 BACKEND: Processing LoadWaveformFile for '{}'", file_path);
+            debug_log!(DEBUG_BACKEND, "🔍 BACKEND: Processing LoadWaveformFile for '{}'", file_path);
             load_waveform_file(file_path.clone(), session_id, cor_id).await;
-            println!("🔍 BACKEND: Completed LoadWaveformFile for '{}'", file_path);
+            debug_log!(DEBUG_BACKEND, "🔍 BACKEND: Completed LoadWaveformFile for '{}'", file_path);
         }
         UpMsg::GetParsingProgress(file_id) => {
             send_parsing_progress(file_id.clone(), session_id, cor_id).await;
@@ -370,9 +387,9 @@ async fn up_msg_handler(req: UpMsgRequest<UpMsg>) {
         }
         UpMsg::QuerySignalTransitions { file_path, signal_queries, time_range } => {
             // Add detailed error debugging for QuerySignalTransitions
-            println!("🔍 BACKEND: Processing QuerySignalTransitions for {} with {} queries", file_path, signal_queries.len());
+            debug_log!(DEBUG_BACKEND, "🔍 BACKEND: Processing QuerySignalTransitions for {} with {} queries", file_path, signal_queries.len());
             query_signal_transitions(file_path.clone(), signal_queries.clone(), time_range.clone(), session_id, cor_id).await;
-            println!("🔍 BACKEND: Completed QuerySignalTransitions for {}", file_path);
+            debug_log!(DEBUG_BACKEND, "🔍 BACKEND: Completed QuerySignalTransitions for {}", file_path);
         }
         UpMsg::BatchQuerySignalValues { batch_id, file_queries } => {
             // Handle batch signal value queries - process multiple files in one request
@@ -395,9 +412,9 @@ async fn up_msg_handler(req: UpMsgRequest<UpMsg>) {
         }
         UpMsg::UnifiedSignalQuery { signal_requests, cursor_time_ns, request_id } => {
             // Handle unified signal query using the new cache manager
-            println!("🔍 BACKEND: Processing UnifiedSignalQuery with {} requests, cursor_time: {:?}, request_id: {}", signal_requests.len(), cursor_time_ns, request_id);
+            debug_log!(DEBUG_BACKEND, "🔍 BACKEND: Processing UnifiedSignalQuery with {} requests, cursor_time: {:?}, request_id: {}", signal_requests.len(), cursor_time_ns, request_id);
             handle_unified_signal_query(signal_requests.clone(), cursor_time_ns.clone(), request_id.clone(), session_id, cor_id).await;
-            println!("🔍 BACKEND: Completed UnifiedSignalQuery for request_id: {}", request_id);
+            debug_log!(DEBUG_BACKEND, "🔍 BACKEND: Completed UnifiedSignalQuery for request_id: {}", request_id);
         }
     }
 }
@@ -469,29 +486,29 @@ async fn send_structured_parsing_error(file_id: String, filename: String, file_e
 
 async fn parse_waveform_file(file_path: String, file_id: String, filename: String, 
                        progress: Arc<Mutex<f32>>, session_id: SessionId, cor_id: CorId) {
-    println!("🔍 PARSE: Starting to parse file '{}' (id: {})", file_path, file_id);
+    debug_log!(DEBUG_PARSE, "🔍 PARSE: Starting to parse file '{}' (id: {})", file_path, file_id);
     
     let options = wellen::LoadOptions::default();
     
     // Catch panics from wellen parsing to prevent crashes
-    println!("🔍 PARSE: Calling wellen::viewers::read_header_from_file for '{}'", file_path);
+    debug_log!(DEBUG_PARSE, "🔍 PARSE: Calling wellen::viewers::read_header_from_file for '{}'", file_path);
     let parse_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         wellen::viewers::read_header_from_file(&file_path, &options)
     }));
     
     let header_result = match parse_result {
         Ok(Ok(header)) => {
-            println!("🔍 PARSE: Header parsing SUCCESS for '{}'", file_path);
+            debug_log!(DEBUG_PARSE, "🔍 PARSE: Header parsing SUCCESS for '{}'", file_path);
             header
         },
         Ok(Err(e)) => {
-            println!("🔍 PARSE: Header parsing ERROR for '{}': {}", file_path, e);
+            debug_log!(DEBUG_PARSE, "🔍 PARSE: Header parsing ERROR for '{}': {}", file_path, e);
             let file_error = convert_wellen_error_to_file_error(&e.to_string(), &file_path);
             send_structured_parsing_error(file_id, filename, file_error, session_id, cor_id).await;
             return;
         }
         Err(_panic) => {
-            println!("🔍 PARSE: Header parsing PANIC for '{}'", file_path);
+            debug_log!(DEBUG_PARSE, "🔍 PARSE: Header parsing PANIC for '{}'", file_path);
             let file_error = convert_panic_to_file_error(&file_path);
             send_structured_parsing_error(file_id, filename, file_error, session_id, cor_id).await;
             return;
@@ -588,16 +605,16 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
                         timescale_factor,
                     };
                     
-                    println!("🔍 PARSE: About to store waveform data for '{}' (signals: {})", file_path, waveform_data.signals.len());
+                    debug_log!(DEBUG_PARSE, "🔍 PARSE: About to store waveform data for '{}' (signals: {})", file_path, waveform_data.signals.len());
                     
                     {
                         match WAVEFORM_DATA_STORE.lock() {
                             Ok(mut store) => {
                                 store.insert(file_path.clone(), waveform_data);
-                                println!("🔍 PARSE: Successfully stored waveform data for '{}' (total files in store: {})", file_path, store.len());
+                                debug_log!(DEBUG_PARSE, "🔍 PARSE: Successfully stored waveform data for '{}' (total files in store: {})", file_path, store.len());
                             }
                             Err(e) => {
-                                println!("🔍 PARSE: Failed to store waveform data for '{}': {}", file_path, e);
+                                debug_log!(DEBUG_PARSE, "🔍 PARSE: Failed to store waveform data for '{}': {}", file_path, e);
                                 let error_msg = format!("Internal error: Failed to store waveform data - {}", e);
                                 send_parsing_error(file_id.clone(), filename, error_msg, session_id, cor_id).await;
                                 return;
@@ -607,7 +624,7 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
                     
                     let format = FileFormat::FST;
                     
-                    println!("🔧 BACKEND FILE: Creating WaveformFile '{}' with range: {:?}ns to {:?}ns", 
+                    debug_log!(DEBUG_BACKEND, "🔧 BACKEND FILE: Creating WaveformFile '{}' with range: {:?}ns to {:?}ns", 
                         file_id, min_time_ns, max_time_ns);
                     
                     let waveform_file = WaveformFile {
@@ -666,7 +683,7 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
                             let converted_min = min_time * timescale_factor;
                             let converted_max = max_time * timescale_factor;
                             
-                            println!("🔧 BACKEND TIME RANGE: VCD file time range: {:.3}s to {:.3}s (span: {:.3}s)", 
+                            debug_log!(DEBUG_BACKEND, "🔧 BACKEND TIME RANGE: VCD file time range: {:.3}s to {:.3}s (span: {:.3}s)", 
                                 converted_min, converted_max, converted_max - converted_min);
                             
                             (converted_min, converted_max)
@@ -695,7 +712,7 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
                     let format = FileFormat::VCD;
                     let (min_time_ns, max_time_ns) = (Some((min_seconds * 1_000_000_000.0) as u64), Some((max_seconds * 1_000_000_000.0) as u64));
                     
-                    println!("🔧 BACKEND FILE: Creating WaveformFile '{}' with range: {:?}ns to {:?}ns", 
+                    debug_log!(DEBUG_BACKEND, "🔧 BACKEND FILE: Creating WaveformFile '{}' with range: {:?}ns to {:?}ns", 
                         file_id, min_time_ns, max_time_ns);
                     
                     // Create lightweight file data WITHOUT full signal source
@@ -724,18 +741,18 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
                     send_progress_update(file_id.clone(), 1.0, session_id, cor_id).await;
                     
                     // VCD: Parse body and store waveform data for signal queries (like FST branch)
-                    println!("🔍 PARSE: Parsing VCD body for signal storage: '{}'", file_path);
+                    debug_log!(DEBUG_PARSE, "🔍 PARSE: Parsing VCD body for signal storage: '{}'", file_path);
                     let body_parse_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         wellen::viewers::read_body(header_result.body, &header_result.hierarchy, None)
                     }));
                     
                     let body_result = match body_parse_result {
                         Ok(Ok(body)) => {
-                            println!("🔍 PARSE: VCD body parsing SUCCESS for '{}'", file_path);
+                            debug_log!(DEBUG_PARSE, "🔍 PARSE: VCD body parsing SUCCESS for '{}'", file_path);
                             body
                         },
                         Ok(Err(e)) => {
-                            println!("🔍 PARSE: VCD body parsing ERROR for '{}': {}", file_path, e);
+                            debug_log!(DEBUG_PARSE, "🔍 PARSE: VCD body parsing ERROR for '{}': {}", file_path, e);
                             // Still send FileLoaded without signal data
                             send_down_msg(DownMsg::FileLoaded { 
                                 file_id: file_id.clone(), 
@@ -745,7 +762,7 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
                             return;
                         }
                         Err(_panic) => {
-                            println!("🔍 PARSE: VCD body parsing PANIC for '{}'", file_path);
+                            debug_log!(DEBUG_PARSE, "🔍 PARSE: VCD body parsing PANIC for '{}'", file_path);
                             // Still send FileLoaded without signal data
                             send_down_msg(DownMsg::FileLoaded { 
                                 file_id: file_id.clone(), 
@@ -786,16 +803,16 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
                         timescale_factor,
                     };
                     
-                    println!("🔍 PARSE: About to store VCD waveform data for '{}' (signals: {})", file_path, waveform_data.signals.len());
+                    debug_log!(DEBUG_PARSE, "🔍 PARSE: About to store VCD waveform data for '{}' (signals: {})", file_path, waveform_data.signals.len());
                     
                     {
                         match WAVEFORM_DATA_STORE.lock() {
                             Ok(mut store) => {
                                 store.insert(file_path.clone(), waveform_data);
-                                println!("🔍 PARSE: Successfully stored VCD waveform data for '{}' (total files in store: {})", file_path, store.len());
+                                debug_log!(DEBUG_PARSE, "🔍 PARSE: Successfully stored VCD waveform data for '{}' (total files in store: {})", file_path, store.len());
                             }
                             Err(e) => {
-                                println!("🔍 PARSE: Failed to store VCD waveform data for '{}': {}", file_path, e);
+                                debug_log!(DEBUG_PARSE, "🔍 PARSE: Failed to store VCD waveform data for '{}': {}", file_path, e);
                             }
                         }
                     }
@@ -927,7 +944,7 @@ fn extract_fst_time_range(body_result: &wellen::viewers::BodyResult, timescale_f
     let min_seconds = raw_min * timescale_factor;
     let max_seconds = raw_max * timescale_factor;
     
-    println!("🔧 BACKEND TIME RANGE: FST file time range: {:.3}s to {:.3}s (span: {:.3}s)", 
+    debug_log!(DEBUG_BACKEND, "🔧 BACKEND TIME RANGE: FST file time range: {:.3}s to {:.3}s (span: {:.3}s)", 
         min_seconds, max_seconds, max_seconds - min_seconds);
     
     (min_seconds, max_seconds)
@@ -1706,7 +1723,7 @@ fn generate_scope_path_fallbacks(scope_path: &str, variable_name: &str) -> Vec<S
     fallbacks.push(format!("|{}", variable_name));
     fallbacks.push(variable_name.to_string());
     
-    println!("🔧 Generated {} fallback keys for scope '{}' variable '{}':", fallbacks.len(), scope_path, variable_name);
+    debug_log!(DEBUG_BACKEND, "🔧 Generated {} fallback keys for scope '{}' variable '{}':", fallbacks.len(), scope_path, variable_name);
     for fallback in &fallbacks {
         println!("  - '{}'", fallback);
     }
@@ -1755,8 +1772,8 @@ async fn query_signal_values(file_path: String, queries: Vec<SignalValueQuery>, 
         
         // Debug: Log the query key and available keys for troubleshooting
         if !waveform_data.signals.contains_key(&key) {
-            println!("🔍 SIGNAL NOT FOUND: Looking for key '{}' in file '{}'", key, file_path);
-            println!("🔍 Available signal keys ({} total):", waveform_data.signals.len());
+            debug_log!(DEBUG_BACKEND, "🔍 SIGNAL NOT FOUND: Looking for key '{}' in file '{}'", key, file_path);
+            debug_log!(DEBUG_BACKEND, "🔍 Available signal keys ({} total):", waveform_data.signals.len());
             for (available_key, _) in waveform_data.signals.iter().take(10) {
                 println!("  - '{}'", available_key);
             }
@@ -2162,15 +2179,15 @@ async fn query_signal_transitions(
         let key = format!("{}|{}", query.scope_path, query.variable_name);
         
         // DEBUG: Log signal lookup to identify key mismatch
-        println!("🔍 BACKEND: Looking for signal key: '{}'", key);
-        println!("🔍 BACKEND: Available keys: {:?}", waveform_data.signals.keys().collect::<Vec<_>>());
+        debug_log!(DEBUG_BACKEND, "🔍 BACKEND: Looking for signal key: '{}'", key);
+        debug_log!(DEBUG_BACKEND, "🔍 BACKEND: Available keys: {:?}", waveform_data.signals.keys().collect::<Vec<_>>());
         
         // Try multiple key formats to handle scope path variations
         let signal_ref_option = waveform_data.signals.get(&key)
             .or_else(|| {
                 // Try with different scope separators
                 let alt_key1 = key.replace(".", "/");
-                println!("🔍 BACKEND: Trying alternative key format: '{}'", alt_key1);
+                debug_log!(DEBUG_BACKEND, "🔍 BACKEND: Trying alternative key format: '{}'", alt_key1);
                 waveform_data.signals.get(&alt_key1)
             })
             .or_else(|| {
@@ -2178,7 +2195,7 @@ async fn query_signal_transitions(
                 let parts: Vec<&str> = query.scope_path.split('.').collect();
                 if parts.len() > 1 {
                     let flat_key = format!("{}_{}", parts.join("_"), query.variable_name);
-                    println!("🔍 BACKEND: Trying flattened key format: '{}'", flat_key);
+                    debug_log!(DEBUG_BACKEND, "🔍 BACKEND: Trying flattened key format: '{}'", flat_key);
                     waveform_data.signals.get(&flat_key)
                 } else {
                     None
@@ -2186,7 +2203,7 @@ async fn query_signal_transitions(
             })
             .or_else(|| {
                 // Try searching for partial matches in case scope path differs
-                println!("🔍 BACKEND: Searching for variable '{}' in any scope", query.variable_name);
+                debug_log!(DEBUG_BACKEND, "🔍 BACKEND: Searching for variable '{}' in any scope", query.variable_name);
                 waveform_data.signals.iter()
                     .find(|(k, _)| k.ends_with(&format!("|{}", query.variable_name)))
                     .map(|(_, v)| v)
@@ -2381,7 +2398,7 @@ fn format_non_binary_signal_value(value: &wellen::SignalValue) -> String {
                 let bit_string = value.to_bit_string().unwrap_or_else(|| "?".to_string());
                 
                 // 🐛 DEBUG: Log what wellen actually returns vs what we expect
-                println!("🔍 WELLEN ACTUAL: width={}, to_bit_string()='{}' (expecting binary like '1100')", width, bit_string);
+                debug_log!(DEBUG_BACKEND, "🔍 WELLEN ACTUAL: width={}, to_bit_string()='{}' (expecting binary like '1100')", width, bit_string);
                 
                 bit_string
             }
@@ -2400,7 +2417,7 @@ fn format_non_binary_signal_value(value: &wellen::SignalValue) -> String {
                 let bit_string = value.to_bit_string().unwrap_or_else(|| "?".to_string());
                 
                 // 🐛 DEBUG: Log FourValue output too
-                println!("🔍 WELLEN FOURVALUE: width={}, to_bit_string()='{}' (expecting binary)", width, bit_string);
+                debug_log!(DEBUG_BACKEND, "🔍 WELLEN FOURVALUE: width={}, to_bit_string()='{}' (expecting binary)", width, bit_string);
                 
                 bit_string
             }
@@ -2421,10 +2438,10 @@ async fn handle_unified_signal_query(
     session_id: SessionId,
     cor_id: CorId,
 ) {
-    println!("🔍 BACKEND: About to call SIGNAL_CACHE_MANAGER.query_unified_signals for request_id: {}", request_id);
+    debug_log!(DEBUG_BACKEND, "🔍 BACKEND: About to call SIGNAL_CACHE_MANAGER.query_unified_signals for request_id: {}", request_id);
     match SIGNAL_CACHE_MANAGER.query_unified_signals(signal_requests, cursor_time_ns).await {
         Ok((signal_data, cursor_values, statistics)) => {
-            println!("🔍 BACKEND: SIGNAL_CACHE_MANAGER success - {} signal_data items, {} cursor_values", signal_data.len(), cursor_values.len());
+            debug_log!(DEBUG_BACKEND, "🔍 BACKEND: SIGNAL_CACHE_MANAGER success - {} signal_data items, {} cursor_values", signal_data.len(), cursor_values.len());
             send_down_msg(DownMsg::UnifiedSignalResponse {
                 request_id,
                 signal_data,
@@ -2434,7 +2451,7 @@ async fn handle_unified_signal_query(
             }, session_id, cor_id).await;
         }
         Err(error) => {
-            println!("🔍 BACKEND: SIGNAL_CACHE_MANAGER error: {}", error);
+            debug_log!(DEBUG_BACKEND, "🔍 BACKEND: SIGNAL_CACHE_MANAGER error: {}", error);
             send_down_msg(DownMsg::UnifiedSignalError {
                 request_id,
                 error,
@@ -2451,7 +2468,7 @@ async fn main() -> std::io::Result<()> {
     }));
     
     
-    start(frontend, up_msg_handler, |error| {
-        println!("BACKEND ERROR: Request processing error occurred (generic error handler called)");
+    start(frontend, up_msg_handler, |_error| {
+        // Error logging removed to reduce log spam
     }).await
 }

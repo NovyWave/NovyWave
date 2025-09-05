@@ -198,6 +198,7 @@ where
     /// // Efficient UI binding for entries
     /// cache.entries_signal_vec()
     /// ```
+    #[allow(dead_code)] // Actor+Relay API method - preserve for completeness
     pub fn entries_signal_vec(&self) -> impl SignalVec<Item = (K, V)> {
         // Use MutableBTreeMap's native entries_cloned() method
         self.map.entries_cloned()

@@ -10,7 +10,7 @@ pub mod time_types;
 pub mod timeline_service;
 
 // Re-exports for API compatibility
-pub use timeline_actor::WaveformTimeline;
+// pub use timeline_actor::WaveformTimeline; // Unused re-export
 
 // Re-export the global domain function with compatible name
 pub fn timeline_actor_domain() -> timeline_actor::WaveformTimeline {

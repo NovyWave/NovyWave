@@ -2,15 +2,12 @@ use zoon::*;
 use crate::visualizer::state::timeline_state::{IS_ZOOMING_IN, IS_PANNING_LEFT, IS_PANNING_RIGHT, 
     IS_CURSOR_MOVING_LEFT, IS_CURSOR_MOVING_RIGHT};
 use crate::visualizer::timeline::timeline_actor::{
-    zoom_in_started_relay, current_cursor_position_seconds, current_viewport, 
-    set_cursor_position_if_changed, set_viewport_if_changed,
-    current_ns_per_pixel, set_ns_per_pixel_if_changed,
-    current_coordinates, current_canvas_width, current_zoom_center_seconds
+    current_cursor_position_seconds, set_viewport_if_changed,
+    current_ns_per_pixel, current_coordinates
 };
-use crate::visualizer::timeline::time_types::{TimeNs, Viewport, NsPerPixel, TimelineCoordinates};
-use crate::visualizer::state::canvas_state::{DIRECT_CURSOR_ANIMATION, DirectCursorAnimation, 
-    PENDING_CANVAS_UPDATE, LAST_TRANSITION_NAVIGATION_TIME};
-use js_sys;
+use crate::visualizer::timeline::time_types::{TimeNs, NsPerPixel};
+use crate::visualizer::state::canvas_state::{DIRECT_CURSOR_ANIMATION};
+// Removed unused import: js_sys
 
 
 

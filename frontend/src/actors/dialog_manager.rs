@@ -375,7 +375,6 @@ pub fn current_dialog_visible() -> bool {
     crate::actors::global_domains::DIALOG_MANAGER_SIGNALS.get()
         .map(|signals| signals.dialog_visible_mutable.get())
         .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ DialogManager signals not initialized, returning false dialog visible");
             false
         })
 }
@@ -385,7 +384,6 @@ pub fn current_paths_input() -> String {
     crate::actors::global_domains::DIALOG_MANAGER_SIGNALS.get()
         .map(|signals| signals.paths_input_mutable.get_cloned())
         .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ DialogManager signals not initialized, returning empty paths input");
             String::new()
         })
 }
@@ -395,7 +393,6 @@ pub fn current_expanded_directories() -> IndexSet<String> {
     crate::actors::global_domains::DIALOG_MANAGER_SIGNALS.get()
         .map(|signals| signals.expanded_directories_mutable.get_cloned())
         .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ DialogManager signals not initialized, returning empty expanded directories");
             IndexSet::new()
         })
 }
@@ -405,7 +402,6 @@ pub fn current_selected_files() -> Vec<String> {
     crate::actors::global_domains::DIALOG_MANAGER_SIGNALS.get()
         .map(|signals| signals.selected_files_mutable.lock_ref().to_vec())
         .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ DialogManager signals not initialized, returning empty selected files");
             Vec::new()
         })
 }
@@ -415,7 +411,6 @@ pub fn current_file_error() -> Option<String> {
     crate::actors::global_domains::DIALOG_MANAGER_SIGNALS.get()
         .map(|signals| signals.current_error_mutable.get_cloned())
         .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ DialogManager signals not initialized, returning None file error");
             None
         })
 }
@@ -425,7 +420,6 @@ pub fn current_error_cache() -> HashMap<String, String> {
     crate::actors::global_domains::DIALOG_MANAGER_SIGNALS.get()
         .map(|signals| signals.error_cache_mutable.get_cloned())
         .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ DialogManager signals not initialized, returning empty error cache");
             HashMap::new()
         })
 }
@@ -435,7 +429,6 @@ pub fn current_scroll_position() -> i32 {
     crate::actors::global_domains::DIALOG_MANAGER_SIGNALS.get()
         .map(|signals| signals.scroll_position_mutable.get())
         .unwrap_or_else(|| {
-            zoon::eprintln!("⚠️ DialogManager signals not initialized, returning 0 scroll position");
             0
         })
 }

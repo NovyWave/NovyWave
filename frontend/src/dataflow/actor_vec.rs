@@ -148,6 +148,7 @@ where
     /// // Compute length without cloning items
     /// items.signal_ref(|vec| vec.len())
     /// ```
+    #[allow(dead_code)] // Actor+Relay API method - preserve for completeness
     pub fn signal_ref<U>(&self, f: impl Fn(&Vec<T>) -> U + Send + Sync + 'static) -> impl Signal<Item = U>
     where
         U: PartialEq + Send + Sync + Copy + 'static,

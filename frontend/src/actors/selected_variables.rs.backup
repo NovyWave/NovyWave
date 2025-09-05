@@ -440,8 +440,9 @@ impl SelectedVariables {
                                 // Sync dedicated Vec signal after ActorVec change (no conversion antipattern)
                                 {
                                     let current_vars = variables_mutable.lock_ref().to_vec();
-                                    let _len = current_vars.len();
+                                    let len = current_vars.len();
                                     variables_vec_signal.set_neq(current_vars);
+                                    zoon::println!("✅ ACTOR: Added variable '{}' - total selected: {}", variable_id, len);
                                 }
                                 
                                 // ✅ FIXED: Only update Actor state - no dual updates to prevent infinite loops
@@ -468,6 +469,7 @@ impl SelectedVariables {
         };
         
         // for (i, f) in tracked_files.iter().enumerate() {
+        //     zoon::println!("  Actor File {}: id='{}', path='{}'", i, f.id, f.path);
         // }
         
         // Parse variable_id: "file_path|scope_id|variable_name"  
@@ -571,8 +573,9 @@ impl SelectedVariables {
         // Sync dedicated Vec signal after ActorVec change (no conversion antipattern)
         {
             let current_vars = variables_mutable.lock_ref().to_vec();
-            let _len = current_vars.len();
+            let len = current_vars.len();
             variables_vec_signal.set_neq(current_vars);
+            zoon::println!("🗑️ ACTOR: Removed variable '{}' - total selected: {}", variable_id, len);
         }
         
         // ✅ FIXED: Only update Actor state - no dual updates to prevent infinite loops
@@ -590,8 +593,9 @@ impl SelectedVariables {
         // Sync dedicated Vec signal after ActorVec change (no conversion antipattern)
         {
             let current_vars = variables_mutable.lock_ref().to_vec();
-            let _len = current_vars.len();
+            let len = current_vars.len();
             variables_vec_signal.set_neq(current_vars);
+            zoon::println!("🧹 ACTOR: Cleared all variables - total selected: {}", len);
         }
         
         // ✅ FIXED: Only update Actor state - no dual updates to prevent infinite loops
@@ -603,10 +607,12 @@ impl SelectedVariables {
         variables_vec_signal: &zoon::Mutable<Vec<SelectedVariable>>,
         restored_variables: Vec<SelectedVariable>
     ) {
-        let _count_before = variables_mutable.lock_ref().len();
+        let count_before = variables_mutable.lock_ref().len();
         
-        for (_i, _var) in restored_variables.iter().enumerate() {
-            // Variable processing removed for performance
+        zoon::println!("🔍 ACTOR: Variables restoration - {} variables before, {} to restore", 
+            count_before, restored_variables.len());
+        for (i, var) in restored_variables.iter().enumerate() {
+            zoon::println!("🔍 ACTOR: Restoring variable {}: {}", i, var.unique_id);
         }
         
         // Replace all variables in single operation (prevents signal spam)
@@ -615,8 +621,9 @@ impl SelectedVariables {
         // Sync dedicated Vec signal after ActorVec change (no conversion antipattern)
         {
             let current_vars = variables_mutable.lock_ref().to_vec();
-            for (_i, _var) in current_vars.iter().enumerate() {
-                // Variable processing removed for performance
+            zoon::println!("🔍 ACTOR: After restoration - {} variables in ActorVec", current_vars.len());
+            for (i, var) in current_vars.iter().enumerate() {
+                zoon::println!("🔍 ACTOR: Final variable {}: {}", i, var.unique_id);
             }
             variables_vec_signal.set_neq(current_vars);
         }
@@ -631,6 +638,7 @@ impl SelectedVariables {
         variable_id: String,
         new_format: shared::VarFormat
     ) {
+        zoon::println!("🎯 FORMAT CHANGED in Actor: {} -> {:?}", variable_id, new_format);
         
         // Update the specific variable's format
         // Find the variable and update it using MutableVec approach
@@ -642,11 +650,13 @@ impl SelectedVariables {
             if var.unique_id == variable_id {
                 var.formatter = Some(new_format);
                 found = true;
+                zoon::println!("✅ Updated variable formatter: {} -> {:?}", variable_id, new_format);
             }
             updated_variables.push(var);
         }
         
         if !found {
+            zoon::println!("⚠️ Variable not found for format update: {}", variable_id);
         }
         
         // Replace the entire vector with updated one
@@ -826,7 +836,9 @@ pub fn current_variables() -> Vec<SelectedVariable> {
     // Get current selected variables from the config storage
     // This reads the actual state that's connected to the Actor signals
     let vars = crate::state::SELECTED_VARIABLES_FOR_CONFIG.get_cloned();
-    for (_i, _var) in vars.iter().enumerate() {
+    zoon::println!("🔍 current_variables() returning {} variables", vars.len());
+    for (i, var) in vars.iter().enumerate() {
+        zoon::println!("🔍 current_variables()[{}]: {}", i, var.unique_id);
     }
     vars
 }

@@ -120,6 +120,7 @@ impl TrackedFiles {
                                     .find(|f| f.id == file_id).cloned();
                                 
                                 if let Some(existing_file) = existing_file {
+                                    zoon::println!("📄 TrackedFiles: Reloading file: {}", existing_file.path);
                                     
                                     // Create new file with Starting state to trigger full parsing
                                     let new_file = create_tracked_file(
@@ -128,6 +129,7 @@ impl TrackedFiles {
                                     );
                                     
                                     // CRITICAL: Trigger parsing BEFORE modifying collection to avoid duplicate detection
+                                    zoon::println!("⚡ TrackedFiles: Triggering parsing for reload: {}", new_file.path);
                                     trigger_file_parsing(new_file.path.clone());
                                     
                                     // ATOMIC: Single lock operation - remove old, add new  
@@ -143,6 +145,7 @@ impl TrackedFiles {
                                         files_vec_signal_sync.set_neq(current_files);
                                     }
                                 } else {
+                                    zoon::println!("❌ TrackedFiles: File with id '{}' not found for reload", file_id);
                                 }
                             } // Read lock scope ends here
                         }
@@ -166,6 +169,7 @@ impl TrackedFiles {
                                     files_vec_signal_sync.set_neq(current_files);
                                 }
                             } else {
+                                zoon::println!("❌ TrackedFiles: File with id '{}' not found!", file_id);
                             }
                         }
                     }
@@ -307,6 +311,7 @@ static TRACKED_FILES_INSTANCE: std::sync::OnceLock<TrackedFiles> = std::sync::On
 async fn initialize_tracked_files() -> TrackedFiles {
     let tracked_files = TrackedFiles::new().await;
     if TRACKED_FILES_INSTANCE.set(tracked_files.clone()).is_err() {
+        zoon::println!("⚠️ TrackedFiles already initialized");
     }
     tracked_files
 }
@@ -329,6 +334,7 @@ fn initialize_from_config(config_file_paths: Vec<String>) {
     if let Some(domain) = tracked_files_domain() {
         domain.config_files_loaded_relay.send(config_file_paths);
     } else {
+        zoon::println!("⚠️ TrackedFiles domain not initialized - cannot load config files");
     }
 }
 

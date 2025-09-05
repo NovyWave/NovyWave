@@ -7,7 +7,7 @@ use futures::{StreamExt, select};
 use shared::UpMsg;
 use serde::{Serialize, Deserialize};
 use std::sync::Arc;
-use std::str::FromStr;
+// Removed unused import: std::str::FromStr
 use moonzoon_novyui::tokens::theme;
 
 // === SHARED TYPES FOR ACTORS ===
@@ -98,8 +98,7 @@ fn create_config_saver_actor(
                         CurrentPlatform::send_message(UpMsg::SaveConfig(shared_config)).await
                 }.await;
                 
-                if let Err(e) = save_result {
-                    zoon::eprintln!("🚨 Failed to save config: {e}");
+                if let Err(_e) = save_result {
                 }
             });
             
@@ -222,9 +221,12 @@ pub struct AppConfig {
     pub panel_dimensions_bottom_actor: Actor<PanelDimensions>,
     pub timeline_state_actor: Actor<TimelineState>,
     pub session_state_actor: Actor<SessionState>,
+    #[allow(dead_code)] // Actor+Relay state actor - preserve for completeness
     pub ui_state_actor: Actor<UiState>,
     pub toast_dismiss_ms_actor: Actor<u32>,
+    #[allow(dead_code)] // Actor+Relay state actor - preserve for completeness
     pub dialogs_data_actor: Actor<DialogsData>,
+    #[allow(dead_code)] // Actor+Relay state actor - preserve for completeness
     pub is_loaded_actor: Actor<bool>,
     
     // === UI MUTABLES FOR DIRECT TREEVIEW CONNECTION ===
@@ -240,12 +242,18 @@ pub struct AppConfig {
     pub variables_filter_changed_relay: Relay<String>,
     pub panel_dimensions_right_changed_relay: Relay<PanelDimensions>,
     pub panel_dimensions_bottom_changed_relay: Relay<PanelDimensions>,
+    #[allow(dead_code)] // Actor+Relay event relay - preserve for completeness
     pub panel_resized_relay: Relay<PanelDimensions>,
+    #[allow(dead_code)] // Actor+Relay event relay - preserve for completeness
     pub timeline_state_changed_relay: Relay<TimelineState>,
+    #[allow(dead_code)] // Actor+Relay event relay - preserve for completeness
     pub cursor_moved_relay: Relay<TimeNs>,
+    #[allow(dead_code)] // Actor+Relay event relay - preserve for completeness
     pub zoom_changed_relay: Relay<f64>,
     pub session_state_changed_relay: Relay<SessionState>,
+    #[allow(dead_code)] // Actor+Relay event relay - preserve for completeness
     pub ui_state_changed_relay: Relay<UiState>,
+    #[allow(dead_code)] // Actor+Relay event relay - preserve for completeness
     pub toast_dismiss_ms_changed_relay: Relay<u32>,
     pub dialogs_data_changed_relay: Relay<DialogsData>,
 }
@@ -261,9 +269,7 @@ impl AppConfig {
     pub async fn new() -> Self {
         // Load app config from backend using request-response pattern
         let config = Self::load_config_from_backend().await
-            .unwrap_or_else(|error| {
-                zoon::eprintln!("⚠️ Failed to load config from backend: {error}");
-                zoon::println!("🔧 Using default configuration");
+            .unwrap_or_else(|_error| {
                 SharedAppConfig::default()
             });
         
@@ -272,9 +278,9 @@ impl AppConfig {
         let (theme_button_clicked_relay, mut theme_button_clicked_stream) = relay();
         let (dock_mode_button_clicked_relay, mut dock_mode_button_clicked_stream) = relay();
         let (variables_filter_changed_relay, variables_filter_changed_stream) = relay();
-        let (panel_dimensions_right_changed_relay, panel_dimensions_right_changed_stream) = relay();
-        let (panel_dimensions_bottom_changed_relay, panel_dimensions_bottom_changed_stream) = relay();
-        let (panel_resized_relay, panel_resized_stream) = relay();
+        let (panel_dimensions_right_changed_relay, _panel_dimensions_right_changed_stream) = relay();
+        let (panel_dimensions_bottom_changed_relay, _panel_dimensions_bottom_changed_stream) = relay();
+        let (panel_resized_relay, _panel_resized_stream) = relay();
         let (timeline_state_changed_relay, timeline_state_changed_stream) = relay();
         let (cursor_moved_relay, cursor_moved_stream) = relay();
         let (zoom_changed_relay, zoom_changed_stream) = relay();
@@ -282,7 +288,7 @@ impl AppConfig {
         let (ui_state_changed_relay, mut ui_state_changed_stream) = relay();
         let (toast_dismiss_ms_changed_relay, mut toast_dismiss_ms_changed_stream) = relay();
         let (dialogs_data_changed_relay, mut dialogs_data_changed_stream) = relay();
-        let (config_loaded_relay, mut config_loaded_stream) = relay::<SharedAppConfig>();
+        let (_config_loaded_relay, mut config_loaded_stream) = relay::<SharedAppConfig>();
 
         // Clone relays for use in multiple Actors to avoid move issues
         let panel_dimensions_right_changed_relay_clone = panel_dimensions_right_changed_relay.clone();
@@ -298,13 +304,11 @@ impl AppConfig {
                 SharedTheme::Dark => theme::Theme::Dark,
             };
             theme::init_theme(Some(initial_novyui_theme), None);
-            // Theme Actor: Initialized NovyUI theme system
             
             loop {
                 select! {
                     button_click = theme_button_clicked_stream.next() => {
                         if let Some(()) = button_click {
-                            // Theme Actor: Processing button click
                             // ✅ Read and modify state directly
                             {
                                 let old_theme = state.get();
@@ -313,7 +317,6 @@ impl AppConfig {
                                     SharedTheme::Dark => SharedTheme::Light,
                                 };
                                 state.set(new_theme);
-                                // Theme Actor: Toggling theme
                                 
                                 // Update NovyUI theme system immediately
                                 let novyui_theme = match new_theme {
@@ -342,7 +345,6 @@ impl AppConfig {
                         if let Some(()) = button_click {
                             
                             // Get current panel dimensions from DRAGGING SYSTEM BEFORE switching mode
-                            let current_files_height = crate::visualizer::interaction::dragging::files_panel_height_signal().to_stream().next().await.unwrap_or(300.0) as u32;
                             let current_name_width = crate::visualizer::interaction::dragging::variables_name_column_width_signal().to_stream().next().await.unwrap_or(190.0) as u32;
                             let current_value_width = crate::visualizer::interaction::dragging::variables_value_column_width_signal().to_stream().next().await.unwrap_or(220.0) as u32;
                             
@@ -400,7 +402,7 @@ impl AppConfig {
                                         DockMode::Right => {
                                             // Load Right dock dimensions and update Actors
                                             let right_config = crate::config::app_config().panel_dimensions_right_actor.signal().to_stream().next().await;
-                                            if let Some(dims) = right_config {
+                                            if let Some(_dims) = right_config {
                                                 
                                                 // Right mode dimensions are already loaded into the config actors - no need to force sync
                                             }
@@ -408,7 +410,7 @@ impl AppConfig {
                                         DockMode::Bottom => {
                                             // Load Bottom dock dimensions and update Actors
                                             let bottom_config = crate::config::app_config().panel_dimensions_bottom_actor.signal().to_stream().next().await;
-                                            if let Some(dims) = bottom_config {
+                                            if let Some(_dims) = bottom_config {
                                                 
                                                 // Bottom mode dimensions are already loaded into the config actors - no need to force sync
                                             }
@@ -591,7 +593,6 @@ impl AppConfig {
             for scope in &config.workspace.expanded_scopes {
                 // Distinguish between file-level and scope-level expansion
                 let scope_id = if scope.is_empty() {
-                    zoon::println!("⚠️ Config: Skipping empty scope ID");
                     continue; // Skip empty scope IDs
                 } else if scope.contains('|') {
                     // Nested scope - add "scope_" prefix  

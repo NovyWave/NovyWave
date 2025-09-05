@@ -437,6 +437,7 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
     
     // 🔍 DEBUG: Format initialization logging disabled to reduce startup spam
     // if current_format != shared::SignalValueFormat::default() || saved_format.is_some() {
+    //     zoon::println!("🔄 INIT FORMAT for {}: selected_var.formatter={:?}, saved_format={:?} -> current_format={:?}", unique_id, selected_var.formatter, saved_format, current_format);
     // }
     
     // Create reactive state for selection changes
@@ -471,6 +472,7 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
                 update_variable_format(&unique_id, new_format);
                 
                 // 🔍 DEBUG: Format change
+                zoon::println!("🔄 FORMAT CHANGED for {}: '{}' -> {:?}", unique_id, new_format_str, new_format);
             }
             }
             }).await;
@@ -800,6 +802,7 @@ fn update_variable_format(unique_id: &str, new_format: shared::VarFormat) {
     // This triggers format persistence and variable updates in the Actor
     variable_format_changed_relay().send((unique_id.to_string(), new_format));
     
+    zoon::println!("🎯 FORMAT RELAY: Sent format change for {} -> {:?}", unique_id, new_format);
 }
 
 /// Compute signal value from cached transitions at a specific time
@@ -948,9 +951,10 @@ pub fn is_cursor_within_variable_time_range(unique_id: &str, cursor_time: f64) -
 
 /// Query signal values for selected variables at a specific time
 #[allow(dead_code)]
-pub fn query_signal_values_at_time(_time_seconds: f64) {
+pub fn query_signal_values_at_time(time_seconds: f64) {
     // Note: In Actor+Relay architecture, this would get current variables from the domain
     // For now, use a placeholder until full migration is complete
+    zoon::println!("Query signal values at time {time_seconds} - needs Actor+Relay implementation");
     
     // TODO: Complete Actor+Relay implementation
     // This function needs to be reimplemented to work with the new domain signals
@@ -1689,6 +1693,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                                                 Text::with_signal(
                                                                                     ns_per_pixel_signal().map(|ns_per_pixel| {
                                                                                         // DEBUG: Log what UI zoom display receives
+                                                                                        zoon::println!("🖥️ UI ZOOM DISPLAY: Showing {} ({} raw ns)", ns_per_pixel, ns_per_pixel.nanos());
                                                                                         // Use NsPerPixel's built-in Display formatting
                                                                                         format!("{}", ns_per_pixel)
                                                                                     })
@@ -1703,6 +1708,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                             .item(
                                                                 El::new()
                                                                     .on_click(|| {
+                                                                        zoon::println!("🚨 R BUTTON CLICKED: Triggering reset zoom directly");
                                                                         crate::visualizer::timeline::timeline_actor_domain().reset_zoom_pressed_relay.send(());
                                                                     })
                                                                     .child(kbd("R").size(KbdSize::Small).variant(KbdVariant::Outlined).title("Reset zoom to 1x, fit all data, and center cursor").build())
@@ -2439,10 +2445,12 @@ fn process_file_picker_selection() {
             if let Some(signals) = crate::actors::global_domains::TRACKED_FILES_SIGNALS.get() {
                 // Get current files from the signal storage
                 let files = signals.files_mutable.lock_ref().to_vec();
+                // zoon::println!("🔍 DEBUG: Found {} files in global domain signals", files.len());
                 files
             } else {
                 // Fallback to legacy system if signals not initialized
                 let files = state::TRACKED_FILES.lock_ref().to_vec();
+                // zoon::println!("🔍 DEBUG: Using legacy system, found {} files", files.len());
                 files
             }
         };
@@ -2454,13 +2462,17 @@ fn process_file_picker_selection() {
             let selected_pathbuf = PathBuf::from(&selected_path);
             
             // DEBUG: Log path comparison details
+            // zoon::println!("🔍 DEBUG: Checking selected_path: '{}'", selected_path);
             // for existing_file in &tracked_files_snapshot {
+            //     zoon::println!("  - Tracked file: id='{}', path='{}'", existing_file.id, existing_file.path);
             // }
             
             // Check if file is already tracked
             if let Some(existing_file) = tracked_files_snapshot.iter().find(|f| f.id == selected_path || f.path == selected_path) {
+                // zoon::println!("🔄 File already opened, will reload: {} (state: {:?})", selected_path, existing_file.state);
                 reload_files.push(existing_file.id.clone());
             } else {
+                // zoon::println!("📁 New file will be loaded: {}", selected_path);
                 new_files.push(selected_pathbuf);
             }
         }
@@ -2469,11 +2481,13 @@ fn process_file_picker_selection() {
         
         // Handle new files
         if !new_files.is_empty() {
+            // zoon::println!("📥 Loading {} new files", new_files.len());
             tracked_files.files_dropped_relay.send(new_files);
         }
         
         // Handle reload files - use direct reload calls for proper parsing
         if !reload_files.is_empty() {
+            // zoon::println!("🔄 Reloading {} existing files via reload relay", reload_files.len());
             
             // Use direct reload calls instead of remove→re-add pattern
             // This ensures reload files go through full parsing pipeline
