@@ -244,6 +244,16 @@ impl TrackedFiles {
         })
     }
     
+    /// Get signal for loaded files count
+    #[allow(dead_code)] // Actor+Relay API method - preserve for completeness
+    pub fn loaded_count_signal(&self) -> impl Signal<Item = usize> {
+        self.files_signal().map(|files| {
+            files.iter()
+                .filter(|file| matches!(file.state, shared::FileState::Loaded(_)))
+                .count()
+        })
+    }
+    
     /// Get signal for expanded scopes
     pub fn expanded_scopes_signal(&self) -> impl Signal<Item = IndexSet<String>> {
         self.expanded_scopes.signal()

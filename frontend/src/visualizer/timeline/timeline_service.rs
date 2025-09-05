@@ -41,12 +41,16 @@ impl Default for RequestTracker {
     }
 }
 
+// ❌ ANTIPATTERN: Service Layer Caching - TODO: Move to WaveformTimeline Actor
 /// Global circuit breaker state for preventing infinite request loops
+#[deprecated(note = "Use WaveformTimeline Actor with Cache Current Values pattern instead of service layer caching")]
 static CIRCUIT_BREAKER: Lazy<Mutable<HashMap<String, RequestTracker>>> = Lazy::new(|| {
     Mutable::new(HashMap::new())
 });
 
+// ❌ ANTIPATTERN: Service Layer Caching - TODO: Move to WaveformTimeline Actor
 /// Cache for empty results to prevent retry storms
+#[deprecated(note = "Use WaveformTimeline Actor with Cache Current Values pattern instead of service layer caching")]
 static EMPTY_RESULT_CACHE: Lazy<Mutable<HashMap<String, TimeNs>>> = Lazy::new(|| {
     Mutable::new(HashMap::new())
 });
@@ -54,6 +58,8 @@ static EMPTY_RESULT_CACHE: Lazy<Mutable<HashMap<String, TimeNs>>> = Lazy::new(||
 
 // ===== PUBLIC API =====
 
+// ❌ ANTIPATTERN: Service Layer Abstraction - TODO: Replace with WaveformTimeline Actor+Relay events
+#[deprecated(note = "Replace service methods with Actor+Relay events in WaveformTimeline domain")]
 pub struct UnifiedTimelineService;
 
 impl UnifiedTimelineService {

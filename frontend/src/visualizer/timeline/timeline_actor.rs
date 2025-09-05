@@ -2039,6 +2039,8 @@ pub fn current_viewport() -> Option<Viewport> {
 }
 
 /// Static cache for current viewport - updated by signal handler
+// ❌ ANTIPATTERN: Static caching outside Actor loops - TODO: Use Cache Current Values pattern in WaveformTimeline Actor
+#[deprecated(note = "Replace static cache with Cache Current Values pattern inside WaveformTimeline Actor loop")]
 pub fn static_cache_viewport() -> &'static std::sync::OnceLock<std::sync::Mutex<Viewport>> {
     static VIEWPORT_CACHE: std::sync::OnceLock<std::sync::Mutex<Viewport>> = std::sync::OnceLock::new();
     &VIEWPORT_CACHE
@@ -2073,7 +2075,8 @@ pub fn current_coordinates() -> Option<TimelineCoordinates> {
 
 /// Get current canvas width synchronously (replacement for bridge function)
 pub fn current_canvas_width() -> Option<f32> {
-    // ✅ FIXED: Use static signal pattern like other functions in this file
+    // ❌ ANTIPATTERN: Static caching outside Actor loops - TODO: Use WaveformTimeline Actor with Cache Current Values pattern
+    #[deprecated(note = "Use WaveformTimeline Actor with Cache Current Values pattern instead of static caching")]
     static CANVAS_WIDTH_CACHE: std::sync::OnceLock<std::sync::Arc<std::sync::Mutex<f32>>> = std::sync::OnceLock::new();
     
     let cache = CANVAS_WIDTH_CACHE.get_or_init(|| {
@@ -2100,7 +2103,8 @@ pub fn current_canvas_width() -> Option<f32> {
 
 /// Get current canvas height synchronously (replacement for bridge function)
 pub fn current_canvas_height() -> f32 {
-    // ✅ FIXED: Use static signal pattern like other functions in this file
+    // ❌ ANTIPATTERN: Static caching outside Actor loops - TODO: Use WaveformTimeline Actor with Cache Current Values pattern
+    #[deprecated(note = "Use WaveformTimeline Actor with Cache Current Values pattern instead of static caching")]
     static CANVAS_HEIGHT_CACHE: std::sync::OnceLock<std::sync::Arc<std::sync::Mutex<f32>>> = std::sync::OnceLock::new();
     
     let cache = CANVAS_HEIGHT_CACHE.get_or_init(|| {
@@ -2306,23 +2310,31 @@ pub fn initialize_value_caching() {
 }
 
 // Helper functions to get the static cache instances
+// ❌ ANTIPATTERN: Static caching outside Actor loops - TODO: Use Cache Current Values pattern in WaveformTimeline Actor
+#[deprecated(note = "Replace static cache with Cache Current Values pattern inside WaveformTimeline Actor loop")]
 fn static_cache_cursor() -> &'static std::sync::OnceLock<std::sync::Mutex<TimeNs>> {
     static CACHED_CURSOR: std::sync::OnceLock<std::sync::Mutex<TimeNs>> = std::sync::OnceLock::new();
     &CACHED_CURSOR
 }
 
 fn static_cache_zoom_center() -> &'static std::sync::OnceLock<std::sync::Mutex<TimeNs>> {
+    // ❌ ANTIPATTERN: Static caching outside Actor loops - TODO: Use WaveformTimeline Actor with Cache Current Values pattern
+    #[deprecated(note = "Use WaveformTimeline Actor with Cache Current Values pattern instead of static caching")]
     static CACHED_ZOOM_CENTER: std::sync::OnceLock<std::sync::Mutex<TimeNs>> = std::sync::OnceLock::new();
     &CACHED_ZOOM_CENTER
 }
 
 
 fn static_cache_ns_per_pixel() -> &'static std::sync::OnceLock<std::sync::Mutex<NsPerPixel>> {
+    // ❌ ANTIPATTERN: Static caching outside Actor loops - TODO: Use WaveformTimeline Actor with Cache Current Values pattern
+    #[deprecated(note = "Use WaveformTimeline Actor with Cache Current Values pattern instead of static caching")]
     static CACHED_NS_PER_PIXEL: std::sync::OnceLock<std::sync::Mutex<NsPerPixel>> = std::sync::OnceLock::new();
     &CACHED_NS_PER_PIXEL
 }
 
 fn static_cache_coordinates() -> &'static std::sync::OnceLock<std::sync::Mutex<TimelineCoordinates>> {
+    // ❌ ANTIPATTERN: Static caching outside Actor loops - TODO: Use WaveformTimeline Actor with Cache Current Values pattern
+    #[deprecated(note = "Use WaveformTimeline Actor with Cache Current Values pattern instead of static caching")]
     static CACHED_COORDINATES: std::sync::OnceLock<std::sync::Mutex<TimelineCoordinates>> = std::sync::OnceLock::new();
     &CACHED_COORDINATES
 }

@@ -31,10 +31,11 @@ pub fn start_smooth_pan_left() {
                         };
                         
                         // Check for Shift key for turbo panning
+                        // ❌ ANTIPATTERN: Hardcoded animation pan speeds - TODO: Use configurable animation constants or DPI-aware calculations
                         let pan_pixels = if crate::visualizer::state::timeline_state::IS_SHIFT_PRESSED.get() {
-                            -10  // Turbo pan with Shift (10 pixels per frame)
+                            -10  // Magic number - should be DPI-aware or user-configurable
                         } else {
-                            -2   // Normal smooth pan (2 pixels per frame)
+                            -2   // Magic number - should be DPI-aware or user-configurable
                         };
                         
                         // Store original viewport start for comparison
@@ -61,6 +62,7 @@ pub fn start_smooth_pan_left() {
                 } else {
                     break; // Timeline not initialized yet, stop panning
                 }
+                // ❌ ANTIPATTERN: Timer::sleep() for animation timing - TODO: Use requestAnimationFrame or proper animation loops
                 Timer::sleep(16).await; // 60fps for smooth motion
             }
         });
@@ -85,10 +87,11 @@ pub fn start_smooth_pan_right() {
                         };
                         
                         // Check for Shift key for turbo panning
+                        // ❌ ANTIPATTERN: Hardcoded animation pan speeds - TODO: Use configurable animation constants or DPI-aware calculations
                         let pan_pixels = if crate::visualizer::state::timeline_state::IS_SHIFT_PRESSED.get() {
-                            10   // Turbo pan with Shift (10 pixels per frame)
+                            10   // Magic number - should be DPI-aware or user-configurable
                         } else {
-                            2    // Normal smooth pan (2 pixels per frame)
+                            2    // Magic number - should be DPI-aware or user-configurable
                         };
                         
                         // Store original viewport start for comparison

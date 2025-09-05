@@ -41,8 +41,9 @@ pub fn waveform_canvas() -> impl Element {
 fn create_canvas_element() -> impl Element {
     
     Canvas::new()
-        .width(640)
-        .height(480)
+        // ❌ ANTIPATTERN: Hardcoded canvas dimensions - TODO: Use responsive viewport-based sizing
+        .width(640) // Magic number - should be calculated from parent container
+        .height(480) // Magic number - should be calculated from parent container
         .update_raw_el(move |raw_el| {
             raw_el
                 .on_resize(move |width, height| {
@@ -60,6 +61,7 @@ fn create_canvas_element() -> impl Element {
                         let canvas_clone = raw_element.clone();
                         Task::start(async move {
                             // Wait a tick for DOM to be fully ready
+                            // ❌ ANTIPATTERN: Timer::sleep() for DOM coordination - TODO: Use proper DOM readiness events
                             Timer::sleep(10).await;
                             
                             let _width = canvas_clone.width();

@@ -97,6 +97,8 @@ pub fn main() {
         
 
         // ✅ RESTORE SELECTED VARIABLES FROM CONFIG (after domain initialization)
+        // ❌ ANTIPATTERN: Direct state access - TODO: Convert to signal-based cached access in domain Actor
+        // TODO: Use config_domain().selected_variables_signal() instead of .get_cloned()
         let selected_variables = crate::state::SELECTED_VARIABLES_FOR_CONFIG.get_cloned();
         if !selected_variables.is_empty() {
             let variables_restored_relay = crate::actors::selected_variables::variables_restored_relay();
@@ -155,6 +157,7 @@ pub fn main() {
                         UnifiedTimelineService::reset_circuit_breakers_for_variables(&problematic_variables);
                         
                         // Trigger fresh queries at new cursor position
+                        // ❌ ANTIPATTERN: Timer::sleep() for reset coordination - TODO: Use proper signal-based reset completion
                         Timer::sleep(100).await; // Brief delay for reset to take effect
                         crate::views::trigger_signal_value_queries();
                         // Fresh queries triggered at cursor position
@@ -185,6 +188,7 @@ pub fn main() {
                     // Movement started - just track state, don't query
                     was_moving.set(true);
                 } else if was_moving.get() {
+                    // ❌ ANTIPATTERN: Direct state access - TODO: Use signal-based movement state tracking
                     // Movement just stopped - use unified caching logic with built-in range checking
                     crate::views::trigger_signal_value_queries();
                     was_moving.set(false);
@@ -209,6 +213,7 @@ pub fn main() {
                 let last_position = last_position.clone();
                 async move {
                 // Only query for direct position changes (not during Q/E movement)
+                // ❌ ANTIPATTERN: Direct state access - TODO: Use signal-based position tracking in Actor
                 if !is_moving && (cursor_pos - last_position.get()).abs() > 0.001 {
                     // Use the unified caching logic with built-in range checking
                     crate::views::trigger_signal_value_queries();
@@ -374,13 +379,14 @@ fn main_layout() -> impl Element {
         })
         .update_raw_el(move |raw_el| {
             raw_el.global_event_handler(move |event: zoon::events::KeyDown| {
+                // TODO: Convert .get() to signal-based cached access (requires keyboard handler architecture refactoring)
                 let search_focused = state::VARIABLES_SEARCH_INPUT_FOCUSED.get();
-                
-                // Skip timeline controls if typing in search input
-                if search_focused {
-                    // Keyboard blocked: search input has focus
-                    return;
-                }
+                    
+                    // Skip timeline controls if typing in search input
+                    if search_focused {
+                        // Keyboard blocked: search input has focus
+                        return;
+                    }
                 
                 match event.key().as_str() {
                     "Shift" => {
@@ -431,6 +437,7 @@ fn main_layout() -> impl Element {
                     },
                     "q" | "Q" => {
                         let waveform_timeline = crate::visualizer::timeline::timeline_actor_domain();
+                        // TODO: Convert .get() to signal-based cached access (shift state) 
                         if crate::visualizer::state::timeline_state::IS_SHIFT_PRESSED.get() {
                             // Shift+Q: Jump to previous transition using WaveformTimeline domain
                             waveform_timeline.jump_to_previous_pressed_relay.send(());
@@ -447,6 +454,7 @@ fn main_layout() -> impl Element {
                     },
                     "e" | "E" => {
                         let waveform_timeline = crate::visualizer::timeline::timeline_actor_domain();
+                        // TODO: Convert .get() to signal-based cached access (shift state)
                         if crate::visualizer::state::timeline_state::IS_SHIFT_PRESSED.get() {
                             // Shift+E: Jump to next transition using WaveformTimeline domain
                             waveform_timeline.jump_to_next_pressed_relay.send(());
@@ -486,7 +494,7 @@ fn main_layout() -> impl Element {
                 }
             })
             .global_event_handler(move |event: zoon::events::KeyUp| {
-                // Skip timeline controls if typing in search input
+                // TODO: Convert .get() to signal-based cached access (requires keyboard handler architecture refactoring)
                 if state::VARIABLES_SEARCH_INPUT_FOCUSED.get() {
                     return;
                 }

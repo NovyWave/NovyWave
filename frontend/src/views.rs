@@ -24,7 +24,8 @@ use crate::state::SELECTED_VARIABLES_ROW_HEIGHT;
 // Cached timeline range signal to prevent duplicate calculations
 fn timeline_range_signal() -> impl Signal<Item = Option<(f64, f64)>> {
     map_ref! {
-        let _loaded_files = crate::state::LOADED_FILES.signal_vec_cloned().to_signal_cloned().dedupe_cloned(),
+        // ✅ FIXED: Use count signal instead of SignalVec conversion antipattern (for trigger only)
+        let _files_count = crate::actors::tracked_files::tracked_files_count_signal(),
         let _selected_vars = variables_signal() =>
         crate::visualizer::canvas::waveform_canvas::get_maximum_timeline_range()
     }.dedupe_cloned()
@@ -153,15 +154,17 @@ fn create_smart_dropdown(
     
     // Calculate actual dropdown height based on content
     // Modern library approach: account for all box model properties + safety margin
-    let vertical_padding = 12.0; // .y(6) = 6px top + 6px bottom
-    let explicit_line_height = 16.0; // Set explicit line-height to avoid browser variations
+    // ❌ ANTIPATTERN: Hardcoded UI measurement constants - TODO: Use design system tokens or dynamic calculations
+    let vertical_padding = 12.0; // Magic number - should be design token
+    let explicit_line_height = 16.0; // Magic number - should be typography token
     let item_height = vertical_padding + explicit_line_height; // 28px total per item
-    let border_height = 2.0; // Border::new().width(1) = 1px top + 1px bottom
-    let safety_margin = 4.0; // Safety buffer for fractional pixel rendering
+    let border_height = 2.0; // Magic number - should be border design token
+    let safety_margin = 4.0; // Magic number - should be layout constant
     
     let content_height = dropdown_options.len() as f64 * item_height;
     let calculated_height = content_height + border_height + safety_margin;
-    let dynamic_dropdown_height = (calculated_height.min(300.0)).ceil(); // Math.ceil() for fractional pixels
+    // ❌ ANTIPATTERN: Hardcoded maximum height constraint - TODO: Use responsive viewport calculations
+    let dynamic_dropdown_height = (calculated_height.min(300.0)).ceil(); // Magic number max height
     
     // Create unique ID for positioning calculations
     let dropdown_id = format!("smart-dropdown-{}", js_sys::Date::now() as u64);
@@ -1460,16 +1463,13 @@ fn create_stable_tree_view() -> impl Element {
                         .style("min-width", "fit-content")
                 })
                 .items_signal_vec(
-                    map_ref! {
-                        let tracked_files = crate::actors::tracked_files::tracked_files_signal_vec().to_signal_cloned().dedupe_cloned(),
-                        let expanded_scopes = crate::state::EXPANDED_SCOPES.signal_cloned() => {
-                            // When either tracked files OR expanded scopes change, re-render all TreeViews
-                            // Pass current expanded scopes state to each TreeView
-                            tracked_files.into_iter().map(|tracked_file| {
-                                render_tracked_file_with_expanded_state(tracked_file.clone(), expanded_scopes.clone())
-                            }).collect::<Vec<_>>()
-                        }
-                    }.to_signal_vec()
+                    // ✅ FIXED: Use signal_vec directly instead of SignalVec conversion antipattern
+                    // Map each tracked file to its rendered element with current expanded state
+                    crate::actors::tracked_files::tracked_files_signal_vec().map(|tracked_file| {
+                        // Get current expanded scopes for this render
+                        let expanded_scopes = crate::state::EXPANDED_SCOPES.get_cloned();
+                        render_tracked_file_with_expanded_state(tracked_file.clone(), expanded_scopes)
+                    })
                 )
         )
 }

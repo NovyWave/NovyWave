@@ -12,12 +12,18 @@ use indexmap::{IndexSet, IndexMap};
 use zoon::*;
 
 /// Global TrackedFiles domain instance
+// ❌ ANTIPATTERN: Static domain instances create non-functional signals that never update
+#[deprecated(note = "Use proper Actor+Relay initialization with working signal connections instead of static OnceLock")]
 static TRACKED_FILES_DOMAIN_INSTANCE: OnceLock<TrackedFiles> = OnceLock::new();
 
 /// Global SelectedVariables domain instance  
+// ❌ ANTIPATTERN: Static domain instances create non-functional signals that never update
+#[deprecated(note = "Use proper Actor+Relay initialization with working signal connections instead of static OnceLock")]
 pub static SELECTED_VARIABLES_DOMAIN_INSTANCE: OnceLock<SelectedVariables> = OnceLock::new();
 
 /// Global WaveformTimeline domain instance
+// ❌ ANTIPATTERN: Static domain instances create non-functional signals that never update
+#[deprecated(note = "Use proper Actor+Relay initialization with working signal connections instead of static OnceLock")]
 static WAVEFORM_TIMELINE_DOMAIN_INSTANCE: OnceLock<WaveformTimeline> = OnceLock::new();
 
 /// Global UserConfiguration domain instance
@@ -25,9 +31,13 @@ static USER_CONFIGURATION_DOMAIN_INSTANCE: OnceLock<UserConfiguration> = OnceLoc
 
 
 /// Global DialogManager domain instance
+// ❌ ANTIPATTERN: Static domain instances create non-functional signals that never update
+#[deprecated(note = "Use proper Actor+Relay initialization with working signal connections instead of static OnceLock")]
 static DIALOG_MANAGER_DOMAIN_INSTANCE: OnceLock<DialogManager> = OnceLock::new();
 
 /// Global ErrorManager domain instance
+// ❌ ANTIPATTERN: Static domain instances create non-functional signals that never update
+#[deprecated(note = "Use proper Actor+Relay initialization with working signal connections instead of static OnceLock")]
 static ERROR_MANAGER_DOMAIN_INSTANCE: OnceLock<ErrorManager> = OnceLock::new();
 
 // === STATIC SIGNAL STORAGE FOR DOMAIN SIGNAL LIFETIME FIX ===
@@ -60,6 +70,8 @@ impl TrackedFilesSignalStorage {
 }
 
 /// Global TrackedFiles signal storage
+// ❌ ANTIPATTERN: Static signal storage creates non-reactive signal chains
+#[deprecated(note = "Use proper Actor signal methods instead of static signal storage")]
 pub static TRACKED_FILES_SIGNALS: OnceLock<TrackedFilesSignalStorage> = OnceLock::new();
 
 /// Static signal storage for SelectedVariables domain  
@@ -83,6 +95,8 @@ impl SelectedVariablesSignalStorage {
 }
 
 /// Global SelectedVariables signal storage
+// ❌ ANTIPATTERN: Static signal storage creates non-reactive signal chains
+#[deprecated(note = "Use proper Actor signal methods instead of static signal storage")]
 pub static SELECTED_VARIABLES_SIGNALS: OnceLock<SelectedVariablesSignalStorage> = OnceLock::new();
 
 
@@ -116,6 +130,8 @@ impl DialogManagerSignalStorage {
 }
 
 /// Global DialogManager signal storage
+// ❌ ANTIPATTERN: Static signal storage creates non-reactive signal chains
+#[deprecated(note = "Use proper Actor signal methods instead of static signal storage")]
 pub static DIALOG_MANAGER_SIGNALS: OnceLock<DialogManagerSignalStorage> = OnceLock::new();
 
 /// Static signal storage for ErrorManager domain
@@ -140,6 +156,8 @@ impl ErrorManagerSignalStorage {
 }
 
 /// Global ErrorManager signal storage
+// ❌ ANTIPATTERN: Static signal storage creates non-reactive signal chains
+#[deprecated(note = "Use proper Actor signal methods instead of static signal storage")]
 pub static ERROR_MANAGER_SIGNALS: OnceLock<ErrorManagerSignalStorage> = OnceLock::new();
 
 /// Initialize all domain instances - call once on app startup
@@ -259,11 +277,12 @@ pub fn _are_domains_initialized() -> bool {
 /// Get owned signal for all tracked files - LIFETIME SAFE for UI components
 /// Enables: tracked_files_signal().map(|files| render(files))
 pub fn tracked_files_signal() -> impl Signal<Item = Vec<TrackedFile>> {
-    TRACKED_FILES_SIGNALS.get()
-        .map(|signals| signals.files_mutable.signal_vec_cloned().to_signal_cloned().dedupe_cloned())
-        .unwrap_or_else(|| {
-            MutableVec::<TrackedFile>::new().signal_vec_cloned().to_signal_cloned().dedupe_cloned()
-        })
+    // ✅ FIXED: Use dedicated Vec signal from domain instead of conversion antipattern
+    if let Some(domain) = TRACKED_FILES_DOMAIN_INSTANCE.get() {
+        domain.files_signal().boxed_local()
+    } else {
+        Mutable::new(vec![]).signal_cloned().boxed_local()
+    }
 }
 
 /// Compare two TrackedFiles for sorting: filename first, then visible distinguishing prefix
@@ -308,6 +327,8 @@ pub fn tracked_files_signal_vec() -> impl SignalVec<Item = TrackedFile> {
 }
 
 /// Get owned signal for loading files - LIFETIME SAFE
+// ❌ ANTIPATTERN: SignalVec to Signal conversion causes 20+ renders from single change
+#[deprecated(note = "Use tracked_files_domain().loading_files_signal() with items_signal_vec instead of signal conversion")]
 #[allow(dead_code)]
 pub fn loading_files_signal() -> impl Signal<Item = Vec<LoadingFile>> {
     TRACKED_FILES_SIGNALS.get()
@@ -318,6 +339,8 @@ pub fn loading_files_signal() -> impl Signal<Item = Vec<LoadingFile>> {
 }
 
 /// Get owned signal for loaded files - LIFETIME SAFE
+// ❌ ANTIPATTERN: SignalVec to Signal conversion causes 20+ renders from single change
+#[deprecated(note = "Use tracked_files_domain().loaded_files_signal() with items_signal_vec instead of signal conversion")]
 #[allow(dead_code)]
 pub fn loaded_files_signal() -> impl Signal<Item = Vec<WaveformFile>> {
     TRACKED_FILES_SIGNALS.get()
@@ -338,22 +361,23 @@ pub fn is_loading_signal() -> impl Signal<Item = bool> {
 
 /// Get owned signal for file count - CONNECTS TO TRACKEDFILES DOMAIN
 pub fn file_count_signal() -> impl Signal<Item = usize> {
-    // For now, use config directly until TrackedFiles domain is fully integrated
-    crate::config::app_config().session_state_actor.signal().map(|session| {
-        let count = session.opened_files.len();
-        count
-    })
+    // ✅ FIXED: Use proper Actor signal from TrackedFiles domain
+    if let Some(domain) = TRACKED_FILES_DOMAIN_INSTANCE.get() {
+        domain.file_count_signal().boxed_local()
+    } else {
+        Mutable::new(0).signal().boxed_local()
+    }
 }
 
 /// Get owned signal for loaded files count - SIMPLE ACTOR+RELAY APPROACH
 #[allow(dead_code)]
 pub fn loaded_files_count_signal() -> impl Signal<Item = usize> {
-    // Use a simple Mutable<usize> that gets updated by the TrackedFiles domain
-    use std::sync::OnceLock;
-    static LOADED_COUNT_SIGNAL: OnceLock<Mutable<usize>> = OnceLock::new();
-    
-    let signal = LOADED_COUNT_SIGNAL.get_or_init(|| Mutable::new(0));
-    signal.signal()
+    // ✅ FIXED: Use proper Actor signal from TrackedFiles domain
+    if let Some(domain) = TRACKED_FILES_DOMAIN_INSTANCE.get() {
+        domain.loaded_count_signal().boxed_local()
+    } else {
+        Mutable::new(0).signal().boxed_local()
+    }
 }
 
 /// Get owned signal for selected variables - LIFETIME SAFE
@@ -398,20 +422,9 @@ pub fn search_filter_signal() -> impl Signal<Item = String> {
 /// Update the static signal storage when TrackedFiles domain changes
 /// This bridges domain events to static signals for UI reactive access
 pub fn _update_tracked_files_signals(files: Vec<TrackedFile>) {
-    // Update count signals
-    use std::sync::OnceLock;
-    static FILE_COUNT_SIGNAL: OnceLock<Mutable<usize>> = OnceLock::new();
-    static LOADED_COUNT_SIGNAL: OnceLock<Mutable<usize>> = OnceLock::new();
-    
-    let file_count = FILE_COUNT_SIGNAL.get_or_init(|| Mutable::new(0));
-    let loaded_count = LOADED_COUNT_SIGNAL.get_or_init(|| Mutable::new(0));
-    
-    file_count.set_neq(files.len());
-    
-    let loaded = files.iter()
-        .filter(|file| matches!(file.state, shared::FileState::Loaded(_)))
-        .count();
-    loaded_count.set_neq(loaded);
+    // ✅ FIXED: Removed OnceLock antipatterns - count signals now use proper domain signals
+    // The file_count_signal() and loaded_files_count_signal() functions now read directly from 
+    // TrackedFiles domain instead of these static signals
     if let Some(signals) = TRACKED_FILES_SIGNALS.get() {
         signals.files_mutable.lock_mut().replace_cloned(files);
     }
@@ -497,6 +510,8 @@ pub fn dialog_manager_expanded_directories_signal() -> impl Signal<Item = IndexS
 }
 
 /// Get owned signal for selected files - LIFETIME SAFE
+// ❌ ANTIPATTERN: SignalVec to Signal conversion causes 20+ renders from single change
+#[deprecated(note = "Use dialog_manager_domain().selected_files_signal() with items_signal_vec instead of signal conversion")]
 pub fn dialog_manager_selected_files_signal() -> impl Signal<Item = Vec<String>> {
     DIALOG_MANAGER_SIGNALS.get()
         .map(|signals| signals.selected_files_mutable.signal_vec_cloned().to_signal_cloned().dedupe_cloned())
@@ -571,20 +586,22 @@ pub fn dialog_manager_selected_mutable() -> MutableVec<String> {
 
 /// Get owned signal for error alerts - LIFETIME SAFE
 pub fn error_manager_alerts_signal() -> impl Signal<Item = Vec<crate::state::ErrorAlert>> {
-    ERROR_MANAGER_SIGNALS.get()
-        .map(|signals| signals.alerts_mutable.signal_vec_cloned().to_signal_cloned().dedupe_cloned())
-        .unwrap_or_else(|| {
-            MutableVec::<crate::state::ErrorAlert>::new().signal_vec_cloned().to_signal_cloned().dedupe_cloned()
-        })
+    // ✅ FIXED: Use dedicated Vec signal from domain instead of conversion antipattern
+    if let Some(domain) = ERROR_MANAGER_DOMAIN_INSTANCE.get() {
+        domain.alerts_vec_signal().boxed_local()
+    } else {
+        Mutable::new(vec![]).signal_cloned().boxed_local()
+    }
 }
 
 /// Get owned signal for toast notifications - LIFETIME SAFE
 pub fn error_manager_notifications_signal() -> impl Signal<Item = Vec<crate::state::ErrorAlert>> {
-    ERROR_MANAGER_SIGNALS.get()
-        .map(|signals| signals.notifications_mutable.signal_vec_cloned().to_signal_cloned().dedupe_cloned())
-        .unwrap_or_else(|| {
-            MutableVec::<crate::state::ErrorAlert>::new().signal_vec_cloned().to_signal_cloned().dedupe_cloned()
-        })
+    // ✅ FIXED: Use dedicated Vec signal from domain instead of conversion antipattern
+    if let Some(domain) = ERROR_MANAGER_DOMAIN_INSTANCE.get() {
+        domain.notifications_vec_signal().boxed_local()
+    } else {
+        Mutable::new(vec![]).signal_cloned().boxed_local()
+    }
 }
 
 /// Get SignalVec for toast notifications - EFFICIENT for items_signal_vec

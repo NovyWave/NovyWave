@@ -30,8 +30,14 @@ pub struct ErrorManager {
     /// Active error alerts → replaces ERROR_ALERTS
     alerts: ActorVec<ErrorAlert>,
     
+    /// Dedicated Vec signal for alerts (no SignalVec conversion antipattern)
+    alerts_vec_signal: Mutable<Vec<ErrorAlert>>,
+    
     /// Toast notifications → replaces TOAST_NOTIFICATIONS  
     notifications: ActorVec<ErrorAlert>,
+    
+    /// Dedicated Vec signal for notifications (no SignalVec conversion antipattern)
+    notifications_vec_signal: Mutable<Vec<ErrorAlert>>,
     
     /// Current file picker error → replaces FILE_PICKER_ERROR
     picker_error: Actor<Option<String>>,
@@ -117,6 +123,10 @@ impl ErrorManager {
         let (bulk_alerts_added_relay, _bulk_alerts_added_stream) = relay();
         let (error_state_restored_relay, _error_state_restored_stream) = relay();
         
+        // Create dedicated Vec signals that sync with ActorVec changes (no conversion antipattern)
+        let alerts_vec_signal = Mutable::new(vec![]);
+        let notifications_vec_signal = Mutable::new(vec![]);
+        
         // Use placeholder actors for now - will be properly implemented later
         let alerts = ActorVec::new(vec![], async move |_handle| {
             // TODO: Implement proper actor processor
@@ -137,7 +147,9 @@ impl ErrorManager {
         // Create domain instance with initialized actors
         Self {
             alerts,
+            alerts_vec_signal,
             notifications,
+            notifications_vec_signal,
             picker_error,
             error_cache,
             next_alert_id,
@@ -195,6 +207,18 @@ impl ErrorManager {
     
     async fn handle_error_state_restored(&self, _state: ErrorState) {
         // TODO: Implement proper Actor processing 
+    }
+    
+    // === DEDICATED VEC SIGNAL ACCESS ===
+    
+    /// Get alerts signal using dedicated Vec signal (no conversion antipattern)
+    pub fn alerts_vec_signal(&self) -> impl Signal<Item = Vec<ErrorAlert>> {
+        self.alerts_vec_signal.signal_cloned()
+    }
+    
+    /// Get notifications signal using dedicated Vec signal (no conversion antipattern)
+    pub fn notifications_vec_signal(&self) -> impl Signal<Item = Vec<ErrorAlert>> {
+        self.notifications_vec_signal.signal_cloned()
     }
 }
 

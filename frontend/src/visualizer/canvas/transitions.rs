@@ -61,6 +61,8 @@ pub fn get_selected_variable_file_paths() -> std::collections::HashSet<String> {
     
     // ITERATION 5: Track file path consistency between calls (simplified approach)
     use std::sync::OnceLock;
+    // ❌ ANTIPATTERN: Static state tracking - TODO: Use Cache Current Values pattern in Actor loop
+    #[deprecated(note = "Replace static file path tracking with Cache Current Values pattern inside Actor loop")]
     static PREVIOUS_FILE_PATHS: OnceLock<std::sync::Mutex<Option<std::collections::HashSet<String>>>> = OnceLock::new();
     
     for var in selected_vars.iter() {

@@ -55,6 +55,7 @@ fn create_config_saver_actor(
             
             // Schedule new save with 1 second debounce
             let handle = Task::start_droppable(async move {
+                // ❌ ANTIPATTERN: Timer::sleep() for coordination - TODO: Use proper signal-based debouncing
                 Timer::sleep(1000).await;
                 
                 // ConfigSaver: Executing debounced save
@@ -78,8 +79,10 @@ fn create_config_saver_actor(
                             selected_variables_panel_value_column_width: Some(panel_right.variables_value_column_width as f64),
                         },
                         dock_mode: dock_mode.clone(),
+                        // TODO: Convert to signal-based access - use domain signals instead of direct state access
                         expanded_scopes: crate::state::EXPANDED_SCOPES_FOR_CONFIG.get_cloned(),
                         load_files_expanded_directories: session.file_picker_expanded_directories,
+                        // TODO: Convert to signal-based access - use domain signals instead of direct state access
                         selected_scope_id: crate::state::SELECTED_SCOPE_ID_FOR_CONFIG.get_cloned(),
                         load_files_scroll_position: session.file_picker_scroll_position,
                         variables_search_filter: session.variables_search_filter,
@@ -129,12 +132,14 @@ pub struct PanelDimensions {
 impl Default for PanelDimensions {
     fn default() -> Self {
         Self {
-            files_panel_width: 300.0,
-            files_panel_height: 300.0,
-            variables_panel_width: 300.0,
-            timeline_panel_height: 200.0,
-            variables_name_column_width: 190.0,
-            variables_value_column_width: 220.0,
+            // ❌ ANTIPATTERN: Hardcoded panel dimensions - TODO: Use responsive layout calculations or user-defined defaults
+            files_panel_width: 300.0, // Magic number - should be viewport percentage
+            files_panel_height: 300.0, // Magic number - should be viewport percentage
+            variables_panel_width: 300.0, // Magic number - should be viewport percentage
+            timeline_panel_height: 200.0, // Magic number - should be viewport percentage
+            // ❌ ANTIPATTERN: Hardcoded column widths - TODO: Use content-aware or proportional sizing
+            variables_name_column_width: 190.0, // Magic number - should be content-based
+            variables_value_column_width: 220.0, // Magic number - should be content-based
         }
     }
 }
@@ -345,8 +350,9 @@ impl AppConfig {
                         if let Some(()) = button_click {
                             
                             // Get current panel dimensions from DRAGGING SYSTEM BEFORE switching mode
-                            let current_name_width = crate::visualizer::interaction::dragging::variables_name_column_width_signal().to_stream().next().await.unwrap_or(190.0) as u32;
-                            let current_value_width = crate::visualizer::interaction::dragging::variables_value_column_width_signal().to_stream().next().await.unwrap_or(220.0) as u32;
+                            // ❌ ANTIPATTERN: Hardcoded fallback values - TODO: Use proper signal defaults or responsive calculations
+                            let current_name_width = crate::visualizer::interaction::dragging::variables_name_column_width_signal().to_stream().next().await.unwrap_or(190.0) as u32; // Magic number fallback
+                            let current_value_width = crate::visualizer::interaction::dragging::variables_value_column_width_signal().to_stream().next().await.unwrap_or(220.0) as u32; // Magic number fallback
                             
                             
                             // ✅ Read and modify dock mode
@@ -396,6 +402,7 @@ impl AppConfig {
                             Task::start({
                                 let new_mode = new_mode;
                                 async move {
+                                    // ❌ ANTIPATTERN: Timer::sleep() for actor coordination - TODO: Use proper signal dependencies
                                     Timer::sleep(50).await; // Small delay to ensure config actors are updated
                                     
                                     match new_mode {
@@ -430,10 +437,12 @@ impl AppConfig {
         let panel_dimensions_right_actor = Actor::new(PanelDimensions {
             files_panel_width: config.workspace.docked_right_dimensions.files_and_scopes_panel_width as f32,
             files_panel_height: config.workspace.docked_right_dimensions.files_and_scopes_panel_height as f32,
-            variables_panel_width: 300.0, // Default values for missing fields
-            timeline_panel_height: 200.0,
-            variables_name_column_width: config.workspace.docked_right_dimensions.selected_variables_panel_name_column_width.unwrap_or(190.0) as f32,
-            variables_value_column_width: config.workspace.docked_right_dimensions.selected_variables_panel_value_column_width.unwrap_or(220.0) as f32,
+            // ❌ ANTIPATTERN: Hardcoded fallback defaults - TODO: Use responsive layout calculations
+            variables_panel_width: 300.0, // Magic number - should be calculated from viewport
+            timeline_panel_height: 200.0, // Magic number - should be calculated from viewport
+            // ❌ ANTIPATTERN: unwrap_or hardcoded fallbacks - TODO: Use proper default signal patterns
+            variables_name_column_width: config.workspace.docked_right_dimensions.selected_variables_panel_name_column_width.unwrap_or(190.0) as f32, // Magic number fallback
+            variables_value_column_width: config.workspace.docked_right_dimensions.selected_variables_panel_value_column_width.unwrap_or(220.0) as f32, // Magic number fallback
         }, async move |state| {
             let mut right_stream = panel_dimensions_right_changed_relay_clone.subscribe();
             let mut resized_stream = panel_resized_relay_clone.subscribe();
@@ -458,10 +467,12 @@ impl AppConfig {
         let panel_dimensions_bottom_actor = Actor::new(PanelDimensions {
             files_panel_width: config.workspace.docked_bottom_dimensions.files_and_scopes_panel_width as f32,
             files_panel_height: config.workspace.docked_bottom_dimensions.files_and_scopes_panel_height as f32,
-            variables_panel_width: 300.0, // Default values for missing fields
-            timeline_panel_height: 200.0,
-            variables_name_column_width: config.workspace.docked_bottom_dimensions.selected_variables_panel_name_column_width.unwrap_or(190.0) as f32,
-            variables_value_column_width: config.workspace.docked_bottom_dimensions.selected_variables_panel_value_column_width.unwrap_or(220.0) as f32,
+            // ❌ ANTIPATTERN: Hardcoded fallback defaults - TODO: Use responsive layout calculations
+            variables_panel_width: 300.0, // Magic number - should be calculated from viewport
+            timeline_panel_height: 200.0, // Magic number - should be calculated from viewport  
+            // ❌ ANTIPATTERN: unwrap_or hardcoded fallbacks - TODO: Use proper default signal patterns
+            variables_name_column_width: config.workspace.docked_bottom_dimensions.selected_variables_panel_name_column_width.unwrap_or(190.0) as f32, // Magic number fallback
+            variables_value_column_width: config.workspace.docked_bottom_dimensions.selected_variables_panel_value_column_width.unwrap_or(220.0) as f32, // Magic number fallback
         }, async move |state| {
             let mut bottom_stream = panel_dimensions_bottom_changed_relay_clone.subscribe();
             
@@ -756,11 +767,14 @@ pub fn workspace_section_signal() -> impl Signal<Item = shared::WorkspaceSection
                 selected_variables_panel_value_column_width: Some(right_dims.variables_value_column_width as f64),
             },
             dock_mode: *dock_mode,
+            // TODO: Convert to signal-based access - use domain signals instead of direct state access
             expanded_scopes: crate::state::EXPANDED_SCOPES_FOR_CONFIG.get_cloned(),
             load_files_expanded_directories: session.file_picker_expanded_directories.clone(),
+            // TODO: Convert to signal-based access - use domain signals instead of direct state access
             selected_scope_id: crate::state::SELECTED_SCOPE_ID_FOR_CONFIG.get_cloned(),
             load_files_scroll_position: session.file_picker_scroll_position,
             variables_search_filter: session.variables_search_filter.clone(),
+            // TODO: Convert to signal-based access - use domain signals instead of direct state access
             selected_variables: crate::state::SELECTED_VARIABLES_FOR_CONFIG.get_cloned(),
             timeline_cursor_position_ns: timeline.cursor_position.nanos(),
             timeline_visible_range_start_ns: Some(timeline.visible_range.start.nanos()),

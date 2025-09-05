@@ -73,17 +73,9 @@ static FILE_UPDATE_QUEUE: Lazy<Mutable<Vec<FileUpdateMessage>>> = Lazy::new(|| {
 */
 
 
-// Panel resizing state
-#[allow(dead_code)]
-pub static VERTICAL_DIVIDER_DRAGGING: Lazy<Mutable<bool>> = lazy::default();
-#[allow(dead_code)]
-pub static HORIZONTAL_DIVIDER_DRAGGING: Lazy<Mutable<bool>> = lazy::default();
-
-// Variables panel column resizing state
-#[allow(dead_code)]
-pub static VARIABLES_NAME_DIVIDER_DRAGGING: Lazy<Mutable<bool>> = lazy::default();
-#[allow(dead_code)]
-pub static VARIABLES_VALUE_DIVIDER_DRAGGING: Lazy<Mutable<bool>> = lazy::default();
+// ===== MIGRATED TO ACTOR+RELAY: Panel dragging state =====
+// These mutables have been migrated to visualizer/interaction/dragging.rs system
+// Use functions from that module and actors/panel_layout.rs instead of these globals
 
 // Selected Variables panel row height
 pub const SELECTED_VARIABLES_ROW_HEIGHT: u32 = 30;
@@ -127,15 +119,20 @@ pub const SELECTED_VARIABLES_ROW_HEIGHT: u32 = 30;
 // pub static CANVAS_HEIGHT: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(400.0));
 
 
+// ❌ ANTIPATTERN: Global mutable state - TODO: Move to DialogManager Actor
 // Input focus tracking for keyboard control prevention
+#[deprecated(note = "Use DialogManager Actor with Atom for local UI state instead of global mutables")]
 pub static VARIABLES_SEARCH_INPUT_FOCUSED: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
 
 
 
 
 
+// ❌ ANTIPATTERN: Global mutable state - TODO: Move to DialogManager Actor
 // File picker state for TreeView-based browser
+#[deprecated(note = "Use DialogManager Actor for file picker state instead of global mutables")]
 pub static FILE_PICKER_EXPANDED: Lazy<Mutable<IndexSet<String>>> = lazy::default();
+#[deprecated(note = "Use DialogManager Actor for error handling instead of global mutables")]
 pub static FILE_PICKER_ERROR_CACHE: Lazy<Mutable<HashMap<String, String>>> = lazy::default();
 
 
@@ -143,20 +140,31 @@ pub static FILE_PICKER_ERROR_CACHE: Lazy<Mutable<HashMap<String, String>>> = laz
 
 // Config initialization complete flag removed - config loaded in main with await
 
+// ❌ ANTIPATTERN: Global mutable state - TODO: Complete migration to DialogManager Actor
 // Hierarchical file tree storage - maps directory path to its contents
+#[deprecated(note = "Use DialogManager.file_tree_cache Actor instead of global mutables")]
 pub static FILE_TREE_CACHE: Lazy<Mutable<HashMap<String, Vec<FileSystemItem>>>> = lazy::default();
 
+// ❌ ANTIPATTERN: Global mutable state - TODO: Complete migration to TrackedFiles domain
 // Enhanced file tracking system - replaces LOADED_FILES, LOADING_FILES, and FILE_PATHS  
+#[deprecated(note = "Use tracked_files_domain() signals instead of global mutables")]
 pub static TRACKED_FILES: Lazy<MutableVec<TrackedFile>> = lazy::default();
+#[deprecated(note = "Use tracked_files_domain().is_loading_signal() instead of global mutables")]
 pub static IS_LOADING: Lazy<Mutable<bool>> = lazy::default();
 
 
 
+// ❌ ANTIPATTERN: Legacy support global mutables - TODO: Complete removal after TrackedFiles migration
 // Legacy support during transition - will be removed later
+#[deprecated(note = "Use tracked_files_domain().loading_files_signal() instead of global mutables")]
 pub static LOADING_FILES: Lazy<MutableVec<LoadingFile>> = lazy::default();
+#[deprecated(note = "Use tracked_files_domain().loaded_files_signal() instead of global mutables")]
 pub static LOADED_FILES: Lazy<MutableVec<WaveformFile>> = lazy::default();
+#[deprecated(note = "Use tracked_files_domain().file_paths_signal() instead of global mutables")]
 pub static FILE_PATHS: Lazy<Mutable<IndexMap<String, String>>> = lazy::default();
 
+// ❌ ANTIPATTERN: Global mutable state - TODO: Move to SelectedVariables Actor
+#[deprecated(note = "Use selected_variables_domain().selected_scope_signal() instead of global mutables")]
 pub static SELECTED_SCOPE_ID: Lazy<Mutable<Option<String>>> = Lazy::new(|| {
     let mutable = Mutable::new(None);
     mutable
@@ -164,7 +172,9 @@ pub static SELECTED_SCOPE_ID: Lazy<Mutable<Option<String>>> = Lazy::new(|| {
 pub static TREE_SELECTED_ITEMS: Lazy<Mutable<IndexSet<String>>> = lazy::default(); // UI state only - not persisted
 pub static USER_CLEARED_SELECTION: Lazy<Mutable<bool>> = lazy::default(); // Flag to prevent unwanted restoration
 
+// ❌ ANTIPATTERN: Global mutable state - TODO: Move to SelectedVariables Actor
 // Track expanded scopes for TreeView persistence
+#[deprecated(note = "Use selected_variables_domain().expanded_scopes_signal() instead of global mutables")]
 pub static EXPANDED_SCOPES: Lazy<Mutable<IndexSet<String>>> = Lazy::new(|| {
     let expanded = Mutable::new(IndexSet::new());
     

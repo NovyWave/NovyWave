@@ -46,6 +46,9 @@ pub struct DialogManager {
     /// Error cache by file path → replaces FILE_PICKER_ERROR_CACHE
     error_cache: Actor<HashMap<String, String>>,
     
+    /// File tree cache by directory path → replaces FILE_TREE_CACHE
+    file_tree_cache: Actor<HashMap<String, Vec<shared::FileSystemItem>>>,
+    
     /// Dialog viewport Y position for scroll restoration
     viewport_y: Actor<i32>,
     
@@ -161,6 +164,9 @@ impl DialogManager {
         let error_cache = Actor::new(HashMap::new(), async move |_handle| {
             // TODO: Implement proper actor processor
         });
+        let file_tree_cache = Actor::new(HashMap::new(), async move |_handle| {
+            // TODO: Implement proper actor processor
+        });
         let viewport_y = Actor::new(0, async move |_handle| {
             // TODO: Implement proper actor processor
         });
@@ -179,6 +185,7 @@ impl DialogManager {
             selected_files,
             current_error,
             error_cache,
+            file_tree_cache,
             viewport_y,
             scroll_position,
             last_expanded,

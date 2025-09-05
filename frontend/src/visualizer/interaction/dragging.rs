@@ -11,6 +11,8 @@ use shared::DockMode;
 // === DRAGGING STATE ===
 
 /// Global dragging state for all dividers
+// ❌ ANTIPATTERN: OnceLock global state - TODO: Convert to proper Actor+Relay domain with event-driven dragging
+#[deprecated(note = "Replace OnceLock pattern with Actor+Relay PanelLayout domain using event-source relay naming")]
 static DRAGGING_STATE: std::sync::OnceLock<DraggerState> = std::sync::OnceLock::new();
 
 #[derive(Clone)]
