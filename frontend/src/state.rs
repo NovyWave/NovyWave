@@ -8,15 +8,7 @@ use crate::config::app_config;
 
 // ===== STABLE SIGNAL HELPERS =====
 
-/// ✅ MIGRATED: Count-only signal for file counts in titles and UI
-pub fn tracked_files_count_signal() -> impl Signal<Item = usize> {
-    crate::actors::file_count_signal()
-}
 
-/// ✅ MIGRATED: Signal that tracks count of files that are actually LOADED with data
-pub fn loaded_files_count_signal() -> impl Signal<Item = usize> {
-    crate::actors::loaded_files_count_signal()
-}
 
 
 
@@ -68,14 +60,6 @@ fn _cleanup_file_related_state_for_batch(file_id: &str) {
 
 
 
-// ===== FILE UPDATE MESSAGE QUEUE SYSTEM =====
-
-#[derive(Debug, Clone)]
-pub enum FileUpdateMessage {
-    Update { file_id: String, new_state: FileState },
-    #[allow(dead_code)]
-    Remove { file_id: String },
-}
 
 // ===== LEGACY FILE UPDATE QUEUE SYSTEM - REPLACED BY TRACKEDFILES DOMAIN =====
 // This entire section is now handled by the TrackedFiles domain and can be removed
@@ -88,25 +72,14 @@ static FILE_UPDATE_QUEUE: Lazy<Mutable<Vec<FileUpdateMessage>>> = Lazy::new(|| {
 });
 */
 
-/// ✅ ACTOR+RELAY: Send a message to the file update processor
-/// Migrated to use TrackedFiles domain (legacy queue system removed)
-pub fn send_file_update_message(_message: FileUpdateMessage) {
-    // Note: File update messaging is now handled internally by the TrackedFiles domain
-    // This function is kept for compatibility but does nothing - callers should use
-    // domain methods directly (update_file_state, remove_file, etc.)
-}
 
 // Panel resizing state
-pub static FILES_PANEL_WIDTH: Lazy<Mutable<u32>> = Lazy::new(|| 470.into());
-pub static FILES_PANEL_HEIGHT: Lazy<Mutable<u32>> = Lazy::new(|| 300.into());
 #[allow(dead_code)]
 pub static VERTICAL_DIVIDER_DRAGGING: Lazy<Mutable<bool>> = lazy::default();
 #[allow(dead_code)]
 pub static HORIZONTAL_DIVIDER_DRAGGING: Lazy<Mutable<bool>> = lazy::default();
 
 // Variables panel column resizing state
-pub static VARIABLES_NAME_COLUMN_WIDTH: Lazy<Mutable<u32>> = Lazy::new(|| 180.into());
-pub static VARIABLES_VALUE_COLUMN_WIDTH: Lazy<Mutable<u32>> = Lazy::new(|| 100.into());
 #[allow(dead_code)]
 pub static VARIABLES_NAME_DIVIDER_DRAGGING: Lazy<Mutable<bool>> = lazy::default();
 #[allow(dead_code)]
@@ -153,36 +126,20 @@ pub const SELECTED_VARIABLES_ROW_HEIGHT: u32 = 30;
 // pub static CANVAS_WIDTH: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(800.0));
 // pub static CANVAS_HEIGHT: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(400.0));
 
-// Search filter for Variables panel
-pub static VARIABLES_SEARCH_FILTER: Lazy<Mutable<String>> = lazy::default();
 
 // Input focus tracking for keyboard control prevention
 pub static VARIABLES_SEARCH_INPUT_FOCUSED: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
 
 
-// Dock state management - DEFAULT TO DOCKED MODE  
-pub static IS_DOCKED_TO_BOTTOM: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(true));
 
-// File dialog state
-pub static SHOW_FILE_DIALOG: Lazy<Mutable<bool>> = lazy::default();
-pub static FILE_PATHS_INPUT: Lazy<Mutable<String>> = lazy::default();
 
-// Dock toggle state to prevent cascading saves
-pub static DOCK_TOGGLE_IN_PROGRESS: Lazy<Mutable<bool>> = lazy::default();
 
 // File picker state for TreeView-based browser
 pub static FILE_PICKER_EXPANDED: Lazy<Mutable<IndexSet<String>>> = lazy::default();
-pub static FILE_PICKER_SELECTED: Lazy<MutableVec<String>> = lazy::default();
-pub static CURRENT_DIRECTORY: Lazy<Mutable<String>> = lazy::default();
-pub static FILE_PICKER_ERROR: Lazy<Mutable<Option<String>>> = lazy::default();
 pub static FILE_PICKER_ERROR_CACHE: Lazy<Mutable<HashMap<String, String>>> = lazy::default();
 
 
-// Test viewport scrolling for Load Files dialog  
-pub static LOAD_FILES_VIEWPORT_Y: Lazy<Mutable<i32>> = lazy::default();
 
-// Load Files dialog scroll position (persistent)
-pub static LOAD_FILES_SCROLL_POSITION: Lazy<Mutable<i32>> = lazy::default();
 
 // Config initialization complete flag removed - config loaded in main with await
 
@@ -193,8 +150,6 @@ pub static FILE_TREE_CACHE: Lazy<Mutable<HashMap<String, Vec<FileSystemItem>>>> 
 pub static TRACKED_FILES: Lazy<MutableVec<TrackedFile>> = lazy::default();
 pub static IS_LOADING: Lazy<Mutable<bool>> = lazy::default();
 
-// Cache of tracked file IDs - prevents recursive locking in signal handlers
-pub static TRACKED_FILE_IDS: Lazy<Mutable<IndexSet<String>>> = lazy::default();
 
 
 // Legacy support during transition - will be removed later
@@ -380,25 +335,11 @@ pub fn _remove_tracked_file(file_id: &str) {
 
 
 
-/// ✅ ACTOR+RELAY: Get all file paths currently being tracked  
-/// MIGRATION: This function should be converted to reactive pattern
-/// TODO: Replace synchronous access with tracked_files_signal()
-pub fn get_all_tracked_file_paths() -> Vec<String> {
-    // MIGRATION: Temporary fallback - should use reactive signals instead
-    Vec::new() // Default empty list during migration
-}
 
 
 
 // ===== SELECTED VARIABLES MANAGEMENT =====
 
-/// Add a variable to the selected list - DEPRECATED: Use Actor+Relay domain instead
-pub fn add_selected_variable(_variable: shared::Signal, _file_id: &str, _scope_id: &str) -> bool {
-    // DEPRECATED: This function has been replaced by Actor+Relay architecture
-    // Use crate::actors::selected_variables::variable_clicked_relay().send(unique_id) instead
-    // The new domain handles variable creation from file data internally
-    panic!("add_selected_variable is deprecated - use Actor+Relay domain");
-}
 
 /// Remove a variable from the selected list - DEPRECATED: Use Actor+Relay domain instead
 pub fn _remove_selected_variable(_unique_id: &str) {
@@ -414,12 +355,6 @@ pub fn _clear_selected_variables() {
     panic!("clear_selected_variables is deprecated - use Actor+Relay domain");
 }
 
-/// Check if a variable is already selected - DEPRECATED: Use Actor+Relay domain instead
-pub fn is_variable_selected(_file_path: &str, _scope_path: &str, _variable_name: &str) -> bool {
-    // DEPRECATED: This function has been replaced by Actor+Relay architecture
-    // Use crate::actors::selected_variables::variable_index_signal() instead
-    panic!("is_variable_selected is deprecated - use Actor+Relay domain");
-}
 
 /// Helper function to find scope full name in the file structure
 pub fn find_scope_full_name(scopes: &[shared::ScopeData], target_scope_id: &str) -> Option<String> {
@@ -448,29 +383,6 @@ pub fn save_selected_variables() {
 // DERIVED SIGNALS FOR CONFIG - Single Source of Truth for Config Serialization
 // =============================================================================
 
-/// Derived signal that automatically converts TRACKED_FILES to Vec<String> for config storage
-pub static OPENED_FILES_FOR_CONFIG: Lazy<Mutable<Vec<String>>> = Lazy::new(|| {
-    let derived = Mutable::new(Vec::new());
-    
-    // Initialize the derived signal with current TRACKED_FILES
-    let derived_clone = derived.clone();
-    Task::start(async move {
-        TRACKED_FILES.signal_vec_cloned()
-            .len()
-            .dedupe()
-            .for_each(move |_| {
-                let derived = derived_clone.clone();
-                async move {
-                    let files: Vec<TrackedFile> = TRACKED_FILES.lock_ref().to_vec();
-                    let file_paths: Vec<String> = files.iter().map(|f| f.path.clone()).collect();
-                    derived.set_neq(file_paths);
-                }
-            })
-            .await;
-    });
-    
-    derived
-});
 
 /// Derived signal that converts EXPANDED_SCOPES (IndexSet) to Vec<String> for config storage
 /// Converts EXPANDED_SCOPES (IndexSet) to Vec<String> for config storage
@@ -506,29 +418,6 @@ pub static EXPANDED_SCOPES_FOR_CONFIG: Lazy<Mutable<Vec<String>>> = Lazy::new(||
     derived
 });
 
-/// Derived signal that converts FILE_PICKER_EXPANDED (IndexSet) to Vec<String> for config storage
-/// Converts FILE_PICKER_EXPANDED (IndexSet) to Vec<String> for config storage
-pub static LOAD_FILES_EXPANDED_DIRECTORIES_FOR_CONFIG: Lazy<Mutable<Vec<String>>> = Lazy::new(|| {
-    let derived = Mutable::new(Vec::new());
-    
-    // Initialize the derived signal with current FILE_PICKER_EXPANDED
-    let derived_clone = derived.clone();
-    Task::start(async move {
-        FILE_PICKER_EXPANDED.signal_ref(|expanded_set| expanded_set.clone())
-            // Note: Guard flag prevents circular triggers more effectively than dedupe
-            .for_each(move |expanded_set| {
-                let derived = derived_clone.clone();
-                async move {
-                    // Process file picker directory changes for config storage
-                    let expanded_vec: Vec<String> = expanded_set.into_iter().collect();
-                    derived.set_neq(expanded_vec);
-                }
-            })
-            .await;
-    });
-    
-    derived
-});
 
 /// Derived signal that converts SELECTED_SCOPE_ID (Option<String>) to Option<String> for config storage  
 /// Strips TreeView "scope_" prefixes before storing to config

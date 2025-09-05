@@ -307,16 +307,16 @@ impl AppConfig {
                             // Theme Actor: Processing button click
                             // ✅ Read and modify state directly
                             {
-                                let mut theme = state.lock_mut();
-                                let old_theme = *theme;
-                                *theme = match *theme {
+                                let old_theme = state.get();
+                                let new_theme = match old_theme {
                                     SharedTheme::Light => SharedTheme::Dark,
                                     SharedTheme::Dark => SharedTheme::Light,
                                 };
+                                state.set(new_theme);
                                 // Theme Actor: Toggling theme
                                 
                                 // Update NovyUI theme system immediately
-                                let novyui_theme = match *theme {
+                                let novyui_theme = match new_theme {
                                     SharedTheme::Light => theme::Theme::Light,
                                     SharedTheme::Dark => theme::Theme::Dark,
                                 };
@@ -349,13 +349,12 @@ impl AppConfig {
                             
                             // ✅ Read and modify dock mode
                             let (old_mode, new_mode) = {
-                                let mut dock_mode = state.lock_mut();
-                                let old_mode = *dock_mode;
-                                *dock_mode = match *dock_mode {
+                                let old_mode = state.get();
+                                let new_mode = match old_mode {
                                     DockMode::Right => DockMode::Bottom,
                                     DockMode::Bottom => DockMode::Right,
                                 };
-                                let new_mode = *dock_mode;
+                                state.set(new_mode);
                                 (old_mode, new_mode)
                             };
                             
@@ -522,10 +521,9 @@ impl AppConfig {
                     filter_change = variables_filter_stream.next() => {
                         if let Some(new_filter) = filter_change {
                             // Update just the variables_search_filter field
-                            {
-                                let mut session = state.lock_mut();
+                            state.update_mut(|session| {
                                 session.variables_search_filter = new_filter;
-                            }
+                            });
                         }
                     }
                 }

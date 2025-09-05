@@ -58,10 +58,6 @@ impl TimeNs {
         TimeNs(self.0.saturating_add(duration.0))
     }
     
-    /// Safely subtract a duration from this time point
-    pub fn sub_duration(self, duration: DurationNs) -> TimeNs {
-        TimeNs(self.0.saturating_sub(duration.0))
-    }
 }
 
 impl fmt::Display for TimeNs {
@@ -161,7 +157,6 @@ pub struct NsPerPixel(pub u64);
 impl NsPerPixel {
     pub const MAX_ZOOM_IN: NsPerPixel = NsPerPixel(1);      // 1 ns/pixel (finest resolution)
     pub const MEDIUM_ZOOM: NsPerPixel = NsPerPixel(1_000_000); // 1 ms/pixel  
-    pub const LOW_ZOOM: NsPerPixel = NsPerPixel(1_000_000_000); // 1 s/pixel
     
     /// Create a new NsPerPixel from nanoseconds
     #[allow(dead_code)]
@@ -264,20 +259,7 @@ impl Viewport {
         self.start.add_duration(DurationNs(duration.0 / 2))
     }
     
-    /// Create a new viewport centered on a time point with given duration
-    pub fn centered_on(center: TimeNs, duration: DurationNs) -> Self {
-        let half_duration = DurationNs(duration.0 / 2);
-        Viewport::new(
-            center.sub_duration(half_duration),
-            center.add_duration(half_duration)
-        )
-    }
     
-    /// Zoom this viewport to a new resolution, centered on a point
-    pub fn zoom_to(self, ns_per_pixel: NsPerPixel, center: TimeNs, canvas_width_pixels: u32) -> Self {
-        let new_duration = ns_per_pixel.viewport_duration(canvas_width_pixels);
-        Viewport::centered_on(center, new_duration)
-    }
     
 }
 
@@ -294,20 +276,7 @@ impl fmt::Display for Viewport {
 pub mod coordinates {
     use super::*;
     
-    /// Convert mouse X coordinate to timeline time (PURE INTEGER - no precision loss)
-    #[allow(dead_code)]
-    pub fn mouse_to_time_ns(mouse_x_pixels: u32, ns_per_pixel: NsPerPixel, viewport_start: TimeNs) -> TimeNs {
-        let offset_ns = mouse_x_pixels as u64 * ns_per_pixel.nanos();
-        viewport_start.add_duration(DurationNs(offset_ns))
-    }
     
-    /// Convert timeline time to pixel X coordinate (INTEGER - exact results)
-    #[allow(dead_code)]
-    pub fn time_to_pixel(time_ns: TimeNs, ns_per_pixel: NsPerPixel, viewport_start: TimeNs) -> Option<u32> {
-        let offset_ns = time_ns.nanos().checked_sub(viewport_start.nanos())?;
-        let pixel_x = offset_ns / ns_per_pixel.nanos();
-        Some(pixel_x as u32)
-    }
     
     /// Calculate viewport from center point and canvas width (PURE INTEGER)
     #[allow(dead_code)]
@@ -625,18 +594,7 @@ impl TimelineCoordinates {
         }
     }
     
-    /// Convert mouse X coordinate to timeline time (PURE INTEGER - no precision loss)
-    pub fn mouse_to_time(&self, mouse_x_pixels: u32) -> TimeNs {
-        let offset_ns = mouse_x_pixels as u64 * self.ns_per_pixel.nanos();
-        self.viewport_start_ns.add_duration(DurationNs(offset_ns))
-    }
     
-    /// Convert timeline time to pixel X coordinate (INTEGER - exact results)
-    pub fn time_to_pixel(&self, time_ns: TimeNs) -> Option<u32> {
-        let offset_ns = time_ns.nanos().checked_sub(self.viewport_start_ns.nanos())?;
-        let pixel_x = offset_ns / self.ns_per_pixel.nanos();
-        Some(pixel_x as u32)
-    }
     
     /// Get current viewport end time
     pub fn viewport_end_ns(&self) -> TimeNs {
@@ -668,10 +626,6 @@ impl TimelineCoordinates {
         self.cursor_ns = cursor_ns;
     }
     
-    /// Update canvas width (for window resize)
-    pub fn set_canvas_width(&mut self, canvas_width_pixels: u32) {
-        self.canvas_width_pixels = canvas_width_pixels;
-    }
     
     
     /// Clamp viewport to be within file bounds

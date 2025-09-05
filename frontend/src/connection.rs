@@ -271,7 +271,7 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 }
                 
                 // Trigger canvas redraw when data arrives
-                crate::visualizer::canvas::waveform_canvas::trigger_canvas_redraw();
+                crate::visualizer::canvas::waveform_canvas::trigger_canvas_redraw_global();
             }
             DownMsg::SignalTransitionsError { file_path: _, error: _ } => {
                 // TODO: Handle signal transitions error for future use

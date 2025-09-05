@@ -102,6 +102,10 @@ pub fn main() {
 
         // ✅ RESTORE SELECTED VARIABLES FROM CONFIG (after domain initialization)
         let selected_variables = crate::state::SELECTED_VARIABLES_FOR_CONFIG.get_cloned();
+        zoon::println!("🔍 MAIN: Config restoration - {} variables to restore", selected_variables.len());
+        for (i, var) in selected_variables.iter().enumerate() {
+            zoon::println!("🔍 MAIN: Variable {}: {}", i, var.unique_id);
+        }
         if !selected_variables.is_empty() {
             let variables_restored_relay = crate::actors::selected_variables::variables_restored_relay();
             variables_restored_relay.send(selected_variables);

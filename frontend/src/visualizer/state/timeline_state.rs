@@ -12,7 +12,6 @@ pub static STARTUP_CURSOR_POSITION_SET: Lazy<Mutable<bool>> = lazy::default();
 
 // MIGRATED: Zoom control → use is_zooming_in_signal() / is_zooming_out_signal() from waveform_timeline
 pub static IS_ZOOMING_IN: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
-pub static IS_ZOOMING_OUT: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
 
 // MIGRATED: Pan control → use is_panning_left_signal() / is_panning_right_signal() from waveform_timeline
 pub static IS_PANNING_LEFT: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
@@ -26,11 +25,9 @@ pub static IS_CURSOR_MOVING_RIGHT: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::n
 pub static IS_SHIFT_PRESSED: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
 
 // MIGRATED: Mouse tracking → use mouse_x_position_signal() / mouse_time_ns_signal() from waveform_timeline
-pub static MOUSE_X_POSITION: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(0.0));
 pub static MOUSE_TIME_NS: Lazy<Mutable<TimeNs>> = Lazy::new(|| Mutable::new(TimeNs::ZERO));
 
 // MIGRATED: Zoom center → use zoom_center_ns_signal() from waveform_timeline
-pub static ZOOM_CENTER_NS: Lazy<Mutable<TimeNs>> = Lazy::new(|| Mutable::new(TimeNs::ZERO));
 
 // MIGRATED: Signal values → use signal_values_signal() from waveform_timeline
 pub static SIGNAL_VALUES: Lazy<Mutable<HashMap<String, crate::visualizer::formatting::signal_values::SignalValue>>> = lazy::default();

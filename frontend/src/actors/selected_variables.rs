@@ -607,7 +607,13 @@ impl SelectedVariables {
         variables_vec_signal: &zoon::Mutable<Vec<SelectedVariable>>,
         restored_variables: Vec<SelectedVariable>
     ) {
-        let _count_before = variables_mutable.lock_ref().len();
+        let count_before = variables_mutable.lock_ref().len();
+        
+        zoon::println!("🔍 ACTOR: Variables restoration - {} variables before, {} to restore", 
+            count_before, restored_variables.len());
+        for (i, var) in restored_variables.iter().enumerate() {
+            zoon::println!("🔍 ACTOR: Restoring variable {}: {}", i, var.unique_id);
+        }
         
         // Replace all variables in single operation (prevents signal spam)
         variables_mutable.lock_mut().replace_cloned(restored_variables.clone());
@@ -615,6 +621,10 @@ impl SelectedVariables {
         // Sync dedicated Vec signal after ActorVec change (no conversion antipattern)
         {
             let current_vars = variables_mutable.lock_ref().to_vec();
+            zoon::println!("🔍 ACTOR: After restoration - {} variables in ActorVec", current_vars.len());
+            for (i, var) in current_vars.iter().enumerate() {
+                zoon::println!("🔍 ACTOR: Final variable {}: {}", i, var.unique_id);
+            }
             variables_vec_signal.set_neq(current_vars);
         }
         
@@ -825,7 +835,12 @@ pub fn search_focused_signal() -> impl zoon::Signal<Item = bool> {
 pub fn current_variables() -> Vec<SelectedVariable> {
     // Get current selected variables from the config storage
     // This reads the actual state that's connected to the Actor signals
-    crate::state::SELECTED_VARIABLES_FOR_CONFIG.get_cloned()
+    let vars = crate::state::SELECTED_VARIABLES_FOR_CONFIG.get_cloned();
+    zoon::println!("🔍 current_variables() returning {} variables", vars.len());
+    for (i, var) in vars.iter().enumerate() {
+        zoon::println!("🔍 current_variables()[{}]: {}", i, var.unique_id);
+    }
+    vars
 }
 
 /// MIGRATION: Temporary compatibility function - replace with expanded_scopes_signal()
