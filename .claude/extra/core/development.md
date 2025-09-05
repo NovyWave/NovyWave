@@ -488,3 +488,164 @@ This pattern enables sustained autonomous work while maintaining quality and pre
 - Only use exit_plan_mode tool when planning implementation steps for code writing tasks
 - For research tasks (gathering information, searching, reading), do NOT use exit_plan_mode
 
+## Systematic Multi-Session Task Methodology
+
+### When to Use This Methodology
+
+**Apply this systematic approach for:**
+- **Complex tasks spanning multiple sessions** - Architecture migrations, major refactors, large-scale cleanups
+- **Tasks with high regression risk** - Changes that could introduce new antipatterns
+- **Warning/error resolution campaigns** - Systematic elimination of compiler warnings or errors
+- **Large codebase updates** - Changes affecting 10+ files or multiple domains
+- **Quality improvement initiatives** - Code cleanup, performance optimization, architectural compliance
+
+**Pattern Recognition:** If a task requires more than 2-3 sessions or affects critical architecture, use this methodology.
+
+### 5-Phase Safety Methodology
+
+**Critical Success Pattern: Preparation → Implementation → Verification → Monitoring → Documentation**
+
+#### Phase 1: Foundation Reading (MANDATORY)
+
+**Before touching any code:**
+```
+[ ] Read relevant antipattern documentation
+[ ] Study correct pattern examples (e.g., chat_example.md)
+[ ] Review architectural rules (CLAUDE.md + .claude/extra/)
+[ ] Check current system state (logs, warnings, errors)
+[ ] Identify specific target scope for this session
+[ ] Create TodoWrite plan with specific verification checkpoints
+```
+
+**Key Principle:** Never start implementation without understanding the correct patterns and current system state.
+
+#### Phase 2: Systematic Implementation
+
+**Session Scope Rules:**
+- **Single focus area** - Never work on multiple architectural domains simultaneously
+- **Limited scope** - Maximum 10-15 related changes per session
+- **TodoWrite tracking** - Every step tracked with intermediate verification
+- **File-by-file approach** - Complete and verify each file before moving to next
+- **Frequent compilation checks** - Verify after each significant change
+
+#### Phase 3: Anti-Regression Verification (CRITICAL)
+
+**After each session, verify no new antipatterns introduced:**
+```
+[ ] Check for new antipattern indicators (grep/rg commands)
+[ ] Verify architectural compliance (Actor+Relay, no raw mutables, etc.)
+[ ] Confirm compilation success
+[ ] Document change impact (warning counts, error elimination)
+[ ] Test critical functionality if applicable
+```
+
+**🚨 REGRESSION INDICATORS - STOP AND FIX:**
+- **Error/warning count increased** - New problems introduced
+- **New antipattern code patterns** - Architectural violations
+- **Compilation failures** - Fix immediately before continuing
+
+#### Phase 4: Documentation Maintenance
+
+**Keep documentation synchronized:**
+```
+[ ] Update relevant documentation with resolved issues
+[ ] Mark completed patterns with ✅ RESOLVED
+[ ] Update success metrics and baselines
+[ ] Document new antipatterns discovered
+[ ] Commit documentation changes with descriptive messages
+```
+
+#### Phase 5: Ongoing Monitoring
+
+**Prevent regression and architectural drift:**
+```
+[ ] Weekly/bi-weekly system health checks
+[ ] Monitor trending metrics (warnings, errors, performance)
+[ ] Review recent commits for antipattern introduction
+[ ] Update methodology based on lessons learned
+```
+
+### Session Workflow Template
+
+**Copy this template for complex multi-session tasks:**
+
+```
+## Multi-Session Task: [Task Name] - Session [X] - [Date]
+
+### Preparation Phase
+[ ] Current system state: [warnings/errors count, compilation status]
+[ ] Target scope: [specific area/domain/files]
+[ ] Re-read relevant antipatterns documentation
+[ ] Review correct patterns for this domain
+[ ] Plan specific changes for this session
+
+### Implementation Phase
+[ ] Change 1: [specific change] - [file/location]
+[ ] Change 2: [specific change] - [file/location]
+[ ] Change 3: [specific change] - [file/location]
+[ ] Compilation check after each change
+[ ] Progress metric check after each change
+
+### Verification Phase  
+[ ] NO new antipatterns introduced: [specific checks]
+[ ] Compilation success: [status]
+[ ] Target metrics improvement: [before → after counts]
+[ ] Critical functionality verification: [if needed]
+
+### Documentation Phase
+[ ] Update relevant docs with progress
+[ ] Mark resolved items
+[ ] Update success metrics
+[ ] Commit with descriptive message
+
+### Session Results
+- **Changes Made:** [summary]
+- **Files Modified:** [list]
+- **Metrics Impact:** [before → after]
+- **Verification Status:** ✅ PASS / ❌ FAIL
+- **Next Session Plan:** [what to tackle next]
+```
+
+### Emergency Recovery Pattern
+
+**If verification reveals new problems:**
+1. **STOP** all implementation work immediately
+2. **Revert** to last known-good state: `git reset --hard <commit>`
+3. **Re-read** documentation to understand what went wrong
+4. **Re-plan** with smaller, safer scope
+5. **Use TodoWrite** to track micro-steps
+6. **Get verification** at each tiny step before proceeding
+
+### Success Indicators
+
+**✅ METHODOLOGY WORKING:**
+- **Steady progress** - Target metrics improving over sessions
+- **No regressions** - New problems not introduced during fixes
+- **Sustainable pace** - Can work consistently without burnout or confusion
+- **Clear direction** - Always know what to do next
+- **Quality maintained** - Compilation success and functionality preserved
+
+**❌ METHODOLOGY FAILING:**
+- **Chaos symptoms** - Lost track of what was changed or needs changing
+- **Regression introduction** - New problems appearing during "fixes"
+- **Overwhelming scope** - Trying to change too much at once
+- **Verification skipping** - Not checking after each step
+
+**Recovery:** Return to Phase 1 (Foundation Reading) and restart with smaller scope.
+
+### Multi-Session Coordination
+
+**Between sessions:**
+- **Commit all changes** with descriptive messages
+- **Document session results** using template above
+- **Update tracking documents** (like hunt_warnings.md)
+- **Plan next session scope** based on current progress
+
+**Session startup checklist:**
+- **Review previous session results**
+- **Check current system state** (may have changed)
+- **Confirm no regressions** since last session
+- **Plan current session scope** (small, focused)
+
+This methodology ensures systematic progress on complex tasks while preventing the introduction of new problems during the resolution process.
+
