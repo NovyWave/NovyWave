@@ -10,11 +10,11 @@
 use zoon::*;
 use shared::{UpMsg, SignalValue, SignalTransition};
 use crate::connection::send_up_msg;
-use crate::time_types::{TimeNs, TimelineCache, CacheRequestType, CacheRequestState};
+use crate::visualizer::timeline::time_types::{TimeNs, TimelineCache, CacheRequestType, CacheRequestState};
 use std::collections::HashMap;
-use crate::state::UNIFIED_TIMELINE_CACHE;
+use crate::visualizer::state::timeline_state::UNIFIED_TIMELINE_CACHE;
 use zoon::Lazy;
-use crate::actors::waveform_timeline::{cursor_position_signal, viewport_signal};
+use crate::visualizer::timeline::timeline_actor::{cursor_position_signal, viewport_signal};
 
 // ===== DATA STRUCTURES =====
 
@@ -74,7 +74,7 @@ impl UnifiedTimelineService {
             
             // Check backoff delay
             if let Some(last_request) = tracker.last_request_time {
-                let backoff_duration = crate::time_types::DurationNs::from_external_seconds(tracker.backoff_delay_ms as f64 / 1000.0);
+                let backoff_duration = super::time_types::DurationNs::from_external_seconds(tracker.backoff_delay_ms as f64 / 1000.0);
                 if now.duration_since(last_request) < backoff_duration {
                     zoon::println!("⏸️ BACKOFF: Waiting {}ms before retry for variable {}", 
                         tracker.backoff_delay_ms, signal_id);
@@ -86,7 +86,7 @@ impl UnifiedTimelineService {
         // Check empty result cache
         let empty_cache = EMPTY_RESULT_CACHE.lock_ref();
         if let Some(cached_time) = empty_cache.get(signal_id) {
-            let cache_duration = crate::time_types::DurationNs::from_external_seconds(5.0); // 5 second cache
+            let cache_duration = super::time_types::DurationNs::from_external_seconds(5.0); // 5 second cache
             if now.duration_since(*cached_time) < cache_duration {
                 zoon::println!("💾 EMPTY CACHE: Using cached empty result for variable {}", signal_id);
                 return true;
@@ -418,7 +418,7 @@ impl UnifiedTimelineService {
                 Self::reset_circuit_breaker(&signal.unique_id);
                 
                 if request.request_type == CacheRequestType::ViewportData {
-                    let viewport_data = crate::time_types::ViewportSignalData {
+                    let viewport_data = super::time_types::ViewportSignalData {
                     };
                     cache.viewport_data.insert(signal.unique_id, viewport_data);
                 }
@@ -435,8 +435,8 @@ impl UnifiedTimelineService {
                 
                 // Convert backend SignalValue to UI SignalValue format
                 let ui_value = match value {
-                    shared::SignalValue::Present(data) => crate::format_utils::SignalValue::from_data(data.clone()),
-                    shared::SignalValue::Missing => crate::format_utils::SignalValue::missing(),
+                    shared::SignalValue::Present(data) => super::super::formatting::signal_values::SignalValue::from_data(data.clone()),
+                    shared::SignalValue::Missing => super::super::formatting::signal_values::SignalValue::missing(),
                 };
                 ui_signal_values.insert(signal_id.clone(), ui_value);
                 
@@ -447,7 +447,7 @@ impl UnifiedTimelineService {
             // Send cursor values to UI signal system
             let num_values = ui_signal_values.len();
             if num_values > 0 {
-                let relay = crate::actors::waveform_timeline::signal_values_updated_relay();
+                let relay = crate::visualizer::timeline::timeline_actor::signal_values_updated_relay();
                 relay.send(ui_signal_values);
                 // Debug logging removed to prevent console spam in hot path
             }
@@ -544,12 +544,12 @@ impl UnifiedTimelineService {
     
     /// Enhanced duplicate request checking by variable set rather than individual IDs
     fn is_duplicate_request_by_set(
-        cache: &crate::time_types::TimelineCache,
+        cache: &super::time_types::TimelineCache,
         variable_set: &std::collections::HashSet<String>,
-        request_type: crate::time_types::CacheRequestType
+        request_type: super::time_types::CacheRequestType
     ) -> bool {
-        let now = crate::time_types::TimeNs::from_external_seconds(js_sys::Date::now() / 1000.0);
-        let dedup_threshold = crate::time_types::DurationNs::from_external_seconds(0.5); // 500ms
+        let now = super::time_types::TimeNs::from_external_seconds(js_sys::Date::now() / 1000.0);
+        let dedup_threshold = super::time_types::DurationNs::from_external_seconds(0.5); // 500ms
         
         cache.active_requests.values().any(|request| {
             if request.request_type != request_type || 
@@ -635,7 +635,7 @@ impl UnifiedTimelineService {
         
         // Clean up old circuit breaker entries (older than 5 minutes)
         let mut breaker_map = CIRCUIT_BREAKER.lock_mut();
-        let cutoff_duration = crate::time_types::DurationNs::from_external_seconds(300.0); // 5 minutes
+        let cutoff_duration = super::time_types::DurationNs::from_external_seconds(300.0); // 5 minutes
         
         breaker_map.retain(|signal_id, tracker| {
             if let Some(last_request) = tracker.last_request_time {
@@ -651,7 +651,7 @@ impl UnifiedTimelineService {
         
         // Clean up old empty result cache entries
         let mut empty_cache = EMPTY_RESULT_CACHE.lock_mut();
-        let cache_cutoff = crate::time_types::DurationNs::from_external_seconds(30.0); // 30 seconds
+        let cache_cutoff = super::time_types::DurationNs::from_external_seconds(30.0); // 30 seconds
         
         empty_cache.retain(|signal_id, cached_time| {
             let should_keep = now.duration_since(*cached_time) < cache_cutoff;
@@ -665,7 +665,7 @@ impl UnifiedTimelineService {
     fn cleanup_old_requests() {
         let mut cache = UNIFIED_TIMELINE_CACHE.lock_mut();
         let now = TimeNs::from_external_seconds(js_sys::Date::now() / 1000.0);
-        let cutoff_threshold = crate::time_types::DurationNs::from_external_seconds(10.0); // 10 seconds
+        let cutoff_threshold = super::time_types::DurationNs::from_external_seconds(10.0); // 10 seconds
         
         cache.active_requests.retain(|_, request| {
             now.duration_since(request.timestamp_ns) < cutoff_threshold

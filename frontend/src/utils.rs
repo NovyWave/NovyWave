@@ -1,7 +1,8 @@
 use zoon::*;
 use shared::{ScopeData, file_contains_scope};
 use shared::LoadingStatus;
-use crate::state::{LOADING_FILES, IS_LOADING, LOADED_FILES, TREE_SELECTED_ITEMS, EXPANDED_SCOPES, USER_CLEARED_SELECTION, STARTUP_CURSOR_POSITION_SET};
+use crate::state::{LOADING_FILES, IS_LOADING, LOADED_FILES, TREE_SELECTED_ITEMS, EXPANDED_SCOPES, USER_CLEARED_SELECTION};
+use crate::visualizer::state::timeline_state::STARTUP_CURSOR_POSITION_SET;
 use std::collections::HashSet;
 
 // Signal for completion state changes - triggers clearing of completed files

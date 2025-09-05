@@ -4,7 +4,7 @@ use crate::error_display::{add_error_alert, log_error_console_only};
 use crate::state::ErrorAlert;
 use crate::utils::restore_scope_selection_for_file;
 use crate::views::is_cursor_within_variable_time_range;
-use crate::actors::waveform_timeline::current_cursor_position_seconds;
+use crate::visualizer::timeline::timeline_actor::current_cursor_position_seconds;
 use crate::actors::dialog_manager::{set_file_error};
 use shared::{UpMsg, DownMsg};
 use shared::{LoadingFile, LoadingStatus};
@@ -80,16 +80,16 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                     
                     // ✅ FIX: Send timeline bounds to WaveformTimeline Actor when file loads
                     // Use get_maximum_timeline_range() to get actual file data, not current viewport
-                    if let Some((min_time, max_time)) = crate::waveform_canvas::get_maximum_timeline_range() {
-                        crate::actors::waveform_timeline::timeline_bounds_calculated_relay()
+                    if let Some((min_time, max_time)) = crate::visualizer::canvas::waveform_canvas::get_maximum_timeline_range() {
+                        crate::visualizer::timeline::timeline_actor::timeline_bounds_calculated_relay()
                             .send((min_time, max_time));
                         zoon::println!("🎯 FILE_LOADED: Sent timeline bounds to Actor: {:.6}s to {:.6}s (from actual file data)", min_time, max_time);
                     } else {
                         // Force timeline bounds calculation even when no variables selected
                         zoon::println!("🎯 FILE_LOADED: get_maximum_timeline_range returned None, force-calculating bounds");
-                        let (file_min, file_max) = crate::waveform_canvas::get_full_file_range();
+                        let (file_min, file_max) = crate::visualizer::canvas::waveform_canvas::get_full_file_range();
                         if file_min < file_max && file_min.is_finite() && file_max.is_finite() {
-                            crate::actors::waveform_timeline::timeline_bounds_calculated_relay()
+                            crate::visualizer::timeline::timeline_actor::timeline_bounds_calculated_relay()
                                 .send((file_min, file_max));
                             zoon::println!("🎯 FILE_LOADED: Force-sent timeline bounds to Actor: {:.6}s to {:.6}s (full file range)", file_min, file_max);
                         } else {
@@ -261,7 +261,7 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                     // zoon::println!("=== INSERTING TO CACHE: {} with {} transitions ===", cache_key, result.transitions.len());
                     
                     // Store backend data in unified cache
-                    crate::unified_timeline_service::UnifiedTimelineService::insert_raw_transitions(
+                    crate::visualizer::timeline::timeline_service::UnifiedTimelineService::insert_raw_transitions(
                         cache_key.clone(), 
                         result.transitions
                     );
@@ -271,7 +271,7 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 }
                 
                 // Trigger canvas redraw when data arrives
-                crate::waveform_canvas::trigger_canvas_redraw();
+                crate::visualizer::canvas::waveform_canvas::trigger_canvas_redraw();
             }
             DownMsg::SignalTransitionsError { file_path: _, error: _ } => {
                 // TODO: Handle signal transitions error for future use
@@ -280,7 +280,7 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
             DownMsg::BatchSignalValues { batch_id: _, file_results } => {
                 // Process batch signal values from backend (first handler)
                 for file_result in file_results {
-                    let mut signal_values = crate::state::SIGNAL_VALUES.lock_mut();
+                    let mut signal_values = crate::visualizer::state::timeline_state::SIGNAL_VALUES.lock_mut();
                     
                     for result in file_result.results {
                         let unique_id = format!("{}|{}|{}", 
@@ -295,12 +295,12 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                         
                         let signal_value = if within_time_range {
                             if let Some(raw_binary) = result.raw_value {
-                                crate::format_utils::SignalValue::from_data(raw_binary)
+                                crate::visualizer::formatting::signal_values::SignalValue::from_data(raw_binary)
                             } else {
-                                crate::format_utils::SignalValue::missing()
+                                crate::visualizer::formatting::signal_values::SignalValue::missing()
                             }
                         } else {
-                            crate::format_utils::SignalValue::missing()  // Beyond time range
+                            crate::visualizer::formatting::signal_values::SignalValue::missing()  // Beyond time range
                         };
                         signal_values.insert(unique_id, signal_value);
                     }
@@ -324,11 +324,11 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 }
                 
                 // Handle unified signal response through the unified timeline service
-                crate::unified_timeline_service::UnifiedTimelineService::handle_unified_response(request_id, signal_data, cursor_values, statistics);
+                crate::visualizer::timeline::timeline_service::UnifiedTimelineService::handle_unified_response(request_id, signal_data, cursor_values, statistics);
             }
             DownMsg::UnifiedSignalError { request_id, error } => {
                 // Handle unified signal error through the unified timeline service
-                crate::unified_timeline_service::UnifiedTimelineService::handle_unified_error(request_id, error);
+                crate::visualizer::timeline::timeline_service::UnifiedTimelineService::handle_unified_error(request_id, error);
             }
             
             DownMsg::SignalValues { .. } => {

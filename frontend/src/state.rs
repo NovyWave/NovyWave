@@ -2,7 +2,7 @@ use zoon::*;
 use std::collections::HashMap;
 use indexmap::{IndexMap, IndexSet};
 use shared::{WaveformFile, LoadingFile, FileSystemItem, TrackedFile, FileState};
-use crate::time_types::{TimeNs, TimelineCache};
+use crate::visualizer::timeline::time_types::{TimeNs, TimelineCache};
 use crate::config::app_config;
 // Using simpler queue approach with MutableVec
 
@@ -145,33 +145,9 @@ pub const SELECTED_VARIABLES_ROW_HEIGHT: u32 = 30;
 
 // ===== MIGRATED TO ACTOR+RELAY: WaveformTimeline domain (15 more mutables) =====
 
-// MIGRATED: Timeline cache → use unified_timeline_cache_signal() from waveform_timeline
-pub static UNIFIED_TIMELINE_CACHE: Lazy<Mutable<TimelineCache>> = Lazy::new(|| Mutable::new(TimelineCache::new()));
-
-// MIGRATED: Cursor initialization → use startup_cursor_position_set_signal() from waveform_timeline
-pub static STARTUP_CURSOR_POSITION_SET: Lazy<Mutable<bool>> = lazy::default();
-
-// MIGRATED: Zoom control → use is_zooming_in_signal() / is_zooming_out_signal() from waveform_timeline
-pub static IS_ZOOMING_IN: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
-pub static IS_ZOOMING_OUT: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
-
-// MIGRATED: Pan control → use is_panning_left_signal() / is_panning_right_signal() from waveform_timeline
-pub static IS_PANNING_LEFT: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
-pub static IS_PANNING_RIGHT: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
-
-// MIGRATED: Cursor movement → use is_cursor_moving_left/right_signal() from waveform_timeline
-pub static IS_CURSOR_MOVING_LEFT: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
-pub static IS_CURSOR_MOVING_RIGHT: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
-
-// MIGRATED: Shift key → use is_shift_pressed_signal() from waveform_timeline
-pub static IS_SHIFT_PRESSED: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
-
-// MIGRATED: Mouse tracking → use mouse_x_position_signal() / mouse_time_ns_signal() from waveform_timeline
-pub static MOUSE_X_POSITION: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(0.0));
-pub static MOUSE_TIME_NS: Lazy<Mutable<TimeNs>> = Lazy::new(|| Mutable::new(TimeNs::ZERO));
-
-// MIGRATED: Zoom center → use zoom_center_ns_signal() from waveform_timeline
-pub static ZOOM_CENTER_NS: Lazy<Mutable<TimeNs>> = Lazy::new(|| Mutable::new(TimeNs::ZERO));
+// ===== MIGRATED TO VISUALIZER/STATE/TIMELINE_STATE.RS =====
+// All timeline-related globals have been moved to visualizer/state/timeline_state.rs
+// Use imports from there instead:
 
 // MIGRATED: Canvas dimensions → use canvas_width_signal() / canvas_height_signal() from waveform_timeline
 // pub static CANVAS_WIDTH: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(800.0));
@@ -245,11 +221,7 @@ pub static EXPANDED_SCOPES: Lazy<Mutable<IndexSet<String>>> = Lazy::new(|| {
 // NOTE: SELECTED_VARIABLES and SELECTED_VARIABLES_INDEX have been migrated to Actor+Relay architecture
 // Use crate::actors::selected_variables::* functions instead
 
-// MIGRATED: Signal values → use signal_values_signal() from waveform_timeline
-pub static SIGNAL_VALUES: Lazy<Mutable<HashMap<String, crate::format_utils::SignalValue>>> = lazy::default();
-
-// MIGRATED: Variable formats → use selected_variable_formats_signal() from waveform_timeline
-pub static SELECTED_VARIABLE_FORMATS: Lazy<Mutable<HashMap<String, shared::VarFormat>>> = lazy::default();
+// MIGRATED: Signal values and variable formats moved to visualizer/state/timeline_state.rs
 
 // ===== ERROR DISPLAY SYSTEM =====
 

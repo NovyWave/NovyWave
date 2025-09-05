@@ -6,7 +6,7 @@
 mod actor_relay_tests {
     use super::*;
     use crate::actors::{Actor, ActorVec, Relay, relay, tracked_files_domain, waveform_timeline_domain};
-    use crate::time_types::{TimeNs, Viewport, NsPerPixel};
+    use crate::visualizer::timeline::time_types::{TimeNs, Viewport, NsPerPixel};
     use shared::{TrackedFile, SelectedVariable, FileState};
     use zoon::{Task, Timer};
     use futures::StreamExt;
@@ -116,13 +116,13 @@ mod actor_relay_tests {
     /// Test that value caching bridge works correctly
     #[tokio::test]
     async fn test_value_caching_bridge() {
-        use crate::actors::waveform_timeline::{
+        use crate::visualizer::timeline::timeline_actor::{
             current_cursor_position_seconds, 
             set_cursor_position_seconds,
             current_viewport,
             set_viewport_if_changed
         };
-        use crate::time_types::Viewport;
+        use crate::visualizer::timeline::time_types::Viewport;
         
         // Test cursor position caching
         let test_position = 42.0;
@@ -493,7 +493,7 @@ pub mod dev_testing {
     macro_rules! actor_debug {
         ($actor:expr, $event_type:expr, $data:expr) => {
             #[cfg(debug_assertions)]
-            $crate::actors::testing::_ACTOR_DEBUGGER.record_event($actor, $event_type, &format!("{}", $data));
+            $crate::visualizer::testing::actor_testing::_ACTOR_DEBUGGER.record_event($actor, $event_type, &format!("{}", $data));
         };
     }
     

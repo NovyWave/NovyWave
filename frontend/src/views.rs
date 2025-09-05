@@ -18,7 +18,7 @@ use crate::{
     FILE_PATHS, show_file_paths_dialog, FILE_TREE_CACHE,
     TRACKED_FILES, state, clipboard
 };
-use crate::actors::waveform_timeline::{ns_per_pixel_signal, cursor_position_seconds_signal};
+use crate::visualizer::timeline::timeline_actor::{ns_per_pixel_signal, cursor_position_seconds_signal};
 
 use crate::state::SELECTED_VARIABLES_ROW_HEIGHT;
 
@@ -27,7 +27,7 @@ fn timeline_range_signal() -> impl Signal<Item = Option<(f64, f64)>> {
     map_ref! {
         let _loaded_files = crate::state::LOADED_FILES.signal_vec_cloned().to_signal_cloned().dedupe_cloned(),
         let _selected_vars = variables_signal() =>
-        crate::waveform_canvas::get_maximum_timeline_range()
+        crate::visualizer::canvas::waveform_canvas::get_maximum_timeline_range()
     }.dedupe_cloned()
 }
 
@@ -65,7 +65,7 @@ fn format_time(time: f64) -> String {
     }
 }
 use crate::actors::selected_variables::{variables_signal, variables_signal_vec, selected_scope_signal, search_filter_signal, search_filter_changed_relay, search_focus_changed_relay};
-use crate::dragging::{
+use crate::visualizer::interaction::dragging::{
     variables_name_column_width_signal, variables_value_column_width_signal, files_panel_height_signal
 };
 use crate::actors::dialog_manager::{
@@ -73,7 +73,7 @@ use crate::actors::dialog_manager::{
     file_picker_error_cache_signal, change_files_selection,
     current_dialog_visible, current_selected_files
 };
-use crate::format_utils::truncate_value;
+use crate::visualizer::formatting::signal_values::truncate_value;
 
 /// Get signal type information for a selected variable (signal-based version)
 fn get_signal_type_for_selected_variable_from_files(selected_var: &SelectedVariable, files: &[TrackedFile]) -> String {
@@ -144,7 +144,7 @@ fn get_signal_type_for_selected_variable(selected_var: &SelectedVariable) -> Str
 
 /// Create a smart dropdown with viewport edge detection using web-sys APIs
 fn create_smart_dropdown(
-    dropdown_options: Vec<crate::format_utils::DropdownFormatOption>, 
+    dropdown_options: Vec<crate::visualizer::formatting::signal_values::DropdownFormatOption>, 
     selected_format: Mutable<String>,
     is_open: Mutable<bool>,
     trigger_id: String
@@ -431,7 +431,7 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
     let signal_type = get_signal_type_for_selected_variable(selected_var);
     
     // Check if format is already saved in global formats
-    let saved_format = crate::state::SELECTED_VARIABLE_FORMATS.lock_ref().get(&unique_id).cloned();
+    let saved_format = crate::visualizer::state::timeline_state::SELECTED_VARIABLE_FORMATS.lock_ref().get(&unique_id).cloned();
     let current_format = saved_format
         .or(selected_var.formatter)
         .unwrap_or_default();
@@ -495,7 +495,7 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
             
             map_ref! {
                 // ✅ NEWEST: Use unified timeline service with integer time precision
-                let current_value = crate::unified_timeline_service::UnifiedTimelineService::cursor_value_signal(&unique_id_for_signal),
+                let current_value = crate::visualizer::timeline::timeline_service::UnifiedTimelineService::cursor_value_signal(&unique_id_for_signal),
                 let format_state = selected_format.signal_cloned() => {
                     // Parse current format for proper display
                     let current_format_enum = match format_state.as_str() {
@@ -512,11 +512,11 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
                     // Debug logging removed to prevent console spam in hot signal path
                     
                     let current_signal_value = if current_value == "N/A" {
-                        crate::format_utils::SignalValue::missing()
+                        crate::visualizer::formatting::signal_values::SignalValue::missing()
                     } else if current_value == "Loading..." {
-                        crate::format_utils::SignalValue::Loading
+                        crate::visualizer::formatting::signal_values::SignalValue::Loading
                     } else {
-                        crate::format_utils::SignalValue::from_data(current_value.clone())
+                        crate::visualizer::formatting::signal_values::SignalValue::from_data(current_value.clone())
                     };
                     
                     let full_display_text = current_signal_value.get_full_display_with_format(&current_format_enum);
@@ -525,7 +525,7 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
                     // Debug logging removed to prevent console spam in hot signal path
                     
                     // Generate dropdown options with formatted values
-                    let dropdown_options = crate::format_utils::generate_dropdown_options(&current_signal_value, &signal_type);
+                    let dropdown_options = crate::visualizer::formatting::signal_values::generate_dropdown_options(&current_signal_value, &signal_type);
                     
                     // Create unique trigger ID for positioning reference
                     let trigger_id = format!("select-trigger-{}", unique_id);
@@ -794,7 +794,7 @@ fn update_variable_format(unique_id: &str, new_format: shared::VarFormat) {
     use crate::actors::selected_variables::variable_format_changed_relay;
     
     // Update the legacy format tracking for compatibility during transition
-    use crate::state::SELECTED_VARIABLE_FORMATS;
+    use crate::visualizer::state::timeline_state::SELECTED_VARIABLE_FORMATS;
     let mut formats = SELECTED_VARIABLE_FORMATS.lock_mut();
     formats.insert(unique_id.to_string(), new_format);
     drop(formats);
@@ -822,7 +822,7 @@ pub fn compute_value_from_cached_transitions(
     }
     
     // First, try the exact cache key from unified service
-    if let Some(transitions) = crate::unified_timeline_service::UnifiedTimelineService::get_raw_transitions(&cache_key) {
+    if let Some(transitions) = crate::visualizer::timeline::timeline_service::UnifiedTimelineService::get_raw_transitions(&cache_key) {
         if file_path.ends_with(".fst") && variable_name == "clk" {
             // Debug logging removed to prevent event loop blocking
         }
@@ -991,7 +991,7 @@ fn request_single_variable_value(unique_id: &str, cursor_time: f64) {
     let variable_name = parts[2];
     
     // Use SignalDataService for proper deduplication and coordination
-    let request = crate::unified_timeline_service::SignalRequest {
+    let request = crate::visualizer::timeline::timeline_service::SignalRequest {
         file_path: file_path.to_string(),
         scope_path: scope_path.to_string(),
         variable_name: variable_name.to_string(),
@@ -1002,8 +1002,8 @@ fn request_single_variable_value(unique_id: &str, cursor_time: f64) {
     
     // Convert to signal ID and request cursor value
     let signal_id = format!("{}|{}|{}", request.file_path, request.scope_path, request.variable_name);
-    let cursor_time_ns = crate::time_types::TimeNs::from_nanos((cursor_time * 1_000_000_000.0) as u64);
-    crate::unified_timeline_service::UnifiedTimelineService::request_cursor_values(vec![signal_id], cursor_time_ns);
+    let cursor_time_ns = crate::visualizer::timeline::time_types::TimeNs::from_nanos((cursor_time * 1_000_000_000.0) as u64);
+    crate::visualizer::timeline::timeline_service::UnifiedTimelineService::request_cursor_values(vec![signal_id], cursor_time_ns);
 }
 
 /// Update signal values in UI from cached or backend results
@@ -1031,16 +1031,16 @@ fn update_signal_values_in_ui(results: &[SignalValueResult]) {
             
             // Handle missing data properly - use N/A instead of "Loading..."
             let signal_value = if let Some(raw_binary) = result.raw_value.clone() {
-                crate::format_utils::SignalValue::from_data(raw_binary)
+                crate::visualizer::formatting::signal_values::SignalValue::from_data(raw_binary)
             } else {
                 // For missing data, create a special N/A signal value
-                crate::format_utils::SignalValue::missing()
+                crate::visualizer::formatting::signal_values::SignalValue::missing()
             };
             
             // Update the value and trigger signal manually
-            let mut new_values = crate::state::SIGNAL_VALUES.get_cloned();
+            let mut new_values = crate::visualizer::state::timeline_state::SIGNAL_VALUES.get_cloned();
             new_values.insert(full_unique_id, signal_value);
-            crate::state::SIGNAL_VALUES.set(new_values);
+            crate::visualizer::state::timeline_state::SIGNAL_VALUES.set(new_values);
         }
         */
     }
@@ -1048,7 +1048,7 @@ fn update_signal_values_in_ui(results: &[SignalValueResult]) {
 
 
 fn variables_name_vertical_divider() -> impl Element {
-    use crate::dragging::{start_drag, is_divider_dragging, DividerType};
+    use crate::visualizer::interaction::dragging::{start_drag, is_divider_dragging, DividerType};
     
     let is_dragging_signal = is_divider_dragging(DividerType::VariablesNameColumn);
     
@@ -1069,7 +1069,7 @@ fn variables_name_vertical_divider() -> impl Element {
 }
 
 fn variables_value_vertical_divider() -> impl Element {
-    use crate::dragging::{start_drag, is_divider_dragging, DividerType};
+    use crate::visualizer::interaction::dragging::{start_drag, is_divider_dragging, DividerType};
     
     let is_dragging_signal = is_divider_dragging(DividerType::VariablesValueColumn);
     
@@ -1721,7 +1721,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                                                 El::new()
                                                                     .on_click(|| {
                                                                         zoon::println!("🚨 R BUTTON CLICKED: Triggering reset zoom directly");
-                                                                        crate::actors::waveform_timeline_domain().reset_zoom_pressed_relay.send(());
+                                                                        crate::visualizer::timeline::timeline_actor_domain().reset_zoom_pressed_relay.send(());
                                                                     })
                                                                     .child(kbd("R").size(KbdSize::Small).variant(KbdVariant::Outlined).title("Reset zoom to 1x, fit all data, and center cursor").build())
                                                             )
@@ -1878,7 +1878,7 @@ pub fn selected_variables_with_waveform_panel() -> impl Element {
                                             .s(Width::fill())
                                             .s(Height::fill())
                                             .s(Background::new().color_signal(neutral_2()))
-                                            .child(crate::waveform_canvas::waveform_canvas())
+                                            .child(crate::visualizer::canvas::waveform_canvas::waveform_canvas())
                                     )
                             )
                     )
@@ -2700,7 +2700,7 @@ fn dock_toggle_button() -> impl Element {
 }
 
 pub fn files_panel_vertical_divider() -> impl Element {
-    use crate::dragging::{start_drag, is_divider_dragging, DividerType};
+    use crate::visualizer::interaction::dragging::{start_drag, is_divider_dragging, DividerType};
     
     let is_dragging_signal = is_divider_dragging(DividerType::FilesPanelMain);
     
@@ -2721,7 +2721,7 @@ pub fn files_panel_vertical_divider() -> impl Element {
 }
 
 pub fn files_panel_horizontal_divider() -> impl Element {
-    use crate::dragging::{start_drag, is_divider_dragging, DividerType};
+    use crate::visualizer::interaction::dragging::{start_drag, is_divider_dragging, DividerType};
     
     let is_dragging_signal = is_divider_dragging(DividerType::FilesPanelSecondary);
     

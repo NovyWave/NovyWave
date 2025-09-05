@@ -1,7 +1,7 @@
 use zoon::{*, futures_util::future::try_join_all};
 use moonzoon_novyui::tokens::theme::{Theme, init_theme};
 use moonzoon_novyui::tokens::color::{neutral_1};
-use crate::time_types::TimeNs;
+use crate::visualizer::timeline::time_types::TimeNs;
 
 mod dataflow;
 mod actors;
@@ -15,9 +15,8 @@ mod clipboard;
 mod file_utils;
 use file_utils::*;
 
-mod format_utils;
 
-mod waveform_canvas;
+// mod waveform_canvas; // MOVED to visualizer/canvas/waveform_canvas.rs
 
 
 mod connection;
@@ -28,11 +27,12 @@ mod platform;
 mod config;
 use shared;
 
-mod dragging;
+// mod dragging; // MOVED to visualizer/interaction/dragging.rs
 
 mod types;
 
-mod time_types;
+
+mod visualizer;
 
 use shared::{UpMsg};
 
@@ -41,8 +41,8 @@ use views::*;
 
 mod state;
 use state::*;
-use actors::waveform_timeline::{current_viewport};
-use dragging::{
+use crate::visualizer::timeline::timeline_actor::{current_viewport};
+use crate::visualizer::interaction::dragging::{
     files_panel_width_signal, files_panel_height_signal, 
     variables_name_column_width_signal, variables_value_column_width_signal,
     is_any_divider_dragging, active_divider_type_signal, process_drag_movement, DividerType
@@ -51,8 +51,7 @@ use config::app_config;
 use actors::dialog_manager::{dialog_visible_signal, file_picker_selected_signal};
 
 
-mod unified_timeline_service;
-use unified_timeline_service::{*, UnifiedTimelineService};
+use crate::visualizer::timeline::timeline_service::{*, UnifiedTimelineService};
 
 mod utils;
 use utils::*;
@@ -112,7 +111,7 @@ pub fn main() {
         start_app("app", root);
 
         // Initialize value caching - domains are already initialized
-        crate::actors::waveform_timeline::initialize_value_caching();
+        crate::visualizer::timeline::timeline_actor::initialize_value_caching();
         
         // Initialize selected scope synchronization between UI and persistence
         crate::state::initialize_selected_scope_synchronization();
@@ -145,7 +144,7 @@ pub fn main() {
         // Reset circuit breakers and trigger queries when cursor moves
         Task::start(async {
             // Wait for cursor to move from initial position
-            let cursor_signal = crate::actors::waveform_timeline::cursor_position_signal();
+            let cursor_signal = crate::visualizer::timeline::timeline_actor::cursor_position_signal();
             cursor_signal.for_each(move |cursor_pos| {
                 async move {
                     if cursor_pos.nanos() > 0 {
@@ -178,8 +177,8 @@ pub fn main() {
             
             // Use domain signals instead of direct domain access
             let movement_signal = map_ref! {
-                let left = crate::actors::waveform_timeline::is_cursor_moving_left_signal(),
-                let right = crate::actors::waveform_timeline::is_cursor_moving_right_signal() =>
+                let left = crate::visualizer::timeline::timeline_actor::is_cursor_moving_left_signal(),
+                let right = crate::visualizer::timeline::timeline_actor::is_cursor_moving_right_signal() =>
                 *left || *right
             };
             
@@ -204,9 +203,9 @@ pub fn main() {
             
             // Use domain signal instead of direct domain access - combined approach
             let movement_and_position_signal = map_ref! {
-                let cursor_pos = crate::actors::waveform_timeline::cursor_position_seconds_signal(),
-                let left = crate::actors::waveform_timeline::is_cursor_moving_left_signal(),
-                let right = crate::actors::waveform_timeline::is_cursor_moving_right_signal() =>
+                let cursor_pos = crate::visualizer::timeline::timeline_actor::cursor_position_seconds_signal(),
+                let left = crate::visualizer::timeline::timeline_actor::is_cursor_moving_left_signal(),
+                let right = crate::visualizer::timeline::timeline_actor::is_cursor_moving_right_signal() =>
                 (*cursor_pos, *left || *right)
             };
             
@@ -232,7 +231,7 @@ pub fn main() {
 pub fn is_cursor_in_visible_range(cursor_time: f64) -> bool {
     match current_viewport() {
         Some(viewport) => {
-            let cursor_ns = crate::time_types::TimeNs::from_nanos((cursor_time * 1_000_000_000.0) as u64);
+            let cursor_ns = crate::visualizer::timeline::time_types::TimeNs::from_nanos((cursor_time * 1_000_000_000.0) as u64);
             viewport.contains(cursor_ns)
         }
         None => false // If viewport not initialized, cursor is not in visible range
@@ -386,10 +385,10 @@ fn drag_overlay() -> impl Element {
             }
         })
         .on_pointer_up(|| {
-            dragging::end_drag();
+            crate::visualizer::interaction::dragging::end_drag();
         })
         .on_pointer_leave(|| {
-            dragging::end_drag();
+            crate::visualizer::interaction::dragging::end_drag();
         })
 }
 
@@ -422,10 +421,10 @@ fn main_layout() -> impl Element {
             })
         ))
         .on_pointer_up(|| {
-            dragging::end_drag();
+            crate::visualizer::interaction::dragging::end_drag();
         })
         .on_pointer_leave(|| {
-            dragging::end_drag();
+            crate::visualizer::interaction::dragging::end_drag();
         })
         .update_raw_el(move |raw_el| {
             raw_el.global_event_handler(move |event: zoon::events::KeyDown| {
@@ -442,94 +441,94 @@ fn main_layout() -> impl Element {
                 match event.key().as_str() {
                     "Shift" => {
                         // Track Shift key state
-                        crate::state::IS_SHIFT_PRESSED.set_neq(true);
+                        crate::visualizer::state::timeline_state::IS_SHIFT_PRESSED.set_neq(true);
                     },
                     "w" | "W" => {
                         // W key: zoom in pressed
                         
                         // Zoom in using WaveformTimeline domain
-                        let waveform_timeline = crate::actors::waveform_timeline_domain();
+                        let waveform_timeline = crate::visualizer::timeline::timeline_actor_domain();
                         waveform_timeline.zoom_in_pressed_relay.send(());
                         waveform_timeline.redraw_requested_relay.send(()); // ✅ Trigger rerender like Z key
                         
                         // Zoom in completed
                         
                         // ✅ FIXED: Removed legacy canvas call that was changing viewport range
-                        // Legacy function removed: crate::waveform_canvas::start_smooth_zoom_in();
+                        // Legacy function removed: crate::visualizer::canvas::waveform_canvas::start_smooth_zoom_in();
                     },
                     "s" | "S" => {
                         // S key: zoom out pressed
                         
                         // Zoom out using WaveformTimeline domain
-                        let waveform_timeline = crate::actors::waveform_timeline_domain();
+                        let waveform_timeline = crate::visualizer::timeline::timeline_actor_domain();
                         waveform_timeline.zoom_out_pressed_relay.send(());
                         waveform_timeline.redraw_requested_relay.send(()); // ✅ Trigger rerender like Z key
                         
                         // Zoom out completed
                         
                         // ✅ FIXED: Removed legacy canvas call that was changing viewport range  
-                        // Legacy function removed: crate::waveform_canvas::start_smooth_zoom_out();
+                        // Legacy function removed: crate::visualizer::canvas::waveform_canvas::start_smooth_zoom_out();
                     },
                     "a" | "A" => {
                         // Pan left using WaveformTimeline domain
-                        let waveform_timeline = crate::actors::waveform_timeline_domain();
+                        let waveform_timeline = crate::visualizer::timeline::timeline_actor_domain();
                         waveform_timeline.pan_left_pressed_relay.send(());
                         
                         // Legacy function call for backward compatibility (will be removed)
-                        crate::waveform_canvas::start_smooth_pan_left();
+                        crate::visualizer::canvas::waveform_canvas::start_smooth_pan_left();
                     },
                     "d" | "D" => {
                         // Pan right using WaveformTimeline domain
-                        let waveform_timeline = crate::actors::waveform_timeline_domain();
+                        let waveform_timeline = crate::visualizer::timeline::timeline_actor_domain();
                         waveform_timeline.pan_right_pressed_relay.send(());
                         
                         // Legacy function call for backward compatibility (will be removed)
-                        crate::waveform_canvas::start_smooth_pan_right();
+                        crate::visualizer::canvas::waveform_canvas::start_smooth_pan_right();
                     },
                     "q" | "Q" => {
-                        let waveform_timeline = crate::actors::waveform_timeline_domain();
-                        if crate::state::IS_SHIFT_PRESSED.get() {
+                        let waveform_timeline = crate::visualizer::timeline::timeline_actor_domain();
+                        if crate::visualizer::state::timeline_state::IS_SHIFT_PRESSED.get() {
                             // Shift+Q: Jump to previous transition using WaveformTimeline domain
                             waveform_timeline.jump_to_previous_pressed_relay.send(());
                             
                             // Legacy function call for backward compatibility (will be removed)
-                            crate::waveform_canvas::jump_to_previous_transition();
+                            crate::visualizer::canvas::waveform_canvas::jump_to_previous_transition();
                         } else {
                             // Q: Cursor left using WaveformTimeline domain
                             waveform_timeline.left_key_pressed_relay.send(());
                             
                             // Legacy function call for backward compatibility (will be removed)
-                            crate::waveform_canvas::start_smooth_cursor_left();
+                            crate::visualizer::canvas::waveform_canvas::start_smooth_cursor_left();
                         }
                     },
                     "e" | "E" => {
-                        let waveform_timeline = crate::actors::waveform_timeline_domain();
-                        if crate::state::IS_SHIFT_PRESSED.get() {
+                        let waveform_timeline = crate::visualizer::timeline::timeline_actor_domain();
+                        if crate::visualizer::state::timeline_state::IS_SHIFT_PRESSED.get() {
                             // Shift+E: Jump to next transition using WaveformTimeline domain
                             waveform_timeline.jump_to_next_pressed_relay.send(());
                             
                             // Legacy function call for backward compatibility (will be removed)
-                            crate::waveform_canvas::jump_to_next_transition();
+                            crate::visualizer::canvas::waveform_canvas::jump_to_next_transition();
                         } else {
                             // E: Cursor right using WaveformTimeline domain
                             waveform_timeline.right_key_pressed_relay.send(());
                             
                             // Legacy function call for backward compatibility (will be removed)
-                            crate::waveform_canvas::start_smooth_cursor_right();
+                            crate::visualizer::canvas::waveform_canvas::start_smooth_cursor_right();
                         }
                     },
                     "r" | "R" => {
                         // R key: reset zoom pressed
                         
                         // R: Reset zoom using WaveformTimeline domain only
-                        let waveform_timeline = crate::actors::waveform_timeline_domain();
+                        let waveform_timeline = crate::visualizer::timeline::timeline_actor_domain();
                         waveform_timeline.reset_zoom_pressed_relay.send(());
                         
                         // Reset zoom completed
                     },
                     "z" | "Z" => {
                         // Z: Move zoom center to 0 (keep cursor position unchanged)
-                        let waveform_timeline = crate::actors::waveform_timeline_domain();
+                        let waveform_timeline = crate::visualizer::timeline::timeline_actor_domain();
                         
                         // ✅ CORRECT FIX: Reset ONLY zoom center to 0, do NOT move cursor
                         // Z key: zoom center reset to 0
@@ -551,33 +550,33 @@ fn main_layout() -> impl Element {
                 match event.key().as_str() {
                     "Shift" => {
                         // Track Shift key state
-                        crate::state::IS_SHIFT_PRESSED.set_neq(false);
+                        crate::visualizer::state::timeline_state::IS_SHIFT_PRESSED.set_neq(false);
                     },
                     "w" | "W" => {
                         // ✅ FIXED: No legacy zoom animation to stop - domain actor handles zoom instantly
-                        // Removed: crate::waveform_canvas::stop_smooth_zoom_in();
+                        // Removed: crate::visualizer::canvas::waveform_canvas::stop_smooth_zoom_in();
                     },
                     "s" | "S" => {
                         // ✅ FIXED: No legacy zoom animation to stop - domain actor handles zoom instantly
-                        // Removed: crate::waveform_canvas::stop_smooth_zoom_out();
+                        // Removed: crate::visualizer::canvas::waveform_canvas::stop_smooth_zoom_out();
                     },
                     "a" | "A" => {
                         // Stop smooth pan left
-                        crate::waveform_canvas::stop_smooth_pan_left();
+                        crate::visualizer::canvas::waveform_canvas::stop_smooth_pan_left();
                     },
                     "d" | "D" => {
                         // Stop smooth pan right
-                        crate::waveform_canvas::stop_smooth_pan_right();
+                        crate::visualizer::canvas::waveform_canvas::stop_smooth_pan_right();
                     },
                     "q" | "Q" => {
                         // Always stop smooth cursor when Q is released 
                         // (Shift+Q is instantaneous, normal Q is continuous)
-                        crate::waveform_canvas::stop_smooth_cursor_left();
+                        crate::visualizer::canvas::waveform_canvas::stop_smooth_cursor_left();
                     },
                     "e" | "E" => {
                         // Always stop smooth cursor when E is released
                         // (Shift+E is instantaneous, normal E is continuous) 
-                        crate::waveform_canvas::stop_smooth_cursor_right();
+                        crate::visualizer::canvas::waveform_canvas::stop_smooth_cursor_right();
                     },
                     _ => {} // Ignore other keys
                 }

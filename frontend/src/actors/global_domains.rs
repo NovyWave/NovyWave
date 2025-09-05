@@ -3,7 +3,8 @@
 //! Centralized instantiation and access to domain actors throughout the application.
 //! Replaces global mutables with domain-driven reactive state management.
 
-use crate::actors::{TrackedFiles, SelectedVariables, WaveformTimeline, UserConfiguration, DialogManager, ErrorManager};
+use crate::actors::{TrackedFiles, SelectedVariables, UserConfiguration, DialogManager, ErrorManager};
+use crate::visualizer::timeline::timeline_actor::WaveformTimeline;
 use crate::actors::{dialog_manager, error_manager, config_sync};
 use std::sync::OnceLock;
 use shared::{TrackedFile, LoadingFile, WaveformFile, SelectedVariable};

@@ -11,25 +11,25 @@ use shared::DockMode;
 /// Get files panel width signal
 pub fn files_panel_width_signal() -> impl Signal<Item = u32> {
     // Use the new dragging system signal that works correctly
-    crate::dragging::files_panel_width_signal().map(|w| w as u32)
+    crate::visualizer::interaction::dragging::files_panel_width_signal().map(|w| w as u32)
 }
 
 /// Get files panel height signal  
 pub fn files_panel_height_signal() -> impl Signal<Item = u32> {
     // Use the new dragging system signal that works correctly
-    crate::dragging::files_panel_height_signal().map(|h| h as u32)
+    crate::visualizer::interaction::dragging::files_panel_height_signal().map(|h| h as u32)
 }
 
 /// Get variables name column width signal
 pub fn variables_name_column_width_signal() -> impl Signal<Item = u32> {
     // Use the new dragging system signal that works correctly
-    crate::dragging::variables_name_column_width_signal().map(|w| w as u32)
+    crate::visualizer::interaction::dragging::variables_name_column_width_signal().map(|w| w as u32)
 }
 
 /// Get variables value column width signal
 pub fn variables_value_column_width_signal() -> impl Signal<Item = u32> {
     // Use the new dragging system signal that works correctly
-    crate::dragging::variables_value_column_width_signal().map(|w| w as u32)
+    crate::visualizer::interaction::dragging::variables_value_column_width_signal().map(|w| w as u32)
 }
 
 /// Get timeline panel height signal
@@ -53,25 +53,25 @@ pub fn dock_transitioning_signal() -> impl Signal<Item = bool> {
 /// Get files vertical dragging signal
 pub fn files_vertical_dragging_signal() -> impl Signal<Item = bool> {
     // Use dragging system signal
-    crate::dragging::is_divider_dragging(crate::dragging::DividerType::FilesPanelMain)
+    crate::visualizer::interaction::dragging::is_divider_dragging(crate::visualizer::interaction::dragging::DividerType::FilesPanelMain)
 }
 
 /// Get files horizontal dragging signal
 pub fn files_horizontal_dragging_signal() -> impl Signal<Item = bool> {
     // Use dragging system signal
-    crate::dragging::is_divider_dragging(crate::dragging::DividerType::FilesPanelSecondary)
+    crate::visualizer::interaction::dragging::is_divider_dragging(crate::visualizer::interaction::dragging::DividerType::FilesPanelSecondary)
 }
 
 /// Get name divider dragging signal
 pub fn name_divider_dragging_signal() -> impl Signal<Item = bool> {
     // Use dragging system signal
-    crate::dragging::is_divider_dragging(crate::dragging::DividerType::VariablesNameColumn)
+    crate::visualizer::interaction::dragging::is_divider_dragging(crate::visualizer::interaction::dragging::DividerType::VariablesNameColumn)
 }
 
 /// Get value divider dragging signal
 pub fn value_divider_dragging_signal() -> impl Signal<Item = bool> {
     // Use dragging system signal
-    crate::dragging::is_divider_dragging(crate::dragging::DividerType::VariablesValueColumn)
+    crate::visualizer::interaction::dragging::is_divider_dragging(crate::visualizer::interaction::dragging::DividerType::VariablesValueColumn)
 }
 
 // === COMPATIBILITY FUNCTIONS (NO-OP) ===

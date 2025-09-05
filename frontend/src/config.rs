@@ -1,6 +1,6 @@
 use zoon::*;
 use shared::{self, AppConfig as SharedAppConfig, DockMode, Theme as SharedTheme};
-use crate::time_types::TimeNs;
+use crate::visualizer::timeline::time_types::TimeNs;
 use crate::dataflow::{Actor, relay, Relay};
 use crate::platform::{Platform, CurrentPlatform};
 use futures::{StreamExt, select};
@@ -342,9 +342,9 @@ impl AppConfig {
                         if let Some(()) = button_click {
                             
                             // Get current panel dimensions from DRAGGING SYSTEM BEFORE switching mode
-                            let current_files_height = crate::dragging::files_panel_height_signal().to_stream().next().await.unwrap_or(300.0) as u32;
-                            let current_name_width = crate::dragging::variables_name_column_width_signal().to_stream().next().await.unwrap_or(190.0) as u32;
-                            let current_value_width = crate::dragging::variables_value_column_width_signal().to_stream().next().await.unwrap_or(220.0) as u32;
+                            let current_files_height = crate::visualizer::interaction::dragging::files_panel_height_signal().to_stream().next().await.unwrap_or(300.0) as u32;
+                            let current_name_width = crate::visualizer::interaction::dragging::variables_name_column_width_signal().to_stream().next().await.unwrap_or(190.0) as u32;
+                            let current_value_width = crate::visualizer::interaction::dragging::variables_value_column_width_signal().to_stream().next().await.unwrap_or(220.0) as u32;
                             
                             
                             // ✅ Read and modify dock mode

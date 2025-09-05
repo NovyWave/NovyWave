@@ -7,12 +7,12 @@
 
 use crate::actors::{Actor, ActorMap, Relay, relay};
 use crate::actors::global_domains::waveform_timeline_domain;
-use crate::time_types::{TimeNs, Viewport, NsPerPixel, TimelineCoordinates, TimelineCache};
+use crate::visualizer::timeline::time_types::{TimeNs, Viewport, NsPerPixel, TimelineCoordinates, TimelineCache};
 use shared::{SignalTransition, SignalValue, WaveformFile, VarFormat};
 use zoon::{SignalExt, SignalVecExt, MutableExt};
 use futures::{StreamExt, select};
 use std::collections::{BTreeMap, HashMap};
-use crate::format_utils;
+use crate::visualizer::formatting::signal_values as format_utils;
 
 /// Domain-driven timeline management with Actor+Relay architecture.
 /// 
@@ -245,7 +245,7 @@ impl WaveformTimeline {
         
         // Helper function to get initial cursor position
         let get_initial_cursor_position = || {
-            if let Some((min_time, max_time)) = crate::waveform_canvas::get_current_timeline_range() {
+            if let Some((min_time, max_time)) = crate::visualizer::canvas::waveform_canvas::get_current_timeline_range() {
                 let center_time = (min_time + max_time) / 2.0;
                 TimeNs::from_external_seconds(center_time)
             } else {
@@ -314,7 +314,7 @@ impl WaveformTimeline {
                         match event {
                             Some(()) => {
                                 // Center cursor at viewport center
-                                let viewport = crate::actors::waveform_timeline::current_viewport();
+                                let viewport = crate::visualizer::timeline::timeline_actor::current_viewport();
                                 let center_time = if let Some(vp) = viewport {
                                     TimeNs::from_external_seconds(
                                         (vp.start.display_seconds() + vp.end.display_seconds()) / 2.0
@@ -340,7 +340,7 @@ impl WaveformTimeline {
         // Helper function to get initial viewport from file data
         let get_initial_viewport = || {
             // Try to get file range from loaded files
-            if let Some((min_time, max_time)) = crate::waveform_canvas::get_maximum_timeline_range() {
+            if let Some((min_time, max_time)) = crate::visualizer::canvas::waveform_canvas::get_maximum_timeline_range() {
                 let file_span = max_time - min_time;
                 if file_span > 1.0 {  // Use file data if span > 1 second
                     zoon::println!("🎯 VIEWPORT INIT: Using file range: {:.3}s to {:.3}s (span: {:.3}s)", min_time, max_time, file_span);
@@ -390,7 +390,7 @@ impl WaveformTimeline {
                                     // ✅ FIX: Trigger automatic fit-all zoom when timeline bounds are calculated (on file load)
                                     // Use the same relay that R key uses for consistent behavior
                                     zoon::println!("🎯 TIMELINE INIT: Auto-triggering fit-all zoom on file load (range: {:.3}s to {:.3}s)", min_time, max_time);
-                                    crate::actors::waveform_timeline_domain().reset_zoom_pressed_relay.send(());
+                                    crate::visualizer::timeline::timeline_actor_domain().reset_zoom_pressed_relay.send(());
                                     
                                     // ✅ FIX: Center cursor at viewport center when timeline bounds are calculated
                                     let center_time = (min_time + max_time) / 2.0;
@@ -404,7 +404,7 @@ impl WaveformTimeline {
                             match event {
                                 Some(()) => {
                                     // ✅ FIX: Reset viewport to full timeline range using actual file data
-                                    if let Some((min_time, max_time)) = crate::waveform_canvas::get_maximum_timeline_range() {
+                                    if let Some((min_time, max_time)) = crate::visualizer::canvas::waveform_canvas::get_maximum_timeline_range() {
                                         let full_timeline_viewport = Viewport::new(
                                             TimeNs::from_external_seconds(min_time),
                                             TimeNs::from_external_seconds(max_time)
@@ -420,7 +420,7 @@ impl WaveformTimeline {
                                         }
                                     } else {
                                         // Fallback to full file range if no variables selected
-                                        let (file_min, file_max) = crate::waveform_canvas::get_full_file_range();
+                                        let (file_min, file_max) = crate::visualizer::canvas::waveform_canvas::get_full_file_range();
                                         if file_min < file_max && file_min.is_finite() && file_max.is_finite() {
                                             let full_timeline_viewport = Viewport::new(
                                                 TimeNs::from_external_seconds(file_min),
@@ -510,7 +510,7 @@ impl WaveformTimeline {
                                 // Using dynamic canvas width for zoom calculation
                                 
                                 // ✅ CORRECT: Use zoom center position (blue line), not cursor position (yellow line)
-                                let center_time = crate::actors::waveform_timeline::current_zoom_center_position();
+                                let center_time = crate::visualizer::timeline::timeline_actor::current_zoom_center_position();
                                 
                                 // Calculate new viewport range based on new zoom level and ACTUAL canvas width
                                 let half_range_ns = (new_ns_per_pixel.nanos() * canvas_width as u64) / 2;
@@ -549,7 +549,7 @@ impl WaveformTimeline {
                                 // Using dynamic canvas width for zoom calculation
                                 
                                 // ✅ CORRECT: Use zoom center position (blue line), not cursor position (yellow line)
-                                let center_time = crate::actors::waveform_timeline::current_zoom_center_position();
+                                let center_time = crate::visualizer::timeline::timeline_actor::current_zoom_center_position();
                                 
                                 // Calculate new viewport range based on new zoom level
                                 let half_range_ns = (new_ns_per_pixel.nanos() * canvas_width as u64) / 2;
@@ -581,11 +581,11 @@ impl WaveformTimeline {
                                 
                                 // Debug current Actor state before calculation
                                 let current_ns_per_pixel = ns_per_pixel_handle.get();
-                                let current_viewport = match crate::actors::waveform_timeline::current_viewport() {
+                                let current_viewport = match crate::visualizer::timeline::timeline_actor::current_viewport() {
                                     Some(viewport) => viewport,
                                     None => continue, // Timeline not initialized yet, skip this frame
                                 };
-                                let current_coords = match crate::actors::waveform_timeline::current_coordinates() {
+                                let current_coords = match crate::visualizer::timeline::timeline_actor::current_coordinates() {
                                     Some(coords) => coords,
                                     None => continue, // Timeline not initialized yet, skip this frame
                                 };
@@ -624,7 +624,7 @@ impl WaveformTimeline {
                                 static STABLE_CANVAS_WIDTH: std::sync::OnceLock<std::sync::Mutex<u32>> = std::sync::OnceLock::new();
                                 
                                 let canvas_width = {
-                                    let raw_width = match crate::actors::waveform_timeline::current_canvas_width() {
+                                    let raw_width = match crate::visualizer::timeline::timeline_actor::current_canvas_width() {
                                         Some(width) => width as u32,
                                         None => continue, // Timeline not initialized yet, skip this frame
                                     };
@@ -647,7 +647,7 @@ impl WaveformTimeline {
                                     *cached_width
                                 };
                                 
-                                if let Some((min_time, max_time)) = crate::waveform_canvas::get_maximum_timeline_range() {
+                                if let Some((min_time, max_time)) = crate::visualizer::canvas::waveform_canvas::get_maximum_timeline_range() {
                                     // ITERATION 7: Debug checkpoint 2 - After timeline range calculation
                                     
                                     let time_range_ns = ((max_time - min_time) * 1_000_000_000.0) as u64;
@@ -2295,7 +2295,7 @@ pub fn timeline_bounds_calculated_relay() -> Relay<(f64, f64)> {
 
 /// Get initial cursor position (timeline center or 0 as fallback)
 fn get_initial_cursor_position() -> TimeNs {
-    if let Some((min_time, max_time)) = crate::waveform_canvas::get_current_timeline_range() {
+    if let Some((min_time, max_time)) = crate::visualizer::canvas::waveform_canvas::get_current_timeline_range() {
         let center_time = (min_time + max_time) / 2.0;
         zoon::println!("🎯 CURSOR CACHE INIT: Using timeline center: {}s (range: {}s-{}s)", center_time, min_time, max_time);
         TimeNs::from_external_seconds(center_time)

@@ -1,13 +1,14 @@
 use zoon::*;
 use fast2d;
-use crate::state::{LOADED_FILES, IS_LOADING, IS_ZOOMING_IN, IS_ZOOMING_OUT, IS_PANNING_LEFT, IS_PANNING_RIGHT, 
+use crate::state::{LOADED_FILES, IS_LOADING};
+use crate::visualizer::state::timeline_state::{IS_ZOOMING_IN, IS_ZOOMING_OUT, IS_PANNING_LEFT, IS_PANNING_RIGHT, 
     IS_CURSOR_MOVING_LEFT, IS_CURSOR_MOVING_RIGHT, ZOOM_CENTER_NS, MOUSE_TIME_NS, MOUSE_X_POSITION};
-use crate::actors::waveform_timeline::{
+use crate::visualizer::timeline::timeline_actor::{
     zoom_in_started_relay, zoom_center_ns_signal
 };
 // Most other functions removed as unused, but these are needed for zoom functionality
 // MIGRATED: Canvas dimensions, zoom/pan flags, mouse tracking now from actors/waveform_timeline.rs
-use crate::actors::waveform_timeline::{current_cursor_position, current_cursor_position_seconds, current_viewport,
+use crate::visualizer::timeline::timeline_actor::{current_cursor_position, current_cursor_position_seconds, current_viewport,
     set_cursor_position, set_cursor_position_if_changed, set_cursor_position_seconds,
     set_viewport_if_changed, viewport_signal,
     current_ns_per_pixel, set_ns_per_pixel_if_changed, ns_per_pixel_signal,
@@ -15,7 +16,7 @@ use crate::actors::waveform_timeline::{current_cursor_position, current_cursor_p
     current_zoom_center_seconds};
 // MIGRATED: WaveformTimeline domain now initialized through actors/waveform_timeline.rs
 use crate::actors::global_domains::waveform_timeline_domain;
-use crate::time_types::{TimeNs, Viewport, NsPerPixel, TimelineCoordinates};
+use crate::visualizer::timeline::time_types::{TimeNs, Viewport, NsPerPixel, TimelineCoordinates};
 use crate::platform::{Platform, CurrentPlatform};
 use crate::config::app_config;
 use shared::{SelectedVariable, UpMsg, SignalTransitionQuery, SignalTransition};
@@ -51,9 +52,8 @@ const ANIMATION_FRAME_NS: u64 = 16_666_666; // 16.666ms = 60fps in nanoseconds
 // REMOVED: SIGNAL_TRANSITIONS_CACHE - now handled by unified_timeline_service
 // Raw signal transitions are now stored in UNIFIED_TIMELINE_CACHE.raw_transitions
 
-// Simplified request tracking - just a pending flag to prevent overlapping requests
-// MIGRATED: Pending request tracking → use has_pending_request_signal() from waveform_timeline
-static _HAS_PENDING_REQUEST: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
+// Request tracking moved to visualizer module
+use crate::visualizer::state::canvas_state::HAS_PENDING_REQUEST as _HAS_PENDING_REQUEST;
 
 // Note: Old complex deduplication system removed - now using simple throttling + batching
 
@@ -89,13 +89,13 @@ fn request_transitions_for_all_variables(time_range: Option<(f64, f64)>) {
     }
     
     // NEW: Use unified SignalDataService instead of old query system
-    let signal_requests: Vec<crate::unified_timeline_service::SignalRequest> = variables_to_request
+    let signal_requests: Vec<crate::visualizer::timeline::timeline_service::SignalRequest> = variables_to_request
         .into_iter()
         .filter_map(|unique_id| {
             // Parse unique_id: "/path/file.ext|scope|variable"
             let parts: Vec<&str> = unique_id.split('|').collect();
             if parts.len() >= 3 {
-                Some(crate::unified_timeline_service::SignalRequest {
+                Some(crate::visualizer::timeline::timeline_service::SignalRequest {
                     file_path: parts[0].to_string(),
                     scope_path: parts[1].to_string(),
                     variable_name: parts[2].to_string(),
@@ -122,7 +122,7 @@ fn request_transitions_for_all_variables(time_range: Option<(f64, f64)>) {
         None => return, // Timeline not initialized yet
     };
     let _request_count = signal_requests.len(); // logging removed
-    crate::unified_timeline_service::UnifiedTimelineService::request_cursor_values(signal_ids, cursor_time_ns);
+    crate::visualizer::timeline::timeline_service::UnifiedTimelineService::request_cursor_values(signal_ids, cursor_time_ns);
     
 }
 
@@ -143,15 +143,8 @@ pub fn _clear_all_transition_tracking() {
 
 
 
-// Store current theme for synchronous access
-static CURRENT_THEME_CACHE: Lazy<Mutable<NovyUITheme>> = Lazy::new(|| {
-    Mutable::new(NovyUITheme::Dark) // Default to dark
-});
-
-// Store hover information for tooltip display
-static HOVER_INFO: Lazy<Mutable<Option<HoverInfo>>> = Lazy::new(|| {
-    Mutable::new(None)
-});
+// Canvas state moved to visualizer module
+use crate::visualizer::state::canvas_state::{CURRENT_THEME_CACHE, HOVER_INFO, HoverInfo};
 
 // Dedicated counter to force canvas redraws when incremented
 // MIGRATED: Force redraw → use force_redraw_signal() from waveform_timeline
@@ -163,69 +156,21 @@ static HOVER_INFO: Lazy<Mutable<Option<HoverInfo>>> = Lazy::new(|| {
 #[allow(dead_code)]
 const REDRAW_THROTTLE_MS: f64 = 16.0; // Max 60fps redraws
 
-// High-performance direct cursor animation state
-#[derive(Clone, Debug)]
-struct DirectCursorAnimation {
-    current_position: f64,     // Current position in seconds (high precision)
-    target_position: f64,      // Target position in seconds
-    velocity_pixels_per_frame: f64, // Movement speed in pixels per frame
-    is_animating: bool,        // Animation active flag
-    direction: i8,             // -1 for left, 1 for right, 0 for stopped
-    _last_frame_time: u64,      // Last animation frame timestamp (nanoseconds)
-}
+// DirectCursorAnimation struct definition moved to visualizer::state::canvas_state
 
-impl Default for DirectCursorAnimation {
-    fn default() -> Self {
-        Self {
-            current_position: 0.0,
-            target_position: 0.0,
-            velocity_pixels_per_frame: PIXELS_PER_FRAME,
-            is_animating: false,
-            direction: 0,
-            _last_frame_time: 0,
-        }
-    }
-}
-
-// Direct cursor animation state - no Tweened overhead
-static DIRECT_CURSOR_ANIMATION: Lazy<Mutable<DirectCursorAnimation>> = Lazy::new(|| {
-    Mutable::new(DirectCursorAnimation::default())
-});
-
-// Canvas update debouncing to reduce redraw overhead
-// MIGRATED: Last canvas update → use last_canvas_update_signal() from waveform_timeline
-// static LAST_CANVAS_UPDATE: Lazy<Mutable<u64>> = Lazy::new(|| Mutable::new(0));
-static PENDING_CANVAS_UPDATE: Lazy<Mutable<bool>> = Lazy::new(|| Mutable::new(false));
-
-// Debouncing for transition navigation to prevent rapid key press issues
-static LAST_TRANSITION_NAVIGATION_TIME: Lazy<Mutable<u64>> = Lazy::new(|| Mutable::new(0));
+// Canvas animation and update state moved to visualizer module
+use crate::visualizer::state::canvas_state::{DIRECT_CURSOR_ANIMATION, DirectCursorAnimation, 
+    PENDING_CANVAS_UPDATE, LAST_TRANSITION_NAVIGATION_TIME};
 const TRANSITION_NAVIGATION_DEBOUNCE_MS: u64 = 100; // 100ms debounce
 
 // f64 precision tolerance for transition navigation (much more precise than f32)
 const F64_PRECISION_TOLERANCE: f64 = 1e-15;
 
-// PERFORMANCE FIX: Incremental Canvas Object Cache
-// Caches rendered objects by variable unique_id to avoid full recreation
-static VARIABLE_OBJECT_CACHE: Lazy<Mutable<HashMap<String, Vec<fast2d::Object2d>>>> = 
-    Lazy::new(|| Mutable::new(HashMap::new()));
-
-// Track last known variables to detect changes
-static LAST_VARIABLES_STATE: Lazy<Mutable<Vec<SelectedVariable>>> = 
-    Lazy::new(|| Mutable::new(Vec::new()));
-
-// Track last canvas dimensions for full redraw detection
-static LAST_CANVAS_DIMENSIONS: Lazy<Mutable<(f32, f32)>> = 
-    Lazy::new(|| Mutable::new((0.0, 0.0)));
+// Canvas cache and tracking state moved to visualizer module
+use crate::visualizer::state::canvas_state::{VARIABLE_OBJECT_CACHE, LAST_VARIABLES_STATE, LAST_CANVAS_DIMENSIONS};
 
 
-#[derive(Clone, Debug, PartialEq)]
-struct HoverInfo {
-    mouse_x: f32,
-    mouse_y: f32,
-    time: f32,
-    variable_name: String,
-    value: String,
-}
+// HoverInfo struct now imported from visualizer::state::canvas_state
 
 
 // Time unit detection for intelligent timeline formatting
@@ -345,7 +290,7 @@ pub fn clear_processed_signal_cache() {
     // Clearing canvas cache due to state change
     
     // Trigger a redraw using the proper relay - this forces canvas to re-render with fresh data
-    crate::actors::waveform_timeline::redraw_requested_relay().send(());
+    crate::visualizer::timeline::timeline_actor::redraw_requested_relay().send(());
     // Canvas redraw triggered
     
     // Also manually force a data request for all currently selected variables with new viewport
@@ -538,7 +483,7 @@ fn validate_startup_state_with_canvas_width(actual_canvas_width: f32) {
             None => return, // Timeline not initialized yet
         };
         // Use Actor+Relay system instead of legacy ZOOM_CENTER_NS
-        crate::actors::waveform_timeline::set_zoom_center_follow_mouse(TimeNs::from_external_seconds(cursor_position));
+        crate::visualizer::timeline::timeline_actor::set_zoom_center_follow_mouse(TimeNs::from_external_seconds(cursor_position));
     } else {
         crate::debug_utils::debug_timeline_validation("STARTUP: Timeline state validation passed");
         
@@ -663,9 +608,9 @@ async fn create_canvas_element() -> impl Element {
             let zoom_state = ns_per_pixel_signal(),
             let cursor_pos = timeline_domain.cursor_position_signal(),
             let zoom_center = timeline_domain.zoom_center_signal(),
-            let _cache_trigger = crate::unified_timeline_service::UnifiedTimelineService::cache_signal(),
+            let _cache_trigger = crate::visualizer::timeline::timeline_service::UnifiedTimelineService::cache_signal(),
             let _hover_trigger = HOVER_INFO.signal_ref(|_| ()),
-            let _force_redraw = crate::actors::waveform_timeline::force_redraw_signal(),
+            let _force_redraw = crate::visualizer::timeline::timeline_actor::force_redraw_signal(),
             let _variables_changed = crate::actors::selected_variables::variables_signal() => {
                 // Return tuple of all values that should trigger canvas updates
                 (convert_theme(&theme_value), *zoom_state, *cursor_pos, *zoom_center)
@@ -729,7 +674,7 @@ async fn create_canvas_element() -> impl Element {
             let config_loaded = app_config().is_loaded_actor.signal() => {
                 // Calculate new range from selected variables 
                 if let Some((min_time, max_time)) = get_current_timeline_range() {
-                    let range_viewport = crate::time_types::Viewport::new(
+                    let range_viewport = crate::visualizer::timeline::time_types::Viewport::new(
                         TimeNs::from_external_seconds(min_time),
                         TimeNs::from_external_seconds(max_time)
                     );
@@ -798,7 +743,7 @@ async fn create_canvas_element() -> impl Element {
     // React to canvas dimension changes
     let canvas_wrapper_for_dims = canvas_wrapper_shared.clone();
     Task::start(async move {
-        crate::actors::waveform_timeline::canvas_width_signal().for_each(move |_| {
+        crate::visualizer::timeline::timeline_actor::canvas_width_signal().for_each(move |_| {
             let _canvas_wrapper = canvas_wrapper_for_dims.clone();
             async move {
                 trigger_canvas_redraw();
@@ -957,7 +902,7 @@ async fn create_canvas_element() -> impl Element {
                     set_cursor_position(clamped_time_ns);
                     
                     // Emit cursor clicked event to WaveformTimeline domain
-                    let waveform_timeline = crate::actors::waveform_timeline_domain();
+                    let waveform_timeline = crate::visualizer::timeline::timeline_actor_domain();
                     waveform_timeline.cursor_clicked_relay.send(clamped_time_ns);
                     
                     // Synchronize direct animation to prevent jumps  
@@ -1005,7 +950,7 @@ async fn create_canvas_element() -> impl Element {
             let mouse_y = page_mouse_y as f64 - canvas_top;
             
             // Emit mouse move event to WaveformTimeline domain and get actual Actor state
-            let waveform_timeline = crate::actors::waveform_timeline_domain();
+            let waveform_timeline = crate::visualizer::timeline::timeline_actor_domain();
             
             // Convert mouse X position to timeline time - debug coordinate consistency
             let coords = match current_coordinates() {
@@ -1016,7 +961,7 @@ async fn create_canvas_element() -> impl Element {
             waveform_timeline.mouse_moved_relay.send((mouse_x as f32, mouse_time));
             
             // Update zoom center to follow mouse position (blue vertical line)
-            crate::actors::waveform_timeline::set_zoom_center_follow_mouse(mouse_time);
+            crate::visualizer::timeline::timeline_actor::set_zoom_center_follow_mouse(mouse_time);
             
             // TODO: Remove when domain handles all mouse tracking
             MOUSE_X_POSITION.set_neq(mouse_x as f32);
@@ -1162,7 +1107,7 @@ fn get_signal_transitions_for_variable(var: &SelectedVariable, time_range: (f64,
     // Not in processed cache, check raw backend data cache
     let raw_cache_key = format!("{}|{}|{}", file_path, scope_path, variable_name);
     // Checking raw cache
-    if let Some(transitions) = crate::unified_timeline_service::UnifiedTimelineService::get_raw_transitions(&raw_cache_key) {
+    if let Some(transitions) = crate::visualizer::timeline::timeline_service::UnifiedTimelineService::get_raw_transitions(&raw_cache_key) {
         // Found raw transitions in cache
         
         // Convert real backend data to canvas format with proper waveform logic
@@ -1286,7 +1231,7 @@ pub fn trigger_canvas_redraw() {
     let _now = js_sys::Date::now();
     // TODO: Use last_redraw_time_signal() from waveform_timeline for throttling
     // For now, always trigger redraw (throttling will be handled by WaveformTimeline actor)
-    crate::actors::waveform_timeline::redraw_requested_relay().send(());
+    crate::visualizer::timeline::timeline_actor::redraw_requested_relay().send(());
 }
 
 // Extract unique file paths from selected variables
@@ -1658,7 +1603,7 @@ pub fn start_smooth_zoom_in() {
                 };
                 
                 // Calculate new resolution using pure integer math (timeline plan approach)
-                let new_ns_per_pixel_value = if crate::state::IS_SHIFT_PRESSED.get() {
+                let new_ns_per_pixel_value = if crate::visualizer::state::timeline_state::IS_SHIFT_PRESSED.get() {
                     // Fast zoom: 90% of previous (10% zoom in per frame)
                     (current_ns_per_pixel * 9) / 10
                 } else {
@@ -1706,7 +1651,7 @@ pub fn start_smooth_zoom_out() {
                 if let Some(current_ns_per_pixel_val) = current_ns_per_pixel() {
                     // FIXED: Use pure integer math instead of floating-point factors
                     // Industry standard approach: increase ns_per_pixel by integer multiplication/division
-                    let new_ns_per_pixel_value = if crate::state::IS_SHIFT_PRESSED.get() {
+                    let new_ns_per_pixel_value = if crate::visualizer::state::timeline_state::IS_SHIFT_PRESSED.get() {
                         // Fast zoom out: multiply by 1.2 (equivalent to multiply by 6/5)
                         (current_ns_per_pixel_val.nanos() * 6) / 5  // 20% zoom out per frame
                     } else {
@@ -1782,7 +1727,7 @@ pub fn start_smooth_pan_left() {
                         };
                         
                         // Check for Shift key for turbo panning
-                        let pan_pixels = if crate::state::IS_SHIFT_PRESSED.get() {
+                        let pan_pixels = if crate::visualizer::state::timeline_state::IS_SHIFT_PRESSED.get() {
                             -10  // Turbo pan with Shift (10 pixels per frame)
                         } else {
                             -2   // Normal smooth pan (2 pixels per frame)
@@ -1835,7 +1780,7 @@ pub fn start_smooth_pan_right() {
                         };
                         
                         // Check for Shift key for turbo panning
-                        let pan_pixels = if crate::state::IS_SHIFT_PRESSED.get() {
+                        let pan_pixels = if crate::visualizer::state::timeline_state::IS_SHIFT_PRESSED.get() {
                             10   // Turbo pan with Shift (10 pixels per frame)
                         } else {
                             2    // Normal smooth pan (2 pixels per frame)
@@ -1996,8 +1941,8 @@ fn start_direct_cursor_animation_loop() {
 
 // Smart cursor update with debouncing to reduce canvas redraw overhead
 fn update_timeline_cursor_with_debouncing(new_position: f64) {
-    let time_ns = crate::time_types::TimeNs::from_external_seconds(new_position);
-    crate::actors::waveform_timeline::set_cursor_position_if_changed(time_ns);
+    let time_ns = crate::visualizer::timeline::time_types::TimeNs::from_external_seconds(new_position);
+    crate::visualizer::timeline::timeline_actor::set_cursor_position_if_changed(time_ns);
     
     // Debounce canvas updates - only redraw every 16ms maximum
     let _now = get_current_time_ns();
@@ -2540,7 +2485,7 @@ fn create_waveform_objects_with_dimensions_and_theme(selected_vars: &[SelectedVa
             } else {
                 // FIXED: Last rectangle extends only to current viewport end, not full timeline
                 // This prevents massive rectangles when zoomed in
-                match crate::actors::waveform_timeline::current_viewport() {
+                match crate::visualizer::timeline::timeline_actor::current_viewport() {
                     Some(viewport) => viewport.end.display_seconds() as f32,
                     None => continue, // Skip if viewport not initialized
                 }
@@ -2934,7 +2879,7 @@ pub fn collect_all_transitions() -> Vec<f64> {
         let cache_key = format!("{}|{}|{}", file_path, scope_path, variable_name);
         
         // Get transitions from cache
-        if let Some(transitions) = crate::unified_timeline_service::UnifiedTimelineService::get_raw_transitions(&cache_key) {
+        if let Some(transitions) = crate::visualizer::timeline::timeline_service::UnifiedTimelineService::get_raw_transitions(&cache_key) {
             // Extract time points and convert to f64
             for transition in &transitions {
                 // Only include transitions within reasonable bounds
@@ -3067,7 +3012,7 @@ pub fn reset_zoom_to_fit_all() {
     // 🔧 DEBUG: Check for mixed file ranges affecting zoom
     let span = file_max - file_min;
     
-    let viewport = crate::time_types::Viewport::new(
+    let viewport = crate::visualizer::timeline::time_types::Viewport::new(
         TimeNs::from_external_seconds(file_min),
         TimeNs::from_external_seconds(file_max)
     );
@@ -3096,7 +3041,7 @@ pub fn reset_zoom_to_fit_all() {
 /// Reset zoom center to 0 seconds
 pub fn reset_zoom_center() {
     // Use Actor+Relay system to reset zoom center
-    crate::actors::waveform_timeline::set_zoom_center_follow_mouse(TimeNs::ZERO);
+    crate::visualizer::timeline::timeline_actor::set_zoom_center_follow_mouse(TimeNs::ZERO);
     // Also update mouse time position for consistency with zoom behavior
     MOUSE_TIME_NS.set_neq(TimeNs::ZERO);
     crate::debug_utils::debug_conditional("Zoom center reset to 0s using Actor+Relay");
