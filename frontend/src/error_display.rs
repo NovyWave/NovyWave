@@ -5,21 +5,19 @@ use crate::actors::error_manager::{
 };
 use zoon::*;
 
-// Cache for toast dismiss time from config
-static TOAST_DISMISS_MS: Lazy<Mutable<u64>> = Lazy::new(|| Mutable::new(5000));
 
 /// Add an error alert to the global error display system
 /// This is the single entry point for all error handling:
 /// - Logs technical details to console (for developers)
 /// - Shows user-friendly toast notification (for users)
-pub fn add_error_alert(alert: ErrorAlert) {
+pub async fn add_error_alert(alert: ErrorAlert) {
     // Log technical error to console for developers
     
     // Add new alert using domain function
     add_domain_alert(alert.clone());
     
     // Always add error alerts as toast notifications - timeout will be handled by UI
-    add_toast_notification(alert);
+    add_toast_notification(alert).await;
 }
 
 /// Log error to browser console only (no toast notification)
@@ -38,9 +36,13 @@ pub fn dismiss_error_alert(id: &str) {
 }
 
 /// Add a toast notification that auto-dismisses
-fn add_toast_notification(mut alert: ErrorAlert) {
-    // Always ensure auto-dismiss time is set from config
-    alert.auto_dismiss_ms = TOAST_DISMISS_MS.get();
+async fn add_toast_notification(mut alert: ErrorAlert) {
+    let config = crate::config::app_config();
+    if let Some(dismiss_ms) = config.toast_dismiss_ms_actor.signal().to_stream().next().await {
+        alert.auto_dismiss_ms = dismiss_ms as u64;
+    } else {
+        alert.auto_dismiss_ms = 5000; // Default fallback
+    }
     
     // Add new toast using domain function
     add_domain_notification(alert.clone());
@@ -53,26 +55,5 @@ fn add_toast_notification(mut alert: ErrorAlert) {
 
 /// Initialize error display system handlers
 pub fn init_error_display_system() {
-    // Set initial value and sync toast dismiss time with config actor
-    Task::start(async {
-        // Get initial value from config
-        if let Some(initial_ms) = crate::config::app_config()
-            .toast_dismiss_ms_actor
-            .signal()
-            .to_stream()
-            .next()
-            .await {
-            TOAST_DISMISS_MS.set_neq(initial_ms as u64);
-        }
-        
-        // Keep syncing with config changes
-        crate::config::app_config()
-            .toast_dismiss_ms_actor
-            .signal()
-            .for_each(|dismiss_ms| {
-                TOAST_DISMISS_MS.set_neq(dismiss_ms as u64);
-                async {}
-            })
-            .await;
-    });
+    // Error display system is now ready - toast dismiss time is read from config when needed
 }

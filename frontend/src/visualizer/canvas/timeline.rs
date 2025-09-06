@@ -39,8 +39,7 @@ pub fn get_current_timeline_range() -> Option<(f64, f64)> {
     // Viewport range debug info reduced
     
     // CRITICAL: Enforce minimum time range to prevent coordinate precision loss
-    // TODO: Use waveform_timeline_domain().canvas_width.signal() for proper reactive patterns
-    // For now, use fallback width to eliminate deprecated warnings
+    // Canvas width would be accessed through reactive signals from timeline domain for proper reactive patterns
     let canvas_width = 800_u32; // Fallback canvas width
     let min_zoom_range = get_min_valid_range_ns(canvas_width) as f64 / 1_000_000_000.0; // NsPerPixel-based minimum
     let current_range = range_end - range_start;
@@ -202,7 +201,6 @@ pub fn get_current_timeline_range() -> Option<(f64, f64)> {
     
     // Ensure minimum range for coordinate precision (but don't override valid microsecond ranges!)
     let file_range = max_time - min_time;
-    // ✅ FIXED: Use constant since reactive access not available in synchronous context
     let canvas_width = 800_u32; // DEFAULT_CANVAS_WIDTH fallback for calculations
     if file_range < get_min_valid_range_ns(canvas_width) as f64 / 1_000_000_000.0 {  // Only enforce minimum for truly tiny ranges (< 1 nanosecond)
         let expanded_end = min_time + get_min_valid_range_ns(canvas_width) as f64 / 1_000_000_000.0;
@@ -297,7 +295,6 @@ pub fn get_maximum_timeline_range() -> Option<(f64, f64)> {
     
     // Ensure minimum range for coordinate precision (but don't override valid microsecond ranges!)
     let file_range = max_time - min_time;
-    // ✅ FIXED: Use constant since reactive access not available in synchronous context
     let canvas_width = 800_u32; // DEFAULT_CANVAS_WIDTH fallback for calculations
     if file_range < get_min_valid_range_ns(canvas_width) as f64 / 1_000_000_000.0 {  // Only enforce minimum for truly tiny ranges (< 1 nanosecond)
         let expanded_end = min_time + get_min_valid_range_ns(canvas_width) as f64 / 1_000_000_000.0;
@@ -333,7 +330,6 @@ pub fn validate_and_sanitize_range(start: f64, end: f64) -> (f64, f64) {
     
     // Enforce minimum viable range based on maximum zoom level
     let range = end - start;
-    // ✅ FIXED: Use constant since reactive access not available in synchronous context
     let canvas_width = 800_u32; // DEFAULT_CANVAS_WIDTH fallback for calculations
     let min_valid_range = get_min_valid_range_ns(canvas_width) as f64 / 1_000_000_000.0;
     if range < min_valid_range {
@@ -349,7 +345,6 @@ pub fn validate_and_sanitize_range(start: f64, end: f64) -> (f64, f64) {
 
 /// Get file range from currently selected variables only
 pub fn get_full_file_range() -> (f64, f64) {
-    // ✅ FIXED: Break circular dependency with get_maximum_timeline_range()
     // Calculate full file range directly from loaded files without selection dependency
     let tracked_files = crate::actors::global_domains::get_current_tracked_files();
     let loaded_files: Vec<shared::WaveformFile> = tracked_files.iter()

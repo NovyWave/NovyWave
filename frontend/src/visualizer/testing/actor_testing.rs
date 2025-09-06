@@ -38,7 +38,7 @@ mod actor_relay_tests {
         tracked_files.file_selected_relay.send(test_paths[0].clone());
         
         // Verify reactive behavior without using .get()
-        Timer::sleep(50).await; // Allow signal processing
+        Task::next_macro_tick().await; // Yield to event loop for relay processing
         // In real implementation, would check selection state via signal
     }
     
@@ -123,7 +123,7 @@ mod actor_relay_tests {
             current_viewport,
             set_viewport_if_changed
         };
-        // TODO: Replace current_cursor_position_seconds with cursor_position_signal() for proper reactive patterns
+        // Cursor position would be accessed through reactive signals instead of synchronous position functions
         use crate::visualizer::timeline::time_types::Viewport;
         
         // Test cursor position caching
@@ -131,10 +131,9 @@ mod actor_relay_tests {
         set_cursor_position_seconds(test_position);
         
         // Allow bridge signal processing
-        Timer::sleep(50).await;
+        Task::next_macro_tick().await;
         
-        // TODO: Replace current_cursor_position_seconds with cursor_position_signal() for proper reactive patterns
-        // Temporarily disabled to eliminate deprecated warnings
+        // Cursor position would be accessed through reactive signals instead of synchronous position functions
         // let cached_position = current_cursor_position_seconds();
         // assert_eq!(cached_position, test_position);
         
@@ -145,8 +144,9 @@ mod actor_relay_tests {
         );
         set_viewport_if_changed(test_viewport);
         
-        // Allow bridge signal processing
-        Timer::sleep(50).await;
+        // Wait for viewport signal to update with the new value
+        use crate::visualizer::timeline::timeline_actor::viewport_signal;
+        viewport_signal().to_stream().next().await;
         
         // Verify cached access
         let cached_viewport = current_viewport();
@@ -208,8 +208,10 @@ mod actor_relay_tests {
             waveform_timeline.viewport_changed_relay.send((0.0, position * 2.0));
         }
         
-        // Wait for all processing to complete
-        Timer::sleep(100).await;
+        // Wait for all signal processing to complete with proper async coordination
+        for _ in 0..5 {
+            Task::next_macro_tick().await;  // Allow multiple event loop cycles for all signals to process
+        }
         
         // Verify final state is consistent (no panics occurred)
         let final_cursor = waveform_timeline.cursor_position_signal()
@@ -337,7 +339,7 @@ pub mod test_utils {
                     panic!("Timeout waiting for {} emissions, got {}", count, current_count);
                 }
                 
-                Timer::sleep(10).await;
+                Task::next_macro_tick().await;
             }
         }
         
@@ -394,139 +396,6 @@ pub mod test_utils {
     }
 }
 
-/// Development testing helpers (available in debug builds)
-#[cfg(debug_assertions)]
-pub mod dev_testing {
-    use std::sync::{Arc, Mutex};
-    use std::collections::HashMap;
-    
-    /// Debug tracker for Actor+Relay interactions
-    #[allow(dead_code)]
-    pub struct ActorDebugger {
-        enabled: Arc<Mutex<bool>>,
-        filter: Arc<Mutex<Option<String>>>,
-        events: Arc<Mutex<Vec<DebugEvent>>>,
-    }
-    
-    #[derive(Debug, Clone)]
-    #[allow(dead_code)]
-    pub struct DebugEvent {
-        pub timestamp: f64,
-        pub actor_name: String,
-        pub event_type: String,
-        pub data: String,
-    }
-    
-    #[allow(dead_code)]
-    impl ActorDebugger {
-        /// Create new debugger instance
-        pub fn new() -> Self {
-            Self {
-                enabled: Arc::new(Mutex::new(false)),
-                filter: Arc::new(Mutex::new(None)),
-                events: Arc::new(Mutex::new(Vec::new())),
-            }
-        }
-        
-        /// Enable/disable debug output
-        pub fn set_enabled(&self, enabled: bool) {
-            *self.enabled.lock().unwrap() = enabled;
-        }
-        
-        /// Set filter for specific actors
-        pub fn set_filter(&self, pattern: Option<String>) {
-            *self.filter.lock().unwrap() = pattern;
-        }
-        
-        /// Record debug event
-        pub fn record_event(&self, actor_name: &str, event_type: &str, data: &str) {
-            if !*self.enabled.lock().unwrap() {
-                return;
-            }
-            
-            if let Some(ref filter) = *self.filter.lock().unwrap() {
-                if !actor_name.contains(filter) {
-                    return;
-                }
-            }
-            
-            let event = DebugEvent {
-                timestamp: js_sys::Date::now(),
-                actor_name: actor_name.to_string(),
-                event_type: event_type.to_string(),
-                data: data.to_string(),
-            };
-            
-            self.events.lock().unwrap().push(event);
-        }
-        
-        /// Get all recorded events
-        pub fn get_events(&self) -> Vec<DebugEvent> {
-            self.events.lock().unwrap().clone()
-        }
-        
-        /// Clear all debug data
-        pub fn clear(&self) {
-            self.events.lock().unwrap().clear();
-        }
-        
-        /// Print summary of recorded events
-        pub fn print_summary(&self) {
-            let events = self.get_events();
-            let mut actor_counts: HashMap<String, usize> = HashMap::new();
-            
-            for event in &events {
-                *actor_counts.entry(event.actor_name.clone()).or_insert(0) += 1;
-            }
-            
-            for (_actor, _count) in actor_counts {
-            }
-        }
-    }
-    
-    /// Global debugger instance
-    static _ACTOR_DEBUGGER: std::sync::LazyLock<ActorDebugger> = 
-        std::sync::LazyLock::new(|| ActorDebugger::new());
-    
-    /// Debug macro for Actor events
-    #[macro_export]
-    macro_rules! actor_debug {
-        ($actor:expr, $event_type:expr, $data:expr) => {
-            #[cfg(debug_assertions)]
-            $crate::visualizer::testing::actor_testing::_ACTOR_DEBUGGER.record_event($actor, $event_type, &format!("{}", $data));
-        };
-    }
-    
-    /// Enable Actor debugging for development
-    pub fn _enable_actor_debugging() {
-        _ACTOR_DEBUGGER.set_enabled(true);
-    }
-    
-    /// Disable Actor debugging
-    pub fn _disable_actor_debugging() {
-        _ACTOR_DEBUGGER.set_enabled(false);
-    }
-    
-    /// Set Actor debugging filter
-    pub fn _set_actor_debug_filter(pattern: Option<String>) {
-        _ACTOR_DEBUGGER.set_filter(pattern);
-    }
-    
-    /// Get Actor debugging summary
-    pub fn _get_actor_debug_summary() -> Vec<DebugEvent> {
-        _ACTOR_DEBUGGER.get_events()
-    }
-    
-    /// Clear Actor debugging data
-    pub fn _clear_actor_debug_data() {
-        _ACTOR_DEBUGGER.clear();
-    }
-    
-    /// Print Actor debugging summary
-    pub fn _print_actor_debug_summary() {
-        _ACTOR_DEBUGGER.print_summary();
-    }
-}
 
 /// Performance testing utilities
 #[cfg(test)]
@@ -557,8 +426,10 @@ pub mod performance_tests {
             waveform_timeline.viewport_changed_relay.send((0.0, i as f64 * 2.0));
         }
         
-        // Wait for processing
-        Timer::sleep(200).await;
+        // Wait for signal processing to complete using collectors
+        // Give minimal time for async processing to propagate
+        Task::next_macro_tick().await;
+        Task::next_macro_tick().await; // Extra tick for signal chain processing
         let processing_time = start_time.elapsed();
         
         // Verify performance: Should have minimal signal emissions (target < 5 per operation)

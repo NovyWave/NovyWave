@@ -1,9 +1,5 @@
 use zoon::*;
-// Removed unused imports: std::collections::HashMap, WaveformFile, LoadingFile, FileSystemItem, TrackedFile
 use shared::FileState;
-// use crate::visualizer::timeline::time_types::{TimeNs, TimelineCache}; // Unused
-// use crate::config::app_config; // Unused
-// Using simpler queue approach with MutableVec
 
 // ===== STABLE SIGNAL HELPERS =====
 
@@ -64,16 +60,7 @@ fn _cleanup_file_related_state_for_batch(file_id: &str) {
 
 
 
-// ===== LEGACY FILE UPDATE QUEUE SYSTEM - REPLACED BY TRACKEDFILES DOMAIN =====
-// This entire section is now handled by the TrackedFiles domain and can be removed
-// after migration is complete. Keeping for reference during migration.
-
-/*
-// Message queue system to prevent recursive locking
-static FILE_UPDATE_QUEUE: Lazy<Mutable<Vec<FileUpdateMessage>>> = Lazy::new(|| {
-    // ... (queue processing code now handled by TrackedFiles domain) ...
-});
-*/
+// ✅ CLEANED UP: Legacy file update queue system removed - now handled by TrackedFiles domain
 
 
 // ===== MIGRATED TO ACTOR+RELAY: Panel dragging state =====
@@ -83,46 +70,9 @@ static FILE_UPDATE_QUEUE: Lazy<Mutable<Vec<FileUpdateMessage>>> = Lazy::new(|| {
 // Selected Variables panel row height
 pub const SELECTED_VARIABLES_ROW_HEIGHT: u32 = 30;
 
-// ===== MIGRATED TO ACTOR+RELAY: WaveformTimeline domain =====
-// These mutables have been migrated to actors/waveform_timeline.rs
-// Use functions from that module instead of these globals
-
-// MIGRATED: Timeline cursor position → use cursor_position_signal() from waveform_timeline
-// pub static _TIMELINE_CURSOR_NS: Lazy<Mutable<TimeNs>> = Lazy::new(|| Mutable::new(TimeNs::ZERO));
-
-// MIGRATED: Timeline viewport → use viewport_signal() from waveform_timeline  
-// pub static _TIMELINE_VIEWPORT: Lazy<Mutable<Viewport>> = Lazy::new(|| {
-//     Mutable::new(Viewport::new(
-//         TimeNs::ZERO,
-// TimeNs::from_external_seconds(100.0) // Default 100 second range
-//     ))
-// });
-
-// MIGRATED: Timeline resolution → use ns_per_pixel_signal() from waveform_timeline
-// pub static _TIMELINE_NS_PER_PIXEL: Lazy<Mutable<NsPerPixel>> = Lazy::new(|| Mutable::new(NsPerPixel::MEDIUM_ZOOM));
-
-// MIGRATED: Timeline coordinates → use coordinates_signal() from waveform_timeline
-// pub static _TIMELINE_COORDINATES: Lazy<Mutable<TimelineCoordinates>> = Lazy::new(|| {
-//     Mutable::new(TimelineCoordinates::new(
-//         TimeNs::ZERO,                    // cursor_ns
-//         TimeNs::ZERO,                    // viewport_start_ns
-//         NsPerPixel::MEDIUM_ZOOM,         // ns_per_pixel
-//         800                              // canvas_width_pixels (initial value)
-//     ))
-// });
-
-// ===== MIGRATED TO ACTOR+RELAY: WaveformTimeline domain (15 more mutables) =====
-
-// ===== MIGRATED TO VISUALIZER/STATE/TIMELINE_STATE.RS =====
-// All timeline-related globals have been moved to visualizer/state/timeline_state.rs
-// Use imports from there instead:
-
-// MIGRATED: Canvas dimensions → use canvas_width_signal() / canvas_height_signal() from waveform_timeline
-// pub static CANVAS_WIDTH: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(800.0));
-// pub static CANVAS_HEIGHT: Lazy<Mutable<f32>> = Lazy::new(|| Mutable::new(400.0));
+// ✅ CLEANED UP: WaveformTimeline domain migration completed - all timeline mutables now use Actor+Relay architecture
 
 
-// ✅ REMOVED: VARIABLES_SEARCH_INPUT_FOCUSED - migrated to Actor+Relay architecture
 // Now using search_focused_signal() from selected_variables domain Actor
 
 
@@ -262,9 +212,6 @@ pub fn make_error_user_friendly(error: &str) -> String {
     }
 }
 
-// ❌ LEGACY: Replaced by ErrorManager domain (actors/error_manager.rs)
-// pub static ERROR_ALERTS: Lazy<MutableVec<ErrorAlert>> = lazy::default();
-// pub static TOAST_NOTIFICATIONS: Lazy<MutableVec<ErrorAlert>> = lazy::default();
 
 // ===== TRACKED FILES MANAGEMENT UTILITIES =====
 
@@ -276,12 +223,6 @@ pub fn update_tracked_file_state(file_id: &str, new_state: FileState) {
     tracked_files_domain.update_file_state(file_id.to_string(), new_state);
 }
 
-/// ✅ ACTOR+RELAY: Remove a tracked file by ID
-/// Migrated to use TrackedFiles domain
-pub fn _remove_tracked_file(file_id: &str) {
-    let tracked_files_domain = crate::actors::global_domains::tracked_files_domain();
-    tracked_files_domain.remove_file(file_id.to_string());
-}
 
 
 

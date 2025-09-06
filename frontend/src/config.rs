@@ -18,7 +18,6 @@ fn create_config_saver_actor(
     dock_mode_actor: Actor<DockMode>,
     panel_right_actor: Actor<PanelDimensions>,
     panel_bottom_actor: Actor<PanelDimensions>,
-    timeline_actor: Actor<TimelineState>,
     session_actor: Actor<SessionState>,
     toast_dismiss_ms_actor: Actor<u32>,
 ) -> Actor<()> {
@@ -32,7 +31,6 @@ fn create_config_saver_actor(
             let dock_mode = dock_mode_actor.signal(), 
             let panel_right = panel_right_actor.signal(),
             let panel_bottom = panel_bottom_actor.signal(),
-            let timeline = timeline_actor.signal(),
             let session = session_actor.signal(),
             let toast_dismiss_ms = toast_dismiss_ms_actor.signal(),
             let expanded_scopes = crate::actors::selected_variables::expanded_scopes_signal().map(|scopes| scopes.into_iter().collect::<Vec<String>>()),
@@ -48,13 +46,13 @@ fn create_config_saver_actor(
             }),
             let selected_variables = crate::actors::global_domains::selected_variables_signal() =>
             (theme.clone(), dock_mode.clone(), panel_right.clone(), panel_bottom.clone(), 
-             timeline.clone(), session.clone(), toast_dismiss_ms.clone(), expanded_scopes.clone(), selected_scope_id.clone(), 
+             session.clone(), toast_dismiss_ms.clone(), expanded_scopes.clone(), selected_scope_id.clone(), 
              selected_variables.clone())
         };
         
         config_change_signal.to_stream().skip(1).for_each({
             let debounce_task = debounce_task.clone();
-            move |(theme, dock_mode, panel_right, panel_bottom, timeline, session, toast_dismiss_ms, expanded_scopes, _selected_scope_id, selected_variables)| {
+            move |(theme, dock_mode, panel_right, panel_bottom, session, toast_dismiss_ms, expanded_scopes, _selected_scope_id, selected_variables)| {
                 let debounce_task = debounce_task.clone();
                 async move {
                     // Cancel any pending save
@@ -89,15 +87,14 @@ fn create_config_saver_actor(
                         dock_mode: dock_mode.clone(),
                         expanded_scopes: expanded_scopes.clone(),
                         load_files_expanded_directories: session.file_picker_expanded_directories,
-                        // ✅ ARCHITECTURE FIX: Use value from signal chain (already has prefix stripping)
                         selected_scope_id: _selected_scope_id,
                         load_files_scroll_position: session.file_picker_scroll_position,
                         variables_search_filter: session.variables_search_filter,
                         selected_variables,
-                        timeline_cursor_position_ns: timeline.cursor_position.nanos(),
-                        timeline_visible_range_start_ns: Some(timeline.visible_range.start.nanos()),
-                        timeline_visible_range_end_ns: Some(timeline.visible_range.end.nanos()),
-                        timeline_zoom_level: timeline.zoom_level as f32,
+                        timeline_cursor_position_ns: 0, // Default value
+                        timeline_visible_range_start_ns: None,
+                        timeline_visible_range_end_ns: None,
+                        timeline_zoom_level: 1.0, // Default zoom level
                     },
                     ui: shared::UiSection {
                         theme,
@@ -138,7 +135,6 @@ pub struct PanelDimensions {
 
 impl Default for PanelDimensions {
     fn default() -> Self {
-        // ✅ FIXED: Use responsive calculations instead of hardcoded magic numbers
         Self {
             files_panel_width: Self::responsive_panel_width(),
             files_panel_height: Self::responsive_panel_height(), 
@@ -300,8 +296,6 @@ pub struct AppConfig {
     pub dock_mode_actor: Actor<DockMode>, 
     pub panel_dimensions_right_actor: Actor<PanelDimensions>,
     pub panel_dimensions_bottom_actor: Actor<PanelDimensions>,
-    #[allow(dead_code)] // Timeline state actor - used in workspace_section_signal
-    pub timeline_state_actor: Actor<TimelineState>,
     pub session_state_actor: Actor<SessionState>,
     pub toast_dismiss_ms_actor: Actor<u32>,
     
@@ -322,14 +316,6 @@ pub struct AppConfig {
     pub variables_filter_changed_relay: Relay<String>,
     pub panel_dimensions_right_changed_relay: Relay<PanelDimensions>,
     pub panel_dimensions_bottom_changed_relay: Relay<PanelDimensions>,
-    #[allow(dead_code)] // Actor+Relay event relay - preserve for completeness
-    pub panel_resized_relay: Relay<PanelDimensions>,
-    #[allow(dead_code)] // Actor+Relay event relay - preserve for completeness
-    pub timeline_state_changed_relay: Relay<TimelineState>,
-    #[allow(dead_code)] // Actor+Relay event relay - preserve for completeness
-    pub cursor_moved_relay: Relay<TimeNs>,
-    #[allow(dead_code)] // Actor+Relay event relay - preserve for completeness
-    pub zoom_changed_relay: Relay<f64>,
     pub session_state_changed_relay: Relay<SessionState>,
 }
 
@@ -355,16 +341,11 @@ impl AppConfig {
         let (variables_filter_changed_relay, variables_filter_changed_stream) = relay();
         let (panel_dimensions_right_changed_relay, _panel_dimensions_right_changed_stream) = relay();
         let (panel_dimensions_bottom_changed_relay, _panel_dimensions_bottom_changed_stream) = relay();
-        let (panel_resized_relay, _panel_resized_stream) = relay();
-        let (timeline_state_changed_relay, timeline_state_changed_stream) = relay();
-        let (cursor_moved_relay, cursor_moved_stream) = relay();
-        let (zoom_changed_relay, zoom_changed_stream) = relay();
         let (session_state_changed_relay, session_state_changed_stream) = relay();
 
         // Clone relays for use in multiple Actors to avoid move issues
         let panel_dimensions_right_changed_relay_clone = panel_dimensions_right_changed_relay.clone();
         let panel_dimensions_bottom_changed_relay_clone = panel_dimensions_bottom_changed_relay.clone();
-        let panel_resized_relay_clone = panel_resized_relay.clone();
 
         // Create theme actor with loaded config value
         let theme_actor = Actor::new(config.ui.theme, async move |state| {
@@ -469,7 +450,6 @@ impl AppConfig {
                             Task::start({
                                 let new_mode = new_mode;
                                 async move {
-                                    // ✅ FIXED: Use proper signal dependencies instead of Timer::sleep
                                     // Wait for dock mode signal to update, then proceed
                                     
                                     match new_mode {
@@ -504,26 +484,17 @@ impl AppConfig {
         let panel_dimensions_right_actor = Actor::new(PanelDimensions {
             files_panel_width: config.workspace.docked_right_dimensions.files_and_scopes_panel_width as f32,
             files_panel_height: config.workspace.docked_right_dimensions.files_and_scopes_panel_height as f32,
-            // ✅ FIXED: Use responsive calculations instead of hardcoded fallbacks
             variables_panel_width: PanelDimensions::responsive_panel_width(),
             timeline_panel_height: PanelDimensions::responsive_timeline_height(),
-            // ✅ FIXED: Use responsive methods instead of hardcoded fallbacks
             variables_name_column_width: config.workspace.docked_right_dimensions.selected_variables_panel_name_column_width.unwrap_or(PanelDimensions::responsive_name_column_width() as f64) as f32,
             variables_value_column_width: config.workspace.docked_right_dimensions.selected_variables_panel_value_column_width.unwrap_or(PanelDimensions::responsive_value_column_width() as f64) as f32,
         }, async move |state| {
             let mut right_stream = panel_dimensions_right_changed_relay_clone.subscribe();
-            let mut resized_stream = panel_resized_relay_clone.subscribe();
             
             loop {
                 select! {
                     new_dims = right_stream.next() => {
                         if let Some(dims) = new_dims {
-                            state.set_neq(dims);
-                        }
-                    }
-                    resized_dims = resized_stream.next() => {
-                        if let Some(dims) = resized_dims {
-                            // Handle panel resize events
                             state.set_neq(dims);
                         }
                     }
@@ -534,10 +505,8 @@ impl AppConfig {
         let panel_dimensions_bottom_actor = Actor::new(PanelDimensions {
             files_panel_width: config.workspace.docked_bottom_dimensions.files_and_scopes_panel_width as f32,
             files_panel_height: config.workspace.docked_bottom_dimensions.files_and_scopes_panel_height as f32,
-            // ✅ FIXED: Use responsive calculations instead of hardcoded fallbacks
             variables_panel_width: PanelDimensions::responsive_panel_width(),
             timeline_panel_height: PanelDimensions::responsive_timeline_height(),  
-            // ✅ FIXED: Use responsive methods instead of hardcoded fallbacks
             variables_name_column_width: config.workspace.docked_bottom_dimensions.selected_variables_panel_name_column_width.unwrap_or(PanelDimensions::responsive_name_column_width() as f64) as f32,
             variables_value_column_width: config.workspace.docked_bottom_dimensions.selected_variables_panel_value_column_width.unwrap_or(PanelDimensions::responsive_value_column_width() as f64) as f32,
         }, async move |state| {
@@ -554,32 +523,6 @@ impl AppConfig {
             }
         });
 
-        // Create timeline state actor (using defaults for now - can be added to config later)
-        let timeline_state_actor = Actor::new(TimelineState::default(), async move |state| {
-            let mut timeline_stream = timeline_state_changed_stream;
-            let mut cursor_stream = cursor_moved_stream;
-            let mut zoom_stream = zoom_changed_stream;
-            
-            loop {
-                select! {
-                    new_state = timeline_stream.next() => {
-                        if let Some(state_update) = new_state {
-                            state.set_neq(state_update);
-                        }
-                    }
-                    cursor_pos = cursor_stream.next() => {
-                        if let Some(pos) = cursor_pos {
-                            state.update_mut(|current| current.cursor_position = pos);
-                        }
-                    }
-                    zoom_level = zoom_stream.next() => {
-                        if let Some(level) = zoom_level {
-                            state.update_mut(|current| current.zoom_level = level);
-                        }
-                    }
-                }
-            }
-        });
 
         // Create session state actor with loaded config values
         let session_state_actor = Actor::new(SessionState {
@@ -629,7 +572,6 @@ impl AppConfig {
             dock_mode_actor.clone(), 
             panel_dimensions_right_actor.clone(),
             panel_dimensions_bottom_actor.clone(),
-            timeline_state_actor.clone(),
             session_state_actor.clone(),
             toast_dismiss_ms_actor.clone(),
         );
@@ -697,7 +639,6 @@ impl AppConfig {
             // Config: No selected scope ID in config, leaving SELECTED_SCOPE_ID as None
         }
 
-        // ✅ ARCHITECTURE FIX: Don't load into static bypass - main.rs will get selected variables directly from config
         // NOTE: Selected variables restoration handled by main.rs using proper config.workspace.selected_variables access
 
         // Create file picker scroll position mutable with loaded config
@@ -750,14 +691,12 @@ impl AppConfig {
             dock_mode_actor,
             panel_dimensions_right_actor,
             panel_dimensions_bottom_actor,
-            timeline_state_actor,
             session_state_actor,
             toast_dismiss_ms_actor,
             
             file_picker_expanded_directories,
             file_picker_scroll_position,
             
-            // ✅ ARCHITECTURE FIX: Store loaded selected variables for domain restoration
             loaded_selected_variables: config.workspace.selected_variables.clone(),
             
             _config_saver_actor: config_saver_actor,
@@ -767,10 +706,6 @@ impl AppConfig {
             variables_filter_changed_relay,
             panel_dimensions_right_changed_relay,
             panel_dimensions_bottom_changed_relay,
-            panel_resized_relay,
-            timeline_state_changed_relay,
-            cursor_moved_relay,
-            zoom_changed_relay,
             session_state_changed_relay,
         }
     }
@@ -791,56 +726,6 @@ pub fn app_config() -> &'static AppConfig {
 
 
 
-/// Combined workspace section signal
-#[allow(dead_code)] // Config serialization function - preserve for config system
-pub fn workspace_section_signal() -> impl Signal<Item = shared::WorkspaceSection> {
-    map_ref! {
-        let dock_mode = app_config().dock_mode_actor.signal(),
-        let right_dims = app_config().panel_dimensions_right_actor.signal(),
-        let bottom_dims = app_config().panel_dimensions_bottom_actor.signal(),
-        let timeline = app_config().timeline_state_actor.signal(),
-        let session = app_config().session_state_actor.signal(),
-        let expanded_scopes = crate::actors::selected_variables::expanded_scopes_signal().map(|scopes| scopes.into_iter().collect::<Vec<String>>()),
-        let selected_scope_id = crate::actors::selected_variables::selected_scope_signal().map(|scope| {
-            // Strip TreeView "scope_" prefix before storing to config
-            scope.as_ref().map(|scope_id| {
-                if scope_id.starts_with("scope_") {
-                    scope_id.strip_prefix("scope_").unwrap_or(scope_id).to_string()
-                } else {
-                    scope_id.clone()
-                }
-            })
-        }) =>
-        shared::WorkspaceSection {
-            opened_files: session.opened_files.clone(),
-            docked_bottom_dimensions: shared::DockedBottomDimensions {
-                files_and_scopes_panel_width: bottom_dims.files_panel_width as f64,
-                files_and_scopes_panel_height: bottom_dims.files_panel_height as f64,
-                selected_variables_panel_name_column_width: Some(bottom_dims.variables_name_column_width as f64),
-                selected_variables_panel_value_column_width: Some(bottom_dims.variables_value_column_width as f64),
-            },
-            docked_right_dimensions: shared::DockedRightDimensions {
-                files_and_scopes_panel_width: right_dims.files_panel_width as f64,
-                files_and_scopes_panel_height: right_dims.files_panel_height as f64,
-                selected_variables_panel_name_column_width: Some(right_dims.variables_name_column_width as f64),
-                selected_variables_panel_value_column_width: Some(right_dims.variables_value_column_width as f64),
-            },
-            dock_mode: *dock_mode,
-            expanded_scopes: expanded_scopes.clone(),
-            load_files_expanded_directories: session.file_picker_expanded_directories.clone(),
-            // ✅ ARCHITECTURE FIX: Use value from signal chain (already has prefix stripping)
-            selected_scope_id: selected_scope_id.clone(),
-            load_files_scroll_position: session.file_picker_scroll_position,
-            variables_search_filter: session.variables_search_filter.clone(),
-            // ✅ ARCHITECTURE FIX: Use proper domain access instead of static bypass
-            selected_variables: crate::actors::selected_variables::current_variables(),
-            timeline_cursor_position_ns: timeline.cursor_position.nanos(),
-            timeline_visible_range_start_ns: Some(timeline.visible_range.start.nanos()),
-            timeline_visible_range_end_ns: Some(timeline.visible_range.end.nanos()),
-            timeline_zoom_level: timeline.zoom_level as f32,
-        }
-    }
-}
 
 
 // === BACKEND INTEGRATION ===

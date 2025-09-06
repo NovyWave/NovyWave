@@ -1,6 +1,5 @@
 // Badge Component
 // Small status indicator with various styles and colors
-// MIGRATED FROM VUE STORYBOOK - EXACT VISUAL PARITY
 
 use crate::tokens::*;
 use crate::components::icon::{IconBuilder, IconName, IconSize, IconColor};

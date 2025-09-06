@@ -268,8 +268,8 @@ where
     // Part of public Actor+Relay API - will be used when moved to standalone crate
     #[allow(dead_code)]
     pub fn contains_key_signal(&self, key: K) -> impl Signal<Item = bool> {
-        // TODO: Implement using SignalMap when available
-        // For now, derive from value_signal
+        // Returns reactive signal indicating whether key exists in the ActorMap
+        // Currently implemented by deriving from value_signal for efficient key existence checking
         self.value_signal(key).map(|opt| opt.is_some())
     }
 

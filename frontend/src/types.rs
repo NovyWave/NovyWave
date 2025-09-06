@@ -36,7 +36,6 @@ pub fn get_variables_from_tracked_files(selected_scope_id: &str) -> Vec<Variable
         selected_scope_id
     };
     
-    // ✅ ACTOR+RELAY: Get tracked files from TrackedFiles domain
     let tracked_files = crate::actors::global_domains::get_current_tracked_files();
     
     // Find variables in any loaded file that matches the scope

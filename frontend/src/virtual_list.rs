@@ -4,7 +4,7 @@ use moonzoon_novyui::tokens::color::{neutral_2, neutral_4, neutral_8, neutral_11
 // Removed unused import: moonzoon_novyui::tokens::*
 use wasm_bindgen::JsCast;
 
-use crate::types::{VariableWithContext, filter_variables_with_context};
+use crate::types::VariableWithContext;
 
 // Virtual list performance constants - extracted from hardcoded values
 const FALLBACK_CONTAINER_HEIGHT: f64 = 400.0;  // Typical panel height for initial calculations
@@ -28,29 +28,6 @@ fn empty_state_hint(text: &str) -> impl Element {
 // This prevents log corruption while preserving essential debugging capability.
 //
 
-#[allow(dead_code)] // Migration legacy function - preserve during Actor+Relay transition
-pub fn virtual_variables_list(variables: Vec<VariableWithContext>, search_filter: String) -> Column<column::EmptyFlagNotSet, RawHtmlEl> {
-    // Handle special cases first (empty states)
-    if variables.is_empty() && search_filter.starts_with("Select a scope") {
-        return Column::new().item(empty_state_hint(&search_filter));
-    }
-    
-    if variables.is_empty() {
-        return Column::new().item(empty_state_hint("No variables in selected scope"));
-    }
-    
-    // Apply search filter
-    let filtered_variables = filter_variables_with_context(&variables, &search_filter);
-    
-    if filtered_variables.is_empty() {
-        return Column::new().item(empty_state_hint("No variables match search filter"));
-    }
-    
-    // FIXED-HEIGHT VIRTUAL LIST - only render ~15 visible items
-    // PHASE 1 TEST: Use signal-based version with always(400.0)
-    // SIMPLE FILL: Use Height::fill() directly (works now that Column hierarchy is fixed)
-    rust_virtual_variables_list_simple_fill(filtered_variables)
-}
 
 /// ✅ PERFORMANCE: Pre-filtered virtual list - no filtering inside, just rendering
 pub fn virtual_variables_list_pre_filtered(filtered_variables: Vec<VariableWithContext>) -> Column<column::EmptyFlagNotSet, RawHtmlEl> {
@@ -89,7 +66,6 @@ pub fn rust_virtual_variables_list_simple_fill(variables: Vec<VariableWithContex
         )
 }
 
-// REMOVED: rust_virtual_variables_list - unused legacy function
 
 pub fn rust_virtual_variables_list_with_signal(
     variables: Vec<VariableWithContext>,
@@ -202,7 +178,6 @@ pub fn rust_virtual_variables_list_with_signal(
         }
     });
     
-    // REMOVED: visible_end update task - now handled in coordinated pool management task
     
     // ===== OPTIMIZED POOL UPDATE TASK WITH DOM BATCHING =====
     // Update pool elements when visible range OR selection state changes
@@ -243,7 +218,6 @@ pub fn rust_virtual_variables_list_with_signal(
                     // ✅ OPTIMIZATION: Pre-compute selection lookup to reduce clone operations
                     // use crate::state::{find_scope_full_name}; // Unused
                     
-                    // ✅ ACTOR+RELAY: Get tracked files from TrackedFiles domain
                     let tracked_files = crate::actors::global_domains::get_current_tracked_files();
                     
                     // ✅ REACTIVE: Build selection index from current selected variables
@@ -361,7 +335,6 @@ pub fn rust_virtual_variables_list_with_signal(
         }
     });
     
-    // REMOVED: Reactive selection state task - now integrated with pool update task for better coordination
     // Selection state updates are now handled in the optimized pool update task above
     
     
@@ -556,7 +529,6 @@ pub fn rust_virtual_variables_list_with_signal(
         )
 }
 
-// REMOVED: rust_virtual_variables_list_dynamic_wrapper - unused legacy function
 
 // ===== ROW RENDERING FUNCTIONS =====
 
@@ -663,9 +635,7 @@ fn create_stable_variable_element_hybrid(state: VirtualElementState, hovered_ind
 }
 
 
-// REMOVED: virtual_variable_row - unused legacy function
 
-// REMOVED: simple_variable_row - unused legacy function
 
 // ===== SHARED PREFIX HIGHLIGHTING FUNCTIONS =====
 
@@ -823,5 +793,4 @@ fn create_variable_name_display(
 
 // ===== SUPPORT FUNCTIONS =====
 
-// REMOVED: simple_variables_list - unused legacy function
 

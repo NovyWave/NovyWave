@@ -1,11 +1,8 @@
 use zoon::*;
 use crate::visualizer::timeline::timeline_actor::{
-    set_cursor_position_seconds, 
-    set_ns_per_pixel_if_changed, set_viewport_if_changed
+    set_cursor_position_seconds
 };
-// TODO: Replace current_cursor_position_seconds with cursor_position_signal() for proper reactive patterns
-use crate::visualizer::timeline::time_types::{TimeNs, NsPerPixel, Viewport};
-use crate::visualizer::state::canvas_state::{DIRECT_CURSOR_ANIMATION, LAST_TRANSITION_NAVIGATION_TIME};
+// Cursor position would be accessed through reactive signals instead of synchronous position functions
 use js_sys;
 
 // Constants for navigation timing and precision
@@ -60,21 +57,23 @@ pub fn collect_all_transitions() -> Vec<f64> {
 
 /// Jump to the previous transition relative to current cursor position
 pub fn jump_to_previous_transition() {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static LAST_NAVIGATION_TIME: AtomicU64 = AtomicU64::new(0);
+    
     // Debounce rapid key presses to prevent precision issues
     let now = get_current_time_ns();
-    let last_navigation = LAST_TRANSITION_NAVIGATION_TIME.get();
+    let last_navigation = LAST_NAVIGATION_TIME.load(Ordering::Relaxed);
     if now - last_navigation < TRANSITION_NAVIGATION_DEBOUNCE_MS * 1_000_000 {
         return; // Still within debounce period
     }
-    LAST_TRANSITION_NAVIGATION_TIME.set_neq(now);
+    LAST_NAVIGATION_TIME.store(now, Ordering::Relaxed);
     
     // Validate timeline range exists before attempting transition jump
     if super::get_current_timeline_range().is_none() {
         return; // No valid timeline range available
     }
     
-    // TODO: Implement proper Actor+Relay transition jumping through waveform_timeline_domain
-    // For now, use fallback position to eliminate deprecated warnings
+    // Transition jumping would be implemented through proper Actor+Relay events in waveform_timeline_domain
     let current_cursor = Some(0.0); // Fallback - proper implementation needs Actor+Relay event
     let transitions = collect_all_transitions();
     
@@ -96,40 +95,38 @@ pub fn jump_to_previous_transition() {
     if let Some(prev_time) = previous_transition {
         // Jump to previous transition
         set_cursor_position_seconds(prev_time);
-        // Synchronize direct animation to prevent jumps when using Q/E after transition jump
-        let mut animation = DIRECT_CURSOR_ANIMATION.lock_mut();
-        animation.current_position = prev_time;
-        animation.target_position = prev_time;
+        // Cursor synchronization would use dedicated relay events in WaveformTimeline Actor
+        // timeline.cursor_synced_relay.send((prev_time, prev_time));  // (current, target)
         // Jumped to previous transition
     } else if !transitions.is_empty() {
         // If no previous transition, wrap to the last transition
         let last_transition = transitions[transitions.len() - 1];
         set_cursor_position_seconds(last_transition);
-        // Synchronize direct animation to prevent jumps when using Q/E after transition jump
-        let mut animation = DIRECT_CURSOR_ANIMATION.lock_mut();
-        animation.current_position = last_transition;
-        animation.target_position = last_transition;
+        // Cursor synchronization would use dedicated relay events in WaveformTimeline Actor
+        // timeline.cursor_synced_relay.send((last_transition, last_transition));  // (current, target)
         // Wrapped to last transition
     }
 }
 
 /// Jump to the next transition relative to current cursor position
 pub fn jump_to_next_transition() {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static LAST_NAVIGATION_TIME: AtomicU64 = AtomicU64::new(0);
+    
     // Debounce rapid key presses to prevent precision issues
     let now = get_current_time_ns();
-    let last_navigation = LAST_TRANSITION_NAVIGATION_TIME.get();
+    let last_navigation = LAST_NAVIGATION_TIME.load(Ordering::Relaxed);
     if now - last_navigation < TRANSITION_NAVIGATION_DEBOUNCE_MS * 1_000_000 {
         return; // Still within debounce period
     }
-    LAST_TRANSITION_NAVIGATION_TIME.set_neq(now);
+    LAST_NAVIGATION_TIME.store(now, Ordering::Relaxed);
     
     // Validate timeline range exists before attempting transition jump
     if super::get_current_timeline_range().is_none() {
         return; // No valid timeline range available
     }
     
-    // TODO: Implement proper Actor+Relay transition jumping through waveform_timeline_domain
-    // For now, use fallback position to eliminate deprecated warnings
+    // Transition jumping would be implemented through proper Actor+Relay events in waveform_timeline_domain
     let current_cursor = Some(0.0); // Fallback - proper implementation needs Actor+Relay event
     let transitions = collect_all_transitions();
     
@@ -145,51 +142,17 @@ pub fn jump_to_next_transition() {
     if let Some(next_time) = next_transition {
         // Jump to next transition
         set_cursor_position_seconds(next_time);
-        // Synchronize direct animation to prevent jumps when using Q/E after transition jump
-        let mut animation = DIRECT_CURSOR_ANIMATION.lock_mut();
-        animation.current_position = next_time;
-        animation.target_position = next_time;
+        // Cursor synchronization would use dedicated relay events in WaveformTimeline Actor
+        // timeline.cursor_synced_relay.send((next_time, next_time));  // (current, target)
         // Jumped to next transition
     } else if !transitions.is_empty() {
         // If no next transition, wrap to the first transition
         let first_transition = transitions[0];
         set_cursor_position_seconds(first_transition);
-        // Synchronize direct animation to prevent jumps when using Q/E after transition jump
-        let mut animation = DIRECT_CURSOR_ANIMATION.lock_mut();
-        animation.current_position = first_transition;
-        animation.target_position = first_transition;
+        // Cursor synchronization would use dedicated relay events in WaveformTimeline Actor
+        // timeline.cursor_synced_relay.send((first_transition, first_transition));  // (current, target)
         // Wrapped to first transition
     }
 }
 
-/// Reset zoom to fit all data in view (recovery function for broken zoom states)
-#[allow(dead_code)] // Navigation function - preserve for timeline reset functionality
-pub fn reset_zoom_to_fit_all() {
-    
-    // Reset zoom to 1x
-    set_ns_per_pixel_if_changed(NsPerPixel::MEDIUM_ZOOM);
-    
-    // Get range for files with selected variables only
-    let (file_min, file_max) = crate::visualizer::canvas::timeline::get_selected_variables_file_range();
-    
-    // Check for mixed file ranges affecting zoom
-    let _span = file_max - file_min; // Prefix with underscore - used for debug analysis
-    
-    let viewport = Viewport::new(
-        TimeNs::from_external_seconds(file_min),
-        TimeNs::from_external_seconds(file_max)
-    );
-    set_viewport_if_changed(viewport);
-    
-    // Reset cursor to a reasonable position
-    let middle_time = (file_min + file_max) / 2.0;
-    set_cursor_position_seconds(middle_time);
-    
-    // Synchronize direct animation to prevent jumps when using Q/E after zoom reset
-    let mut animation = DIRECT_CURSOR_ANIMATION.lock_mut();
-    animation.current_position = middle_time as f64;
-    animation.target_position = middle_time as f64;
-    
-    // Range calculation completed
-}
 

@@ -16,7 +16,6 @@ pub fn create_selected_variable(
     scope_id: &str
 ) -> Option<SelectedVariable> {
     
-    // ✅ ACTOR+RELAY: Get tracked files from TrackedFiles domain  
     let tracked_files = crate::actors::global_domains::get_current_tracked_files();
     
     

@@ -44,8 +44,6 @@ impl TimeUnit {
 /// Theme-aware color scheme for waveform visualization
 #[derive(Clone, Debug)]
 struct ThemeColors {
-    #[allow(dead_code)] // Theme color - preserve for canvas theming completeness
-    neutral_1: (u8, u8, u8, f32),
     neutral_2: (u8, u8, u8, f32),
     neutral_3: (u8, u8, u8, f32),
     neutral_12: (u8, u8, u8, f32),
@@ -60,8 +58,6 @@ struct ThemeColors {
 pub struct WaveformRenderer {
     canvas: Option<Fast2DCanvas>,
     theme: NovyUITheme,
-    #[allow(dead_code)] // Canvas optimization cache - preserve for performance features
-    cached_objects: Vec<Object2d>,
     last_viewport: Option<Viewport>,
     last_cursor_pos: Option<f64>,
 }
@@ -71,18 +67,11 @@ impl WaveformRenderer {
         Self {
             canvas: None,
             theme: NovyUITheme::Dark,
-            cached_objects: Vec::new(),
             last_viewport: None,
             last_cursor_pos: None,
         }
     }
     
-    /// Initialize Fast2D canvas with given DOM element
-    #[allow(dead_code)] // Canvas initialization method - preserve for Fast2D integration
-    pub fn initialize_canvas(&mut self, _canvas_element: web_sys::HtmlCanvasElement, _width: u32, _height: u32) {
-        // Since we can't use async in this method, mark as needing initialization
-        // The actual async initialization will be handled by the external caller
-    }
     
     /// Set the canvas after async initialization
     pub fn set_canvas(&mut self, canvas: Fast2DCanvas) {
@@ -601,7 +590,6 @@ impl WaveformRenderer {
         match self.theme {
             NovyUITheme::Dark => ThemeColors {
                 // Professional dark theme with subtle neutral greys
-                neutral_1: (13, 13, 13, 1.0),      // Deep dark background
                 neutral_2: (45, 47, 50, 1.0),      // Subtle row background (alternating)
                 neutral_3: (52, 54, 58, 1.0),      // Subtle row background (alternating)
                 neutral_12: (253, 253, 253, 1.0),  // High contrast white text
@@ -614,7 +602,6 @@ impl WaveformRenderer {
             },
             NovyUITheme::Light => ThemeColors {
                 // Professional light theme with clean neutral greys
-                neutral_1: (255, 255, 255, 1.0),   // Pure white background
                 neutral_2: (249, 250, 251, 1.0),   // Nearly white row background (alternating)
                 neutral_3: (243, 244, 246, 1.0),   // Light grey row background (alternating)
                 neutral_12: (17, 24, 39, 1.0),     // High contrast dark text
@@ -683,55 +670,9 @@ impl WaveformRenderer {
 }
 
 // WASM-safe canvas rendering - no static global state needed
-use std::rc::Rc;
-use std::cell::RefCell;
 
-/// Create a new waveform renderer instance (WASM-safe, no static state)
-#[allow(dead_code)] // Canvas rendering function - preserve for Fast2D integration
-pub fn create_waveform_renderer() -> Rc<RefCell<WaveformRenderer>> {
-    Rc::new(RefCell::new(WaveformRenderer::new()))
-}
 
-/// Initialize canvas rendering system with local renderer instance
-#[allow(dead_code)] // Canvas rendering function - preserve for Fast2D integration
-pub fn initialize_canvas_rendering(
-    renderer: Rc<RefCell<WaveformRenderer>>,
-    canvas_element: web_sys::HtmlCanvasElement, 
-    width: u32, 
-    height: u32
-) {
-    // Initialize renderer state (synchronous part)
-    if let Ok(mut r) = renderer.try_borrow_mut() {
-        r.initialize_canvas(canvas_element.clone(), width, height);
-    }
-    
-    // Handle async Fast2D canvas creation
-    let renderer_clone = renderer.clone();
-    Task::start(async move {
-        let canvas = Fast2DCanvas::new_with_canvas(canvas_element).await;
-        if let Ok(mut r) = renderer_clone.try_borrow_mut() {
-            r.set_canvas(canvas);
-        }
-    });
-}
 
-/// Trigger canvas redraw with local renderer instance
-#[allow(dead_code)] // Canvas rendering function - preserve for Fast2D integration
-pub fn trigger_canvas_redraw(renderer: Rc<RefCell<WaveformRenderer>>) {
-    if let Ok(mut r) = renderer.try_borrow_mut() {
-        if r.needs_redraw() {
-            r.render_frame();
-        }
-    }
-}
-
-/// Update canvas theme with local renderer instance
-#[allow(dead_code)] // Canvas rendering function - preserve for Fast2D integration
-pub fn update_canvas_theme(renderer: Rc<RefCell<WaveformRenderer>>, theme: NovyUITheme) {
-    if let Ok(mut r) = renderer.try_borrow_mut() {
-        r.set_theme(theme);
-    }
-}
 
 
 

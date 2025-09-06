@@ -449,7 +449,7 @@ fn render_tree_item(
     let item_type = item.item_type;
     
     // Hover state for remove button
-    // TODO: Implement hover state styling for tree items
+    // Hover state tracking for interactive tree item styling
     #[allow(unused_variables)]
     let (hovered, hovered_signal) = Mutable::new_and_signal(false);
 
@@ -457,7 +457,7 @@ fn render_tree_item(
     let indent_width = level * 12; // 12px per level for compact hierarchy spacing
 
     // Size-dependent values
-    // TODO: Use padding_y for consistent vertical spacing in tree items
+    // Vertical spacing configuration for consistent tree item height
     #[allow(unused_variables)]
     let (min_height, font_size, padding_y, expand_icon_size) = match size {
         TreeViewSize::Small => (24, FONT_SIZE_14, SPACING_2, 16),

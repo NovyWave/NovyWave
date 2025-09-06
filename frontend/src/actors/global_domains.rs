@@ -3,7 +3,7 @@
 //! Centralized instantiation and access to domain actors throughout the application.
 //! Replaces global mutables with domain-driven reactive state management.
 
-use crate::actors::{TrackedFiles, SelectedVariables, UserConfiguration, DialogManager, ErrorManager};
+use crate::actors::{TrackedFiles, SelectedVariables, DialogManager, ErrorManager};
 use crate::visualizer::timeline::timeline_actor::WaveformTimeline;
 use crate::actors::{dialog_manager, error_manager, config_sync};
 use std::sync::OnceLock;
@@ -23,8 +23,6 @@ pub static SELECTED_VARIABLES_DOMAIN_INSTANCE: OnceLock<SelectedVariables> = Onc
 /// Connected to UI through proper Actor+Relay signals
 static WAVEFORM_TIMELINE_DOMAIN_INSTANCE: OnceLock<WaveformTimeline> = OnceLock::new();
 
-/// Global UserConfiguration domain instance
-static USER_CONFIGURATION_DOMAIN_INSTANCE: OnceLock<UserConfiguration> = OnceLock::new();
 
 
 /// Global DialogManager domain instance
@@ -65,11 +63,10 @@ pub async fn initialize_all_domains() -> Result<(), &'static str> {
     // ✅ ELIMINATED: ERROR_MANAGER_SIGNALS - now uses direct domain access
     
     // PHASE 2: Initialize legacy domains in parallel for better startup performance
-    let (tracked_files, selected_variables, waveform_timeline, user_config, dialog_manager, error_manager) = futures::join!(
+    let (tracked_files, selected_variables, waveform_timeline, dialog_manager, error_manager) = futures::join!(
         TrackedFiles::new(),
         SelectedVariables::new(),
         WaveformTimeline::new(),
-        UserConfiguration::new(),
         DialogManager::new(),
         ErrorManager::new()
     );
@@ -81,8 +78,6 @@ pub async fn initialize_all_domains() -> Result<(), &'static str> {
         .map_err(|_| "FATAL: SelectedVariables domain already initialized. This indicates initialize_all_domains() was called multiple times, which suggests a serious application initialization bug. The application must restart to recover.")?;
     WAVEFORM_TIMELINE_DOMAIN_INSTANCE.set(waveform_timeline)
         .map_err(|_| "FATAL: WaveformTimeline domain already initialized. This indicates initialize_all_domains() was called multiple times, which suggests a serious application initialization bug. The application must restart to recover.")?;
-    USER_CONFIGURATION_DOMAIN_INSTANCE.set(user_config)
-        .map_err(|_| "FATAL: UserConfiguration domain already initialized. This indicates initialize_all_domains() was called multiple times, which suggests a serious application initialization bug. The application must restart to recover.")?;
     DIALOG_MANAGER_DOMAIN_INSTANCE.set(dialog_manager)
         .map_err(|_| "FATAL: DialogManager domain already initialized. This indicates initialize_all_domains() was called multiple times, which suggests a serious application initialization bug. The application must restart to recover.")?;
     ERROR_MANAGER_DOMAIN_INSTANCE.set(error_manager)
@@ -126,15 +121,6 @@ pub fn waveform_timeline_domain() -> &'static WaveformTimeline {
 }
 
 /// Get the global UserConfiguration domain instance
-/// ❌ MARKED FOR REMOVAL: Unused function with clone() antipattern
-/// Domains should be accessed by reference, not cloned
-#[allow(dead_code)]
-pub fn _user_configuration_domain() -> &'static UserConfiguration {
-    USER_CONFIGURATION_DOMAIN_INSTANCE.get()
-        .unwrap_or_else(|| {
-            panic!("UserConfiguration domain accessed before initialization - this indicates a critical application initialization ordering bug")
-        })
-}
 
 
 /// Get the global DialogManager domain instance
@@ -151,7 +137,6 @@ pub fn _are_domains_initialized() -> bool {
     TRACKED_FILES_DOMAIN_INSTANCE.get().is_some() && 
     SELECTED_VARIABLES_DOMAIN_INSTANCE.get().is_some() && 
     WAVEFORM_TIMELINE_DOMAIN_INSTANCE.get().is_some() && 
-    USER_CONFIGURATION_DOMAIN_INSTANCE.get().is_some() &&
     DIALOG_MANAGER_DOMAIN_INSTANCE.get().is_some() &&
     ERROR_MANAGER_DOMAIN_INSTANCE.get().is_some()
 }
@@ -161,7 +146,6 @@ pub fn _are_domains_initialized() -> bool {
 /// Get owned signal for all tracked files - LIFETIME SAFE for UI components
 /// Enables: tracked_files_signal().map(|files| render(files))
 pub fn tracked_files_signal() -> impl Signal<Item = Vec<TrackedFile>> {
-    // ✅ ARCHITECTURE FIX: Use actual domain signals instead of static signal bypass
     tracked_files_domain().files_signal()
 }
 
@@ -182,7 +166,6 @@ pub fn get_current_tracked_files() -> Vec<TrackedFile> {
 /// Get owned signal vec for tracked files - LIFETIME SAFE for items_signal_vec
 /// Enables: .items_signal_vec(tracked_files_signal_vec().map(|file| render(file)))
 pub fn tracked_files_signal_vec() -> impl SignalVec<Item = TrackedFile> {
-    // ✅ ARCHITECTURE FIX: Use actual domain signals instead of static signal bypass
     let domain = tracked_files_domain();
     domain.files_signal_vec()
 }
@@ -195,49 +178,30 @@ pub fn tracked_files_signal_vec() -> impl SignalVec<Item = TrackedFile> {
 
 /// Get owned signal for file count - CONNECTS TO TRACKEDFILES DOMAIN
 pub fn file_count_signal() -> impl Signal<Item = usize> {
-    // ✅ ARCHITECTURE FIX: Use actual domain signals instead of static signal bypass
     let domain = tracked_files_domain();
     domain.file_count_signal()
 }
 
-/// Get owned signal for loaded files count - SIMPLE ACTOR+RELAY APPROACH
-#[allow(dead_code)]
-pub fn loaded_files_count_signal() -> impl Signal<Item = usize> {
-    // ✅ ARCHITECTURE FIX: Use actual domain signals instead of static signal bypass
-    let domain = tracked_files_domain();
-    domain.loaded_count_signal()
-}
 
 /// Get owned signal for selected variables - LIFETIME SAFE
 /// Enables: selected_variables_signal().map(|vars| render(vars))
 pub fn selected_variables_signal() -> impl Signal<Item = Vec<SelectedVariable>> {
-    // ✅ ARCHITECTURE FIX: Use actual domain signals instead of static signal bypass
     let domain = selected_variables_domain();
     domain.variables_signal()
 }
 
 /// Get owned signal vec for selected variables - LIFETIME SAFE for items_signal_vec
 pub fn selected_variables_signal_vec() -> impl SignalVec<Item = SelectedVariable> {
-    // ✅ ARCHITECTURE FIX: Use actual domain signals instead of static signal bypass
     let domain = selected_variables_domain();
     domain.variables_signal_vec()
 }
 
 /// Get owned signal for expanded scopes - LIFETIME SAFE
-#[allow(dead_code)] // Actor+Relay API function - preserve for completeness
 pub fn expanded_scopes_signal() -> impl Signal<Item = IndexSet<String>> {
-    // ✅ ARCHITECTURE FIX: Use actual domain signals instead of static signal bypass
     let domain = selected_variables_domain();
     domain.expanded_scopes_signal()
 }
 
-/// Get owned signal for search filter - LIFETIME SAFE
-#[allow(dead_code)] // Actor+Relay API function - preserve for completeness
-pub fn search_filter_signal() -> impl Signal<Item = String> {
-    // ✅ ARCHITECTURE FIX: Use actual domain signals instead of static signal bypass
-    let domain = selected_variables_domain();
-    domain.search_filter_signal()
-}
 
 // === SIGNAL SYNCHRONIZATION FUNCTIONS (INTERNAL) ===
 
@@ -302,18 +266,6 @@ pub fn dialog_manager_last_expanded_signal() -> impl Signal<Item = std::collecti
 // Use dialog_manager_expanded_directories_signal() directly instead
 
 /// Get selected files mutable for TreeView external_selected - SIMPLIFIED: Direct domain access
-/// ❌ ELIMINATED: Complex bi-directional sync using zoon::Task (violates Actor+Relay architecture)
-/// ✅ CORRECTED: Use direct domain signals - TreeView should connect directly to domain signals
-pub fn dialog_manager_selected_mutable() -> zoon::MutableVec<String> {
-    // ✅ SIMPLIFIED: Return basic mutable, TreeView connects to domain signals separately
-    // This eliminates zoon::Task antipattern while maintaining API compatibility
-    let tree_mutable = zoon::MutableVec::new();
-    
-    // TreeView should use: .external_selected(dialog_manager_selected_files_signal())
-    // instead of complex bi-directional sync patterns
-    
-    tree_mutable
-}
 
 /// Get owned signal for file tree cache - ARCHITECTURE FIX: Use proper domain Actor instead of static bypass
 pub fn dialog_manager_file_tree_cache_signal() -> impl Signal<Item = std::collections::HashMap<String, Vec<shared::FileSystemItem>>> {
@@ -338,38 +290,6 @@ pub fn dialog_manager_file_tree_cache_mutable() -> zoon::Mutable<std::collection
 
 // === VALIDATION FUNCTIONS FOR LIFETIME FIX ===
 
-/// Test function to validate that domain signals have proper lifetimes
-/// This would NOT compile with the old borrowed signal approach
-#[allow(dead_code)]
-pub fn test_domain_signal_lifetimes() -> impl Element {
-    // ✅ BEFORE FIX: This would FAIL with lifetime errors  
-    // ❌ tracked_files_domain().files_signal().map(|files| ...)  <- Domain instance dropped
-    
-    // ✅ AFTER FIX: This WORKS because signals are owned and stable
-    Column::new()
-        .item(
-            Row::new()
-                .item(Text::new("File Count: "))
-                .item_signal(file_count_signal().map(|count| Text::new(&count.to_string())))
-        )
-        .item(
-            Row::new()
-                .item(Text::new("Loading: "))
-                .item_signal(file_count_signal().map(|count| 
-                    Text::new(if count > 0 { "Yes" } else { "No" })
-                ))
-        )
-        .items_signal_vec(
-            tracked_files_signal_vec().map(|file| {
-                Text::new(&format!("File: {}", file.filename))
-            })
-        )
-        .items_signal_vec(
-            selected_variables_signal_vec().map(|var| {
-                Text::new(&format!("Variable: {}", var.unique_id))
-            })
-        )
-}
 
 // Test function removed - use proper reactive patterns in actual code
 

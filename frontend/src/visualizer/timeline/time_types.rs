@@ -192,37 +192,13 @@ impl NsPerPixel {
     pub const MAX_ZOOM_IN: NsPerPixel = NsPerPixel(1);      // 1 ns/pixel (finest resolution)
     pub const MEDIUM_ZOOM: NsPerPixel = NsPerPixel(MIN_CURSOR_STEP_NS); // 1 ms/pixel  
     
-    /// Create a new NsPerPixel from nanoseconds
-    #[allow(dead_code)]
-    pub fn from_nanos(nanos: u64) -> Self {
-        NsPerPixel(nanos)
-    }
-    
-    /// Create NsPerPixel from viewport and canvas width
-    #[allow(dead_code)]
-    pub fn from_viewport(viewport: Viewport, canvas_width_pixels: u32) -> Self {
-        let duration_ns = viewport.duration().nanos();
-        // Fix: Use proper rounding instead of truncated integer division
-        let ns_per_pixel = (duration_ns + canvas_width_pixels as u64 / 2) / canvas_width_pixels as u64;
-        NsPerPixel(ns_per_pixel.max(1)) // Ensure minimum 1 ns/pixel
-    }
-    
-    /// Check if this resolution is more detailed than another
-    #[allow(dead_code)]
-    pub fn is_more_detailed_than(self, other: NsPerPixel) -> bool {
-        self.0 < other.0  // Lower ns/pixel = more detailed
-    }
     
     /// Get nanoseconds per pixel value
     pub fn nanos(self) -> u64 {
         self.0
     }
     
-    /// Calculate viewport duration for given canvas width (pure integer)
-    #[allow(dead_code)] // Timeline API method - may be used in future features
-    pub fn viewport_duration(self, canvas_width_pixels: u32) -> DurationNs {
-        DurationNs(self.0 * canvas_width_pixels as u64)
-    }
+    
     
     
     /// Zoom in by reducing nanoseconds per pixel (smooth zoom)
@@ -236,7 +212,6 @@ impl NsPerPixel {
         let new_ns_per_pixel = ((self.0 as f64) * (1.0 + factor.clamp(0.0, 10.0))) as u64;
         NsPerPixel(new_ns_per_pixel)
     }
-    
     
     
 }
@@ -308,29 +283,6 @@ impl fmt::Display for Viewport {
 // This prevents any fallback rendering until real timeline data is available
 
 /// Coordinate conversion utilities for timeline rendering - PURE INTEGER VERSION
-pub mod coordinates {
-    use super::*;
-    
-    
-    
-    /// Calculate viewport from center point and canvas width (PURE INTEGER)
-    #[allow(dead_code)]
-    pub fn viewport_from_center(center_ns: TimeNs, canvas_width_pixels: u32, ns_per_pixel: NsPerPixel) -> Viewport {
-        let half_viewport_ns = (canvas_width_pixels as u64 * ns_per_pixel.nanos()) / 2;
-        Viewport::new(
-            TimeNs(center_ns.nanos().saturating_sub(half_viewport_ns)),
-            TimeNs(center_ns.nanos().saturating_add(half_viewport_ns))
-        )
-    }
-    
-    
-    
-    /// Convert viewport to floating point range (for display compatibility)
-    #[allow(dead_code)]
-    pub fn viewport_to_f64_range(viewport: Viewport) -> (f64, f64) {
-        (viewport.start.display_seconds(), viewport.end.display_seconds())
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -359,9 +311,8 @@ mod tests {
         let resolution = NsPerPixel::from_nanos(1000);
         assert_eq!(resolution.nanos(), 1000);
         
-        // Test viewport duration calculation
-        let duration = resolution.viewport_duration(100); // 100 pixels
-        assert_eq!(duration.nanos(), 100_000); // 100 * 1000 ns
+        // Test nanoseconds value access
+        assert_eq!(resolution.nanos() * 100, 100_000); // 100 pixels * 1000 ns/pixel
         
         // Test zoom in/out
         let zoomed_in = resolution.zoom_in_smooth(0.1); // 10% zoom in
@@ -475,8 +426,6 @@ pub struct CacheRequestState {
 /// Types of requests to the cache system
 #[derive(Clone, Debug, PartialEq)]
 pub enum CacheRequestType {
-    /// Request viewport data (decimated for rendering)
-    ViewportData,
     /// Request cursor values (point-in-time)
     CursorValues,
 }
@@ -631,57 +580,6 @@ impl TimelineCoordinates {
     
     
     
-    /// Get current viewport end time
-    #[allow(dead_code)] // Timeline API method - may be used in future features
-    pub fn viewport_end_ns(&self) -> TimeNs {
-        let viewport_duration = self.ns_per_pixel.viewport_duration(self.canvas_width_pixels);
-        self.viewport_start_ns.add_duration(viewport_duration)
-    }
-    
-    /// Get current viewport as Viewport struct
-    #[allow(dead_code)] // Timeline API method - may be used in future features
-    pub fn viewport(&self) -> Viewport {
-        Viewport::new(self.viewport_start_ns, self.viewport_end_ns())
-    }
-    
-    /// Pan by pixel distance (positive = pan right, negative = pan left)
-    #[allow(dead_code)] // Timeline API method - may be used in future features
-    pub fn pan_by_pixels(&mut self, pixels: i32) {
-        let delta_ns = (pixels.abs() as u64) * self.ns_per_pixel.nanos();
-        if pixels < 0 {
-            // Pan left - subtract time
-            self.viewport_start_ns = TimeNs(self.viewport_start_ns.nanos().saturating_sub(delta_ns));
-        } else {
-            // Pan right - add time
-            self.viewport_start_ns = TimeNs(self.viewport_start_ns.nanos().saturating_add(delta_ns));
-        }
-    }
-    
-    
-    
-    /// Set cursor position
-    pub fn _set_cursor(&mut self, cursor_ns: TimeNs) {
-        self.cursor_ns = cursor_ns;
-    }
-    
-    
-    
-    /// Clamp viewport to be within file bounds
-    #[allow(dead_code)] // Timeline API method - may be used in future features
-    pub fn clamp_viewport(&mut self, file_start: TimeNs, file_end: TimeNs) {
-        let viewport_end = self.viewport_end_ns();
-        let viewport_duration = viewport_end.nanos().saturating_sub(self.viewport_start_ns.nanos());
-        
-        // If viewport extends beyond file end, move it back
-        if viewport_end.nanos() > file_end.nanos() {
-            self.viewport_start_ns = TimeNs(file_end.nanos().saturating_sub(viewport_duration));
-        }
-        
-        // If viewport starts before file start, move it forward
-        if self.viewport_start_ns.nanos() < file_start.nanos() {
-            self.viewport_start_ns = file_start;
-        }
-    }
 }
 
 impl Default for TimelineCoordinates {

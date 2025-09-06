@@ -46,7 +46,7 @@ impl ListItemBuilder {
         }
     }
     
-    // TODO: Implement build() method for individual list items
+    // Individual list item build method with consistent styling
     pub fn build(self) -> impl Element {
         El::new()
             .s(Width::fill())

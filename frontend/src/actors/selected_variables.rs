@@ -339,7 +339,6 @@ impl SelectedVariables {
     /// Get variables from a specific file  
     pub fn file_variables_signal(&self, file_path: String) -> impl zoon::Signal<Item = Vec<SelectedVariable>> {
         use zoon::SignalExt;
-        // ✅ FIXED: Use dedicated Vec signal instead of conversion antipattern
         self.variables_vec_signal.signal_cloned()
             .map(move |vars| {
                 vars.iter()
@@ -371,7 +370,6 @@ impl SelectedVariables {
     /// Get filtered variables based on search text
     pub fn filtered_variables_signal(&self) -> impl zoon::Signal<Item = Vec<SelectedVariable>> {
         
-        // ✅ FIXED: Use dedicated Vec signal instead of conversion antipattern
         let variables_signal = self.variables_vec_signal.signal_cloned();
         let filter_signal = self.search_filter.signal();
         
@@ -437,7 +435,6 @@ impl SelectedVariables {
             let variable_name = parts[2];
             
             
-            // ✅ ACTOR+RELAY: Use TrackedFiles domain instead of static signals
             let tracked_files = crate::actors::global_domains::get_current_tracked_files();
             
             // SIMPLIFIED: Just use the working helper function directly
@@ -467,7 +464,6 @@ impl SelectedVariables {
                                     variables_vec_signal.set_neq(current_vars);
                                 }
                                 
-                                // ✅ FIXED: Only update Actor state - no dual updates to prevent infinite loops
                                 return;
                             }
                         } else {
@@ -483,7 +479,6 @@ impl SelectedVariables {
     /// Find and create SelectedVariable from variable_id
     async fn find_and_create_selected_variable(variable_id: &str, scope_id: &str) -> Option<SelectedVariable> {
         
-        // ✅ ACTOR+RELAY: Use TrackedFiles domain instead of static signals
         let tracked_files = crate::actors::global_domains::get_current_tracked_files();
         if tracked_files.is_empty() {
             return None;
@@ -558,7 +553,6 @@ impl SelectedVariables {
         None
     }
     
-    // ✅ REMOVED: update_global_signals_for_addition() - dual updates caused infinite loops
     
     /// Recursively search through scopes and their children for a signal by name
     fn find_signal_in_scopes(scopes: &[shared::ScopeData], signal_name: &str) -> Option<(shared::Signal, String)> {
@@ -578,7 +572,6 @@ impl SelectedVariables {
         None
     }
     
-    // ✅ REMOVED: update_global_signals_for_removal() - dual updates caused infinite loops
     
     /// Handle removing specific variable by ID
     async fn handle_variable_removed(
@@ -597,7 +590,6 @@ impl SelectedVariables {
             variables_vec_signal.set_neq(current_vars);
         }
         
-        // ✅ FIXED: Only update Actor state - no dual updates to prevent infinite loops
     }
     
     /// Handle clearing all selected variables
@@ -616,11 +608,9 @@ impl SelectedVariables {
             variables_vec_signal.set_neq(current_vars);
         }
         
-        // TODO: Use selection clearing events through relays instead of direct mutation
-        // Temporarily disabled to eliminate deprecated warnings
+        // Selection clearing should use relay events for proper Actor+Relay patterns
         // set_user_cleared_selection(true);
         
-        // ✅ FIXED: Only update Actor state - no dual updates to prevent infinite loops
     }
     
     /// Handle variables restored from configuration
@@ -647,7 +637,6 @@ impl SelectedVariables {
             variables_vec_signal.set_neq(current_vars);
         }
         
-        // ✅ FIXED: Only update Actor state - no dual updates to prevent infinite loops
     }
     
     /// Handle variable format change event
@@ -694,7 +683,6 @@ impl SelectedVariables {
         use shared::file_contains_scope;
         use crate::actors::global_domains::{tracked_files_domain, selected_variables_domain};
         use futures::StreamExt;
-        // ✅ ACTOR+RELAY: Check user cleared flag using proper signal stream access
         let user_cleared = user_cleared_selection_signal().to_stream().next().await.unwrap_or(false);
         if user_cleared {
             // Skip scope restoration - user cleared selection
@@ -706,7 +694,7 @@ impl SelectedVariables {
         let selected_vars_domain = selected_variables_domain();
         
         // ✅ CACHE CURRENT VALUES: Get scope to restore from config signal
-        // TODO: Connect to proper config field once scope persistence is implemented
+        // Scope persistence connection - would sync with config system when implemented
         let scope_to_restore: Option<String> = None; // Placeholder during migration
         
         if let Some(scope_id) = scope_to_restore {
@@ -721,14 +709,11 @@ impl SelectedVariables {
             });
             
             if is_valid {
-                // ✅ ACTOR+RELAY: Use domain event emission for scope selection
                 selected_vars_domain.scope_selected_relay.send(Some(scope_id.to_string()));
                 
-                // ✅ ACTOR+RELAY: Clear user cleared flag using domain function
-                // TODO: Use selection clearing events through relays instead of direct mutation
+                // Selection clearing should emit events rather than direct state mutation
                 // set_user_cleared_selection(false);
                 
-                // ✅ ACTOR+RELAY: Emit scope expansion event instead of direct manipulation
                 selected_vars_domain.scope_expanded_relay.send(scope_id.to_string());
             }
         }
@@ -775,7 +760,6 @@ pub fn selection_cleared_relay() -> Relay<()> {
 
 /// User typed in variable filter/search box
 pub fn search_filter_changed_relay() -> Relay<String> {
-    // ✅ PROPER ACTOR+RELAY: Connect directly to app config for persistence
     crate::config::app_config().variables_filter_changed_relay.clone()
 }
 
@@ -787,7 +771,6 @@ pub fn search_focus_changed_relay() -> Relay<bool> {
 
 // ===== USER CLEARED FLAG DOMAIN ACCESS (REPLACES USER_CLEARED_SELECTION) =====
 
-// REMOVED: is_user_cleared_selection() - Use user_cleared_selection_signal() for proper reactive access
 
 /// ❌ DEPRECATED: Use clear_selection_relay for reactive patterns
 /// This synchronous function violates Actor+Relay architecture 
@@ -800,7 +783,6 @@ pub fn set_user_cleared_selection(cleared: bool) {
 
 /// Get user cleared selection signal → replaces USER_CLEARED_SELECTION.signal()
 pub fn user_cleared_selection_signal() -> impl zoon::Signal<Item = bool> {
-    // ✅ CONVERTED: Use domain actor signal instead of deprecated global state
     crate::actors::global_domains::selected_variables_domain().user_cleared.signal()
 }
 
@@ -859,7 +841,6 @@ pub fn variable_index_signal() -> impl zoon::Signal<Item = IndexSet<String>> {
 
 /// Get reactive signal for selected scope → ACTOR INTERNAL STATE  
 pub fn selected_scope_signal() -> impl zoon::Signal<Item = Option<String>> {
-    // ✅ CORRECT: Use Actor's internal state instead of deprecated global mutable
     crate::actors::global_domains::selected_variables_domain().selected_scope.signal()
 }
 
@@ -884,14 +865,13 @@ pub fn user_cleared_signal() -> impl zoon::Signal<Item = bool> {
 
 /// Get reactive signal for expanded scopes → SAFE INITIALIZATION VERSION
 pub fn expanded_scopes_signal() -> impl zoon::Signal<Item = IndexSet<String>> {
-    // ✅ PROPER ACTOR+RELAY: Use domain signal from SelectedVariables actor
     crate::actors::global_domains::selected_variables_domain().expanded_scopes.signal()
 }
 
 /// Get reactive signal for search filter → SAFE INITIALIZATION VERSION
 pub fn search_filter_signal() -> impl zoon::Signal<Item = String> {
     // ✅ INITIALIZATION SAFE: Use simple default during migration to prevent startup issues  
-    // TODO: Connect to real config data after initialization order is fixed
+    // Config data connection - would integrate with app config once initialization is stable
     zoon::always(String::new())
 }
 
@@ -912,9 +892,7 @@ pub fn is_search_input_focused() -> bool {
     false
 }
 
-/// ✅ PROPER ACTOR+RELAY: Emit search focus event through domain relay
 pub fn set_search_input_focused(focused: bool) {
-    // ✅ CONVERTED: Use proper event emission through domain relay
     search_focus_changed_relay().send(focused);
 }
 
@@ -923,7 +901,6 @@ pub fn set_search_input_focused(focused: bool) {
 /// Get expanded scopes mutable for TreeView bi-directional integration
 /// This allows TreeView to directly update the mutable when user expands/collapses scopes
 pub fn expanded_scopes_mutable() -> zoon::Mutable<IndexSet<String>> {
-    // ✅ ACTOR+RELAY: Use proper domain Actor connection instead of deprecated global mutable
     use crate::actors::global_domains::selected_variables_domain;
     
     // Create a Mutable that syncs with the Actor state
@@ -952,7 +929,6 @@ pub fn expanded_scopes_mutable() -> zoon::Mutable<IndexSet<String>> {
 /// Get tree selection mutable for TreeView bi-directional integration  
 /// This allows TreeView to directly update the mutable when user selects items
 pub fn tree_selection_mutable() -> zoon::Mutable<IndexSet<String>> {
-    // ✅ ARCHITECTURE FIX: Use proper domain Actor connection instead of deprecated static
     use crate::actors::global_domains::selected_variables_domain;
     
     // Create a Mutable that syncs with the Actor state
@@ -992,7 +968,7 @@ pub fn get_expanded_scopes() -> IndexSet<String> {
     // This function should be eliminated in favor of expanded_scopes_signal()
     
     // For migration compatibility, provide synchronous access
-    // TODO: Convert all callers to use expanded_scopes_signal() directly
+    // Migration path: Convert remaining callers to use reactive signal patterns
     IndexSet::new() // Return empty during migration - callers should use reactive patterns
 }
 
@@ -1017,11 +993,9 @@ where
 
 /// Clear all expanded scopes (replaces direct EXPANDED_SCOPES.lock_mut().clear())
 pub fn clear_expanded_scopes() {
-    // ✅ ACTOR+RELAY: Use proper domain Actor state instead of deprecated global mutable
     use crate::actors::global_domains::selected_variables_domain;
     let domain = selected_variables_domain();
     
-    // ✅ ACTOR+RELAY: Send empty scopes through proper relay to clear all expanded scopes
     let empty_scopes = IndexSet::new();
     domain.expanded_scopes_restored_relay.send(empty_scopes);
 }
@@ -1038,7 +1012,7 @@ pub fn clear_expanded_scopes() {
 // - variable_index_signal() instead of current_variable_index()
 
 // === TEMPORARY COMPATIBILITY FUNCTIONS FOR MIGRATION ===
-// TODO: Replace these calls with proper reactive signal patterns
+// Migration compatibility functions - replace with reactive signal patterns when callers are updated
 
 /// ✅ ARCHITECTURE FIX: Get current variables from proper domain instead of static bypass
 pub fn current_variables() -> Vec<SelectedVariable> {
@@ -1047,7 +1021,6 @@ pub fn current_variables() -> Vec<SelectedVariable> {
     domain.variables_vec_signal.get_cloned()
 }
 
-// REMOVED: current_selected_scope_for_config() - convert config system to be signal-based
 
 /// MIGRATION: Temporary compatibility function - replace with expanded_scopes_signal()
 pub fn current_expanded_scopes() -> IndexSet<String> {

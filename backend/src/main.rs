@@ -825,7 +825,7 @@ async fn parse_waveform_file(file_path: String, file_id: String, filename: Strin
                     cleanup_parsing_session(&file_id);
                 }
         wellen::FileFormat::Ghw | wellen::FileFormat::Unknown => {
-            // TODO: Add proper error handling for GHW/Unknown formats
+            // GHW/Unknown format handling - these formats temporarily disabled
             let error_msg = format!("GHW and Unknown formats temporarily disabled during error handling implementation");
             send_parsing_error(file_id, filename, error_msg, session_id, cor_id).await;
         }
@@ -1528,7 +1528,6 @@ async fn scan_directory_async(path: &Path) -> Result<Vec<FileSystemItem>, Box<dy
     Ok(items)
 }
 
-// REMOVED: process_entry_async and should_disable_directory functions for instant loading
 
 // Build signal reference map for efficient lookup during value queries
 fn build_signal_reference_map(hierarchy: &wellen::Hierarchy, signals: &mut HashMap<String, wellen::SignalRef>) {
@@ -2446,7 +2445,7 @@ async fn handle_unified_signal_query(
                 request_id,
                 signal_data,
                 cursor_values,
-                cached_time_range_ns: None, // TODO: Implement based on actual cache data
+                cached_time_range_ns: None, // Cache time range would be computed from signal data bounds
                 statistics: Some(statistics),
             }, session_id, cor_id).await;
         }

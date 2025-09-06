@@ -18,7 +18,6 @@ pub fn show_file_paths_dialog() {
         let _ = CurrentPlatform::send_message(UpMsg::BrowseDirectory("~".to_string())).await;
     });
     
-    // ✅ ARCHITECTURE FIX: Restore scroll position reactively instead of Timer::sleep() workaround
     Task::start(async {
         // Wait for dialog manager domain to be initialized (proper reactive pattern)
         // This ensures the dialog state is ready before setting scroll position

@@ -1079,7 +1079,6 @@ pub struct WorkspaceSection {
     #[serde(default = "default_timeline_cursor_position_ns")]
     pub timeline_cursor_position_ns: u64,
     
-    // Timeline zoom level (deprecated - replaced by NsPerPixel in frontend)
     #[serde(default = "default_timeline_zoom_level")]
     pub timeline_zoom_level: f32,
     

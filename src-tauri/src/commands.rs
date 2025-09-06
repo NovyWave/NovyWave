@@ -98,8 +98,8 @@ pub async fn load_waveform_file(
         "filename": filename
     })).map_err(|e| format!("Failed to emit parsing_started: {}", e))?;
     
-    // TODO: Implement actual waveform parsing
-    // For now, simulate parsing with progress updates
+    // Waveform parsing simulation with progress events
+    // Real parsing would integrate with wellen library here
     for progress in (0..=100).step_by(10) {
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
         
@@ -140,16 +140,16 @@ pub async fn load_waveform_file(
 pub async fn browse_directory(path: String) -> Result<(), String> {
     let _dir_path = PathBuf::from(&path);
     
-    // TODO: Implement directory browsing and emit directory_contents event
-    // For now, just return empty result
+    // Directory browsing placeholder - would scan filesystem
+    // and emit directory_contents event with file listings
     Ok(())
 }
 
 /// Browse multiple directories
 #[tauri::command]
 pub async fn browse_directories(_paths: Vec<String>) -> Result<(), String> {
-    // TODO: Implement batch directory browsing
-    // For now, just return empty result
+    // Batch directory browsing placeholder - would process multiple paths
+    // and aggregate file listings for efficient bulk operations
     Ok(())
 }
 
@@ -159,8 +159,8 @@ pub async fn query_signal_values(
     _file_path: String,
     _queries: Vec<SignalValueQuery>
 ) -> Result<(), String> {
-    // TODO: Implement signal value queries
-    // For now, just return empty result
+    // Signal value query placeholder - would extract values from parsed waveforms
+    // at specific time points using wellen library integration
     Ok(())
 }
 
@@ -171,15 +171,15 @@ pub async fn query_signal_transitions(
     _signal_queries: Vec<SignalTransitionQuery>,
     _time_range: (f64, f64)
 ) -> Result<(), String> {
-    // TODO: Implement signal transition queries
-    // For now, just return empty result
+    // Signal transition query placeholder - would extract transition data
+    // over time ranges from parsed waveform databases
     Ok(())
 }
 
 /// Get parsing progress for a file
 #[tauri::command]
 pub async fn get_parsing_progress(_file_id: String) -> Result<(), String> {
-    // TODO: Implement progress tracking
-    // For now, just return empty result
+    // Parsing progress tracking placeholder - would maintain progress state
+    // for active file parsing operations
     Ok(())
 }

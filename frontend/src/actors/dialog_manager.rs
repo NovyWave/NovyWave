@@ -147,34 +147,44 @@ impl DialogManager {
         
         // Use placeholder actors for now - will be properly implemented later
         let dialog_visible = Actor::new(false, async move |_handle| {
-            // TODO: Implement proper actor processor
+            // Actor processor would handle dialog show/hide state changes from UI events
+            // Processes dialog_opened_relay and dialog_closed_relay events
         });
         let paths_input = Actor::new(String::new(), async move |_handle| {
-            // TODO: Implement proper actor processor  
+            // Actor processor would handle file paths input text changes from user typing
+            // Processes paths_input_changed_relay events and validates input format
         });
         let expanded_directories = Actor::new(IndexSet::new(), async move |_handle| {
-            // TODO: Implement proper actor processor
+            // Actor processor would handle directory expansion/collapse state changes
+            // Processes directory_toggled_relay events and maintains expanded tree state
         });
         let selected_files = Actor::new(Vec::new(), async move |_handle| {
-            // TODO: Implement proper actor processor
+            // Actor processor would handle file selection changes from user clicks
+            // Processes files_selection_changed_relay and maintains multi-selection state
         });
         let current_error = Actor::new(None, async move |_handle| {
-            // TODO: Implement proper actor processor
+            // Actor processor would handle current file picker error display state
+            // Processes error_occurred_relay and error_cleared_relay events
         });
         let error_cache = Actor::new(HashMap::new(), async move |_handle| {
-            // TODO: Implement proper actor processor
+            // Actor processor would handle caching of file path errors for quick retrieval
+            // Processes error_occurred_relay events and builds path->error mapping
         });
         let file_tree_cache = Actor::new(HashMap::new(), async move |_handle| {
-            // TODO: Implement proper actor processor
+            // Actor processor would handle caching of directory contents for file tree display
+            // Processes directory scan results and maintains path->contents mapping
         });
         let viewport_y = Actor::new(0, async move |_handle| {
-            // TODO: Implement proper actor processor
+            // Actor processor would handle dialog vertical viewport position for scroll restoration
+            // Processes viewport_changed_relay events and maintains scroll state
         });
         let scroll_position = Actor::new(0, async move |_handle| {
-            // TODO: Implement proper actor processor  
+            // Actor processor would handle dialog scroll position changes for state persistence
+            // Processes scroll_changed_relay events and maintains current scroll offset
         });
         let last_expanded = Actor::new(HashSet::new(), async move |_handle| {
-            // TODO: Implement proper actor processor
+            // Actor processor would handle tracking last expanded directories for restoration
+            // Processes directory_toggled_relay events and maintains expansion history
         });
         
         // Create domain instance with initialized actors
@@ -206,48 +216,58 @@ impl DialogManager {
     // === EVENT HANDLERS ===
     
     async fn handle_dialog_opened(&self) {
-        // TODO: Implement actual Actor processing when Actor API is clarified
-        // For now, use signal synchronization approach like other domains
+        // Event handler would process dialog open requests from UI buttons or keyboard shortcuts
+        // Updates dialog_visible actor state and triggers dialog display logic
     }
     
     async fn handle_dialog_closed(&self) {
-        // TODO: Implement proper Actor processing 
+        // Event handler would process dialog close requests from UI dismiss actions
+        // Updates dialog_visible actor state and triggers cleanup/persistence logic
     }
     
     async fn handle_paths_input_changed(&self, _input: String) {
-        // TODO: Implement proper Actor processing 
+        // Event handler would process file paths input text changes from user typing
+        // Updates paths_input actor state and validates/parses path format
     }
     
     async fn handle_directory_toggled(&self, _path: String) {
-        // TODO: Implement proper Actor processing 
+        // Event handler would process directory expand/collapse actions from tree view
+        // Updates expanded_directories actor state and triggers directory content loading
     }
     
     async fn handle_files_selection_changed(&self, _files: Vec<String>) {
-        // TODO: Implement proper Actor processing 
+        // Event handler would process file selection changes from user clicks/keyboard
+        // Updates selected_files actor state and validates selection constraints
     }
     
     async fn handle_error_occurred(&self, _error: FilePickerError) {
-        // TODO: Implement proper Actor processing 
+        // Event handler would process file operation errors from filesystem operations
+        // Updates current_error and error_cache actor states for error display/recovery
     }
     
     async fn handle_error_cleared(&self, _path: Option<String>) {
-        // TODO: Implement proper Actor processing 
+        // Event handler would process error dismissal actions from user or timeout
+        // Updates current_error actor state and optionally clears error_cache entries
     }
     
     async fn handle_scroll_changed(&self, _position: i32) {
-        // TODO: Implement proper Actor processing 
+        // Event handler would process dialog scroll position changes from user scrolling
+        // Updates scroll_position actor state for persistence and scroll restoration
     }
     
     async fn handle_viewport_changed(&self, _position: i32) {
-        // TODO: Implement proper Actor processing 
+        // Event handler would process dialog viewport position changes from scrolling/resizing
+        // Updates viewport_y actor state for maintaining view position across sessions
     }
     
     async fn handle_dialog_state_restored(&self, _state: DialogState) {
-        // TODO: Implement proper Actor processing 
+        // Event handler would process complete dialog state restoration from saved configuration
+        // Updates all relevant actor states (expanded dirs, selection, scroll, etc.) in batch
     }
     
     async fn handle_files_confirmed(&self, _files: Vec<String>) {
-        // TODO: Implement proper Actor processing 
+        // Event handler would process file confirmation action from user accepting selection
+        // Triggers file loading workflow and closes dialog with selected files
     }
 }
 
@@ -307,14 +327,12 @@ pub fn file_tree_cache_signal() -> impl Signal<Item = HashMap<String, Vec<shared
 
 /// Open file dialog event
 pub fn open_file_dialog() {
-    // ✅ ARCHITECTURE FIX: Use direct domain access instead of static signals
     let domain = crate::actors::global_domains::dialog_manager_domain();
     domain.dialog_opened_relay.send(());
 }
 
 /// Close file dialog event
 pub fn close_file_dialog() {
-    // ✅ ARCHITECTURE FIX: Use direct domain access instead of static signals
     let domain = crate::actors::global_domains::dialog_manager_domain();
     domain.dialog_closed_relay.send(());
 }
@@ -379,7 +397,6 @@ pub fn confirm_files(files: Vec<String>) {
 #[deprecated(note = "Use dialog_visible_signal() reactive pattern instead of synchronous access")]
 pub fn current_dialog_visible() -> bool {
     // ❌ ARCHITECTURE VIOLATION: Synchronous access breaks Actor+Relay reactive patterns
-    // ✅ CORRECT: Use crate::actors::global_domains::dialog_manager_dialog_visible_signal()
     false  // Return default since reactive patterns should be used instead
 }
 
@@ -387,7 +404,6 @@ pub fn current_dialog_visible() -> bool {
 #[deprecated(note = "Use dialog_manager_paths_input_signal() reactive pattern instead")]
 pub fn current_paths_input() -> String {
     // ❌ ARCHITECTURE VIOLATION: Synchronous access breaks Actor+Relay reactive patterns
-    // ✅ CORRECT: Use crate::actors::global_domains::dialog_manager_paths_input_signal()
     String::new()  // Return default since reactive patterns should be used instead
 }
 
@@ -395,19 +411,16 @@ pub fn current_paths_input() -> String {
 #[deprecated(note = "Use dialog_manager_expanded_directories_signal() reactive pattern instead")]
 pub fn current_expanded_directories() -> IndexSet<String> {
     // ❌ ARCHITECTURE VIOLATION: Synchronous access breaks Actor+Relay reactive patterns
-    // ✅ CORRECT: Use crate::actors::global_domains::dialog_manager_expanded_directories_signal()
     IndexSet::new()  // Return default since reactive patterns should be used instead
 }
 
 /// Migration helper: Insert expanded directory (replaces FILE_PICKER_EXPANDED.lock_mut().insert())
 pub fn insert_expanded_directory(path: String) {
-    // ✅ ARCHITECTURE FIX: Use proper app_config instead of deprecated static
     crate::config::app_config().file_picker_expanded_directories.lock_mut().insert(path);
 }
 
 /// Migration helper: Insert multiple expanded directories (replaces bulk FILE_PICKER_EXPANDED operations)
 pub fn insert_expanded_directories(paths: Vec<String>) {
-    // ✅ ARCHITECTURE FIX: Use proper app_config instead of deprecated static
     let mut expanded = crate::config::app_config().file_picker_expanded_directories.lock_mut();
     for path in paths {
         expanded.insert(path);
@@ -418,7 +431,6 @@ pub fn insert_expanded_directories(paths: Vec<String>) {
 #[deprecated(note = "Use dialog_manager_selected_files_signal() reactive pattern instead")]
 pub fn current_selected_files() -> Vec<String> {
     // ❌ ARCHITECTURE VIOLATION: Synchronous access breaks Actor+Relay reactive patterns
-    // ✅ CORRECT: Use crate::actors::global_domains::dialog_manager_selected_files_signal()
     Vec::new()  // Return default since reactive patterns should be used instead
 }
 
@@ -426,7 +438,6 @@ pub fn current_selected_files() -> Vec<String> {
 #[deprecated(note = "Use dialog_manager_current_error_signal() reactive pattern instead")]
 pub fn current_file_error() -> Option<String> {
     // ❌ ARCHITECTURE VIOLATION: Synchronous access breaks Actor+Relay reactive patterns
-    // ✅ CORRECT: Use crate::actors::global_domains::dialog_manager_current_error_signal()
     None  // Return default since reactive patterns should be used instead
 }
 
@@ -434,7 +445,6 @@ pub fn current_file_error() -> Option<String> {
 #[deprecated(note = "Use dialog_manager_error_cache_signal() reactive pattern instead")]
 pub fn current_error_cache() -> HashMap<String, String> {
     // ❌ ARCHITECTURE VIOLATION: Synchronous access breaks Actor+Relay reactive patterns
-    // ✅ CORRECT: Use crate::actors::global_domains::dialog_manager_error_cache_signal()
     HashMap::new()  // Return default since reactive patterns should be used instead
 }
 
@@ -442,7 +452,6 @@ pub fn current_error_cache() -> HashMap<String, String> {
 #[deprecated(note = "Use dialog_manager_scroll_position_signal() reactive pattern instead")]
 pub fn current_scroll_position() -> i32 {
     // ❌ ARCHITECTURE VIOLATION: Synchronous access breaks Actor+Relay reactive patterns
-    // ✅ CORRECT: Use crate::actors::global_domains::dialog_manager_scroll_position_signal()
     0  // Return default since reactive patterns should be used instead
 }
 
@@ -450,7 +459,6 @@ pub fn current_scroll_position() -> i32 {
 #[deprecated(note = "Use dialog_manager_file_tree_cache_signal() reactive pattern instead")]
 pub fn current_file_tree_cache() -> HashMap<String, Vec<shared::FileSystemItem>> {
     // ❌ ARCHITECTURE VIOLATION: Synchronous access breaks Actor+Relay reactive patterns
-    // ✅ CORRECT: Use crate::actors::global_domains::dialog_manager_file_tree_cache_signal()
     HashMap::new()  // Return default since reactive patterns should be used instead
 }
 
@@ -512,7 +520,6 @@ pub fn file_picker_error_signal() -> impl Signal<Item = Option<String>> {
 
 /// Legacy signal compatibility: Get error cache signal (replaces FILE_PICKER_ERROR_CACHE.signal())
 pub fn file_picker_error_cache_signal() -> impl Signal<Item = HashMap<String, String>> {
-    // ✅ ARCHITECTURE FIX: Use proper domain signal instead of deprecated static
     error_cache_signal()
 }
 

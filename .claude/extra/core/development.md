@@ -115,6 +115,7 @@ Once I understand these details clearly, I'll implement all the improvements eff
 - Backend/shared crate compilation takes DOZENS OF SECONDS TO MINUTES - this is normal
 - **WAIT ENFORCEMENT: Must wait for compilation to complete, no matter how long**
 - **NEVER use `cargo build/check`** - Only mzoon handles WASM properly
+- **CRITICAL: NO cargo check EVER** - Use `tail -50 dev_server.log | grep "warning:"` for warnings instead
 - **NEVER restart dev server** without permission - compilation takes minutes
 - Monitor: `makers start > dev_server.log 2>&1 &`
 - Check: `tail -f dev_server.log` for build status

@@ -88,7 +88,7 @@ pub fn main() {
                 message: format!("Critical startup error: {}", error_msg),
                 technical_error: error_msg.to_string(),
                 auto_dismiss_ms: 10000, // Critical errors get longer timeout
-            });
+            }).await;
             return; // Exit gracefully instead of panic
         }
         

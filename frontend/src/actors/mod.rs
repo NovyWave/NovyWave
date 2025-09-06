@@ -45,8 +45,6 @@ pub use crate::dataflow::{
 pub mod tracked_files;
 pub mod selected_variables;
 // pub mod waveform_timeline; // MOVED to visualizer/timeline/timeline_actor.rs
-pub mod user_configuration;
-pub mod panel_layout;
 pub mod dialog_manager;
 pub mod error_manager;
 pub mod config_sync;
@@ -57,8 +55,6 @@ pub mod naming_validation;
 pub use tracked_files::TrackedFiles;
 pub use selected_variables::{SelectedVariables};
 // pub use waveform_timeline::{WaveformTimeline}; // MOVED to visualizer/timeline/timeline_actor.rs
-pub use user_configuration::{UserConfiguration};
-// PanelLayout type removed - now uses direct config system
 pub use dialog_manager::{DialogManager};
 pub use error_manager::{ErrorManager};
 pub use global_domains::{

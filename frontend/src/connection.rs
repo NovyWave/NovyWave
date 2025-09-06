@@ -1,6 +1,6 @@
 use zoon::*;
 // Removed legacy import check_loading_complete - migration complete
-use crate::error_display::{add_error_alert, log_error_console_only};
+use crate::error_display::log_error_console_only;
 use crate::state::ErrorAlert;
 use crate::views::is_cursor_within_variable_time_range;
 use crate::actors::dialog_manager::{set_file_error};
@@ -22,12 +22,10 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 // Update TRACKED_FILES with parsing started status
                 crate::state::update_tracked_file_state(&file_id, shared::FileState::Loading(shared::LoadingStatus::Parsing));
                 
-                // ✅ ACTOR+RELAY: Send loading started event to TrackedFiles Actor
                 let tracked_files = crate::actors::global_domains::tracked_files_domain();
                 tracked_files.loading_started_relay.send((file_id.clone(), filename.clone()));
             }
             DownMsg::ParsingProgress { file_id, progress } => {
-                // ✅ ACTOR+RELAY: Send parsing progress event to TrackedFiles Actor
                 let tracked_files = crate::actors::global_domains::tracked_files_domain();
                 tracked_files.parsing_progress_relay.send((file_id, progress, LoadingStatus::Parsing));
             }
@@ -54,10 +52,8 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                     }
                 }
                 
-                // ✅ ACTOR+RELAY: File loading is handled by file_load_completed_relay above
                 // The TrackedFiles Actor manages all loaded file state and handles scope restoration
                 
-                // ✅ ACTOR+RELAY: File completion is handled by file_load_completed_relay above
                 // The TrackedFiles Actor automatically manages loading completion business logic
                 
                 // Config automatically saved by ConfigSaver watching domain signals
@@ -71,7 +67,6 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 };
                 crate::state::update_tracked_file_state(&file_id, shared::FileState::Failed(file_error));
                 
-                // ✅ ACTOR+RELAY: Get filename from TrackedFiles domain instead of global mutable
                 let filename = {
                     let tracked_files_domain = crate::actors::global_domains::tracked_files_domain();
                     let current_files = tracked_files_domain.get_current_files();
@@ -87,9 +82,8 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                     filename,
                     error.clone()
                 );
-                add_error_alert(error_alert);
+                crate::error_display::log_error_console_only(error_alert);
                 
-                // ✅ ACTOR+RELAY: Error state is already handled by update_tracked_file_state above
                 // The TrackedFiles Actor will manage loading completion automatically
             }
             DownMsg::DirectoryContents { path, items } => {
@@ -222,7 +216,6 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                     }
                 }
                 
-                // ✅ ACTOR+RELAY: Send batch update through WaveformTimeline domain
                 if !batch_signal_values.is_empty() {
                     crate::visualizer::timeline::timeline_actor::signal_values_updated_relay()
                         .send(batch_signal_values);
@@ -269,7 +262,7 @@ pub fn send_up_msg(up_msg: UpMsg) {
             Err(error) => {
                 // Create and display connection error alert
                 let error_alert = ErrorAlert::new_connection_error(format!("Connection failed: {}", error));
-                add_error_alert(error_alert);
+                crate::error_display::log_error_console_only(error_alert);
             }
         }
     });

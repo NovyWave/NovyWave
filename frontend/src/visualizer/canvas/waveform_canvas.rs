@@ -60,7 +60,6 @@ fn create_canvas_element() -> impl Element {
                         // Initialize Fast2D rendering with DOM canvas element
                         let canvas_clone = raw_element.clone();
                         Task::start(async move {
-                            // ✅ FIXED: Use proper event loop coordination for DOM readiness
                             Task::next_macro_tick().await;
                             
                             let _width = canvas_clone.width();

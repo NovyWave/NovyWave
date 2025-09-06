@@ -18,7 +18,7 @@ pub fn copy_to_clipboard(text: String) {
                     }
                     Err(e) => {
                         let error_alert = ErrorAlert::new_clipboard_error(format!("{:?}", e));
-                        add_error_alert(error_alert);
+                        add_error_alert(error_alert).await;
                         // Could implement fallback here if needed
                     }
                 }
@@ -27,7 +27,7 @@ pub fn copy_to_clipboard(text: String) {
             #[cfg(not(web_sys_unstable_apis))]
             {
                 let error_alert = ErrorAlert::new_clipboard_error("Clipboard API requires unstable APIs flag".to_string());
-                add_error_alert(error_alert);
+                add_error_alert(error_alert).await;
             }
         }
     });
