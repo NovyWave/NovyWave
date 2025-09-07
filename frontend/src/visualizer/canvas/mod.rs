@@ -7,7 +7,6 @@ pub mod waveform_canvas;
 pub mod animation;      // Smooth zoom, pan, and cursor movement functions
 pub mod rendering;      // Canvas drawing, waveform rendering, and theme handling
 pub mod timeline;       // Timeline range calculations and coordinate transformations
-pub mod transitions;    // Signal transition handling and data requests
 pub mod navigation;     // Transition jumping and reset functions
 
 // Re-exports for API compatibility

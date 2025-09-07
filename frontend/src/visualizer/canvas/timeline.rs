@@ -1,4 +1,3 @@
-use zoon::*;
 // Removed LOADED_FILES import - migrated to tracked_files_domain() pattern
 use crate::visualizer::timeline::timeline_actor::{
     current_ns_per_pixel, current_viewport
@@ -64,10 +63,8 @@ pub fn get_current_timeline_range() -> Option<(f64, f64)> {
                 
                 // ENHANCED: Validate expanded range is finite
                 if expanded_start.is_finite() && expanded_end.is_finite() && expanded_end > expanded_start {
-                    crate::debug_utils::debug_timeline_validation(&format!("Expanded narrow range from {:.12} to [{:.12}, {:.12}]", current_range, expanded_start, expanded_end));
                     return Some((expanded_start, expanded_end));
                 } else {
-                    crate::debug_utils::debug_timeline_validation(&format!("WARNING: Failed to expand range - center: {}, half_range: {}", range_center, half_min_range));
                 }
             } else {
                 // Range expansion failed
@@ -195,7 +192,6 @@ pub fn get_current_timeline_range() -> Option<(f64, f64)> {
     
     // ENHANCED: Comprehensive validation before returning range
     if !min_time.is_finite() || !max_time.is_finite() {
-        crate::debug_utils::debug_timeline_validation(&format!("WARNING: Timeline range calculation produced non-finite values - min: {}, max: {}", min_time, max_time));
         return None; // Safe fallback
     }
     
@@ -289,7 +285,6 @@ pub fn get_maximum_timeline_range() -> Option<(f64, f64)> {
     
     // ENHANCED: Comprehensive validation before returning range
     if !min_time.is_finite() || !max_time.is_finite() {
-        crate::debug_utils::debug_timeline_validation(&format!("WARNING: Maximum timeline range calculation produced non-finite values - min: {}, max: {}", min_time, max_time));
         return None; // Safe fallback
     }
     
@@ -314,7 +309,6 @@ pub fn get_maximum_timeline_range() -> Option<(f64, f64)> {
 pub fn validate_and_sanitize_range(start: f64, end: f64) -> (f64, f64) {
     // Check for NaN/Infinity in inputs
     if !start.is_finite() || !end.is_finite() {
-        crate::debug_utils::debug_timeline_validation(&format!("Non-finite range detected - start: {}, end: {}, using actual file range", start, end));
         // ❌ FALLBACK ELIMINATION: Get actual file range instead of hardcoded fallback
         let (file_min, file_max) = get_full_file_range();
         return (file_min, file_max);
@@ -322,7 +316,6 @@ pub fn validate_and_sanitize_range(start: f64, end: f64) -> (f64, f64) {
     
     // Ensure proper ordering
     if start >= end {
-        crate::debug_utils::debug_timeline_validation(&format!("Invalid range ordering - start: {} >= end: {}, using actual file range", start, end));
         // ❌ FALLBACK ELIMINATION: Get actual file range instead of hardcoded fallback
         let (file_min, file_max) = get_full_file_range();
         return (file_min, file_max);
@@ -333,7 +326,6 @@ pub fn validate_and_sanitize_range(start: f64, end: f64) -> (f64, f64) {
     let canvas_width = 800_u32; // DEFAULT_CANVAS_WIDTH fallback for calculations
     let min_valid_range = get_min_valid_range_ns(canvas_width) as f64 / 1_000_000_000.0;
     if range < min_valid_range {
-        crate::debug_utils::debug_timeline_validation(&format!("Range too small: {:.3e}s, enforcing minimum of {:.3e}s", range, min_valid_range));
         let center = (start + end) / 2.0;
         let half_range = min_valid_range / 2.0;
         return (center - half_range, center + half_range);

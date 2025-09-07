@@ -12,12 +12,6 @@ pub mod timeline;
 // User interaction handling (keyboard, mouse, drag)
 pub mod interaction;
 
-// Value and display formatting
-pub mod formatting;
-
-// UI components and integration
-pub mod ui;
-
 // Testing utilities and patterns
 pub mod testing;
 

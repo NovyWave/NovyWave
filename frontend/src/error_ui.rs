@@ -36,8 +36,7 @@ pub fn toast_notifications_container() -> impl Element {
                     raw_el.style("pointer-events", "auto")  // Re-enable pointer events for toast content
                 })
                 .items_signal_vec(
-                    // Direct empty signal vector (error_manager was returning empty anyway)
-                    MutableVec::new_with_values(vec![]).signal_vec_cloned().map(|alert: ErrorAlert| {
+                    crate::error_display::active_toasts_signal_vec().map(|alert: ErrorAlert| {
                         toast_element(alert)
                     })
                 )
