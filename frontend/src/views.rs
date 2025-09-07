@@ -2500,4 +2500,18 @@ pub fn files_panel_horizontal_divider() -> impl Element {
 
 // ===== UNIFIED WAVEFORM CANVAS =====
 
+// ===== MAIN LAYOUT (MIGRATED FROM MAIN.RS) =====
 
+/// Main application layout with keyboard handling and drag interactions
+pub fn main_layout() -> impl Element {
+    El::new()
+        .s(Width::fill())
+        .s(Height::fill())
+        .child(
+            Column::new()
+                .s(Width::fill())
+                .s(Height::fill())
+                .item(files_panel())
+                .item(selected_variables_with_waveform_panel())
+        )
+}
