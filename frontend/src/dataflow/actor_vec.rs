@@ -131,32 +131,8 @@ where
     ///     })
     /// )
     /// ```
-    pub fn signal_vec(&self) -> impl zoon::SignalVec<Item = T> {
+    pub fn signal_vec(&self) -> impl zoon::SignalVec<Item = T> + use<T>{
         self.vec.signal_vec_cloned()
-    }
-
-    /// Get a signal with a reference to avoid cloning.
-    /// 
-    /// Use when you need to compute derived values from the collection
-    /// without cloning the entire vector.
-    /// 
-    /// # Examples
-    /// 
-    /// ```rust
-    /// let items = ActorVec::new(vec![1, 2, 3], /* processor */);
-    /// 
-    /// // Compute length without cloning items
-    /// items.signal_ref(|vec| vec.len())
-    /// ```
-    #[allow(dead_code)] // Actor+Relay API method - preserve for completeness
-    pub fn signal_ref<U>(&self, f: impl Fn(&Vec<T>) -> U + Send + Sync + 'static) -> impl Signal<Item = U>
-    where
-        U: PartialEq + Send + Sync + Copy + 'static,
-    {
-        self.vec.signal_vec_cloned()
-            .to_signal_cloned()
-            .map(move |vec| f(&vec))
-            .dedupe()
     }
 
     /// Get a reactive signal for the collection count.

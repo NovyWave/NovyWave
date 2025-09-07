@@ -88,6 +88,53 @@ let (relay, stream) = relay();    // vs crate::dataflow::relay()
 
 **Key insight:** Simpler architecture often emerges by questioning whether intermediate layers add real value or just complexity.
 
+## Actor Cloning vs Signal Extraction Pattern
+
+### Pass Cloned Actors Instead of Extracted Signals
+
+**CRITICAL: Prefer passing cloned actors over extracted signals to prevent complexity from broadcasters and lifetime issues.**
+
+**❌ WRONG: Extract signals before passing to functions**
+```rust
+// Creates unnecessary lifetime complexity and broadcaster dependencies
+fn variables_loading_signal(tracked_files: crate::tracked_files::TrackedFiles) -> impl Signal<Item = Vec<VariableWithContext>> {
+    let files_signal = tracked_files.files_signal();  // Extract signal first
+    let files_broadcaster = files_signal.broadcast(); // Need broadcaster for lifetime
+    map_ref! {
+        let selected_scope_id = selected_scope_signal(),
+        let _tracked_files = files_broadcaster.signal() => {  // Complex signal routing
+            // Use extracted signal...
+        }
+    }
+}
+```
+
+**✅ CORRECT: Pass cloned actors and use signals directly in map_ref!**
+```rust
+// Simple, clean pattern - no broadcasters or complex signal extraction needed
+fn variables_loading_signal(tracked_files: crate::tracked_files::TrackedFiles) -> impl Signal<Item = Vec<VariableWithContext>> {
+    map_ref! {
+        let selected_scope_id = selected_scope_signal(),
+        let _tracked_files = tracked_files.files_signal() => {  // Direct signal access
+            // Use signal directly...
+        }
+    }
+}
+```
+
+**Why actor cloning is better:**
+- ✅ **No broadcaster complexity** - Direct signal access within map_ref!
+- ✅ **No lifetime issues** - Owned actor values work naturally in closures
+- ✅ **Cleaner code** - Single pattern instead of extract-then-broadcast
+- ✅ **Better performance** - No intermediate signal extraction/broadcasting step
+
+**When to apply:**
+- Function parameters that need signal access
+- Signal composition within `map_ref!` blocks
+- Any situation where you're tempted to extract signals early to avoid lifetime issues
+
+**Key insight:** Actor+Relay architecture is designed for cheap cloning - use it instead of fighting Rust's lifetime system.
+
 ## Signal Dependencies for Data Loading Timing
 
 ### Problem Pattern
@@ -723,3 +770,208 @@ Only update dimensions that are actively managed by the current dock mode. Prese
 2. Switch modes repeatedly: Right→Bottom→Right
 3. Verify console logs show preserved values: "height=356 (kept)", "height=510"
 4. Confirm config file maintains independent values after switches
+
+## Global Domains Migration Patterns
+
+### Complete Architecture Migration Success Patterns
+
+When migrating from global static patterns to Actor+Relay architecture, these proven patterns eliminate compilation errors systematically:
+
+#### Domain Parameter Propagation Pattern
+
+**Problem**: Functions accessing global domains break when globals are removed.
+
+**Solution**: Thread domain instances through function parameters.
+
+```rust
+// ✅ BEFORE: Global access (deprecated)
+fn render_variables() -> impl Element {
+    let vars = crate::global_domains::selected_variables();
+}
+
+// ✅ AFTER: Domain parameter passing
+fn render_variables(
+    selected_variables: &crate::selected_variables::SelectedVariables,
+) -> impl Element {
+    let vars = selected_variables.variables_vec_signal.signal_cloned();
+}
+
+// ✅ Update all call sites to pass domains
+variables_panel(tracked_files, selected_variables, waveform_timeline)
+```
+
+#### Signal Broadcasting Pattern for Lifetime Issues
+
+**Problem**: Rust 'static lifetime requirements for signals in closures when using borrowed domain parameters.
+
+**Solution**: Use `.broadcast()` method to create cloneable signal broadcasters before closures.
+
+```rust
+// ❌ BROKEN: Borrowed data escapes closure
+.items_signal_vec(
+    selected_variables.variables.signal_vec().map(|var| {
+        tracked_files.files_signal().map(|files| ...) // Lifetime error!
+    })
+)
+
+// ✅ CORRECT: Broadcaster pattern
+.items_signal_vec({
+    let selected_variables_for_items = selected_variables.clone();
+    let tracked_files_broadcaster = tracked_files.files_signal().broadcast();
+    selected_variables.variables.signal_vec().map(move |var| {
+        tracked_files_broadcaster.signal().map(|files| ...) // Works!
+    })
+})
+```
+
+#### ConnectionAdapter Pattern
+
+**Problem**: Static Connection instances break Actor+Relay architecture.
+
+**Solution**: Wrapper that provides Actor-compatible message streams.
+
+```rust
+// ✅ Actor-compatible Connection wrapper
+pub struct ConnectionAdapter {
+    connection: Connection<UpMsg, DownMsg>,
+}
+
+impl ConnectionAdapter {
+    pub fn new() -> (Self, impl futures::stream::Stream<Item = DownMsg>) {
+        let (message_sender, message_stream) = futures::channel::mpsc::unbounded();
+        let connection = Connection::new(move |down_msg, _| {
+            let _ = message_sender.unbounded_send(down_msg);
+        });
+        (ConnectionAdapter { connection }, message_stream)
+    }
+}
+
+// Usage in domain Actors
+let (connection_adapter, mut down_msg_stream) = ConnectionAdapter::new();
+let message_handler = Actor::new((), async move |_state| {
+    while let Some(down_msg) = down_msg_stream.next().await {
+        handle_down_msg(down_msg, &tracked_files, &selected_variables);
+    }
+});
+```
+
+#### Closure Lifetime Management Pattern
+
+**Problem**: Closures capturing borrowed domains fail lifetime checks.
+
+**Solution**: Clone domains before closures, use cloned references inside.
+
+```rust
+// ❌ BROKEN: Closure captures borrowed value
+.on_press(move || {
+    selected_variables.variable_removed_relay.send(id); // Borrow error!
+})
+
+// ✅ CORRECT: Clone before closure
+.on_press({
+    let selected_variables_for_press = selected_variables.clone();
+    move || {
+        selected_variables_for_press.variable_removed_relay.send(id); // Works!
+    }
+})
+```
+
+#### Actor+Relay Integration Pattern
+
+**Problem**: UI components lose reactive updates when globals are removed.
+
+**Solution**: Connect components directly to domain signals, not intermediate functions.
+
+```rust
+// ❌ OLD: Global function calls
+crate::selected_variables::variables_signal()
+
+// ✅ NEW: Direct domain signal access
+selected_variables.variables_vec_signal.signal_cloned()
+
+// ✅ Function signature updates
+pub fn virtual_variables_list_pre_filtered(
+    filtered_variables: Vec<VariableWithContext>,
+    selected_variables: &crate::selected_variables::SelectedVariables, // Add domain param
+) -> Column<column::EmptyFlagNotSet, RawHtmlEl> {
+    // Use selected_variables.variables_vec_signal.signal_cloned() directly
+}
+```
+
+### Migration Success Metrics
+
+**Systematic Error Reduction Pattern:**
+- Start: 146 compilation errors (global domains removal)
+- Apply domain parameter propagation: ~100 errors
+- Add signal broadcasting: ~50 errors  
+- Fix closure lifetimes: ~10 errors
+- Complete Actor+Relay integration: 0 errors
+
+**Key Success Indicators:**
+- Zero compilation errors with only warnings remaining
+- All domain parameters passed correctly through call chains
+- No global static access remaining in codebase
+- Proper Actor+Relay signal patterns throughout
+- Broadcaster pattern resolving all lifetime issues
+
+This systematic approach enables complete architectural migrations while maintaining functionality and avoiding temporary bridges or workarounds.
+
+## Getter Antipattern Masking Rust Edition Issues
+
+### Problem: Hidden Lifetime Issues from Unnecessary Method Wrappers
+
+**Discovered Issue**: Getter methods for public struct fields can mask Rust 2024 edition compiler requirements, leading to hard-to-resolve lifetime errors.
+
+**Example Scenario:**
+```rust
+// ❌ ANTIPATTERN: Unnecessary getter method masking real issue
+impl TrackedFiles {
+    pub fn files_signal_vec(&self) -> impl SignalVec<Item = TrackedFile> {
+        self.files.signal_vec()  // Wrapper around public field
+    }
+}
+
+// Usage causes mysterious lifetime errors
+tracked_files_for_signals.files_signal_vec().map(move |tracked_file| {
+    // ERROR: Lifetime issues that seem unresolvable
+})
+```
+
+**Root Cause**: 
+- **Unnecessary wrapper methods** hide the real issue: missing `+ use<T>` syntax in Rust 2024 edition
+- **ActorVec method return types** need explicit `+ use<T>` capture syntax for newer compiler
+- **Getter methods add indirection** that obscures the actual compilation requirement
+
+**✅ SOLUTION: Direct public field access reveals real issue**
+```rust
+// ✅ CORRECT: Use public fields directly (no getter wrapper)
+pub struct TrackedFiles {
+    pub files: ActorVec<TrackedFile>,  // Direct access - no getter needed
+}
+
+// Direct usage shows the real error clearly
+tracked_files_for_signals.files.signal_vec().map(move |tracked_file| {
+    // Now error clearly indicates missing + use<T> in ActorVec return type
+})
+```
+
+**Fix Required in ActorVec Implementation:**
+```rust
+// ActorVec method needs + use<T> for Rust 2024 edition
+impl<T> ActorVec<T> {
+    pub fn signal_vec(&self) -> impl SignalVec<Item = T> + use<T> {  // Add + use<T>
+        // Implementation
+    }
+}
+```
+
+**Key Lessons:**
+- **Getter methods mask real issues** - Remove unnecessary wrappers for struct fields
+- **Direct field access is clearer** - Shows actual compilation requirements
+- **Rust 2024 edition changes** require explicit `+ use<T>` capture syntax
+- **Follow public field architecture** - Don't create getters for simple field access
+
+**Prevention:**
+- Use public struct fields instead of getter methods
+- Check ActorVec/Actor method signatures for `+ use<T>` requirements
+- When encountering mysterious lifetime errors, simplify to direct field access first

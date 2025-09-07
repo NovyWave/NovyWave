@@ -15,6 +15,24 @@ When making changes to files, first understand the file's code conventions. Mimi
 - **NEVER use `#[allow(dead_code)]` or similar warning suppressors** - Remove unused code instead of hiding warnings
   - **EXCEPTION**: Dataflow module APIs (`frontend/src/dataflow/`) can use `#[allow(dead_code)]` for public methods that will be extracted to standalone crate
 
+### Compilation Error Verification (CRITICAL)
+
+**MANDATORY: Always verify ALL compilation errors are actually resolved before claiming success**
+
+- **NEVER report success without verification**: Always check `tail -100 dev_server.log | grep -E "error\[E[0-9]+\]" | wc -l` returns 0
+- **Warnings vs Errors**: Only warnings are acceptable - even 1 compilation error means task is incomplete
+- **Real Example**: Reported "32 errors fixed" when 1 error remained due to missing `.await` on async function call
+- **Verification Commands**:
+  ```bash
+  # Count remaining errors (must be 0)
+  tail -100 dev_server.log | grep -E "error\[E[0-9]+\]" | wc -l
+  
+  # Show error details if any exist
+  tail -100 dev_server.log | grep -A 5 "error\[E"
+  ```
+
+**Why This Matters**: Incomplete error resolution breaks compilation and wastes debugging time later.
+
 ### Comment Antipatterns to Avoid
 
 **NEVER add unnecessary code comments** like:

@@ -4,7 +4,6 @@
 //! It owns a Mutable<T> and processes events from Relays to update state safely.
 
 use zoon::{Mutable, Signal, Task, TaskHandle};
-// futures imports removed - not needed in current implementation
 use std::future::Future;
 use std::sync::Arc;
 

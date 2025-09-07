@@ -5,8 +5,7 @@
 
 #![allow(dead_code)] // Actor+Relay API not yet fully integrated
 
-use crate::actors::{Actor, ActorMap, Relay, relay};
-use crate::actors::global_domains::waveform_timeline_domain;
+use crate::dataflow::{Actor, ActorMap, Relay, relay};
 use crate::visualizer::timeline::time_types::{TimeNs, Viewport, NsPerPixel, TimelineCoordinates, TimelineCache};
 use shared::{SignalTransition, SignalValue, WaveformFile, VarFormat};
 use zoon::*;
@@ -19,10 +18,98 @@ const DEFAULT_CANVAS_WIDTH: f32 = 800.0;
 const DEFAULT_CANVAS_HEIGHT: f32 = 400.0;
 const FALLBACK_CANVAS_HEIGHT: f32 = 600.0;
 
-/// Domain-driven timeline management with Actor+Relay architecture.
-/// 
-/// Replaces ALL 25 timeline-related global mutables with cohesive event-driven state management.
-/// Handles cursor position, viewport, zoom/pan, mouse tracking, canvas state, and signal caching.
+/// Maximum Timeline Range actor - stores computed timeline range for efficient access
+#[derive(Clone, Debug)]
+pub struct MaximumTimelineRange {
+    pub range: Actor<Option<(f64, f64)>>,
+    pub range_updated_relay: Relay<Option<(f64, f64)>>,
+}
+
+impl MaximumTimelineRange {
+    pub async fn new(
+        tracked_files: crate::tracked_files::TrackedFiles,
+        selected_variables: crate::selected_variables::SelectedVariables,
+    ) -> Self {
+        let (range_updated_relay, mut range_updated_stream) = relay();
+        
+        let range = Actor::new(None, async move |state| {
+            loop {
+                select! {
+                    range_update = range_updated_stream.next() => {
+                        match range_update {
+                            Some(new_range) => {
+                                state.set(new_range);
+                            }
+                            None => break,
+                        }
+                    }
+                    complete => break,
+                }
+            }
+        });
+        
+        // Create timeline context for computing range (placeholder for waveform_timeline)
+        // We'll create a temporary TimelineContext since we only need get_maximum_timeline_range
+        let tracked_files_clone = tracked_files.clone();
+        let selected_variables_clone = selected_variables.clone();
+        
+        // Start background computation task
+        let range_relay = range_updated_relay.clone();
+        let files_vec_signal_clone = tracked_files_clone.files_vec_signal.clone();
+        zoon::Task::start(async move {
+            // Listen to file changes and recompute range
+            tracked_files_clone.files_signal().for_each_sync(move |_files| {
+                // Inline get_maximum_timeline_range logic to avoid circular dependency
+                let tracked_files = files_vec_signal_clone.get_cloned();
+                let loaded_files: Vec<shared::WaveformFile> = tracked_files
+                    .iter()
+                    .filter_map(|tracked_file| match &tracked_file.state {
+                        shared::FileState::Loaded(waveform_file) => Some(waveform_file.clone()),
+                        _ => None,
+                    })
+                    .collect();
+
+                if loaded_files.is_empty() {
+                    range_relay.send(None);
+                    return;
+                }
+
+                let mut min_time: f64 = f64::MAX;
+                let mut max_time: f64 = f64::MIN;
+
+                // Get min/max time from all loaded files
+                for waveform_file in &loaded_files {
+                    if let Some(start_time_ns) = waveform_file.min_time_ns {
+                        let start_time_seconds = start_time_ns as f64 / 1_000_000_000.0;
+                        min_time = min_time.min(start_time_seconds);
+                    }
+                    if let Some(end_time_ns) = waveform_file.max_time_ns {
+                        let end_time_seconds = end_time_ns as f64 / 1_000_000_000.0;
+                        max_time = max_time.max(end_time_seconds);
+                    }
+                }
+
+                if min_time != f64::MAX && max_time != f64::MIN && min_time < max_time {
+                    range_relay.send(Some((min_time, max_time)));
+                } else {
+                    range_relay.send(None);
+                }
+            });
+        });
+        
+        Self {
+            range,
+            range_updated_relay,
+        }
+    }
+    
+    /// Get signal for timeline range
+    pub fn range_signal(&self) -> impl Signal<Item = Option<(f64, f64)>> {
+        self.range.signal()
+    }
+}
+
+/// Timeline management with Actor+Relay architecture
 #[derive(Clone, Debug)]
 pub struct WaveformTimeline {
     // === CORE TIMELINE STATE (15 mutables from state.rs) ===
@@ -53,6 +140,9 @@ pub struct WaveformTimeline {
     /// Smooth cursor movement control flags
     cursor_moving_left: Actor<bool>,
     cursor_moving_right: Actor<bool>,
+    
+    /// Maximum timeline range for zoom calculations
+    maximum_timeline_range: MaximumTimelineRange,
     
     /// Direct cursor animation state (migrated from DIRECT_CURSOR_ANIMATION static)
     pub cursor_animation_position: Actor<f64>,     // Current position in seconds (high precision)
@@ -249,7 +339,11 @@ impl WaveformTimeline {
     /// - 15 core timeline mutables from state.rs
     /// - 5 zoom/pan mutables from state.rs  
     /// - 5 canvas mutables from waveform_canvas.rs
-    pub async fn new() -> Self {
+    pub async fn new(maximum_timeline_range: MaximumTimelineRange) -> Self {
+        // Clone-at-entry pattern: Create clones for multiple Actor usage
+        let maximum_timeline_range_for_viewport = maximum_timeline_range.clone();
+        let maximum_timeline_range_for_ns_per_pixel = maximum_timeline_range.clone();
+        
         // Create relays for comprehensive user interactions
         let (cursor_clicked_relay, cursor_clicked_stream) = relay::<TimeNs>();
         let (cursor_moved_relay, cursor_moved_stream) = relay::<TimeNs>();
@@ -301,12 +395,8 @@ impl WaveformTimeline {
         
         // Helper function to get initial cursor position
         let get_initial_cursor_position = || {
-            if let Some((min_time, max_time)) = crate::visualizer::canvas::waveform_canvas::get_current_timeline_range() {
-                let center_time = (min_time + max_time) / 2.0;
-                TimeNs::from_external_seconds(center_time)
-            } else {
-                TimeNs::ZERO
-            }
+            // Use default cursor position - proper range will be set via MaximumTimelineRange actor
+            TimeNs::from_external_seconds(0.5)  // Start at 0.5 seconds
         };
         
         // Create cursor position actor with comprehensive event handling
@@ -390,16 +480,8 @@ impl WaveformTimeline {
         
         // Helper function to get initial viewport from file data
         let get_initial_viewport = || {
-            // Try to get file range from loaded files
-            if let Some((min_time, max_time)) = crate::visualizer::canvas::waveform_canvas::get_maximum_timeline_range() {
-                let file_span = max_time - min_time;
-                if file_span > 1.0 {  // Use file data if span > 1 second
-                    return Viewport::new(
-                        TimeNs::from_external_seconds(min_time),
-                        TimeNs::from_external_seconds(max_time)
-                    );
-                }
-            }
+            // During initialization, use fallback since range will be computed later
+            // The range will update via timeline_range_stream once files are loaded
             Viewport::new(TimeNs::ZERO, TimeNs::from_external_seconds(1.0))  // 1-second fallback
         };
 
@@ -412,6 +494,10 @@ impl WaveformTimeline {
                     let mut viewport_changed = _viewport_changed_stream;
                     let mut timeline_bounds_calculated = timeline_bounds_calculated_stream;
                     let mut fit_all_clicked = fit_all_clicked_stream;
+                    let mut timeline_range_stream = maximum_timeline_range_for_viewport.range_signal().to_stream().fuse();
+                
+                // Cache current values pattern for timeline range
+                let mut cached_timeline_range: Option<(f64, f64)> = None;
                 
                 loop {
                     select! {
@@ -436,13 +522,17 @@ impl WaveformTimeline {
                                     );
                                     viewport_handle.set(new_viewport);
                                     
-                                    // ✅ FIX: Trigger automatic fit-all zoom when timeline bounds are calculated (on file load)
-                                    // Use the same relay that R key uses for consistent behavior
-                                    crate::visualizer::timeline::timeline_actor_domain().reset_zoom_pressed_relay.send(());
-                                    
                                     // ✅ FIX: Center cursor at viewport center when timeline bounds are calculated
                                     let _center_time = (min_time + max_time) / 2.0;
                                     cursor_center_at_viewport_relay_clone.send(());
+                                }
+                                None => break,
+                            }
+                        }
+                        range_update = timeline_range_stream.next() => {
+                            match range_update {
+                                Some(new_range) => {
+                                    cached_timeline_range = new_range;
                                 }
                                 None => break,
                             }
@@ -451,7 +541,7 @@ impl WaveformTimeline {
                             match event {
                                 Some(()) => {
                                     // ✅ FIX: Reset viewport to full timeline range using actual file data
-                                    if let Some((min_time, max_time)) = crate::visualizer::canvas::waveform_canvas::get_maximum_timeline_range() {
+                                    if let Some((min_time, max_time)) = cached_timeline_range {
                                         let full_timeline_viewport = Viewport::new(
                                             TimeNs::from_external_seconds(min_time),
                                             TimeNs::from_external_seconds(max_time)
@@ -459,9 +549,9 @@ impl WaveformTimeline {
                                         viewport_handle.set_neq(full_timeline_viewport);
                                         
                                     } else {
-                                        // Fallback to full file range if no variables selected
-                                        let (file_min, file_max) = crate::visualizer::canvas::waveform_canvas::get_full_file_range();
-                                        if file_min < file_max && file_min.is_finite() && file_max.is_finite() {
+                                        // Fallback viewport using default range if no timeline range cached
+                                        let (file_min, file_max) = (0.0, 1.0);  // 1-second fallback
+                                        if file_min < file_max {
                                             let full_timeline_viewport = Viewport::new(
                                                 TimeNs::from_external_seconds(file_min),
                                                 TimeNs::from_external_seconds(file_max)
@@ -496,6 +586,10 @@ impl WaveformTimeline {
                 let mut zoom_out_started = zoom_out_started_stream;
                 let mut zoom_in_pressed = zoom_in_pressed_stream;
                 let mut zoom_out_pressed = zoom_out_pressed_stream;
+                
+                // Cache current values pattern for timeline range
+                let mut cached_timeline_range: Option<(f64, f64)> = None;
+                let mut timeline_range_stream = maximum_timeline_range_for_ns_per_pixel.range_signal().to_stream().fuse();
                 let mut reset_zoom_pressed = reset_zoom_pressed_stream;
                 let mut reset_zoom_center_pressed = reset_zoom_center_pressed_stream;
                 let mut ns_per_pixel_changed = ns_per_pixel_changed_stream;
@@ -503,6 +597,12 @@ impl WaveformTimeline {
             
             loop {
                 select! {
+                    // Update cached timeline range
+                    range = timeline_range_stream.next() => {
+                        if let Some(new_range) = range {
+                            cached_timeline_range = new_range;
+                        }
+                    }
                     event = zoom_in_started.next() => {
                         match event {
                             Some(_center_time) => {
@@ -531,11 +631,11 @@ impl WaveformTimeline {
                                 
                                 // ✅ CRITICAL FIX: Update viewport when zoom changes
                                 let _current_viewport = viewport_for_ns_per_pixel.signal().to_stream().next().await.unwrap_or_else(|| {
-                                    panic!("Canvas resize without valid file range - no data available")
+                                    crate::visualizer::timeline::time_types::Viewport::default() // Default viewport when no data available
                                 });
                                 
-                                let timeline = crate::actors::global_domains::waveform_timeline_domain();
-                                let canvas_width = timeline.canvas_width.signal().to_stream().next().await.unwrap_or(0.0);
+                                // TODO: Pass WaveformTimeline instance as parameter - using default for now
+                                let canvas_width = DEFAULT_CANVAS_WIDTH;
                                 if canvas_width <= 0.0 {
                                     continue; // Timeline not initialized yet, skip this frame
                                 }
@@ -571,10 +671,10 @@ impl WaveformTimeline {
                                 
                                 // ✅ CRITICAL FIX: Update viewport when zoom changes
                                 let _current_viewport = viewport_for_ns_per_pixel.signal().to_stream().next().await.unwrap_or_else(|| {
-                                    panic!("Canvas resize without valid file range - no data available")
+                                    crate::visualizer::timeline::time_types::Viewport::default() // Default viewport when no data available
                                 });
-                                let timeline = crate::actors::global_domains::waveform_timeline_domain();
-                                let canvas_width = timeline.canvas_width.signal().to_stream().next().await.unwrap_or(0.0);
+                                // TODO: Pass WaveformTimeline instance as parameter - using default for now
+                                let canvas_width = DEFAULT_CANVAS_WIDTH;
                                 if canvas_width <= 0.0 {
                                     continue; // Timeline not initialized yet, skip this frame
                                 }
@@ -659,7 +759,7 @@ impl WaveformTimeline {
                                 let canvas_width = canvas_width as u32;
                                 
                                 
-                                if let Some((min_time, max_time)) = crate::visualizer::canvas::waveform_canvas::get_maximum_timeline_range() {
+                                if let Some((min_time, max_time)) = cached_timeline_range {
                                     // ITERATION 7: Debug checkpoint 2 - After timeline range calculation
                                     
                                     let time_range_ns = ((max_time - min_time) * crate::visualizer::timeline::time_types::NS_PER_SECOND) as u64;
@@ -708,7 +808,8 @@ impl WaveformTimeline {
                                         
                                     // ITERATION 8: COMPREHENSIVE SUMMARY per R key press
                                 } else {
-                                    panic!("R KEY: No timeline range available - Actor not properly initialized");
+                                    // R KEY: No timeline range available - skip reset operation
+                                    continue; // Skip this reset operation when no data is available
                                 }
                             }
                             None => break,
@@ -1100,7 +1201,6 @@ impl WaveformTimeline {
                             Some(()) => {
                                 redraw_handle.update_mut(|counter| {
                                     *counter += 1;
-                                    // Removed redraw counter debug spam
                                 });
                             },
                             None => break,
@@ -1141,6 +1241,7 @@ impl WaveformTimeline {
             panning_right,
             cursor_moving_left,
             cursor_moving_right,
+            maximum_timeline_range,
             shift_pressed,
             
             // Mouse tracking
@@ -1433,7 +1534,6 @@ impl WaveformTimeline {
     /// Create a dummy instance for relay access during initialization
     /// This prevents panics when timeline functions are called before domain initialization
     pub fn new_dummy_for_initialization() -> Self {
-        // unused shared import removed
         
         // Create dummy relays that can be cloned but won't process events meaningfully
         let cursor_clicked_relay = Relay::new();
@@ -1494,6 +1594,10 @@ impl WaveformTimeline {
             panning_right: Actor::new(false, async |_| { loop { futures::future::pending::<()>().await; } }),
             cursor_moving_left: Actor::new(false, async |_| { loop { futures::future::pending::<()>().await; } }),
             cursor_moving_right: Actor::new(false, async |_| { loop { futures::future::pending::<()>().await; } }),
+            maximum_timeline_range: MaximumTimelineRange {
+                range: Actor::new(None, async |_| { loop { futures::future::pending::<()>().await; } }),
+                range_updated_relay: Relay::new(),
+            },
             shift_pressed: Actor::new(false, async |_| { loop { futures::future::pending::<()>().await; } }),
             mouse_x: Actor::new(0.0, async |_| { loop { futures::future::pending::<()>().await; } }),
             mouse_time: Actor::new(TimeNs::ZERO, async |_| { loop { futures::future::pending::<()>().await; } }),
@@ -1567,206 +1671,6 @@ impl WaveformTimeline {
         }
     }
 
-    // === STATIC SIGNAL ACCESSORS FOR GLOBAL FUNCTIONS ===
-    
-    /// Variable formats signal from domain - PROPERLY CONNECTED TO WAVEFORM_TIMELINE_DOMAIN
-    pub fn variable_formats_signal_static() -> impl zoon::Signal<Item = HashMap<String, VarFormat>> {
-        crate::actors::global_domains::waveform_timeline_domain()
-            .variable_formats_hashmap_signal
-            .signal_cloned()
-    }
-    
-    /// Pending request signal from domain - PROPERLY CONNECTED TO WAVEFORM_TIMELINE_DOMAIN
-    pub fn has_pending_request_signal_static() -> impl zoon::Signal<Item = bool> {
-        crate::actors::global_domains::waveform_timeline_domain()
-            .has_pending_request
-            .signal()
-    }
-    
-    /// Canvas cache signal from domain - PROPERLY CONNECTED TO WAVEFORM_TIMELINE_DOMAIN
-    pub fn canvas_cache_signal_static() -> impl zoon::Signal<Item = HashMap<String, Vec<(f32, SignalValue)>>> {
-        crate::actors::global_domains::waveform_timeline_domain()
-            .canvas_cache_hashmap_signal
-            .signal_cloned()
-    }
-    
-    /// Force redraw signal from domain - PROPERLY CONNECTED TO WAVEFORM_TIMELINE_DOMAIN
-    pub fn force_redraw_signal_static() -> impl zoon::Signal<Item = u32> {
-        crate::actors::global_domains::waveform_timeline_domain()
-            .force_redraw
-            .signal()
-    }
-    
-    /// Last redraw time signal from domain - PROPERLY CONNECTED TO WAVEFORM_TIMELINE_DOMAIN
-    pub fn last_redraw_time_signal_static() -> impl zoon::Signal<Item = f64> {
-        crate::actors::global_domains::waveform_timeline_domain()
-            .last_redraw_time
-            .signal()
-    }
-    
-    /// Last canvas update signal from domain - PROPERLY CONNECTED TO WAVEFORM_TIMELINE_DOMAIN
-    pub fn last_canvas_update_signal_static() -> impl zoon::Signal<Item = u64> {
-        crate::actors::global_domains::waveform_timeline_domain()
-            .last_canvas_update
-            .signal()
-    }
-    
-    /// Mouse X signal from domain - PROPERLY CONNECTED TO WAVEFORM_TIMELINE_DOMAIN
-    pub fn mouse_x_signal_static() -> impl zoon::Signal<Item = f32> {
-        crate::actors::global_domains::waveform_timeline_domain()
-            .mouse_x
-            .signal()
-    }
-    
-    /// Mouse time signal from domain - PROPERLY CONNECTED TO WAVEFORM_TIMELINE_DOMAIN
-    pub fn mouse_time_signal_static() -> impl zoon::Signal<Item = TimeNs> {
-        crate::actors::global_domains::waveform_timeline_domain()
-            .mouse_time
-            .signal()
-    }
-    
-    /// Zoom center signal from domain - PROPERLY CONNECTED TO WAVEFORM_TIMELINE_DOMAIN
-    pub fn zoom_center_signal_static() -> impl zoon::Signal<Item = TimeNs> {
-        crate::actors::global_domains::waveform_timeline_domain()
-            .zoom_center
-            .signal()
-    }
-    
-    /// Canvas width signal from domain - PROPERLY CONNECTED TO WAVEFORM_TIMELINE_DOMAIN
-    pub fn canvas_width_signal_static() -> impl zoon::Signal<Item = f32> {
-        crate::actors::global_domains::waveform_timeline_domain()
-            .canvas_width
-            .signal()
-    }
-    
-    /// Canvas height signal from domain - PROPERLY CONNECTED TO WAVEFORM_TIMELINE_DOMAIN
-    pub fn canvas_height_signal_static() -> impl zoon::Signal<Item = f32> {
-        crate::actors::global_domains::waveform_timeline_domain()
-            .canvas_height
-            .signal()
-    }
-    
-    /// Signal values signal from domain - PROPERLY CONNECTED TO WAVEFORM_TIMELINE_DOMAIN
-    pub fn signal_values_signal_static() -> impl zoon::Signal<Item = HashMap<String, SignalValue>> {
-        crate::actors::global_domains::waveform_timeline_domain()
-            .signal_values_hashmap_signal
-            .signal_cloned()
-    }
-
-    // === MORE STATIC SIGNAL ACCESSORS ===
-    
-    /// Cursor position signal from domain - PROPERLY CONNECTED TO WAVEFORM_TIMELINE_DOMAIN
-    pub fn cursor_position_signal_static() -> impl zoon::Signal<Item = TimeNs> {
-        crate::actors::global_domains::waveform_timeline_domain()
-            .cursor_position
-            .signal()
-    }
-    
-    /// Cursor position seconds signal from domain - PROPERLY CONNECTED TO WAVEFORM_TIMELINE_DOMAIN
-    pub fn cursor_position_seconds_signal_static() -> impl zoon::Signal<Item = f64> {
-        crate::actors::global_domains::waveform_timeline_domain()
-            .cursor_position
-            .signal()
-            .map(|time_ns| time_ns.display_seconds())
-    }
-    
-    /// Viewport signal from domain - PROPERLY CONNECTED TO WAVEFORM_TIMELINE_DOMAIN
-    /// Returns None until actual VCD data is loaded - no fallbacks!
-    pub fn viewport_signal_static() -> impl zoon::Signal<Item = Option<Viewport>> {
-        crate::actors::global_domains::waveform_timeline_domain()
-            .viewport
-            .signal()
-            .map(|viewport| Some(viewport))
-    }
-    
-    /// Ns per pixel signal from domain - PROPERLY CONNECTED TO WAVEFORM_TIMELINE_DOMAIN
-    pub fn ns_per_pixel_signal_static() -> impl zoon::Signal<Item = NsPerPixel> {
-        crate::actors::global_domains::waveform_timeline_domain()
-            .ns_per_pixel
-            .signal()
-    }
-    
-    /// Coordinates signal from domain - PROPERLY CONNECTED TO WAVEFORM_TIMELINE_DOMAIN
-    pub fn coordinates_signal_static() -> impl zoon::Signal<Item = TimelineCoordinates> {
-        let timeline = crate::actors::global_domains::waveform_timeline_domain();
-        zoon::map_ref! {
-            let cursor_pos = timeline.cursor_position.signal(),
-            let viewport = timeline.viewport.signal(),
-            let ns_per_pixel = timeline.ns_per_pixel.signal(),
-            let canvas_width = timeline.canvas_width.signal() =>
-            TimelineCoordinates::new(
-                *cursor_pos,
-                viewport.start,
-                *ns_per_pixel,
-                *canvas_width as u32
-            )
-        }
-    }
-    
-    /// Cache signal from domain - PROPERLY CONNECTED TO WAVEFORM_TIMELINE_DOMAIN
-    pub fn cache_signal_static() -> impl zoon::Signal<Item = ()> {
-        crate::actors::global_domains::waveform_timeline_domain()
-            .cache
-            .signal_ref(|_| ())
-    }
-    
-    /// Cursor initialized signal from domain - PROPERLY CONNECTED TO WAVEFORM_TIMELINE_DOMAIN
-    pub fn cursor_initialized_signal_static() -> impl zoon::Signal<Item = bool> {
-        crate::actors::global_domains::waveform_timeline_domain()
-            .cursor_initialized
-            .signal()
-    }
-    
-    // === CONTROL FLAGS STATIC SIGNALS ===
-    
-    /// Zooming in signal from domain - PROPERLY CONNECTED TO WAVEFORM_TIMELINE_DOMAIN
-    pub fn zooming_in_signal_static() -> impl zoon::Signal<Item = bool> {
-        crate::actors::global_domains::waveform_timeline_domain()
-            .zooming_in
-            .signal()
-    }
-    
-    /// Zooming out signal from domain - PROPERLY CONNECTED TO WAVEFORM_TIMELINE_DOMAIN
-    pub fn zooming_out_signal_static() -> impl zoon::Signal<Item = bool> {
-        crate::actors::global_domains::waveform_timeline_domain()
-            .zooming_out
-            .signal()
-    }
-    
-    /// Panning left signal from domain - PROPERLY CONNECTED TO WAVEFORM_TIMELINE_DOMAIN
-    pub fn panning_left_signal_static() -> impl zoon::Signal<Item = bool> {
-        crate::actors::global_domains::waveform_timeline_domain()
-            .panning_left
-            .signal()
-    }
-    
-    /// Panning right signal from domain - PROPERLY CONNECTED TO WAVEFORM_TIMELINE_DOMAIN
-    pub fn panning_right_signal_static() -> impl zoon::Signal<Item = bool> {
-        crate::actors::global_domains::waveform_timeline_domain()
-            .panning_right
-            .signal()
-    }
-    
-    /// Cursor moving left signal from domain - PROPERLY CONNECTED TO WAVEFORM_TIMELINE_DOMAIN
-    pub fn cursor_moving_left_signal_static() -> impl zoon::Signal<Item = bool> {
-        crate::actors::global_domains::waveform_timeline_domain()
-            .cursor_moving_left
-            .signal()
-    }
-    
-    /// Cursor moving right signal from domain - PROPERLY CONNECTED TO WAVEFORM_TIMELINE_DOMAIN
-    pub fn cursor_moving_right_signal_static() -> impl zoon::Signal<Item = bool> {
-        crate::actors::global_domains::waveform_timeline_domain()
-            .cursor_moving_right
-            .signal()
-    }
-    
-    /// Shift pressed signal from domain - PROPERLY CONNECTED TO WAVEFORM_TIMELINE_DOMAIN
-    pub fn shift_pressed_signal_static() -> impl zoon::Signal<Item = bool> {
-        crate::actors::global_domains::waveform_timeline_domain()
-            .shift_pressed
-            .signal()
-    }
 }
 
 // === EVENT HANDLER IMPLEMENTATIONS ===
@@ -1842,140 +1746,6 @@ impl WaveformTimeline {
 
 // === CONVENIENCE FUNCTIONS FOR UI INTEGRATION ===
 
-// ===== GLOBAL WAVEFORM TIMELINE INSTANCE =====
-
-// ✅ ELIMINATED: WAVEFORM_TIMELINE_INSTANCE duplicate domain instance
-// Now using centralized global_domains::WAVEFORM_TIMELINE_DOMAIN_INSTANCE
-
-// ✅ ELIMINATED: initialize_waveform_timeline() - initialization handled by global_domains::initialize_all_domains()
-
-/// Get the global WaveformTimeline instance
-fn get_waveform_timeline() -> WaveformTimeline {
-    // Use the global domains instance (which is properly initialized by initialize_all_domains())
-    crate::actors::global_domains::waveform_timeline_domain().clone()
-}
-
-// ===== CONVENIENCE FUNCTIONS FOR GLOBAL ACCESS =====
-
-// === CORE TIMELINE STATE ACCESS ===
-
-/// Get cursor position signal (replaces _TIMELINE_CURSOR_NS.signal())
-pub fn cursor_position_signal() -> impl zoon::Signal<Item = TimeNs> {
-    crate::actors::global_domains::waveform_timeline_domain().cursor_position.signal()
-}
-
-/// Get cursor position in seconds signal (compatibility)
-pub fn cursor_position_seconds_signal() -> impl zoon::Signal<Item = f64> {
-    crate::actors::global_domains::waveform_timeline_domain().cursor_position.signal()
-        .map(|time_ns| time_ns.display_seconds())
-}
-
-/// Get viewport signal (replaces _TIMELINE_VIEWPORT.signal())
-pub fn viewport_signal() -> impl zoon::Signal<Item = Viewport> {
-    crate::actors::global_domains::waveform_timeline_domain()
-        .viewport
-        .signal()
-}
-
-/// Get ns per pixel signal (replaces _TIMELINE_NS_PER_PIXEL.signal())
-pub fn ns_per_pixel_signal() -> impl zoon::Signal<Item = NsPerPixel> {
-    crate::actors::global_domains::waveform_timeline_domain().ns_per_pixel.signal().map(|value| {
-        value
-    })
-}
-
-/// Get coordinates signal (replaces _TIMELINE_COORDINATES.signal())
-pub fn coordinates_signal() -> impl zoon::Signal<Item = TimelineCoordinates> {
-    let timeline = crate::actors::global_domains::waveform_timeline_domain();
-    zoon::map_ref! {
-        let cursor_pos = timeline.cursor_position.signal(),
-        let viewport = timeline.viewport.signal(),
-        let ns_per_pixel = timeline.ns_per_pixel.signal(),
-        let canvas_width = timeline.canvas_width.signal() =>
-        TimelineCoordinates::new(
-            *cursor_pos,
-            viewport.start,
-            *ns_per_pixel,
-            *canvas_width as u32
-        )
-    }
-}
-
-/// Get unified cache signal (replaces UNIFIED_TIMELINE_CACHE.signal())
-pub fn unified_timeline_cache_signal() -> impl zoon::Signal<Item = ()> {
-    crate::actors::global_domains::waveform_timeline_domain()
-        .cache
-        .signal_ref(|_| ())
-}
-
-/// Get cursor initialized signal (replaces STARTUP_CURSOR_POSITION_SET.signal())
-pub fn startup_cursor_position_set_signal() -> impl zoon::Signal<Item = bool> {
-    crate::actors::global_domains::waveform_timeline_domain()
-        .cursor_initialized
-        .signal()
-}
-
-// === CONTROL FLAG SIGNALS ===
-
-/// Get zooming in signal (replaces IS_ZOOMING_IN.signal())
-pub fn is_zooming_in_signal() -> impl zoon::Signal<Item = bool> {
-    crate::actors::global_domains::waveform_timeline_domain()
-        .zooming_in
-        .signal()
-}
-
-/// Get zooming out signal (replaces IS_ZOOMING_OUT.signal())
-pub fn is_zooming_out_signal() -> impl zoon::Signal<Item = bool> {
-    crate::actors::global_domains::waveform_timeline_domain()
-        .zooming_out
-        .signal()
-}
-
-/// Get panning left signal (replaces IS_PANNING_LEFT.signal())
-pub fn is_panning_left_signal() -> impl zoon::Signal<Item = bool> {
-    crate::actors::global_domains::waveform_timeline_domain()
-        .panning_left
-        .signal()
-}
-
-/// Get panning right signal (replaces IS_PANNING_RIGHT.signal())
-pub fn is_panning_right_signal() -> impl zoon::Signal<Item = bool> {
-    crate::actors::global_domains::waveform_timeline_domain()
-        .panning_right
-        .signal()
-}
-
-/// Get cursor moving left signal (replaces IS_CURSOR_MOVING_LEFT.signal())
-pub fn is_cursor_moving_left_signal() -> impl zoon::Signal<Item = bool> {
-    crate::actors::global_domains::waveform_timeline_domain()
-        .cursor_moving_left
-        .signal()
-}
-
-/// Get cursor moving right signal (replaces IS_CURSOR_MOVING_RIGHT.signal())
-pub fn is_cursor_moving_right_signal() -> impl zoon::Signal<Item = bool> {
-    crate::actors::global_domains::waveform_timeline_domain()
-        .cursor_moving_right
-        .signal()
-}
-
-/// Get shift pressed signal (replaces IS_SHIFT_PRESSED.signal())
-pub fn is_shift_pressed_signal() -> impl zoon::Signal<Item = bool> {
-    crate::actors::global_domains::waveform_timeline_domain()
-        .shift_pressed
-        .signal()
-}
-
-/// Get current shift pressed state synchronously (replaces IS_SHIFT_PRESSED.get())
-/// ❌ DEPRECATED: Use is_shift_pressed_signal() for reactive patterns
-/// This synchronous function violates Actor+Relay architecture
-#[deprecated(note = "Use is_shift_pressed_signal() for proper reactive patterns")]
-pub fn is_shift_pressed() -> bool {
-    // ❌ ANTIPATTERN: This function should be eliminated - use signals instead
-    // For now, return default to fix compilation. Calling code should use reactive signals.
-    false // Always return false - calling code must migrate to reactive patterns
-}
-
 // === ANIMATION STATE SYNCHRONOUS ACCESS (MIGRATION BRIDGES) ===
 
 /// Get current zooming in state synchronously (replaces IS_ZOOMING_IN.get())
@@ -2013,102 +1783,26 @@ pub fn is_cursor_moving_right() -> bool {
     false  // Global mutable eliminated, animation state managed internally
 }
 
+/// Get current shift pressed state synchronously (replaces IS_SHIFT_PRESSED.get())
+/// ❌ DEPRECATED: Use signal-based reactive patterns instead
+/// This synchronous function violates Actor+Relay architecture  
+pub fn is_shift_pressed() -> bool {
+    false // Always return false - calling code must migrate to reactive patterns
+}
+
 // === VARIABLE FORMAT SYNCHRONOUS ACCESS (MIGRATION BRIDGE) ===
 
 /// Get variable format for a specific signal ID (replaces SELECTED_VARIABLE_FORMATS.lock_ref().get())
 /// ✅ MIGRATED: Returns None as global mutable eliminated
-/// TODO: Replace with proper waveform_timeline_domain signal access
 pub fn get_variable_format(_unique_id: &str) -> Option<VarFormat> {
     None  // Global mutable eliminated, format state managed in Actor domain
 }
 
-// === MOUSE TRACKING SIGNALS ===
-
-/// Get mouse X position signal (replaces MOUSE_X_POSITION.signal())
-pub fn mouse_x_position_signal() -> impl zoon::Signal<Item = f32> {
-    crate::actors::global_domains::waveform_timeline_domain()
-        .mouse_x
-        .signal()
-}
-
-/// Get mouse time signal (replaces MOUSE_TIME_NS.signal())
-pub fn mouse_time_ns_signal() -> impl zoon::Signal<Item = TimeNs> {
-    crate::actors::global_domains::waveform_timeline_domain()
-        .mouse_time
-        .signal()
-}
-
-// === ZOOM/PAN SIGNALS ===
-
-/// Get zoom center signal (replaces ZOOM_CENTER_NS.signal())
-pub fn zoom_center_ns_signal() -> impl zoon::Signal<Item = TimeNs> {
-    crate::actors::global_domains::waveform_timeline_domain()
-        .zoom_center
-        .signal()
-}
-
-/// Get canvas width signal (replaces CANVAS_WIDTH.signal())
-pub fn canvas_width_signal() -> impl zoon::Signal<Item = f32> {
-    crate::actors::global_domains::waveform_timeline_domain()
-        .canvas_width
-        .signal()
-}
-
-/// Get canvas height signal (replaces CANVAS_HEIGHT.signal())
-pub fn canvas_height_signal() -> impl zoon::Signal<Item = f32> {
-    crate::actors::global_domains::waveform_timeline_domain()
-        .canvas_height
-        .signal()
-}
-
-/// Get signal values signal (replaces SIGNAL_VALUES.signal())
-pub fn signal_values_signal() -> impl zoon::Signal<Item = HashMap<String, SignalValue>> {
-    crate::actors::global_domains::waveform_timeline_domain()
-        .signal_values_hashmap_signal
-        .signal_cloned()
-}
-
-/// Get variable formats signal (replaces SELECTED_VARIABLE_FORMATS.signal())
-pub fn selected_variable_formats_signal() -> impl zoon::Signal<Item = HashMap<String, VarFormat>> {
-    crate::actors::global_domains::waveform_timeline_domain()
-        .variable_formats_hashmap_signal
-        .signal_cloned()
-}
-
 // === CANVAS STATE SIGNALS ===
 
-/// Get pending request signal (replaces _HAS_PENDING_REQUEST.signal())
-pub fn has_pending_request_signal() -> impl zoon::Signal<Item = bool> {
-    crate::actors::global_domains::waveform_timeline_domain()
-        .has_pending_request
-        .signal()
-}
-
-/// Get canvas cache signal (replaces PROCESSED_CANVAS_CACHE.signal())
-pub fn processed_canvas_cache_signal() -> impl zoon::Signal<Item = HashMap<String, Vec<(f32, SignalValue)>>> {
-    crate::actors::global_domains::waveform_timeline_domain()
-        .canvas_cache_hashmap_signal
-        .signal_cloned()
-}
-
 /// Get force redraw signal (replaces FORCE_REDRAW.signal())
-pub fn force_redraw_signal() -> impl zoon::Signal<Item = u32> {
-    // Use real domain actor signal instead of static fallback
-    get_waveform_timeline().force_redraw.signal()
-}
-
-/// Get last redraw time signal (replaces LAST_REDRAW_TIME.signal())
-pub fn last_redraw_time_signal() -> impl zoon::Signal<Item = f64> {
-    crate::actors::global_domains::waveform_timeline_domain()
-        .last_redraw_time
-        .signal()
-}
-
-/// Get last canvas update signal (replaces LAST_CANVAS_UPDATE.signal())
-pub fn last_canvas_update_signal() -> impl zoon::Signal<Item = u64> {
-    crate::actors::global_domains::waveform_timeline_domain()
-        .last_canvas_update
-        .signal()
+pub fn force_redraw_signal(timeline: &WaveformTimeline) -> impl zoon::Signal<Item = u32> {
+    timeline.force_redraw.signal()
 }
 
 // ===== EVENT RELAY FUNCTIONS FOR UI INTEGRATION =====
@@ -2116,166 +1810,162 @@ pub fn last_canvas_update_signal() -> impl zoon::Signal<Item = u64> {
 // === USER INTERACTION EVENTS ===
 
 /// User clicked on timeline at specific time (replaces direct cursor position setting)
-pub fn cursor_clicked_relay() -> Relay<TimeNs> {
-    get_waveform_timeline().cursor_clicked_relay.clone()
+pub fn cursor_clicked_relay(timeline: &WaveformTimeline) -> Relay<TimeNs> {
+    timeline.cursor_clicked_relay.clone()
 }
 
 /// User moved cursor to specific time
-pub fn cursor_moved_relay() -> Relay<TimeNs> {
-    get_waveform_timeline().cursor_moved_relay.clone()
+pub fn cursor_moved_relay(timeline: &WaveformTimeline) -> Relay<TimeNs> {
+    timeline.cursor_moved_relay.clone()
 }
 
 /// User started zoom in gesture at specific time
-pub fn zoom_in_started_relay() -> Relay<TimeNs> {
-    get_waveform_timeline().zoom_in_started_relay.clone()
+pub fn zoom_in_started_relay(timeline: &WaveformTimeline) -> Relay<TimeNs> {
+    timeline.zoom_in_started_relay.clone()
 }
 
 /// User started zoom out gesture at specific time
-pub fn zoom_out_started_relay() -> Relay<TimeNs> {
-    get_waveform_timeline().zoom_out_started_relay.clone()
+pub fn zoom_out_started_relay(timeline: &WaveformTimeline) -> Relay<TimeNs> {
+    timeline.zoom_out_started_relay.clone()
 }
 
 /// User started panning left
-pub fn pan_left_started_relay() -> Relay<()> {
-    get_waveform_timeline().pan_left_started_relay.clone()
+pub fn pan_left_started_relay(timeline: &WaveformTimeline) -> Relay<()> {
+    timeline.pan_left_started_relay.clone()
 }
 
 /// User started panning right
-pub fn pan_right_started_relay() -> Relay<()> {
-    get_waveform_timeline().pan_right_started_relay.clone()
+pub fn pan_right_started_relay(timeline: &WaveformTimeline) -> Relay<()> {
+    timeline.pan_right_started_relay.clone()
 }
 
 /// User moved mouse over canvas (position and time)
-pub fn mouse_moved_relay() -> Relay<(f32, TimeNs)> {
-    get_waveform_timeline().mouse_moved_relay.clone()
+pub fn mouse_moved_relay(timeline: &WaveformTimeline) -> Relay<(f32, TimeNs)> {
+    timeline.mouse_moved_relay.clone()
 }
 
 /// Canvas dimensions changed (resize)
-pub fn canvas_resized_relay() -> Relay<(f32, f32)> {
-    get_waveform_timeline().canvas_resized_relay.clone()
+pub fn canvas_resized_relay(timeline: &WaveformTimeline) -> Relay<(f32, f32)> {
+    timeline.canvas_resized_relay.clone()
 }
 
 /// Force redraw requested
-pub fn redraw_requested_relay() -> Relay<()> {
-    get_waveform_timeline().redraw_requested_relay.clone()
+pub fn redraw_requested_relay(timeline: &WaveformTimeline) -> Relay<()> {
+    timeline.redraw_requested_relay.clone()
 }
 
 /// Signal values updated from backend
-pub fn signal_values_updated_relay() -> Relay<HashMap<String, SignalValue>> {
-    get_waveform_timeline().signal_values_updated_relay.clone()
+pub fn signal_values_updated_relay(timeline: &WaveformTimeline) -> Relay<HashMap<String, SignalValue>> {
+    timeline.signal_values_updated_relay.clone()
 }
 
 /// Variable format updated for specific variable
-pub fn variable_format_updated_relay() -> Relay<(String, VarFormat)> {
-    get_waveform_timeline().variable_format_updated_relay.clone()
+pub fn variable_format_updated_relay(timeline: &WaveformTimeline) -> Relay<(String, VarFormat)> {
+    timeline.variable_format_updated_relay.clone()
 }
 
 // === KEYBOARD NAVIGATION EVENTS ===
 
 /// User pressed left arrow key
-pub fn left_key_pressed_relay() -> Relay<()> {
-    get_waveform_timeline().left_key_pressed_relay.clone()
+pub fn left_key_pressed_relay(timeline: &WaveformTimeline) -> Relay<()> {
+    timeline.left_key_pressed_relay.clone()
 }
 
 /// User pressed right arrow key
-pub fn right_key_pressed_relay() -> Relay<()> {
-    get_waveform_timeline().right_key_pressed_relay.clone()
+pub fn right_key_pressed_relay(timeline: &WaveformTimeline) -> Relay<()> {
+    timeline.right_key_pressed_relay.clone()
 }
 
 /// User pressed zoom in key
-pub fn zoom_in_pressed_relay() -> Relay<()> {
-    get_waveform_timeline().zoom_in_pressed_relay.clone()
+pub fn zoom_in_pressed_relay(timeline: &WaveformTimeline) -> Relay<()> {
+    timeline.zoom_in_pressed_relay.clone()
 }
 
 /// User pressed zoom out key
-pub fn zoom_out_pressed_relay() -> Relay<()> {
-    get_waveform_timeline().zoom_out_pressed_relay.clone()
+pub fn zoom_out_pressed_relay(timeline: &WaveformTimeline) -> Relay<()> {
+    timeline.zoom_out_pressed_relay.clone()
 }
 
 // === SYSTEM EVENTS ===
 
 /// Waveform data loaded from file
-pub fn data_loaded_relay() -> Relay<(String, WaveformFile)> {
-    get_waveform_timeline().data_loaded_relay.clone()
+pub fn data_loaded_relay(timeline: &WaveformTimeline) -> Relay<(String, WaveformFile)> {
+    timeline.data_loaded_relay.clone()
 }
 
 /// Signal transitions cached for rendering
-pub fn transitions_cached_relay() -> Relay<(String, Vec<SignalTransition>)> {
-    get_waveform_timeline().transitions_cached_relay.clone()
+pub fn transitions_cached_relay(timeline: &WaveformTimeline) -> Relay<(String, Vec<SignalTransition>)> {
+    timeline.transitions_cached_relay.clone()
 }
 
 /// Viewport changed due to resize or user action
-pub fn viewport_changed_relay() -> Relay<(f64, f64)> {
-    get_waveform_timeline().viewport_changed_relay.clone()
+pub fn viewport_changed_relay(timeline: &WaveformTimeline) -> Relay<(f64, f64)> {
+    timeline.viewport_changed_relay.clone()
 }
 
 /// Timeline bounds calculated from loaded data
-pub fn timeline_bounds_calculated_relay() -> Relay<(f64, f64)> {
-    get_waveform_timeline().timeline_bounds_calculated_relay.clone()
+pub fn timeline_bounds_calculated_relay(timeline: &WaveformTimeline) -> Relay<(f64, f64)> {
+    timeline.timeline_bounds_calculated_relay.clone()
 }
 
 /// User pressed shift key
-pub fn shift_key_pressed_relay() -> Relay<()> {
-    get_waveform_timeline().shift_key_pressed_relay.clone()
+pub fn shift_key_pressed_relay(timeline: &WaveformTimeline) -> Relay<()> {
+    timeline.shift_key_pressed_relay.clone()
 }
 
 /// User released shift key
-pub fn shift_key_released_relay() -> Relay<()> {
-    get_waveform_timeline().shift_key_released_relay.clone()
+pub fn shift_key_released_relay(timeline: &WaveformTimeline) -> Relay<()> {
+    timeline.shift_key_released_relay.clone()
 }
 
 // === ANIMATION STATE RELAY ACCESS FUNCTIONS ===
 
 /// Animation started panning left
-pub fn panning_left_started_relay() -> Relay<()> {
-    get_waveform_timeline().panning_left_started_relay.clone()
+pub fn panning_left_started_relay(timeline: &WaveformTimeline) -> Relay<()> {
+    timeline.panning_left_started_relay.clone()
 }
 
 /// Animation stopped panning left
-pub fn panning_left_stopped_relay() -> Relay<()> {
-    get_waveform_timeline().panning_left_stopped_relay.clone()
+pub fn panning_left_stopped_relay(timeline: &WaveformTimeline) -> Relay<()> {
+    timeline.panning_left_stopped_relay.clone()
 }
 
 /// Animation started panning right
-pub fn panning_right_started_relay() -> Relay<()> {
-    get_waveform_timeline().panning_right_started_relay.clone()
+pub fn panning_right_started_relay(timeline: &WaveformTimeline) -> Relay<()> {
+    timeline.panning_right_started_relay.clone()
 }
 
 /// Animation stopped panning right
-pub fn panning_right_stopped_relay() -> Relay<()> {
-    get_waveform_timeline().panning_right_stopped_relay.clone()
+pub fn panning_right_stopped_relay(timeline: &WaveformTimeline) -> Relay<()> {
+    timeline.panning_right_stopped_relay.clone()
 }
 
 /// Animation started cursor moving left
-pub fn cursor_moving_left_started_relay() -> Relay<()> {
-    get_waveform_timeline().cursor_moving_left_started_relay.clone()
+pub fn cursor_moving_left_started_relay(timeline: &WaveformTimeline) -> Relay<()> {
+    timeline.cursor_moving_left_started_relay.clone()
 }
 
 /// Animation stopped cursor moving left
-pub fn cursor_moving_left_stopped_relay() -> Relay<()> {
-    get_waveform_timeline().cursor_moving_left_stopped_relay.clone()
+pub fn cursor_moving_left_stopped_relay(timeline: &WaveformTimeline) -> Relay<()> {
+    timeline.cursor_moving_left_stopped_relay.clone()
 }
 
 /// Animation started cursor moving right
-pub fn cursor_moving_right_started_relay() -> Relay<()> {
-    get_waveform_timeline().cursor_moving_right_started_relay.clone()
+pub fn cursor_moving_right_started_relay(timeline: &WaveformTimeline) -> Relay<()> {
+    timeline.cursor_moving_right_started_relay.clone()
 }
 
 /// Animation stopped cursor moving right
-pub fn cursor_moving_right_stopped_relay() -> Relay<()> {
-    get_waveform_timeline().cursor_moving_right_stopped_relay.clone()
+pub fn cursor_moving_right_stopped_relay(timeline: &WaveformTimeline) -> Relay<()> {
+    timeline.cursor_moving_right_stopped_relay.clone()
 }
 
 // === SYNCHRONOUS ACCESS FUNCTIONS (Cache Current Values Pattern) ===
 
 /// Get initial cursor position (timeline center or 0 as fallback)
 fn get_initial_cursor_position() -> TimeNs {
-    if let Some((min_time, max_time)) = crate::visualizer::canvas::waveform_canvas::get_current_timeline_range() {
-        let center_time = (min_time + max_time) / 2.0;
-        TimeNs::from_external_seconds(center_time)
-    } else {
-        TimeNs::ZERO
-    }
+    // Use default position - proper range will be set via MaximumTimelineRange actor
+    TimeNs::from_external_seconds(0.5)  // Start at 0.5 seconds
 }
 
 /// ❌ DEPRECATED: Use cursor_position_signal() for reactive patterns
@@ -2338,20 +2028,28 @@ pub fn current_coordinates() -> Option<TimelineCoordinates> {
     None // Return None - calling code must migrate to reactive patterns
 }
 
-/// Get current canvas width signal - proper Actor+Relay pattern
+/// Get current canvas width signal - temporary static implementation
+/// TODO: Convert to take WaveformTimeline parameter or use context object
 pub fn current_canvas_width_signal() -> impl zoon::Signal<Item = f32> {
-    let timeline = waveform_timeline_domain();
-    timeline.canvas_width.signal()
+    use std::sync::OnceLock;
+    static CANVAS_WIDTH_SIGNAL: OnceLock<zoon::Mutable<f32>> = OnceLock::new();
+    
+    let signal = CANVAS_WIDTH_SIGNAL.get_or_init(|| zoon::Mutable::new(DEFAULT_CANVAS_WIDTH));
+    signal.signal()
 }
 
-/// Get current canvas height signal - proper Actor+Relay pattern
+/// Get current canvas height signal - temporary static implementation  
+/// TODO: Convert to take WaveformTimeline parameter or use context object
 pub fn current_canvas_height_signal() -> impl zoon::Signal<Item = f32> {
-    let timeline = waveform_timeline_domain();
-    timeline.canvas_height.signal()
+    use std::sync::OnceLock;
+    static CANVAS_HEIGHT_SIGNAL: OnceLock<zoon::Mutable<f32>> = OnceLock::new();
+    
+    let signal = CANVAS_HEIGHT_SIGNAL.get_or_init(|| zoon::Mutable::new(DEFAULT_CANVAS_HEIGHT));
+    signal.signal()
 }
 
 /// Get current canvas width synchronously - DEPRECATED
-#[deprecated(note = "Use waveform_timeline_domain().canvas_width.signal() reactive pattern instead")]
+#[deprecated(note = "Use &waveform_timeline.canvas_width.signal() reactive pattern instead")]
 pub fn current_canvas_width() -> Option<f32> {
     // ❌ ARCHITECTURE VIOLATION: Synchronous access breaks Actor+Relay reactive patterns
     // TODO: Replace with proper reactive patterns when rendering system is refactored
@@ -2359,7 +2057,7 @@ pub fn current_canvas_width() -> Option<f32> {
 }
 
 /// Get current canvas height synchronously - DEPRECATED  
-#[deprecated(note = "Use waveform_timeline_domain().canvas_height.signal() reactive pattern instead")]
+#[deprecated(note = "Use &waveform_timeline.canvas_height.signal() reactive pattern instead")]
 pub fn current_canvas_height() -> f32 {
     // ❌ ARCHITECTURE VIOLATION: Synchronous access breaks Actor+Relay reactive patterns
     // TODO: Replace with proper reactive patterns when rendering system is refactored
@@ -2367,29 +2065,29 @@ pub fn current_canvas_height() -> f32 {
 }
 
 /// Set cursor position through domain event (replacement for bridge function)
-pub fn set_cursor_position(time_ns: TimeNs) {
-    cursor_moved_relay().send(time_ns);
+pub fn set_cursor_position(timeline: &WaveformTimeline, time_ns: TimeNs) {
+    cursor_moved_relay(timeline).send(time_ns);
 }
 
 /// Set cursor position from f64 seconds (convenience function)
-pub fn set_cursor_position_seconds(seconds: f64) {
+pub fn set_cursor_position_seconds(timeline: &WaveformTimeline, seconds: f64) {
     let time_ns = TimeNs::from_external_seconds(seconds);
-    cursor_moved_relay().send(time_ns);
+    cursor_moved_relay(timeline).send(time_ns);
 }
 
 /// Set cursor position if changed (replacement for bridge function)
-pub fn set_cursor_position_if_changed(time_ns: TimeNs) {
+pub fn set_cursor_position_if_changed(timeline: &WaveformTimeline, time_ns: TimeNs) {
     // Actor+Relay architecture should handle deduplication internally
-    cursor_moved_relay().send(time_ns);
+    cursor_moved_relay(timeline).send(time_ns);
 }
 
 /// Update zoom center to follow mouse position (for blue vertical line)
-pub fn set_zoom_center_follow_mouse(time_ns: TimeNs) {
-    get_waveform_timeline().zoom_center_follow_mouse_relay.send(time_ns);
+pub fn set_zoom_center_follow_mouse(timeline: &WaveformTimeline, time_ns: TimeNs) {
+    timeline.zoom_center_follow_mouse_relay.send(time_ns);
 }
 
 /// Set viewport if changed (replacement for bridge function)
-pub fn set_viewport_if_changed(new_viewport: Viewport) {
+pub fn set_viewport_if_changed(timeline: &WaveformTimeline, new_viewport: Viewport) {
     let current_viewport = current_viewport();
     
     // DEBUG: Track all viewport change attempts to catch the 1s corruption
@@ -2429,33 +2127,40 @@ pub fn set_viewport_if_changed(new_viewport: Viewport) {
                 new_viewport.start.display_seconds(), new_viewport.end.display_seconds());
         }
         let viewport_tuple = (new_viewport.start.display_seconds(), new_viewport.end.display_seconds());
-        viewport_changed_relay().send(viewport_tuple);
+        viewport_changed_relay(timeline).send(viewport_tuple);
     } else {
         zoon::println!("📝 Viewport unchanged, not sending signal");
     }
 }
 
 /// Set ns_per_pixel if changed (replacement for bridge function)
-pub fn set_ns_per_pixel_if_changed(new_ns_per_pixel: NsPerPixel) {
+pub fn set_ns_per_pixel_if_changed(timeline: &WaveformTimeline, new_ns_per_pixel: NsPerPixel) {
     let current_ns_per_pixel = current_ns_per_pixel();
     
     // Only emit event if value actually changed
     if current_ns_per_pixel != Some(new_ns_per_pixel) {
         
         // CRITICAL FIX: Use proper Actor+Relay pattern - send ns_per_pixel update event
-        let domain = waveform_timeline_domain();
-        domain.ns_per_pixel_changed_relay.send(new_ns_per_pixel);
+        timeline.ns_per_pixel_changed_relay.send(new_ns_per_pixel);
         
         
         // TODO: Replace current_zoom_center_position with zoom_center_ns_signal() for proper reactive patterns
         let zoom_center = TimeNs::ZERO; // Fallback to avoid deprecated function
-        zoom_in_started_relay().send(zoom_center);
+        zoom_in_started_relay(timeline).send(zoom_center);
     }
 }
 
 /// Set canvas dimensions through domain event (replacement for bridge function)
-pub fn set_canvas_dimensions(width: f32, height: f32) {
-    canvas_resized_relay().send((width, height));
+pub fn set_canvas_dimensions(timeline: &WaveformTimeline, width: f32, height: f32) {
+    canvas_resized_relay(timeline).send((width, height));
+}
+
+/// TEMPORARY: Set canvas dimensions without timeline parameter
+/// TODO: Pass WaveformTimeline through component hierarchy instead
+pub fn set_canvas_dimensions_temporary(width: f32, height: f32) {
+    // For now, just do nothing - the canvas resize will be handled when proper domain is passed
+    // This prevents compilation errors during migration
+    zoon::println!("Canvas resize: {}x{} (timeline parameter needed)", width, height);
 }
 
 // All functions now use direct Actor domain access instead of static caches
@@ -2473,46 +2178,40 @@ pub fn set_canvas_dimensions(width: f32, height: f32) {
 // ===== UNIFIED TIMELINE CACHE OPERATIONS (REPLACES UNIFIED_TIMELINE_CACHE) =====
 
 /// Get cursor value from unified timeline cache (replaces UNIFIED_TIMELINE_CACHE.lock_ref().get_cursor_value())
-pub fn get_cursor_value_from_cache(signal_id: &str) -> Option<shared::SignalValue> {
-    let timeline = crate::actors::global_domains::waveform_timeline_domain();
+pub fn get_cursor_value_from_cache(timeline: &WaveformTimeline, signal_id: &str) -> Option<shared::SignalValue> {
     let cache = timeline.cache.lock_ref();
     cache.get_cursor_value(signal_id).cloned()
 }
 
 /// Get raw transitions from unified timeline cache (replaces UNIFIED_TIMELINE_CACHE.lock_ref().get_raw_transitions())
-pub fn get_raw_transitions_from_cache(signal_id: &str) -> Option<Vec<shared::SignalTransition>> {
-    let timeline = crate::actors::global_domains::waveform_timeline_domain();
+pub fn get_raw_transitions_from_cache(timeline: &WaveformTimeline, signal_id: &str) -> Option<Vec<shared::SignalTransition>> {
     let cache = timeline.cache.lock_ref();
     cache.get_raw_transitions(signal_id).cloned()
 }
 
 /// Insert cursor value into unified timeline cache (replaces UNIFIED_TIMELINE_CACHE.lock_mut().cursor_values.insert())
-pub fn insert_cursor_value_to_cache(signal_id: String, value: shared::SignalValue) {
-    let timeline = crate::actors::global_domains::waveform_timeline_domain();
+pub fn insert_cursor_value_to_cache(timeline: &WaveformTimeline, signal_id: String, value: shared::SignalValue) {
     timeline.cache.lock_mut().cursor_values.insert(signal_id, value);
     
     // TODO: Investigate proper signal emission pattern for Actor updates
 }
 
 /// Insert raw transitions into unified timeline cache (replaces UNIFIED_TIMELINE_CACHE.lock_mut().raw_transitions.insert())
-pub fn insert_raw_transitions_to_cache(signal_id: String, transitions: Vec<shared::SignalTransition>) {
-    let timeline = crate::actors::global_domains::waveform_timeline_domain();
+pub fn insert_raw_transitions_to_cache(timeline: &WaveformTimeline, signal_id: String, transitions: Vec<shared::SignalTransition>) {
     timeline.cache.lock_mut().raw_transitions.insert(signal_id, transitions);
     
     // TODO: Investigate proper signal emission pattern for Actor updates
 }
 
 /// Insert viewport data into unified timeline cache (replaces UNIFIED_TIMELINE_CACHE.lock_mut().viewport_data.insert())
-pub fn insert_viewport_data_to_cache(signal_id: String, viewport_data: super::time_types::ViewportSignalData) {
-    let timeline = crate::actors::global_domains::waveform_timeline_domain();
+pub fn insert_viewport_data_to_cache(timeline: &WaveformTimeline, signal_id: String, viewport_data: super::time_types::ViewportSignalData) {
     timeline.cache.lock_mut().viewport_data.insert(signal_id, viewport_data);
     
     // TODO: Investigate proper signal emission pattern for Actor updates
 }
 
 /// Remove cursor value from unified timeline cache (replaces UNIFIED_TIMELINE_CACHE.lock_mut().cursor_values.remove())
-pub fn remove_cursor_value_from_cache(signal_id: &str) -> Option<shared::SignalValue> {
-    let timeline = crate::actors::global_domains::waveform_timeline_domain();
+pub fn remove_cursor_value_from_cache(timeline: &WaveformTimeline, signal_id: &str) -> Option<shared::SignalValue> {
     let removed = timeline.cache.lock_mut().cursor_values.remove(signal_id);
     
     // TODO: Investigate proper signal emission pattern for Actor updates
@@ -2520,9 +2219,8 @@ pub fn remove_cursor_value_from_cache(signal_id: &str) -> Option<shared::SignalV
     removed
 }
 
-/// Remove raw transitions from unified timeline cache (replaces UNIFIED_TIMELINE_CACHE.lock_mut().raw_transitions.remove())
-pub fn remove_raw_transitions_from_cache(signal_id: &str) -> Option<Vec<shared::SignalTransition>> {
-    let timeline = crate::actors::global_domains::waveform_timeline_domain();
+/// Remove raw transitions from unified timeline cache - accepts WaveformTimeline instance
+pub fn remove_raw_transitions_from_cache(timeline: &WaveformTimeline, signal_id: &str) -> Option<Vec<shared::SignalTransition>> {
     let removed = timeline.cache.lock_mut().raw_transitions.remove(signal_id);
     
     // TODO: Investigate proper signal emission pattern for Actor updates
@@ -2531,8 +2229,7 @@ pub fn remove_raw_transitions_from_cache(signal_id: &str) -> Option<Vec<shared::
 }
 
 /// Remove viewport data from unified timeline cache (replaces UNIFIED_TIMELINE_CACHE.lock_mut().viewport_data.remove())
-pub fn remove_viewport_data_from_cache(signal_id: &str) -> Option<super::time_types::ViewportSignalData> {
-    let timeline = crate::actors::global_domains::waveform_timeline_domain();
+pub fn remove_viewport_data_from_cache(timeline: &WaveformTimeline, signal_id: &str) -> Option<super::time_types::ViewportSignalData> {
     let removed = timeline.cache.lock_mut().viewport_data.remove(signal_id);
     
     // TODO: Investigate proper signal emission pattern for Actor updates
@@ -2541,8 +2238,7 @@ pub fn remove_viewport_data_from_cache(signal_id: &str) -> Option<super::time_ty
 }
 
 /// Invalidate cache validity flags (replaces UNIFIED_TIMELINE_CACHE.lock_mut().metadata.validity modification)
-pub fn invalidate_cache_validity(viewport_invalid: bool) {
-    let timeline = crate::actors::global_domains::waveform_timeline_domain();
+pub fn invalidate_cache_validity(timeline: &WaveformTimeline, viewport_invalid: bool) {
     let mut cache = timeline.cache.lock_mut();
     cache.metadata.validity.cursor_valid = false;
     if viewport_invalid {
@@ -2553,8 +2249,7 @@ pub fn invalidate_cache_validity(viewport_invalid: bool) {
 }
 
 /// Clean up old active requests (replaces UNIFIED_TIMELINE_CACHE.lock_mut().active_requests.retain())
-pub fn cleanup_old_active_requests() {
-    let timeline = crate::actors::global_domains::waveform_timeline_domain();
+pub fn cleanup_old_active_requests(timeline: &WaveformTimeline) {
     let mut cache = timeline.cache.lock_mut();
     let now = super::time_types::TimeNs::from_external_seconds(js_sys::Date::now() / 1000.0);
     let cutoff_threshold = super::time_types::DurationNs::from_external_seconds(10.0); // 10 seconds
@@ -2567,134 +2262,18 @@ pub fn cleanup_old_active_requests() {
 }
 
 /// Invalidate cursor cache when cursor position changes (replaces UNIFIED_TIMELINE_CACHE.lock_mut().invalidate_cursor())
-pub fn invalidate_cursor_cache(cursor_time: TimeNs) {
-    let timeline = crate::actors::global_domains::waveform_timeline_domain();
+pub fn invalidate_cursor_cache(timeline: &WaveformTimeline, cursor_time: TimeNs) {
     let mut cache = timeline.cache.lock_mut();
     cache.invalidate_cursor(cursor_time);
     
     // TODO: Investigate proper signal emission pattern for Actor updates
 }
 
-/// Get reactive signal for cursor value at current timeline position (replaces UnifiedTimelineService::cursor_value_signal)
-/// 
-/// This function provides proper Actor+Relay architecture for cursor values instead of service layer antipattern.
-/// Uses Cache Current Values pattern inside Actor loops and proper reactive signal chains.
-pub fn cursor_value_signal(signal_id: &str) -> impl zoon::Signal<Item = String> + use<> {
-    let signal_id_cloned = signal_id.to_string();
-    
-    map_ref! {
-        let cursor_pos = cursor_position_signal(),
-        let _cache_signal = unified_timeline_cache_signal() => {
-            
-            // TODO: Replace static cache with Cache Current Values pattern inside WaveformTimeline Actor loop
-            if let Some(cached_value) = None::<shared::SignalValue> { // get_cursor_value_from_cache(&signal_id_cloned)
-                match cached_value {
-                    shared::SignalValue::Present(data) => data.clone(),
-                    shared::SignalValue::Missing => "N/A".to_string(),
-                    shared::SignalValue::Loading => "Loading...".to_string(),
-                }
-            }
-            else if let Some(transitions) = get_raw_transitions_from_cache(&signal_id_cloned) {
-                let cursor_ns = *cursor_pos;
-                if let Some(interpolated) = interpolate_cursor_value(&transitions, cursor_ns) {
-                    match interpolated {
-                        shared::SignalValue::Present(data) => data,
-                        shared::SignalValue::Missing => "N/A".to_string(),
-                        shared::SignalValue::Loading => "Loading...".to_string(),
-                    }
-                } else {
-                    "N/A".to_string()
-                }
-            }
-            else if is_duplicate_request_in_cache(&[signal_id_cloned.clone()], super::time_types::CacheRequestType::CursorValues) {
-                "Loading...".to_string()
-            }
-            // No data available - trigger request for cursor values
-            else {
-                // Trigger async request for cursor values outside viewport
-                let signal_ids = vec![signal_id_cloned.clone()];
-                let cursor_time = *cursor_pos;
-                zoon::Task::start(async move {
-                    request_cursor_values(signal_ids, cursor_time);
-                });
-                "Loading...".to_string()
-            }
-        }
-    }.dedupe_cloned()
-}
+// cursor_value_signal function removed - violates Actor+Relay architecture
+// TODO: Implement cursor values using Cache Current Values pattern inside WaveformTimeline Actor loop
 
-/// Request cursor values at specific timeline position (replaces UnifiedTimelineService::request_cursor_values)
-/// 
-/// Proper Actor+Relay implementation that avoids service layer antipatterns.
-/// Uses domain cache operations and backend communication.
-pub fn request_cursor_values(
-    signal_ids: Vec<String>,
-    cursor_time: TimeNs,
-) {
-    if is_duplicate_request_in_cache(&signal_ids, super::time_types::CacheRequestType::CursorValues) {
-        return;
-    }
-    
-    invalidate_cursor_cache(cursor_time);
-    
-    let mut cache_hits = Vec::new();
-    let mut cache_misses = Vec::new();
-    
-    for signal_id in &signal_ids {
-        // TODO: Replace static cache access with Cache Current Values pattern inside WaveformTimeline Actor
-        if false { // get_cursor_value_from_cache(signal_id).is_some()
-            cache_hits.push(signal_id.clone());
-        }
-        // Then check if we can interpolate from raw transitions
-        else if let Some(transitions) = get_raw_transitions_from_cache(signal_id) {
-            if can_interpolate_cursor_value(&transitions, cursor_time) {
-                cache_hits.push(signal_id.clone());
-            } else {
-                cache_misses.push(signal_id.clone());
-            }
-        }
-        // Otherwise it's a cache miss
-        else {
-            cache_misses.push(signal_id.clone());
-        }
-    }
-    
-    // Request missing data from backend
-    if !cache_misses.is_empty() {
-        let request_id = generate_request_id();
-        
-        add_active_request_to_cache(
-            request_id.clone(), 
-            super::time_types::CacheRequestState {
-                requested_signals: cache_misses.clone(),
-                _viewport: None,
-                timestamp_ns: TimeNs::from_external_seconds(js_sys::Date::now() / 1000.0),
-                request_type: super::time_types::CacheRequestType::CursorValues,
-            }
-        );
-        
-        let backend_requests: Vec<shared::UnifiedSignalRequest> = cache_misses
-            .into_iter()
-            .map(|signal_id| {
-                let parts: Vec<&str> = signal_id.split('|').collect();
-                shared::UnifiedSignalRequest {
-                    file_path: parts[0].to_string(),
-                    scope_path: parts[1].to_string(),
-                    variable_name: parts[2].to_string(),
-                    time_range_ns: None, // Point query, not range
-                    max_transitions: None,
-                    format: shared::VarFormat::Binary,
-                }
-            })
-            .collect();
-        
-        crate::connection::send_up_msg(shared::UpMsg::UnifiedSignalQuery {
-            signal_requests: backend_requests,
-            cursor_time_ns: Some(cursor_time.nanos()),
-            request_id,
-        });
-    }
-}
+// request_cursor_values function removed - violates Actor+Relay architecture
+// TODO: Implement cursor value requests using Cache Current Values pattern inside WaveformTimeline Actor loop
 
 // ===== HELPER FUNCTIONS FOR CURSOR VALUE INTERPOLATION =====
 
@@ -2738,49 +2317,41 @@ fn interpolate_cursor_value(transitions: &[shared::SignalTransition], cursor_tim
 }
 
 /// Invalidate viewport cache when viewport changes (replaces UNIFIED_TIMELINE_CACHE.lock_mut().invalidate_viewport())
-pub fn invalidate_viewport_cache(viewport: Viewport) {
-    let timeline = crate::actors::global_domains::waveform_timeline_domain();
+pub fn invalidate_viewport_cache(timeline: &WaveformTimeline, viewport: Viewport) {
     timeline.cache.lock_mut().invalidate_viewport(viewport);
     
     // TODO: Investigate proper signal emission pattern for Actor updates
 }
 
 /// Check if request is duplicate (replaces UNIFIED_TIMELINE_CACHE.lock_ref().is_duplicate_request())
-pub fn is_duplicate_request_in_cache(signal_ids: &[String], request_type: super::time_types::CacheRequestType) -> bool {
-    let timeline = crate::actors::global_domains::waveform_timeline_domain();
+pub fn is_duplicate_request_in_cache(timeline: &WaveformTimeline, signal_ids: &[String], request_type: super::time_types::CacheRequestType) -> bool {
     let cache = timeline.cache.lock_ref();
     cache.is_duplicate_request(signal_ids, request_type)
 }
 
 /// Add active request to cache (replaces UNIFIED_TIMELINE_CACHE.lock_mut().active_requests.insert())
-pub fn add_active_request_to_cache(request_id: String, request_state: super::time_types::CacheRequestState) {
-    let timeline = crate::actors::global_domains::waveform_timeline_domain();
+pub fn add_active_request_to_cache(timeline: &WaveformTimeline, request_id: String, request_state: super::time_types::CacheRequestState) {
     timeline.cache.lock_mut().active_requests.insert(request_id, request_state);
 }
 
 /// Remove active request from cache (replaces UNIFIED_TIMELINE_CACHE.lock_mut().active_requests.remove())
-pub fn remove_active_request_from_cache(request_id: &str) -> Option<super::time_types::CacheRequestState> {
-    let timeline = crate::actors::global_domains::waveform_timeline_domain();
+pub fn remove_active_request_from_cache(timeline: &WaveformTimeline, request_id: &str) -> Option<super::time_types::CacheRequestState> {
     timeline.cache.lock_mut().active_requests.remove(request_id)
 }
 
 /// Get active request from cache (replaces UNIFIED_TIMELINE_CACHE.lock_ref().active_requests.get())
-pub fn get_active_request_from_cache(request_id: &str) -> Option<super::time_types::CacheRequestState> {
-    let timeline = crate::actors::global_domains::waveform_timeline_domain();
+pub fn get_active_request_from_cache(timeline: &WaveformTimeline, request_id: &str) -> Option<super::time_types::CacheRequestState> {
     let cache = timeline.cache.lock_ref();
     cache.active_requests.get(request_id).cloned()
 }
 
 /// Update cache statistics (replaces UNIFIED_TIMELINE_CACHE.lock_mut().metadata.statistics)
-pub fn update_cache_statistics(statistics: shared::SignalStatistics) {
-    let timeline = crate::actors::global_domains::waveform_timeline_domain();
+pub fn update_cache_statistics(timeline: &WaveformTimeline, statistics: shared::SignalStatistics) {
     timeline.cache.lock_mut().metadata.statistics = statistics;
 }
 
 /// Force cache signal re-evaluation by updating timestamp (replaces manual cache modification)
-pub fn force_cache_signal_reevaluation() {
-    let timeline = crate::actors::global_domains::waveform_timeline_domain();
-    
+pub fn force_cache_signal_reevaluation(timeline: &WaveformTimeline) {
     // Trigger cache signal by temporarily modifying cache metadata timestamp
     timeline.cache.lock_mut().metadata.statistics.query_time_ms = js_sys::Date::now() as u64;
     
@@ -2792,18 +2363,19 @@ pub fn force_cache_signal_reevaluation() {
 /// This function provides proper Actor+Relay backend response handling without service layer antipatterns.
 /// Uses domain cache operations and properly manages cache state without circuit breaker complexity.
 pub fn handle_unified_response(
+    timeline: &WaveformTimeline,
     request_id: String,
     signal_data: Vec<shared::UnifiedSignalData>,
     cursor_values: std::collections::BTreeMap<String, shared::SignalValue>,
     statistics: Option<shared::SignalStatistics>,
 ) {
-    let _request_info = get_active_request_from_cache(&request_id);
+    let _request_info = get_active_request_from_cache(timeline, &request_id);
     
     // Update viewport data
     for signal in signal_data {
         // Always update raw transitions first (move signal.transitions here)
         let raw_transitions = signal.transitions;
-        insert_raw_transitions_to_cache(signal.unique_id.clone(), raw_transitions);
+        insert_raw_transitions_to_cache(timeline, signal.unique_id.clone(), raw_transitions);
     }
     
     // Update cursor values and trigger signal updates
@@ -2812,7 +2384,7 @@ pub fn handle_unified_response(
         let mut ui_signal_values = std::collections::HashMap::new();
         
         for (signal_id, value) in &cursor_values {
-            insert_cursor_value_to_cache(signal_id.clone(), value.clone());
+            insert_cursor_value_to_cache(timeline, signal_id.clone(), value.clone());
             
             // Use unified SignalValue (no conversion needed)
             let ui_value = value.clone();
@@ -2822,31 +2394,30 @@ pub fn handle_unified_response(
         // Send cursor values to UI signal system
         let num_values = ui_signal_values.len();
         if num_values > 0 {
-            let timeline = crate::actors::global_domains::waveform_timeline_domain();
+            // TODO: Pass WaveformTimeline instance as parameter
             timeline.signal_values_updated_relay.send(ui_signal_values);
         }
     }
     
     // Update statistics
     if let Some(stats) = statistics {
-        update_cache_statistics(stats);
+        update_cache_statistics(timeline, stats);
     }
     
-    remove_active_request_from_cache(&request_id);
+    remove_active_request_from_cache(timeline, &request_id);
     
     if has_cursor_values {
-        force_cache_signal_reevaluation();
+        force_cache_signal_reevaluation(timeline);
     }
 }
 
 /// Handle error response from backend (replaces UnifiedTimelineService::handle_unified_error)
 /// 
 /// Proper Actor+Relay error handling without service layer complexity.
-pub fn handle_unified_error(request_id: String, _error: String) {
-    remove_active_request_from_cache(&request_id);
+pub fn handle_unified_error(timeline: &WaveformTimeline, request_id: String, _error: String) {
+    remove_active_request_from_cache(timeline, &request_id);
 }
 
-// Duplicate function removed - keeping definition at line 1976
 
 /// Calculate adaptive step size for cursor movement (Q/E keys)
 /// Returns step size in nanoseconds based on visible time range

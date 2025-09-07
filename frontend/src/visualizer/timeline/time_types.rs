@@ -244,6 +244,15 @@ pub struct Viewport {
     pub end: TimeNs,
 }
 
+impl Default for Viewport {
+    fn default() -> Self {
+        Viewport {
+            start: TimeNs::ZERO,
+            end: TimeNs::ZERO,
+        }
+    }
+}
+
 impl Viewport {
     /// Create a new viewport
     pub fn new(start: TimeNs, end: TimeNs) -> Self {

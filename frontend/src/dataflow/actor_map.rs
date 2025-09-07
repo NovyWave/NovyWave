@@ -3,7 +3,7 @@
 //! ActorMap provides controlled key-value map management with sequential message processing.
 //! Built on MutableBTreeMap for ordered, deterministic iteration and efficient MapDiff updates.
 
-use zoon::{MutableBTreeMap, Signal, SignalVec, Task, TaskHandle, SignalMapExt, SignalExt, SignalVecExt};
+use zoon::{MutableBTreeMap, Signal, SignalVec, SignalMap, Task, TaskHandle, SignalMapExt, SignalExt, SignalVecExt};
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::sync::Arc;
@@ -137,7 +137,7 @@ where
     /// ```
     // Part of public Actor+Relay API - will be used when moved to standalone crate
     #[allow(dead_code)]
-    pub fn signal_map(&self) -> impl SignalMapExt<Key = K, Value = V> {
+    pub fn signal_map(&self) -> impl SignalMap<Key = K, Value = V> + use<K, V> {
         self.map.signal_map_cloned()
     }
 
@@ -160,7 +160,7 @@ where
     ///     }
     /// })
     /// ```
-    pub fn value_signal(&self, key: K) -> impl Signal<Item = Option<V>> {
+    pub fn value_signal(&self, key: K) -> impl Signal<Item = Option<V>> + use<K, V>{
         // Use key_cloned for efficient single key tracking
         self.map.signal_map_cloned().key_cloned(key)
     }
@@ -180,7 +180,7 @@ where
     /// ```
     // Part of public Actor+Relay API - will be used when moved to standalone crate
     #[allow(dead_code)]
-    pub fn keys_signal_vec(&self) -> impl SignalVec<Item = K> {
+    pub fn keys_signal_vec(&self) -> impl SignalVec<Item = K> + use<K, V>{
         // Use MutableBTreeMap's native signal_vec_keys() method
         self.map.signal_vec_keys()
     }
@@ -199,7 +199,7 @@ where
     /// cache.entries_signal_vec()
     /// ```
     #[allow(dead_code)] // Actor+Relay API method - preserve for completeness
-    pub fn entries_signal_vec(&self) -> impl SignalVec<Item = (K, V)> {
+    pub fn entries_signal_vec(&self) -> impl SignalVec<Item = (K, V)>  + use<K,V> {
         // Use MutableBTreeMap's native entries_cloned() method
         self.map.entries_cloned()
     }

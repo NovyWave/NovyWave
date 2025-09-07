@@ -1,21 +1,18 @@
 use zoon::*;
-// Removed: IS_ZOOMING_IN, IS_PANNING_LEFT, IS_PANNING_RIGHT, IS_CURSOR_MOVING_LEFT, IS_CURSOR_MOVING_RIGHT
 use crate::visualizer::timeline::timeline_actor::{
     current_ns_per_pixel
 };
-// Removed unused import: set_viewport_if_changed
 // Note: Some synchronous operations maintained for performance in animation loops
 use crate::visualizer::timeline::time_types::NsPerPixel;
-// Removed unused import: js_sys
 
 
 
 
 
 /// Start smooth pan left animation
-pub fn start_smooth_pan_left() {
+pub fn start_smooth_pan_left(timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline) {
     if !crate::visualizer::timeline::timeline_actor::is_panning_left() {
-        crate::visualizer::timeline::timeline_actor::panning_left_started_relay().send(());
+        crate::visualizer::timeline::timeline_actor::panning_left_started_relay(timeline).send(());
         Task::start(async move {
             while crate::visualizer::timeline::timeline_actor::is_panning_left() {
                 let ns_per_pixel = current_ns_per_pixel();
@@ -38,9 +35,9 @@ pub fn start_smooth_pan_left() {
 }
 
 /// Start smooth pan right animation
-pub fn start_smooth_pan_right() {
+pub fn start_smooth_pan_right(timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline) {
     if !crate::visualizer::timeline::timeline_actor::is_panning_right() {
-        crate::visualizer::timeline::timeline_actor::panning_right_started_relay().send(());
+        crate::visualizer::timeline::timeline_actor::panning_right_started_relay(timeline).send(());
         Task::start(async move {
             while crate::visualizer::timeline::timeline_actor::is_panning_right() {
                 let ns_per_pixel = current_ns_per_pixel();
@@ -62,13 +59,13 @@ pub fn start_smooth_pan_right() {
 }
 
 /// Stop smooth pan left animation
-pub fn stop_smooth_pan_left() {
-    crate::visualizer::timeline::timeline_actor::panning_left_stopped_relay().send(());
+pub fn stop_smooth_pan_left(timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline) {
+    crate::visualizer::timeline::timeline_actor::panning_left_stopped_relay(timeline).send(());
 }
 
 /// Stop smooth pan right animation
-pub fn stop_smooth_pan_right() {
-    crate::visualizer::timeline::timeline_actor::panning_right_stopped_relay().send(());
+pub fn stop_smooth_pan_right(timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline) {
+    crate::visualizer::timeline::timeline_actor::panning_right_stopped_relay(timeline).send(());
 }
 
 
@@ -76,25 +73,25 @@ pub fn stop_smooth_pan_right() {
 
 
 /// Start smooth cursor movement to the left
-pub fn start_smooth_cursor_left() {
-    crate::visualizer::timeline::timeline_actor::cursor_moving_left_started_relay().send(());
+pub fn start_smooth_cursor_left(timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline) {
+    crate::visualizer::timeline::timeline_actor::cursor_moving_left_started_relay(timeline).send(());
     // Animation system would use cursor_animation_started relay to handle direction and animation state events
 }
 
 /// Start smooth cursor movement to the right
-pub fn start_smooth_cursor_right() {
-    crate::visualizer::timeline::timeline_actor::cursor_moving_right_started_relay().send(());
+pub fn start_smooth_cursor_right(timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline) {
+    crate::visualizer::timeline::timeline_actor::cursor_moving_right_started_relay(timeline).send(());
     // Animation system would use cursor_animation_started relay to handle direction and animation state events
 }
 
 /// Stop smooth cursor movement to the left
-pub fn stop_smooth_cursor_left() {
-    crate::visualizer::timeline::timeline_actor::cursor_moving_left_stopped_relay().send(());
+pub fn stop_smooth_cursor_left(timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline) {
+    crate::visualizer::timeline::timeline_actor::cursor_moving_left_stopped_relay(timeline).send(());
     // Animation system would use cursor_animation_stopped relay to handle animation state transitions properly
 }
 
 /// Stop smooth cursor movement to the right
-pub fn stop_smooth_cursor_right() {
-    crate::visualizer::timeline::timeline_actor::cursor_moving_right_stopped_relay().send(());
+pub fn stop_smooth_cursor_right(timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline) {
+    crate::visualizer::timeline::timeline_actor::cursor_moving_right_stopped_relay(timeline).send(());
     // Animation system would use cursor_animation_stopped relay to handle animation state transitions properly
 }

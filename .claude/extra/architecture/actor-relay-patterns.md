@@ -471,6 +471,58 @@ tracked_files.send_file_dropped(vec![path]);  // Extra indirection
 - **API explosion** - Every field gets multiple wrapper functions
 - **Violates Actor+Relay principles** - Relays are designed for direct access
 
+#### Rust Struct Design Philosophy (MANDATORY)
+
+**CRITICAL: Use almost only public fields - treat structs like data, not classes**
+
+Rust structs should be treated as data containers, not object-oriented classes with encapsulation. This prevents access problems and eliminates the need for getter/setter methods.
+
+**✅ CORRECT: Public fields for direct access**
+```rust
+struct TrackedFiles {
+    pub files: ActorVec<TrackedFile>,                    // Public - direct access
+    pub files_vec_signal: Mutable<Vec<TrackedFile>>,     // Public - direct access
+    pub file_dropped_relay: Relay<Vec<PathBuf>>,         // Public - direct access
+}
+
+// ✅ CORRECT: Direct field access
+let tracked_files = self.tracked_files.files_vec_signal.get_cloned();
+let selected_variables = self.selected_variables.variables_vec_signal.get_cloned();
+```
+
+**❌ WRONG: Private fields requiring getter/setter methods**
+```rust
+struct TrackedFiles {
+    files: ActorVec<TrackedFile>,                        // ❌ Private - requires getter
+    files_vec_signal: Mutable<Vec<TrackedFile>>,         // ❌ Private - causes errors
+}
+
+// ❌ COMPILATION ERROR: private field
+let tracked_files = self.tracked_files.files_vec_signal.get_cloned();
+//                                     ^^^^^^^^^^^^^^^^ private field
+
+// ❌ ANTIPATTERN: Getter/setter methods
+impl TrackedFiles {
+    pub fn get_files_vec_signal(&self) -> &Mutable<Vec<TrackedFile>> {  // Unnecessary
+        &self.files_vec_signal
+    }
+}
+```
+
+**Key Benefits of Public Fields:**
+- **Direct access** - No compilation errors from private field access
+- **No getter/setter boilerplate** - Eliminates unnecessary methods
+- **Data-oriented design** - Structs are data containers, not objects
+- **Rust idioms** - Follows Rust's preference for data over encapsulation
+- **Simplicity** - Less cognitive overhead than OOP encapsulation
+
+**When to use private fields (rare exceptions):**
+- Internal implementation details that would break if exposed
+- Fields requiring invariant maintenance through methods
+- Complex state that needs validation during updates
+
+**General rule: Default to `pub` fields unless there's a specific reason for privacy.**
+
 ### 3. zoon::Task Prohibition (CRITICAL)
 
 **CRITICAL: NEVER use zoon::Task - use Actors instead for all event handling**
@@ -723,5 +775,222 @@ Task::start(THEME_STATE.signal().for_each_sync(move |theme| {
 - Increment/decrement counters  
 - State machines with transitions
 - Any read-modify-write sequence that should be atomic
+
+## Context Object Pattern for Utility Functions (MANDATORY)
+
+**CRITICAL USER GUIDANCE: "I wanted you to group as much utility and UI functions into multiple objects or big objects and then the functions would just take domain objects or whatever from `self` when needed - think about `self` as a passing Ctx or similar constructs"**
+
+### Core Principle: Self as Domain Context
+
+Instead of cascading domain parameters through individual functions, create context objects that encapsulate domain access. This eliminates parameter cascading and creates clean dependency injection patterns.
+
+**✅ CORRECT: Context Object Pattern**
+```rust
+/// Context object holding domain references
+struct TimelineContext {
+    pub tracked_files: TrackedFiles,
+    pub selected_variables: SelectedVariables,
+    pub waveform_timeline: WaveformTimeline,
+}
+
+impl TimelineContext {
+    pub fn new(
+        tracked_files: TrackedFiles,
+        selected_variables: SelectedVariables,
+        waveform_timeline: WaveformTimeline,
+    ) -> Self {
+        Self { tracked_files, selected_variables, waveform_timeline }
+    }
+    
+    /// Domain access through self - no parameter cascading
+    pub fn get_maximum_timeline_range(&self) -> Option<(f64, f64)> {
+        let tracked_files = self.tracked_files.files_vec_signal.get_cloned();
+        let selected_file_paths = self.get_selected_variable_file_paths();
+        // All domain access through self.domain_name
+    }
+    
+    pub fn get_selected_variable_file_paths(&self) -> HashSet<String> {
+        let selected_vars = self.selected_variables.variables_vec_signal.get_cloned();
+        selected_vars.iter().filter_map(|var| var.file_path()).collect()
+    }
+}
+
+/// Usage: Create context once, use methods everywhere
+let timeline_ctx = TimelineContext::new(tracked_files, selected_variables, waveform_timeline);
+let range = timeline_ctx.get_maximum_timeline_range();
+let paths = timeline_ctx.get_selected_variable_file_paths();
+```
+
+**❌ WRONG: Parameter Cascading Antipattern**
+```rust
+// ❌ ANTIPATTERN: Cascading parameters everywhere
+pub fn get_maximum_timeline_range(
+    tracked_files: &TrackedFiles,
+    selected_variables: &SelectedVariables,
+) -> Option<(f64, f64)> {
+    let selected_file_paths = get_selected_variable_file_paths(selected_variables);
+    // More parameter passing...
+}
+
+pub fn get_selected_variable_file_paths(
+    selected_variables: &SelectedVariables  // Parameter cascade continues
+) -> HashSet<String> {
+    // Function needs to be updated every time signature changes
+}
+```
+
+### Benefits of Context Object Pattern
+
+1. **Eliminates Parameter Cascading**: No more updating 20+ function signatures when adding a domain
+2. **Clean Dependency Injection**: Domains injected once at context creation
+3. **Method Grouping**: Related utility functions naturally grouped together
+4. **Self as Context**: `self` provides domain access without explicit parameters
+5. **Single Responsibility**: Each context object handles one functional area
+
+### Implementation Strategy
+
+1. **Group Related Functions**: Identify utility functions that work together
+2. **Create Context Struct**: Define struct with needed domain references
+3. **Convert Functions to Methods**: Transform `fn(domain_params)` → `fn(&self)`
+4. **Update Call Sites**: Replace function calls with context method calls
+5. **Domain Access via Self**: Use `self.domain_name` instead of parameters
+
+### Context Object Examples for NovyWave
+
+```rust
+// Timeline utilities
+struct TimelineContext {
+    tracked_files: TrackedFiles,
+    selected_variables: SelectedVariables,
+    waveform_timeline: WaveformTimeline,
+}
+
+// UI rendering utilities  
+struct UIContext {
+    tracked_files: TrackedFiles,
+    selected_variables: SelectedVariables,
+    app_config: AppConfig,
+}
+
+// Connection and messaging utilities
+struct ConnectionContext {
+    tracked_files: TrackedFiles,
+    selected_variables: SelectedVariables,
+    waveform_timeline: WaveformTimeline,
+}
+```
+
+**Key Rule: Think of `self` as a passing context (Ctx) that provides domain access without explicit parameter passing.**
+
+## Standalone Derived State Actors
+
+### Centralize Cross-Domain Computed Values
+
+**CRITICAL: For derived data needed by multiple domains, create standalone actors instead of duplicating computation logic.**
+
+**Problem Pattern - Scattered Computation:**
+```rust
+// ❌ WRONG: Same computation duplicated across different actors
+// In WaveformTimeline actor:
+if let Some((min_time, max_time)) = compute_timeline_range_from_files() { ... }
+
+// In ZoomController actor:
+if let Some((min_time, max_time)) = compute_timeline_range_from_files() { ... }
+
+// In ResetZoom handler:
+if let Some((min_time, max_time)) = compute_timeline_range_from_files() { ... }
+```
+
+**✅ CORRECT: Standalone Derived State Actor**
+```rust
+/// Dedicated actor for timeline range - single source of truth
+#[derive(Clone, Debug)]
+pub struct MaximumTimelineRange {
+    pub range: Actor<Option<(f64, f64)>>,
+    pub range_updated_relay: Relay<Option<(f64, f64)>>,
+}
+
+impl MaximumTimelineRange {
+    pub async fn new(
+        tracked_files: TrackedFiles,
+        selected_variables: SelectedVariables,
+    ) -> Self {
+        let (range_updated_relay, mut range_updated_stream) = relay();
+        
+        let range = Actor::new(None, async move |state| {
+            loop {
+                select! {
+                    Some(new_range) = range_updated_stream.next() => {
+                        state.set(new_range);
+                    }
+                }
+            }
+        });
+        
+        // Background computation - updates when source data changes
+        let timeline_context = TimelineContext { tracked_files, selected_variables };
+        let range_relay = range_updated_relay.clone();
+        zoon::Task::start(async move {
+            tracked_files.files_signal().for_each_sync(move |_files| {
+                let new_range = timeline_context.get_maximum_timeline_range();
+                range_relay.send(new_range);
+            });
+        });
+        
+        Self { range, range_updated_relay }
+    }
+    
+    pub fn range_signal(&self) -> impl Signal<Item = Option<(f64, f64)>> {
+        self.range.signal()
+    }
+}
+```
+
+**Using Cached Values in Other Actors:**
+```rust
+// Other actors can cache the derived value
+let maximum_timeline_range = MaximumTimelineRange::new(tracked_files, selected_variables).await;
+
+let zoom_actor = Actor::new(ZoomState::default(), {
+    let range_actor = maximum_timeline_range.clone();
+    async move |state| {
+        // Cache current values pattern
+        let mut cached_timeline_range: Option<(f64, f64)> = None;
+        let mut range_stream = range_actor.range_signal().to_stream();
+        
+        loop {
+            select! {
+                // Update cached value when range changes
+                range = range_stream.next() => {
+                    if let Some(new_range) = range {
+                        cached_timeline_range = new_range;
+                    }
+                }
+                // Use cached value in business logic
+                reset_event = reset_stream.next() => {
+                    if let Some((min_time, max_time)) = cached_timeline_range {
+                        // Use range for zoom calculations
+                    }
+                }
+            }
+        }
+    }
+});
+```
+
+**Key Benefits:**
+- ✅ **Single Source of Truth** - Timeline range computed once, used everywhere
+- ✅ **No State Scattering** - Derived data centralized in dedicated actor
+- ✅ **Automatic Updates** - All consumers get updates when source data changes
+- ✅ **Clean Architecture** - No cross-domain dependencies in business logic actors
+- ✅ **Performance** - Computation happens once, not per consumer
+
+**When to Use:**
+- Derived data needed by multiple domains/actors
+- Complex computations that shouldn't be duplicated
+- Cross-domain state that doesn't belong to any single domain
+- Values that update when source data changes
+
+**Pattern Rule:** Centralize derived state instead of scattering computation logic across the codebase.
 
 This comprehensive guide provides everything needed to implement proper Actor+Relay architecture in NovyWave.
