@@ -85,7 +85,7 @@ pub enum DownMsg {
 
 // ===== SIGNAL VALUE QUERY TYPES =====
 
-/// Represents a signal value that can be either present or missing
+/// Represents a signal value that can be present, missing, or loading
 /// This allows distinguishing between actual "0" values and missing/no-data regions
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum SignalValue {
@@ -93,6 +93,8 @@ pub enum SignalValue {
     Present(String),
     /// Signal has no data at this time (beyond file boundaries, gaps, etc.)
     Missing,
+    /// Signal value is being loaded (query in progress)
+    Loading,
 }
 
 impl SignalValue {
@@ -106,6 +108,11 @@ impl SignalValue {
         SignalValue::Missing
     }
     
+    /// Create a loading value
+    pub fn loading() -> Self {
+        SignalValue::Loading
+    }
+    
     /// Check if the value is present
     pub fn is_present(&self) -> bool {
         matches!(self, SignalValue::Present(_))
@@ -116,11 +123,17 @@ impl SignalValue {
         matches!(self, SignalValue::Missing)
     }
     
+    /// Check if the value is loading
+    pub fn is_loading(&self) -> bool {
+        matches!(self, SignalValue::Loading)
+    }
+    
     /// Get the value as Option<String> for backward compatibility
     pub fn as_option(&self) -> Option<String> {
         match self {
             SignalValue::Present(value) => Some(value.clone()),
             SignalValue::Missing => None,
+            SignalValue::Loading => None,
         }
     }
     
@@ -129,6 +142,7 @@ impl SignalValue {
         match self {
             SignalValue::Present(value) => value.clone(),
             SignalValue::Missing => placeholder.to_string(),
+            SignalValue::Loading => "Loading...".to_string(),
         }
     }
     
@@ -150,6 +164,7 @@ impl SignalValue {
         match self {
             SignalValue::Present(value) => SignalValue::Present(f(value)),
             SignalValue::Missing => SignalValue::Missing,
+            SignalValue::Loading => SignalValue::Loading,
         }
     }
 }
@@ -173,6 +188,68 @@ impl From<&str> for SignalValue {
     fn from(value: &str) -> Self {
         SignalValue::Present(value.to_string())
     }
+}
+
+// Signal Value Formatting Methods
+impl SignalValue {
+    /// Create from raw signal data (expects binary string from backend)
+    pub fn from_data(raw_data: String) -> Self {
+        SignalValue::Present(raw_data)
+    }
+
+    /// Get formatted value for specific format
+    pub fn get_formatted(&self, format: &VarFormat) -> String {
+        match self {
+            Self::Present(raw_value) => {
+                if raw_value.is_empty() {
+                    "(empty)".to_string()
+                } else {
+                    format.format(raw_value)
+                }
+            }
+            Self::Missing => "N/A".to_string(),
+            Self::Loading => "Loading...".to_string(),
+        }
+    }
+
+    /// Get display string with value and format name (e.g., "1010 Bin")
+    pub fn get_display_with_format(&self, format: &VarFormat) -> String {
+        let formatted_value = self.get_formatted(format);
+        let format_name = format.as_static_str();
+        
+        let display_value = if formatted_value.is_empty() { "-" } else { &formatted_value };
+        format!("{} {}", display_value, format_name)
+    }
+
+    /// Get display string with truncated value for dropdowns (e.g., "101010101...1010 Bin")
+    pub fn get_truncated_display_with_format(&self, format: &VarFormat, max_chars: usize) -> String {
+        let formatted_value = self.get_formatted(format);
+        let format_name = format.as_static_str();
+        
+        let display_value = if formatted_value.is_empty() { "-" } else { &formatted_value };
+        let truncated_value = truncate_value(display_value, max_chars);
+        format!("{} {}", truncated_value, format_name)
+    }
+
+    /// Get full untruncated display string for tooltip
+    pub fn get_full_display_with_format(&self, format: &VarFormat) -> String {
+        self.get_display_with_format(format)
+    }
+
+    /// Check if this represents real data (not missing/loading)  
+    pub fn is_data(&self) -> bool {
+        matches!(self, Self::Present(_))
+    }
+}
+
+/// Truncate a value string if it's longer than max_chars, using simple right truncation
+pub fn truncate_value(value: &str, max_chars: usize) -> String {
+    if value.len() <= max_chars {
+        return value.to_string();
+    }
+    
+    let truncate_at = max_chars.saturating_sub(3);
+    format!("{}...", &value[..truncate_at])
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

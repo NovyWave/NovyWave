@@ -300,6 +300,7 @@ impl WaveformRenderer {
                     }
                 },
                 SignalValue::Missing => theme_colors.neutral_2,
+                SignalValue::Loading => theme_colors.neutral_3,
             };
             
             // Create value rectangle with signal color
@@ -319,6 +320,7 @@ impl WaveformRenderer {
                     (binary_value.clone(), theme_colors.neutral_12)
                 },
                 SignalValue::Missing => ("N/A".to_string(), theme_colors.neutral_3),
+                SignalValue::Loading => ("Loading...".to_string(), theme_colors.neutral_3),
             };
             
             let text_padding = 5.0;

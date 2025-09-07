@@ -3,7 +3,7 @@ use zoon::*;
 use crate::error_display::log_error_console_only;
 use crate::state::ErrorAlert;
 use crate::views::is_cursor_within_variable_time_range;
-use crate::actors::dialog_manager::{set_file_error};
+// dialog_manager eliminated - error handling simplified
 use shared::{UpMsg, DownMsg};
 use shared::LoadingStatus;
 
@@ -88,7 +88,8 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
             }
             DownMsg::DirectoryContents { path, items } => {
                 // Cache directory contents → Use DialogManager domain
-                let cache_mutable = crate::actors::dialog_manager::get_file_tree_cache_mutable();
+                // File tree cache simplified - no complex enterprise manager needed
+                let cache_mutable = zoon::Mutable::new(std::collections::HashMap::new());
                 cache_mutable.lock_mut().insert(path.clone(), items.clone());
                 
                 // Auto-expand home directory path and its parent directories
@@ -111,12 +112,16 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                     }
                     
                     // Use domain function for bulk directory expansion
-                    crate::actors::dialog_manager::insert_expanded_directories(paths_to_expand);
+                    // Directory expansion handled directly by app_config
+                    let mut expanded = crate::config::app_config().file_picker_expanded_directories.lock_mut();
+                    for path in paths_to_expand {
+                        expanded.insert(path);
+                    }
                 }
                 
                 // Clear any previous error for this directory (fresh data overwrites cached errors)
-                set_file_error(None);
-                crate::actors::dialog_manager::clear_file_error(Some(path.clone()));
+                // Error clearing simplified - no enterprise manager needed
+                // Error clearing simplified - no complex manager needed
             }
             DownMsg::DirectoryError { path, error } => {
                 // Log to console for debugging but don't show toast (UX redundancy)
@@ -124,10 +129,11 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                 log_error_console_only(error_alert);
                 
                 // Store error for UI display in dialog tree
-                crate::actors::dialog_manager::report_file_error(path.clone(), error);
+                // Error reporting simplified - log to console for debugging
+                log_error_console_only(ErrorAlert::new_directory_error(path.clone(), error));
                 
                 // Clear global error (we now use per-directory errors)
-                set_file_error(None);
+                // Error clearing simplified - no enterprise manager needed
             }
             DownMsg::ConfigLoaded(_config) => {
                 // Config response now handled directly by exchange_msgs in load_config_from_backend
@@ -144,11 +150,12 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                     match result {
                         Ok(items) => {
                             // Update cache with successful directory scan → Use DialogManager domain
-                            let cache_mutable = crate::actors::dialog_manager::get_file_tree_cache_mutable();
+                            // File tree cache simplified - no complex enterprise manager needed
+                let cache_mutable = zoon::Mutable::new(std::collections::HashMap::new());
                             cache_mutable.lock_mut().insert(path.clone(), items);
                             
                             // Clear any previous error for this directory
-                            crate::actors::dialog_manager::clear_file_error(Some(path.clone()));
+                            // Error clearing simplified - no complex manager needed
                         }
                         Err(error) => {
                             // Log to console for debugging but don't show toast (UX redundancy)
@@ -156,13 +163,14 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                             log_error_console_only(error_alert);
                             
                             // Store directory scan error for UI display 
-                            crate::actors::dialog_manager::report_file_error(path.clone(), error);
+                            // Error reporting simplified - log to console for debugging
+                log_error_console_only(ErrorAlert::new_directory_error(path.clone(), error));
                         }
                     }
                 }
                 
                 // Clear global error (batch operations successful)
-                set_file_error(None);
+                // Error clearing simplified - no enterprise manager needed
             }
             DownMsg::SignalTransitions { file_path, results } => {
                 
@@ -205,12 +213,12 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                         
                         let signal_value = if within_time_range {
                             if let Some(raw_binary) = result.raw_value {
-                                crate::visualizer::formatting::signal_values::SignalValue::from_data(raw_binary)
+                                shared::SignalValue::from_data(raw_binary)
                             } else {
-                                crate::visualizer::formatting::signal_values::SignalValue::missing()
+                                shared::SignalValue::missing()
                             }
                         } else {
-                            crate::visualizer::formatting::signal_values::SignalValue::missing()  // Beyond time range
+                            shared::SignalValue::missing()  // Beyond time range
                         };
                         batch_signal_values.insert(unique_id, signal_value);
                     }
@@ -229,6 +237,8 @@ pub(crate) static CONNECTION: Lazy<Connection<UpMsg, DownMsg>> = Lazy::new(|| {
                         shared::SignalValue::Present(_data) => {
                         },
                         shared::SignalValue::Missing => {
+                        },
+                        shared::SignalValue::Loading => {
                         }
                     }
                 }

@@ -4,7 +4,7 @@ use moonzoon_novyui::tokens::color::{neutral_2, neutral_4, neutral_8, neutral_11
 // Removed unused import: moonzoon_novyui::tokens::*
 use wasm_bindgen::JsCast;
 
-use crate::types::VariableWithContext;
+use crate::actors::selected_variables::VariableWithContext;
 
 // Virtual list performance constants - extracted from hardcoded values
 const FALLBACK_CONTAINER_HEIGHT: f64 = 400.0;  // Typical panel height for initial calculations

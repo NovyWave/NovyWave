@@ -3,9 +3,8 @@
 //! Centralized instantiation and access to domain actors throughout the application.
 //! Replaces global mutables with domain-driven reactive state management.
 
-use crate::actors::{TrackedFiles, SelectedVariables, DialogManager, ErrorManager};
+use crate::actors::{TrackedFiles, SelectedVariables};
 use crate::visualizer::timeline::timeline_actor::WaveformTimeline;
-use crate::actors::{dialog_manager, error_manager, config_sync};
 use std::sync::OnceLock;
 use shared::{TrackedFile, SelectedVariable};
 use indexmap::IndexSet;
@@ -25,11 +24,9 @@ static WAVEFORM_TIMELINE_DOMAIN_INSTANCE: OnceLock<WaveformTimeline> = OnceLock:
 
 
 
-/// Global DialogManager domain instance
-static DIALOG_MANAGER_DOMAIN_INSTANCE: OnceLock<DialogManager> = OnceLock::new();
+// DialogManager eliminated - replaced with simple file_dialog.rs Atom-based UI state
 
-/// Global ErrorManager domain instance
-static ERROR_MANAGER_DOMAIN_INSTANCE: OnceLock<ErrorManager> = OnceLock::new();
+// ErrorManager removed as hollow stub
 
 // === STATIC SIGNAL STORAGE FOR DOMAIN SIGNAL LIFETIME FIX ===
 
@@ -51,7 +48,7 @@ static ERROR_MANAGER_DOMAIN_INSTANCE: OnceLock<ErrorManager> = OnceLock::new();
 /// Global DialogManager signal storage - Bridge between domain and UI signals
 // ✅ ELIMINATED: DIALOG_MANAGER_SIGNALS static signal bypass - now uses direct domain access
 
-// ✅ ELIMINATED: ErrorManagerSignalStorage - unused static signal storage replaced by Actor domain
+// ✅ ELIMINATED: ErrorManagerSignalStorage - hollow stub removed
 
 /// Global ErrorManager signal storage - Bridge between domain and UI signals
 // ✅ ELIMINATED: ERROR_MANAGER_SIGNALS static signal bypass - now uses direct domain access
@@ -60,15 +57,13 @@ static ERROR_MANAGER_DOMAIN_INSTANCE: OnceLock<ErrorManager> = OnceLock::new();
 pub async fn initialize_all_domains() -> Result<(), &'static str> {
     // PHASE 1: Initialize static signal storage first  
     // ✅ ELIMINATED: TRACKED_FILES_SIGNALS - now uses direct domain access
-    // ✅ ELIMINATED: ERROR_MANAGER_SIGNALS - now uses direct domain access
+    // ✅ ELIMINATED: ERROR_MANAGER_SIGNALS - hollow stub removed
     
     // PHASE 2: Initialize legacy domains in parallel for better startup performance
-    let (tracked_files, selected_variables, waveform_timeline, dialog_manager, error_manager) = futures::join!(
+    let (tracked_files, selected_variables, waveform_timeline) = futures::join!(
         TrackedFiles::new(),
         SelectedVariables::new(),
-        WaveformTimeline::new(),
-        DialogManager::new(),
-        ErrorManager::new()
+        WaveformTimeline::new()
     );
     
     // Store legacy instances for global access
@@ -78,15 +73,11 @@ pub async fn initialize_all_domains() -> Result<(), &'static str> {
         .map_err(|_| "FATAL: SelectedVariables domain already initialized. This indicates initialize_all_domains() was called multiple times, which suggests a serious application initialization bug. The application must restart to recover.")?;
     WAVEFORM_TIMELINE_DOMAIN_INSTANCE.set(waveform_timeline)
         .map_err(|_| "FATAL: WaveformTimeline domain already initialized. This indicates initialize_all_domains() was called multiple times, which suggests a serious application initialization bug. The application must restart to recover.")?;
-    DIALOG_MANAGER_DOMAIN_INSTANCE.set(dialog_manager)
-        .map_err(|_| "FATAL: DialogManager domain already initialized. This indicates initialize_all_domains() was called multiple times, which suggests a serious application initialization bug. The application must restart to recover.")?;
-    ERROR_MANAGER_DOMAIN_INSTANCE.set(error_manager)
-        .map_err(|_| "FATAL: ErrorManager domain already initialized. This indicates initialize_all_domains() was called multiple times, which suggests a serious application initialization bug. The application must restart to recover.")?;
+    // DialogManager eliminated - replaced with simple file_dialog.rs Atom-based UI state
+    // ErrorManager removed as hollow stub
     
     // Initialize Phase 2 domains (Lazy-initialized automatically on first access)
-    dialog_manager::initialize();
-    error_manager::initialize();
-    config_sync::initialize();
+    // dialog_manager::initialize() eliminated - no longer needed with simple Atom approach
     
     // PHASE 3: Connect TrackedFiles domain to config persistence
     setup_tracked_files_config_bridge().await;
@@ -123,22 +114,15 @@ pub fn waveform_timeline_domain() -> &'static WaveformTimeline {
 /// Get the global UserConfiguration domain instance
 
 
-/// Get the global DialogManager domain instance
-pub fn dialog_manager_domain() -> &'static DialogManager {
-    DIALOG_MANAGER_DOMAIN_INSTANCE.get()
-        .unwrap_or_else(|| {
-            panic!("DialogManager domain accessed before initialization - this indicates a critical application initialization ordering bug")
-        })
-}
+// dialog_manager_domain() eliminated - replaced with simple file_dialog.rs functions
 
 
 /// Check if all domains are initialized
 pub fn _are_domains_initialized() -> bool {
     TRACKED_FILES_DOMAIN_INSTANCE.get().is_some() && 
     SELECTED_VARIABLES_DOMAIN_INSTANCE.get().is_some() && 
-    WAVEFORM_TIMELINE_DOMAIN_INSTANCE.get().is_some() && 
-    DIALOG_MANAGER_DOMAIN_INSTANCE.get().is_some() &&
-    ERROR_MANAGER_DOMAIN_INSTANCE.get().is_some()
+    WAVEFORM_TIMELINE_DOMAIN_INSTANCE.get().is_some()
+    // DialogManager eliminated - no longer part of domain initialization check
 }
 
 // === GLOBAL SIGNAL ACCESS FUNCTIONS (LIFETIME-SAFE) ===
@@ -190,11 +174,6 @@ pub fn selected_variables_signal() -> impl Signal<Item = Vec<SelectedVariable>> 
     domain.variables_signal()
 }
 
-/// Get owned signal vec for selected variables - LIFETIME SAFE for items_signal_vec
-pub fn selected_variables_signal_vec() -> impl SignalVec<Item = SelectedVariable> {
-    let domain = selected_variables_domain();
-    domain.variables_signal_vec()
-}
 
 /// Get owned signal for expanded scopes - LIFETIME SAFE
 pub fn expanded_scopes_signal() -> impl Signal<Item = IndexSet<String>> {
@@ -215,76 +194,10 @@ pub fn expanded_scopes_signal() -> impl Signal<Item = IndexSet<String>> {
 // Domain signals now accessed directly via selected_variables_domain().method_signal()
 
 
-// === DIALOG MANAGER SIGNAL ACCESS FUNCTIONS (LIFETIME-SAFE) ===
+// === FILE DIALOG LEGACY COMPATIBILITY FUNCTIONS ===
+// DialogManager enterprise antipattern eliminated - replaced with simple file_dialog.rs Atom-based UI state
 
-/// Get owned signal for dialog visibility - ARCHITECTURE FIX: Use proper domain Actor instead of static bypass
-pub fn dialog_manager_visible_signal() -> impl Signal<Item = bool> {
-    dialog_manager_domain().dialog_visible.signal()
-}
-
-/// Get owned signal for paths input - ARCHITECTURE FIX: Use proper domain Actor instead of static bypass
-pub fn dialog_manager_paths_input_signal() -> impl Signal<Item = String> {
-    dialog_manager_domain().paths_input.signal()
-}
-
-/// Get owned signal for expanded directories - ARCHITECTURE FIX: Use proper domain Actor instead of static bypass
-pub fn dialog_manager_expanded_directories_signal() -> impl Signal<Item = IndexSet<String>> {
-    dialog_manager_domain().expanded_directories.signal()
-}
-
-/// Get owned signal for selected files - ARCHITECTURE FIX: Use proper domain Actor instead of static bypass
-pub fn dialog_manager_selected_files_signal() -> impl Signal<Item = Vec<String>> {
-    dialog_manager_domain().selected_files.signal()
-}
-
-/// Get owned signal for current error - ARCHITECTURE FIX: Use proper domain Actor instead of static bypass
-pub fn dialog_manager_current_error_signal() -> impl Signal<Item = Option<String>> {
-    dialog_manager_domain().current_error.signal()
-}
-
-/// Get owned signal for error cache - ARCHITECTURE FIX: Use proper domain Actor instead of static bypass
-pub fn dialog_manager_error_cache_signal() -> impl Signal<Item = std::collections::HashMap<String, String>> {
-    dialog_manager_domain().error_cache.signal()
-}
-
-/// Get owned signal for viewport Y position - ARCHITECTURE FIX: Use proper domain Actor instead of static bypass
-pub fn dialog_manager_viewport_y_signal() -> impl Signal<Item = i32> {
-    dialog_manager_domain().viewport_y.signal()
-}
-
-/// Get owned signal for scroll position - ARCHITECTURE FIX: Use proper domain Actor instead of static bypass
-pub fn dialog_manager_scroll_position_signal() -> impl Signal<Item = i32> {
-    dialog_manager_domain().scroll_position.signal()
-}
-
-/// Get owned signal for last expanded directories - ARCHITECTURE FIX: Use proper domain Actor instead of static bypass
-pub fn dialog_manager_last_expanded_signal() -> impl Signal<Item = std::collections::HashSet<String>> {
-    dialog_manager_domain().last_expanded.signal()
-}
-
-// ✅ ELIMINATED: dialog_manager_expanded_mutable() - unused bi-directional sync antipattern (uses prohibited zoon::Task)
-// Use dialog_manager_expanded_directories_signal() directly instead
-
-/// Get selected files mutable for TreeView external_selected - SIMPLIFIED: Direct domain access
-
-/// Get owned signal for file tree cache - ARCHITECTURE FIX: Use proper domain Actor instead of static bypass
-pub fn dialog_manager_file_tree_cache_signal() -> impl Signal<Item = std::collections::HashMap<String, Vec<shared::FileSystemItem>>> {
-    dialog_manager_domain().file_tree_cache.signal()
-}
-
-/// Get file tree cache mutable for direct access - SIMPLIFIED: Direct domain access
-/// ❌ ELIMINATED: Complex bi-directional sync using zoon::Task (violates Actor+Relay architecture)
-/// ✅ CORRECTED: Use direct domain signals - components should connect directly to domain signals
-pub fn dialog_manager_file_tree_cache_mutable() -> zoon::Mutable<std::collections::HashMap<String, Vec<shared::FileSystemItem>>> {
-    // ✅ SIMPLIFIED: Return basic mutable, components connect to domain signals separately
-    // This eliminates zoon::Task antipattern while maintaining API compatibility
-    let cache_mutable = zoon::Mutable::new(std::collections::HashMap::new());
-    
-    // Components should use: .child_signal(dialog_manager_file_tree_cache_signal().map(...))
-    // instead of complex bi-directional sync patterns
-    
-    cache_mutable
-}
+// ✅ CLEANED UP: All legacy dialog_manager compatibility functions removed as they were unused
 
 
 

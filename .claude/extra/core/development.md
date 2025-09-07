@@ -15,6 +15,17 @@ When making changes to files, first understand the file's code conventions. Mimi
 - **NEVER use `#[allow(dead_code)]` or similar warning suppressors** - Remove unused code instead of hiding warnings
   - **EXCEPTION**: Dataflow module APIs (`frontend/src/dataflow/`) can use `#[allow(dead_code)]` for public methods that will be extracted to standalone crate
 
+### Comment Antipatterns to Avoid
+
+**NEVER add unnecessary code comments** like:
+- `// ✅ CLEANED UP` - Code should be self-evident 
+- `// removed` - Version control handles this
+- `// migrated` - Don't document refactoring history in code
+- `// eliminated` - Obvious from absence of code
+- `// consolidated` - Implementation speaks for itself
+
+**Principle:** Clean code documents itself through clear naming and structure, not explanatory comments.
+
 ### UI Hardcoded Values Exception
 
 **Design system tokens are preferred** for UI spacing, colors, and dimensions, but **hardcoded values are acceptable within UI functions for locality**:

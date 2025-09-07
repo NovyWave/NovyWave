@@ -12,7 +12,7 @@ use shared::{SignalTransition, SignalValue, WaveformFile, VarFormat};
 use zoon::*;
 use futures::{StreamExt, select};
 use std::collections::{BTreeMap, HashMap};
-use crate::visualizer::formatting::signal_values as format_utils;
+// Signal values now unified in shared crate
 
 // Canvas dimension constants - extracted from hardcoded values
 const DEFAULT_CANVAS_WIDTH: f32 = 800.0;
@@ -77,8 +77,8 @@ pub struct WaveformTimeline {
     canvas_height: Actor<f32>,
     
     /// Current signal values at cursor position
-    signal_values: ActorMap<String, format_utils::SignalValue>,
-    signal_values_hashmap_signal: zoon::Mutable<HashMap<String, format_utils::SignalValue>>,  // Dedicated signal for efficient HashMap access
+    signal_values: ActorMap<String, SignalValue>,
+    signal_values_hashmap_signal: zoon::Mutable<HashMap<String, SignalValue>>,  // Dedicated signal for efficient HashMap access
     
     /// Format selections for selected variables
     variable_formats: ActorMap<String, VarFormat>,
@@ -133,7 +133,7 @@ pub struct WaveformTimeline {
     pub redraw_requested_relay: Relay<()>,
     
     /// Signal values updated from backend
-    pub signal_values_updated_relay: Relay<HashMap<String, format_utils::SignalValue>>,
+    pub signal_values_updated_relay: Relay<HashMap<String, SignalValue>>,
     
     /// Variable format updated for specific variable
     pub variable_format_updated_relay: Relay<(String, VarFormat)>,
@@ -260,7 +260,7 @@ impl WaveformTimeline {
         let (mouse_moved_relay, mouse_moved_stream) = relay::<(f32, TimeNs)>();
         let (canvas_resized_relay, _canvas_resized_stream) = relay::<(f32, f32)>();
         let (redraw_requested_relay, redraw_requested_stream) = relay::<()>();
-        let (signal_values_updated_relay, signal_values_updated_stream) = relay::<HashMap<String, format_utils::SignalValue>>();
+        let (signal_values_updated_relay, signal_values_updated_stream) = relay::<HashMap<String, SignalValue>>();
         let (variable_format_updated_relay, variable_format_updated_stream) = relay::<(String, VarFormat)>();
         
         // Create relays for keyboard navigation
@@ -1038,7 +1038,7 @@ impl WaveformTimeline {
                                 
                                 // Sync dedicated HashMap signal after ActorMap change
                                 {
-                                    let current_map: HashMap<String, format_utils::SignalValue> = values_handle.lock_ref().iter()
+                                    let current_map: HashMap<String, SignalValue> = values_handle.lock_ref().iter()
                                         .map(|(k, v)| (k.clone(), v.clone()))
                                         .collect();
                                     signal_values_sync.set(current_map);
@@ -1339,7 +1339,7 @@ impl WaveformTimeline {
     }
     
     /// Get reactive signal for all signal values
-    pub fn signal_values_signal(&self) -> impl zoon::Signal<Item = HashMap<String, format_utils::SignalValue>> {
+    pub fn signal_values_signal(&self) -> impl zoon::Signal<Item = HashMap<String, SignalValue>> {
         self.signal_values_hashmap_signal.signal_cloned()
     }
     
@@ -1381,7 +1381,7 @@ impl WaveformTimeline {
     }
     
     /// Get signal for specific signal value
-    pub fn signal_value_for_id(&self, signal_id: String) -> impl zoon::Signal<Item = Option<format_utils::SignalValue>> {
+    pub fn signal_value_for_id(&self, signal_id: String) -> impl zoon::Signal<Item = Option<SignalValue>> {
         self.signal_values.value_signal(signal_id)
     }
     
@@ -1647,7 +1647,7 @@ impl WaveformTimeline {
     }
     
     /// Signal values signal from domain - PROPERLY CONNECTED TO WAVEFORM_TIMELINE_DOMAIN
-    pub fn signal_values_signal_static() -> impl zoon::Signal<Item = HashMap<String, format_utils::SignalValue>> {
+    pub fn signal_values_signal_static() -> impl zoon::Signal<Item = HashMap<String, SignalValue>> {
         crate::actors::global_domains::waveform_timeline_domain()
             .signal_values_hashmap_signal
             .signal_cloned()
@@ -2062,7 +2062,7 @@ pub fn canvas_height_signal() -> impl zoon::Signal<Item = f32> {
 }
 
 /// Get signal values signal (replaces SIGNAL_VALUES.signal())
-pub fn signal_values_signal() -> impl zoon::Signal<Item = HashMap<String, format_utils::SignalValue>> {
+pub fn signal_values_signal() -> impl zoon::Signal<Item = HashMap<String, SignalValue>> {
     crate::actors::global_domains::waveform_timeline_domain()
         .signal_values_hashmap_signal
         .signal_cloned()
@@ -2161,7 +2161,7 @@ pub fn redraw_requested_relay() -> Relay<()> {
 }
 
 /// Signal values updated from backend
-pub fn signal_values_updated_relay() -> Relay<HashMap<String, format_utils::SignalValue>> {
+pub fn signal_values_updated_relay() -> Relay<HashMap<String, SignalValue>> {
     get_waveform_timeline().signal_values_updated_relay.clone()
 }
 
@@ -2591,6 +2591,7 @@ pub fn cursor_value_signal(signal_id: &str) -> impl zoon::Signal<Item = String> 
                 match cached_value {
                     shared::SignalValue::Present(data) => data.clone(),
                     shared::SignalValue::Missing => "N/A".to_string(),
+                    shared::SignalValue::Loading => "Loading...".to_string(),
                 }
             }
             else if let Some(transitions) = get_raw_transitions_from_cache(&signal_id_cloned) {
@@ -2599,6 +2600,7 @@ pub fn cursor_value_signal(signal_id: &str) -> impl zoon::Signal<Item = String> 
                     match interpolated {
                         shared::SignalValue::Present(data) => data,
                         shared::SignalValue::Missing => "N/A".to_string(),
+                        shared::SignalValue::Loading => "Loading...".to_string(),
                     }
                 } else {
                     "N/A".to_string()
@@ -2812,11 +2814,8 @@ pub fn handle_unified_response(
         for (signal_id, value) in &cursor_values {
             insert_cursor_value_to_cache(signal_id.clone(), value.clone());
             
-            // Convert backend SignalValue to UI SignalValue format
-            let ui_value = match value {
-                shared::SignalValue::Present(data) => crate::visualizer::formatting::signal_values::SignalValue::from_data(data.clone()),
-                shared::SignalValue::Missing => crate::visualizer::formatting::signal_values::SignalValue::missing(),
-            };
+            // Use unified SignalValue (no conversion needed)
+            let ui_value = value.clone();
             ui_signal_values.insert(signal_id.clone(), ui_value);
         }
         

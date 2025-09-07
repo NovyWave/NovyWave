@@ -45,18 +45,15 @@ pub use crate::dataflow::{
 pub mod tracked_files;
 pub mod selected_variables;
 // pub mod waveform_timeline; // MOVED to visualizer/timeline/timeline_actor.rs
-pub mod dialog_manager;
-pub mod error_manager;
-pub mod config_sync;
+// pub mod dialog_manager; // ELIMINATED - replaced with simple file_dialog.rs Atom-based UI state
 pub mod global_domains;
-pub mod variable_helpers;
 pub mod naming_validation;
 // pub mod testing; // MOVED to visualizer/testing/actor_testing.rs
 pub use tracked_files::TrackedFiles;
 pub use selected_variables::{SelectedVariables};
 // pub use waveform_timeline::{WaveformTimeline}; // MOVED to visualizer/timeline/timeline_actor.rs
-pub use dialog_manager::{DialogManager};
-pub use error_manager::{ErrorManager};
+// pub use dialog_manager::{DialogManager}; // ELIMINATED - replaced with simple file_dialog.rs functions
+// ErrorManager removed as hollow stub
 pub use global_domains::{
     initialize_all_domains, 
     selected_variables_domain,
@@ -64,4 +61,4 @@ pub use global_domains::{
     // Domain signal functions (only used ones)
     tracked_files_signal
 };
-pub use variable_helpers::{create_selected_variable};
+pub use selected_variables::{create_selected_variable};

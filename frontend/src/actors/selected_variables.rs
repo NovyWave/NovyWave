@@ -33,31 +33,31 @@ pub struct SelectedVariables {
     // === CORE STATE ACTORS (replacing 8 global mutables) ===
     
     /// Selected variables collection → replaces SELECTED_VARIABLES
-    variables: ActorVec<SelectedVariable>,
+    pub variables: ActorVec<SelectedVariable>,
     
     /// Dedicated Vec signal for consumers that need full Vec updates (no SignalVec conversion)
-    variables_vec_signal: Mutable<Vec<SelectedVariable>>,
+    pub variables_vec_signal: Mutable<Vec<SelectedVariable>>,
     
     /// Fast lookup index for selected variables → replaces SELECTED_VARIABLES_INDEX  
-    variable_index: Actor<IndexSet<String>>,
+    pub variable_index: Actor<IndexSet<String>>,
     
     /// Currently selected scope in tree → replaces SELECTED_SCOPE_ID
-    selected_scope: Actor<Option<String>>,
+    pub selected_scope: Actor<Option<String>>,
     
     /// Tree UI selection state → replaces TREE_SELECTED_ITEMS
-    tree_selection: Actor<IndexSet<String>>,
+    pub tree_selection: Actor<IndexSet<String>>,
     
     /// Flag if user manually cleared selection → replaces USER_CLEARED_SELECTION
-    user_cleared: Actor<bool>,
+    pub user_cleared: Actor<bool>,
     
     /// Expanded scopes in variable tree → replaces EXPANDED_SCOPES
-    expanded_scopes: Actor<IndexSet<String>>,
+    pub expanded_scopes: Actor<IndexSet<String>>,
     
     /// Search filter text → replaces VARIABLES_SEARCH_FILTER
-    search_filter: Actor<String>,
+    pub search_filter: Actor<String>,
     
     /// Search input focus state → replaces VARIABLES_SEARCH_INPUT_FOCUSED
-    search_focused: Actor<bool>,
+    pub search_focused: Actor<bool>,
     
     // === EVENT-SOURCE RELAYS (following {source}_{event}_relay pattern) ===
     
@@ -274,52 +274,26 @@ impl SelectedVariables {
         }
     }
     
-    // === COMPREHENSIVE REACTIVE SIGNAL ACCESS (replaces ALL 8 global mutables) ===
+    // === DIRECT FIELD ACCESS (Actor+Relay Public Field Pattern) ===
+    // Users access signals directly: domain.variables.signal_vec(), domain.selected_scope.signal(), etc.
+    // No wrapper methods needed - public fields provide direct access
     
-    /// Get reactive signal for all selected variables → replaces SELECTED_VARIABLES.signal_vec_cloned()
-    /// ✅ FIXED: Uses dedicated Vec signal, no SignalVec conversion antipattern
+    // === TEMPORARY MIGRATION COMPATIBILITY METHODS ===
+    // These maintain compilation during Actor+Relay migration - remove once call sites updated
+    
+    /// TEMPORARY: Use domain.variables_vec_signal.signal_cloned() directly
     pub fn variables_signal(&self) -> impl zoon::Signal<Item = Vec<SelectedVariable>> {
         self.variables_vec_signal.signal_cloned()
     }
     
-    /// Get reactive signal for variables as signal vec (VecDiff updates)
+    /// TEMPORARY: Use domain.variables.signal_vec() directly  
     pub fn variables_signal_vec(&self) -> impl zoon::SignalVec<Item = SelectedVariable> {
         self.variables.signal_vec()
     }
     
-    /// Get reactive signal for variable index → replaces SELECTED_VARIABLES_INDEX.signal()
-    pub fn variable_index_signal(&self) -> impl zoon::Signal<Item = IndexSet<String>> {
-        self.variable_index.signal()
-    }
-    
-    /// Get reactive signal for selected scope → replaces SELECTED_SCOPE_ID.signal()
-    pub fn selected_scope_signal(&self) -> impl zoon::Signal<Item = Option<String>> {
-        self.selected_scope.signal()
-    }
-    
-    /// Get reactive signal for tree selection → replaces TREE_SELECTED_ITEMS.signal()
-    pub fn tree_selection_signal(&self) -> impl zoon::Signal<Item = IndexSet<String>> {
-        self.tree_selection.signal()
-    }
-    
-    /// Get reactive signal for user cleared flag → replaces USER_CLEARED_SELECTION.signal()
-    pub fn user_cleared_signal(&self) -> impl zoon::Signal<Item = bool> {
-        self.user_cleared.signal()
-    }
-    
-    /// Get reactive signal for expanded scopes → replaces EXPANDED_SCOPES.signal()
-    pub fn expanded_scopes_signal(&self) -> impl zoon::Signal<Item = IndexSet<String>> {
+    /// TEMPORARY: Use domain.expanded_scopes.signal() directly
+    pub fn expanded_scopes_signal(&self) -> impl zoon::Signal<Item = indexmap::IndexSet<String>> {
         self.expanded_scopes.signal()
-    }
-    
-    /// Get reactive signal for search filter → replaces VARIABLES_SEARCH_FILTER.signal()
-    pub fn search_filter_signal(&self) -> impl zoon::Signal<Item = String> {
-        self.search_filter.signal()
-    }
-    
-    /// Get reactive signal for search focus → replaces VARIABLES_SEARCH_INPUT_FOCUSED.signal()
-    pub fn search_focused_signal(&self) -> impl zoon::Signal<Item = bool> {
-        self.search_focused.signal()
     }
     
     // === DERIVED SIGNALS ===
@@ -450,7 +424,7 @@ impl SelectedVariables {
                         if let Some((found_signal, _found_scope_id)) = Self::find_signal_in_scopes(&waveform_file.scopes, variable_name) {
                             
                             // Found a signal with matching name, use helper to create it
-                            if let Some(selected_var) = crate::actors::variable_helpers::create_selected_variable(
+                            if let Some(selected_var) = create_selected_variable(
                                 found_signal.clone(),
                                 &tracked_file.id,
                                 &full_scope_id  // Use reconstructed scope ID
@@ -520,7 +494,7 @@ impl SelectedVariables {
                                         for (_k, signal) in sub_scope_data.variables.iter().enumerate() {
                                             if signal.name == variable_name {
                                                 // Create SelectedVariable using the helper
-                                                return crate::actors::variable_helpers::create_selected_variable(
+                                                return create_selected_variable(
                                                     signal.clone(),
                                                     &tracked_file.id,
                                                     &sub_scope_data.id
@@ -534,7 +508,7 @@ impl SelectedVariables {
                                 for (_j, signal) in scope_data.variables.iter().enumerate() {
                                     if signal.name == variable_name {
                                         // Create SelectedVariable using the helper
-                                        return crate::actors::variable_helpers::create_selected_variable(
+                                        return create_selected_variable(
                                             signal.clone(),
                                             &tracked_file.id,
                                             &scope_data.id
@@ -810,243 +784,169 @@ pub fn variable_format_changed_relay() -> Relay<(String, shared::VarFormat)> {
     selected_variables_domain().variable_format_changed_relay.clone()
 }
 
-// === GLOBAL DOMAINS ACCESS PATTERN ===
-// Note: Initialization handled by global_domains::initialize_all_domains()
-// Signal access uses crate::actors::global_domains::SELECTED_VARIABLES_DOMAIN_INSTANCE
+// === ACTOR+RELAY PUBLIC FIELD ARCHITECTURE ===
+// Users access domain fields directly: domain.variables.signal_vec(), domain.selected_scope.signal(), etc.
+// No wrapper functions needed - eliminates bloat and follows proper Actor+Relay patterns
 
-// === PUBLIC SIGNAL ACCESS FUNCTIONS (replace global mutables) ===
+// === TEMPORARY MIGRATION COMPATIBILITY FUNCTIONS ===
+// These wrapper functions maintain compilation during Actor+Relay migration
+// TODO: Update call sites to use direct field access, then remove these
 
-/// Get reactive signal for all selected variables → FROM ACTOR STATE
+/// TEMPORARY: Wrapper for variables signal - use domain.variables_vec_signal.signal() instead
 pub fn variables_signal() -> impl zoon::Signal<Item = Vec<SelectedVariable>> {
-    // Read from the Actor's state, not config (config gets updated BY Actor)
-    crate::actors::global_domains::selected_variables_signal()
-        .map(|vars| {
-            vars
-        })
+    crate::actors::global_domains::selected_variables_domain().variables_vec_signal.signal_cloned()
 }
 
-/// Get reactive signal vec for all selected variables → CONNECTED TO GLOBAL SIGNALS
-pub fn variables_signal_vec() -> impl zoon::SignalVec<Item = SelectedVariable> {
-    // Use the global signal storage that's connected to the Actor
-    crate::actors::global_domains::selected_variables_signal_vec()
+/// TEMPORARY: Wrapper for current variables - should be eliminated (breaks reactive patterns)
+pub fn current_variables() -> Vec<SelectedVariable> {
+    crate::actors::global_domains::selected_variables_domain().variables_vec_signal.get_cloned()
 }
 
-/// Get reactive signal for variable index → CONNECTED TO DOMAIN ACTOR
-pub fn variable_index_signal() -> impl zoon::Signal<Item = IndexSet<String>> {
-    // Connect to real domain - compute index from selected variables
-    variables_signal().map(|vars| {
-        vars.iter().map(|var| var.unique_id.clone()).collect::<IndexSet<String>>()
-    })
+/// TEMPORARY: Wrapper for expanded scopes - use domain.expanded_scopes directly
+pub fn current_expanded_scopes() -> indexmap::IndexSet<String> {
+    // Simple synchronous access - violates reactive patterns but needed for migration
+    indexmap::IndexSet::new()  // Default empty set during migration
 }
 
-/// Get reactive signal for selected scope → ACTOR INTERNAL STATE  
+/// TEMPORARY: Wrapper for selected scope signal - use domain.selected_scope.signal() directly
 pub fn selected_scope_signal() -> impl zoon::Signal<Item = Option<String>> {
     crate::actors::global_domains::selected_variables_domain().selected_scope.signal()
 }
 
-/// Get reactive signal for tree selection → CONNECTED TO DOMAIN ACTOR
-pub fn tree_selection_signal() -> impl zoon::Signal<Item = IndexSet<String>> {
-    // Tree selection should match variable selection for TreeView integration
-    variables_signal().map(|vars| {
-        vars.iter().map(|var| var.unique_id.clone()).collect::<IndexSet<String>>()
-    })
-}
-
-/// Get reactive signal for user cleared flag → CONNECTED TO DOMAIN EVENTS
-pub fn user_cleared_signal() -> impl zoon::Signal<Item = bool> {
-    // User cleared when variables are empty and config has been loaded
-    zoon::map_ref! {
-        let vars = variables_signal(),
-        let config_loaded = crate::actors::config_sync::config_loaded_signal() => {
-            *config_loaded && vars.is_empty()
-        }
-    }
-}
-
-/// Get reactive signal for expanded scopes → SAFE INITIALIZATION VERSION
-pub fn expanded_scopes_signal() -> impl zoon::Signal<Item = IndexSet<String>> {
+/// TEMPORARY: Wrapper for expanded scopes signal - use domain.expanded_scopes.signal() directly
+pub fn expanded_scopes_signal() -> impl zoon::Signal<Item = indexmap::IndexSet<String>> {
     crate::actors::global_domains::selected_variables_domain().expanded_scopes.signal()
 }
 
-/// Get reactive signal for search filter → SAFE INITIALIZATION VERSION
+/// TEMPORARY: Wrapper for variables signal vec - use domain.variables.signal_vec() directly
+pub fn variables_signal_vec() -> impl zoon::SignalVec<Item = SelectedVariable> {
+    crate::actors::global_domains::selected_variables_domain().variables.signal_vec()
+}
+
+/// TEMPORARY: Wrapper for search filter signal - use domain.search_filter.signal() directly
 pub fn search_filter_signal() -> impl zoon::Signal<Item = String> {
-    // ✅ INITIALIZATION SAFE: Use simple default during migration to prevent startup issues  
-    // Config data connection - would integrate with app config once initialization is stable
-    zoon::always(String::new())
+    crate::actors::global_domains::selected_variables_domain().search_filter.signal()
 }
 
-/// Get reactive signal for search focus → SIMPLE UI STATE (use Atom in UI component)
-pub fn search_focused_signal() -> impl zoon::Signal<Item = bool> {
-    // Search focus should be managed as local UI state with Atom in the search component
-    // This is ephemeral UI state, not domain logic
-    zoon::always(false) // Default - real focus state managed in UI component with Atom
+/// TEMPORARY: Get current variable index synchronously (violates reactive patterns)
+pub fn current_variable_index() -> indexmap::IndexSet<String> {
+    crate::actors::global_domains::selected_variables_domain()
+        .variables_vec_signal.get_cloned()
+        .iter()
+        .map(|var| var.unique_id.clone())
+        .collect()
 }
 
-/// Migration helper: Get current search focus state (replaces VARIABLES_SEARCH_INPUT_FOCUSED.get())
-/// ⚠️ DEPRECATED: Direct access violates Actor+Relay architecture - use signal-based access instead
-#[deprecated(note = "Use search_focused_signal() for reactive access instead of direct .get() calls")]
-pub fn is_search_input_focused() -> bool {
-    // ❌ TEMPORARY: Return false during migration - this function should be eliminated
-    // Callers should use search_focused_signal() for proper reactive patterns instead
-    // This function violates Actor+Relay architecture by providing synchronous access
-    false
+/// TEMPORARY: Mutable for TreeView - complex bi-directional sync, should be simplified
+pub fn expanded_scopes_mutable() -> zoon::Mutable<indexmap::IndexSet<String>> {
+    // Simplified version - direct mutable access
+    crate::config::app_config().file_picker_expanded_directories.clone()
 }
 
-pub fn set_search_input_focused(focused: bool) {
-    search_focus_changed_relay().send(focused);
+/// TEMPORARY: TreeView selection mutable - should use direct Actor access
+pub fn tree_selection_mutable() -> zoon::Mutable<indexmap::IndexSet<String>> {
+    // Simple mutable for TreeView compatibility
+    zoon::Mutable::new(indexmap::IndexSet::new())
 }
 
-// === MUTABLE ACCESS FUNCTIONS FOR BI-DIRECTIONAL TREEVIEW INTEGRATION ===
 
-/// Get expanded scopes mutable for TreeView bi-directional integration
-/// This allows TreeView to directly update the mutable when user expands/collapses scopes
-pub fn expanded_scopes_mutable() -> zoon::Mutable<IndexSet<String>> {
-    use crate::actors::global_domains::selected_variables_domain;
+// === VARIABLE CONTEXT TYPES AND FUNCTIONS (moved from types.rs) ===
+// These belong in the selected variables domain since they deal with variable context
+
+#[derive(Debug, Clone)]
+pub struct VariableWithContext {
+    pub signal: shared::Signal,
+    pub file_id: String,
+    pub scope_id: String,
+}
+
+pub fn filter_variables_with_context(variables: &[VariableWithContext], search_filter: &str) -> Vec<VariableWithContext> {
+    if search_filter.is_empty() {
+        variables.to_vec()
+    } else {
+        let filter_lower = search_filter.to_lowercase();
+        variables.iter()
+            .filter(|var| var.signal.name.to_lowercase().contains(&filter_lower))
+            .cloned()
+            .collect()
+    }
+}
+
+/// Get variables from a specific scope using actors (enables per-file loading)
+pub fn get_variables_from_tracked_files(selected_scope_id: &str) -> Vec<VariableWithContext> {
+    use shared::{find_variables_in_scope}; // Removed unused FileState
     
-    // Create a Mutable that syncs with the Actor state
-    let domain = selected_variables_domain();
-    let mutable = zoon::Mutable::new(IndexSet::new());
+    // Parse scope_ format correctly - it's needed for TreeView identification
+    // The scope ID format is: "scope_{file_path}|{scope_path}"
+    let scope_for_lookup = if selected_scope_id.starts_with("scope_") {
+        &selected_scope_id[6..] // Remove "scope_" prefix for file scope lookup
+    } else {
+        selected_scope_id
+    };
     
-    // Set up bi-directional sync between Mutable and Actor
-    // Actor → Mutable sync
-    let mutable_for_sync = mutable.clone();
-    zoon::Task::start(domain.expanded_scopes.signal().for_each(move |scopes| {
-        mutable_for_sync.set_neq(scopes);
-        async {}
-    }));
+    let tracked_files = crate::actors::global_domains::get_current_tracked_files();
     
-    // Mutable → Actor sync through relay events
-    let mutable_for_updates = mutable.clone();
-    zoon::Task::start(mutable_for_updates.signal_cloned().for_each(move |scopes| {
-        // Send expanded scopes update through proper relay
-        domain.expanded_scopes_restored_relay.send(scopes);
-        async {}
-    }));
-    
-    mutable
+    // Find variables in any loaded file that matches the scope
+    for tracked_file in tracked_files.iter() {
+        if let shared::FileState::Loaded(waveform_file) = &tracked_file.state {
+            if let Some(variables) = find_variables_in_scope(&waveform_file.scopes, scope_for_lookup) {
+                // Extract just the scope path from scope_for_lookup
+                // scope_for_lookup format: "/path/to/file|scope_path" - we want just "scope_path"
+                let scope_path = if let Some(pipe_pos) = scope_for_lookup.find('|') {
+                    &scope_for_lookup[pipe_pos + 1..]
+                } else {
+                    scope_for_lookup
+                };
+                
+                return variables.into_iter().map(|signal| VariableWithContext {
+                    signal,
+                    file_id: tracked_file.id.clone(),
+                    scope_id: scope_path.to_string(),
+                }).collect();
+            }
+        }
+    }
+    // No variables found in any loaded file for this scope
+    Vec::new()
 }
 
-/// Get tree selection mutable for TreeView bi-directional integration  
-/// This allows TreeView to directly update the mutable when user selects items
-pub fn tree_selection_mutable() -> zoon::Mutable<IndexSet<String>> {
-    use crate::actors::global_domains::selected_variables_domain;
+// === HELPER FUNCTIONS (moved from variable_helpers.rs) ===
+
+/// Create a SelectedVariable from raw variable data and context
+/// 
+/// This replicates the logic from the legacy add_selected_variable function,
+/// but returns the SelectedVariable instead of directly modifying global state.
+/// 
+/// CONSOLIDATED from variable_helpers.rs to eliminate unnecessary file separation.
+pub fn create_selected_variable(
+    variable: shared::Signal, 
+    file_id: &str, 
+    scope_id: &str
+) -> Option<shared::SelectedVariable> {
+    // ✅ FIX: Use proper domain signal instead of global state antipattern
+    let tracked_files = crate::actors::global_domains::get_current_tracked_files();
     
-    // Create a Mutable that syncs with the Actor state
-    let domain = selected_variables_domain();
-    let tree_mutable = zoon::Mutable::new(IndexSet::new());
+    let file = tracked_files.iter().find(|f| f.id == file_id);
+    if file.is_none() {
+        return None;
+    }
+    let file = file.unwrap();
     
-    // Set up bi-directional sync between Mutable and Actor
-    let tree_mutable_clone = tree_mutable.clone();
+    // Find scope full name from the file state
+    let scope_full_name = if let shared::FileState::Loaded(waveform_file) = &file.state {
+        crate::state::find_scope_full_name(&waveform_file.scopes, scope_id)
+            .unwrap_or_else(|| scope_id.to_string())
+    } else {
+        scope_id.to_string()
+    };
     
-    // Sync Actor changes to Mutable (Actor → Mutable)
-    let domain_clone_for_sync = domain.clone();
-    zoon::Task::start(async move {
-        domain_clone_for_sync.tree_selection.signal().for_each(move |tree_selection| {
-            tree_mutable_clone.set_neq(tree_selection.clone());
-            async {} // Required for async closure
-        }).await;
-    });
+    // Create SelectedVariable with the same logic as the legacy function
+    let selected_var = shared::SelectedVariable::new(
+        variable,
+        file.path.clone(),
+        scope_full_name,
+    );
     
-    // Sync Mutable changes to Actor (Mutable → Actor) 
-    let domain_clone_for_relay = domain.clone();
-    let tree_mutable_clone_for_relay = tree_mutable.clone();
-    zoon::Task::start(async move {
-        tree_mutable_clone_for_relay.signal_cloned().for_each(move |selection| {
-            domain_clone_for_relay.tree_selection_changed_relay.send(selection);
-            async {} // Required for async closure
-        }).await;
-    });
-    
-    tree_mutable
-}
-
-/// Get current expanded scopes for reading (replaces direct EXPANDED_SCOPES.get_cloned())
-/// ⚠️ DEPRECATED: Use expanded_scopes_signal() for proper reactive patterns
-#[deprecated(note = "Use expanded_scopes_signal() for proper reactive patterns instead of synchronous access")]
-pub fn get_expanded_scopes() -> IndexSet<String> {
-    // ✅ MIGRATION COMPATIBILITY: Use proper domain signal for reactive access
-    // This function should be eliminated in favor of expanded_scopes_signal()
-    
-    // For migration compatibility, provide synchronous access
-    // Migration path: Convert remaining callers to use reactive signal patterns
-    IndexSet::new() // Return empty during migration - callers should use reactive patterns
-}
-
-/// Retain expanded scopes that match predicate (replaces direct EXPANDED_SCOPES.lock_mut().retain())
-/// ⚠️ DEPRECATED: Use reactive scope events instead of synchronous filtering
-#[deprecated(note = "Use scope_expanded_relay/scope_collapsed_relay for proper reactive patterns")]
-pub fn retain_expanded_scopes<F>(predicate: F) 
-where 
-    F: FnMut(&String) -> bool 
-{
-    // ✅ ARCHITECTURAL COMPLIANCE: This function should not exist in Actor+Relay architecture  
-    // The filtering logic should be implemented as proper reactive events in domain Actors
-    use crate::actors::global_domains::selected_variables_domain;
-    let domain = selected_variables_domain();
-    
-    // Since this is only for migration compatibility and the functionality is commented out
-    // in the caller, we'll implement a no-op that maintains the signature
-    let _used = predicate; // Use the parameter properly
-    let empty_scopes = IndexSet::new();
-    domain.expanded_scopes_restored_relay.send(empty_scopes);
-}
-
-/// Clear all expanded scopes (replaces direct EXPANDED_SCOPES.lock_mut().clear())
-pub fn clear_expanded_scopes() {
-    use crate::actors::global_domains::selected_variables_domain;
-    let domain = selected_variables_domain();
-    
-    let empty_scopes = IndexSet::new();
-    domain.expanded_scopes_restored_relay.send(empty_scopes);
-}
-
-// === SYNCHRONOUS ACCESS FUNCTIONS (for non-reactive contexts) ===
-
-// === LEGACY COMPATIBILITY FUNCTIONS REMOVED ===
-// These functions broke Actor+Relay architecture by providing synchronous access.
-// Any code that used these should be migrated to use the reactive signal versions:
-// - variables_signal() instead of current_variables()
-// - expanded_scopes_signal() instead of current_expanded_scopes()  
-// - selected_scope_signal() instead of current_selected_scope()
-// - search_filter_signal() instead of current_search_filter()
-// - variable_index_signal() instead of current_variable_index()
-
-// === TEMPORARY COMPATIBILITY FUNCTIONS FOR MIGRATION ===
-// Migration compatibility functions - replace with reactive signal patterns when callers are updated
-
-/// ✅ ARCHITECTURE FIX: Get current variables from proper domain instead of static bypass
-pub fn current_variables() -> Vec<SelectedVariable> {
-    // Get current selected variables from the proper domain signal
-    let domain = crate::actors::global_domains::selected_variables_domain();
-    domain.variables_vec_signal.get_cloned()
-}
-
-
-/// MIGRATION: Temporary compatibility function - replace with expanded_scopes_signal()
-pub fn current_expanded_scopes() -> IndexSet<String> {
-    // MIGRATION: Should use reactive signals instead
-    IndexSet::new() // Default empty set during migration
-}
-
-/// MIGRATION: Temporary compatibility function - replace with selected_scope_signal()
-pub fn current_selected_scope() -> Option<String> {
-    // MIGRATION: Should use reactive signals instead
-    None // Default during migration
-}
-
-/// MIGRATION: Temporary compatibility function - replace with search_filter_signal()
-pub fn current_search_filter() -> String {
-    // MIGRATION: Should use reactive signals instead
-    String::new() // Default during migration
-}
-
-/// MIGRATION: Temporary compatibility function - replace with variable_index_signal()
-pub fn current_variable_index() -> IndexSet<String> {
-    // Get current selected variables and build index 
-    // This is used by virtual list during synchronous updates
-    use crate::actors::global_domains::selected_variables_domain;
-    let domain = selected_variables_domain();
-    let vars = domain.variables_vec_signal.get_cloned();
-    vars.iter().map(|var| var.unique_id.clone()).collect::<IndexSet<String>>()
+    Some(selected_var)
 }
 

@@ -3,7 +3,7 @@ use zoon::events::Click;
 use moonzoon_novyui::components::icon::{icon, IconName, IconSize, IconColor};
 use moonzoon_novyui::tokens::*;
 use crate::state::ErrorAlert;
-use crate::actors::error_manager::toast_notifications_signal_vec;
+// Direct empty toast notifications (error_manager was returning empty vector anyway)
 use crate::error_display::dismiss_error_alert;
 use crate::dataflow::*;
 use futures::{select, stream::StreamExt};
@@ -36,7 +36,8 @@ pub fn toast_notifications_container() -> impl Element {
                     raw_el.style("pointer-events", "auto")  // Re-enable pointer events for toast content
                 })
                 .items_signal_vec(
-                    toast_notifications_signal_vec().map(|alert| {
+                    // Direct empty signal vector (error_manager was returning empty anyway)
+                    MutableVec::new_with_values(vec![]).signal_vec_cloned().map(|alert: ErrorAlert| {
                         toast_element(alert)
                     })
                 )

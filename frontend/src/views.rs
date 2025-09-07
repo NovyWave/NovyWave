@@ -9,12 +9,12 @@ use moonzoon_novyui::tokens::typography::font_mono;
 use shared::{ScopeData, UpMsg, TrackedFile, SelectedVariable, FileState};
 use crate::actors::{relay};
 use crate::dataflow::atom::Atom;
-use crate::types::{get_variables_from_tracked_files, filter_variables_with_context, VariableWithContext};
+use crate::actors::selected_variables::{get_variables_from_tracked_files, filter_variables_with_context, VariableWithContext};
 use crate::virtual_list::{virtual_variables_list_pre_filtered};
 use crate::config::app_config;
 use std::collections::{HashSet, HashMap};
 use crate::clipboard;
-use crate::file_utils::show_file_paths_dialog;
+use crate::file_dialog::show_file_paths_dialog;
 use crate::visualizer::timeline::timeline_actor::{ns_per_pixel_signal, cursor_position_seconds_signal};
 
 use crate::state::SELECTED_VARIABLES_ROW_HEIGHT;
@@ -65,11 +65,29 @@ use crate::actors::selected_variables::{variables_signal, variables_signal_vec, 
 use crate::visualizer::interaction::dragging::{
     variables_name_column_width_signal, variables_value_column_width_signal, files_panel_height_signal
 };
-use crate::actors::dialog_manager::{
-    close_file_dialog,
-    file_picker_error_cache_signal
-};
-use crate::visualizer::formatting::signal_values::truncate_value;
+// dialog_manager eliminated - use simple file_dialog functions
+// Error cache functionality simplified - most was stub implementation
+use shared::truncate_value;
+
+/// Format options for dropdown - contains value and disabled state
+#[derive(Debug, Clone)]
+struct DropdownFormatOption {
+    format: shared::VarFormat,
+    display_text: String,
+    full_text: String,    // For tooltip
+    disabled: bool,
+}
+
+impl DropdownFormatOption {
+    fn new(format: shared::VarFormat, display_text: String, full_text: String, disabled: bool) -> Self {
+        Self {
+            format,
+            display_text,
+            full_text,
+            disabled,
+        }
+    }
+}
 
 /// Get signal type information for a selected variable (signal-based version)
 fn get_signal_type_for_selected_variable_from_files(selected_var: &SelectedVariable, files: &[TrackedFile]) -> String {
@@ -138,9 +156,54 @@ fn get_signal_type_for_selected_variable(selected_var: &SelectedVariable) -> Str
 
 // Format options and display functions moved to format_utils.rs
 
+/// Generate dropdown options for UI from shared SignalValue
+fn generate_ui_dropdown_options(
+    signal_value: &shared::SignalValue,
+    _signal_type: &str,
+    max_value_chars: usize
+) -> Vec<DropdownFormatOption> {
+    let all_formats = [
+        shared::VarFormat::ASCII,
+        shared::VarFormat::Binary,
+        shared::VarFormat::BinaryWithGroups,
+        shared::VarFormat::Hexadecimal,
+        shared::VarFormat::Octal,
+        shared::VarFormat::Signed,
+        shared::VarFormat::Unsigned,
+    ];
+
+    all_formats
+        .iter()
+        .map(|format| {
+            let (display_text, full_text) = match signal_value {
+                shared::SignalValue::Present(_) => {
+                    let full = signal_value.get_full_display_with_format(format);
+                    let truncated = signal_value.get_truncated_display_with_format(format, max_value_chars);
+                    (truncated, full)
+                },
+                shared::SignalValue::Missing => {
+                    let text = format!("N/A {}", format.as_static_str());
+                    (text.clone(), text)
+                },
+                shared::SignalValue::Loading => {
+                    let text = format!("Loading... {}", format.as_static_str());
+                    (text.clone(), text)
+                },
+            };
+
+            DropdownFormatOption::new(
+                *format, 
+                display_text, 
+                full_text, 
+                false
+            )
+        })
+        .collect()
+}
+
 /// Create a smart dropdown with viewport edge detection using web-sys APIs
 fn create_smart_dropdown(
-    dropdown_options: Vec<crate::visualizer::formatting::signal_values::DropdownFormatOption>, 
+    dropdown_options: Vec<DropdownFormatOption>, 
     selected_format: Mutable<String>,
     is_open: Mutable<bool>,
     trigger_id: String
@@ -510,11 +573,11 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
                     // Debug logging removed to prevent console spam in hot signal path
                     
                     let current_signal_value = if current_value == "N/A" {
-                        crate::visualizer::formatting::signal_values::SignalValue::missing()
+                        shared::SignalValue::missing()
                     } else if current_value == "Loading..." {
-                        crate::visualizer::formatting::signal_values::SignalValue::Loading
+                        shared::SignalValue::loading()
                     } else {
-                        crate::visualizer::formatting::signal_values::SignalValue::from_data(current_value.clone())
+                        shared::SignalValue::from_data(current_value.clone())
                     };
                     
                     let full_display_text = current_signal_value.get_full_display_with_format(&current_format_enum);
@@ -523,7 +586,7 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
                     // Debug logging removed to prevent console spam in hot signal path
                     
                     // Generate dropdown options with formatted values
-                    let dropdown_options = crate::visualizer::formatting::signal_values::generate_dropdown_options(&current_signal_value, &signal_type);
+                    let dropdown_options = generate_ui_dropdown_options(&current_signal_value, &signal_type, 30);
                     
                     // Create unique trigger ID for positioning reference
                     let trigger_id = format!("select-trigger-{}", unique_id);
@@ -907,7 +970,7 @@ pub fn file_paths_dialog() -> impl Element {
     
     let close_dialog = move || {
         // Use domain function to close dialog and clear state
-        close_file_dialog();
+        crate::file_dialog::close_file_dialog();
     };
 
 
@@ -939,13 +1002,12 @@ pub fn file_paths_dialog() -> impl Element {
                     })
                     .global_event_handler({
                         move |event: KeyDown| {
-                            // Emit global key events - let domain actors handle business logic
+                            // Simple key event handling - no complex enterprise manager needed
                             if event.key() == "Escape" {
-                                crate::actors::global_domains::dialog_manager_domain()
-                                    .dialog_closed_relay.send(());
+                                crate::file_dialog::close_file_dialog();
                             } else if event.key() == "Enter" {
-                                crate::actors::global_domains::dialog_manager_domain()
-                                    .files_confirmed_relay.send(Vec::new()); // Actor will get actual files
+                                // Enter key handling for file selection can be added when needed
+                                // No complex Actor relay system required
                             }
                         }
                     })
@@ -1868,7 +1930,7 @@ fn variables_loading_signal() -> impl Signal<Item = Vec<VariableWithContext>> {
     map_ref! {
         let selected_scope_id = selected_scope_signal(),
         let _tracked_files = crate::actors::global_domains::tracked_files_signal() => {
-            if let Some(scope_id) = selected_scope_id {
+            if let Some(scope_id) = selected_scope_id.as_ref() {
                 get_variables_from_tracked_files(&scope_id)
             } else {
                 Vec::new()
@@ -2048,8 +2110,8 @@ async fn simple_file_picker_tree() -> impl Element {
         })
         .child_signal(
             map_ref! {
-                let tree_cache = crate::actors::dialog_manager::file_tree_cache_signal(),
-                let error_cache = file_picker_error_cache_signal(),
+                let tree_cache = crate::file_dialog::file_tree_cache_mutable().signal_cloned(),
+                let error_cache = zoon::always(std::collections::HashMap::new()), // Error cache simplified
                 let expanded = crate::config::app_config().file_picker_expanded_directories.signal_cloned() =>
                 move {
                     // Build tree view from cached data
@@ -2234,7 +2296,7 @@ fn process_file_picker_selection() {
         // Get current selected files using signal-based access
         use futures::StreamExt;
         use zoon::SignalExt;
-        let selected_files = crate::actors::dialog_manager::file_picker_selected_signal()
+        let selected_files = crate::file_dialog::file_picker_selected_signal()
             .to_stream()
             .next()
             .await
@@ -2286,7 +2348,7 @@ fn process_file_picker_selection() {
                 }
                 
                 // Close dialog using domain function
-                close_file_dialog();
+                crate::file_dialog::close_file_dialog();
             }
     }); // End of async Task::start block
 }

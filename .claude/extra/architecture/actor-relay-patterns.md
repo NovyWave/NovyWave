@@ -14,6 +14,12 @@ All state must use Actor+Relay or Atom:
 static TRACKED_FILES: Lazy<MutableVec<TrackedFile>> = lazy::default();
 static DIALOG_OPEN: Lazy<Mutable<bool>> = lazy::default();
 
+// ❌ PROHIBITED: Functions returning raw Mutables (also violates NO RAW MUTABLES)
+pub fn file_tree_cache_mutable() -> zoon::Mutable<HashMap<String, Vec<Item>>> {
+    static CACHE: Lazy<Mutable<HashMap<String, Vec<Item>>>> = Lazy::new(|| Mutable::new(HashMap::new()));
+    CACHE.clone()  // Still violates NO RAW MUTABLES rule
+}
+
 // ✅ REQUIRED: Domain-driven Actors
 struct TrackedFiles {
     files: ActorVec<TrackedFile>,
@@ -22,6 +28,12 @@ struct TrackedFiles {
 
 // ✅ REQUIRED: Atom for local UI
 let dialog_open = Atom::new(false);
+
+// ✅ CORRECT: Use Actor+Relay for shared state
+struct FileTreeCache {
+    cache: Actor<HashMap<String, Vec<Item>>>,
+    cache_updated_relay: Relay<(String, Vec<Item>)>,
+}
 ```
 
 ### 2. Event-Source Relay Naming (MANDATORY)

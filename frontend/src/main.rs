@@ -12,7 +12,9 @@ mod debug_utils;
 
 mod clipboard;
 
-mod file_utils;
+// mod file_utils; // ELIMINATED - consolidated into file_dialog.rs
+
+mod file_dialog;
 
 
 // mod waveform_canvas; // MOVED to visualizer/canvas/waveform_canvas.rs
@@ -28,7 +30,6 @@ use shared;
 
 // mod dragging; // MOVED to visualizer/interaction/dragging.rs
 
-mod types;
 
 
 mod visualizer;
@@ -45,13 +46,11 @@ use crate::visualizer::interaction::dragging::{
     is_any_divider_dragging, active_divider_type_signal, process_drag_movement, DividerType
 };
 // use config::app_config; // Unused
-use actors::dialog_manager::{dialog_visible_signal, file_picker_selected_signal};
+use crate::file_dialog::{dialog_visible_signal, file_picker_selected_signal};
 
 
 // Service layer antipattern removed - use Actor+Relay timeline functions directly
 
-mod utils;
-use utils::*;
 
 mod error_display;
 use error_display::*;
@@ -111,8 +110,7 @@ pub fn main() {
         // Initialize file picker directory browsing
         init_file_picker_handlers();
         
-        // Initialize signal-based loading completion handling
-        init_signal_chains();
+        // Signal-based loading completion now handled directly by domain events
         
         
         // Note: init_timeline_signal_handlers() and init_selected_variables_signal_service_bridge() 

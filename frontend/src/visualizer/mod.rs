@@ -15,26 +15,11 @@ pub mod interaction;
 // Value and display formatting
 pub mod formatting;
 
-// Consolidated global state
-pub mod state;
-
 // UI components and integration
 pub mod ui;
 
-// Configuration and persistence
-pub mod config;
-
-// Debugging utilities
-pub mod debug;
-
-// Utilities and helpers
-pub mod utils;
-
 // Testing utilities and patterns
 pub mod testing;
-
-// Integration with main app
-pub mod integration;
 
 // Re-export commonly used types for convenience  
 // pub use timeline::time_types::*;        // Unused re-export
@@ -42,5 +27,3 @@ pub mod integration;
 // pub use formatting::signal_values::*;   // Unused re-export
 // pub use canvas::waveform_canvas::*;     // Unused re-export
 // pub use interaction::dragging::*;       // Unused re-export
-// Future re-exports:
-// pub use state::{timeline_state::*, canvas_state::*};
