@@ -331,7 +331,7 @@ impl TrackedFiles {
 
 
 
-// ✅ ELIMINATED: tracked_files_signal_vec() - unused convenience function, use crate::actors::global_domains::tracked_files_signal_vec() directly
+// ✅ ELIMINATED: tracked_files_signal_vec() - unused convenience function, use crate::global_domains::tracked_files_signal_vec() directly
 
 // ✅ ELIMINATED: tracked_files_count_signal() - Use crate::actors::global_domains::file_count_signal() directly
 

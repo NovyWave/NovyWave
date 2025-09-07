@@ -27,7 +27,9 @@ use zoon::*;
 
 // Core modules
 mod dataflow;
-mod actors;
+mod tracked_files;
+mod selected_variables; 
+mod global_domains; // LEGACY: Used by views.rs - remove after NovyWaveApp migration complete
 mod app; // ✅ NEW: NovyWaveApp self-contained architecture
 
 // Legacy modules still needed for views/components

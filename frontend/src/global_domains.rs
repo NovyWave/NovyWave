@@ -1,9 +1,16 @@
-//! Global domain instances for Actor+Relay architecture
+//! LEGACY: Global domain instances - DEPRECATED
 //!
-//! Centralized instantiation and access to domain actors throughout the application.
-//! Replaces global mutables with domain-driven reactive state management.
+//! ⚠️  **ARCHITECTURAL DEBT WARNING** ⚠️ 
+//! 
+//! This file contains legacy global domain patterns that contradict the completed
+//! NovyWaveApp self-contained architecture. The new NovyWaveApp creates its own
+//! domain instances and doesn't use these global domains.
+//!
+//! **STATUS**: Used by legacy views.rs and other files that haven't been migrated
+//! **TODO**: Remove this file after migrating views.rs to use NovyWaveApp domains
+//! **NEW ARCHITECTURE**: See app.rs for proper domain ownership patterns
 
-use crate::actors::{TrackedFiles, SelectedVariables};
+use crate::{TrackedFiles, SelectedVariables};
 use crate::visualizer::timeline::timeline_actor::WaveformTimeline;
 use std::sync::OnceLock;
 use shared::{TrackedFile, SelectedVariable};
@@ -53,7 +60,11 @@ static WAVEFORM_TIMELINE_DOMAIN_INSTANCE: OnceLock<WaveformTimeline> = OnceLock:
 /// Global ErrorManager signal storage - Bridge between domain and UI signals
 // ✅ ELIMINATED: ERROR_MANAGER_SIGNALS static signal bypass - now uses direct domain access
 
-/// Initialize all domain instances - call once on app startup
+/// LEGACY: Initialize all domain instances - DEPRECATED
+/// 
+/// ⚠️ **NOT USED** by NovyWaveApp architecture - domains are created directly in app.rs
+/// Only kept for compatibility with legacy views.rs that still use global domains.
+#[deprecated(note = "Use NovyWaveApp::new() instead - creates domains without global state")]
 pub async fn initialize_all_domains() -> Result<(), &'static str> {
     // PHASE 1: Initialize static signal storage first  
     // ✅ ELIMINATED: TRACKED_FILES_SIGNALS - now uses direct domain access

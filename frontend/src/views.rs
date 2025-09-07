@@ -7,9 +7,9 @@ use moonzoon_novyui::tokens::color::{neutral_1, neutral_2, neutral_4, neutral_8,
 use moonzoon_novyui::components::{kbd, KbdSize, KbdVariant};
 use moonzoon_novyui::tokens::typography::font_mono;
 use shared::{ScopeData, UpMsg, TrackedFile, SelectedVariable, FileState};
-use crate::actors::{relay};
+use crate::dataflow::{relay};
 use crate::dataflow::atom::Atom;
-use crate::actors::selected_variables::{get_variables_from_tracked_files, filter_variables_with_context, VariableWithContext};
+use crate::selected_variables::{get_variables_from_tracked_files, filter_variables_with_context, VariableWithContext};
 use crate::virtual_list::{virtual_variables_list_pre_filtered};
 use crate::config::app_config;
 use std::collections::{HashSet, HashMap};
@@ -22,7 +22,7 @@ use crate::state::SELECTED_VARIABLES_ROW_HEIGHT;
 // Cached timeline range signal to prevent duplicate calculations
 fn timeline_range_signal() -> impl Signal<Item = Option<(f64, f64)>> {
     map_ref! {
-        let _files_count = crate::actors::global_domains::file_count_signal(),
+        let _files_count = crate::global_domains::file_count_signal(),
         let _selected_vars = variables_signal() =>
         crate::visualizer::canvas::waveform_canvas::get_maximum_timeline_range()
     }.dedupe_cloned()
@@ -61,7 +61,7 @@ fn format_time(time: f64) -> String {
         }
     }
 }
-use crate::actors::selected_variables::{variables_signal, variables_signal_vec, selected_scope_signal, search_filter_signal, search_filter_changed_relay, search_focus_changed_relay};
+use crate::selected_variables::{variables_signal, variables_signal_vec, selected_scope_signal, search_filter_signal, search_filter_changed_relay, search_focus_changed_relay};
 use crate::visualizer::interaction::dragging::{
     variables_name_column_width_signal, variables_value_column_width_signal, files_panel_height_signal
 };
@@ -124,7 +124,7 @@ fn get_signal_type_for_selected_variable(selected_var: &SelectedVariable) -> Str
     // Parse the unique_id to get file_path, scope_path, and variable_name
     if let Some((file_path, scope_path, variable_name)) = selected_var.parse_unique_id() {
         // Use the same approach as Variables panel - only check loaded files
-        let tracked_files = crate::actors::global_domains::tracked_files_domain().get_current_files();
+        let tracked_files = crate::global_domains::tracked_files_domain().get_current_files();
         
         // Find the corresponding file by path and check if it's loaded
         for tracked_file in tracked_files.iter() {
@@ -851,7 +851,7 @@ fn create_format_select_component(selected_var: &SelectedVariable) -> impl Eleme
 
 /// Update the format for a selected variable using Actor+Relay architecture
 fn update_variable_format(unique_id: &str, new_format: shared::VarFormat) {
-    use crate::actors::selected_variables::variable_format_changed_relay;
+    use crate::selected_variables::variable_format_changed_relay;
     
     variable_format_changed_relay().send((unique_id.to_string(), new_format));
     
@@ -873,7 +873,7 @@ pub fn is_cursor_within_variable_time_range(unique_id: &str, cursor_time: f64) -
     let file_path = parts[0];
     
     // Find the loaded file and check its time range
-    let tracked_files = crate::actors::global_domains::tracked_files_domain().get_current_files();
+    let tracked_files = crate::global_domains::tracked_files_domain().get_current_files();
     if let Some(tracked_file) = tracked_files.iter().find(|f| f.path == file_path) {
         if let shared::FileState::Loaded(loaded_file) = &tracked_file.state {
         if let (Some(min_time), Some(max_time)) = (loaded_file.min_time_ns.map(|ns| ns as f64 / 1_000_000_000.0), loaded_file.max_time_ns.map(|ns| ns as f64 / 1_000_000_000.0)) {
@@ -897,7 +897,7 @@ pub fn is_cursor_within_variable_time_range(unique_id: &str, cursor_time: f64) -
 /// Trigger signal value queries when variables are present
 pub fn trigger_signal_value_queries() {
     // Prevent queries during startup until files are properly loaded
-    let tracked_files = crate::actors::global_domains::tracked_files_domain().get_current_files();
+    let tracked_files = crate::global_domains::tracked_files_domain().get_current_files();
     let has_loaded_files = tracked_files.iter().any(|f| matches!(f.state, shared::FileState::Loaded(_)));
     
     if !has_loaded_files {
@@ -1118,7 +1118,7 @@ pub fn file_paths_dialog() -> impl Element {
                                     button()
                                         .label_signal(
                                             map_ref! {
-                                                let file_count = crate::actors::global_domains::file_count_signal(),
+                                                let file_count = crate::global_domains::file_count_signal(),
                                                 let selected_files = selected_files.signal() =>
                                                 move {
                                                     let is_loading = *file_count > 0;
@@ -1135,7 +1135,7 @@ pub fn file_paths_dialog() -> impl Element {
                                         )
                                         .disabled_signal(
                                             map_ref! {
-                                                let file_count = crate::actors::global_domains::file_count_signal(),
+                                                let file_count = crate::global_domains::file_count_signal(),
                                                 let selected_files = selected_files.signal() => {
                                                 let is_loading = *file_count > 0;
                                                 let selected_count = selected_files.len();
@@ -1204,7 +1204,7 @@ pub fn files_panel() -> impl Element {
                                             .s(Height::fill())
                                             .s(Width::fill())
                                             .child_signal(
-                                                crate::actors::global_domains::file_count_signal().map(|file_count| {
+                                                crate::global_domains::file_count_signal().map(|file_count| {
                                     // File count for UI decision
                                     if file_count == 0 {
                                         empty_state_hint("Click 'Load Files' to add waveform files.")
@@ -1233,7 +1233,7 @@ fn render_tracked_file_reactive(tracked_file: TrackedFile) -> impl Element {
     let smart_label = compute_smart_label_for_file(&tracked_file);
     
     El::new().child_signal(
-        crate::actors::global_domains::expanded_scopes_signal().map(move |expanded_scopes| {
+        crate::global_domains::expanded_scopes_signal().map(move |expanded_scopes| {
             render_tracked_file_as_tree_item_with_label_and_expanded_state(
                 tracked_file.clone(), 
                 smart_label.clone(), 
@@ -1321,8 +1321,8 @@ fn render_tracked_file_as_tree_item_with_label_and_expanded_state(
         .show_checkboxes(true)
         .show_checkboxes_on_scopes_only(true)
         .single_scope_selection(true)
-        .external_expanded(crate::actors::selected_variables::expanded_scopes_mutable()) 
-        .external_selected(crate::actors::selected_variables::tree_selection_mutable())
+        .external_expanded(crate::selected_variables::expanded_scopes_mutable()) 
+        .external_selected(crate::selected_variables::tree_selection_mutable())
         .build()
 }
 
@@ -1409,7 +1409,7 @@ fn create_stable_tree_view() -> impl Element {
                 })
                 .items_signal_vec(
                     // Map each tracked file to its rendered element with current expanded state
-                    crate::actors::global_domains::tracked_files_signal_vec().map(|tracked_file| {
+                    crate::global_domains::tracked_files_signal_vec().map(|tracked_file| {
                         render_tracked_file_reactive(tracked_file.clone())
                     })
                 )
@@ -1929,7 +1929,7 @@ fn simple_variables_content() -> impl Element {
 fn variables_loading_signal() -> impl Signal<Item = Vec<VariableWithContext>> {
     map_ref! {
         let selected_scope_id = selected_scope_signal(),
-        let _tracked_files = crate::actors::global_domains::tracked_files_signal() => {
+        let _tracked_files = crate::global_domains::tracked_files_signal() => {
             if let Some(scope_id) = selected_scope_id.as_ref() {
                 get_variables_from_tracked_files(&scope_id)
             } else {
@@ -1962,21 +1962,21 @@ fn variables_display_signal() -> impl Signal<Item = Vec<VariableWithContext>> {
 // Helper function to clean up all file-related state when a file is removed
 fn cleanup_file_related_state(file_id: &str) {
     // Get filename and file path before any cleanup (needed for cleanup logic)
-    let (_filename, _file_path) = crate::actors::global_domains::tracked_files_domain().get_current_files()
+    let (_filename, _file_path) = crate::global_domains::tracked_files_domain().get_current_files()
         .iter()
         .find(|f| f.id == file_id)
         .map(|f| (f.filename.clone(), f.path.clone()))
         .unwrap_or_else(|| (String::new(), String::new()));
     
     // Use Actor+Relay event emission instead of direct state access
-    crate::actors::selected_variables::scope_selected_relay().send(None);
+    crate::selected_variables::scope_selected_relay().send(None);
     
     // Actor+Relay domain event cleanup for file removal
     /*
     // Clear expanded scopes for this file using domain signals
     // New scope ID format: {full_path}|{scope_full_name} or just {full_path}
     // Using selected_variables domain for scope management
-    crate::actors::selected_variables::retain_expanded_scopes(|scope| {
+    crate::selected_variables::retain_expanded_scopes(|scope| {
         // Keep scopes that don't belong to this file
         scope != &file_path && !scope.starts_with(&format!("{}|", file_path))
     });
@@ -1985,7 +1985,7 @@ fn cleanup_file_related_state(file_id: &str) {
     // SelectedVariable uses full file path in new format
     if !file_path.is_empty() {
         // Remove selected variables from this file using domain events
-        let current_vars = crate::actors::selected_variables::current_variables();
+        let current_vars = crate::selected_variables::current_variables();
         let vars_to_remove: Vec<String> = current_vars.iter()
             .filter(|var| var.file_path().unwrap_or_default() == file_path)
             .map(|var| var.unique_id.clone())
@@ -1993,7 +1993,7 @@ fn cleanup_file_related_state(file_id: &str) {
         
         // Send remove events for each variable from this file
         for var_id in vars_to_remove {
-            crate::actors::selected_variables::variable_removed_relay().send(var_id);
+            crate::selected_variables::variable_removed_relay().send(var_id);
         }
         // Note: variable_index is managed automatically by the domain
     }
@@ -2007,7 +2007,7 @@ fn create_enhanced_file_remove_handler(_file_id: String) -> impl Fn(&str) + 'sta
         cleanup_file_related_state(id);
         
         // ✅ ACTOR+RELAY MIGRATION: Emit file_removed event through TrackedFiles domain
-        let tracked_files = crate::actors::global_domains::tracked_files_domain();
+        let tracked_files = crate::global_domains::tracked_files_domain();
         tracked_files.file_removed_relay.send(id.to_string());
         
         // Remove from legacy systems during transition (will be removed later)
@@ -2042,7 +2042,7 @@ fn convert_scope_to_tree_data(scope: &ScopeData) -> TreeViewItemData {
 
 fn load_files_button_with_progress(variant: ButtonVariant, size: ButtonSize, icon: Option<IconName>) -> impl Element {
     El::new()
-        .child_signal(crate::actors::global_domains::file_count_signal().map(move |file_count| {
+        .child_signal(crate::global_domains::file_count_signal().map(move |file_count| {
             let is_loading = file_count > 0; // Simple loading state based on file activity
             let mut btn = button();
             
@@ -2310,7 +2310,7 @@ fn process_file_picker_selection() {
                 
                 // Get currently tracked files to check for duplicates
                 // Use the global domain signal storage for current files
-                let tracked_files_snapshot = crate::actors::global_domains::get_current_tracked_files();
+                let tracked_files_snapshot = crate::global_domains::get_current_tracked_files();
                 
                 let mut new_files: Vec<PathBuf> = Vec::new();
                 let mut reload_files: Vec<String> = Vec::new();
@@ -2330,7 +2330,7 @@ fn process_file_picker_selection() {
                     }
                 }
                 
-                let tracked_files = crate::actors::global_domains::tracked_files_domain();
+                let tracked_files = crate::global_domains::tracked_files_domain();
                 
                 // Handle new files
                 if !new_files.is_empty() {
@@ -2357,7 +2357,7 @@ fn clear_all_files() {
     // ✅ ACTOR+RELAY MIGRATION: Use TrackedFiles domain events instead of direct state manipulation
     
     // Get all tracked file IDs before clearing (for cleanup)
-    let file_ids: Vec<String> = crate::actors::global_domains::tracked_files_domain().get_current_files()
+    let file_ids: Vec<String> = crate::global_domains::tracked_files_domain().get_current_files()
         .iter()
         .map(|f| f.id.clone())
         .collect();
@@ -2368,7 +2368,7 @@ fn clear_all_files() {
     }
     
     // Emit all_files_cleared event through TrackedFiles domain
-    let tracked_files = crate::actors::global_domains::tracked_files_domain();
+    let tracked_files = crate::global_domains::tracked_files_domain();
     tracked_files.all_files_cleared_relay.send(());
     
     // Clear legacy systems during transition (will be removed later)

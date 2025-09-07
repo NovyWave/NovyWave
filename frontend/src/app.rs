@@ -6,7 +6,7 @@
 use zoon::*;
 use futures::select;
 
-use crate::actors::{TrackedFiles, SelectedVariables};
+use crate::{TrackedFiles, SelectedVariables};
 use crate::visualizer::timeline::timeline_actor::WaveformTimeline;
 use crate::config::AppConfig;
 use crate::dataflow::{Relay, relay};
