@@ -296,6 +296,64 @@ async fn test_config_load_stability() {
 
 **See system.md for complete subagent delegation strategies.**
 
+## Architectural Migration Best Practices
+
+### Clean Slate Transformation Rule
+
+**CRITICAL: For major architectural migrations, never create bridge patterns or parallel APIs**
+
+When transforming architectures (e.g., global state → self-contained patterns), follow these principles:
+
+```rust
+// ❌ WRONG: Bridge/adapter patterns create schizophrenic architecture
+// During global → ChatApp migration:
+struct GlobalBridge {
+    global_files: &'static TrackedFiles,      // Old system
+    app_files: &'self TrackedFiles,           // New system
+}
+
+// ❌ WRONG: Parallel API maintenance
+pub fn files_panel_global() -> impl Element { ... }  // Old API
+pub fn files_panel_self(&self) -> impl Element { ... } // New API
+
+// ❌ WRONG: Compatibility layers
+trait FilesPanelCompat {
+    fn render() -> impl Element;
+}
+```
+
+**✅ CORRECT: Clean slate approach**
+```rust
+// 1. Create backup files for safety
+// cp views.rs views.rs.backup
+// cp global_domains.rs global_domains.rs.backup
+
+// 2. Complete transformation - no halfway measures
+struct NovyWaveApp {
+    tracked_files: TrackedFiles,    // New architecture only
+    selected_variables: SelectedVariables,
+}
+
+impl NovyWaveApp {
+    fn files_panel(&self) -> impl Element { ... }  // Single API
+}
+
+// 3. Delete old architecture files entirely
+// rm global_domains.rs dialog_manager.rs error_manager.rs
+```
+
+**Migration Strategy:**
+- **Clean slate migration** - no bridges, adapters, or parallel APIs
+- **Create backup files** of source code before starting transformation  
+- **All-or-nothing conversion** - commit to new architecture completely
+- **Single validation** after complete conversion only
+
+**Why this matters:**
+- **Prevents architectural confusion** - developers know which pattern to follow
+- **Eliminates maintenance burden** - no dual codepaths to maintain
+- **Forces commitment** - can't fall back to old patterns
+- **Cleaner end result** - no legacy code or compatibility layers
+
 ## CRITICAL: Never Hardcode Dynamic Values
 
 **MANDATORY RULE: Never hardcode any values that should be dynamic - you'll forget it and then debugging will be hell**
@@ -492,6 +550,39 @@ pub fn current_value(&self) -> T {
 - NEVER create files unless they're absolutely necessary
 - ALWAYS prefer editing an existing file to creating a new one
 - NEVER proactively create documentation files (*.md) or README files unless explicitly requested
+- **NEVER create generic files** like `utils.rs`, `helpers.rs`, `types.rs`, or `state.rs` with common business-related helpers
+
+### Avoid Generic Utility Files
+
+**CRITICAL PRINCIPLE: Business logic belongs in domain-specific modules, not generic containers**
+
+**❌ PROHIBITED: Generic business utility files**
+```rust
+// ❌ BAD: Generic dumping grounds
+utils.rs          // Becomes dumping ground for miscellaneous functions
+helpers.rs        // Vague responsibility, grows into architectural graveyard
+state.rs          // Central state becomes migration comment repository
+types.rs          // Type definitions divorced from their domain context
+variable_helpers.rs  // Business logic divorced from domain
+```
+
+**✅ CORRECT: Domain-specific placement**
+```rust
+// ✅ GOOD: Business logic lives with its domain
+selected_variables.rs   // Variable utilities IN the variables domain
+tracked_files.rs       // File utilities IN the files domain
+error_display.rs       // Error utilities IN the error domain
+config.rs             // Config utilities IN the config domain
+```
+
+**Why generic files are harmful:**
+- **Architectural graveyards** - Accumulate migration comments and deprecated code
+- **Unclear ownership** - No clear responsibility for maintenance and evolution
+- **Import confusion** - Developers unsure where to find or place business logic
+- **Coupling issues** - Generic files often import from multiple domains
+- **Testing difficulty** - Mixed responsibilities make focused testing harder
+
+**Instead:** Place utility functions directly in their domain modules where they belong.
 
 ### Autonomous Sustained Work Pattern
 
