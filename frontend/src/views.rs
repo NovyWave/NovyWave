@@ -7,7 +7,7 @@ use moonzoon_novyui::*;
 use zoon::events::{Click, KeyDown};
 use zoon::*;
 use crate::clipboard;
-use crate::config::app_config;
+// Removed app_config import - now passed as parameter
 use crate::dataflow::atom::Atom;
 use crate::dataflow::relay;
 use crate::file_dialog::show_file_paths_dialog;
@@ -536,6 +536,7 @@ fn create_format_select_component(
     selected_var: SelectedVariable,
     tracked_files: Vec<TrackedFile>,
     waveform_timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline,
+    app_config: crate::config::AppConfig,
 ) -> impl Element {
     let unique_id = selected_var.unique_id.clone();
 
@@ -727,7 +728,7 @@ fn create_format_select_component(
                                                 .style("min-width", "0")
                                         })
                                         .child_signal(
-                                            variables_value_column_width_signal().map({
+                                            variables_value_column_width_signal(app_config.clone()).map({
                                                 let display_text_clone = display_text.clone();
                                                 move |column_width| {
                                                     let text = display_text_clone.clone();
@@ -809,6 +810,7 @@ fn create_format_select_component(
                                                 .size(ButtonSize::Small)
                                                 .custom_padding(4, 2)
                                                 .on_press({
+                                                    let app_config = app_config.clone();
                                                     let display_text = display_text.clone();
                                                     move || {
                                                         // Extract just the value part for copying
@@ -827,7 +829,7 @@ fn create_format_select_component(
                                                             .to_string();
 
                                                         // Copy to clipboard
-                                                        clipboard::copy_variable_value(&filtered_value);
+                                                        clipboard::copy_variable_value(&filtered_value, &app_config);
                                                     }
                                                 })
                                                 .build()
@@ -976,7 +978,7 @@ pub fn trigger_signal_value_queries(tracked_files: &[TrackedFile]) {
 /// Update signal values in UI from cached or backend results
 // This function was never called and contained legacy architecture patterns
 
-fn variables_name_vertical_divider() -> impl Element {
+fn variables_name_vertical_divider(app_config: &crate::config::AppConfig) -> impl Element {
     use crate::visualizer::interaction::dragging::{DividerType, is_divider_dragging, start_drag};
 
     let is_dragging_signal = is_divider_dragging(DividerType::VariablesNameColumn);
@@ -988,12 +990,15 @@ fn variables_name_vertical_divider() -> impl Element {
             .color_signal(is_dragging_signal.map_bool_signal(|| primary_7(), || primary_6())))
         .s(Cursor::new(CursorIcon::ColumnResize))
         .s(Padding::all(0))
-        .on_pointer_down(move || {
-            start_drag(DividerType::VariablesNameColumn, (0.0, 0.0));
+        .on_pointer_down({
+            let app_config = app_config.clone();
+            move || {
+                start_drag(DividerType::VariablesNameColumn, (0.0, 0.0), &app_config);
+            }
         })
 }
 
-fn variables_value_vertical_divider() -> impl Element {
+fn variables_value_vertical_divider(app_config: &crate::config::AppConfig) -> impl Element {
     use crate::visualizer::interaction::dragging::{DividerType, is_divider_dragging, start_drag};
 
     let is_dragging_signal = is_divider_dragging(DividerType::VariablesValueColumn);
@@ -1005,8 +1010,11 @@ fn variables_value_vertical_divider() -> impl Element {
             .color_signal(is_dragging_signal.map_bool_signal(|| primary_7(), || primary_6())))
         .s(Cursor::new(CursorIcon::ColumnResize))
         .s(Padding::all(0))
-        .on_pointer_down(move || {
-            start_drag(DividerType::VariablesValueColumn, (0.0, 0.0));
+        .on_pointer_down({
+            let app_config = app_config.clone();
+            move || {
+                start_drag(DividerType::VariablesValueColumn, (0.0, 0.0), &app_config);
+            }
         })
 }
 
@@ -1020,6 +1028,7 @@ fn empty_state_hint(text: &str) -> impl Element {
 pub fn file_paths_dialog(
     tracked_files: crate::tracked_files::TrackedFiles,
     _selected_variables: crate::selected_variables::SelectedVariables,
+    app_config: &crate::config::AppConfig,
 ) -> impl Element {
     // Use files_vec_signal directly for 'static lifetime
     let file_count_broadcaster = tracked_files.files_vec_signal.signal_cloned().map(|files| files.len()).broadcast();
@@ -1121,7 +1130,7 @@ pub fn file_paths_dialog(
                                         .style("overflow-x", "auto")   // Enable horizontal scroll
                                         .style("overflow-y", "hidden") // Prevent double scrollbars
                                 })
-                                .child(file_picker_content())
+                                .child(file_picker_content(app_config))
                         )
                         .item(
                             El::new()
@@ -1610,10 +1619,15 @@ pub fn selected_variables_with_waveform_panel(
     selected_variables: crate::selected_variables::SelectedVariables,
     waveform_timeline: crate::visualizer::timeline::timeline_actor::WaveformTimeline,
     tracked_files: crate::tracked_files::TrackedFiles,
+    app_config: crate::config::AppConfig,
 ) -> impl Element {
     // Clone for use in signal closures to fix lifetime issues
     let selected_variables_for_signals = selected_variables.clone();
     let tracked_files_broadcaster = tracked_files.files.signal_vec().to_signal_cloned().broadcast();
+    
+    // Pass owned app_config to signal functions
+    let name_column_width_signal = variables_name_column_width_signal(app_config.clone());
+    let value_column_width_signal = variables_value_column_width_signal(app_config.clone());
     
     Column::new()
         .s(Width::growable())
@@ -1637,10 +1651,10 @@ pub fn selected_variables_with_waveform_panel(
                                     .s(Width::growable())
                             )
                             .item(
-                                theme_toggle_button()
+                                theme_toggle_button(&app_config)
                             )
                             .item(
-                                dock_toggle_button()
+                                dock_toggle_button(&app_config)
                             )
                             .item(
                                 El::new()
@@ -1667,7 +1681,7 @@ pub fn selected_variables_with_waveform_panel(
                                     .item(
                                         // Column 1: Variable name (resizable) with footer
                                         Column::new()
-                                            .s(Width::exact_signal(variables_name_column_width_signal().map(|w| w as u32)))
+                                            .s(Width::exact_signal(name_column_width_signal.map(|w| w as u32)))
                                             .s(Height::fill())
                                             .s(Align::new().top())
                                             .s(Scrollbars::x_and_clip_y())
@@ -1809,11 +1823,11 @@ pub fn selected_variables_with_waveform_panel(
                                                     )
                                             )
                                     )
-                                    .item(variables_name_vertical_divider())
+                                    .item(variables_name_vertical_divider(&app_config))
                                     .item(
                                         // Column 2: Variable value (resizable) - HEIGHT FOLLOWER
                                         Column::new()
-                                            .s(Width::exact_signal(variables_value_column_width_signal().map(|w| w as u32)))
+                                            .s(Width::exact_signal(value_column_width_signal.map(|w| w as u32)))
                                             .s(Height::fill())
                                             .s(Align::new().top())
                                             .s(Scrollbars::x_and_clip_y())
@@ -1941,14 +1955,14 @@ pub fn selected_variables_with_waveform_panel(
                                                     )
                                             )
                                     )
-                                    .item(variables_value_vertical_divider())
+                                    .item(variables_value_vertical_divider(&app_config))
                                     .item(
                                         // Column 3: Unified waveform canvas (fills remaining space) - HEIGHT FOLLOWER
                                         El::new()
                                             .s(Width::fill())
                                             .s(Height::fill())
                                             .s(Background::new().color_signal(neutral_2()))
-                                            .child(crate::visualizer::canvas::waveform_canvas::waveform_canvas(&selected_variables, &waveform_timeline))
+                                            .child(crate::visualizer::canvas::waveform_canvas::waveform_canvas(&selected_variables, &waveform_timeline, &app_config))
                                     )
                             )
                     )
@@ -1961,11 +1975,12 @@ pub fn selected_variables_with_waveform_panel(
 pub fn files_panel_with_height(
     tracked_files: &crate::tracked_files::TrackedFiles,
     selected_variables: &crate::selected_variables::SelectedVariables,
+    app_config: &crate::config::AppConfig,
 ) -> impl Element {
     // TEST 2: Remove Scrollbars::both() from individual panels
     El::new()
         .s(Height::exact_signal(
-            files_panel_height_signal().map(|h| h as u32),
+            files_panel_height_signal(app_config.clone()).map(|h| h as u32),
         ))
         .s(Width::growable())
         .update_raw_el(|raw_el| {
@@ -1983,25 +1998,27 @@ pub fn variables_panel_with_fill(
     tracked_files: &crate::tracked_files::TrackedFiles,
     selected_variables: &crate::selected_variables::SelectedVariables,
     waveform_timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline,
+    app_config: &crate::config::AppConfig,
 ) -> impl Element {
     // Clone domains for use in closure
     let tracked_files = tracked_files.clone();
     let selected_variables = selected_variables.clone();
     let waveform_timeline = waveform_timeline.clone();
+    let app_config = app_config.clone();
     
     // TEST 2: Remove Scrollbars::both() from individual panels
     El::new()
         .s(Width::growable())
         .s(Height::fill())
         .s(Scrollbars::both())
-        .child_signal(app_config().dock_mode_actor.signal().map(move |dock_mode| {
+        .child_signal(app_config.dock_mode_actor.signal().map(move |dock_mode| {
             let is_docked = matches!(dock_mode, shared::DockMode::Bottom);
             if is_docked {
                 // When docked to bottom, use files panel height signal for synchronized resizing
                 El::new()
                     .s(Width::fill())
                     .s(Height::exact_signal(
-                        files_panel_height_signal().map(|h| h as u32),
+                        files_panel_height_signal(app_config.clone()).map(|h| h as u32),
                     ))
                     .update_raw_el(|raw_el| {
                         raw_el.style("scrollbar-width", "thin").style_signal(
@@ -2263,7 +2280,7 @@ fn load_files_button_with_progress(
     )
 }
 
-fn file_picker_content() -> impl Element {
+fn file_picker_content(app_config: &crate::config::AppConfig) -> impl Element {
     El::new()
         .s(Height::fill())
         .s(Scrollbars::both())
@@ -2275,11 +2292,11 @@ fn file_picker_content() -> impl Element {
                     .flatten(),
             )
         })
-        .child_signal(simple_file_picker_tree().into_signal_option())
+        .child_signal(simple_file_picker_tree(app_config.clone()).into_signal_option())
 }
 
-async fn simple_file_picker_tree() -> impl Element {
-    let scroll_position = crate::config::app_config()
+async fn simple_file_picker_tree(app_config: crate::config::AppConfig) -> impl Element {
+    let scroll_position = app_config
         .file_picker_scroll_position
         .signal()
         .to_stream()
@@ -2295,8 +2312,11 @@ async fn simple_file_picker_tree() -> impl Element {
             Task::next_macro_tick().await;
             scroll_position
         })).map(|position| position.flatten().unwrap_or_default()))
-        .on_viewport_location_change(|_scene, viewport| {
-            crate::config::app_config().file_picker_scroll_position.set_neq(viewport.y);
+        .on_viewport_location_change({
+            let scroll_position_mutable = app_config.file_picker_scroll_position.clone();
+            move |_scene, viewport| {
+                scroll_position_mutable.set_neq(viewport.y);
+            }
         })
         .update_raw_el(|raw_el| {
             raw_el
@@ -2309,11 +2329,11 @@ async fn simple_file_picker_tree() -> impl Element {
             map_ref! {
                 let tree_cache = crate::file_dialog::file_tree_cache_mutable().signal_cloned(),
                 let error_cache = zoon::always(std::collections::HashMap::new()), // Error cache simplified
-                let expanded = crate::config::app_config().file_picker_expanded_directories.signal_cloned() =>
+                let expanded = app_config.file_picker_expanded_directories.signal_cloned() =>
                 move {
                     // Build tree view from cached data
 
-                    monitor_directory_expansions(expanded.iter().cloned().collect::<HashSet<_>>());
+                    monitor_directory_expansions(expanded.iter().cloned().collect::<HashSet<_>>(), &app_config);
 
                     // Check if we have root directory data
                     if let Some(_root_items) = tree_cache.get("/") {
@@ -2335,7 +2355,7 @@ async fn simple_file_picker_tree() -> impl Element {
                                     .variant(TreeViewVariant::Basic)
                                     .show_icons(true)
                                     .show_checkboxes(true)
-                                    .external_expanded(crate::config::app_config().file_picker_expanded_directories.clone())
+                                    .external_expanded(app_config.file_picker_expanded_directories.clone())
                                     .external_selected_vec(MutableVec::<String>::new())
                                     .build()
                             )
@@ -2462,9 +2482,9 @@ fn build_hierarchical_tree(
     }
 }
 
-pub fn monitor_directory_expansions(expanded: HashSet<String>) {
+pub fn monitor_directory_expansions(expanded: HashSet<String>, app_config: &crate::config::AppConfig) {
     // Get previous expanded directories from config to detect changes
-    let config = crate::config::app_config();
+    let config = app_config;
     let current_config_expanded = config.file_picker_expanded_directories.lock_ref();
     let last_expanded: HashSet<String> = current_config_expanded.iter().cloned().collect();
 
@@ -2624,8 +2644,9 @@ fn clear_all_variables_button(
         .build()
 }
 
-fn theme_toggle_button() -> impl Element {
-    El::new().child_signal(theme().map(|current_theme| {
+fn theme_toggle_button(app_config: &crate::config::AppConfig) -> impl Element {
+    let app_config = app_config.clone();
+    El::new().child_signal(theme().map(move |current_theme| {
         button()
             .left_icon(match current_theme {
                 Theme::Light => IconName::Moon,
@@ -2633,14 +2654,20 @@ fn theme_toggle_button() -> impl Element {
             })
             .variant(ButtonVariant::Outline)
             .size(ButtonSize::Small)
-            .on_press(|| app_config().theme_button_clicked_relay.send(()))
+            .on_press({
+                let theme_relay = app_config.theme_button_clicked_relay.clone();
+                move || theme_relay.send(())
+            })
             .build()
             .into_element()
     }))
 }
 
-fn dock_toggle_button() -> impl Element {
-    El::new().child_signal(app_config().dock_mode_actor.signal().map(|dock_mode| {
+fn dock_toggle_button(app_config: &crate::config::AppConfig) -> impl Element {
+    let app_config = app_config.clone();
+    El::new().child_signal(app_config.dock_mode_actor.signal().map(move |dock_mode| {
+        let app_config_for_icon = app_config.clone();
+        let app_config_for_press = app_config.clone();
         let is_docked = matches!(dock_mode, shared::DockMode::Bottom);
         button()
             .label(if is_docked {
@@ -2648,9 +2675,9 @@ fn dock_toggle_button() -> impl Element {
             } else {
                 "Dock to Bottom"
             })
-            .left_icon_element(|| {
+            .left_icon_element(move || {
                 El::new()
-                    .child_signal(app_config().dock_mode_actor.signal().map(|dock_mode| {
+                    .child_signal(app_config_for_icon.dock_mode_actor.signal().map(|dock_mode| {
                         let is_docked = matches!(dock_mode, shared::DockMode::Bottom);
                         let icon_el = icon(IconName::ArrowDownToLine)
                             .size(IconSize::Small)
@@ -2669,9 +2696,12 @@ fn dock_toggle_button() -> impl Element {
             })
             .variant(ButtonVariant::Outline)
             .size(ButtonSize::Small)
-            .on_press(|| {
-                // Use domain function to toggle dock mode (handles all logic internally)
-                app_config().dock_mode_button_clicked_relay.send(());
+            .on_press({
+                let dock_relay = app_config_for_press.dock_mode_button_clicked_relay.clone();
+                move || {
+                    // Use domain function to toggle dock mode (handles all logic internally)
+                    dock_relay.send(());
+                }
             })
             .align(Align::center())
             .build()
@@ -2679,7 +2709,7 @@ fn dock_toggle_button() -> impl Element {
     }))
 }
 
-pub fn files_panel_vertical_divider() -> impl Element {
+pub fn files_panel_vertical_divider(app_config: &crate::config::AppConfig) -> impl Element {
     use crate::visualizer::interaction::dragging::{DividerType, is_divider_dragging, start_drag};
 
     let is_dragging_signal = is_divider_dragging(DividerType::FilesPanelMain);
@@ -2691,12 +2721,15 @@ pub fn files_panel_vertical_divider() -> impl Element {
             .color_signal(is_dragging_signal.map_bool_signal(|| primary_7(), || primary_6())))
         .s(Cursor::new(CursorIcon::ColumnResize))
         .s(Padding::all(0))
-        .on_pointer_down(move || {
-            start_drag(DividerType::FilesPanelMain, (0.0, 0.0));
+        .on_pointer_down({
+            let app_config = app_config.clone();
+            move || {
+                start_drag(DividerType::FilesPanelMain, (0.0, 0.0), &app_config);
+            }
         })
 }
 
-pub fn files_panel_horizontal_divider() -> impl Element {
+pub fn files_panel_horizontal_divider(app_config: &crate::config::AppConfig) -> impl Element {
     use crate::visualizer::interaction::dragging::{DividerType, is_divider_dragging, start_drag};
 
     let is_dragging_signal = is_divider_dragging(DividerType::FilesPanelSecondary);
@@ -2707,8 +2740,11 @@ pub fn files_panel_horizontal_divider() -> impl Element {
         .s(Background::new()
             .color_signal(is_dragging_signal.map_bool_signal(|| primary_7(), || primary_6())))
         .s(Cursor::new(CursorIcon::RowResize))
-        .on_pointer_down(move || {
-            start_drag(DividerType::FilesPanelSecondary, (0.0, 0.0));
+        .on_pointer_down({
+            let app_config = app_config.clone();
+            move || {
+                start_drag(DividerType::FilesPanelSecondary, (0.0, 0.0), &app_config);
+            }
         })
 }
 
@@ -2721,6 +2757,7 @@ pub fn main_layout(
     tracked_files: &crate::tracked_files::TrackedFiles,
     selected_variables: &crate::selected_variables::SelectedVariables,
     waveform_timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline,
+    app_config: &crate::config::AppConfig,
 ) -> impl Element {
     El::new().s(Width::fill()).s(Height::fill()).child(
         Column::new()
@@ -2731,6 +2768,7 @@ pub fn main_layout(
                 selected_variables.clone(),
                 waveform_timeline.clone(),
                 tracked_files.clone(),
+                app_config.clone(),
             )),
     )
 }

@@ -791,9 +791,9 @@ pub fn user_cleared_selection_signal() -> impl zoon::Signal<Item = bool> {
 /// TEMPORARY: Get current variable index synchronously (violates reactive patterns)
 
 /// TEMPORARY: Mutable for TreeView - complex bi-directional sync, should be simplified
-pub fn expanded_scopes_mutable() -> zoon::Mutable<indexmap::IndexSet<String>> {
+pub fn expanded_scopes_mutable(app_config: &crate::config::AppConfig) -> zoon::Mutable<indexmap::IndexSet<String>> {
     // Simplified version - direct mutable access
-    crate::config::app_config()
+    app_config
         .file_picker_expanded_directories
         .clone()
 }

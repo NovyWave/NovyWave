@@ -42,6 +42,46 @@ When making changes to files, first understand the file's code conventions. Mimi
 - `// eliminated` - Obvious from absence of code
 - `// consolidated` - Implementation speaks for itself
 
+**NEVER add verbose structural comments** like:
+- `// ===== SIGNAL ACCESS =====` - Section dividers add noise
+- `// Get signal for all tracked files` - Function name is self-documenting
+- `// Sync dedicated Vec signal after ActorVec change` - Obvious from implementation
+- `// Found files list (debug info omitted for performance)` - Unnecessary annotations
+- `// Actor+Relay compliance explanation` - Belongs in documentation, not code
+- `// Implementation details for obvious patterns` - Code structure is clear
+
+**Systematic Comment Cleanup Success Pattern:**
+```rust
+// ❌ BEFORE: Verbose, redundant commentary (370 lines)
+// ===== PUBLIC API FUNCTIONS =====
+
+/// Get signal for all tracked files - provides reactive access
+/// to the complete collection of tracked files with proper
+/// Actor+Relay architecture compliance
+pub fn files_signal(&self) -> impl Signal<Item = Vec<TrackedFile>> {
+    // Sync the dedicated Vec signal to ensure consistency
+    // This maintains proper Actor+Relay patterns
+    self.files_vec_signal.signal_cloned()
+}
+
+// ✅ AFTER: Clean, focused code (261 lines)
+pub fn files_signal(&self) -> impl Signal<Item = Vec<TrackedFile>> {
+    self.files_vec_signal.signal_cloned()
+}
+```
+
+**What to Preserve:**
+- Essential module/file documentation
+- Non-obvious business logic context
+- Error message formatting details
+- Public API signatures remain clean
+
+**Results of Proper Comment Cleanup:**
+- 30% reduction in file size typical
+- Significantly improved readability
+- Zero impact on functionality
+- Code self-documents through clear structure
+
 **Principle:** Clean code documents itself through clear naming and structure, not explanatory comments.
 
 ### UI Hardcoded Values Exception
@@ -557,6 +597,41 @@ pub fn current_value(&self) -> T {
 - "The serialization patterns need Actor-internal caching which is complex to implement correctly"
 
 **Quality over appearance:** Better to deliver partial but correct work than complete but broken work.
+
+### Avoid Ugly Hacks That Circumvent Best Practices
+
+**CRITICAL PRINCIPLE: Never implement ugly hacks that work around Rust best practices or established patterns/antipatterns**
+
+- **Don't bypass lifetime rules** with unsafe code or artificial static lifetimes when proper ownership patterns exist
+- **Don't circumvent borrow checker** with excessive cloning, RefCell overuse, or pointer tricks when Actor+Relay patterns provide the solution
+- **Don't work around type system** with `as` casting, `transmute`, or `Any` trait abuse when proper type design is available
+- **Don't hack around compilation errors** with deprecated functions, temporary bridges, or architectural violations when the error reveals a real design issue
+
+**✅ CORRECT: Fix the root architectural issue**
+```rust
+// ✅ GOOD: Proper Actor+Relay pattern
+let actor = Actor::new(State::default(), async move |state| {
+    // Clean, idiomatic Rust following established patterns
+});
+
+// ✅ GOOD: Proper signal-based reactive updates  
+.child_signal(domain_actor.signal().map(|state| render_state(state)))
+```
+
+**❌ WRONG: Ugly hacks to work around proper patterns**
+```rust
+// ❌ BAD: Static lifetime hack to avoid proper ownership
+static GLOBAL_HACK: Lazy<Mutex<State>> = Lazy::new(|| Mutex::new(State::default()));
+
+// ❌ BAD: Unsafe pointer hack to bypass borrow checker
+let ptr = &state as *const State as *mut State;
+unsafe { (*ptr).modify() }  // Violates Rust safety
+
+// ❌ BAD: Arc<Mutex<>> overuse to avoid proper Actor patterns
+let shared_hack = Arc::new(Mutex::new(ComplexState::default()));
+```
+
+**Key Principle:** When you encounter resistance from Rust's type system or compilation errors, this usually indicates a design issue that should be solved architecturally, not hacked around technically.
 
 ## Quality Assurance & Best Practices
 

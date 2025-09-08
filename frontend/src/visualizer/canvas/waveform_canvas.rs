@@ -19,6 +19,7 @@ thread_local! {
 pub fn waveform_canvas(
     selected_variables: &crate::selected_variables::SelectedVariables,
     waveform_timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline,
+    app_config: &crate::config::AppConfig,
 ) -> impl Element {
     // Initialize renderer instance first
     RENDERER.with(|r| {
@@ -28,7 +29,7 @@ pub fn waveform_canvas(
     });
 
     // Start signal listeners for canvas updates
-    setup_canvas_signal_listeners(selected_variables, waveform_timeline);
+    setup_canvas_signal_listeners(selected_variables, waveform_timeline, app_config);
 
     El::new()
         .s(Width::fill())
@@ -100,6 +101,7 @@ fn create_canvas_element() -> impl Element {
 fn setup_canvas_signal_listeners(
     selected_variables: &crate::selected_variables::SelectedVariables,
     waveform_timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline,
+    app_config: &crate::config::AppConfig,
 ) {
     use std::sync::atomic::{AtomicBool, Ordering};
     static LISTENERS_SETUP: AtomicBool = AtomicBool::new(false);
@@ -148,11 +150,13 @@ fn setup_canvas_signal_listeners(
     });
 
     // Listen to theme changes
-    Task::start(async move {
-        crate::config::app_config()
-            .theme_actor
-            .signal()
-            .for_each_sync(|theme| {
+    Task::start({
+        let app_config = app_config.clone();
+        async move {
+            app_config
+                .theme_actor
+                .signal()
+                .for_each_sync(|theme| {
                 let novyui_theme = match theme {
                     shared::Theme::Dark => moonzoon_novyui::tokens::theme::Theme::Dark,
                     shared::Theme::Light => moonzoon_novyui::tokens::theme::Theme::Light,
@@ -168,6 +172,7 @@ fn setup_canvas_signal_listeners(
                 trigger_canvas_redraw_global();
             })
             .await;
+        }
     });
 }
 

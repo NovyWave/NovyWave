@@ -568,7 +568,123 @@ struct SyncActor {
 
 **Key Rule: If you're using zoon::Task for anything other than one-off operations (like debounced saves), use Actor instead.**
 
-### 4. Atom for Local UI State (MANDATORY)
+#### Internal Relay Pattern for Eliminating zoon::Task
+
+**VERIFIED SOLUTION: When zoon::Task is used for async operations within Actor contexts, use internal relays instead**
+
+This pattern completely eliminates zoon::Task while maintaining proper async handling within Actor select! loops:
+
+```rust
+// ✅ CORRECT: Add internal relay to Actor struct
+#[derive(Clone)]
+pub struct TrackedFiles {
+    pub files: ActorVec<TrackedFile>,
+    pub file_parse_requested_relay: Relay<String>, // Internal relay for async operations
+    // ... other fields
+}
+
+impl TrackedFiles {
+    pub async fn new() -> Self {
+        let (file_parse_requested_relay, mut file_parse_requested_stream) = relay::<String>();
+        
+        let files = ActorVec::new(vec![], async move |files_handle| {
+            loop {
+                select! {
+                    // ... other event streams
+                    
+                    // ✅ Handle async operations within Actor context
+                    parse_requested = file_parse_requested_stream.next() => {
+                        if let Some(file_path) = parse_requested {
+                            // ✅ CORRECT: Direct async call within Actor - NO zoon::Task!
+                            send_parse_request_to_backend(file_path).await;
+                        }
+                    }
+                }
+            }
+        });
+        
+        Self { files, file_parse_requested_relay }
+    }
+}
+
+// ✅ Usage: Direct relay emission instead of zoon::Task
+fn trigger_async_operation(file_path: String) {
+    // Instead of: zoon::Task::start(async_operation(file_path))
+    tracked_files.file_parse_requested_relay.send(file_path); // ✅ Pure relay event
+}
+```
+
+**Benefits of Internal Relay Pattern:**
+- ✅ **Complete zoon::Task elimination** - No Task usage anywhere
+- ✅ **Proper async handling** - await works correctly in Actor select! loops  
+- ✅ **Actor+Relay compliance** - Maintains architectural principles
+- ✅ **Internal organization** - Async operations handled within domain boundaries
+- ✅ **Clean event flow** - Direct relay emission → Actor processing → async execution
+
+**When to Use This Pattern:**
+- Replacing zoon::Task::start(async_function()) calls within Actor contexts
+- Backend communication from within Actors (file parsing, network requests)
+- Any async operation that was previously wrapped in zoon::Task for event handling
+- Operations that need to be triggered from within Actor select! loops
+
+### 4. Data Bundling Struct Antipattern (CRITICAL)
+
+**ANTIPATTERN: Artificial struct groupings that force unrelated data to update together**
+
+```rust
+// ❌ WRONG: Data bundling struct - artificial grouping of unrelated dimensions
+#[derive(Clone, Debug)]
+struct PanelDimensions {
+    pub files_panel_width: f32,           // Files panel concern
+    pub timeline_panel_height: f32,       // Timeline panel concern  
+    pub variables_name_column_width: f32, // Variables table concern
+    pub variables_value_column_width: f32, // Variables table concern
+}
+
+// ❌ PROBLEMS: Forces all dimensions to update together
+Actor<PanelDimensions>  // Single change triggers entire struct update
+Relay<PanelDimensions>  // Bundles unrelated dimension changes
+```
+
+**Why this is harmful:**
+- **Artificial coupling** - Groups unrelated concerns (files + timeline + variables)
+- **Update overhead** - Single dimension change forces entire struct recreation
+- **Signal noise** - Unrelated components get notified of irrelevant changes  
+- **Construction complexity** - Must build entire struct for single field updates
+- **Testing difficulty** - Cannot test individual dimension concerns in isolation
+
+**✅ CORRECT: Individual actors for each concern**
+```rust
+// ✅ GOOD: Separate actors for independent concerns
+struct PanelConfig {
+    pub files_panel_width_actor: Actor<f32>,          // Files panel only
+    pub files_panel_height_actor: Actor<f32>,         // Files panel only
+    pub timeline_panel_height_actor: Actor<f32>,      // Timeline only
+    pub variables_name_column_width_actor: Actor<f32>, // Variables only
+    pub variables_value_column_width_actor: Actor<f32>, // Variables only
+    
+    // Individual relays for precise change notifications
+    pub files_width_changed_relay: Relay<f32>,
+    pub timeline_height_changed_relay: Relay<f32>,
+    pub name_column_width_changed_relay: Relay<f32>,
+}
+```
+
+**Benefits of separated actors:**
+- **Precise updates** - Only affected components get notifications
+- **Independent testing** - Test each dimension concern separately
+- **Clear ownership** - Each actor has single responsibility
+- **Performance** - No unnecessary struct construction/destruction
+- **Reactive precision** - UI updates only when relevant data changes
+
+**When bundling IS appropriate:**
+- **Cohesive data** - Fields that logically belong together (e.g., `Point { x, y }`)
+- **Atomic updates** - When all fields must change together for consistency
+- **Domain modeling** - When struct represents a real-world concept
+
+**Key Rule: Avoid bundling data just for "organization" - use proper domain modeling instead.**
+
+### 5. Atom for Local UI State (MANDATORY)
 
 **CRITICAL: Use Atom for local view state, Actor+Relay for domain state**
 

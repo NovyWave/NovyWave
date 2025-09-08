@@ -5,7 +5,7 @@
 
 use zoon::*;
 use futures::StreamExt;
-use crate::config::{app_config, PanelDimensions};
+use crate::config::PanelDimensions;
 use shared::DockMode;
 
 // === DRAGGING STATE ===
@@ -53,7 +53,7 @@ fn dragging_state() -> &'static DraggerState {
 // === DRAGGING LOGIC ===
 
 /// Start dragging a divider
-pub fn start_drag(divider_type: DividerType, _start_position: (f32, f32)) {
+pub fn start_drag(divider_type: DividerType, _start_position: (f32, f32), app_config: &crate::config::AppConfig) {
     let state = dragging_state();
     
     // Set dragging state - get initial value from reactive signal
@@ -64,13 +64,14 @@ pub fn start_drag(divider_type: DividerType, _start_position: (f32, f32)) {
     // Use Task to get initial value from signals asynchronously
     let state_clone = state.clone();
     let divider_clone = divider_type.clone();
+    let app_config_clone = app_config.clone();
     Task::start(async move {
         // Get initial value from the corresponding signal
         let initial_value = match &divider_clone {
-            DividerType::FilesPanelMain => files_panel_width_signal().to_stream().next().await.unwrap_or(crate::config::PanelDimensions::responsive_panel_width()),
-            DividerType::FilesPanelSecondary => files_panel_height_signal().to_stream().next().await.unwrap_or(crate::config::PanelDimensions::responsive_panel_height()),
-            DividerType::VariablesNameColumn => variables_name_column_width_signal().to_stream().next().await.unwrap_or(crate::config::PanelDimensions::responsive_name_column_width()),
-            DividerType::VariablesValueColumn => variables_value_column_width_signal().to_stream().next().await.unwrap_or(crate::config::PanelDimensions::responsive_value_column_width()),
+            DividerType::FilesPanelMain => files_panel_width_signal(app_config_clone.clone()).to_stream().next().await.unwrap_or(crate::config::DEFAULT_PANEL_WIDTH),
+            DividerType::FilesPanelSecondary => files_panel_height_signal(app_config_clone.clone()).to_stream().next().await.unwrap_or(crate::config::DEFAULT_PANEL_HEIGHT),
+            DividerType::VariablesNameColumn => variables_name_column_width_signal(app_config_clone.clone()).to_stream().next().await.unwrap_or(crate::config::DEFAULT_NAME_COLUMN_WIDTH),
+            DividerType::VariablesValueColumn => variables_value_column_width_signal(app_config_clone.clone()).to_stream().next().await.unwrap_or(crate::config::DEFAULT_VALUE_COLUMN_WIDTH),
         };
         
         state_clone.initial_value.set_neq(initial_value);
@@ -79,7 +80,7 @@ pub fn start_drag(divider_type: DividerType, _start_position: (f32, f32)) {
 }
 
 /// Process mouse movement during drag
-pub fn process_drag_movement(current_position: (f32, f32)) {
+pub fn process_drag_movement(current_position: (f32, f32), app_config: &crate::config::AppConfig) {
     let state = dragging_state();
     
     if let Some(divider_type) = state.active_divider.get_cloned() {
@@ -98,8 +99,8 @@ pub fn process_drag_movement(current_position: (f32, f32)) {
                 // Files panel width - horizontal movement
                 let delta_x = current_position.0 - start_pos.0;
                 let new_width = (initial_value + delta_x).clamp(
-                    PanelDimensions::min_files_panel_width(),
-                    PanelDimensions::max_files_panel_width()
+                    crate::config::MIN_FILES_PANEL_WIDTH,
+                    crate::config::MAX_FILES_PANEL_WIDTH
                 );
                 (delta_x, new_width)
             }
@@ -107,8 +108,8 @@ pub fn process_drag_movement(current_position: (f32, f32)) {
                 // Files panel height - vertical movement
                 let delta_y = current_position.1 - start_pos.1;
                 let new_height = (initial_value + delta_y).clamp(
-                    PanelDimensions::min_panel_height(),
-                    PanelDimensions::max_panel_height()
+                    crate::config::MIN_PANEL_HEIGHT,
+                    crate::config::MAX_PANEL_HEIGHT
                 );
                 (delta_y, new_height)
             }
@@ -116,8 +117,8 @@ pub fn process_drag_movement(current_position: (f32, f32)) {
                 // Name column width - horizontal movement
                 let delta_x = current_position.0 - start_pos.0;
                 let new_width = (initial_value + delta_x).clamp(
-                    PanelDimensions::min_column_width(),
-                    PanelDimensions::max_column_width()
+                    crate::config::MIN_COLUMN_WIDTH,
+                    crate::config::MAX_COLUMN_WIDTH
                 );
                 (delta_x, new_width)
             }
@@ -125,8 +126,8 @@ pub fn process_drag_movement(current_position: (f32, f32)) {
                 // Value column width - horizontal movement
                 let delta_x = current_position.0 - start_pos.0;
                 let new_width = (initial_value + delta_x).clamp(
-                    PanelDimensions::min_column_width(),
-                    PanelDimensions::max_column_width()
+                    crate::config::MIN_COLUMN_WIDTH,
+                    crate::config::MAX_COLUMN_WIDTH
                 );
                 (delta_x, new_width)
             }
@@ -134,7 +135,7 @@ pub fn process_drag_movement(current_position: (f32, f32)) {
         
         // Only update if value actually changed (avoids spam)
         if delta.abs() > 1.0 {
-            update_config_dimension(&divider_type, new_value);
+            update_config_dimension(&divider_type, new_value, app_config);
             
         }
     }
@@ -152,8 +153,8 @@ pub fn end_drag() {
 }
 
 /// Update the appropriate config dimension
-fn update_config_dimension(divider_type: &DividerType, new_value: f32) {
-    let config = app_config();
+fn update_config_dimension(divider_type: &DividerType, new_value: f32, app_config: &crate::config::AppConfig) {
+    let config = app_config.clone();
     let divider_type = divider_type.clone();
     
     // Get dock mode and update the appropriate dimensions asynchronously
@@ -227,11 +228,11 @@ pub fn active_divider_type_signal() -> impl Signal<Item = Option<DividerType>> {
 // === PANEL DIMENSION SIGNALS ===
 
 /// Get files panel width signal for current dock mode
-pub fn files_panel_width_signal() -> impl Signal<Item = f32> {
+pub fn files_panel_width_signal(app_config: crate::config::AppConfig) -> impl Signal<Item = f32> {
     map_ref! {
-        let dock_mode = app_config().dock_mode_actor.signal(),
-        let right_dims = app_config().panel_dimensions_right_actor.signal(),
-        let bottom_dims = app_config().panel_dimensions_bottom_actor.signal() => {
+        let dock_mode = app_config.dock_mode_actor.signal(),
+        let right_dims = app_config.panel_dimensions_right_actor.signal(),
+        let bottom_dims = app_config.panel_dimensions_bottom_actor.signal() => {
             match dock_mode {
                 DockMode::Right => right_dims.files_panel_width,
                 DockMode::Bottom => bottom_dims.files_panel_width,
@@ -241,11 +242,11 @@ pub fn files_panel_width_signal() -> impl Signal<Item = f32> {
 }
 
 /// Get files panel height signal for current dock mode
-pub fn files_panel_height_signal() -> impl Signal<Item = f32> {
+pub fn files_panel_height_signal(app_config: crate::config::AppConfig) -> impl Signal<Item = f32> {
     map_ref! {
-        let dock_mode = app_config().dock_mode_actor.signal(),
-        let right_dims = app_config().panel_dimensions_right_actor.signal(),
-        let bottom_dims = app_config().panel_dimensions_bottom_actor.signal() => {
+        let dock_mode = app_config.dock_mode_actor.signal(),
+        let right_dims = app_config.panel_dimensions_right_actor.signal(),
+        let bottom_dims = app_config.panel_dimensions_bottom_actor.signal() => {
             match dock_mode {
                 DockMode::Right => right_dims.files_panel_height,
                 DockMode::Bottom => bottom_dims.files_panel_height,
@@ -255,11 +256,11 @@ pub fn files_panel_height_signal() -> impl Signal<Item = f32> {
 }
 
 /// Get variables name column width signal for current dock mode
-pub fn variables_name_column_width_signal() -> impl Signal<Item = f32> {
+pub fn variables_name_column_width_signal(app_config: crate::config::AppConfig) -> impl Signal<Item = f32> {
     map_ref! {
-        let dock_mode = app_config().dock_mode_actor.signal(),
-        let right_dims = app_config().panel_dimensions_right_actor.signal(),
-        let bottom_dims = app_config().panel_dimensions_bottom_actor.signal() => {
+        let dock_mode = app_config.dock_mode_actor.signal(),
+        let right_dims = app_config.panel_dimensions_right_actor.signal(),
+        let bottom_dims = app_config.panel_dimensions_bottom_actor.signal() => {
             match dock_mode {
                 DockMode::Right => right_dims.variables_name_column_width,
                 DockMode::Bottom => bottom_dims.variables_name_column_width,
@@ -269,11 +270,11 @@ pub fn variables_name_column_width_signal() -> impl Signal<Item = f32> {
 }
 
 /// Get variables value column width signal for current dock mode
-pub fn variables_value_column_width_signal() -> impl Signal<Item = f32> {
+pub fn variables_value_column_width_signal(app_config: crate::config::AppConfig) -> impl Signal<Item = f32> {
     map_ref! {
-        let dock_mode = app_config().dock_mode_actor.signal(),
-        let right_dims = app_config().panel_dimensions_right_actor.signal(),
-        let bottom_dims = app_config().panel_dimensions_bottom_actor.signal() => {
+        let dock_mode = app_config.dock_mode_actor.signal(),
+        let right_dims = app_config.panel_dimensions_right_actor.signal(),
+        let bottom_dims = app_config.panel_dimensions_bottom_actor.signal() => {
             match dock_mode {
                 DockMode::Right => right_dims.variables_value_column_width,
                 DockMode::Bottom => bottom_dims.variables_value_column_width,

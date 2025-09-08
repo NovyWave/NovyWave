@@ -169,85 +169,33 @@ pub struct PanelDimensions {
 impl Default for PanelDimensions {
     fn default() -> Self {
         Self {
-            files_panel_width: Self::responsive_panel_width(),
-            files_panel_height: Self::responsive_panel_height(),
-            variables_panel_width: Self::responsive_panel_width(),
-            timeline_panel_height: Self::responsive_timeline_height(),
-            variables_name_column_width: Self::responsive_name_column_width(),
-            variables_value_column_width: Self::responsive_value_column_width(),
+            files_panel_width: DEFAULT_PANEL_WIDTH,
+            files_panel_height: DEFAULT_PANEL_HEIGHT,
+            variables_panel_width: DEFAULT_PANEL_WIDTH,
+            timeline_panel_height: DEFAULT_TIMELINE_HEIGHT,
+            variables_name_column_width: DEFAULT_NAME_COLUMN_WIDTH,
+            variables_value_column_width: DEFAULT_VALUE_COLUMN_WIDTH,
         }
     }
 }
 
-impl PanelDimensions {
-    /// ✅ Responsive panel width based on typical desktop layouts
-    pub fn responsive_panel_width() -> f32 {
-        // Reasonable default width for side panels on desktop (25% of ~1200px viewport)
-        300.0
-    }
+// === STATIC DIMENSION CONSTANTS ===
+// Default dimensions for professional waveform viewer interface
+pub const DEFAULT_PANEL_WIDTH: f32 = 300.0;        // Side panel default width
+pub const DEFAULT_PANEL_HEIGHT: f32 = 300.0;       // Horizontal panel default height  
+pub const DEFAULT_TIMELINE_HEIGHT: f32 = 200.0;    // Timeline panel optimized height
+pub const DEFAULT_NAME_COLUMN_WIDTH: f32 = 190.0;  // Variable name column width
+pub const DEFAULT_VALUE_COLUMN_WIDTH: f32 = 220.0; // Variable value column width
 
-    /// ✅ Responsive panel height based on common vertical space usage
-    pub fn responsive_panel_height() -> f32 {
-        // Reasonable default height for horizontal panels (25% of ~800px viewport)
-        300.0
-    }
+// === CONSTRAINT CONSTANTS ===
+// UI constraints for professional layout bounds
+pub const MIN_PANEL_HEIGHT: f32 = 150.0;           // Minimum for content + scrollbar
+pub const MAX_PANEL_HEIGHT: f32 = 530.0;           // Maximum before overwhelming UI
+pub const MIN_COLUMN_WIDTH: f32 = 100.0;           // Minimum for readable text
+pub const MAX_COLUMN_WIDTH: f32 = 400.0;           // Maximum before inefficient spacing
+pub const MIN_FILES_PANEL_WIDTH: f32 = 200.0;      // Minimum for file names
+pub const MAX_FILES_PANEL_WIDTH: f32 = 600.0;      // Maximum before UI dominance
 
-    /// ✅ Responsive timeline height optimized for waveform visualization
-    pub fn responsive_timeline_height() -> f32 {
-        // Smaller timeline panel height for efficient space usage
-        200.0
-    }
-
-    /// ✅ Responsive name column width based on typical variable name lengths
-    pub fn responsive_name_column_width() -> f32 {
-        // Accommodates most variable names without excessive whitespace
-        190.0
-    }
-
-    /// ✅ Responsive value column width based on signal value display needs
-    pub fn responsive_value_column_width() -> f32 {
-        // Wide enough for hex values, binary strings, and formatted numbers
-        220.0
-    }
-
-    // === RESPONSIVE CONSTRAINT METHODS ===
-
-    /// ✅ Minimum panel height constraint (based on content visibility requirements)
-    pub fn min_panel_height() -> f32 {
-        // Minimum height to show meaningful content with scrollbar and header
-        150.0
-    }
-
-    /// ✅ Maximum panel height constraint (based on viewport proportions)
-    pub fn max_panel_height() -> f32 {
-        // Maximum 66% of typical desktop viewport height (~800px * 0.66)
-        530.0
-    }
-
-    /// ✅ Minimum column width constraint (based on readability)
-    pub fn min_column_width() -> f32 {
-        // Minimum width for readable text content
-        100.0
-    }
-
-    /// ✅ Maximum column width constraint (based on efficient space usage)
-    pub fn max_column_width() -> f32 {
-        // Maximum width before column becomes inefficiently wide
-        400.0
-    }
-
-    /// ✅ Minimum files panel width constraint (based on file name display)
-    pub fn min_files_panel_width() -> f32 {
-        // Minimum width to show file names without excessive truncation
-        200.0
-    }
-
-    /// ✅ Maximum files panel width constraint (based on layout proportions)
-    pub fn max_files_panel_width() -> f32 {
-        // Maximum width before files panel dominates the interface
-        600.0
-    }
-}
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
 pub struct TimelineState {
@@ -432,9 +380,15 @@ impl AppConfig {
                             button_click = dock_mode_button_clicked_stream.next() => {
                                 if let Some(()) = button_click {
 
-                                    // Get current panel dimensions from DRAGGING SYSTEM BEFORE switching mode
-                                    let current_name_width = crate::visualizer::interaction::dragging::variables_name_column_width_signal().to_stream().next().await.unwrap_or(PanelDimensions::responsive_name_column_width()) as u32;
-                                    let current_value_width = crate::visualizer::interaction::dragging::variables_value_column_width_signal().to_stream().next().await.unwrap_or(PanelDimensions::responsive_value_column_width()) as u32;
+                                    // Get current panel dimensions from CONFIG ACTORS BEFORE switching mode
+                                    let current_name_width = match current_dock_mode {
+                                        DockMode::Right => config.workspace.docked_right_dimensions.selected_variables_panel_name_column_width.unwrap_or(130.0),
+                                        DockMode::Bottom => config.workspace.docked_bottom_dimensions.selected_variables_panel_name_column_width.unwrap_or(130.0),
+                                    } as u32;
+                                    let current_value_width = match current_dock_mode {
+                                        DockMode::Right => config.workspace.docked_right_dimensions.selected_variables_panel_value_column_width.unwrap_or(170.0),
+                                        DockMode::Bottom => config.workspace.docked_bottom_dimensions.selected_variables_panel_value_column_width.unwrap_or(170.0),
+                                    } as u32;
 
 
                                     // ✅ Use cached current value for toggle logic
@@ -451,8 +405,15 @@ impl AppConfig {
                                 // ✅ FIX: Don't overwrite existing config values - only save current Actor values for ACTIVE dimensions
                                 match old_mode {
                                     DockMode::Right => {
-                                        // Update Right dock dimensions - keep existing values, only update what's currently active
-                                        let current_dims = crate::config::app_config().panel_dimensions_right_actor.signal().to_stream().next().await.unwrap();
+                                        // Update Right dock dimensions - use current config values
+                                        let current_dims = PanelDimensions {
+                                            files_panel_width: config.workspace.docked_right_dimensions.files_and_scopes_panel_width as f32,
+                                            files_panel_height: config.workspace.docked_right_dimensions.files_and_scopes_panel_height as f32,
+                                            variables_panel_width: DEFAULT_PANEL_WIDTH,
+                                            timeline_panel_height: DEFAULT_TIMELINE_HEIGHT,
+                                            variables_name_column_width: config.workspace.docked_right_dimensions.selected_variables_panel_name_column_width.unwrap_or(DEFAULT_NAME_COLUMN_WIDTH as f64) as f32,
+                                            variables_value_column_width: config.workspace.docked_right_dimensions.selected_variables_panel_value_column_width.unwrap_or(DEFAULT_VALUE_COLUMN_WIDTH as f64) as f32,
+                                        };
                                         let updated_dims = PanelDimensions {
                                             files_panel_width: current_dims.files_panel_width, // Keep existing
                                             files_panel_height: current_dims.files_panel_height, // Keep existing - don't overwrite with shared Actor
@@ -464,8 +425,15 @@ impl AppConfig {
                                         panel_dimensions_right_changed_relay.send(updated_dims);
                                     }
                                     DockMode::Bottom => {
-                                        // Update Bottom dock dimensions - keep existing values, only update what's currently active
-                                        let current_dims = crate::config::app_config().panel_dimensions_bottom_actor.signal().to_stream().next().await.unwrap();
+                                        // Update Bottom dock dimensions - use current config values  
+                                        let current_dims = PanelDimensions {
+                                            files_panel_width: config.workspace.docked_bottom_dimensions.files_and_scopes_panel_width as f32,
+                                            files_panel_height: config.workspace.docked_bottom_dimensions.files_and_scopes_panel_height as f32,
+                                            variables_panel_width: DEFAULT_PANEL_WIDTH,
+                                            timeline_panel_height: DEFAULT_TIMELINE_HEIGHT,
+                                            variables_name_column_width: config.workspace.docked_bottom_dimensions.selected_variables_panel_name_column_width.unwrap_or(DEFAULT_NAME_COLUMN_WIDTH as f64) as f32,
+                                            variables_value_column_width: config.workspace.docked_bottom_dimensions.selected_variables_panel_value_column_width.unwrap_or(DEFAULT_VALUE_COLUMN_WIDTH as f64) as f32,
+                                        };
                                         let updated_dims = PanelDimensions {
                                             files_panel_width: current_dims.files_panel_width, // Keep existing
                                             files_panel_height: current_dims.files_panel_height, // Keep existing - don't overwrite with shared Actor
@@ -486,20 +454,10 @@ impl AppConfig {
 
                                         match new_mode {
                                             DockMode::Right => {
-                                                // Load Right dock dimensions and update Actors
-                                                let right_config = crate::config::app_config().panel_dimensions_right_actor.signal().to_stream().next().await;
-                                                if let Some(_dims) = right_config {
-
-                                                    // Right mode dimensions are already loaded into the config actors - no need to force sync
-                                                }
+                                                // Right mode dimensions are already loaded into the config actors - no need to force sync
                                             }
                                             DockMode::Bottom => {
-                                                // Load Bottom dock dimensions and update Actors
-                                                let bottom_config = crate::config::app_config().panel_dimensions_bottom_actor.signal().to_stream().next().await;
-                                                if let Some(_dims) = bottom_config {
-
-                                                    // Bottom mode dimensions are already loaded into the config actors - no need to force sync
-                                                }
+                                                // Bottom mode dimensions are already loaded into the config actors - no need to force sync
                                             }
                                         }
                                     }
@@ -523,19 +481,19 @@ impl AppConfig {
                     .workspace
                     .docked_right_dimensions
                     .files_and_scopes_panel_height as f32,
-                variables_panel_width: PanelDimensions::responsive_panel_width(),
-                timeline_panel_height: PanelDimensions::responsive_timeline_height(),
+                variables_panel_width: DEFAULT_PANEL_WIDTH,
+                timeline_panel_height: DEFAULT_TIMELINE_HEIGHT,
                 variables_name_column_width: config
                     .workspace
                     .docked_right_dimensions
                     .selected_variables_panel_name_column_width
-                    .unwrap_or(PanelDimensions::responsive_name_column_width() as f64)
+                    .unwrap_or(DEFAULT_NAME_COLUMN_WIDTH as f64)
                     as f32,
                 variables_value_column_width: config
                     .workspace
                     .docked_right_dimensions
                     .selected_variables_panel_value_column_width
-                    .unwrap_or(PanelDimensions::responsive_value_column_width() as f64)
+                    .unwrap_or(DEFAULT_VALUE_COLUMN_WIDTH as f64)
                     as f32,
             },
             async move |state| {
@@ -563,19 +521,19 @@ impl AppConfig {
                     .workspace
                     .docked_bottom_dimensions
                     .files_and_scopes_panel_height as f32,
-                variables_panel_width: PanelDimensions::responsive_panel_width(),
-                timeline_panel_height: PanelDimensions::responsive_timeline_height(),
+                variables_panel_width: DEFAULT_PANEL_WIDTH,
+                timeline_panel_height: DEFAULT_TIMELINE_HEIGHT,
                 variables_name_column_width: config
                     .workspace
                     .docked_bottom_dimensions
                     .selected_variables_panel_name_column_width
-                    .unwrap_or(PanelDimensions::responsive_name_column_width() as f64)
+                    .unwrap_or(DEFAULT_NAME_COLUMN_WIDTH as f64)
                     as f32,
                 variables_value_column_width: config
                     .workspace
                     .docked_bottom_dimensions
                     .selected_variables_panel_value_column_width
-                    .unwrap_or(PanelDimensions::responsive_value_column_width() as f64)
+                    .unwrap_or(DEFAULT_VALUE_COLUMN_WIDTH as f64)
                     as f32,
             },
             async move |state| {
@@ -798,17 +756,6 @@ impl AppConfig {
             session_state_changed_relay,
         }
     }
-}
-
-// === GLOBAL INSTANCE ===
-
-pub static APP_CONFIG: std::sync::OnceLock<AppConfig> = std::sync::OnceLock::new();
-
-/// Get the global config domain
-pub fn app_config() -> &'static AppConfig {
-    APP_CONFIG
-        .get()
-        .expect_throw("AppConfig not initialized - call init_app_config() first")
 }
 
 // === BACKEND INTEGRATION ===

@@ -5,36 +5,87 @@
 
 use crate::dataflow::atom::Atom;
 use zoon::{Signal, Lazy};
+use futures::StreamExt;
 
-/// Simple dialog visibility state - replaces entire DialogManager enterprise antipattern
-static FILE_DIALOG_VISIBLE: Lazy<Atom<bool>> = Lazy::new(|| Atom::new(false));
-
-/// Simple file selection events - replaces complex manager relay system
-static FILE_PICKER_SELECTED: Lazy<Atom<Vec<String>>> = Lazy::new(|| Atom::new(Vec::new()));
-
-// File picker expanded directories and scroll position are handled by AppConfig
-// See: config.file_picker_expanded_directories and file_picker_scroll_position
-
-// === SIMPLE UI FUNCTIONS (replacing manager methods) ===
-
-/// Open the file dialog - simple UI action
-pub fn open_file_dialog() {
-    FILE_DIALOG_VISIBLE.set(true);
+/// File Dialog UI state - proper Actor+Relay for dialog management
+#[derive(Clone)]
+pub struct FileDialogState {
+    pub visible: Atom<bool>,
+    pub selected_files: Atom<Vec<String>>,
+    pub dialog_opened_relay: crate::dataflow::Relay<()>,
+    pub dialog_closed_relay: crate::dataflow::Relay<()>,
+    pub files_selected_relay: crate::dataflow::Relay<Vec<String>>,
 }
 
-/// Close the file dialog - simple UI action  
+impl Default for FileDialogState {
+    fn default() -> Self {
+        let (dialog_opened_relay, mut dialog_opened_stream) = crate::dataflow::relay::<()>();
+        let (dialog_closed_relay, mut dialog_closed_stream) = crate::dataflow::relay::<()>();
+        let (files_selected_relay, mut files_selected_stream) = crate::dataflow::relay::<Vec<String>>();
+        
+        let visible = Atom::new(false);
+        let selected_files = Atom::new(Vec::new());
+        
+        // Set up reactive handlers
+        let visible_clone = visible.clone();
+        let selected_files_clone = selected_files.clone();
+        
+        zoon::Task::start(async move {
+            loop {
+                futures::select! {
+                    _ = dialog_opened_stream.next() => {
+                        visible_clone.set(true);
+                    }
+                    _ = dialog_closed_stream.next() => {
+                        visible_clone.set(false);
+                    }
+                    files = files_selected_stream.next() => {
+                        if let Some(file_paths) = files {
+                            selected_files_clone.set(file_paths);
+                        }
+                    }
+                }
+            }
+        });
+        
+        Self {
+            visible,
+            selected_files,
+            dialog_opened_relay,
+            dialog_closed_relay,
+            files_selected_relay,
+        }
+    }
+}
+
+// Static instance for compatibility during migration
+static FILE_DIALOG_STATE_INSTANCE: Lazy<FileDialogState> = Lazy::new(|| FileDialogState::default());
+
+/// Get the file dialog state instance
+pub fn get_file_dialog_state() -> &'static FileDialogState {
+    &FILE_DIALOG_STATE_INSTANCE
+}
+
+// === UI FUNCTIONS (using proper event-source relays) ===
+
+/// Open the file dialog - triggers dialog_opened_relay
+pub fn open_file_dialog() {
+    get_file_dialog_state().dialog_opened_relay.send(());
+}
+
+/// Close the file dialog - triggers dialog_closed_relay
 pub fn close_file_dialog() {
-    FILE_DIALOG_VISIBLE.set(false);
+    get_file_dialog_state().dialog_closed_relay.send(());
 }
 
 /// Get dialog visibility signal - direct Atom access
 pub fn dialog_visible_signal() -> impl Signal<Item = bool> {
-    FILE_DIALOG_VISIBLE.signal()
+    get_file_dialog_state().visible.signal()
 }
 
 /// Get file picker selection signal - direct Atom access
 pub fn file_picker_selected_signal() -> impl Signal<Item = Vec<String>> {
-    FILE_PICKER_SELECTED.signal()
+    get_file_dialog_state().selected_files.signal()
 }
 
 
@@ -73,10 +124,46 @@ pub fn show_file_paths_dialog() {
 // === MIGRATION COMPATIBILITY ===
 // ✅ CLEANED UP: All legacy dialog_manager compatibility functions removed as they were unused
 
-/// Simple file tree cache for dialog - replaces complex manager pattern
-pub fn file_tree_cache_mutable() -> zoon::Mutable<std::collections::HashMap<String, Vec<shared::FileSystemItem>>> {
-        // Simple UI state, not complex domain logic
-    static FILE_TREE_CACHE: zoon::Lazy<zoon::Mutable<std::collections::HashMap<String, Vec<shared::FileSystemItem>>>> = 
-        zoon::Lazy::new(|| zoon::Mutable::new(std::collections::HashMap::new()));
-    FILE_TREE_CACHE.clone()
+/// File tree cache domain using proper Actor+Relay architecture
+#[derive(Clone)]
+pub struct FileTreeCache {
+    pub cache: crate::dataflow::Actor<std::collections::HashMap<String, Vec<shared::FileSystemItem>>>,
+    pub cache_updated_relay: crate::dataflow::Relay<(String, Vec<shared::FileSystemItem>)>,
+}
+
+impl FileTreeCache {
+    pub async fn new() -> Self {
+        let (cache_updated_relay, mut cache_updated_stream) = crate::dataflow::relay::<(String, Vec<shared::FileSystemItem>)>();
+        
+        let cache = crate::dataflow::Actor::new(std::collections::HashMap::new(), async move |state| {
+            while let Some((path, items)) = cache_updated_stream.next().await {
+                let mut cache_map = state.lock_mut();
+                cache_map.insert(path, items);
+            }
+        });
+        
+        Self { cache, cache_updated_relay }
+    }
+    
+    pub fn cache_signal(&self) -> impl zoon::Signal<Item = std::collections::HashMap<String, Vec<shared::FileSystemItem>>> {
+        self.cache.signal()
+    }
+}
+
+// Static instance for compatibility during migration
+static FILE_TREE_CACHE_INSTANCE: zoon::Lazy<std::sync::Arc<std::sync::Mutex<Option<FileTreeCache>>>> = 
+    zoon::Lazy::new(|| std::sync::Arc::new(std::sync::Mutex::new(None)));
+
+/// Get or initialize the file tree cache instance
+pub async fn get_file_tree_cache() -> FileTreeCache {
+    let instance_arc = FILE_TREE_CACHE_INSTANCE.clone();
+    let mut instance_guard = instance_arc.lock().unwrap();
+    
+    if instance_guard.is_none() {
+        let cache = FileTreeCache::new().await;
+        *instance_guard = Some(cache.clone());
+        cache
+    } else {
+        instance_guard.as_ref().unwrap().clone()
+    }
 }

@@ -36,16 +36,18 @@ pub fn create_connection_message_handler(
     tracked_files: &crate::tracked_files::TrackedFiles,
     selected_variables: &crate::selected_variables::SelectedVariables,
     waveform_timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline,
+    app_config: &crate::config::AppConfig,
 ) -> (ConnectionAdapter, crate::dataflow::Actor<()>) {
     let (connection_adapter, mut down_msg_stream) = ConnectionAdapter::new();
     
     let tracked_files = tracked_files.clone();
     let selected_variables = selected_variables.clone();
     let waveform_timeline = waveform_timeline.clone();
+    let app_config = app_config.clone();
     
     let message_handler = crate::dataflow::Actor::new((), async move |_state| {
         while let Some(down_msg) = down_msg_stream.next().await {
-            handle_down_msg(down_msg, &tracked_files, &selected_variables, &waveform_timeline);
+            handle_down_msg(down_msg, &tracked_files, &selected_variables, &waveform_timeline, &app_config);
         }
     });
     
@@ -58,6 +60,7 @@ fn handle_down_msg(
     tracked_files: &crate::tracked_files::TrackedFiles,
     _selected_variables: &crate::selected_variables::SelectedVariables,
     waveform_timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline,
+    app_config: &crate::config::AppConfig,
 ) {
     match down_msg {
         DownMsg::ParsingStarted { file_id, filename } => {
@@ -154,8 +157,8 @@ fn handle_down_msg(
                     }
 
                     // Use domain function for bulk directory expansion
-                    // Directory expansion handled directly by app_config
-                    let mut expanded = crate::config::app_config()
+                    // Directory expansion handled directly by app_config parameter
+                    let mut expanded = app_config
                         .file_picker_expanded_directories
                         .lock_mut();
                     for path in paths_to_expand {
@@ -322,12 +325,14 @@ fn handle_down_msg(
                 );
             }
 
-        DownMsg::SignalValues { .. } => {
-            // Handle legacy SignalValues message (deprecated in favor of UnifiedSignalResponse)
+        DownMsg::SignalValues { file_path, results } => {
+            zoon::println!("📨 Received SignalValues for {} with {} results", file_path, results.len());
+            // TODO: Implement proper handling or convert to unified format
         }
 
-        DownMsg::SignalValuesError { .. } => {
-            // Handle legacy SignalValuesError message (deprecated in favor of UnifiedSignalError)
+        DownMsg::SignalValuesError { file_path, error } => {
+            zoon::println!("❌ SignalValuesError for {}: {}", file_path, error);
+            // TODO: Implement proper error handling
         }
     }
 }
