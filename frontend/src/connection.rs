@@ -1,7 +1,8 @@
 use zoon::*;
 use futures::stream::StreamExt;
-use crate::error_display::log_error_console_only;
-use crate::state::ErrorAlert;
+use crate::error_display::{log_error_console_only, ErrorAlert};
+use crate::tracked_files::update_tracked_file_state;
+use crate::selected_variables::find_scope_full_name;
 use crate::views::is_cursor_within_variable_time_range;
 use shared::LoadingStatus;
 use shared::{DownMsg, UpMsg};
@@ -16,7 +17,6 @@ impl ConnectionAdapter {
         let (message_sender, message_stream) = futures::channel::mpsc::unbounded();
         
         let connection = Connection::new(move |down_msg, _| {
-            // Simple forwarding - no business logic here
             let _ = message_sender.unbounded_send(down_msg);
         });
         
@@ -64,20 +64,17 @@ fn handle_down_msg(
 ) {
     match down_msg {
         DownMsg::ParsingStarted { file_id, filename } => {
-                // Update TRACKED_FILES with parsing started status
-                crate::state::update_tracked_file_state(
+                update_tracked_file_state(
                     &file_id,
                     shared::FileState::Loading(shared::LoadingStatus::Parsing),
                     tracked_files,
                 );
 
-                // TODO: Pass TrackedFiles instance as parameter
                 tracked_files
                     .loading_started_relay
                     .send((file_id.clone(), filename.clone()));
             }
             DownMsg::ParsingProgress { file_id, progress } => {
-                // TODO: Pass TrackedFiles instance as parameter
                 tracked_files.parsing_progress_relay.send((
                     file_id,
                     progress,
@@ -85,67 +82,45 @@ fn handle_down_msg(
                 ));
             }
             DownMsg::FileLoaded { file_id, hierarchy } => {
-                // Update TRACKED_FILES with loaded waveform file
                 if let Some(loaded_file) = hierarchy.files.first() {
-                    crate::state::update_tracked_file_state(
+                    update_tracked_file_state(
                         &file_id,
                         shared::FileState::Loaded(loaded_file.clone()),
                         tracked_files,
                     );
 
-                    // Scope restoration handled by SelectedVariables Actor when variables are selected
-
-                    // Timeline bounds calculation now handled by MaximumTimelineRange Actor
-                    // The Actor automatically computes bounds from tracked files and selected variables
-                    // No manual bounds calculation needed here
                 }
 
-                // The TrackedFiles Actor manages all loaded file state and handles scope restoration
-
-                // The TrackedFiles Actor automatically manages loading completion business logic
-
-                // Config automatically saved by ConfigSaver watching domain signals
             }
             DownMsg::ParsingError { file_id, error } => {
-                // Update TRACKED_FILES with error state
                 let file_error = shared::FileError::ParseError {
                     source: error.clone(),
                     context: format!("Parsing file with ID: {}", file_id),
                 };
-                crate::state::update_tracked_file_state(
+                update_tracked_file_state(
                     &file_id,
                     shared::FileState::Failed(file_error),
                     tracked_files,
                 );
 
                 let filename = {
-                    // Use TrackedFiles instance parameter instead of global
-                    // For now, use fallback since TrackedFiles API needs implementation
                     "Unknown file".to_string()
                 };
 
-                // Create and display error alert
                 let error_alert =
                     ErrorAlert::new_file_parsing_error(file_id.clone(), filename, error.clone());
                 crate::error_display::log_error_console_only(error_alert);
 
-                // The TrackedFiles Actor will manage loading completion automatically
             }
             DownMsg::DirectoryContents { path, items } => {
-                // Cache directory contents → Use DialogManager domain
-                // File tree cache simplified - no complex enterprise manager needed
                 let cache_mutable = zoon::Mutable::new(std::collections::HashMap::new());
                 cache_mutable.lock_mut().insert(path.clone(), items.clone());
 
-                // Auto-expand home directory path and its parent directories
                 if path.contains("/home/") || path.starts_with("/Users/") {
                     let mut paths_to_expand = Vec::new();
 
-                    // Expand the home directory itself
                     paths_to_expand.push(path.clone());
 
-                    // Only expand parent directories, don't browse them automatically
-                    // This prevents infinite loops
                     let mut parent_path = std::path::Path::new(&path);
                     while let Some(parent) = parent_path.parent() {
                         let parent_str = parent.to_string_lossy().to_string();
@@ -156,8 +131,6 @@ fn handle_down_msg(
                         parent_path = parent;
                     }
 
-                    // Use domain function for bulk directory expansion
-                    // Directory expansion handled directly by app_config parameter
                     let mut expanded = app_config
                         .file_picker_expanded_directories
                         .lock_mut();
@@ -166,55 +139,36 @@ fn handle_down_msg(
                     }
                 }
 
-                // Clear any previous error for this directory (fresh data overwrites cached errors)
-                // Error clearing simplified - no enterprise manager needed
-                // Error clearing simplified - no complex manager needed
             }
             DownMsg::DirectoryError { path, error } => {
-                // Log to console for debugging but don't show toast (UX redundancy)
                 let error_alert = ErrorAlert::new_directory_error(path.clone(), error.clone());
                 log_error_console_only(error_alert);
 
-                // Store error for UI display in dialog tree
-                // Error reporting simplified - log to console for debugging
                 log_error_console_only(ErrorAlert::new_directory_error(path.clone(), error));
 
-                // Clear global error (we now use per-directory errors)
-                // Error clearing simplified - no enterprise manager needed
             }
             DownMsg::ConfigLoaded(_config) => {
-                // Config response now handled directly by exchange_msgs in load_config_from_backend
             }
             DownMsg::ConfigSaved => {
-                // Config saved successfully
             }
             DownMsg::ConfigError(_error) => {
-                // Config error: {}
             }
             DownMsg::BatchDirectoryContents { results } => {
-                // Handle batch directory results by updating cache for each directory
                 for (path, result) in results {
                     match result {
                         Ok(items) => {
-                            // Update cache with successful directory scan → Use DialogManager domain
-                            // File tree cache simplified - no complex enterprise manager needed
                             let cache_mutable =
                                 zoon::Mutable::new(std::collections::HashMap::new());
                             cache_mutable.lock_mut().insert(path.clone(), items);
 
-                            // Clear any previous error for this directory
-                            // Error clearing simplified - no complex manager needed
                         }
                         Err(error) => {
-                            // Log to console for debugging but don't show toast (UX redundancy)
-                            let error_alert = crate::state::ErrorAlert::new_directory_error(
+                                        let error_alert = ErrorAlert::new_directory_error(
                                 path.clone(),
                                 error.clone(),
                             );
                             log_error_console_only(error_alert);
 
-                            // Store directory scan error for UI display
-                            // Error reporting simplified - log to console for debugging
                             log_error_console_only(ErrorAlert::new_directory_error(
                                 path.clone(),
                                 error,
@@ -223,42 +177,33 @@ fn handle_down_msg(
                     }
                 }
 
-                // Clear global error (batch operations successful)
-                // Error clearing simplified - no enterprise manager needed
             }
             DownMsg::SignalTransitions { file_path, results } => {
-                // Process signal transitions from backend - UPDATE CACHE
                 for result in results {
                     let cache_key = format!(
                         "{}|{}|{}",
                         file_path, result.scope_path, result.variable_name
                     );
 
-                    // Store backend data in unified cache using Actor+Relay pattern
                     crate::visualizer::timeline::timeline_actor::insert_raw_transitions_to_cache(
                         waveform_timeline,
                         cache_key.clone(),
                         result.transitions,
                     );
 
-                    // Don't clear processed cache - data hasn't changed, just updated
-                    // Processed cache will remain valid for existing time ranges
                 }
 
-                // Trigger canvas redraw when data arrives
                 crate::visualizer::canvas::waveform_canvas::trigger_canvas_redraw_global();
             }
             DownMsg::SignalTransitionsError {
                 file_path: _,
                 error: _,
             } => {
-                // Currently using static data in canvas, will integrate later
             }
             DownMsg::BatchSignalValues {
                 batch_id: _,
                 file_results,
             } => {
-                // Process batch signal values from backend using domain relay
                 let mut batch_signal_values = std::collections::HashMap::new();
 
                 for file_result in file_results {
@@ -268,10 +213,8 @@ fn handle_down_msg(
                             file_result.file_path, result.scope_path, result.variable_name
                         );
 
-                        // Check if cursor time is within this variable's file time range
-                        let _cursor_time = Some(0.0); // Fallback to avoid deprecated function
-                        // TODO: Pass tracked_files parameter when CONNECTION has domain access
-                        let within_time_range = true; // Temporary: assume within range until domain integration
+                        let _cursor_time = Some(0.0);
+                        let within_time_range = true;
 
                         let signal_value = if within_time_range {
                             if let Some(raw_binary) = result.raw_value {
@@ -280,7 +223,7 @@ fn handle_down_msg(
                                 shared::SignalValue::missing()
                             }
                         } else {
-                            shared::SignalValue::missing() // Beyond time range
+                            shared::SignalValue::missing()
                         };
                         batch_signal_values.insert(unique_id, signal_value);
                     }
@@ -298,7 +241,6 @@ fn handle_down_msg(
                 statistics,
                 cached_time_range_ns: _,
             } => {
-                // Log cursor values for debugging
                 for (_signal_id, value) in &cursor_values {
                     match value {
                         shared::SignalValue::Present(_data) => {}
@@ -307,7 +249,6 @@ fn handle_down_msg(
                     }
                 }
 
-                // Handle unified signal response through the unified timeline service
                 crate::visualizer::timeline::timeline_actor::handle_unified_response(
                     waveform_timeline,
                     request_id,
@@ -317,7 +258,6 @@ fn handle_down_msg(
                 );
             }
             DownMsg::UnifiedSignalError { request_id, error } => {
-                // Handle unified signal error through the unified timeline service
                 crate::visualizer::timeline::timeline_actor::handle_unified_error(
                     waveform_timeline,
                     request_id,
@@ -327,12 +267,10 @@ fn handle_down_msg(
 
         DownMsg::SignalValues { file_path, results } => {
             zoon::println!("📨 Received SignalValues for {} with {} results", file_path, results.len());
-            // TODO: Implement proper handling or convert to unified format
         }
 
         DownMsg::SignalValuesError { file_path, error } => {
             zoon::println!("❌ SignalValuesError for {}: {}", file_path, error);
-            // TODO: Implement proper error handling
         }
     }
 }

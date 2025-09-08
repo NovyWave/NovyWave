@@ -141,7 +141,7 @@ fn setup_canvas_signal_listeners(
     Task::start({
         let selected_variables = selected_variables.clone();
         async move {
-            selected_variables.variables_vec_signal.signal_cloned()
+            selected_variables.variables_vec_actor.signal()
                 .for_each_sync(|_variables| {
                     trigger_canvas_redraw_global();
                 })

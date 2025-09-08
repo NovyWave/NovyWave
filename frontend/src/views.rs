@@ -7,40 +7,43 @@ use moonzoon_novyui::*;
 use zoon::events::{Click, KeyDown};
 use zoon::*;
 use crate::clipboard;
-// Removed app_config import - now passed as parameter
+
+// Selected Variables panel row height
+pub const SELECTED_VARIABLES_ROW_HEIGHT: u32 = 30;
 use crate::dataflow::atom::Atom;
 use crate::dataflow::relay;
-use crate::file_dialog::show_file_paths_dialog;
 use crate::selected_variables::{
     VariableWithContext, filter_variables_with_context, get_variables_from_tracked_files,
 };
 use crate::virtual_list::virtual_variables_list_pre_filtered;
-// Removed timeline signal function imports - these are now methods on WaveformTimeline instance
 use moonzoon_novyui::components::{KbdSize, KbdVariant, kbd};
 use moonzoon_novyui::tokens::typography::font_mono;
 use shared::{FileState, ScopeData, SelectedVariable, TrackedFile, UpMsg};
 use std::collections::{HashMap, HashSet};
 
-use crate::state::SELECTED_VARIABLES_ROW_HEIGHT;
 
-// Cached timeline range signal to prevent duplicate calculations
 fn timeline_range_signal(
     tracked_files: &crate::tracked_files::TrackedFiles,
     selected_variables: &crate::selected_variables::SelectedVariables,
 ) -> impl Signal<Item = Option<(f64, f64)>> {
-    // Clone signals to get owned values for signal lifetime
     let files_count_signal = tracked_files.file_count_signal();
-    let variables_signal = selected_variables.variables_vec_signal.signal_cloned();
+    let variables_signal = selected_variables.variables_vec_actor.signal();
     
     map_ref! {
-        let _files_count = files_count_signal,
-        let _selected_vars = variables_signal =>
-        Some((0.0, 1.0))  // Fallback timeline range (replacing removed get_maximum_timeline_range)
+        let files_count = files_count_signal,
+        let _selected_vars = variables_signal => {
+            if *files_count == 0 {
+                None
+            } else {
+                // TODO: Implement proper timeline range calculation from actual file data
+                // This should return Some((min_time, max_time)) from loaded files
+                None
+            }
+        }
     }
     .dedupe_cloned()
 }
 
-// Smart time formatting that removes unnecessary decimals
 fn format_time(time: f64) -> String {
     if !time.is_finite() || time <= 0.0 {
         "0s".to_string()
@@ -74,15 +77,11 @@ fn format_time(time: f64) -> String {
     }
 }
 use crate::selected_variables::{
-    selected_scope_signal, // Keep standalone functions that exist
-    // Removed instance method imports - these are now accessed through SelectedVariables parameter
 };
 use crate::visualizer::interaction::dragging::{
     files_panel_height_signal, variables_name_column_width_signal,
     variables_value_column_width_signal,
 };
-// dialog_manager eliminated - use simple file_dialog functions
-// Error cache functionality simplified - most was stub implementation
 use shared::truncate_value;
 
 /// Format options for dropdown - contains value and disabled state
@@ -115,22 +114,15 @@ fn get_signal_type_for_selected_variable_from_files(
     selected_var: &SelectedVariable,
     files: &[TrackedFile],
 ) -> String {
-    // Parse the unique_id to get file_path, scope_path, and variable_name
     if let Some((file_path, scope_path, variable_name)) = selected_var.parse_unique_id() {
-        // Find the corresponding file by path and check if it's loaded
         for tracked_file in files.iter() {
-            // Match by file path (tracked_file.path is the file path)
             if tracked_file.path == file_path {
                 if let FileState::Loaded(waveform_file) = &tracked_file.state {
-                    // The scope IDs in waveform_file include the full file path prefix
-                    // We need to construct the full scope ID to match what's stored
                     let full_scope_id = format!("{}|{}", file_path, scope_path);
 
-                    // Find variables in the specific scope using the full scope ID
                     if let Some(variables) =
                         shared::find_variables_in_scope(&waveform_file.scopes, &full_scope_id)
                     {
-                        // Find the specific variable by name
                         if let Some(signal) = variables.iter().find(|v| v.name == variable_name) {
                             return format!("{} {}-bit", signal.signal_type, signal.width);
                         }
@@ -141,8 +133,7 @@ fn get_signal_type_for_selected_variable_from_files(
         }
     }
 
-    // Fallback if variable not found or file not loaded
-    "Loading...".to_string()
+    String::new()
 }
 
 /// Get signal type information for a selected variable (legacy synchronous version)
@@ -150,24 +141,16 @@ fn get_signal_type_for_selected_variable(
     selected_var: &SelectedVariable,
     tracked_files: &[TrackedFile],
 ) -> String {
-    // Parse the unique_id to get file_path, scope_path, and variable_name
     if let Some((file_path, scope_path, variable_name)) = selected_var.parse_unique_id() {
-        // Use the same approach as Variables panel - only check loaded files
 
-        // Find the corresponding file by path and check if it's loaded
         for tracked_file in tracked_files.iter() {
-            // Match by file path (tracked_file.path is the file path)
             if tracked_file.path == file_path {
                 if let FileState::Loaded(waveform_file) = &tracked_file.state {
-                    // The scope IDs in waveform_file include the full file path prefix
-                    // We need to construct the full scope ID to match what's stored
                     let full_scope_id = format!("{}|{}", file_path, scope_path);
 
-                    // Find variables in the specific scope using the full scope ID
                     if let Some(variables) =
                         shared::find_variables_in_scope(&waveform_file.scopes, &full_scope_id)
                     {
-                        // Find the specific variable by name
                         if let Some(signal) = variables.iter().find(|v| v.name == variable_name) {
                             return format!("{} {}-bit", signal.signal_type, signal.width);
                         }
@@ -178,13 +161,9 @@ fn get_signal_type_for_selected_variable(
         }
     }
 
-    // Fallback if variable not found or file not loaded
-    "Loading...".to_string()
+    String::new()
 }
 
-/// Get the default format for a signal type based on docs/signal_type_aware_formatting.md
-
-// Format options and display functions moved to format_utils.rs
 
 /// Generate dropdown options for UI from shared SignalValue
 fn generate_ui_dropdown_options(
@@ -230,15 +209,15 @@ fn generate_ui_dropdown_options(
 /// Create a smart dropdown with viewport edge detection using web-sys APIs
 fn create_smart_dropdown(
     dropdown_options: Vec<DropdownFormatOption>,
-    selected_format: Mutable<String>,
-    is_open: Mutable<bool>,
+    format_actor: crate::dataflow::Actor<shared::VarFormat>,
+    is_open: zoon::Mutable<bool>,
     trigger_id: String,
+    unique_id: String,
+    selected_variables: &crate::selected_variables::SelectedVariables,
 ) -> impl Element {
     use wasm_bindgen::JsCast;
     use web_sys::{HtmlElement, window};
 
-    // Calculate actual dropdown height based on content
-    // Modern library approach: account for all box model properties + safety margin
     let vertical_padding = SPACING_12 as f64;
     let explicit_line_height = 16.0; // Magic number - should be typography token
     let item_height = vertical_padding + explicit_line_height; // 28px total per item
@@ -247,15 +226,12 @@ fn create_smart_dropdown(
 
     let content_height = dropdown_options.len() as f64 * item_height;
     let calculated_height = content_height + border_height + safety_margin;
-    // ✅ RESPONSIVE: Calculate max height based on viewport percentage
     const DROPDOWN_MAX_VIEWPORT_RATIO: f64 = 0.25; // 25% of viewport height
     let max_dropdown_height = 1200.0 * DROPDOWN_MAX_VIEWPORT_RATIO; // Using fallback viewport height for dropdown sizing
     let dynamic_dropdown_height = (calculated_height.min(max_dropdown_height)).ceil();
 
-    // Create unique ID for positioning calculations
     let dropdown_id = format!("smart-dropdown-{}", js_sys::Date::now() as u64);
 
-    // Create dropdown with smart edge detection positioning
     Column::new()
         .s(Transform::new().move_down(0))
         .s(Background::new().color_signal(neutral_1()))
@@ -282,7 +258,6 @@ fn create_smart_dropdown(
                 if let Some(html_el) = raw_el.dom_element().dyn_ref::<HtmlElement>() {
                     html_el.set_id(&dropdown_id);
 
-                    // Apply initial positioning
                     let style = html_el.style();
                     let _ = style.set_property("position", "fixed");
                     let _ = style.set_property("z-index", "9999");
@@ -291,7 +266,6 @@ fn create_smart_dropdown(
                         style.set_property("max-height", &format!("{}px", dynamic_dropdown_height));
                     let _ = style.set_property("overflow-y", "auto");
 
-                    // Edge detection and smart positioning using web-sys
                     if let Some(window) = window() {
                         if let Some(document) = window.document() {
                             if let Some(trigger_element) = document.get_element_by_id(&trigger_id) {
@@ -300,45 +274,36 @@ fn create_smart_dropdown(
                                 let viewport_height =
                                     window.inner_height().unwrap().as_f64().unwrap_or(768.0);
 
-                                // Get trigger's bounding rect for positioning reference
                                 let trigger_rect = trigger_element.get_bounding_client_rect();
                                 const MIN_DROPDOWN_WIDTH: f64 = 200.0; // Matches CSS min-width
                                 let dropdown_width = MIN_DROPDOWN_WIDTH;
                                 let dropdown_height = dynamic_dropdown_height; // Use the calculated height
 
-                                // Start with default positioning below trigger
                                 let mut x = trigger_rect.left();
                                 let mut y = trigger_rect.bottom() + 1.0; // 1px gap below trigger
 
-                                // Right edge detection - shift left if dropdown would overflow
                                 if x + dropdown_width > viewport_width {
                                     x = viewport_width - dropdown_width - 8.0; // 8px margin from edge
                                 }
 
-                                // Left edge protection - ensure dropdown doesn't go off-screen left
                                 if x < 8.0 {
                                     x = 8.0;
                                 }
 
-                                // Bottom edge detection - flip to above trigger if insufficient space below
                                 if y + dropdown_height > viewport_height {
                                     let space_above = trigger_rect.top();
 
                                     if space_above >= dropdown_height + 1.0 {
-                                        // Enough space above - position above trigger
                                         y = trigger_rect.top() - dropdown_height - 1.0; // 1px gap above
                                     } else {
-                                        // Not enough space above either - constrain within viewport
                                         y = viewport_height - dropdown_height - 8.0; // 8px margin from bottom
                                     }
                                 }
 
-                                // Top edge protection
                                 if y < 8.0 {
                                     y = 8.0;
                                 }
 
-                                // Apply calculated position
                                 let _ = style.set_property("left", &format!("{}px", x));
                                 let _ = style.set_property("top", &format!("{}px", y));
                             }
@@ -371,26 +336,21 @@ fn create_smart_dropdown(
                             let full_text = option_full_text.clone();
                             let display_text = option_display.clone();
                             move |raw_el| {
-                                // Add tooltip with full text if it differs from display text
                                 if full_text != display_text {
-                                    // Extract value-only part from full_text (remove format name)
                                     let value_only = if let Some(space_pos) = full_text.rfind(' ') {
                                         full_text[..space_pos].to_string()
                                     } else {
                                         full_text.clone()
                                     };
-                                    // Apply same unicode filtering as display text
                                     let filtered_tooltip = value_only
                                         .chars()
                                         .filter(|&c| {
-                                            // Keep regular spaces and visible characters only
                                             c == ' ' || (c.is_ascii() && c.is_ascii_graphic())
                                         })
                                         .collect::<String>()
                                         .trim()
                                         .to_string();
 
-                                    // Only show tooltip if it differs from the displayed text
                                     let display_value_only =
                                         if let Some(space_pos) = display_text.rfind(' ') {
                                             display_text[..space_pos].to_string()
@@ -424,12 +384,10 @@ fn create_smart_dropdown(
                             )
                             .size(12))
                         .child(
-                            // Use Variables panel styling pattern: value left, format right
                             Row::new()
                                 .s(Width::fill())
                                 .s(Gap::new().x(SPACING_8))
                                 .item(
-                                    // Value - left aligned, contrasting color (like variable name)
                                     El::new()
                                         .s(Font::new()
                                             .color_signal(
@@ -444,7 +402,6 @@ fn create_smart_dropdown(
                                         .s(font_mono())
                                         .s(Width::growable())
                                         .child({
-                                            // Extract just the value part (before the format name)
                                             let display_text = option.display_text.clone();
                                             let value_only =
                                                 if let Some(space_pos) = display_text.rfind(' ') {
@@ -452,12 +409,10 @@ fn create_smart_dropdown(
                                                 } else {
                                                     display_text.clone()
                                                 };
-                                            // Remove invisible characters that cause UI layout issues
                                             let filtered_value = value_only
                                                 .chars()
                                                 .filter(|&c| {
-                                                    // Keep regular spaces and visible characters only
-                                                    c == ' '
+                                                            c == ' '
                                                         || (c.is_ascii() && c.is_ascii_graphic())
                                                 })
                                                 .collect::<String>()
@@ -478,7 +433,6 @@ fn create_smart_dropdown(
                                 )
                                 .item(El::new().s(Width::fill())) // Spacer to push format to right
                                 .item(
-                                    // Format name - right aligned, blueish color (like variable type)
                                     El::new()
                                         .s(Font::new()
                                             .color_signal(
@@ -492,14 +446,12 @@ fn create_smart_dropdown(
                                             .no_wrap())
                                         .s(Align::new().right())
                                         .child({
-                                            // Extract just the format name (after the last space)
                                             let display_text = option.display_text.clone();
                                             let format_name = if let Some(space_pos) =
                                                 display_text.rfind(' ')
                                             {
                                                 display_text[space_pos + 1..].to_string()
                                             } else {
-                                                // If no space, show the format enum name
                                                 match option.format {
                                                     shared::VarFormat::ASCII => "ASCII",
                                                     shared::VarFormat::Binary => "Bin",
@@ -516,12 +468,13 @@ fn create_smart_dropdown(
                                 ),
                         )
                         .on_click({
-                            let selected_format = selected_format.clone();
+                            let variable_format_changed_relay = selected_variables.variable_format_changed_relay.clone();
+                            let unique_id_for_relay = unique_id.clone();
                             let is_open = is_open.clone();
-                            let option_format = option_format.clone();
+                            let option_format_enum = option.format; // Use the actual enum, not the string
                             move || {
                                 if !option_disabled {
-                                    selected_format.set(option_format.clone());
+                                    variable_format_changed_relay.send((unique_id_for_relay.clone(), option_format_enum));
                                     is_open.set(false);
                                 }
                             }
@@ -529,380 +482,6 @@ fn create_smart_dropdown(
                 })
                 .collect::<Vec<_>>(),
         )
-}
-
-/// Create a format selection component for a selected variable using NovyUI Select
-fn create_format_select_component(
-    selected_var: SelectedVariable,
-    tracked_files: Vec<TrackedFile>,
-    waveform_timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline,
-    app_config: crate::config::AppConfig,
-) -> impl Element {
-    let unique_id = selected_var.unique_id.clone();
-
-    // Get signal type for format options and default
-    let signal_type = get_signal_type_for_selected_variable(&selected_var, &tracked_files);
-
-    // Check if format is already saved using domain method
-    let saved_format = crate::visualizer::timeline::timeline_actor::get_variable_format(&unique_id);
-    let current_format = saved_format.or(selected_var.formatter).unwrap_or_default();
-
-    // 🔍 DEBUG: Format initialization logging disabled to reduce startup spam
-    // if current_format != shared::SignalValueFormat::default() || saved_format.is_some() {
-    // }
-
-    // Create reactive state for selection changes
-    let selected_format = Mutable::new(format!("{:?}", current_format));
-
-    // Listen for changes and update backend
-    Task::start({
-        let unique_id = unique_id.clone();
-        let selected_format = selected_format.clone();
-        let previous_format = Mutable::new(format!("{:?}", current_format));
-
-        async move {
-            selected_format
-                .signal_cloned()
-                .for_each(move |new_format_str| {
-                    let previous_format = previous_format.clone();
-                    let unique_id = unique_id.clone();
-                    async move {
-                        if new_format_str != previous_format.get_cloned() {
-                            previous_format.set(new_format_str.clone());
-
-                            // Parse the format string back to VarFormat
-                            let new_format = match new_format_str.as_str() {
-                                "ASCII" => shared::VarFormat::ASCII,
-                                "Binary" => shared::VarFormat::Binary,
-                                "BinaryWithGroups" => shared::VarFormat::BinaryWithGroups,
-                                "Hexadecimal" => shared::VarFormat::Hexadecimal,
-                                "Octal" => shared::VarFormat::Octal,
-                                "Signed" => shared::VarFormat::Signed,
-                                "Unsigned" => shared::VarFormat::Unsigned,
-                                _ => shared::VarFormat::Hexadecimal, // Default fallback
-                            };
-
-                            // TEMPORARY: Commented out during migration to avoid lifetime issues
-                            // TODO: Fix lifetime by cloning necessary data or restructuring
-                            // update_variable_format(&unique_id, new_format, waveform_timeline);
-
-                            // 🔍 DEBUG: Format change
-                        }
-                    }
-                })
-                .await;
-        }
-    });
-
-    // Create custom dropdown that shows value+format with working dropdown menu
-    let is_open = Mutable::new(false);
-
-    El::new()
-        .s(Width::fill())
-        .s(Height::fill())
-        .s(Align::new().center_y().left())
-        .child_signal({
-            let unique_id_for_signal = unique_id.clone();
-
-            // FST Debug: Check what unique_id looks like for FST files
-            // FST UI debug logging removed to prevent event loop blocking
-
-            map_ref! {
-                // TEMPORARY: Commented out during migration to avoid lifetime issues
-                // TODO: Fix lifetime by cloning necessary data or restructuring
-                // let current_value = crate::visualizer::timeline::timeline_actor::cursor_value_signal(waveform_timeline, &unique_id_for_signal),
-                let current_value = zoon::always("N/A".to_string()),
-                let format_state = selected_format.signal_cloned() => {
-                    // Parse current format for proper display
-                    let current_format_enum = match format_state.as_str() {
-                        "ASCII" => shared::VarFormat::ASCII,
-                        "Binary" => shared::VarFormat::Binary,
-                        "BinaryWithGroups" => shared::VarFormat::BinaryWithGroups,
-                        "Hexadecimal" => shared::VarFormat::Hexadecimal,
-                        "Octal" => shared::VarFormat::Octal,
-                        "Signed" => shared::VarFormat::Signed,
-                        "Unsigned" => shared::VarFormat::Unsigned,
-                        _ => shared::VarFormat::Hexadecimal,
-                    };
-
-                    // Debug logging removed to prevent console spam in hot signal path
-
-                    let current_signal_value = if current_value == "N/A" {
-                        shared::SignalValue::missing()
-                    } else if current_value == "Loading..." {
-                        shared::SignalValue::loading()
-                    } else {
-                        shared::SignalValue::from_data(current_value.clone())
-                    };
-
-                    let full_display_text = current_signal_value.get_full_display_with_format(&current_format_enum);
-                    let display_text = current_signal_value.get_truncated_display_with_format(&current_format_enum, 30);
-
-                    // Debug logging removed to prevent console spam in hot signal path
-
-                    // Generate dropdown options with formatted values
-                    let dropdown_options = generate_ui_dropdown_options(&current_signal_value, &signal_type, 30);
-
-                    // Create unique trigger ID for positioning reference
-                    let trigger_id = format!("select-trigger-{}", unique_id);
-
-                    // Create custom select trigger that shows value+format
-                    Row::new()
-                        .s(Width::fill())
-                        .s(Height::exact(SELECTED_VARIABLES_ROW_HEIGHT - 2))
-                        .s(Padding::new().x(SPACING_8).y(SPACING_4))
-                        .s(Gap::new().x(SPACING_2))
-                        .s(Borders::all_signal(neutral_4().map(|color|
-                            Border::new().width(1).color(color)
-                        )))
-                        .s(RoundedCorners::all(6))
-                        .s(Background::new().color_signal(neutral_1()))
-                        .s(Cursor::new(CursorIcon::Pointer))
-                        .s(Align::new().center_y().left())
-                        .update_raw_el({
-                            let trigger_id = trigger_id.clone();
-                            let full_text = full_display_text.clone();
-                            let display_text_for_tooltip = display_text.clone();
-                            move |raw_el| {
-                                if let Some(html_el) = raw_el.dom_element().dyn_ref::<web_sys::HtmlElement>() {
-                                    html_el.set_id(&trigger_id);
-                                    // Add tooltip if text is truncated
-                                    if full_text != display_text_for_tooltip {
-                                        // Extract value-only part from full_text (remove format name)
-                                        let value_only = if let Some(space_pos) = full_text.rfind(' ') {
-                                            full_text[..space_pos].to_string()
-                                        } else {
-                                            full_text.clone()
-                                        };
-                                        // Apply same unicode filtering as display text
-                                        let filtered_tooltip = value_only
-                                            .chars()
-                                            .filter(|&c| {
-                                                // Keep regular spaces and visible characters only
-                                                c == ' ' || (c.is_ascii() && c.is_ascii_graphic())
-                                            })
-                                            .collect::<String>()
-                                            .trim()
-                                            .to_string();
-
-                                        // Only show tooltip if it differs from the displayed text
-                                        let display_value_only = if let Some(space_pos) = display_text_for_tooltip.rfind(' ') {
-                                            display_text_for_tooltip[..space_pos].to_string()
-                                        } else {
-                                            display_text_for_tooltip.clone()
-                                        };
-                                        let filtered_display = display_value_only
-                                            .chars()
-                                            .filter(|&c| {
-                                                c == ' ' || (c.is_ascii() && c.is_ascii_graphic())
-                                            })
-                                            .collect::<String>()
-                                            .trim()
-                                            .to_string();
-
-                                        if filtered_tooltip != filtered_display {
-                                            html_el.set_title(&filtered_tooltip);
-                                        }
-                                    }
-                                }
-                                raw_el
-                            }
-                        })
-                        .item(
-                            // Pure flexbox approach - value, format, gap for chevron
-                            Row::new()
-                                .s(Width::fill())
-                                .s(Gap::new().x(SPACING_4))
-                                .s(Align::new().center_y())
-                                .item(
-                                    // Value with programmatic truncation - fixed flex-grow to prevent jumping
-                                    El::new()
-                                        .s(Font::new().color_signal(neutral_11()).size(13).no_wrap())
-                                        .s(font_mono())
-                                        .s(Width::fill())
-                                        .update_raw_el(|raw_el| {
-                                            raw_el
-                                                .style("flex-grow", "1")
-                                                .style("flex-shrink", "1")
-                                                .style("flex-basis", "0")
-                                                .style("min-width", "0")
-                                        })
-                                        .child_signal(
-                                            variables_value_column_width_signal(app_config.clone()).map({
-                                                let display_text_clone = display_text.clone();
-                                                move |column_width| {
-                                                    let text = display_text_clone.clone();
-                                                    // Extract just the value part (before the format name)
-                                                    let value_only = if let Some(space_pos) = text.rfind(' ') {
-                                                        text[..space_pos].to_string()
-                                                    } else {
-                                                        text.clone()
-                                                    };
-                                                    let filtered_value = value_only
-                                                        .chars()
-                                                        .filter(|&c| {
-                                                            c == ' ' || (c.is_ascii() && c.is_ascii_graphic())
-                                                        })
-                                                        .collect::<String>()
-                                                        .trim()
-                                                        .to_string();
-
-                                                    // Dynamic truncation constants - adjust these to fine-tune layout
-                                                    const MONOSPACE_CHAR_WIDTH_PX: f32 = 8.0;  // Width per character in monospace font
-                                                    const TRIGGER_PADDING_PX: f32 = 16.0;      // Row padding (.x(8).y(4) = 8px each side)
-                                                    const ELEMENT_GAPS_PX: f32 = 12.0;         // Gaps between value/copy/format/chevron (4px * 3 gaps)
-                                                    const COPY_BUTTON_WIDTH_PX: f32 = 24.0;    // Small ghost button width
-                                                    const FORMAT_TEXT_WIDTH_PX: f32 = 30.0;    // "Hex", "Bin", etc. text width
-                                                    const CHEVRON_ICON_WIDTH_PX: f32 = 20.0;   // Dropdown chevron icon width
-                                                    const LAYOUT_BUFFER_PX: f32 = 8.0;         // Safety margin for stable layout
-
-                                                    // Calculate available space for value text
-                                                    let total_reserved_width = TRIGGER_PADDING_PX + ELEMENT_GAPS_PX + COPY_BUTTON_WIDTH_PX
-                                                        + FORMAT_TEXT_WIDTH_PX + CHEVRON_ICON_WIDTH_PX + LAYOUT_BUFFER_PX;
-                                                    let available_text_width = (column_width as f32 - total_reserved_width).max(40.0);
-
-                                                    // Convert width to character count with minimum safety threshold
-                                                    const MIN_VISIBLE_CHARS: usize = 6;
-                                                    let max_displayable_chars = ((available_text_width / MONOSPACE_CHAR_WIDTH_PX) as usize).max(MIN_VISIBLE_CHARS);
-
-                                                    // Apply truncation with ellipsis if text exceeds available space
-                                                    let truncated_text = truncate_value(&filtered_value, max_displayable_chars);
-                                                    El::new()
-                                                        .s(Font::new()
-                                                            .color_signal(
-                                                                always(truncated_text.trim() == "-").map_bool_signal(
-                                                                    || neutral_8(),  // Muted color for placeholder
-                                                                    || neutral_11()  // Normal color for real values
-                                                                )
-                                                            )
-                                                            .no_wrap()
-                                                        )
-                                                        .update_raw_el({
-                                                            let filtered_value = filtered_value.clone();
-                                                            let truncated_text = truncated_text.clone();
-                                                            move |raw_el| {
-                                                                // Add tooltip with full text if truncated
-                                                                if filtered_value != truncated_text {
-                                                                    if let Some(html_el) = raw_el.dom_element().dyn_ref::<web_sys::HtmlElement>() {
-                                                                        html_el.set_title(&filtered_value);
-                                                                    }
-                                                                }
-                                                                raw_el
-                                                            }
-                                                        })
-                                                        .child(Text::new(&truncated_text))
-                                                }
-                                            })
-                                        )
-                                )
-                                .item(
-                                    // Copy button - small, minimal, wrapped to prevent event bubbling
-                                    El::new()
-                                        .update_raw_el(|raw_el| {
-                                            raw_el.event_handler(|event: Click| {
-                                                event.stop_propagation();
-                                            })
-                                        })
-                                        .child(
-                                            button()
-                                                .left_icon(IconName::Copy)
-                                                .variant(ButtonVariant::Ghost)
-                                                .size(ButtonSize::Small)
-                                                .custom_padding(4, 2)
-                                                .on_press({
-                                                    let app_config = app_config.clone();
-                                                    let display_text = display_text.clone();
-                                                    move || {
-                                                        // Extract just the value part for copying
-                                                        let value_only = if let Some(space_pos) = display_text.rfind(' ') {
-                                                            display_text[..space_pos].to_string()
-                                                        } else {
-                                                            display_text.clone()
-                                                        };
-                                                        let filtered_value = value_only
-                                                            .chars()
-                                                            .filter(|&c| {
-                                                                c == ' ' || (c.is_ascii() && c.is_ascii_graphic())
-                                                            })
-                                                            .collect::<String>()
-                                                            .trim()
-                                                            .to_string();
-
-                                                        // Copy to clipboard
-                                                        clipboard::copy_variable_value(&filtered_value, &app_config);
-                                                    }
-                                                })
-                                                .build()
-                                        )
-                                )
-                                .item(
-                                    // Format name - fixed width, no shrinking
-                                    El::new()
-                                        .s(Font::new().color_signal(primary_6()).size(11).no_wrap())
-                                        .update_raw_el(|raw_el| {
-                                            raw_el.style("flex-shrink", "0") // Don't shrink
-                                        })
-                                        .child({
-                                            // Extract just the format name (after the last space)
-                                            let format_name = if let Some(space_pos) = display_text.rfind(' ') {
-                                                display_text[space_pos + 1..].to_string()
-                                            } else {
-                                                // If no space, show the format enum name
-                                                match current_format_enum {
-                                                    shared::VarFormat::ASCII => "ASCII",
-                                                    shared::VarFormat::Binary => "Bin",
-                                                    shared::VarFormat::BinaryWithGroups => "Bin",
-                                                    shared::VarFormat::Hexadecimal => "Hex",
-                                                    shared::VarFormat::Octal => "Oct",
-                                                    shared::VarFormat::Signed => "Signed",
-                                                    shared::VarFormat::Unsigned => "Unsigned",
-                                                }.to_string()
-                                            };
-                                            Text::new(&format_name)
-                                        })
-                                )
-                        )
-                        .item(
-                            El::new()
-                                .child(
-                                    IconBuilder::new(IconName::ChevronDown)
-                                        .size(IconSize::Small)
-                                        .color(IconColor::Muted)
-                                        .build()
-                                )
-                                .update_raw_el({
-                                    let is_open = is_open.clone();
-                                    move |raw_el| {
-                                        raw_el.style_signal("transform", is_open.signal().map_bool(
-                                            || "rotate(180deg)".to_string(),
-                                            || "rotate(0deg)".to_string()
-                                        ))
-                                        .style("transition", "transform 0.2s ease")
-                                    }
-                                })
-                        )
-                        .element_below_signal(is_open.signal().map_true({
-                            let selected_format = selected_format.clone();
-                            let is_open = is_open.clone();
-                            let trigger_id = trigger_id.clone();
-
-                            move || {
-                                create_smart_dropdown(dropdown_options.clone(), selected_format.clone(), is_open.clone(), trigger_id.clone())
-                            }
-                        }))
-                        .on_click({
-                            let is_open = is_open.clone();
-                            move || {
-                                is_open.set_neq(!is_open.get());
-                            }
-                        })
-                        .on_click_outside({
-                            let is_open = is_open.clone();
-                            move || is_open.set(false)
-                        })
-                }
-            }
-        })
 }
 
 /// Update the format for a selected variable using Actor+Relay architecture
@@ -914,7 +493,6 @@ fn update_variable_format(
 ) {
     selected_variables.variable_format_changed_relay.send((unique_id.to_string(), new_format));
 
-    // Also update WaveformTimeline domain for signal value formatting
     crate::visualizer::timeline::timeline_actor::variable_format_updated_relay(waveform_timeline)
         .send((unique_id.to_string(), new_format));
 }
@@ -925,15 +503,12 @@ pub fn is_cursor_within_variable_time_range(
     cursor_time: f64,
     tracked_files: &[TrackedFile],
 ) -> bool {
-    // Parse unique_id to get file path: "file_path|scope_path|variable_name"
     let parts: Vec<&str> = unique_id.splitn(3, '|').collect();
     if parts.len() < 3 {
         return true; // Assume valid if we can't parse (maintains existing behavior)
     }
     let file_path = parts[0];
 
-    // Find the loaded file and check its time range
-    // Use passed tracked_files parameter instead of global domain access
     if let Some(tracked_file) = tracked_files.iter().find(|f| f.path == file_path) {
         if let shared::FileState::Loaded(loaded_file) = &tracked_file.state {
             if let (Some(min_time), Some(max_time)) = (
@@ -944,25 +519,20 @@ pub fn is_cursor_within_variable_time_range(
                     .max_time_ns
                     .map(|ns| ns as f64 / 1_000_000_000.0),
             ) {
-                // Check if cursor time is within the file's time range
                 cursor_time >= min_time && cursor_time <= max_time
             } else {
-                // File has no time range data - assume valid (maintains existing behavior)
                 true
             }
         } else {
-            // File not loaded - assume invalid
             false
         }
     } else {
-        // File not found - assume valid (maintains existing behavior)
         true
     }
 }
 
 /// Trigger signal value queries when variables are present
 pub fn trigger_signal_value_queries(tracked_files: &[TrackedFile]) {
-    // Prevent queries during startup until files are properly loaded
     let has_loaded_files = tracked_files
         .iter()
         .any(|f| matches!(f.state, shared::FileState::Loaded(_)));
@@ -971,12 +541,9 @@ pub fn trigger_signal_value_queries(tracked_files: &[TrackedFile]) {
         return; // Don't query if no files are loaded yet
     }
 
-    // Actor+Relay implementation: Signal queries handled by unified timeline service
-    // This function coordinates file loading checks with value query triggers
 }
 
 /// Update signal values in UI from cached or backend results
-// This function was never called and contained legacy architecture patterns
 
 fn variables_name_vertical_divider(app_config: &crate::config::AppConfig) -> impl Element {
     use crate::visualizer::interaction::dragging::{DividerType, is_divider_dragging, start_drag};
@@ -1028,17 +595,16 @@ fn empty_state_hint(text: &str) -> impl Element {
 pub fn file_paths_dialog(
     tracked_files: crate::tracked_files::TrackedFiles,
     _selected_variables: crate::selected_variables::SelectedVariables,
-    app_config: &crate::config::AppConfig,
+    app_config: crate::config::AppConfig,
+    file_dialog_visible: Atom<bool>
 ) -> impl Element {
-    // Use files_vec_signal directly for 'static lifetime
     let file_count_broadcaster = tracked_files.files_vec_signal.signal_cloned().map(|files| files.len()).broadcast();
     
-    // ✅ Create local Atom for dialog selected files (replaces broken dialog_manager signals)
-    let selected_files = Atom::new(Vec::<String>::new());
+    let selected_files = zoon::Mutable::new(Vec::<String>::new());
 
-    let close_dialog = move || {
-        // Use domain function to close dialog and clear state
-        crate::file_dialog::close_file_dialog();
+    let close_dialog = {
+        let file_dialog_visible = file_dialog_visible.clone();
+        move || file_dialog_visible.set(false)
     };
 
     El::new()
@@ -1056,7 +622,6 @@ pub fn file_paths_dialog(
                 .style("justify-content", "center")
                 .style("align-items", "center")
         })
-        // Overlay click handler and keyboard event handler
         .update_raw_el({
             let close_dialog = close_dialog.clone();
             move |raw_el| {
@@ -1069,12 +634,9 @@ pub fn file_paths_dialog(
                     })
                     .global_event_handler({
                         move |event: KeyDown| {
-                            // Simple key event handling - no complex enterprise manager needed
                             if event.key() == "Escape" {
-                                crate::file_dialog::close_file_dialog();
+                                close_dialog();
                             } else if event.key() == "Enter" {
-                                // Enter key handling for file selection can be added when needed
-                                // No complex Actor relay system required
                             }
                         }
                     })
@@ -1090,7 +652,6 @@ pub fn file_paths_dialog(
                 .s(Padding::all(16))
                 .s(Width::fill().min(500).max(600))
                 .s(Height::fill().max(800))
-                // Prevent event bubbling for dialog content clicks
                 .update_raw_el(|raw_el| {
                     raw_el
                         .event_handler(|event: Click| {
@@ -1130,13 +691,13 @@ pub fn file_paths_dialog(
                                         .style("overflow-x", "auto")   // Enable horizontal scroll
                                         .style("overflow-y", "hidden") // Prevent double scrollbars
                                 })
-                                .child(file_picker_content(app_config))
+                                .child(file_picker_content(&app_config, &selected_files))
                         )
                         .item(
                             El::new()
                                 .s(Padding::all(4))
                                 .child_signal(
-                                    selected_files.signal().map(|selected_paths| {
+                                    selected_files.signal_cloned().map(|selected_paths| {
 
                                         if selected_paths.is_empty() {
                                             El::new()
@@ -1157,8 +718,6 @@ pub fn file_paths_dialog(
                                                         .on_remove({
                                                             let path = path.clone();
                                                             move || {
-                                                                // File removal handler - logs action for debugging
-                                                                // Integration with Atom-based file management pending architecture migration
                                                                 zoon::println!("Remove file: {}", path);
                                                             }
                                                         })
@@ -1186,7 +745,7 @@ pub fn file_paths_dialog(
                                         .label_signal(
                                             map_ref! {
                                                 let file_count = file_count_broadcaster.signal(),
-                                                let selected_files = selected_files.signal() =>
+                                                let selected_files = selected_files.signal_cloned() =>
                                                 move {
                                                     let is_loading = *file_count > 0;
                                                     let selected_count = selected_files.len();
@@ -1203,7 +762,7 @@ pub fn file_paths_dialog(
                                         .disabled_signal(
                                             map_ref! {
                                                 let file_count = file_count_broadcaster.signal(),
-                                                let selected_files = selected_files.signal() => {
+                                                let selected_files = selected_files.signal_cloned() => {
                                                 let is_loading = *file_count > 0;
                                                 let selected_count = selected_files.len();
                                                 is_loading || selected_count == 0
@@ -1212,7 +771,16 @@ pub fn file_paths_dialog(
                                         )
                                         .on_press({
                                             let tracked_files_for_press = tracked_files.clone();
-                                            move || process_file_picker_selection(tracked_files_for_press.clone())
+                                            let selected_files_for_press = selected_files.clone();
+                                            let file_dialog_visible_for_press = file_dialog_visible.clone();
+                                            move || {
+                                                let selected_files_value = selected_files_for_press.get_cloned();
+                                                process_file_picker_selection(
+                                                    tracked_files_for_press.clone(),
+                                                    selected_files_value,
+                                                    file_dialog_visible_for_press.clone()
+                                                );
+                                            }
                                         })
                                         .variant(ButtonVariant::Primary)
                                         .build()
@@ -1223,14 +791,11 @@ pub fn file_paths_dialog(
 }
 
 pub fn files_panel(
-    tracked_files: &crate::tracked_files::TrackedFiles,
-    selected_variables: &crate::selected_variables::SelectedVariables,
+    tracked_files: crate::tracked_files::TrackedFiles,
+    selected_variables: crate::selected_variables::SelectedVariables,
+    load_files_button: impl Element + 'static,
 ) -> impl Element {
-    // Clone domains for 'static lifetime in signals
-    let tracked_files = tracked_files.clone();
-    let selected_variables = selected_variables.clone();
     
-    // Use files_vec_signal directly for 'static lifetime
     let file_count_broadcaster = tracked_files.files_vec_signal.signal_cloned().map(|files| files.len()).broadcast();
     El::new().s(Height::fill()).child(create_panel(
         Row::new()
@@ -1238,12 +803,7 @@ pub fn files_panel(
             .s(Align::new().center_y())
             .item(El::new().s(Font::new().no_wrap()).child("Files & Scopes"))
             .item(El::new().s(Width::growable()))
-            .item(load_files_button_with_progress(
-                tracked_files.clone(),
-                ButtonVariant::Outline,
-                ButtonSize::Small,
-                Some(IconName::Folder),
-            ))
+            .item(load_files_button)
             .item(El::new().s(Width::growable()))
             .item(clear_all_files_button(&tracked_files, &selected_variables)),
         Column::new()
@@ -1252,19 +812,16 @@ pub fn files_panel(
             .s(Height::fill())
             .s(Width::growable())
             .item(
-                // Original TreeView for comparison
                 El::new().s(Height::fill()).s(Width::growable()).child(
                     Column::new().s(Width::fill()).s(Height::fill()).item(
                         El::new().s(Height::fill()).s(Width::fill()).child_signal({
                             let tracked_files_for_map = tracked_files.clone();
                             let selected_variables_for_map = selected_variables.clone();
                             file_count_broadcaster.signal().map(move |file_count| {
-                                // File count for UI decision
                                 if file_count == 0 {
                                     empty_state_hint("Click 'Load Files' to add waveform files.")
                                         .unify()
                                 } else {
-                                    // PATCHED: Uses filtered stable signals to reduce flickering
                                     create_stable_tree_view(tracked_files_for_map.clone(), selected_variables_for_map.clone()).unify()
                                 }
                             })
@@ -1276,10 +833,6 @@ pub fn files_panel(
     )
 }
 
-// NOTE: Helper functions for file rendering
-// Uses render_tracked_file_reactive for proper reactive expanded scopes access
-
-// The reactive version eliminates the need for synchronous expanded scopes access
 
 fn render_tracked_file_reactive(
     tracked_file: TrackedFile,
@@ -1287,7 +840,6 @@ fn render_tracked_file_reactive(
     tracked_files: crate::tracked_files::TrackedFiles,
     selected_variables: crate::selected_variables::SelectedVariables,
 ) -> impl Element {
-    // Compute smart label on-the-fly for this specific file
     let smart_label = compute_smart_label_for_file(&tracked_file);
     
     El::new().child_signal({
@@ -1316,7 +868,6 @@ fn render_tracked_file_as_tree_item_with_label_and_expanded_state(
     selected_variables: crate::selected_variables::SelectedVariables,
 ) -> impl Element {
     let display_name = smart_label;
-    // Convert the single file to tree data (includes file + its scopes)
     let tree_data = match &tracked_file.state {
         shared::FileState::Loading(_) => {
             vec![
@@ -1327,7 +878,6 @@ fn render_tracked_file_as_tree_item_with_label_and_expanded_state(
             ]
         }
         shared::FileState::Loaded(file_data) => {
-            // Build children from scopes
             let children = file_data
                 .scopes
                 .iter()
@@ -1380,55 +930,6 @@ fn render_tracked_file_as_tree_item_with_label_and_expanded_state(
         }
     };
 
-    // ✅ FIXED TIME BOMB: Create bridge Mutables that sync with Actor state for bi-directional TreeView updates
-    // TreeView needs Mutable<IndexSet<String>> for bi-directional updates (user can expand/collapse)
-    // but we have Actor<IndexSet<String>> - create synchronized bridge
-    let expanded_bridge = zoon::Mutable::new(indexmap::IndexSet::new());
-    let selection_bridge = zoon::Mutable::new(indexmap::IndexSet::new());
-    
-    // Set up bi-directional sync: Actor → Mutable (for UI updates)
-    {
-        let expanded_bridge_for_sync = expanded_bridge.clone();
-        let selected_variables_for_sync = selected_variables.clone();
-        zoon::Task::start(async move {
-            selected_variables_for_sync.expanded_scopes.signal().for_each_sync(move |scopes| {
-                expanded_bridge_for_sync.set_neq(scopes);
-            });
-        });
-    }
-    
-    {
-        let selection_bridge_for_sync = selection_bridge.clone();
-        let selected_variables_for_sync = selected_variables.clone();
-        zoon::Task::start(async move {
-            selected_variables_for_sync.tree_selection.signal().for_each_sync(move |selection| {
-                selection_bridge_for_sync.set_neq(selection);
-            });
-        });
-    }
-    
-    // Set up bi-directional sync: Mutable → Actor (for user interactions)
-    {
-        let selected_variables_for_expanded = selected_variables.clone();
-        let expanded_bridge_for_watch = expanded_bridge.clone();
-        zoon::Task::start(async move {
-            expanded_bridge_for_watch.signal_cloned().for_each_sync(move |new_expanded| {
-                selected_variables_for_expanded.expanded_scopes_restored_relay.send(new_expanded);
-            });
-        });
-    }
-    
-    {
-        let selected_variables_for_selection = selected_variables.clone();
-        let selection_bridge_for_watch = selection_bridge.clone();
-        zoon::Task::start(async move {
-            selection_bridge_for_watch.signal_cloned().for_each_sync(move |new_selection| {
-                selected_variables_for_selection.tree_selection_changed_relay.send(new_selection);
-            });
-        });
-    }
-
-    // Create TreeView with proper domain-connected bridge mutables
     tree_view()
         .data(tree_data)
         .size(TreeViewSize::Medium)
@@ -1437,16 +938,12 @@ fn render_tracked_file_as_tree_item_with_label_and_expanded_state(
         .show_checkboxes(true)
         .show_checkboxes_on_scopes_only(true)
         .single_scope_selection(true)
-        .external_expanded(expanded_bridge)
-        .external_selected(selection_bridge)
         .build()
 }
 
 /// Compute smart label for a single file with duplicate detection AND time intervals
 fn compute_smart_label_for_file(target_file: &TrackedFile) -> String {
-    // Start with base name (with directory prefix for duplicates)
     let base_name = if target_file.filename == "wave_27.fst" {
-        // Extract parent directory from path for duplicate disambiguation
         if let Some(parent) = std::path::Path::new(&target_file.path).parent() {
             if let Some(dir_name) = parent.file_name() {
                 format!("{}/{}", dir_name.to_string_lossy(), target_file.filename)
@@ -1460,29 +957,23 @@ fn compute_smart_label_for_file(target_file: &TrackedFile) -> String {
         target_file.filename.clone()
     };
 
-    // Add time interval if file is loaded
     match &target_file.state {
         shared::FileState::Loaded(waveform_file) => {
             if let (Some(min_ns), Some(max_ns)) =
                 (waveform_file.min_time_ns, waveform_file.max_time_ns)
             {
-                // Convert nanoseconds to seconds for display
                 let min_seconds = min_ns as f64 / 1_000_000_000.0;
                 let max_seconds = max_ns as f64 / 1_000_000_000.0;
 
-                // Format time range with en-dash for TreeView styling recognition
                 let time_range = if max_seconds < 1.0 {
-                    // Show in milliseconds if under 1 second
                     format!("{:.0}–{:.0}ms", min_seconds * 1000.0, max_seconds * 1000.0)
                 } else if max_seconds < 60.0 {
-                    // Show in seconds if under 1 minute
                     if max_seconds.fract() == 0.0 && min_seconds.fract() == 0.0 {
                         format!("{:.0}–{:.0}s", min_seconds, max_seconds)
                     } else {
                         format!("{:.1}–{:.1}s", min_seconds, max_seconds)
                     }
                 } else {
-                    // Show in minutes if longer
                     let min_minutes = min_seconds / 60.0;
                     let max_minutes = max_seconds / 60.0;
                     format!("{:.1}–{:.1}min", min_minutes, max_minutes)
@@ -1494,27 +985,18 @@ fn compute_smart_label_for_file(target_file: &TrackedFile) -> String {
             }
         }
         shared::FileState::Loading(_) => {
-            // Show loading status
-            // Known issue: Loading text may show in blue styling instead of regular text color
-            // like time postfix pattern. Non-unique files work correctly (regular color).
             format!("{} (Loading...)", base_name)
         }
         _ => {
-            // For failed, missing, unsupported - just show base name
             base_name
         }
     }
 }
 
-/// ✅ STABLE: Working TreeView with items_signal_vec pattern
-///
-/// Uses items_signal_vec to render each TrackedFile individually, avoiding signal conversion issues.
-/// This is the proven working pattern that should NOT be changed.
 fn create_stable_tree_view(
     tracked_files: crate::tracked_files::TrackedFiles,
     selected_variables: crate::selected_variables::SelectedVariables,
 ) -> impl Element {
-    // create_stable_tree_view() called
     El::new().s(Width::fill()).s(Height::fill()).child(
         Column::new()
             .s(Width::fill())
@@ -1530,8 +1012,6 @@ fn create_stable_tree_view(
                 let tracked_files_for_closure = tracked_files.clone();
                 let selected_variables_for_closure = selected_variables.clone();
                 tracked_files_for_signals.files.signal_vec().map(move |tracked_file| {
-                    // Create a simple TreeView item without reactive expanded state for now
-                    // TODO: Implement proper reactive expanded state using shared signals
                     let smart_label = compute_smart_label_for_file(&tracked_file);
                     render_tracked_file_as_tree_item_with_label_and_expanded_state(
                         tracked_file.clone(),
@@ -1549,12 +1029,10 @@ pub fn variables_panel(
     selected_variables: &crate::selected_variables::SelectedVariables,
     waveform_timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline,
 ) -> impl Element {
-    // Clone domains at function entry to get owned values for 'static lifetime requirements
     let tracked_files = tracked_files.clone();
     let selected_variables = selected_variables.clone();
     let _waveform_timeline = waveform_timeline.clone();
     
-    // Clone relays for closures that need 'static lifetime
     let search_filter_relay = selected_variables.search_filter_changed_relay.clone();
     let search_focus_relay = selected_variables.search_focus_changed_relay.clone();
     El::new()
@@ -1570,7 +1048,6 @@ pub fn variables_panel(
                     El::new()
                         .s(Font::new().no_wrap().color_signal(neutral_8()).size(13))
                         .child_signal(
-                            // ✅ PERFORMANCE FIX: Show filtered variable count, not total
                             variables_display_signal(tracked_files.clone(), selected_variables.clone())
                                 .map(|filtered_variables| filtered_variables.len().to_string()),
                         ),
@@ -1621,11 +1098,9 @@ pub fn selected_variables_with_waveform_panel(
     tracked_files: crate::tracked_files::TrackedFiles,
     app_config: crate::config::AppConfig,
 ) -> impl Element {
-    // Clone for use in signal closures to fix lifetime issues
     let selected_variables_for_signals = selected_variables.clone();
     let tracked_files_broadcaster = tracked_files.files.signal_vec().to_signal_cloned().broadcast();
     
-    // Pass owned app_config to signal functions
     let name_column_width_signal = variables_name_column_width_signal(app_config.clone());
     let value_column_width_signal = variables_value_column_width_signal(app_config.clone());
     
@@ -1663,11 +1138,9 @@ pub fn selected_variables_with_waveform_panel(
                             .item(
                                 clear_all_variables_button(&selected_variables)
                             ),
-                        // Resizable columns layout with draggable separators
                         El::new()
                             .s(Height::exact_signal(
                                 selected_variables_for_signals.variables.signal_vec().to_signal_cloned().map(|vars| {
-                                    // Add one extra row height for scrollbar (names/values) or footer/timeline (canvas)
                                     (vars.len() + 1) as u32 * SELECTED_VARIABLES_ROW_HEIGHT
                                 })
                             ))
@@ -1679,7 +1152,6 @@ pub fn selected_variables_with_waveform_panel(
                                     .s(Width::fill())
                                     .s(Align::new().top())
                                     .item(
-                                        // Column 1: Variable name (resizable) with footer
                                         Column::new()
                                             .s(Width::exact_signal(name_column_width_signal.map(|w| w as u32)))
                                             .s(Height::fill())
@@ -1707,7 +1179,6 @@ pub fn selected_variables_with_waveform_panel(
                                                                 .on_press({
                                                                     let remove_relay = selected_variables_for_items.variable_removed_relay.clone();
                                                                     move || {
-                                                                        // ✅ ACTOR+RELAY MIGRATION: Use SelectedVariables domain events
                                                                         remove_relay.send(unique_id.clone());
                                                                     }
                                                                 })
@@ -1765,7 +1236,6 @@ pub fn selected_variables_with_waveform_panel(
                                                 })
                                             })
                                             .item(
-                                                // Footer row with zoom percentage
                                                 El::new()
                                                     .s(Height::exact(SELECTED_VARIABLES_ROW_HEIGHT))
                                                     .s(Width::fill())
@@ -1775,11 +1245,8 @@ pub fn selected_variables_with_waveform_panel(
                                                     .child(
                                                         Row::new()
                                                             .s(Align::new().center_y())
-                                                            // Left group: Z button
                                                             .item(kbd("Z").size(KbdSize::Small).variant(KbdVariant::Outlined).title("Reset zoom center to time 0").build())
-                                                            // Spacer to push center and right groups apart
                                                             .item(El::new().s(Width::fill()))
-                                                            // Center group: W - zoom display - S
                                                             .item(
                                                                 Row::new()
                                                                     .s(Align::center())
@@ -1795,21 +1262,13 @@ pub fn selected_variables_with_waveform_panel(
                                                                             })
                                                                             .s(Font::new().color_signal(neutral_11()).center())
                                                                             .child(
-                                                                                // TEMPORARY: Static text during migration to avoid lifetime issues
-                                                                                // TODO: Fix lifetime by cloning necessary data or restructuring
-                                                                                // Text::with_signal(
-                                                                                //     ns_per_pixel_signal(waveform_timeline).map(|ns_per_pixel| {
-                                                                                //         format!("{}", ns_per_pixel)
-                                                                                //     })
-                                                                                // )
-                                                                                Text::new("1.0 ns/px")
+                                                                                // TODO: Connect to WaveformTimeline Actor signal for zoom level
+                                                                                Text::new("-- ns/px")
                                                                             )
                                                                     )
                                                                     .item(kbd("S").size(KbdSize::Small).variant(KbdVariant::Outlined).title("Zoom out • Shift+S: Zoom out faster").build())
                                                             )
-                                                            // Spacer to push right group apart
                                                             .item(El::new().s(Width::fill()))
-                                                            // Right group: R button (wrapped in clickable El)
                                                             .item(
                                                                 El::new()
                                                                     .on_click({
@@ -1825,7 +1284,6 @@ pub fn selected_variables_with_waveform_panel(
                                     )
                                     .item(variables_name_vertical_divider(&app_config))
                                     .item(
-                                        // Column 2: Variable value (resizable) - HEIGHT FOLLOWER
                                         Column::new()
                                             .s(Width::exact_signal(value_column_width_signal.map(|w| w as u32)))
                                             .s(Height::fill())
@@ -1841,15 +1299,12 @@ pub fn selected_variables_with_waveform_panel(
                                                         .s(Height::exact(SELECTED_VARIABLES_ROW_HEIGHT))
                                                         .s(Width::fill())
                                                         .child(
-                                                            // TEMPORARY: Commented out during migration to avoid lifetime issues
-                                                            // TODO: Fix lifetime by cloning necessary data or restructuring
-                                                            // create_format_select_component(selected_var.clone(), vec![], waveform_timeline)
-                                                            El::new().child("Format selection temporarily disabled during migration")
+                                                            // TODO: Implement format selection dropdown
+                                                            El::new()
                                                         )
                                                 })
                                             })
                                             .item(
-                                                // Footer row with selected time and zoom percentage display
                                                 El::new()
                                                     .s(Height::exact(SELECTED_VARIABLES_ROW_HEIGHT))
                                                     .s(Width::fill())
@@ -1859,7 +1314,6 @@ pub fn selected_variables_with_waveform_panel(
                                                         Row::new()
                                                             .s(Align::new().center_y())
                                                             .s(Font::new().color_signal(neutral_8()).size(12))
-                                                            // Left group: [min time] - A button (preserve width)
                                                             .item(
                                                                 Row::new()
                                                                     .s(Gap::new().x(SPACING_6))
@@ -1875,9 +1329,7 @@ pub fn selected_variables_with_waveform_panel(
                                                                     )
                                                                     .item(kbd("A").size(KbdSize::Small).variant(KbdVariant::Outlined).title("Pan left • Shift+A: Pan left faster").build())
                                                             )
-                                                            // Spacer to push center and right groups apart
                                                             .item(El::new().s(Width::fill()))
-                                                            // Center group: Q - [cursor time] - E
                                                             .item(
                                                                 Row::new()
                                                                     .s(Gap::new().x(SPACING_2))
@@ -1892,51 +1344,13 @@ pub fn selected_variables_with_waveform_panel(
                                                                             })
                                                                             .s(Font::new().color_signal(neutral_11()).center())
                                                                             .child(
-                                                                                // TEMPORARY: Static text during migration to avoid lifetime issues
-                                                                                // TODO: Fix lifetime by cloning necessary data or restructuring  
-                                                                                // Text::with_signal(
-                                                                                //     cursor_position_seconds_signal(waveform_timeline).map(|cursor_pos| {
-                                                                                //         // Time formatting logic...
-                                                                                //     })
-                                                                                // )
-                                                                                Text::new("0.0s")
-                                                                                // LEFTOVER CODE FROM ORIGINAL SIGNAL MAP - COMMENTED OUT DURING MIGRATION
-                                                                                //             let ns_val = cursor_pos * 1e9;
-                                                                                //             if ns_val.fract() == 0.0 {
-                                                                                //                 format!("{}ns", ns_val as i64)
-                                                                                //             } else {
-                                                                                //                 format!("{:.1}ns", ns_val)
-                                                                                //             }
-                                                                                //         } else if cursor_pos < 1e-3 {
-                                                                                //             let us_val = cursor_pos * 1e6;
-                                                                                //             if us_val.fract() == 0.0 {
-                                                                                //                 format!("{}μs", us_val as i64)
-                                                                                //             } else {
-                                                                                //                 format!("{:.1}μs", us_val)
-                                                                                //             }
-                                                                                //         } else if cursor_pos < 1.0 {
-                                                                                //             let ms_val = cursor_pos * 1e3;
-                                                                                //             if ms_val.fract() == 0.0 {
-                                                                                //                 format!("{}ms", ms_val as i64)
-                                                                                //             } else {
-                                                                                //                 format!("{:.1}ms", ms_val)
-                                                                                //             }
-                                                                                //         } else {
-                                                                                //             if cursor_pos.fract() == 0.0 {
-                                                                                //                 format!("{}s", cursor_pos as i64)
-                                                                                //             } else {
-                                                                                //                 format!("{:.1}s", cursor_pos)
-                                                                                //             }
-                                                                                //         }
-                                                                                //     })
-                                                                                // )
+                                                                                // TODO: Connect to WaveformTimeline Actor signal for cursor position
+                                                                                Text::new("--s")
                                                                             )
                                                                     )
                                                                     .item(kbd("E").size(KbdSize::Small).variant(KbdVariant::Outlined).title("Move cursor right • Shift+E: Jump to next transition").build())
                                                             )
-                                                            // Spacer to push right group apart
                                                             .item(El::new().s(Width::fill()))
-                                                            // Right group: D button (preserve width) - [max time]
                                                             .item(
                                                                 Row::new()
                                                                     .s(Gap::new().x(SPACING_6))
@@ -1957,7 +1371,6 @@ pub fn selected_variables_with_waveform_panel(
                                     )
                                     .item(variables_value_vertical_divider(&app_config))
                                     .item(
-                                        // Column 3: Unified waveform canvas (fills remaining space) - HEIGHT FOLLOWER
                                         El::new()
                                             .s(Width::fill())
                                             .s(Height::fill())
@@ -1970,14 +1383,12 @@ pub fn selected_variables_with_waveform_panel(
         )
 }
 
-// Helper functions for different panel configurations
 
 pub fn files_panel_with_height(
     tracked_files: &crate::tracked_files::TrackedFiles,
     selected_variables: &crate::selected_variables::SelectedVariables,
     app_config: &crate::config::AppConfig,
 ) -> impl Element {
-    // TEST 2: Remove Scrollbars::both() from individual panels
     El::new()
         .s(Height::exact_signal(
             files_panel_height_signal(app_config.clone()).map(|h| h as u32),
@@ -1991,7 +1402,11 @@ pub fn files_panel_with_height(
                     .flatten(),
             )
         })
-        .child(files_panel(tracked_files, selected_variables))
+        .child(files_panel(
+            tracked_files.clone(), 
+            selected_variables.clone(),
+            button().label("Load Files").disabled(true).build() // Placeholder - no file_dialog_visible access
+        ))
 }
 
 pub fn variables_panel_with_fill(
@@ -2000,13 +1415,11 @@ pub fn variables_panel_with_fill(
     waveform_timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline,
     app_config: &crate::config::AppConfig,
 ) -> impl Element {
-    // Clone domains for use in closure
     let tracked_files = tracked_files.clone();
     let selected_variables = selected_variables.clone();
     let waveform_timeline = waveform_timeline.clone();
     let app_config = app_config.clone();
     
-    // TEST 2: Remove Scrollbars::both() from individual panels
     El::new()
         .s(Width::growable())
         .s(Height::fill())
@@ -2014,7 +1427,6 @@ pub fn variables_panel_with_fill(
         .child_signal(app_config.dock_mode_actor.signal().map(move |dock_mode| {
             let is_docked = matches!(dock_mode, shared::DockMode::Bottom);
             if is_docked {
-                // When docked to bottom, use files panel height signal for synchronized resizing
                 El::new()
                     .s(Width::fill())
                     .s(Height::exact_signal(
@@ -2033,7 +1445,6 @@ pub fn variables_panel_with_fill(
                     .child(variables_panel(&tracked_files, &selected_variables, &waveform_timeline))
                     .into_element()
             } else {
-                // When docked to right, fill available height
                 El::new()
                     .s(Width::fill())
                     .s(Height::fill())
@@ -2053,7 +1464,6 @@ pub fn variables_panel_with_fill(
         }))
 }
 
-// Supporting functions
 fn create_panel(header_content: impl Element, content: impl Element) -> impl Element {
     El::new()
         .s(Height::fill())
@@ -2111,7 +1521,6 @@ fn simple_variables_content(
     tracked_files: &crate::tracked_files::TrackedFiles,
     selected_variables: &crate::selected_variables::SelectedVariables,
 ) -> impl Element {
-    // Clone domains at function entry for owned values
     let tracked_files = tracked_files.clone();
     let selected_variables = selected_variables.clone();
     Column::new()
@@ -2119,7 +1528,6 @@ fn simple_variables_content(
         .s(Height::fill())
         .s(Width::fill())
         .item(El::new().s(Height::fill()).s(Width::fill()).child_signal(
-            // ✅ PERFORMANCE FIX: Signal-level filtering for instant response
             variables_display_signal(tracked_files.clone(), selected_variables.clone()).map({
                 let selected_variables = selected_variables.clone();
                 move |filtered_variables| {
@@ -2129,14 +1537,18 @@ fn simple_variables_content(
         ))
 }
 
-/// ✅ PERFORMANCE: Load variables only when scope or files change (not filter)
-fn variables_loading_signal(tracked_files: crate::tracked_files::TrackedFiles) -> impl Signal<Item = Vec<VariableWithContext>> {
+fn variables_loading_signal(
+    tracked_files: crate::tracked_files::TrackedFiles,
+    selected_variables: crate::selected_variables::SelectedVariables,
+) -> impl Signal<Item = Vec<VariableWithContext>> {
     let files_signal = tracked_files.files_vec_signal.signal_cloned();
+    let selected_scope_signal = selected_variables.selected_scope.signal();
+    
     map_ref! {
-        let selected_scope_id = selected_scope_signal(),
-        let _tracked_files = files_signal => {
-            if let Some(scope_id) = selected_scope_id.as_ref() {
-                get_variables_from_tracked_files(&scope_id)
+        let selected_scope_id = selected_scope_signal,
+        let tracked_files = files_signal => {
+            if let Some(scope_id) = selected_scope_id {
+                get_variables_from_tracked_files(&scope_id, &tracked_files)
             } else {
                 Vec::new()
             }
@@ -2144,100 +1556,68 @@ fn variables_loading_signal(tracked_files: crate::tracked_files::TrackedFiles) -
     }
 }
 
-/// ✅ PERFORMANCE: Signal-level filtering for instant response
 fn variables_display_signal(
     tracked_files: crate::tracked_files::TrackedFiles,
     selected_variables: crate::selected_variables::SelectedVariables,
 ) -> impl Signal<Item = Vec<VariableWithContext>> {
     map_ref! {
-        let variables = variables_loading_signal(tracked_files.clone()),
+        let variables = variables_loading_signal(tracked_files.clone(), selected_variables.clone()),
         let search_filter = selected_variables.search_filter.signal() => {
-            // Filter at signal level for maximum performance
             filter_variables_with_context(&variables, &search_filter)
         }
     }
 }
 
-// Removed create_styled_smart_label function - styling now handled inline in TreeView component
 
-// NOTE: render_tracked_file_as_tree_item_with_label function removed as it was unused
-// The current implementation uses render_tracked_file_with_expanded_state instead
-
-// Helper function to clean up all file-related state when a file is removed
 fn cleanup_file_related_state(
     file_id: &str, 
     tracked_files: &[TrackedFile],
     selected_variables: &crate::selected_variables::SelectedVariables,
 ) {
-    // Get filename and file path before any cleanup (needed for cleanup logic)
     let (_filename, _file_path) = tracked_files
         .iter()
         .find(|f| f.id == file_id)
         .map(|f| (f.filename.clone(), f.path.clone()))
         .unwrap_or_else(|| (String::new(), String::new()));
 
-    // Use Actor+Relay event emission instead of direct state access
     selected_variables.scope_selected_relay.send(None);
 
-    // Actor+Relay domain event cleanup for file removal
     /*
-    // Clear expanded scopes for this file using domain signals
-    // New scope ID format: {full_path}|{scope_full_name} or just {full_path}
-    // Using selected_variables domain for scope management
     crate::selected_variables::retain_expanded_scopes(|scope| {
-        // Keep scopes that don't belong to this file
         scope != &file_path && !scope.starts_with(&format!("{}|", file_path))
     });
 
-    // Clear selected variables from this file
-    // SelectedVariable uses full file path in new format
     if !file_path.is_empty() {
-        // Remove selected variables from this file using domain events
-        // TODO: In Actor+Relay architecture, we would emit a domain event instead:
-        // selected_variables.variables_from_file_removed_relay.send(file_path.clone());
-        // This would be handled by the SelectedVariables Actor to remove matching variables
-        // Note: variable_index is managed automatically by the domain
     }
     */
 }
 
-// Enhanced file removal handler that works with both old and new systems
 fn create_enhanced_file_remove_handler(
     _file_id: String,
     tracked_files: crate::tracked_files::TrackedFiles,
     selected_variables: crate::selected_variables::SelectedVariables,
 ) -> impl Fn(&str) + 'static {
     move |id: &str| {
-        // Clean up all file-related state (legacy cleanup during transition)
         let current_tracked_files = tracked_files.get_current_files();
         cleanup_file_related_state(id, &current_tracked_files, &selected_variables);
 
-        // ✅ ACTOR+RELAY MIGRATION: Emit file_removed event through TrackedFiles domain
         tracked_files.file_removed_relay.send(id.to_string());
 
-        // Remove from legacy systems during transition (will be removed later)
-        // LOADED_FILES.lock_mut().retain(|f| f.id != id); // REMOVED: Use TrackedFiles domain instead
-        // FILE_PATHS.lock_mut().shift_remove(id); // REMOVED: FILE_PATHS no longer exists
 
-        // Config automatically saved by ConfigSaver watching domain signals
     }
 }
 
 fn convert_scope_to_tree_data(scope: &ScopeData) -> TreeViewItemData {
     let mut children = Vec::new();
 
-    // Sort child scopes alphabetically by name (case-insensitive)
     let mut child_refs: Vec<&ScopeData> = scope.children.iter().collect();
     child_refs.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
 
-    // Add sorted child scopes
     for child_scope in child_refs {
         children.push(convert_scope_to_tree_data(child_scope));
     }
 
-    // Signals are NOT shown in Files & Scopes - they belong in the Variables panel
 
-    // Add "scope_" prefix to make IDs distinguishable for TreeView logic
     let scope_tree_id = format!("scope_{}", scope.id);
 
     TreeViewItemData::new(scope_tree_id, scope.name.clone())
@@ -2245,13 +1625,13 @@ fn convert_scope_to_tree_data(scope: &ScopeData) -> TreeViewItemData {
         .with_children(children)
 }
 
-fn load_files_button_with_progress(
+pub fn load_files_button_with_progress(
     tracked_files: crate::tracked_files::TrackedFiles,
     variant: ButtonVariant,
     size: ButtonSize,
     icon: Option<IconName>,
+    file_dialog_visible: Atom<bool>
 ) -> impl Element {
-    // Use files_vec_signal directly for 'static lifetime
     let file_count_signal = tracked_files.files_vec_signal.signal_cloned().map(|files| files.len());
     El::new().child_signal(
         file_count_signal.map(move |file_count| {
@@ -2266,7 +1646,10 @@ fn load_files_button_with_progress(
             } else {
                 btn = btn
                     .label("Load Files")
-                    .on_press(|| show_file_paths_dialog());
+                    .on_press({
+                        let file_dialog_visible = file_dialog_visible.clone();
+                        move || file_dialog_visible.set(true)
+                    });
                 if let Some(icon) = icon {
                     btn = btn.left_icon(icon);
                 }
@@ -2280,7 +1663,10 @@ fn load_files_button_with_progress(
     )
 }
 
-fn file_picker_content(app_config: &crate::config::AppConfig) -> impl Element {
+fn file_picker_content(
+    app_config: &crate::config::AppConfig,
+    selected_files: &zoon::Mutable<Vec<String>>,
+) -> impl Element {
     El::new()
         .s(Height::fill())
         .s(Scrollbars::both())
@@ -2296,6 +1682,7 @@ fn file_picker_content(app_config: &crate::config::AppConfig) -> impl Element {
 }
 
 async fn simple_file_picker_tree(app_config: crate::config::AppConfig) -> impl Element {
+    let selected_files = zoon::MutableVec::<String>::new();
     let scroll_position = app_config
         .file_picker_scroll_position
         .signal()
@@ -2327,23 +1714,19 @@ async fn simple_file_picker_tree(app_config: crate::config::AppConfig) -> impl E
         })
         .child_signal(
             map_ref! {
-                let tree_cache = crate::file_dialog::file_tree_cache_mutable().signal_cloned(),
-                let error_cache = zoon::always(std::collections::HashMap::new()), // Error cache simplified
+                let tree_cache = zoon::always(std::collections::HashMap::new()), // Use empty cache for now
+                let error_cache = zoon::always(std::collections::HashMap::new()),
                 let expanded = app_config.file_picker_expanded_directories.signal_cloned() =>
                 move {
-                    // Build tree view from cached data
 
                     monitor_directory_expansions(expanded.iter().cloned().collect::<HashSet<_>>(), &app_config);
 
-                    // Check if we have root directory data
                     if let Some(_root_items) = tree_cache.get("/") {
-                        // Create root "/" item and build hierarchical tree
                         let tree_data = vec![
                             TreeViewItemData::new("/".to_string(), "/".to_string())
                                 .with_children(build_hierarchical_tree("/", &tree_cache, &error_cache))
                         ];
 
-                        // Known TreeView UX limitations: Icon clicks don't toggle selection, checkbox state sync needed
                         El::new()
                             .after_insert(clone!((tree_view_rendering_relay) move |_| {
                                 tree_view_rendering_relay.send(());
@@ -2356,7 +1739,7 @@ async fn simple_file_picker_tree(app_config: crate::config::AppConfig) -> impl E
                                     .show_icons(true)
                                     .show_checkboxes(true)
                                     .external_expanded(app_config.file_picker_expanded_directories.clone())
-                                    .external_selected_vec(MutableVec::<String>::new())
+                                    .external_selected_vec(selected_files.clone())
                                     .build()
                             )
                             .unify()
@@ -2374,18 +1757,15 @@ fn should_disable_folder(
     path: &str,
     tree_cache: &HashMap<String, Vec<shared::FileSystemItem>>,
 ) -> bool {
-    // Simple logic: disable folder if it has NO subfolders AND NO waveform files
     if let Some(items) = tree_cache.get(path) {
         let has_subfolders = items.iter().any(|item| item.is_directory);
         let has_waveform_files = items
             .iter()
             .any(|item| !item.is_directory && item.is_waveform_file);
 
-        // Only disable if BOTH conditions are false
         return !has_subfolders && !has_waveform_files;
     }
 
-    // If no cached data, don't disable (allow expansion to load data)
     false
 }
 
@@ -2399,9 +1779,7 @@ fn build_hierarchical_tree(
             .iter()
             .map(|item| {
                 if item.is_directory {
-                    // Check if we have an error for this directory
                     if let Some(_error_msg) = error_cache.get(&item.path) {
-                        // Show error as a child item
                         let data = TreeViewItemData::new(item.path.clone(), item.name.clone())
                             .icon("folder".to_string())
                             .item_type(TreeViewItemType::Folder)
@@ -2410,7 +1788,7 @@ fn build_hierarchical_tree(
                                     "access_denied",
                                     &error_cache
                                         .get(&item.path)
-                                        .map(|err| crate::state::make_error_user_friendly(err))
+                                        .map(|err| crate::error_display::make_error_user_friendly(err))
                                         .unwrap_or_else(|| {
                                             "Cannot access this directory".to_string()
                                         }),
@@ -2420,14 +1798,12 @@ fn build_hierarchical_tree(
                             ]);
                         data
                     } else if let Some(_children) = tree_cache.get(&item.path) {
-                        // Build actual hierarchical children
                         let children = build_hierarchical_tree(&item.path, tree_cache, error_cache);
                         let mut data = TreeViewItemData::new(item.path.clone(), item.name.clone())
                             .icon("folder".to_string())
                             .item_type(TreeViewItemType::Folder)
                             .with_children(children);
 
-                        // Show "No supported files" placeholder for empty folders instead of disabling
                         if should_disable_folder(&item.path, tree_cache) {
                             data = data.with_children(vec![
                                 TreeViewItemData::new("no_supported_files", "No supported files")
@@ -2438,12 +1814,10 @@ fn build_hierarchical_tree(
 
                         data
                     } else {
-                        // No cached contents - only show expand arrow if directory has expandable content
                         let mut data = TreeViewItemData::new(item.path.clone(), item.name.clone())
                             .icon("folder".to_string())
                             .item_type(TreeViewItemType::Folder);
 
-                        // Use backend's has_expandable_content field directly
                         if item.has_expandable_content {
                             data = data.with_children(vec![
                                 TreeViewItemData::new("loading", "Loading...")
@@ -2451,7 +1825,6 @@ fn build_hierarchical_tree(
                                     .disabled(true),
                             ]);
                         } else {
-                            // Directory has no subfolders AND no waveform files - show "No supported files" placeholder
                             data = data.with_children(vec![
                                 TreeViewItemData::new("no_supported_files", "No supported files")
                                     .item_type(TreeViewItemType::Default)
@@ -2462,13 +1835,11 @@ fn build_hierarchical_tree(
                         data
                     }
                 } else {
-                    // File item
                     let mut data = TreeViewItemData::new(item.path.clone(), item.name.clone())
                         .icon("file".to_string())
                         .item_type(TreeViewItemType::File)
                         .is_waveform_file(item.is_waveform_file);
 
-                    // Disable non-waveform files
                     if !item.is_waveform_file {
                         data = data.disabled(true);
                     }
@@ -2483,21 +1854,17 @@ fn build_hierarchical_tree(
 }
 
 pub fn monitor_directory_expansions(expanded: HashSet<String>, app_config: &crate::config::AppConfig) {
-    // Get previous expanded directories from config to detect changes
     let config = app_config;
     let current_config_expanded = config.file_picker_expanded_directories.lock_ref();
     let last_expanded: HashSet<String> = current_config_expanded.iter().cloned().collect();
 
-    // Only proceed if there are actual new expansions (not just re-renders)
     let new_expansions: Vec<String> = expanded.difference(&last_expanded).cloned().collect();
 
-    // For now, request all new expansions - proper cache checking requires signal-based pattern
     let paths_to_request: Vec<String> = new_expansions
         .into_iter()
         .filter(|path| path.starts_with("/") && !path.is_empty())
         .collect();
 
-    // Send batch request for maximum parallel processing with jwalk
     if !paths_to_request.is_empty() {
         Task::start(async move {
             use crate::platform::{CurrentPlatform, Platform};
@@ -2505,35 +1872,24 @@ pub fn monitor_directory_expansions(expanded: HashSet<String>, app_config: &crat
         });
     }
 
-    // Config system automatically handles the expanded directories state
-    // No need to manually track - the config signal will update appropriately
 }
 
 fn extract_filename(path: &str) -> String {
     path.split('/').last().unwrap_or(path).to_string()
 }
 
-// File picker utility functions
 
-fn process_file_picker_selection(tracked_files: crate::tracked_files::TrackedFiles) {
+fn process_file_picker_selection(
+    tracked_files: crate::tracked_files::TrackedFiles,
+    selected_files: Vec<String>,
+    file_dialog_visible: Atom<bool>
+) {
     Task::start(async move {
-        // Get current selected files using signal-based access
-        use futures::StreamExt;
-        use zoon::SignalExt;
-        let selected_files = crate::file_dialog::file_picker_selected_signal()
-            .to_stream()
-            .next()
-            .await
-            .unwrap_or_default();
 
         if !selected_files.is_empty() {
-            // ✅ ELIMINATED: Loading state updates - Loading state handled internally by TrackedFiles domain
 
-            // ✅ FILE RELOAD STRATEGY (Option B): Check for duplicates and implement reload
             use std::path::PathBuf;
 
-            // Get currently tracked files to check for duplicates
-            // Use the global domain signal storage for current files
             let tracked_files_snapshot = tracked_files.get_current_files();
 
             let mut new_files: Vec<PathBuf> = Vec::new();
@@ -2542,11 +1898,6 @@ fn process_file_picker_selection(tracked_files: crate::tracked_files::TrackedFil
             for selected_path in selected_files {
                 let selected_pathbuf = PathBuf::from(&selected_path);
 
-                // DEBUG: Log path comparison details
-                // for existing_file in &tracked_files_snapshot {
-                // }
-
-                // Check if file is already tracked
                 if let Some(existing_file) = tracked_files_snapshot
                     .iter()
                     .find(|f| f.id == selected_path || f.path == selected_path)
@@ -2559,22 +1910,17 @@ fn process_file_picker_selection(tracked_files: crate::tracked_files::TrackedFil
 
             let tracked_files = &tracked_files;
 
-            // Handle new files
             if !new_files.is_empty() {
                 tracked_files.files_dropped_relay.send(new_files);
             }
 
-            // Handle reload files - use direct reload calls for proper parsing
             if !reload_files.is_empty() {
-                // Use direct reload calls instead of remove→re-add pattern
-                // This ensures reload files go through full parsing pipeline
                 for file_id in reload_files {
                     tracked_files.reload_file(file_id);
                 }
             }
 
-            // Close dialog using domain function
-            crate::file_dialog::close_file_dialog();
+            file_dialog_visible.set(false);
         }
     }); // End of async Task::start block
 }
@@ -2583,32 +1929,22 @@ fn clear_all_files(
     tracked_files: &crate::tracked_files::TrackedFiles,
     selected_variables: &crate::selected_variables::SelectedVariables,
 ) {
-    // ✅ ACTOR+RELAY MIGRATION: Use TrackedFiles domain events instead of direct state manipulation
 
-    // Get all tracked file IDs before clearing (for cleanup)
     let file_ids: Vec<String> = tracked_files
         .get_current_files()
         .iter()
         .map(|f| f.id.clone())
         .collect();
 
-    // Clean up all file-related state for each file (legacy cleanup during transition)
     let current_tracked_files = tracked_files.get_current_files();
     for file_id in &file_ids {
         cleanup_file_related_state(file_id, &current_tracked_files, selected_variables);
     }
 
-    // Emit all_files_cleared event through TrackedFiles domain
     tracked_files.all_files_cleared_relay.send(());
 
-    // Clear legacy systems during transition (will be removed later)
-    // LOADED_FILES.lock_mut().clear(); // REMOVED: Use TrackedFiles domain instead
-    // FILE_PATHS.lock_mut().clear(); // REMOVED: FILE_PATHS no longer exists
 
-    // ✅ COMPLETED: Replaced with proper Actor+Relay domain event emissions
-    // Tree selections now handled by SelectedVariables domain Actor
 
-    // Config automatically saved by ConfigSaver watching domain signals
 }
 
 fn clear_all_files_button(
@@ -2638,7 +1974,6 @@ fn clear_all_variables_button(
         .variant(ButtonVariant::DestructiveGhost)
         .size(ButtonSize::Small)
         .on_press(move || {
-            // ✅ ACTOR+RELAY MIGRATION: Use SelectedVariables domain events
             selected_variables_clone.selection_cleared_relay.send(());
         })
         .build()
@@ -2699,7 +2034,6 @@ fn dock_toggle_button(app_config: &crate::config::AppConfig) -> impl Element {
             .on_press({
                 let dock_relay = app_config_for_press.dock_mode_button_clicked_relay.clone();
                 move || {
-                    // Use domain function to toggle dock mode (handles all logic internally)
                     dock_relay.send(());
                 }
             })
@@ -2748,9 +2082,6 @@ pub fn files_panel_horizontal_divider(app_config: &crate::config::AppConfig) -> 
         })
 }
 
-// ===== UNIFIED WAVEFORM CANVAS =====
-
-// ===== MAIN LAYOUT (MIGRATED FROM MAIN.RS) =====
 
 /// Main application layout with keyboard handling and drag interactions
 pub fn main_layout(
@@ -2763,7 +2094,11 @@ pub fn main_layout(
         Column::new()
             .s(Width::fill())
             .s(Height::fill())
-            .item(files_panel(tracked_files, selected_variables))
+            .item(files_panel(
+                tracked_files.clone(), 
+                selected_variables.clone(),
+                button().label("Load Files").disabled(true).build() // Placeholder - no file_dialog_visible access
+            ))
             .item(selected_variables_with_waveform_panel(
                 selected_variables.clone(),
                 waveform_timeline.clone(),

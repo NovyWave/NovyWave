@@ -112,7 +112,7 @@ impl TimelineContext {
 
     /// Get file paths that contain currently selected variables
     pub fn get_selected_variable_file_paths(&self) -> HashSet<String> {
-        let selected_vars = self.selected_variables.variables_vec_signal.get_cloned();
+        let selected_vars = self.selected_variables.variables_vec_actor.state.get_cloned();
         selected_vars
             .iter()
             .filter_map(|var| var.file_path())
@@ -188,7 +188,7 @@ impl TimelineContext {
 
     /// Get selected variables file range (longest span prioritized)
     pub fn get_selected_variables_file_range(&self) -> (f64, f64) {
-        let selected_variables = self.selected_variables.variables_vec_signal.get_cloned();
+        let selected_variables = self.selected_variables.variables_vec_actor.state.get_cloned();
         let tracked_files = self.tracked_files.files_vec_signal.get_cloned();
         let loaded_files: Vec<shared::WaveformFile> = tracked_files
             .iter()

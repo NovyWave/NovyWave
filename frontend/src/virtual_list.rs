@@ -204,7 +204,7 @@ pub fn rust_virtual_variables_list_with_signal(
             map_ref! {
                 let start = visible_start.signal(),
                 let end = visible_end.signal(),
-                let selected_vars = selected_variables.variables_vec_signal.signal_cloned() => (*start, *end, selected_vars.clone())
+                let selected_vars = selected_variables.variables_vec_actor.signal() => (*start, *end, selected_vars.clone())
             }.for_each(move |(start, end, selected_vars)| {
                 let element_pool = element_pool.clone();
                 let variables = variables.clone();

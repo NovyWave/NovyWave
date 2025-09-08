@@ -1,7 +1,116 @@
-use crate::state::ErrorAlert;
 use zoon::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use futures::StreamExt;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ErrorAlert {
+    pub id: String,
+    pub title: String,
+    pub message: String,
+    pub technical_error: String, // Raw technical error for console logging
+    pub auto_dismiss_ms: u64,
+}
+
+impl ErrorAlert {
+    pub fn new_file_parsing_error(file_id: String, filename: String, error: String) -> Self {
+        let user_friendly_message = make_error_user_friendly(&error);
+        Self {
+            id: format!("file_error_{}", file_id),
+            title: "File Loading Error".to_string(),
+            message: format!("{}: {}", filename, user_friendly_message),
+            technical_error: format!("Error parsing file {}: {}", file_id, error),
+            auto_dismiss_ms: 5000, // Default 5s, will be overridden by config in error_display
+        }
+    }
+
+    pub fn new_directory_error(path: String, error: String) -> Self {
+        let user_friendly_message = make_error_user_friendly(&error);
+        Self {
+            id: format!("dir_error_{}", path.replace("/", "_")),
+            title: "Directory Access Error".to_string(),
+            message: format!("Cannot access {}: {}", path, user_friendly_message),
+            technical_error: format!("Error browsing directory {}: {}", path, error),
+            auto_dismiss_ms: 5000, // Default 5s, will be overridden by config in error_display
+        }
+    }
+
+    pub fn new_connection_error(error: String) -> Self {
+        let user_friendly_message = make_error_user_friendly(&error);
+        Self {
+            id: format!("conn_error_{}", js_sys::Date::now() as u64),
+            title: "Connection Error".to_string(),
+            message: user_friendly_message,
+            technical_error: format!("Connection error: {}", error),
+            auto_dismiss_ms: 5000, // Default 5s, will be overridden by config in error_display
+        }
+    }
+
+    pub fn new_clipboard_error(error: String) -> Self {
+        Self {
+            id: format!("clipboard_error_{}", js_sys::Date::now() as u64),
+            title: "Clipboard Error".to_string(),
+            message: "Failed to copy to clipboard. Your browser may not support clipboard access or you may need to use HTTPS.".to_string(),
+            technical_error: format!("Clipboard operation failed: {}", error),
+            auto_dismiss_ms: 5000, // Default 5s, will be overridden by config in error_display
+        }
+    }
+}
+
+pub fn make_error_user_friendly(error: &str) -> String {
+    let error_lower = error.to_lowercase();
+
+    // Extract file path from error messages in multiple formats:
+    // - "Failed to parse waveform file '/path/to/file': error" (quoted format)
+    // - "File not found: /path/to/file" (backend format)
+    let file_path = if let Some(start) = error.find("'") {
+        if let Some(end) = error[start + 1..].find("'") {
+            Some(&error[start + 1..start + 1 + end])
+        } else {
+            None
+        }
+    } else if error_lower.contains("file not found:") {
+        // Extract path after "File not found: "
+        if let Some(colon_pos) = error.find("File not found:") {
+            let path_start = colon_pos + "File not found:".len();
+            Some(error[path_start..].trim())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    if error_lower.contains("unknown file format")
+        || error_lower.contains("only ghw, fst and vcd are supported")
+    {
+        if let Some(path) = file_path {
+            format!(
+                "Unsupported file format '{}'. Only VCD and FST files are supported.",
+                path
+            )
+        } else {
+            "Unsupported file format. Only VCD and FST files are supported.".to_string()
+        }
+    } else if error_lower.contains("file not found") || error_lower.contains("no such file") {
+        if let Some(path) = file_path {
+            format!(
+                "File not found '{}'. Please check if the file exists and try again.",
+                path
+            )
+        } else {
+            "File not found. Please check if the file exists and try again.".to_string()
+        }
+    } else if error_lower.contains("permission denied") || error_lower.contains("access denied") {
+        "Can't access this directory".to_string()
+    } else if error_lower.contains("connection") || error_lower.contains("network") {
+        "Connection error. Please check your network connection.".to_string()
+    } else if error_lower.contains("timeout") {
+        "Operation timed out. Please try again.".to_string()
+    } else {
+        // Keep original error but make it more presentable
+        error.trim().to_string()
+    }
+}
 
 // Global toast management
 static TOAST_ID_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -40,47 +149,21 @@ impl ErrorDisplay {
     }
 }
 
-// Static instance for compatibility during migration
-static ERROR_DISPLAY_INSTANCE: zoon::Lazy<std::sync::Arc<std::sync::Mutex<Option<ErrorDisplay>>>> = 
-    zoon::Lazy::new(|| std::sync::Arc::new(std::sync::Mutex::new(None)));
-
-/// Get or initialize the error display instance
-pub async fn get_error_display() -> ErrorDisplay {
-    let instance_arc = ERROR_DISPLAY_INSTANCE.clone();
-    let mut instance_guard = instance_arc.lock().unwrap();
-    
-    if instance_guard.is_none() {
-        let error_display = ErrorDisplay::new().await;
-        *instance_guard = Some(error_display.clone());
-        error_display
-    } else {
-        instance_guard.as_ref().unwrap().clone()
-    }
-}
 
 
-/// Add an error alert to the global error display system
-/// This is the single entry point for all error handling:
-/// - Logs technical details to console (for developers)
-/// - Shows user-friendly toast notification (for users)
 pub async fn add_error_alert(mut alert: ErrorAlert, app_config: &crate::config::AppConfig) {
-    // Log technical error to console for developers
     zoon::println!("Error: {}", alert.technical_error);
     
-    // Generate unique ID for toast tracking
     let toast_id = TOAST_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
     alert.id = format!("toast_{}", toast_id);
     
-    // Set auto-dismiss timeout from config
     if let Some(dismiss_ms) = app_config.toast_dismiss_ms_actor.signal().to_stream().next().await {
         alert.auto_dismiss_ms = dismiss_ms as u64;
     } else {
-        alert.auto_dismiss_ms = 5000; // Default fallback
+        alert.auto_dismiss_ms = 5000;
     }
     
-    // Use proper Actor+Relay architecture
-    let error_display = get_error_display().await;
-    error_display.toast_added_relay.send(alert);
+    app_config.error_display.toast_added_relay.send(alert);
 }
 
 /// Log error to browser console only (no toast notification)
@@ -90,19 +173,11 @@ pub fn log_error_console_only(alert: ErrorAlert) {
     zoon::println!("Error: {}", alert.technical_error);
 }
 
-/// Dismiss an error alert by ID
-pub async fn dismiss_error_alert(id: &str) {
-    let error_display = get_error_display().await;
-    error_display.toast_dismissed_relay.send(id.to_string());
+pub async fn dismiss_error_alert(id: &str, app_config: &crate::config::AppConfig) {
+    app_config.error_display.toast_dismissed_relay.send(id.to_string());
 }
 
-/// Get the active toasts signal for UI rendering
-pub async fn active_toasts_signal_vec() -> impl zoon::SignalVec<Item = ErrorAlert> {
-    let error_display = get_error_display().await;
-    error_display.active_toasts.signal_vec()
+pub fn active_toasts_signal_vec(app_config: crate::config::AppConfig) -> impl zoon::SignalVec<Item = ErrorAlert> {
+    app_config.error_display.active_toasts.signal_vec()
 }
 
-/// Initialize error display system handlers
-pub fn init_error_display_system() {
-    // Error display system is now ready - toast dismiss time is read from config when needed
-}

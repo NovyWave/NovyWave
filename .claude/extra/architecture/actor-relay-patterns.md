@@ -752,6 +752,38 @@ pub fn open_file_dialog() {
 }
 ```
 
+#### ANTIPATTERN: "Fix Compilation First, Implement Later"
+
+**❌ CRITICAL ANTIPATTERN: Compilation-driven development**
+```rust
+// WRONG: Placeholder just to make it compile
+pub fn get_variables_from_tracked_files(scope_id: &str) -> Vec<VariableWithContext> {
+    Vec::new()  // TODO: Implement later
+}
+```
+
+**Why this is catastrophically harmful:**
+- **Technical debt accumulates** - "Later" often never comes
+- **Breaks functionality** - Code compiles but doesn't work
+- **False sense of progress** - Green build status masks broken features
+- **Context switching cost** - Returning to implement requires re-understanding the problem
+- **Hides architectural issues** - Compilation success doesn't mean correct design
+
+**✅ CORRECT: Implement properly or don't implement at all**
+```rust
+// Either implement the real functionality:
+pub fn get_variables_from_tracked_files(scope_id: &str) -> Vec<VariableWithContext> {
+    let tracked_files = crate::state::tracked_files();
+    let files = tracked_files.files_vec_signal.get_cloned();
+    // ... proper implementation using existing data structures
+}
+
+// Or comment out the call site until ready:
+// variables_display_signal(tracked_files.clone(), selected_variables.clone())
+```
+
+**Key Principle:** Working compilation with broken functionality is worse than compilation errors with correct architecture.
+
 ## Advanced Implementation Patterns
 
 ### Event-Source Relay Naming (MANDATORY)

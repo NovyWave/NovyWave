@@ -975,3 +975,83 @@ impl<T> ActorVec<T> {
 - Use public struct fields instead of getter methods
 - Check ActorVec/Actor method signatures for `+ use<T>` requirements
 - When encountering mysterious lifetime errors, simplify to direct field access first
+
+## Systematic Actor+Relay Architecture Migration Pattern
+
+### Bridge Pattern Elimination Strategy
+
+When encountering complex bi-directional sync code, the solution is usually **complete elimination** rather than trying to fix the bridge. Direct signal connections work better than intermediate synchronization layers.
+
+**Successful Pattern:**
+```rust
+// ❌ BEFORE: Complex bridge pattern (40+ lines)
+let bridge_mutable = Mutable::new(vec![]);
+Task::start(async move {
+    actor_signal.for_each_sync(|data| {
+        bridge_mutable.set_neq(data);  // Manual sync
+    });
+});
+TreeView::new().external_expanded(bridge_mutable)
+
+// ✅ AFTER: Direct connection (eliminated entirely)
+TreeView::new().external_expanded(app_config.expanded_directories.clone())
+```
+
+### Compilation Error Resolution Priority
+
+**Systematic approach that works:**
+1. **Comment out unused functions** causing lifetime issues rather than fighting complex fixes
+2. **Fix missing variable references** with proper types (`MutableVec<String>` vs `Mutable<Vec<String>>`)
+3. **Address type mismatches** at the source rather than adding conversions
+
+### Mutable Usage Rules (CORRECTED)
+
+**✅ ONLY ACCEPTABLE Mutable usage:**
+1. **External component API requirements** - When UI components like TreeView explicitly require `Mutable<T>` or `MutableVec<T>`
+2. **Interface compliance** - When integrating with external libraries that demand specific types
+
+**❌ NOT ACCEPTABLE (use Atom instead):**
+- Dialog visibility → `Atom<bool>`
+- Hover states → `Atom<bool>` 
+- Temporary selections → `Atom<Vec<String>>` or domain Actor
+- Form input values → `Atom<String>`
+- All other local UI state → `Atom<T>`
+
+**Key Principle:** Mutables are a necessary evil ONLY for external API compliance. When we have control over the implementation, use Actor+Relay or Atom.
+
+### TreeView Integration Pattern
+
+TreeView components need specific types:
+- `external_expanded(Mutable<HashSet<String>>)` for expansion state
+- `external_selected_vec(MutableVec<String>)` for selection state (NOT `Mutable<Vec<String>>`)
+- Direct signal connections rather than bridge patterns
+
+**Two acceptable patterns:**
+
+```rust
+// Pattern 1: Local UI state for dialogs
+let selected_files = zoon::MutableVec::<String>::new();
+TreeView::new().external_selected_vec(selected_files.clone())
+
+// Pattern 2: Domain integration (preferred for important state)
+struct FilePickerDomain {
+    pub expanded_directories: Mutable<HashSet<String>>,
+    pub selected_files: MutableVec<String>,
+}
+```
+
+### Systematic Migration Success Framework
+
+1. **Identify all violations** through comprehensive search (Mutable, TODO, OnceLock patterns)
+2. **Create detailed todo tracking** for each violation type  
+3. **Fix systematically** one category at a time
+4. **Verify compilation** after each major change
+5. **Re-enable functionality** with proper reactive patterns
+6. **Complete verification** that all target issues are resolved
+
+**Critical Success Factors:**
+- Remove static signal bypass antipatterns (OnceLock patterns) entirely
+- Use Atom for local UI state, never Mutable unless external API requires it
+- Eliminate bridge patterns completely rather than trying to fix them
+- Comment out problematic unused functions rather than fighting lifetime issues
+- Ensure proper types for external component APIs (MutableVec vs Mutable)

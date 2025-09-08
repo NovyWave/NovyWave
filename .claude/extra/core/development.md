@@ -70,11 +70,12 @@ pub fn files_signal(&self) -> impl Signal<Item = Vec<TrackedFile>> {
 }
 ```
 
-**What to Preserve:**
-- Essential module/file documentation
-- Non-obvious business logic context
-- Error message formatting details
-- Public API signatures remain clean
+**What to Preserve (no explicit request needed):**
+- **Essential module/file documentation**: `//! Module purpose and architectural context`
+- **Non-obvious business logic context**: `// Timeline uses nanosecond precision for VCD compatibility`
+- **Complex algorithm explanations**: `// Binary search with interpolation between transition points`
+- **Public API documentation**: `/// Returns reactive signal that updates when files change`
+- **Domain-specific technical details**: When implementation choices aren't obvious from naming
 
 **Results of Proper Comment Cleanup:**
 - 30% reduction in file size typical
@@ -82,7 +83,44 @@ pub fn files_signal(&self) -> impl Signal<Item = Vec<TrackedFile>> {
 - Zero impact on functionality
 - Code self-documents through clear structure
 
-**Principle:** Clean code documents itself through clear naming and structure, not explanatory comments.
+**Principle:** Clean code documents itself through clear naming and structure. Comments should only explain *why* non-obvious decisions were made, never *what* the code obviously does.
+
+### CRITICAL: Analyze Code Context Before Removing TODOs
+
+**MANDATORY: Always examine what the code actually DOES before removing any TODO comments.**
+
+**The Broken Functionality Trap:**
+```rust
+// ❌ DANGEROUS: Removing TODO without analyzing the code
+let _selected_vars = variables_signal => {
+    if *files_count == 0 {
+        None
+    } else {
+        None  // ← This always returns None! TODO was marking broken functionality
+    }
+}
+```
+
+**TODO Classification Protocol:**
+1. **Read the code the TODO points to** - Don't just read the TODO text
+2. **Identify TODO type**:
+   - **Architectural TODOs**: Nice-to-have improvements → Can remove if obvious from code
+   - **Functionality TODOs**: Point to broken/missing features users expect → Must keep
+
+**Examples of Functionality TODOs (NEVER remove):**
+```rust
+Text::new("-- ns/px")  // TODO: Connect to zoom level signal
+Text::new("--s")       // TODO: Connect to cursor position signal
+El::new()              // TODO: Implement format dropdown
+```
+
+**Examples of Architectural TODOs (safe to remove if obvious):**
+```rust
+// TODO: Refactor to use better signal pattern (when current code works)
+// TODO: Consider performance optimization (when feature is functional)
+```
+
+**Key Rule:** If removing a TODO would hide actually broken functionality that users expect to work, the TODO must stay.
 
 ### UI Hardcoded Values Exception
 
@@ -716,6 +754,22 @@ When users request extended autonomous work (e.g. "I won't be here, work as long
 This pattern enables sustained autonomous work while maintaining quality and preventing getting lost in complex problems.
 
 ### Planning Guidelines
+
+#### User Planning Preference (MANDATORY)
+**CRITICAL: When user uses keyword "PLAN" (e.g., "PLAN to clean this file from antipatterns") - always present comprehensive plan before making ANY changes.**
+
+Recognition patterns:
+- "PLAN to [action]" - Direct planning request
+- "Prepare plan and then tell me before any changes" - Explicit planning requirement
+- Any request implying planning should happen first
+
+Required response:
+- Create and present detailed plan using TodoWrite
+- Wait for user approval before starting implementation  
+- Don't begin coding/changes until user confirms the plan
+- Apply this even when not explicitly in plan mode
+
+#### Tool Usage
 - Use the Task tool when you are in plan mode
 - Only use exit_plan_mode tool when planning implementation steps for code writing tasks
 - For research tasks (gathering information, searching, reading), do NOT use exit_plan_mode

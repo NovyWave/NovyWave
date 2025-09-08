@@ -53,7 +53,7 @@ pub struct Actor<T>
 where
     T: Clone + Send + Sync + 'static,
 {
-    state: Mutable<T>,
+    pub state: Mutable<T>,
     // Part of public Actor+Relay API - will be used when moved to standalone crate
     #[allow(dead_code)]
     task_handle: Arc<TaskHandle>,

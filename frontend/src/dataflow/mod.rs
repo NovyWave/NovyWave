@@ -30,5 +30,5 @@ pub use relay::{Relay, relay};
 pub use actor::Actor;
 pub use actor_vec::ActorVec;
 pub use actor_map::ActorMap;
-// pub use atom::Atom; // Unused - Atom not used anywhere
+pub use atom::Atom;
 

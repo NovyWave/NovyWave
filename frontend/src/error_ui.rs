@@ -2,9 +2,7 @@ use zoon::*;
 use zoon::events::Click;
 use moonzoon_novyui::components::icon::{icon, IconName, IconSize, IconColor};
 use moonzoon_novyui::tokens::*;
-use crate::state::ErrorAlert;
-// Direct empty toast notifications (error_manager was returning empty vector anyway)
-use crate::error_display::dismiss_error_alert;
+use crate::error_display::ErrorAlert;
 use crate::dataflow::*;
 use futures::{select, stream::StreamExt};
 
@@ -12,8 +10,7 @@ use futures::{select, stream::StreamExt};
 type Progress = f32;
 
 
-/// Toast notifications container for auto-dismissing errors
-pub fn toast_notifications_container() -> impl Element {
+pub fn toast_notifications_container(app_config: crate::config::AppConfig) -> impl Element {
     El::new()
         .s(Width::fill())
         .s(Height::fill())
@@ -36,20 +33,26 @@ pub fn toast_notifications_container() -> impl Element {
                     raw_el.style("pointer-events", "auto")  // Re-enable pointer events for toast content
                 })
                 .items_signal_vec(
-                    crate::error_display::active_toasts_signal_vec().map(|alert: ErrorAlert| {
-                        toast_element(alert)
+                    crate::error_display::active_toasts_signal_vec(app_config.clone()).map({
+                        let app_config_for_toast = app_config.clone();
+                        move |alert: ErrorAlert| {
+                            toast_element(alert, app_config_for_toast.clone())
+                        }
                     })
                 )
         )
 }
 
 
-/// Create a toast notification element with proper Actor-based state management
-fn toast_element(alert: ErrorAlert) -> impl Element {
+fn toast_element(alert: ErrorAlert, app_config: crate::config::AppConfig) -> impl Element {
     
     let (toast_clicked_relay, mut toast_clicked_stream) = relay();
     let (dismiss_button_clicked_relay, mut dismiss_button_clicked_stream) = relay();
     let auto_dismiss_ms = alert.auto_dismiss_ms as f32;
+    
+    // Clone necessary data for async closure
+    let error_display = app_config.error_display.clone();
+    let alert_id = alert.id.clone();
     
     let toast_actor = Actor::new(100.0 as Progress, async move |state_handle| {
         let mut elapsed_time = 0.0f32;
@@ -71,7 +74,7 @@ fn toast_element(alert: ErrorAlert) -> impl Element {
                         state_handle.set(progress);
                         
                         if elapsed_time >= auto_dismiss_ms {
-                            dismiss_error_alert(&alert.id);
+                            error_display.toast_dismissed_relay.send(alert_id.clone());
                             break;
                         }
                     }
@@ -83,7 +86,7 @@ fn toast_element(alert: ErrorAlert) -> impl Element {
                 }
                 event = dismiss_button_clicked_stream.next() => {
                     if let Some(()) = event {
-                        dismiss_error_alert(&alert.id);
+                        error_display.toast_dismissed_relay.send(alert_id.clone());
                         break;
                     }
                 }

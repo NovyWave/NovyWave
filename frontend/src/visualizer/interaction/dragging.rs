@@ -5,7 +5,6 @@
 
 use zoon::*;
 use futures::StreamExt;
-use crate::config::PanelDimensions;
 use shared::DockMode;
 
 // === DRAGGING STATE ===
@@ -157,50 +156,27 @@ fn update_config_dimension(divider_type: &DividerType, new_value: f32, app_confi
     let config = app_config.clone();
     let divider_type = divider_type.clone();
     
-    // Get dock mode and update the appropriate dimensions asynchronously
     Task::start(async move {
         let dock_mode = config.dock_mode_actor.signal().to_stream().next().await.unwrap_or(DockMode::Right);
         
         match (&divider_type, dock_mode) {
             (DividerType::FilesPanelMain, DockMode::Right) => {
-                let mut dims = config.panel_dimensions_right_actor.signal().to_stream().next().await.unwrap();
-                dims.files_panel_width = new_value;
-                config.panel_dimensions_right_changed_relay.send(dims);
+                config.files_width_right_changed_relay.send(new_value);
             }
             (DividerType::FilesPanelMain, DockMode::Bottom) => {
-                let mut dims = config.panel_dimensions_bottom_actor.signal().to_stream().next().await.unwrap();
-                dims.files_panel_width = new_value;
-                config.panel_dimensions_bottom_changed_relay.send(dims);
+                config.files_width_bottom_changed_relay.send(new_value);
             }
             (DividerType::FilesPanelSecondary, DockMode::Right) => {
-                let mut dims = config.panel_dimensions_right_actor.signal().to_stream().next().await.unwrap();
-                dims.files_panel_height = new_value;
-                config.panel_dimensions_right_changed_relay.send(dims);
+                config.files_height_right_changed_relay.send(new_value);
             }
             (DividerType::FilesPanelSecondary, DockMode::Bottom) => {
-                let mut dims = config.panel_dimensions_bottom_actor.signal().to_stream().next().await.unwrap();
-                dims.files_panel_height = new_value;
-                config.panel_dimensions_bottom_changed_relay.send(dims);
+                config.files_height_bottom_changed_relay.send(new_value);
             }
-            (DividerType::VariablesNameColumn, DockMode::Right) => {
-                let mut dims = config.panel_dimensions_right_actor.signal().to_stream().next().await.unwrap();
-                dims.variables_name_column_width = new_value;
-                config.panel_dimensions_right_changed_relay.send(dims);
+            (DividerType::VariablesNameColumn, _) => {
+                config.name_column_width_changed_relay.send(new_value);
             }
-            (DividerType::VariablesNameColumn, DockMode::Bottom) => {
-                let mut dims = config.panel_dimensions_bottom_actor.signal().to_stream().next().await.unwrap();
-                dims.variables_name_column_width = new_value;
-                config.panel_dimensions_bottom_changed_relay.send(dims);
-            }
-            (DividerType::VariablesValueColumn, DockMode::Right) => {
-                let mut dims = config.panel_dimensions_right_actor.signal().to_stream().next().await.unwrap();
-                dims.variables_value_column_width = new_value;
-                config.panel_dimensions_right_changed_relay.send(dims);
-            }
-            (DividerType::VariablesValueColumn, DockMode::Bottom) => {
-                let mut dims = config.panel_dimensions_bottom_actor.signal().to_stream().next().await.unwrap();
-                dims.variables_value_column_width = new_value;
-                config.panel_dimensions_bottom_changed_relay.send(dims);
+            (DividerType::VariablesValueColumn, _) => {
+                config.value_column_width_changed_relay.send(new_value);
             }
         }
     });
@@ -231,11 +207,11 @@ pub fn active_divider_type_signal() -> impl Signal<Item = Option<DividerType>> {
 pub fn files_panel_width_signal(app_config: crate::config::AppConfig) -> impl Signal<Item = f32> {
     map_ref! {
         let dock_mode = app_config.dock_mode_actor.signal(),
-        let right_dims = app_config.panel_dimensions_right_actor.signal(),
-        let bottom_dims = app_config.panel_dimensions_bottom_actor.signal() => {
+        let right_width = app_config.files_panel_width_right_actor.signal(),
+        let bottom_width = app_config.files_panel_width_bottom_actor.signal() => {
             match dock_mode {
-                DockMode::Right => right_dims.files_panel_width,
-                DockMode::Bottom => bottom_dims.files_panel_width,
+                DockMode::Right => *right_width,
+                DockMode::Bottom => *bottom_width,
             }
         }
     }
@@ -245,11 +221,11 @@ pub fn files_panel_width_signal(app_config: crate::config::AppConfig) -> impl Si
 pub fn files_panel_height_signal(app_config: crate::config::AppConfig) -> impl Signal<Item = f32> {
     map_ref! {
         let dock_mode = app_config.dock_mode_actor.signal(),
-        let right_dims = app_config.panel_dimensions_right_actor.signal(),
-        let bottom_dims = app_config.panel_dimensions_bottom_actor.signal() => {
+        let right_height = app_config.files_panel_height_right_actor.signal(),
+        let bottom_height = app_config.files_panel_height_bottom_actor.signal() => {
             match dock_mode {
-                DockMode::Right => right_dims.files_panel_height,
-                DockMode::Bottom => bottom_dims.files_panel_height,
+                DockMode::Right => *right_height,
+                DockMode::Bottom => *bottom_height,
             }
         }
     }
@@ -257,28 +233,10 @@ pub fn files_panel_height_signal(app_config: crate::config::AppConfig) -> impl S
 
 /// Get variables name column width signal for current dock mode
 pub fn variables_name_column_width_signal(app_config: crate::config::AppConfig) -> impl Signal<Item = f32> {
-    map_ref! {
-        let dock_mode = app_config.dock_mode_actor.signal(),
-        let right_dims = app_config.panel_dimensions_right_actor.signal(),
-        let bottom_dims = app_config.panel_dimensions_bottom_actor.signal() => {
-            match dock_mode {
-                DockMode::Right => right_dims.variables_name_column_width,
-                DockMode::Bottom => bottom_dims.variables_name_column_width,
-            }
-        }
-    }
+    app_config.variables_name_column_width_actor.signal()
 }
 
 /// Get variables value column width signal for current dock mode
 pub fn variables_value_column_width_signal(app_config: crate::config::AppConfig) -> impl Signal<Item = f32> {
-    map_ref! {
-        let dock_mode = app_config.dock_mode_actor.signal(),
-        let right_dims = app_config.panel_dimensions_right_actor.signal(),
-        let bottom_dims = app_config.panel_dimensions_bottom_actor.signal() => {
-            match dock_mode {
-                DockMode::Right => right_dims.variables_value_column_width,
-                DockMode::Bottom => bottom_dims.variables_value_column_width,
-            }
-        }
-    }
+    app_config.variables_value_column_width_actor.signal()
 }

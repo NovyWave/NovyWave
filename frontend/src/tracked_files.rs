@@ -41,6 +41,7 @@ impl TrackedFiles {
         let files_vec_signal = zoon::Mutable::new(vec![]);
         let files = ActorVec::new(vec![], {
             let files_vec_signal_sync = files_vec_signal.clone();
+            let file_parse_requested_relay_for_actor = file_parse_requested_relay.clone();
             async move |files_handle| {
                 let mut cached_loading_states: std::collections::HashMap<String, FileState> =
                     std::collections::HashMap::new();
@@ -55,7 +56,7 @@ impl TrackedFiles {
                                     .collect();
 
                                 for file in &tracked_files {
-                                    file_parse_requested_relay.send(file.path.clone());
+                                    file_parse_requested_relay_for_actor.send(file.path.clone());
                                 }
 
                                 files_handle.lock_mut().replace_cloned(tracked_files);
@@ -77,7 +78,7 @@ impl TrackedFiles {
                                 for new_file in new_files {
                                     let existing = files_handle.lock_ref().iter().any(|f| f.id == new_file.id);
                                     if !existing {
-                                        file_parse_requested_relay.send(new_file.path.clone());
+                                        file_parse_requested_relay_for_actor.send(new_file.path.clone());
                                         files_handle.lock_mut().push_cloned(new_file);
                                         
                                         let current_files = files_handle.lock_ref().to_vec();
@@ -105,7 +106,7 @@ impl TrackedFiles {
                                         FileState::Loading(LoadingStatus::Starting)
                                     );
 
-                                    file_parse_requested_relay.send(new_file.path.clone());
+                                    file_parse_requested_relay_for_actor.send(new_file.path.clone());
 
                                     let mut files = files_handle.lock_mut();
                                     files.retain(|f| f.id != file_id);
@@ -134,12 +135,7 @@ impl TrackedFiles {
 
                                     if all_done && !all_files_loaded_signaled {
                                         all_files_loaded_signaled = true;
-
-                                        zoon::Task::start({
-                                            async move {
-                                                crate::selected_variables::SelectedVariables::restore_scope_selections_reactive().await;
-                                            }
-                                        });
+                                        // Note: Scope selection restoration now handled by SelectedVariables domain Actor
                                     }
                                 }
                             }
@@ -241,6 +237,16 @@ impl TrackedFiles {
     pub fn update_file_state(&self, file_id: String, new_state: FileState) {
         self.file_load_completed_relay.send((file_id, new_state));
     }
+}
+
+/// Update the state of an existing tracked file
+/// Utility function for compatibility with existing code
+pub fn update_tracked_file_state(
+    file_id: &str, 
+    new_state: FileState,
+    tracked_files: &TrackedFiles,
+) {
+    tracked_files.file_load_completed_relay.send((file_id.to_string(), new_state));
 }
 
 async fn send_parse_request_to_backend(file_path: String) {

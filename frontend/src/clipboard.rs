@@ -1,37 +1,6 @@
-use wasm_bindgen_futures::spawn_local;
-use web_sys::window;
-use crate::error_display::add_error_alert;
-use crate::state::ErrorAlert;
-
-/// Copy text to clipboard with modern API support
+/// Copy text to clipboard using Actor+Relay architecture
 pub fn copy_to_clipboard(text: String, app_config: &crate::config::AppConfig) {
-    let app_config = app_config.clone();
-    spawn_local(async move {
-        if let Some(window) = window() {
-            let navigator = window.navigator();
-            
-            #[cfg(web_sys_unstable_apis)]
-            {
-                let clipboard = navigator.clipboard();
-                match wasm_bindgen_futures::JsFuture::from(clipboard.write_text(&text)).await {
-                    Ok(_) => {
-                        // Clipboard copy successful - no logging needed for normal operation
-                    }
-                    Err(e) => {
-                        let error_alert = ErrorAlert::new_clipboard_error(format!("{:?}", e));
-                        add_error_alert(error_alert, &app_config).await;
-                        // Could implement fallback here if needed
-                    }
-                }
-            }
-            
-            #[cfg(not(web_sys_unstable_apis))]
-            {
-                let error_alert = ErrorAlert::new_clipboard_error("Clipboard API requires unstable APIs flag".to_string());
-                add_error_alert(error_alert, &app_config).await;
-            }
-        }
-    });
+    app_config.clipboard_copy_requested_relay.send(text);
 }
 
 /// User-facing convenience function for copying variable values

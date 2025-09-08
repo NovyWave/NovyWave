@@ -563,3 +563,70 @@ fn compute_smart_label_for_file(target_file: &TrackedFile) -> String {
 - ✅ Smart labeling working (`nested_dir/wave_27.fst`, `test_files/wave_27.fst`)
 - ✅ No rendering failures or disappearing UI
 - ✅ Reliable updates when files change
+
+## 🧟 ZOMBIE ACTOR ANTIPATTERN (CRITICAL)
+
+### The "Zombie Actor" Pattern
+
+**❌ ANTIPATTERN: Actors that consume resources but never change state**
+
+```rust
+// ZOMBIE ACTOR - Uses CPU/memory but provides no functionality
+let user_cleared = Actor::new(false, async move |_cleared_handle| {
+    // Maintained by selection_cleared events in variables actor
+    std::future::pending::<()>().await; // Keep actor alive
+});
+
+let variable_index = Actor::new(IndexSet::new(), async move |_index_handle| {
+    // Index is maintained automatically by variables actor  
+    std::future::pending::<()>().await; // Keep actor alive
+});
+```
+
+**Recognition Signs:**
+- **`std::future::pending::<()>().await`** - Actor never handles events
+- **Underscore parameter names** - `|_handle|` indicates unused state handle
+- **"Maintained by" comments** - Suggests manual synchronization instead of proper event streams
+- **Never changes from initial value** - State remains static forever
+
+**Why This Is Harmful:**
+- **Memory waste** - Each Actor allocates heap space and task overhead
+- **CPU waste** - Async tasks running infinite pending loops  
+- **Architectural confusion** - Fake reactive state that never reacts
+- **Debugging complexity** - Dead actors appear in state but never update
+
+### ✅ CORRECT: Connect Actors to Real Event Streams
+
+```rust
+// ✅ WORKING ACTOR - Actually handles events and updates state
+let user_cleared = Actor::new(false, async move |cleared_handle| {
+    let mut selection_cleared_stream = selection_cleared_stream;
+    
+    loop {
+        select! {
+            Some(()) = selection_cleared_stream.next() => {
+                cleared_handle.set(true); // Actually update state!
+            }
+            // Could add reset events here
+        }
+    }
+});
+```
+
+### Prevention Strategy
+
+1. **Search for zombie patterns**: `rg "std::future::pending.*await" --type rust`
+2. **Check unused handles**: Look for `|_handle|` parameter patterns
+3. **Question "maintained by" comments** - Usually indicates incomplete implementation
+4. **Verify Actor usage** - If state never changes, either connect events or remove entirely
+5. **Delete unused Actors** - Better to remove than keep zombie resources
+
+### Real-World Impact
+
+**Case Study:** NovyWave selected_variables.rs contained 11 zombie actors:
+- **2 zombie actors** in main implementation (`user_cleared`, `variable_index`) 
+- **9 zombie actors** in unused `placeholder()` method
+- **Result**: 11 infinite async tasks, wasted memory, compilation errors from broken field references
+- **Solution**: Complete removal - none were actually needed
+
+**Key Lesson:** If an Actor never handles events, it's expensive static storage. Either connect proper event streams or remove entirely.

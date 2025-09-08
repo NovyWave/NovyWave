@@ -2,6 +2,7 @@
 
 use futures::select;
 use zoon::*;
+use moonzoon_novyui::{ButtonVariant, ButtonSize, IconName};
 
 use crate::config::AppConfig;
 use crate::dataflow::atom::Atom;
@@ -83,6 +84,9 @@ impl NovyWaveApp {
         .await;
 
         let (shutdown_requested_relay, mut shutdown_requested_stream) = relay();
+        let (app_initialized_relay, _app_initialized_stream) = relay();
+        let (file_dialog_toggle_requested_relay, _file_dialog_toggle_requested_stream) = relay();
+        let (error_occurred_relay, _error_occurred_stream) = relay();
 
         let file_dialog_visible = Atom::new(false);
         let search_filter = Atom::new(String::new());
@@ -195,11 +199,19 @@ impl NovyWaveApp {
                 FontFamily::SansSerif,
             ]))
             .layer(self.main_layout())
-            .layer_signal(self.file_dialog_visible.signal().map_true(|| {
-                El::new()
-                    .s(Height::fill())
-                    .s(Width::fill())
-                    .child("File Dialog")
+            .layer_signal(self.file_dialog_visible.signal().map_true({
+                let tracked_files = self.tracked_files.clone();
+                let selected_variables = self.selected_variables.clone();
+                let config = self.config.clone();
+                let file_dialog_visible = self.file_dialog_visible.clone();
+                move || {
+                    crate::views::file_paths_dialog(
+                        tracked_files.clone(),
+                        selected_variables.clone(), 
+                        config.clone(),
+                        file_dialog_visible.clone()
+                    )
+                }
             }))
             .layer(self.toast_notifications_container())
     }
@@ -214,19 +226,23 @@ impl NovyWaveApp {
         )
     }
 
-    /// File paths dialog
-    fn file_paths_dialog(&self) -> impl Element {
-        El::new() // Placeholder
-            .s(Height::fill())
-            .s(Width::fill())
-            .child("File Dialog")
+    /// Files panel with integrated load button
+    pub fn files_panel(&self) -> impl Element {
+        crate::views::files_panel(
+            self.tracked_files.clone(),
+            self.selected_variables.clone(),
+            crate::views::load_files_button_with_progress(
+                self.tracked_files.clone(),
+                ButtonVariant::Outline,
+                ButtonSize::Small,
+                Some(IconName::Folder),
+                self.file_dialog_visible.clone()
+            )
+        )
     }
 
-    /// Toast notifications container
+
     fn toast_notifications_container(&self) -> impl Element {
-        El::new() // Placeholder
-            .s(Height::fill())
-            .s(Width::fill())
-            .child("Toast Notifications")
+        crate::error_ui::toast_notifications_container(self.config.clone())
     }
 }
