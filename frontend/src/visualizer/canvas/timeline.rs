@@ -1,4 +1,4 @@
-use crate::visualizer::timeline::time_types::NsPerPixel;
+use crate::visualizer::timeline::timeline_actor::NsPerPixel;
 use crate::visualizer::timeline::timeline_actor::{current_ns_per_pixel, current_viewport};
 use std::collections::HashSet;
 
@@ -23,6 +23,9 @@ impl TimelineContext {
         }
     }
 }
+
+/// Default canvas width for fallback calculations when actual canvas width is unavailable
+const DEFAULT_CANVAS_WIDTH: u32 = 800;
 
 /// Minimum range calculation based on maximum zoom level
 pub fn get_min_valid_range_ns(canvas_width: u32) -> u64 {
@@ -94,7 +97,7 @@ impl TimelineContext {
 
         // Ensure minimum range for coordinate precision (but don't override valid microsecond ranges!)
         let file_range = max_time - min_time;
-        let canvas_width = 800_u32; // DEFAULT_CANVAS_WIDTH fallback for calculations
+        let canvas_width = self.waveform_timeline.canvas_width.signal().lock_ref().max(800.0) as u32;
         if file_range < get_min_valid_range_ns(canvas_width) as f64 / 1_000_000_000.0 {
             // Only enforce minimum for truly tiny ranges (< 1 nanosecond)
             let expanded_end = min_time + get_min_valid_range_ns(canvas_width) as f64 / 1_000_000_000.0;
@@ -281,7 +284,7 @@ impl TimelineContext {
         let range_end = viewport.end.display_seconds();
 
         // CRITICAL: Enforce minimum time range to prevent coordinate precision loss
-        let canvas_width = 800_u32; // Fallback canvas width
+        let canvas_width = self.waveform_timeline.canvas_width.signal().lock_ref().max(800.0) as u32;
         let min_zoom_range = get_min_valid_range_ns(canvas_width) as f64 / 1_000_000_000.0;
         let current_range = range_end - range_start;
 
@@ -358,7 +361,7 @@ pub fn validate_and_sanitize_range(start: f64, end: f64) -> (f64, f64) {
 
     // Enforce minimum viable range based on maximum zoom level
     let range = end - start;
-    let canvas_width = 800_u32; // DEFAULT_CANVAS_WIDTH fallback for calculations
+    let canvas_width = DEFAULT_CANVAS_WIDTH; // Fallback for calculations in utility function
     let min_valid_range = get_min_valid_range_ns(canvas_width) as f64 / 1_000_000_000.0;
     if range < min_valid_range {
         let center = (start + end) / 2.0;

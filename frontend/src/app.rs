@@ -9,7 +9,7 @@ use crate::dataflow::atom::Atom;
 use crate::dataflow::{Relay, relay};
 use crate::selected_variables::SelectedVariables;
 use crate::tracked_files::TrackedFiles;
-use crate::visualizer::timeline::timeline_actor::WaveformTimeline;
+use crate::visualizer::timeline::WaveformTimeline;
 use shared::{DownMsg, UpMsg};
 
 // Import from extracted modules
@@ -76,7 +76,7 @@ impl NovyWaveApp {
         let selected_variables = SelectedVariables::new().await;
         
         // Create MaximumTimelineRange standalone actor for centralized range computation
-        let maximum_timeline_range = crate::visualizer::timeline::timeline_actor::MaximumTimelineRange::new(
+        let maximum_timeline_range = crate::visualizer::timeline::MaximumTimelineRange::new(
             tracked_files.clone(),
             selected_variables.clone(),
         ).await;

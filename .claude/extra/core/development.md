@@ -726,6 +726,39 @@ config.rs             // Config utilities IN the config domain
 
 **Instead:** Place utility functions directly in their domain modules where they belong.
 
+### File Splitting by Domain Objects (MANDATORY)
+
+**CRITICAL: When splitting large files, organize by domain objects, not by item types**
+
+**✅ CORRECT: Split by domain objects/responsibilities**
+```rust
+// Split timeline_actor.rs into domain-driven modules:
+timeline/
+  waveform_timeline.rs     // WaveformTimeline actor and its business logic
+  maximum_range.rs         // MaximumTimelineRange standalone actor  
+  cursor_control.rs        // CursorController actor and its operations
+  viewport_manager.rs      // ViewportManager actor and its state
+```
+
+**❌ WRONG: Split by technical categories (types, utils, helpers)**
+```rust  
+// DON'T create technical utility modules:
+timeline/
+  types.rs                 // Generic type definitions divorced from domain
+  events.rs               // Event handlers separated from their actors
+  utils.rs                // Utility functions divorced from domain logic
+  cache.rs                // Cache operations separated from their domain
+```
+
+**Key Principle:** Each module should contain **complete domain responsibility** - the actor, its types, its operations, and its business logic together, not scattered across technical utility files.
+
+**Domain Object Organization Benefits:**
+- **Complete ownership** - Each module owns its complete domain
+- **Single responsibility** - Clear boundaries between domain concerns  
+- **Easy navigation** - Find all timeline cursor logic in cursor_control.rs
+- **Natural testing** - Test complete domain behaviors, not scattered utilities
+- **Clear dependencies** - Domain interactions are explicit, not hidden in utils
+
 ### Autonomous Sustained Work Pattern
 
 When users request extended autonomous work (e.g. "I won't be here, work as long as possible"), use this proven pattern for sustained productivity:

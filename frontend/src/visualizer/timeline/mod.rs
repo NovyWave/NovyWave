@@ -1,18 +1,38 @@
-// Timeline data and state management
+//! Timeline Actor+Relay domain for waveform timeline management
+//!
+//! Domain-driven organization: Each module contains a complete domain object with its
+//! types, business logic, and operations together.
 
-// Timeline Actor+Relay domain (moved from actors/waveform_timeline.rs)
-pub mod timeline_actor;
+// Time domain - complete time representation and calculations
+pub mod time_domain;
 
-// Core time types and coordinates (will be moved from time_types.rs)
-pub mod time_types;
+// Main timeline actors domain - WaveformTimeline and related actors with operations
+pub mod timeline_actors;
 
-// Timeline utility functions for calculations and formatting
-pub mod time_utils;
+// MaximumTimelineRange domain - standalone derived state actor for range calculations  
+pub mod maximum_timeline_range;
 
-// Re-exports for API compatibility
-// pub use timeline_actor::WaveformTimeline; // Unused re-export
+// Timeline cache domain - signal data storage and cache management
+pub mod timeline_cache;
 
-// Removed - use NovyWaveApp.waveform_timeline directly
+// Cursor animation domain - smooth cursor movement animation control
+pub mod cursor_animation;
 
-// Future coordinate calculation utilities
-// pub mod coordinates;
+// Panning controller domain - left/right viewport panning control
+pub mod panning_controller;
+
+// Canvas state domain - canvas dimensions and rendering state management
+pub mod canvas_state;
+
+// Zoom controller domain - zoom level management and ns_per_pixel calculations
+pub mod zoom_controller;
+
+// Re-exports for API compatibility from respective domains
+pub use time_domain::{TimeNs, DurationNs, NsPerPixel, Viewport, TimelineCoordinates};
+pub use timeline_actors::WaveformTimeline;
+pub use maximum_timeline_range::MaximumTimelineRange;
+pub use timeline_cache::{TimelineCache, TimelineCacheController, ViewportSignalData, CacheRequestState, CacheRequestType};
+pub use cursor_animation::CursorAnimationController;
+pub use panning_controller::PanningController;
+pub use canvas_state::{CanvasStateController, TimelineStats};
+pub use zoom_controller::ZoomController;

@@ -3,7 +3,7 @@ use crate::visualizer::timeline::timeline_actor::{
     current_ns_per_pixel
 };
 // Note: Some synchronous operations maintained for performance in animation loops
-use crate::visualizer::timeline::time_types::NsPerPixel;
+use crate::visualizer::timeline::timeline_actor::NsPerPixel;
 
 
 
@@ -26,9 +26,8 @@ pub fn start_smooth_pan_left(timeline: &crate::visualizer::timeline::timeline_ac
                 } else {
                     break; // Timeline not initialized yet, stop panning
                 }
-                // ✅ ACCEPTABLE: Timer::sleep() for animation timing (16ms = 60fps)
-                // Note: requestAnimationFrame would be better but Timer::sleep is acceptable for animation loops
-                Timer::sleep(16).await; // 60fps for smooth motion
+                // ✅ PROPER: Use Task::next_macro_tick for event loop yielding instead of Timer::sleep
+                Task::next_macro_tick().await;
             }
         });
     }
@@ -51,8 +50,8 @@ pub fn start_smooth_pan_right(timeline: &crate::visualizer::timeline::timeline_a
                 } else {
                     // Timeline not initialized yet - skip this pan frame
                 }
-                // ✅ ACCEPTABLE: Timer::sleep() for animation timing (16ms = 60fps)
-                Timer::sleep(16).await; // 60fps for smooth motion
+                // ✅ PROPER: Use Task::next_macro_tick for event loop yielding instead of Timer::sleep
+                Task::next_macro_tick().await;
             }
         });
     }

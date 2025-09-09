@@ -214,22 +214,6 @@ impl TrackedFiles {
         }
     }
 
-    pub fn files_signal(&self) -> impl Signal<Item = Vec<TrackedFile>> {
-        self.files_vec_signal.signal_cloned()
-    }
-
-    pub fn files_signal_vec(&self) -> impl SignalVec<Item = TrackedFile> {
-        self.files.signal_vec()
-    }
-
-    pub fn file_count_signal(&self) -> impl Signal<Item = usize> {
-        self.files_signal().map(|files| files.len())
-    }
-
-    pub fn get_current_files(&self) -> Vec<TrackedFile> {
-        self.files_vec_signal.get_cloned()
-    }
-
     pub fn reload_file(&self, file_id: String) {
         self.file_reload_requested_relay.send(file_id);
     }

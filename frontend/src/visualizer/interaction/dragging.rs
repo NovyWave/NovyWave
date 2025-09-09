@@ -11,16 +11,16 @@ use shared::DockMode;
 
 /// Global dragging state for all dividers using Atom (local UI state pattern)
 /// ✅ FIXED: Replaced OnceLock with Atom for local UI state management
-static DRAGGING_STATE: std::sync::LazyLock<DraggerState> = std::sync::LazyLock::new(DraggerState::default);
+// ✅ FIXED: LazyLock static eliminated - use local DraggerState instances instead
 
 #[derive(Clone)]
 pub struct DraggerState {
-    /// Which divider is currently being dragged
-    pub active_divider: Mutable<Option<DividerType>>,
+    /// Which divider is currently being dragged (Actor+Relay architecture: Atom for local UI state)
+    pub active_divider: Atom<Option<DividerType>>,
     /// Start position for calculating deltas
-    pub drag_start_position: Mutable<(f32, f32)>,
+    pub drag_start_position: Atom<(f32, f32)>,
     /// Initial dimension value when drag started (prevents jumping)  
-    pub initial_value: Mutable<f32>,
+    pub initial_value: Atom<f32>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -38,22 +38,22 @@ pub enum DividerType {
 impl Default for DraggerState {
     fn default() -> Self {
         Self {
-            active_divider: Mutable::new(None),
-            drag_start_position: Mutable::new((0.0, 0.0)),
-            initial_value: Mutable::new(0.0),
+            active_divider: Atom::new(None),
+            drag_start_position: Atom::new((0.0, 0.0)),
+            initial_value: Atom::new(0.0),
         }
     }
 }
 
-fn dragging_state() -> &'static DraggerState {
-    &DRAGGING_STATE
+/// Create a new dragging state instance (no global static)
+pub fn new_dragging_state() -> DraggerState {
+    DraggerState::default()
 }
 
 // === DRAGGING LOGIC ===
 
 /// Start dragging a divider
-pub fn start_drag(divider_type: DividerType, _start_position: (f32, f32), app_config: &crate::config::AppConfig) {
-    let state = dragging_state();
+pub fn start_drag(state: &DraggerState, divider_type: DividerType, _start_position: (f32, f32), app_config: &crate::config::AppConfig) {
     
     // Set dragging state - get initial value from reactive signal
     state.active_divider.set_neq(Some(divider_type.clone()));
@@ -79,8 +79,7 @@ pub fn start_drag(divider_type: DividerType, _start_position: (f32, f32), app_co
 }
 
 /// Process mouse movement during drag
-pub fn process_drag_movement(current_position: (f32, f32), app_config: &crate::config::AppConfig) {
-    let state = dragging_state();
+pub fn process_drag_movement(state: &DraggerState, current_position: (f32, f32), app_config: &crate::config::AppConfig) {
     
     if let Some(divider_type) = state.active_divider.get_cloned() {
         let start_pos = state.drag_start_position.get();
@@ -141,8 +140,7 @@ pub fn process_drag_movement(current_position: (f32, f32), app_config: &crate::c
 }
 
 /// Stop dragging
-pub fn end_drag() {
-    let state = dragging_state();
+pub fn end_drag(state: &DraggerState) {
     
     if let Some(_divider_type) = state.active_divider.get_cloned() {
         // Divider was active, now ending drag
@@ -185,20 +183,20 @@ fn update_config_dimension(divider_type: &DividerType, new_value: f32, app_confi
 // === DRAGGING SIGNALS ===
 
 /// Check if any divider is currently being dragged
-pub fn is_any_divider_dragging() -> impl Signal<Item = bool> {
-    dragging_state().active_divider.signal_ref(|divider| divider.is_some())
+pub fn is_any_divider_dragging(state: &DraggerState) -> impl Signal<Item = bool> {
+    state.active_divider.signal_ref(|divider| divider.is_some())
 }
 
 /// Check if a specific divider type is being dragged
-pub fn is_divider_dragging(divider_type: DividerType) -> impl Signal<Item = bool> {
-    dragging_state().active_divider.signal_ref(move |active| {
+pub fn is_divider_dragging(state: &DraggerState, divider_type: DividerType) -> impl Signal<Item = bool> {
+    state.active_divider.signal_ref(move |active| {
         matches!(active, Some(active_type) if *active_type == divider_type)
     })
 }
 
 /// Get the currently active divider type
-pub fn active_divider_type_signal() -> impl Signal<Item = Option<DividerType>> {
-    dragging_state().active_divider.signal_cloned()
+pub fn active_divider_type_signal(state: &DraggerState) -> impl Signal<Item = Option<DividerType>> {
+    state.active_divider.signal_cloned()
 }
 
 // === PANEL DIMENSION SIGNALS ===

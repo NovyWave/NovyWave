@@ -1,6 +1,6 @@
 use crate::dataflow::{Actor, Relay, relay};
 use crate::platform::{CurrentPlatform, Platform};
-use crate::visualizer::timeline::time_types::TimeNs;
+use crate::visualizer::timeline::TimeNs;
 use futures::{StreamExt, select};
 use serde::{Deserialize, Serialize};
 use shared::UpMsg;

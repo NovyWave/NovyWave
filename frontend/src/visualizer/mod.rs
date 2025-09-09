@@ -16,8 +16,4 @@ pub mod interaction;
 pub mod testing;
 
 // Re-export commonly used types for convenience  
-// pub use timeline::time_types::*;        // Unused re-export
-// pub use timeline::timeline_service::*;  // Unused re-export
-// pub use formatting::signal_values::*;   // Unused re-export
-// pub use canvas::waveform_canvas::*;     // Unused re-export
-// pub use interaction::dragging::*;       // Unused re-export
+// All timeline types now integrated directly in timeline_actor domain

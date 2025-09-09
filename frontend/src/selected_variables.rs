@@ -241,9 +241,6 @@ impl SelectedVariables {
         }
     }
 
-    pub fn variable_count_signal(&self) -> impl zoon::Signal<Item = usize> {
-        self.variables.signal_vec().len().dedupe()
-    }
 
 
     pub fn file_variables_signal(&self, file_path: String) -> impl zoon::Signal<Item = Vec<SelectedVariable>> {
@@ -263,33 +260,6 @@ impl SelectedVariables {
         &self.tree_selection
     }
 
-    pub fn filtered_variables_signal(&self) -> impl zoon::Signal<Item = Vec<SelectedVariable>> {
-        use zoon::map_ref;
-        map_ref! {
-            let variables = self.variables_vec_actor.signal(),
-            let filter_text = self.search_filter.signal() => {
-                if filter_text.is_empty() {
-                    variables.clone()
-                } else {
-                    let filter_lower = filter_text.to_lowercase();
-                    variables.iter()
-                        .filter(|v| {
-                            let parts: Vec<&str> = v.unique_id.split('|').collect();
-                            if parts.len() == 3 {
-                                let scope = parts[1];
-                                let variable_name = parts[2];
-                                scope.to_lowercase().contains(&filter_lower) ||
-                                variable_name.to_lowercase().contains(&filter_lower)
-                            } else {
-                                v.unique_id.to_lowercase().contains(&filter_lower)
-                            }
-                        })
-                        .cloned()
-                        .collect()
-                }
-            }
-        }
-    }
 }
 
 impl SelectedVariables {

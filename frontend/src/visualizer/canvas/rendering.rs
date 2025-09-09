@@ -1,5 +1,5 @@
 // Removed current_variables import - will be accessed through SelectedVariables parameter
-use crate::visualizer::timeline::time_types::Viewport;
+use crate::visualizer::timeline::timeline_actor::Viewport;
 use crate::visualizer::timeline::timeline_actor::{
     current_viewport, // TODO: Replace current_cursor_position_seconds with cursor_position_signal() for proper reactive patterns
 };
