@@ -12,6 +12,11 @@ use crate::tracked_files::TrackedFiles;
 use crate::visualizer::timeline::timeline_actor::WaveformTimeline;
 use shared::{DownMsg, UpMsg};
 
+// Import from extracted modules
+use crate::action_buttons::load_files_button_with_progress;
+use crate::file_management::files_panel;
+use crate::file_picker::file_paths_dialog;
+
 /// Self-contained NovyWave application
 pub struct NovyWaveApp {
     /// File tracking and management domain
@@ -205,7 +210,7 @@ impl NovyWaveApp {
                 let config = self.config.clone();
                 let file_dialog_visible = self.file_dialog_visible.clone();
                 move || {
-                    crate::views::file_paths_dialog(
+                    file_paths_dialog(
                         tracked_files.clone(),
                         selected_variables.clone(), 
                         config.clone(),
@@ -218,7 +223,7 @@ impl NovyWaveApp {
 
     /// Main layout
     fn main_layout(&self) -> impl Element {
-        crate::views::main_layout(
+        crate::main_layout(
             &self.tracked_files,
             &self.selected_variables,
             &self.waveform_timeline,
@@ -228,10 +233,10 @@ impl NovyWaveApp {
 
     /// Files panel with integrated load button
     pub fn files_panel(&self) -> impl Element {
-        crate::views::files_panel(
+        files_panel(
             self.tracked_files.clone(),
             self.selected_variables.clone(),
-            crate::views::load_files_button_with_progress(
+            load_files_button_with_progress(
                 self.tracked_files.clone(),
                 ButtonVariant::Outline,
                 ButtonSize::Small,

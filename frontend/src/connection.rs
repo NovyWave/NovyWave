@@ -3,7 +3,7 @@ use futures::stream::StreamExt;
 use crate::error_display::{log_error_console_only, ErrorAlert};
 use crate::tracked_files::update_tracked_file_state;
 use crate::selected_variables::find_scope_full_name;
-use crate::views::is_cursor_within_variable_time_range;
+use crate::signal_processing::is_cursor_within_variable_time_range;
 use shared::LoadingStatus;
 use shared::{DownMsg, UpMsg};
 
