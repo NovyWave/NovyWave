@@ -33,6 +33,59 @@ When making changes to files, first understand the file's code conventions. Mimi
 
 **Why This Matters**: Incomplete error resolution breaks compilation and wastes debugging time later.
 
+### Expressive State Types (CRITICAL)
+
+**MANDATORY: Never use misleading default values - use expressive types that represent actual state**
+
+**❌ WRONG: Misleading defaults that look like real data**
+```rust
+// DANGER: 0 or (0,0) looks like valid data but represents "no data"
+let canvas_width = 0.0;         // Is this "no canvas" or "zero-width canvas"?
+let timeline_range = (0.0, 0.0); // Is this "no range" or "zero-duration range"?
+let cursor_position = 0;        // Is this "no position" or "start position"?
+```
+
+**✅ CORRECT: Expressive types that clearly represent state**
+```rust
+// Clear state representation with Option
+let canvas_width: Option<f32> = None;           // Clearly "not measured yet"
+let timeline_range: Option<(f64, f64)> = None;  // Clearly "no data loaded"
+let cursor_position: Option<TimeNs> = None;     // Clearly "no position set"
+
+// Even better: Custom enums for complex states
+#[derive(Debug, Clone)]
+enum CanvasState {
+    NotMeasured,
+    Measuring,
+    Ready { width: f32, height: f32 },
+    ResizeInProgress { old: (f32, f32), new: (f32, f32) },
+}
+
+#[derive(Debug, Clone)]
+enum TimelineRange {
+    NoData,
+    Loading,
+    Ready { start: f64, end: f64 },
+    Error(String),
+}
+
+// Advanced: Nested options for complex scenarios
+type DataState<T> = Result<Option<T>, String>; // Error | Loading(None) | Ready(Some(data))
+```
+
+**Key Principles:**
+- **Never use 0, (0,0), empty strings as "no data" indicators**
+- **Use `Option<T>` for simple present/absent states**
+- **Use custom enums when multiple states exist (Loading, Error, etc.)**
+- **Consider `Result<Option<T>, E>` for error + loading + data scenarios**
+- **Make invalid states unrepresentable through types**
+
+**Why this matters:**
+- **Debugging nightmare prevention**: No more guessing "is 0 a real value or no data?"
+- **Type safety**: Compiler forces handling of all possible states
+- **Self-documenting**: Code clearly expresses what state represents
+- **Prevents silent failures**: Can't accidentally use "no data" as real data
+
 ### Comment Antipatterns to Avoid
 
 **NEVER add unnecessary code comments** like:
@@ -758,6 +811,33 @@ timeline/
 - **Easy navigation** - Find all timeline cursor logic in cursor_control.rs
 - **Natural testing** - Test complete domain behaviors, not scattered utilities
 - **Clear dependencies** - Domain interactions are explicit, not hidden in utils
+
+### Successful Modularization Example: timeline_actors.rs
+
+**PROVEN SUCCESS PATTERN:** The timeline_actors.rs modularization achieved 57% size reduction using domain extraction:
+
+**Original:** 1,593 line monolithic file with 6+ Actor systems  
+**Result:** Clean domain-driven modules following MaximumTimelineRange extraction pattern
+
+```rust
+// ✅ EXTRACTED DOMAIN CONTROLLERS (908 lines total):
+timeline/
+  maximum_timeline_range.rs    // Derived state actor for timeline bounds
+  timeline_cache.rs           // Signal data caching (169 lines)
+  cursor_animation.rs         // Cursor movement animation (140 lines)  
+  panning_controller.rs       // Left/right viewport panning (95 lines)
+  canvas_state.rs            // Canvas dimensions and rendering (195 lines)
+  zoom_controller.rs          // Complete zoom management (282 lines)
+```
+
+**Extraction Benefits Achieved:**
+- ✅ **Domain-driven separation** - Each controller manages one functional area
+- ✅ **Clean boundaries** - Minimal coupling between controllers
+- ✅ **Actor+Relay compliance** - No architectural violations
+- ✅ **Maintainable size** - Each module 100-300 lines vs 1,593 line monolith
+- ✅ **Complete responsibility** - Controllers own their complete domain logic
+
+**Replication Pattern:** Use this same approach for other monolithic files by identifying distinct Actor systems and extracting them as complete domain controllers following the MaximumTimelineRange extraction pattern.
 
 ### Autonomous Sustained Work Pattern
 

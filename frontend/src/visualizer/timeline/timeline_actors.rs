@@ -12,10 +12,6 @@ use std::collections::{BTreeMap, HashMap};
 // Import time domain
 use super::time_domain::{TimeNs, NsPerPixel, Viewport};
 
-// Canvas dimension constants - extracted from hardcoded values
-const DEFAULT_CANVAS_WIDTH: f32 = 800.0;
-const DEFAULT_CANVAS_HEIGHT: f32 = 400.0;
-const DEFAULT_TIMELINE_RANGE_NS: u64 = 1_000_000_000; // 1 second
 
 // Import extracted domain modules
 use super::maximum_timeline_range::MaximumTimelineRange;
@@ -332,9 +328,9 @@ impl WaveformTimeline {
         
         // Helper function to get initial viewport from file data
         let get_initial_viewport = || {
-            // During initialization, use fallback since range will be computed later
+            // During initialization, return None viewport since range will be computed from actual data
             // The range will update via timeline_range_stream once files are loaded
-            Viewport::new(TimeNs::ZERO, TimeNs::from_nanos(DEFAULT_TIMELINE_RANGE_NS))
+            Viewport::new(TimeNs::ZERO, TimeNs::ZERO) // Will be updated when real data loads
         };
 
         // Create viewport actor with comprehensive event handling  
@@ -403,17 +399,8 @@ impl WaveformTimeline {
                                             TimeNs::from_external_seconds(max_time)
                                         );
                                         viewport_handle.set_neq(full_timeline_viewport);
-                                    } else {
-                                        // Fallback viewport using default range if no timeline range cached
-                                        let (file_min, file_max) = (0.0, DEFAULT_TIMELINE_RANGE_NS as f64 / 1e9);
-                                        if file_min < file_max {
-                                            let full_timeline_viewport = Viewport::new(
-                                                TimeNs::from_external_seconds(file_min),
-                                                TimeNs::from_external_seconds(file_max)
-                                            );
-                                            viewport_handle.set_neq(full_timeline_viewport);
-                                        }
                                     }
+                                    // No fallback - if no timeline range cached, don't update viewport
                                     
                                     // Center cursor at viewport center
                                     cursor_center_at_viewport_relay_clone.send(());
@@ -589,7 +576,7 @@ impl WaveformTimeline {
             }
         }});
         
-        let canvas_height = Actor::new(DEFAULT_CANVAS_HEIGHT, {
+        let canvas_height = Actor::new(0.0_f32, {
             let canvas_resized_relay_clone = canvas_resized_relay.clone();
             async move |height_handle| {
                 let mut canvas_resized_stream = canvas_resized_relay_clone.subscribe();
@@ -804,7 +791,8 @@ impl WaveformTimeline {
         }
         
         if min_time == f64::MAX || max_time == f64::MIN {
-            (0.0, DEFAULT_TIMELINE_RANGE_NS as f64 / 1e9) // Default range if no data
+            // No fallback values - return None through Option wrapper instead
+            (0.0, 0.0) // Caller should handle this as invalid/no data case
         } else {
             (min_time, max_time)
         }
