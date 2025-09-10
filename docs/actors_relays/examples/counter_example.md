@@ -1,6 +1,8 @@
 # Actor+Relay Example: Counter
 
-This example shows how to transform a simple counter from traditional MoonZoon patterns to the Actor+Relay architecture.
+**CRITICAL: NovyWave uses Actor+Relay architecture - NO raw Mutables allowed**
+
+This example shows how to transform a simple counter from traditional MoonZone patterns to the Actor+Relay architecture.
 
 > **📄 Related Documentation**: For global state patterns using Actor+Relay, see [`counter_example_global.md`](counter_example_global.md). This file focuses on the recommended local state approach.
 
@@ -70,7 +72,7 @@ impl Default for CounterApp {
         // Simple Actor that responds to change events
         let value = Actor::new(0, async move |state| {
             while let Some(amount) = change_stream.next().await {
-                state.update(|value| value + amount);
+                state.set_neq(state.get() + amount);
             }
         });
         

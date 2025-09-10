@@ -346,11 +346,47 @@ expanded_scopes().map(|scopes| render_expanded_state(scopes))
 
 ## Debouncing & Task Management
 
-### True Debouncing with TaskHandle
-```rust
-// ❌ Task::start().cancel() - NOT guaranteed (tasks may still complete)
-// ✅ Task::start_droppable with TaskHandle dropping - guaranteed abortion
+### ✅ MODERN: Pure Actor+Relay Debouncing (RECOMMENDED)
 
+**CRITICAL: Use nested select! loops instead of TaskHandle management for clean, Actor+Relay compliant debouncing**
+
+```rust
+// ✅ CLEAN PATTERN: Pure Actor+Relay debouncing without TaskHandle complexity
+let debounce_actor = Actor::new((), async move |_state| {
+    loop {
+        select! {
+            Some(()) = save_requested_stream.next() => {
+                // Debounce loop - wait for quiet period, cancelling if new event arrives
+                loop {
+                    select! {
+                        // New save request cancels timer
+                        Some(()) = save_requested_stream.next() => {
+                            continue; // Restart timer
+                        }
+                        // Timer completes - do the save
+                        _ = Timer::sleep(1000) => {
+                            perform_operation().await;
+                            println!("💾 Operation completed after debounce");
+                            break; // Back to outer loop
+                        }
+                    }
+                }
+            }
+        }
+    }
+});
+```
+
+**Why this pattern is superior:**
+- **Pure Actor+Relay** - No TaskHandle or external task management
+- **Natural cancellation** - Timer futures automatically cancelled by select!
+- **No Arc/Mutex complexity** - Simple nested loops handle state
+- **Actor lifetime management** - Store actor as struct field to keep alive
+- **Automatic cleanup** - No manual task dropping required
+
+### ❌ LEGACY: TaskHandle Debouncing (DEPRECATED)
+```rust
+// ❌ Old pattern - prefer Actor+Relay approach above
 let debounce_task: Mutable<Option<TaskHandle<()>>> = Mutable::new(None);
 signal.for_each_sync(move |_| {
     debounce_task.set(None); // Drop immediately aborts task

@@ -1,7 +1,7 @@
 use crate::dataflow::{Actor, Relay, relay};
 use crate::platform::{CurrentPlatform, Platform};
 use crate::visualizer::timeline::TimeNs;
-use futures::{StreamExt, select};
+use futures::{StreamExt, FutureExt, select};
 use serde::{Deserialize, Serialize};
 use shared::UpMsg;
 use shared::{self, AppConfig as SharedAppConfig, DockMode, Theme as SharedTheme};
@@ -359,82 +359,70 @@ impl AppConfig {
             let toast_actor = toast_dismiss_ms_actor.clone();
             
             async move |_state| {
-                let debounce_task = Arc::new(std::sync::Mutex::new(None::<TaskHandle>));
-
                 loop {
                     select! {
-                        save_request = config_save_requested_stream.next() => {
-                            if let Some(()) = save_request {
-                                let debounce_task = debounce_task.clone();
-                                let theme_actor = theme_actor.clone();
-                                let dock_mode_actor = dock_mode_actor.clone();
-                                let files_width_right_actor = files_width_right_actor.clone();
-                                let files_height_right_actor = files_height_right_actor.clone();
-                                let files_width_bottom_actor = files_width_bottom_actor.clone();
-                                let files_height_bottom_actor = files_height_bottom_actor.clone();
-                                let variables_width_actor = variables_width_actor.clone();
-                                let timeline_height_actor = timeline_height_actor.clone();
-                                let name_width_actor = name_width_actor.clone();
-                                let value_width_actor = value_width_actor.clone();
-                                let session_actor = session_actor.clone();
-                                let toast_actor = toast_actor.clone();
+                        _ = config_save_requested_stream.next() => {
+                            // Debounce loop - wait for quiet period, cancelling if new event arrives
+                            loop {
+                                select! {
+                                    // New save request cancels timer
+                                    _ = config_save_requested_stream.next() => {
+                                        continue; // Restart timer
+                                    }
+                                    // Timer completes - do the save
+                                    _ = Timer::sleep(1000).fuse() => {
+                                        let theme = theme_actor.signal().to_stream().next().await.unwrap_or_default();
+                                        let dock_mode = dock_mode_actor.signal().to_stream().next().await.unwrap_or_default();
+                                        let files_width_right = files_width_right_actor.signal().to_stream().next().await.unwrap_or_default();
+                                        let files_height_right = files_height_right_actor.signal().to_stream().next().await.unwrap_or_default();
+                                        let files_width_bottom = files_width_bottom_actor.signal().to_stream().next().await.unwrap_or_default();
+                                        let files_height_bottom = files_height_bottom_actor.signal().to_stream().next().await.unwrap_or_default();
+                                        let variables_width = variables_width_actor.signal().to_stream().next().await.unwrap_or_default();
+                                        let timeline_height = timeline_height_actor.signal().to_stream().next().await.unwrap_or_default();
+                                        let name_width = name_width_actor.signal().to_stream().next().await.unwrap_or_default();
+                                        let value_width = value_width_actor.signal().to_stream().next().await.unwrap_or_default();
+                                        let session = session_actor.signal().to_stream().next().await.unwrap_or_default();
+                                        let toast_dismiss_ms = toast_actor.signal().to_stream().next().await.unwrap_or_default();
 
-                                *debounce_task.lock().unwrap() = None;
-
-                                let handle = Task::start_droppable(async move {
-                                    Timer::sleep(1000).await;
-
-                                    let theme = theme_actor.signal().to_stream().next().await.unwrap_or_default();
-                                    let dock_mode = dock_mode_actor.signal().to_stream().next().await.unwrap_or_default();
-                                    let files_width_right = files_width_right_actor.signal().to_stream().next().await.unwrap_or_default();
-                                    let files_height_right = files_height_right_actor.signal().to_stream().next().await.unwrap_or_default();
-                                    let files_width_bottom = files_width_bottom_actor.signal().to_stream().next().await.unwrap_or_default();
-                                    let files_height_bottom = files_height_bottom_actor.signal().to_stream().next().await.unwrap_or_default();
-                                    let variables_width = variables_width_actor.signal().to_stream().next().await.unwrap_or_default();
-                                    let timeline_height = timeline_height_actor.signal().to_stream().next().await.unwrap_or_default();
-                                    let name_width = name_width_actor.signal().to_stream().next().await.unwrap_or_default();
-                                    let value_width = value_width_actor.signal().to_stream().next().await.unwrap_or_default();
-                                    let session = session_actor.signal().to_stream().next().await.unwrap_or_default();
-                                    let toast_dismiss_ms = toast_actor.signal().to_stream().next().await.unwrap_or_default();
-
-                                    let shared_config = shared::AppConfig {
-                                        app: shared::AppSection::default(),
-                                        workspace: shared::WorkspaceSection {
-                                            opened_files: session.opened_files,
-                                            docked_bottom_dimensions: shared::DockedBottomDimensions {
-                                                files_and_scopes_panel_width: files_width_bottom as f64,
-                                                files_and_scopes_panel_height: files_height_bottom as f64,
-                                                selected_variables_panel_name_column_width: Some(name_width as f64),
-                                                selected_variables_panel_value_column_width: Some(value_width as f64),
+                                        let shared_config = shared::AppConfig {
+                                            app: shared::AppSection::default(),
+                                            workspace: shared::WorkspaceSection {
+                                                opened_files: session.opened_files,
+                                                docked_bottom_dimensions: shared::DockedBottomDimensions {
+                                                    files_and_scopes_panel_width: files_width_bottom as f64,
+                                                    files_and_scopes_panel_height: files_height_bottom as f64,
+                                                    selected_variables_panel_name_column_width: Some(name_width as f64),
+                                                    selected_variables_panel_value_column_width: Some(value_width as f64),
+                                                },
+                                                docked_right_dimensions: shared::DockedRightDimensions {
+                                                    files_and_scopes_panel_width: files_width_right as f64,
+                                                    files_and_scopes_panel_height: files_height_right as f64,
+                                                    selected_variables_panel_name_column_width: Some(name_width as f64),
+                                                    selected_variables_panel_value_column_width: Some(value_width as f64),
+                                                },
+                                                dock_mode,
+                                                expanded_scopes: session.file_picker_expanded_directories.clone(),
+                                                load_files_expanded_directories: session.file_picker_expanded_directories,
+                                                selected_scope_id: None,
+                                                load_files_scroll_position: session.file_picker_scroll_position,
+                                                variables_search_filter: session.variables_search_filter,
+                                                selected_variables: Vec::new(),
+                                                timeline_cursor_position_ns: 0,
+                                                timeline_visible_range_start_ns: None,
+                                                timeline_visible_range_end_ns: None,
+                                                timeline_zoom_level: 1.0,
                                             },
-                                            docked_right_dimensions: shared::DockedRightDimensions {
-                                                files_and_scopes_panel_width: files_width_right as f64,
-                                                files_and_scopes_panel_height: files_height_right as f64,
-                                                selected_variables_panel_name_column_width: Some(name_width as f64),
-                                                selected_variables_panel_value_column_width: Some(value_width as f64),
+                                            ui: shared::UiSection {
+                                                theme,
+                                                toast_dismiss_ms: toast_dismiss_ms as u64,
                                             },
-                                            dock_mode,
-                                            expanded_scopes: session.file_picker_expanded_directories.clone(),
-                                            load_files_expanded_directories: session.file_picker_expanded_directories,
-                                            selected_scope_id: None,
-                                            load_files_scroll_position: session.file_picker_scroll_position,
-                                            variables_search_filter: session.variables_search_filter,
-                                            selected_variables: Vec::new(),
-                                            timeline_cursor_position_ns: 0,
-                                            timeline_visible_range_start_ns: None,
-                                            timeline_visible_range_end_ns: None,
-                                            timeline_zoom_level: 1.0,
-                                        },
-                                        ui: shared::UiSection {
-                                            theme,
-                                            toast_dismiss_ms: toast_dismiss_ms as u64,
-                                        },
-                                    };
+                                        };
 
-                                    let _ = CurrentPlatform::send_message(UpMsg::SaveConfig(shared_config)).await;
-                                });
-
-                                *debounce_task.lock().unwrap() = Some(handle);
+                                        let _ = CurrentPlatform::send_message(UpMsg::SaveConfig(shared_config)).await;
+                                        zoon::println!("💾 Config saved after debounce");
+                                        break; // Back to outer loop
+                                    }
+                                }
                             }
                         }
                     }

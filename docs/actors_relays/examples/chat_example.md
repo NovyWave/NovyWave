@@ -1,6 +1,8 @@
 # Actor+Relay Example: Chat Application
 
-This example shows how to transform a WebSocket-based chat application from traditional MoonZoon patterns to the Actor+Relay architecture, demonstrating async Actor patterns and external service integration.
+**CRITICAL: NovyWave uses Actor+Relay architecture - NO raw Mutables allowed**
+
+This example shows how to transform a WebSocket-based chat application from traditional MoonZone patterns to the Actor+Relay architecture, demonstrating async Actor patterns and external service integration.
 
 > **📄 Related Documentation**: For global state patterns using Actor+Relay, see [`chat_example_global.md`](chat_example_global.md). This file focuses on the recommended local state approach.
 

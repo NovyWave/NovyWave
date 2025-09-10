@@ -332,7 +332,8 @@ fn setup_state_to_config_persistence() {
 // Deduplication to prevent unnecessary updates
 TIMELINE_CURSOR_POSITION.signal().dedupe().for_each_sync(|pos| expensive_update(pos));
 
-// Debouncing for expensive operations  
+// Debouncing for expensive operations - see reference.md for modern Actor+Relay pattern
+// ❌ DEPRECATED: Use Actor+Relay nested select! pattern instead
 let debounce_handle: Mutable<Option<TaskHandle<()>>> = Mutable::new(None);
 signal.for_each_sync(move |_| {
     debounce_handle.set(None); // Cancel previous

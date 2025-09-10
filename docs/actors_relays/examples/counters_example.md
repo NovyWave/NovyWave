@@ -1,6 +1,8 @@
 # Actor+Relay Example: Counters (Dynamic Collection)
 
-This example shows how to transform a complex multi-counter application with dynamic grid sizing from traditional MoonZoon patterns to clean Actor+Relay architecture using simplified patterns.
+**CRITICAL: NovyWave uses Actor+Relay architecture - NO raw Mutables allowed**
+
+This example shows how to transform a complex multi-counter application with dynamic grid sizing from traditional MoonZone patterns to clean Actor+Relay architecture using simplified patterns.
 
 > **📄 Related Documentation**: For global state patterns using Actor+Relay, see [`counters_example_global.md`](counters_example_global.md). This file focuses on the recommended local state approach.
 
@@ -150,10 +152,10 @@ impl Default for GridDimensionControl {
             loop {
                 select! {
                     Some(()) = increment_stream.next() => {
-                        state.update(|current| current + 1);
+                        state.set_neq(state.get() + 1);
                     }
                     Some(()) = decrement_stream.next() => {
-                        state.update(|current| current.saturating_sub(1).max(1));
+                        state.set_neq(state.get().saturating_sub(1).max(1));
                     }
                 }
             }
