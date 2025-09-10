@@ -36,3 +36,10 @@ pub use cursor_animation::CursorAnimationController;
 pub use panning_controller::PanningController;
 pub use canvas_state::{CanvasStateController, TimelineStats};
 pub use zoom_controller::ZoomController;
+
+// Compatibility module alias for timeline_actor -> timeline_actors
+pub mod timeline_actor {
+    pub use super::timeline_actors::*;
+    // Re-export types from time_domain for compatibility
+    pub use super::time_domain::{TimeNs, DurationNs, NsPerPixel, Viewport, TimelineCoordinates};
+}

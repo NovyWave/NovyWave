@@ -57,7 +57,6 @@ pub struct RenderingParameters {
     pub selected_variables: Vec<SelectedVariable>,
 }
 
-#[derive(Clone)]
 pub struct WaveformRenderer {
     pub rendering_state: Actor<RenderingState>,
     pub render_requested_relay: Relay<RenderingParameters>,
@@ -65,6 +64,24 @@ pub struct WaveformRenderer {
     
     canvas: Option<Fast2DCanvas>,
 }
+
+impl Clone for WaveformRenderer {
+    fn clone(&self) -> Self {
+        // Canvas cannot be cloned (GPU resource), so we create a new instance without canvas
+        // The canvas will be set later via set_canvas method
+        Self {
+            rendering_state: self.rendering_state.clone(),
+            render_requested_relay: self.render_requested_relay.clone(),
+            render_completed_relay: self.render_completed_relay.clone(),
+            canvas: None,
+        }
+    }
+}
+
+// SAFETY: WaveformRenderer is only used on the main thread where GPU resources are accessed
+// The Fast2DCanvas contains raw pointers but is only used in single-threaded WASM context
+unsafe impl Send for WaveformRenderer {}
+unsafe impl Sync for WaveformRenderer {}
 
 #[derive(Clone, Debug)]
 struct RenderingState {
@@ -93,26 +110,29 @@ impl WaveformRenderer {
         let (render_requested_relay, mut render_requested_stream) = relay();
         let (render_completed_relay, _render_completed_stream) = relay();
         
+        let render_completed_relay_for_actor = render_completed_relay.clone();
         let rendering_state = Actor::new(RenderingState::default(), async move |state| {
             loop {
                 select! {
-                    Some(params) = render_requested_stream.next() => {
-                        let start_time = Self::get_current_time_ms();
-                        
-                        let objects = Self::build_render_objects(&params);
-                        let render_time = Self::get_current_time_ms() - start_time;
-                        
-                        let mut current_state = state.lock_mut();
-                        current_state.render_count += 1;
-                        current_state.last_render_params = Some(params);
-                        let render_count = current_state.render_count;
-                        drop(current_state);
-                        
-                        render_completed_relay.send(RenderResult {
-                            render_count,
-                            objects_rendered: objects.len(),
-                            rendering_time_ms: render_time,
-                        });
+                    params_result = render_requested_stream.next() => {
+                        if let Some(params) = params_result {
+                            let start_time = Self::get_current_time_ms();
+                            
+                            let objects = Self::build_render_objects(&params);
+                            let render_time = Self::get_current_time_ms() - start_time;
+                            
+                            let mut current_state = state.lock_mut();
+                            current_state.render_count += 1;
+                            current_state.last_render_params = Some(params);
+                            let render_count = current_state.render_count;
+                            drop(current_state);
+                            
+                            render_completed_relay_for_actor.send(RenderResult {
+                                render_count,
+                                objects_rendered: objects.len(),
+                                rendering_time_ms: render_time,
+                            });
+                        }
                     }
                 }
             }
@@ -132,6 +152,18 @@ impl WaveformRenderer {
     
     pub fn has_canvas(&self) -> bool {
         self.canvas.is_some()
+    }
+    
+    /// Set the theme for the renderer (placeholder for future theme handling)
+    pub fn set_theme(&mut self, _theme: NovyUITheme) {
+        // Theme will be passed through RenderingParameters when rendering
+        // This method exists for API compatibility
+    }
+    
+    /// Set the canvas dimensions (placeholder for future dimension handling)
+    pub fn set_dimensions(&mut self, _width: f32, _height: f32) {
+        // Dimensions will be passed through RenderingParameters when rendering
+        // This method exists for API compatibility
     }
     
     pub fn render_frame(&mut self, params: RenderingParameters) -> bool {

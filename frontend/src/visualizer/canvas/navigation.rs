@@ -49,12 +49,14 @@ impl NavigationController {
         let (next_transition_requested_relay, mut next_transition_stream) = relay();
         let (navigation_completed_relay, _navigation_completed_stream) = relay();
 
-        let debounce_state = Actor::new(NavigationDebounceState::default(), async move |state| {
-            let mut cached_cursor_position: Option<f64> = None;
-            let mut cached_transitions: Vec<f64> = Vec::new();
+        let debounce_state = Actor::new(NavigationDebounceState::default(), {
+            let navigation_completed_relay_for_actor = navigation_completed_relay.clone();
+            async move |state| {
+                let mut cached_cursor_position: Option<f64> = None;
+                let mut cached_transitions: Vec<f64> = Vec::new();
 
-            let mut cursor_stream = cursor_position.signal().to_stream();
-            let mut variables_stream = selected_variables.variables_vec_signal.signal_cloned().to_stream();
+                let mut cursor_stream = cursor_position.signal().to_stream().fuse();
+                let mut variables_stream = selected_variables.variables_vec_actor.signal().to_stream().fuse();
 
             loop {
                 select! {
@@ -73,30 +75,31 @@ impl NavigationController {
                     }
                     previous_request = previous_transition_stream.next() => {
                         if let Some(()) = previous_request {
-                            if let Some(result) = Self::process_navigation_request(
-                                &mut state,
+                            if let Some(result) = Self::process_navigation_with_state_handle(
+                                &mut state.lock_mut(),
                                 NavigationType::PreviousTransition,
                                 cached_cursor_position,
                                 &cached_transitions,
-                            ).await {
-                                navigation_completed_relay.send(result);
+                            ) {
+                                navigation_completed_relay_for_actor.send(result);
                             }
                         }
                     }
                     next_request = next_transition_stream.next() => {
                         if let Some(()) = next_request {
-                            if let Some(result) = Self::process_navigation_request(
-                                &mut state,
+                            if let Some(result) = Self::process_navigation_with_state_handle(
+                                &mut state.lock_mut(),
                                 NavigationType::NextTransition,
                                 cached_cursor_position,
                                 &cached_transitions,
-                            ).await {
-                                navigation_completed_relay.send(result);
+                            ) {
+                                navigation_completed_relay_for_actor.send(result);
                             }
                         }
                     }
                 }
             }
+        }
         });
 
         Self {
@@ -109,14 +112,16 @@ impl NavigationController {
 
     fn extract_transitions_from_cache(
         cache: &crate::visualizer::timeline::timeline_cache::TimelineCache,
-        variables: &[crate::selected_variables::SelectedVariable],
+        variables: &[shared::SelectedVariable],
     ) -> Vec<f64> {
         let mut all_transitions = Vec::new();
 
         for variable in variables {
-            let signal_id = match variable.file_path() {
-                Some(file_path) => format!("{}|{}|{}", file_path, variable.scope_path, variable.variable_name),
-                None => continue,
+            let signal_id = match (variable.file_path(), variable.scope_path(), variable.variable_name()) {
+                (Some(file_path), Some(scope_path), Some(variable_name)) => {
+                    format!("{}|{}|{}", file_path, scope_path, variable_name)
+                },
+                _ => continue, // Skip variables with incomplete path information
             };
 
             if let Some(transitions) = cache.raw_transitions.get(&signal_id) {
@@ -127,49 +132,10 @@ impl NavigationController {
         }
 
         all_transitions.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        all_transitions.dedup_by(|a, b| (a - b).abs() < 1e-15);
+        all_transitions.dedup_by(|a, b| (*a - *b).abs() < 1e-15);
         all_transitions
     }
 
-    async fn process_navigation_request(
-        state: &mut Actor<NavigationDebounceState>,
-        navigation_type: NavigationType,
-        current_cursor: Option<f64>,
-        transitions: &[f64],
-    ) -> Option<NavigationResult> {
-        let current_time = (zoon::performance().now() * 1_000_000.0) as u64;
-        let mut debounce_state = state.lock_mut();
-
-        let time_since_last = current_time - debounce_state.last_navigation_time_ns;
-        let debounce_threshold = debounce_state.debounce_period_ms * 1_000_000;
-
-        if time_since_last < debounce_threshold {
-            return None;
-        }
-
-        debounce_state.last_navigation_time_ns = current_time;
-        drop(debounce_state);
-
-        let cursor_pos = current_cursor?;
-        if transitions.is_empty() {
-            return None;
-        }
-
-        let (target_time, wrapped) = match navigation_type {
-            NavigationType::PreviousTransition => {
-                Self::find_previous_transition(cursor_pos, transitions)
-            }
-            NavigationType::NextTransition => {
-                Self::find_next_transition(cursor_pos, transitions)
-            }
-        };
-
-        target_time.map(|time| NavigationResult {
-            target_time_seconds: time,
-            navigation_type,
-            wrapped,
-        })
-    }
 
     fn find_previous_transition(current_cursor: f64, transitions: &[f64]) -> Option<(f64, bool)> {
         const F64_PRECISION_TOLERANCE: f64 = 1e-15;
@@ -214,6 +180,45 @@ impl NavigationController {
         }
     }
 
+    // Helper method that works with state handle directly (for use inside Actor closures)
+    fn process_navigation_with_state_handle(
+        state_handle: &mut impl std::ops::DerefMut<Target = NavigationDebounceState>,
+        navigation_type: NavigationType,
+        current_cursor: Option<f64>,
+        transitions: &[f64],
+    ) -> Option<NavigationResult> {
+        let current_time = (zoon::performance().now() * 1_000_000.0) as u64;
+
+        let time_since_last = current_time - state_handle.last_navigation_time_ns;
+        let debounce_threshold = state_handle.debounce_period_ms * 1_000_000;
+
+        if time_since_last < debounce_threshold {
+            return None;
+        }
+
+        state_handle.last_navigation_time_ns = current_time;
+
+        let cursor_pos = current_cursor?;
+        if transitions.is_empty() {
+            return None;
+        }
+
+        let (target_time, wrapped) = match navigation_type {
+            NavigationType::PreviousTransition => {
+                Self::find_previous_transition(cursor_pos, transitions)
+            }
+            NavigationType::NextTransition => {
+                Self::find_next_transition(cursor_pos, transitions)
+            }
+        }?;
+
+        Some(NavigationResult {
+            target_time_seconds: target_time,
+            navigation_type,
+            wrapped,
+        })
+    }
+
     pub fn request_previous_transition(&self) {
         self.previous_transition_requested_relay.send(());
     }
@@ -222,7 +227,7 @@ impl NavigationController {
         self.next_transition_requested_relay.send(());
     }
 
-    pub fn navigation_completed_signal(&self) -> impl Signal<Item = NavigationResult> {
-        self.navigation_completed_relay.signal()
+    pub fn navigation_completed_signal(&self) -> impl Stream<Item = NavigationResult> {
+        self.navigation_completed_relay.subscribe()
     }
 }

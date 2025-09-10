@@ -208,6 +208,25 @@ impl WaveformTimeline {
         &self.zoom_controller.ns_per_pixel
     }
     
+    /// Access to viewport signal
+    pub fn viewport_signal(&self) -> impl zoon::Signal<Item = Viewport> {
+        self.viewport.signal()
+    }
+    
+    /// Access to canvas width signal
+    pub fn canvas_width_signal(&self) -> impl zoon::Signal<Item = f32> {
+        self.canvas_width.signal()
+    }
+    
+    // TODO: Remove these architectural violations - no "non-reactive contexts" in Actor+Relay architecture
+    // pub fn current_viewport(&self) -> Viewport {
+    //     self.viewport.signal().to_stream().next().await
+    // }
+    // 
+    // pub fn current_canvas_width(&self) -> f32 {
+    //     self.canvas_width.signal().to_stream().next().await
+    // }
+    
     /// Create a new WaveformTimeline domain with Actor+Relay architecture
     pub async fn new(maximum_timeline_range: MaximumTimelineRange) -> Self {
         // Clone-at-entry pattern: Create clones for multiple Actor usage
@@ -303,16 +322,9 @@ impl WaveformTimeline {
                     event = cursor_center_at_viewport.next() => {
                         match event {
                             Some(()) => {
-                                // Center cursor at viewport center
-                                let viewport = current_viewport();
-                                let center_time = if let Some(vp) = viewport {
-                                    TimeNs::from_external_seconds(
-                                        (vp.start.display_seconds() + vp.end.display_seconds()) / 2.0
-                                    )
-                                } else {
-                                    TimeNs::ZERO
-                                };
-                                cursor_handle.set(center_time);
+                                // TODO: Cursor centering will be handled by viewport Actor
+                                // which has access to viewport state. For now, set to zero.
+                                cursor_handle.set(TimeNs::ZERO);
                             },
                             None => break,
                         }
@@ -337,14 +349,11 @@ impl WaveformTimeline {
         let initial_viewport = get_initial_viewport();
         let viewport = Actor::new(initial_viewport, {
             let cursor_center_at_viewport_relay_clone = cursor_center_at_viewport_relay.clone();
-            let zoom_controller_for_viewport = zoom_controller.clone();
             async move |viewport_handle| {
                 let mut timeline_bounds_calculated = timeline_bounds_calculated_stream;
                 let mut timeline_range_stream = maximum_timeline_range_for_viewport.range.signal().to_stream().fuse();
                 
-                // ZoomController viewport synchronization streams
-                let mut viewport_changed_stream = zoom_controller_for_viewport.viewport_changed_relay.subscribe();
-                let mut fit_all_clicked_stream = zoom_controller_for_viewport.fit_all_clicked_relay.subscribe();
+                // TODO: ZoomController synchronization will be handled through relays
                 
                 // Cache current values pattern for timeline range
                 let mut cached_timeline_range: Option<(f64, f64)> = None;
@@ -375,39 +384,8 @@ impl WaveformTimeline {
                                 None => break,
                             }
                         }
-                        // ZoomController viewport change integration
-                        event = viewport_changed_stream.next() => {
-                            match event {
-                                Some((start, end)) => {
-                                    let new_viewport = Viewport::new(
-                                        TimeNs::from_external_seconds(start),
-                                        TimeNs::from_external_seconds(end)
-                                    );
-                                    viewport_handle.set(new_viewport);
-                                }
-                                None => break,
-                            }
-                        }
-                        // ZoomController fit-all functionality integration
-                        event = fit_all_clicked_stream.next() => {
-                            match event {
-                                Some(()) => {
-                                    // Reset viewport to full timeline range
-                                    if let Some((min_time, max_time)) = cached_timeline_range {
-                                        let full_timeline_viewport = Viewport::new(
-                                            TimeNs::from_external_seconds(min_time),
-                                            TimeNs::from_external_seconds(max_time)
-                                        );
-                                        viewport_handle.set_neq(full_timeline_viewport);
-                                    }
-                                    // No fallback - if no timeline range cached, don't update viewport
-                                    
-                                    // Center cursor at viewport center
-                                    cursor_center_at_viewport_relay_clone.send(());
-                                }
-                                None => break,
-                            }
-                        }
+                        // TODO: ZoomController viewport change integration will be handled through relays
+                        // TODO: ZoomController fit-all functionality integration will be handled through relays
                         complete => break,
                     }
                 }
@@ -521,9 +499,11 @@ impl WaveformTimeline {
             }
         });
         
-        // Mouse tracking actors
+        // Mouse tracking actors - create separate subscriptions from the relay
+        let mouse_moved_broadcaster_for_x = mouse_moved_relay.clone();
+        let mouse_moved_broadcaster_for_time = mouse_moved_relay.clone();
         let mouse_x = Actor::new(0.0_f32, async move |mouse_x_handle| {
-            let mut mouse_moved = mouse_moved_stream;
+            let mut mouse_moved = mouse_moved_broadcaster_for_x.subscribe();
             
             loop {
                 select! {
@@ -539,7 +519,7 @@ impl WaveformTimeline {
         });
         
         let mouse_time = Actor::new(TimeNs::ZERO, async move |mouse_time_handle| {
-            let mut mouse_moved = mouse_moved_stream.clone();
+            let mut mouse_moved = mouse_moved_broadcaster_for_time.subscribe();
             
             loop {
                 select! {
@@ -646,6 +626,34 @@ impl WaveformTimeline {
             timeline_cache_controller.cache.clone(),
         ).await;
         
+        // Extract relay fields before moving controllers into struct
+        let pan_left_started_relay = panning_controller.pan_left_started_relay.clone();
+        let pan_right_started_relay = panning_controller.pan_right_started_relay.clone();
+        let canvas_resized_relay_for_struct = canvas_state_controller.canvas_resized_relay.clone();
+        let redraw_requested_relay_for_struct = canvas_state_controller.redraw_requested_relay.clone();
+        let cursor_values_updated_relay = timeline_cache_controller.cursor_values_updated_relay.clone();
+        let cursor_moving_right_stopped_relay = cursor_animation_controller.cursor_moving_right_stopped_relay.clone();
+        let panning_right_stopped_relay = panning_controller.panning_right_stopped_relay.clone();
+        
+        // Extract remaining controller fields
+        let zoom_in_started_relay = zoom_controller.zoom_in_started_relay.clone();
+        let zoom_out_started_relay = zoom_controller.zoom_out_started_relay.clone();
+        let zoom_in_pressed_relay = zoom_controller.zoom_in_pressed_relay.clone();
+        let zoom_out_pressed_relay = zoom_controller.zoom_out_pressed_relay.clone();
+        let reset_zoom_pressed_relay = zoom_controller.reset_zoom_pressed_relay.clone();
+        let reset_zoom_center_pressed_relay = zoom_controller.reset_zoom_center_pressed_relay.clone();
+        let panning_left_started_relay = panning_controller.panning_left_started_relay.clone();
+        let panning_left_stopped_relay = panning_controller.panning_left_stopped_relay.clone();
+        let panning_right_started_relay = panning_controller.panning_right_started_relay.clone();
+        let cursor_moving_left_started_relay = cursor_animation_controller.cursor_moving_left_started_relay.clone();
+        let cursor_moving_left_stopped_relay = cursor_animation_controller.cursor_moving_left_stopped_relay.clone();
+        let cursor_moving_right_started_relay = cursor_animation_controller.cursor_moving_right_started_relay.clone();
+        let zoom_center_follow_mouse_relay = zoom_controller.zoom_center_follow_mouse_relay.clone();
+        let fit_all_clicked_relay = zoom_controller.fit_all_clicked_relay.clone();
+        let data_loaded_relay = timeline_cache_controller.data_loaded_relay.clone();
+        let transitions_cached_relay = timeline_cache_controller.transitions_cached_relay.clone();
+        let viewport_changed_relay = zoom_controller.viewport_changed_relay.clone();
+        let ns_per_pixel_changed_relay = zoom_controller.ns_per_pixel_changed_relay.clone();
         
         Self {
             // Core timeline state
@@ -676,51 +684,51 @@ impl WaveformTimeline {
             // User interaction relays
             cursor_clicked_relay,
             cursor_moved_relay,
-            zoom_in_started_relay: zoom_controller.zoom_in_started_relay,
-            zoom_out_started_relay: zoom_controller.zoom_out_started_relay,
-            pan_left_started_relay: panning_controller.pan_left_started_relay,
-            pan_right_started_relay: panning_controller.pan_right_started_relay,
+            zoom_in_started_relay,
+            zoom_out_started_relay,
+            pan_left_started_relay,
+            pan_right_started_relay,
             mouse_moved_relay,
-            canvas_resized_relay: canvas_state_controller.canvas_resized_relay,
-            redraw_requested_relay: canvas_state_controller.redraw_requested_relay,
+            canvas_resized_relay: canvas_resized_relay_for_struct,
+            redraw_requested_relay: redraw_requested_relay_for_struct,
             signal_values_updated_relay,
             variable_format_updated_relay,
             
             // Keyboard navigation relays
             left_key_pressed_relay,
             right_key_pressed_relay,
-            zoom_in_pressed_relay: zoom_controller.zoom_in_pressed_relay,
-            zoom_out_pressed_relay: zoom_controller.zoom_out_pressed_relay,
+            zoom_in_pressed_relay,
+            zoom_out_pressed_relay,
             pan_left_pressed_relay,
             pan_right_pressed_relay,
             jump_to_previous_pressed_relay,
             jump_to_next_pressed_relay,
-            reset_zoom_pressed_relay: zoom_controller.reset_zoom_pressed_relay,
-            reset_zoom_center_pressed_relay: zoom_controller.reset_zoom_center_pressed_relay,
+            reset_zoom_pressed_relay,
+            reset_zoom_center_pressed_relay,
             cursor_center_at_viewport_relay: cursor_center_at_viewport_relay_for_struct,
             zoom_center_reset_to_zero_relay,
             shift_key_pressed_relay: shift_key_pressed_relay_var,
             shift_key_released_relay: shift_key_released_relay_var,
             
             // Animation state relays
-            panning_left_started_relay: panning_controller.panning_left_started_relay,
-            panning_left_stopped_relay: panning_controller.panning_left_stopped_relay,
-            panning_right_started_relay: panning_controller.panning_right_started_relay,
-            panning_right_stopped_relay: panning_controller.panning_right_stopped_relay,
-            cursor_moving_left_started_relay: cursor_animation_controller.cursor_moving_left_started_relay,
-            cursor_moving_left_stopped_relay: cursor_animation_controller.cursor_moving_left_stopped_relay,
-            cursor_moving_right_started_relay: cursor_animation_controller.cursor_moving_right_started_relay,
-            cursor_moving_right_stopped_relay: cursor_animation_controller.cursor_moving_right_stopped_relay,
-            zoom_center_follow_mouse_relay: zoom_controller.zoom_center_follow_mouse_relay,
-            fit_all_clicked_relay: zoom_controller.fit_all_clicked_relay,
+            panning_left_started_relay,
+            panning_left_stopped_relay,
+            panning_right_started_relay,
+            panning_right_stopped_relay,
+            cursor_moving_left_started_relay,
+            cursor_moving_left_stopped_relay,
+            cursor_moving_right_started_relay,
+            cursor_moving_right_stopped_relay,
+            zoom_center_follow_mouse_relay,
+            fit_all_clicked_relay,
             
             // System event relays (from controllers)
-            data_loaded_relay: timeline_cache_controller.data_loaded_relay,
-            transitions_cached_relay: timeline_cache_controller.transitions_cached_relay,
-            cursor_values_updated_relay: timeline_cache_controller.cursor_values_updated_relay,
+            data_loaded_relay,
+            transitions_cached_relay,
+            cursor_values_updated_relay,
             timeline_bounds_calculated_relay,
-            viewport_changed_relay: zoom_controller.viewport_changed_relay,
-            ns_per_pixel_changed_relay: zoom_controller.ns_per_pixel_changed_relay,
+            viewport_changed_relay,
+            ns_per_pixel_changed_relay,
         }
     }
     

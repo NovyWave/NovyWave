@@ -125,7 +125,7 @@ impl CanvasStateController {
             async move |canvas_cache_handle| {
                 // Watch viewport and signal values changes to update canvas cache
                 let mut viewport_stream = viewport_for_canvas_cache.signal().to_stream().fuse();
-                let mut signal_values_stream = signal_values_for_canvas.signal().to_stream().fuse();
+                let mut signal_values_stream = signal_values_for_canvas.entries_signal_vec().to_signal_cloned().to_stream().fuse();
                 
                 loop {
                     select! {
@@ -205,7 +205,7 @@ impl CanvasStateController {
             let canvas_cache_for_update_tracking = canvas_cache.clone();
             async move |canvas_update_handle| {
                 // Watch canvas_cache changes to track last update time
-                let mut canvas_stream = canvas_cache_for_update_tracking.signal().to_stream().fuse();
+                let mut canvas_stream = canvas_cache_for_update_tracking.entries_signal_vec().to_signal_cloned().to_stream().fuse();
                 
                 loop {
                     select! {
@@ -232,7 +232,7 @@ impl CanvasStateController {
             async move |stats_handle| {
                 // Watch cache, signal values, and viewport to calculate statistics
                 let mut cache_stream = cache_for_stats.signal().to_stream().fuse();
-                let mut signal_values_stream = signal_values_for_stats.signal().to_stream().fuse();
+                let mut signal_values_stream = signal_values_for_stats.entries_signal_vec().to_signal_cloned().to_stream().fuse();
                 let mut viewport_stream = viewport_for_stats.signal().to_stream().fuse();
                 
                 loop {

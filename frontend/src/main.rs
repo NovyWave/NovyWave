@@ -36,6 +36,8 @@ pub fn main_layout(
     selected_variables: &crate::selected_variables::SelectedVariables,
     waveform_timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline,
     app_config: &crate::config::AppConfig,
+    dragging_system: &crate::dragging::DraggingSystem,
+    waveform_canvas: &crate::visualizer::canvas::waveform_canvas::WaveformCanvas,
 ) -> impl Element {
     use moonzoon_novyui::*;
     use crate::file_management::files_panel;
@@ -55,6 +57,8 @@ pub fn main_layout(
                 waveform_timeline.clone(),
                 tracked_files.clone(),
                 app_config.clone(),
+                dragging_system.clone(),
+                waveform_canvas.clone(),
             )),
     )
 }

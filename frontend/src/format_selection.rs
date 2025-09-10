@@ -417,6 +417,5 @@ pub fn update_variable_format(
 ) {
     selected_variables.variable_format_changed_relay.send((unique_id.to_string(), new_format));
 
-    crate::visualizer::timeline::timeline_actor::variable_format_updated_relay(waveform_timeline)
-        .send((unique_id.to_string(), new_format));
+    waveform_timeline.variable_format_updated_relay.send((unique_id.to_string(), new_format));
 }

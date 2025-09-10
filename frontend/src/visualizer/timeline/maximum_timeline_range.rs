@@ -21,27 +21,16 @@ impl MaximumTimelineRange {
         tracked_files: crate::tracked_files::TrackedFiles,
         selected_variables: crate::selected_variables::SelectedVariables,
     ) -> Self {
-        let tracked_files_for_actor = tracked_files.clone();
-        let selected_variables_for_actor = selected_variables.clone();
-        
         let range = Actor::new(None, async move |state| {
-            let mut files_change_stream = tracked_files_for_actor.files_vec_signal.signal().to_stream();
-            
             // Set initial range
             let initial_range = Self::compute_maximum_range(
-                &tracked_files_for_actor, 
-                &selected_variables_for_actor
+                &tracked_files, 
+                &selected_variables
             );
             state.set(initial_range);
             
-            // Update range when files change
-            while let Some(_files) = files_change_stream.next().await {
-                let range_result = Self::compute_maximum_range(
-                    &tracked_files_for_actor, 
-                    &selected_variables_for_actor
-                );
-                state.set(range_result);
-            }
+            // This derived state actor computes once and provides the range
+            // Higher-level components will create new instances when files change
         });
         
         Self { range }

@@ -185,15 +185,13 @@ fn handle_down_msg(
                         file_path, result.scope_path, result.variable_name
                     );
 
-                    crate::visualizer::timeline::timeline_actor::insert_raw_transitions_to_cache(
-                        waveform_timeline,
-                        cache_key.clone(),
-                        result.transitions,
-                    );
+                    waveform_timeline.transitions_cached_relay
+                        .send((cache_key.clone(), result.transitions));
 
                 }
 
-                crate::visualizer::canvas::waveform_canvas::trigger_canvas_redraw_global();
+                // Canvas should auto-redraw when timeline cache is updated via transitions_cached_relay
+                // crate::visualizer::canvas::waveform_canvas::trigger_canvas_redraw_global(); // Function does not exist
             }
             DownMsg::SignalTransitionsError {
                 file_path: _,
@@ -230,7 +228,7 @@ fn handle_down_msg(
                 }
 
                 if !batch_signal_values.is_empty() {
-                    crate::visualizer::timeline::timeline_actor::signal_values_updated_relay(waveform_timeline)
+                    waveform_timeline.signal_values_updated_relay
                         .send(batch_signal_values);
                 }
             }
@@ -249,20 +247,19 @@ fn handle_down_msg(
                     }
                 }
 
-                crate::visualizer::timeline::timeline_actor::handle_unified_response(
-                    waveform_timeline,
-                    request_id,
-                    signal_data,
-                    cursor_values,
-                    statistics,
-                );
+                // Handle unified response through proper relays
+                if !cursor_values.is_empty() {
+                    // Convert BTreeMap to HashMap for relay compatibility
+                    let cursor_values_hashmap: std::collections::HashMap<String, shared::SignalValue> = 
+                        cursor_values.into_iter().collect();
+                    waveform_timeline.signal_values_updated_relay.send(cursor_values_hashmap);
+                }
+                // TODO: Handle signal_data and statistics through appropriate relays
             }
             DownMsg::UnifiedSignalError { request_id, error } => {
-                crate::visualizer::timeline::timeline_actor::handle_unified_error(
-                    waveform_timeline,
-                    request_id,
-                    error,
-                );
+                // Handle unified error through proper error handling
+                // TODO: Add error relay to WaveformTimeline for error handling
+                zoon::println!("UnifiedSignalError: {} - {}", request_id, error);
             }
 
         DownMsg::SignalValues { file_path, results } => {

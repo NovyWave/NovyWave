@@ -28,8 +28,14 @@ pub struct NovyWaveApp {
     /// Timeline, cursor, and waveform visualization domain
     pub waveform_timeline: WaveformTimeline,
 
+    /// Waveform canvas rendering and state domain
+    pub waveform_canvas: crate::visualizer::canvas::waveform_canvas::WaveformCanvas,
+
     /// Application configuration (theme, panels, etc.)
     pub config: AppConfig,
+    
+    /// Panel dragging and resizing system
+    pub dragging_system: crate::dragging::DraggingSystem,
 
     /// Backend communication connection (Arc for cloning)
     pub connection: std::sync::Arc<Connection<UpMsg, DownMsg>>,
@@ -71,6 +77,9 @@ impl NovyWaveApp {
 
         // Initialize configuration
         let config = AppConfig::new().await;
+        
+        // Initialize dragging system
+        let dragging_system = crate::dragging::DraggingSystem::new(config.clone()).await;
 
         let tracked_files = TrackedFiles::new().await;
         let selected_variables = SelectedVariables::new().await;
@@ -82,6 +91,9 @@ impl NovyWaveApp {
         ).await;
         
         let waveform_timeline = WaveformTimeline::new(maximum_timeline_range).await;
+
+        // Initialize waveform canvas rendering domain
+        let waveform_canvas = crate::visualizer::canvas::waveform_canvas::WaveformCanvas::new().await;
 
         let connection = Self::create_connection_with_domain_integration(
             &tracked_files,
@@ -108,7 +120,9 @@ impl NovyWaveApp {
             tracked_files,
             selected_variables,
             waveform_timeline,
+            waveform_canvas,
             config,
+            dragging_system,
             connection: std::sync::Arc::new(connection),
             file_dialog_visible,
             search_filter,
@@ -228,6 +242,8 @@ impl NovyWaveApp {
             &self.selected_variables,
             &self.waveform_timeline,
             &self.config,
+            &self.dragging_system,
+            &self.waveform_canvas,
         )
     }
 

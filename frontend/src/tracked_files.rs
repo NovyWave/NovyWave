@@ -218,6 +218,15 @@ impl TrackedFiles {
         self.file_reload_requested_relay.send(file_id);
     }
 
+    /// Get signal for tracked files list
+    pub fn files_signal(&self) -> impl zoon::Signal<Item = Vec<TrackedFile>> {
+        self.files_vec_signal.signal_cloned()
+    }
+    
+    pub fn get_current_files(&self) -> Vec<TrackedFile> {
+        self.files_vec_signal.get_cloned()
+    }
+
     pub fn update_file_state(&self, file_id: String, new_state: FileState) {
         self.file_load_completed_relay.send((file_id, new_state));
     }

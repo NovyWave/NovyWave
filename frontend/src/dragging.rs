@@ -36,9 +36,9 @@ struct DragState {
 
 impl DraggingSystem {
     pub async fn new(app_config: crate::config::AppConfig) -> Self {
-        let (drag_started_relay, mut drag_started_stream) = relay();
-        let (drag_moved_relay, mut drag_moved_stream) = relay();
-        let (drag_ended_relay, mut drag_ended_stream) = relay();
+        let (drag_started_relay, mut drag_started_stream) = relay::<(DividerType, (f32, f32))>();
+        let (drag_moved_relay, mut drag_moved_stream) = relay::<(f32, f32)>();
+        let (drag_ended_relay, mut drag_ended_stream) = relay::<()>();
         
         let drag_state_actor = Actor::new(DragState::default(), async move |state_handle| {
             // Cache current values pattern - ONLY in Actor loops
@@ -47,41 +47,64 @@ impl DraggingSystem {
             let mut cached_column_widths = (190.0, 220.0); // name, value
             
             // Signal streams for cached values
-            let mut dock_mode_stream = app_config.dock_mode_actor.signal().to_stream();
-            let mut width_right_stream = app_config.files_panel_width_right_actor.signal().to_stream();
-            let mut width_bottom_stream = app_config.files_panel_width_bottom_actor.signal().to_stream();
-            let mut height_right_stream = app_config.files_panel_height_right_actor.signal().to_stream();
-            let mut height_bottom_stream = app_config.files_panel_height_bottom_actor.signal().to_stream();
-            let mut name_width_stream = app_config.variables_name_column_width_actor.signal().to_stream();
-            let mut value_width_stream = app_config.variables_value_column_width_actor.signal().to_stream();
+            let mut dock_mode_stream = app_config.dock_mode_actor.signal().to_stream().fuse();
+            let mut width_right_stream = app_config.files_panel_width_right_actor.signal().to_stream().fuse();
+            let mut width_bottom_stream = app_config.files_panel_width_bottom_actor.signal().to_stream().fuse();
+            let mut height_right_stream = app_config.files_panel_height_right_actor.signal().to_stream().fuse();
+            let mut height_bottom_stream = app_config.files_panel_height_bottom_actor.signal().to_stream().fuse();
+            let mut name_width_stream = app_config.variables_name_column_width_actor.signal().to_stream().fuse();
+            let mut value_width_stream = app_config.variables_value_column_width_actor.signal().to_stream().fuse();
             
             loop {
                 select! {
                     // Update cached config values
-                    Some(dock_mode) = dock_mode_stream.next() => {
-                        cached_dock_mode = dock_mode;
+                    dock_mode = dock_mode_stream.next() => {
+                        match dock_mode {
+                            Some(dock_mode) => cached_dock_mode = dock_mode,
+                            None => break, // Stream closed
+                        }
                     }
-                    Some(width) = width_right_stream.next() => {
-                        cached_dimensions.0 = width;
+                    width = width_right_stream.next() => {
+                        match width {
+                            Some(width) => cached_dimensions.0 = width,
+                            None => break, // Stream closed
+                        }
                     }
-                    Some(width) = width_bottom_stream.next() => {
-                        cached_dimensions.1 = width;
+                    width = width_bottom_stream.next() => {
+                        match width {
+                            Some(width) => cached_dimensions.1 = width,
+                            None => break, // Stream closed
+                        }
                     }
-                    Some(height) = height_right_stream.next() => {
-                        cached_dimensions.2 = height;
+                    height = height_right_stream.next() => {
+                        match height {
+                            Some(height) => cached_dimensions.2 = height,
+                            None => break, // Stream closed
+                        }
                     }
-                    Some(height) = height_bottom_stream.next() => {
-                        cached_dimensions.3 = height;
+                    height = height_bottom_stream.next() => {
+                        match height {
+                            Some(height) => cached_dimensions.3 = height,
+                            None => break, // Stream closed
+                        }
                     }
-                    Some(width) = name_width_stream.next() => {
-                        cached_column_widths.0 = width;
+                    width = name_width_stream.next() => {
+                        match width {
+                            Some(width) => cached_column_widths.0 = width,
+                            None => break, // Stream closed
+                        }
                     }
-                    Some(width) = value_width_stream.next() => {
-                        cached_column_widths.1 = width;
+                    width = value_width_stream.next() => {
+                        match width {
+                            Some(width) => cached_column_widths.1 = width,
+                            None => break, // Stream closed
+                        }
                     }
                     
                     // Process drag events with cached values
-                    Some((divider_type, start_pos)) = drag_started_stream.next() => {
+                    drag_event = drag_started_stream.next() => {
+                        match drag_event {
+                            Some((divider_type, start_pos)) => {
                         let initial_value = match divider_type {
                             DividerType::FilesPanelMain => match cached_dock_mode {
                                 DockMode::Right => cached_dimensions.0,
@@ -100,9 +123,14 @@ impl DraggingSystem {
                             drag_start_position: start_pos,
                             initial_value,
                         });
+                            }
+                            None => break, // Stream closed
+                        }
                     }
                     
-                    Some(current_position) = drag_moved_stream.next() => {
+                    drag_moved = drag_moved_stream.next() => {
+                        match drag_moved {
+                            Some(current_position) => {
                         // Use Actor's own cached state - no external state queries
                         let mut current_drag_state = state_handle.lock_mut();
                         
@@ -154,10 +182,18 @@ impl DraggingSystem {
                                 }
                             }
                         }
+                            }
+                            None => break, // Stream closed
+                        }
                     }
                     
-                    Some(()) = drag_ended_stream.next() => {
-                        state_handle.set(DragState::default());
+                    drag_ended = drag_ended_stream.next() => {
+                        match drag_ended {
+                            Some(()) => {
+                                state_handle.set(DragState::default());
+                            }
+                            None => break, // Stream closed
+                        }
                     }
                 }
             }

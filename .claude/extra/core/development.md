@@ -133,6 +133,52 @@ pub fn active_divider_signal(&self) -> impl Signal<Item = Option<DividerType>> {
 
 **Why This Matters**: Incomplete error resolution breaks compilation and wastes debugging time later.
 
+### Business Logic Preservation During Refactoring (CRITICAL)
+
+**MANDATORY: Never remove business logic during architectural refactoring - always preserve and convert**
+
+**❌ WRONG: Removing business logic to fix compilation errors**
+```rust
+// ANTIPATTERN: Comment out complex logic during refactoring
+// pub async fn compute_maximum_timeline_range(&self) -> Option<(f64, f64)> {
+//     // TODO: Restore timeline range computation logic later
+// }
+
+// ANTIPATTERN: Placeholder implementations that discard business logic
+pub fn get_variables_from_tracked_files(scope_id: &str) -> Vec<VariableWithContext> {
+    Vec::new()  // TODO: Implement proper variable filtering later
+}
+```
+
+**✅ CORRECT: Convert business logic to new architecture while preserving functionality**
+```rust
+// ✅ GOOD: Convert sync logic to async signal-based patterns
+pub async fn compute_maximum_timeline_range(&self) -> Option<(f64, f64)> {
+    let tracked_files = self.tracked_files.files_vec_signal.get_cloned();
+    let loaded_files: Vec<shared::WaveformFile> = tracked_files
+        .iter()
+        .filter_map(|tracked_file| match &tracked_file.state {
+            shared::FileState::Loaded(waveform_file) => Some(waveform_file.clone()),
+            _ => None,
+        })
+        .collect();
+    
+    let selected_file_paths = self.get_selected_variable_file_paths().await;
+    // ... preserve all original business logic, just converted to new patterns
+}
+```
+
+**Key Principles:**
+- **Convert, don't delete** - Transform existing logic to new architecture patterns
+- **Preserve all business rules** - Timeline calculations, filtering logic, validation must remain
+- **No "implement later" TODOs** - If the logic was working before, make it work in the new architecture
+- **Test equivalent behavior** - Converted logic should produce the same results
+
+**Why this matters:**
+- **Prevents functionality regression** - Users expect existing features to keep working
+- **Avoids context loss** - Business logic represents domain knowledge that's hard to recreate
+- **Maintains code quality** - No partially implemented functions in the codebase
+
 ### Expressive State Types (CRITICAL)
 
 **MANDATORY: Never use misleading default values - use expressive types that represent actual state**

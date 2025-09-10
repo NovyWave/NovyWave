@@ -252,6 +252,11 @@ impl SelectedVariables {
         })
     }
 
+    /// Get signal for all selected variables
+    pub fn variables_signal(&self) -> impl zoon::Signal<Item = Vec<SelectedVariable>> {
+        self.variables_vec_actor.signal()
+    }
+
     pub fn expanded_scopes_actor(&self) -> &Actor<IndexSet<String>> {
         &self.expanded_scopes
     }

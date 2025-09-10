@@ -18,6 +18,7 @@ pub fn variables_panel(
     tracked_files: &crate::tracked_files::TrackedFiles,
     selected_variables: &crate::selected_variables::SelectedVariables,
     waveform_timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline,
+    waveform_canvas: &crate::visualizer::canvas::waveform_canvas::WaveformCanvas,
 ) -> impl Element {
     let tracked_files = tracked_files.clone();
     let selected_variables = selected_variables.clone();
@@ -88,6 +89,8 @@ pub fn selected_variables_with_waveform_panel(
     waveform_timeline: crate::visualizer::timeline::timeline_actor::WaveformTimeline,
     tracked_files: crate::tracked_files::TrackedFiles,
     app_config: crate::config::AppConfig,
+    dragging_system: crate::dragging::DraggingSystem,
+    waveform_canvas: crate::visualizer::canvas::waveform_canvas::WaveformCanvas,
 ) -> impl Element {
     let selected_variables_for_signals = selected_variables.clone();
     let tracked_files_broadcaster = tracked_files.files.signal_vec().to_signal_cloned().broadcast();
@@ -274,7 +277,7 @@ pub fn selected_variables_with_waveform_panel(
                                                     )
                                             )
                                     )
-                                    .item(crate::panel_layout::variables_name_vertical_divider(&app_config))
+                                    .item(crate::panel_layout::variables_name_vertical_divider(&app_config, dragging_system.clone()))
                                     .item(
                                         Column::new()
                                             .s(Width::exact_signal(value_column_width_signal.map(|w| w as u32)))
@@ -366,13 +369,13 @@ pub fn selected_variables_with_waveform_panel(
                                                     )
                                             )
                                     )
-                                    .item(crate::panel_layout::variables_value_vertical_divider(&app_config))
+                                    .item(crate::panel_layout::variables_value_vertical_divider(&app_config, dragging_system.clone()))
                                     .item(
                                         El::new()
                                             .s(Width::fill())
                                             .s(Height::fill())
                                             .s(Background::new().color_signal(moonzoon_novyui::tokens::color::neutral_2()))
-                                            .child(crate::visualizer::canvas::waveform_canvas::waveform_canvas(&selected_variables, &waveform_timeline, &app_config))
+                                            .child(crate::visualizer::canvas::waveform_canvas::waveform_canvas(&waveform_canvas, &selected_variables, &waveform_timeline, &app_config))
                                     )
                             )
                     )
@@ -385,11 +388,13 @@ pub fn variables_panel_with_fill(
     tracked_files: &crate::tracked_files::TrackedFiles,
     selected_variables: &crate::selected_variables::SelectedVariables,
     waveform_timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline,
+    waveform_canvas: &crate::visualizer::canvas::waveform_canvas::WaveformCanvas,
     app_config: &crate::config::AppConfig,
 ) -> impl Element {
     let tracked_files = tracked_files.clone();
     let selected_variables = selected_variables.clone();
     let waveform_timeline = waveform_timeline.clone();
+    let waveform_canvas = waveform_canvas.clone();
     let app_config = app_config.clone();
     
     El::new()
@@ -414,7 +419,7 @@ pub fn variables_panel_with_fill(
                                 .flatten(),
                         )
                     })
-                    .child(variables_panel(&tracked_files, &selected_variables, &waveform_timeline))
+                    .child(variables_panel(&tracked_files, &selected_variables, &waveform_timeline, &waveform_canvas))
                     .into_element()
             } else {
                 El::new()
@@ -430,7 +435,7 @@ pub fn variables_panel_with_fill(
                                 .flatten(),
                         )
                     })
-                    .child(variables_panel(&tracked_files, &selected_variables, &waveform_timeline))
+                    .child(variables_panel(&tracked_files, &selected_variables, &waveform_timeline, &waveform_canvas))
                     .into_element()
             }
         }))

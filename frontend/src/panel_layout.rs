@@ -57,10 +57,14 @@ pub fn create_panel(header_content: impl Element, content: impl Element) -> impl
 }
 
 /// Vertical divider for variables name column
-pub fn variables_name_vertical_divider(app_config: &crate::config::AppConfig) -> impl Element {
+pub fn variables_name_vertical_divider(
+    app_config: &crate::config::AppConfig,
+    dragging_system: crate::dragging::DraggingSystem,
+) -> impl Element {
     use crate::dragging::{DividerType, is_divider_dragging, start_drag};
 
-    let is_dragging_signal = is_divider_dragging(DividerType::VariablesNameColumn);
+    // Use static appearance for now - dragging state will be handled at application level
+    let is_dragging_signal = zoon::always(false);
 
     El::new()
         .s(Width::exact(4))
@@ -71,17 +75,22 @@ pub fn variables_name_vertical_divider(app_config: &crate::config::AppConfig) ->
         .s(Padding::all(0))
         .on_pointer_down({
             let app_config = app_config.clone();
+            let dragging_system = dragging_system.clone();
             move || {
-                start_drag(DividerType::VariablesNameColumn, (0.0, 0.0), &app_config);
+                start_drag(&dragging_system, DividerType::VariablesNameColumn, (0.0, 0.0));
             }
         })
 }
 
 /// Vertical divider for variables value column
-pub fn variables_value_vertical_divider(app_config: &crate::config::AppConfig) -> impl Element {
+pub fn variables_value_vertical_divider(
+    app_config: &crate::config::AppConfig,
+    dragging_system: crate::dragging::DraggingSystem,
+) -> impl Element {
     use crate::dragging::{DividerType, is_divider_dragging, start_drag};
 
-    let is_dragging_signal = is_divider_dragging(DividerType::VariablesValueColumn);
+    // Use static appearance for now - dragging state will be handled at application level
+    let is_dragging_signal = zoon::always(false);
 
     El::new()
         .s(Width::exact(4))
@@ -92,17 +101,22 @@ pub fn variables_value_vertical_divider(app_config: &crate::config::AppConfig) -
         .s(Padding::all(0))
         .on_pointer_down({
             let app_config = app_config.clone();
+            let dragging_system = dragging_system.clone();
             move || {
-                start_drag(DividerType::VariablesValueColumn, (0.0, 0.0), &app_config);
+                start_drag(&dragging_system, DividerType::VariablesValueColumn, (0.0, 0.0));
             }
         })
 }
 
 /// Vertical divider for files panel main section
-pub fn files_panel_vertical_divider(app_config: &crate::config::AppConfig) -> impl Element {
+pub fn files_panel_vertical_divider(
+    app_config: &crate::config::AppConfig,
+    dragging_system: crate::dragging::DraggingSystem,
+) -> impl Element {
     use crate::dragging::{DividerType, is_divider_dragging, start_drag};
 
-    let is_dragging_signal = is_divider_dragging(DividerType::FilesPanelMain);
+    // Use static appearance for now - dragging state will be handled at application level
+    let is_dragging_signal = zoon::always(false);
 
     El::new()
         .s(Width::exact(4))
@@ -113,17 +127,22 @@ pub fn files_panel_vertical_divider(app_config: &crate::config::AppConfig) -> im
         .s(Padding::all(0))
         .on_pointer_down({
             let app_config = app_config.clone();
+            let dragging_system = dragging_system.clone();
             move || {
-                start_drag(DividerType::FilesPanelMain, (0.0, 0.0), &app_config);
+                start_drag(&dragging_system, DividerType::FilesPanelMain, (0.0, 0.0));
             }
         })
 }
 
 /// Horizontal divider for files panel secondary section
-pub fn files_panel_horizontal_divider(app_config: &crate::config::AppConfig) -> impl Element {
+pub fn files_panel_horizontal_divider(
+    app_config: &crate::config::AppConfig,
+    dragging_system: crate::dragging::DraggingSystem,
+) -> impl Element {
     use crate::dragging::{DividerType, is_divider_dragging, start_drag};
 
-    let is_dragging_signal = is_divider_dragging(DividerType::FilesPanelSecondary);
+    // Use static appearance for now - dragging state will be handled at application level
+    let is_dragging_signal = zoon::always(false);
 
     El::new()
         .s(Width::fill())
@@ -133,8 +152,9 @@ pub fn files_panel_horizontal_divider(app_config: &crate::config::AppConfig) -> 
         .s(Cursor::new(CursorIcon::RowResize))
         .on_pointer_down({
             let app_config = app_config.clone();
+            let dragging_system = dragging_system.clone();
             move || {
-                start_drag(DividerType::FilesPanelSecondary, (0.0, 0.0), &app_config);
+                start_drag(&dragging_system, DividerType::FilesPanelSecondary, (0.0, 0.0));
             }
         })
 }

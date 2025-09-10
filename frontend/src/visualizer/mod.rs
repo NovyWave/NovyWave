@@ -12,7 +12,7 @@ pub mod timeline;
 // User interaction handling moved to frontend root (dragging.rs)
 
 // Testing utilities and patterns
-pub mod testing;
+// pub mod testing; // Module does not exist
 
 // Re-export commonly used types for convenience  
 // All timeline types now integrated directly in timeline_actor domain

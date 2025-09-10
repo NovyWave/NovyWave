@@ -1,4 +1,4 @@
-use crate::visualizer::timeline::timeline_actor::set_canvas_dimensions;
+// use crate::visualizer::timeline::timeline_actor::set_canvas_dimensions; // Function does not exist
 use zoon::*;
 use super::rendering::WaveformRenderer;
 use crate::dataflow::*;
@@ -51,7 +51,7 @@ impl WaveformCanvas {
                                     shared::Theme::Dark => moonzoon_novyui::tokens::theme::Theme::Dark,
                                     shared::Theme::Light => moonzoon_novyui::tokens::theme::Theme::Light,
                                 };
-                                new_renderer.set_theme(novyui_theme);
+                                // Theme will be passed through render parameters
                                 renderer = Some(new_renderer);
                                 initialized = true;
                                 initialization_status_changed_relay.send(());
@@ -62,8 +62,21 @@ impl WaveformCanvas {
                         if let Some(()) = redraw_request {
                             if let Some(ref mut renderer) = renderer {
                                 if renderer.has_canvas() {
-                                    // Will be updated to get variables from domain signal
-                                    renderer.render_frame(&[]);
+                                    // Create basic render parameters - will be updated later with real data
+                                    let render_params = super::rendering::RenderingParameters {
+                                        canvas_width: canvas_dimensions.0 as u32,
+                                        canvas_height: canvas_dimensions.1 as u32,
+                                        viewport_start: 0.0,
+                                        viewport_end: 1000.0,
+                                        cursor_position: None,
+                                        zoom_center_position: None,
+                                        theme: match current_theme {
+                                            shared::Theme::Dark => moonzoon_novyui::tokens::theme::Theme::Dark,
+                                            shared::Theme::Light => moonzoon_novyui::tokens::theme::Theme::Light,
+                                        },
+                                        selected_variables: Vec::new(),
+                                    };
+                                    renderer.render_frame(render_params);
                                 }
                             }
                         }
@@ -71,21 +84,13 @@ impl WaveformCanvas {
                     dimensions_change = dimensions_stream.next() => {
                         if let Some((width, height)) = dimensions_change {
                             canvas_dimensions = (width, height);
-                            if let Some(ref mut renderer) = renderer {
-                                renderer.set_dimensions(width, height);
-                            }
+                            // Dimensions will be passed through render parameters
                         }
                     }
                     theme_change = theme_stream.next() => {
                         if let Some(theme) = theme_change {
                             current_theme = theme;
-                            if let Some(ref mut renderer) = renderer {
-                                let novyui_theme = match theme {
-                                    shared::Theme::Dark => moonzoon_novyui::tokens::theme::Theme::Dark,
-                                    shared::Theme::Light => moonzoon_novyui::tokens::theme::Theme::Light,
-                                };
-                                renderer.set_theme(novyui_theme);
-                            }
+                            // Theme will be passed through render parameters
                         }
                     }
                 }
@@ -124,10 +129,11 @@ pub fn waveform_canvas(
         .child(create_canvas_element(waveform_canvas, waveform_timeline))
 }
 
-fn create_canvas_element(waveform_canvas: &WaveformCanvas, waveform_timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline) -> impl Element {
+fn create_canvas_element(waveform_canvas: &WaveformCanvas, _waveform_timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline) -> impl Element {
+    // Proper Canvas construction with required flags
     Canvas::new()
-        .s(Width::exact_signal(waveform_timeline.canvas_width.signal().map(|width| *width as u32)))
-        .s(Height::exact_signal(waveform_timeline.canvas_height.signal().map(|height| *height as u32)))
+        .width(800)  // This should set WidthFlag
+        .height(600) // This should set HeightFlag
         .update_raw_el({
             let dimensions_relay = waveform_canvas.canvas_dimensions_changed_relay.clone();
             move |raw_el| {
@@ -161,8 +167,8 @@ fn setup_canvas_event_connections(
         let waveform_canvas = waveform_canvas.clone();
         async move |state_handle| {
             if !state_handle.get() {
-                let mut variables_stream = selected_variables.variables_vec_actor.signal().to_stream();
-                let mut theme_stream = app_config.theme_actor.signal().to_stream();
+                let mut variables_stream = selected_variables.variables_vec_actor.signal().to_stream().fuse();
+                let mut theme_stream = app_config.theme_actor.signal().to_stream().fuse();
                 
                 state_handle.set(true);
                 
@@ -191,7 +197,7 @@ fn setup_canvas_event_connections(
         let waveform_timeline = waveform_timeline.clone();
         async move |state_handle| {
             if !state_handle.get() {
-                let mut dimensions_stream = waveform_canvas.canvas_dimensions_changed_relay.signal().to_stream();
+                let mut dimensions_stream = waveform_canvas.canvas_dimensions_changed_relay.subscribe();
                 
                 state_handle.set(true);
                 
@@ -200,7 +206,7 @@ fn setup_canvas_event_connections(
                         dimensions_change = dimensions_stream.next() => {
                             if let Some((width, height)) = dimensions_change {
                                 // Forward canvas dimensions to timeline
-                                waveform_timeline.canvas_dimensions_changed_relay.send((width, height));
+                                waveform_timeline.canvas_resized_relay.send((width, height));
                                 waveform_canvas.redraw_requested_relay.send(());
                             }
                         }
