@@ -5,7 +5,7 @@ use zoon::*;
 use shared::{VarFormat, SelectedVariable, TrackedFile};
 use crate::selected_variables::{VariableWithContext, filter_variables_with_context, get_variables_from_tracked_files};
 use crate::virtual_list::virtual_variables_list_pre_filtered;
-use crate::visualizer::interaction::dragging::{
+use crate::dragging::{
     files_panel_height_signal, variables_name_column_width_signal,
     variables_value_column_width_signal,
 };

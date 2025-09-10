@@ -58,7 +58,7 @@ pub fn create_panel(header_content: impl Element, content: impl Element) -> impl
 
 /// Vertical divider for variables name column
 pub fn variables_name_vertical_divider(app_config: &crate::config::AppConfig) -> impl Element {
-    use crate::visualizer::interaction::dragging::{DividerType, is_divider_dragging, start_drag};
+    use crate::dragging::{DividerType, is_divider_dragging, start_drag};
 
     let is_dragging_signal = is_divider_dragging(DividerType::VariablesNameColumn);
 
@@ -79,7 +79,7 @@ pub fn variables_name_vertical_divider(app_config: &crate::config::AppConfig) ->
 
 /// Vertical divider for variables value column
 pub fn variables_value_vertical_divider(app_config: &crate::config::AppConfig) -> impl Element {
-    use crate::visualizer::interaction::dragging::{DividerType, is_divider_dragging, start_drag};
+    use crate::dragging::{DividerType, is_divider_dragging, start_drag};
 
     let is_dragging_signal = is_divider_dragging(DividerType::VariablesValueColumn);
 
@@ -100,7 +100,7 @@ pub fn variables_value_vertical_divider(app_config: &crate::config::AppConfig) -
 
 /// Vertical divider for files panel main section
 pub fn files_panel_vertical_divider(app_config: &crate::config::AppConfig) -> impl Element {
-    use crate::visualizer::interaction::dragging::{DividerType, is_divider_dragging, start_drag};
+    use crate::dragging::{DividerType, is_divider_dragging, start_drag};
 
     let is_dragging_signal = is_divider_dragging(DividerType::FilesPanelMain);
 
@@ -121,7 +121,7 @@ pub fn files_panel_vertical_divider(app_config: &crate::config::AppConfig) -> im
 
 /// Horizontal divider for files panel secondary section
 pub fn files_panel_horizontal_divider(app_config: &crate::config::AppConfig) -> impl Element {
-    use crate::visualizer::interaction::dragging::{DividerType, is_divider_dragging, start_drag};
+    use crate::dragging::{DividerType, is_divider_dragging, start_drag};
 
     let is_dragging_signal = is_divider_dragging(DividerType::FilesPanelSecondary);
 

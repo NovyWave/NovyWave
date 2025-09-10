@@ -9,8 +9,7 @@ pub mod canvas;
 // Timeline data and state management
 pub mod timeline;
 
-// User interaction handling (keyboard, mouse, drag)
-pub mod interaction;
+// User interaction handling moved to frontend root (dragging.rs)
 
 // Testing utilities and patterns
 pub mod testing;

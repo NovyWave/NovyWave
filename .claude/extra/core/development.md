@@ -15,6 +15,106 @@ When making changes to files, first understand the file's code conventions. Mimi
 - **NEVER use `#[allow(dead_code)]` or similar warning suppressors** - Remove unused code instead of hiding warnings
   - **EXCEPTION**: Dataflow module APIs (`frontend/src/dataflow/`) can use `#[allow(dead_code)]` for public methods that will be extracted to standalone crate
 
+### Rust Trait Derivation Best Practices (MANDATORY)
+
+**CRITICAL: Prefer derive macros over manual trait implementations for standard traits**
+
+This lesson emerged from complex reactive architecture rewrites where manual implementations added unnecessary complexity and performance issues.
+
+#### Derive Standard Traits Instead of Manual Implementation
+
+**❌ WRONG: Manual Default implementation with "special" values**
+```rust
+// Custom implementation for simple data structures is verbose and error-prone
+impl Default for DragState {
+    fn default() -> Self {
+        Self {
+            active_divider: None,
+            drag_start_position: (0.0, 0.0),  // "Special" default values  
+            initial_value: 0.0,
+        }
+    }
+}
+```
+
+**✅ CORRECT: Clean derived Default**
+```rust
+// Derive generates optimal implementation automatically
+#[derive(Clone, Debug, Default)]
+struct DragState {
+    active_divider: Option<DividerType>,  // None automatically
+    drag_start_position: (f32, f32),      // (0.0, 0.0) automatically
+    initial_value: f32,                   // 0.0 automatically  
+}
+```
+
+#### Add Copy Trait to Eliminate Unnecessary .clone() Calls
+
+**❌ WRONG: Clone-heavy code with small types**
+```rust
+#[derive(Clone, Debug, PartialEq)]  // Missing Copy
+pub enum DividerType {
+    FilesPanelMain,
+    FilesPanelSecondary,
+}
+
+// Results in verbose comparison patterns
+matches!(state.active_divider, Some(ref active_type) if *active_type == divider_type)
+//                                  ^^^              ^^^^ Dereferencing needed
+
+// And unnecessary .clone() calls
+pub fn active_divider_signal(&self) -> impl Signal<Item = Option<DividerType>> {
+    self.state.signal_ref(|state| state.active_divider.clone()) // Unnecessary allocation
+}
+```
+
+**✅ CORRECT: Copy trait eliminates allocations**
+```rust
+#[derive(Clone, Copy, Debug, PartialEq)]  // Added Copy
+pub enum DividerType {
+    FilesPanelMain,
+    FilesPanelSecondary,
+}
+
+// Clean comparison without references
+matches!(state.active_divider, Some(active_type) if active_type == divider_type)
+
+// Automatic copying without allocation  
+pub fn active_divider_signal(&self) -> impl Signal<Item = Option<DividerType>> {
+    self.state.signal_ref(|state| state.active_divider) // Copy automatically
+}
+```
+
+#### When to Use Copy vs Clone
+
+**Use Copy for:**
+- Enums with simple variants (no heap data)
+- Small structs (primitives, small fixed arrays)
+- Types that should be passed by value efficiently
+
+**Use Clone only for:**
+- Types containing heap-allocated data (String, Vec, etc.)
+- Large structures where copying is expensive
+- Types that need custom cloning behavior
+
+#### Standard Trait Derivation Guidelines
+
+**Always derive when possible:**
+```rust
+// Standard derives for most types
+#[derive(Debug, Clone, PartialEq)]        // Basic derives
+#[derive(Debug, Clone, Copy, PartialEq)]  // + Copy for small types
+#[derive(Debug, Clone, Default)]          // + Default for initializable types
+```
+
+**Benefits:**
+- **Performance**: Derived implementations are optimized by the compiler
+- **Correctness**: Less chance of manual implementation errors  
+- **Maintenance**: Automatically updated when fields change
+- **Consistency**: Standard behavior across the codebase
+
+**Key Lesson:** During complex architectural transformations, prefer Rust idioms (derive macros, Copy semantics) over manual implementations to reduce cognitive overhead and eliminate performance issues.
+
 ### Compilation Error Verification (CRITICAL)
 
 **MANDATORY: Always verify ALL compilation errors are actually resolved before claiming success**

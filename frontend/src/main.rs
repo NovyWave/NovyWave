@@ -17,6 +17,7 @@ mod virtual_list;
 mod visualizer;
 
 mod action_buttons;
+mod dragging;
 mod file_management;
 mod file_operations;
 mod file_picker;

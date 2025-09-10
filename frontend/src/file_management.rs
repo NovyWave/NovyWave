@@ -286,7 +286,7 @@ pub fn files_panel_with_height(
 ) -> impl Element {
     El::new()
         .s(Height::exact_signal(
-            crate::visualizer::interaction::dragging::files_panel_height_signal(app_config.clone()).map(|h| h as u32),
+            crate::dragging::files_panel_height_signal(app_config.clone()).map(|h| h as u32),
         ))
         .s(Width::growable())
         .update_raw_el(|raw_el| {
