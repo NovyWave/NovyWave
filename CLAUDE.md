@@ -8,6 +8,8 @@ Core guidance for Claude Code when working with NovyWave.
 
 <!-- Project Configuration -->
 @.claude/extra/project/patterns.md
+@.claude/extra/project/domain_map.md
+@.claude/extra/project/task_execution.md
 
 <!-- Technical Reference -->
 @.claude/extra/technical/reference.md

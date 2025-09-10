@@ -4,6 +4,8 @@
 
 NovyWave - Professional waveform viewer for digital design verification and analysis.
 
+> **🎯 QUICK START:** For any development task, reference `domain_map.md` first to identify affected domains, architectural patterns, and existing implementations. This eliminates context switching and prevents architectural violations.
+
 ### Architecture
 
 **Dual-Platform:** Web application + Tauri desktop using shared Rust/WASM frontend
