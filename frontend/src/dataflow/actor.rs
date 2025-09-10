@@ -49,7 +49,7 @@ use std::sync::Arc;
 /// counter.signal() // Always returns current state reactively
 /// ```
 #[derive(Clone, Debug)]
-pub struct Actor<T>
+pub struct Actor<T = ()>
 where
     T: Clone + Send + Sync + 'static,
 {

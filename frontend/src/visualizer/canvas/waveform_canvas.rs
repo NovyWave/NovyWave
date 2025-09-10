@@ -1,197 +1,213 @@
 use crate::visualizer::timeline::timeline_actor::set_canvas_dimensions;
 use zoon::*;
 use super::rendering::WaveformRenderer;
+use crate::dataflow::*;
+use futures::{select, stream::StreamExt};
 
-// Re-export all functions from sub-modules for API compatibility
 pub use super::animation::*;
 pub use super::navigation::*;
 pub use super::timeline::*;
 
-// ✅ FIXED: Replaced thread_local! with Atom for local UI state (Actor+Relay architecture)
-use std::cell::RefCell;
-use std::rc::Rc;
-
-/// Canvas state using Atom for local UI state management
+/// Canvas domain - manages waveform rendering and canvas state
 #[derive(Clone)]
-pub struct CanvasState {
-    /// Renderer instance for Fast2D graphics
-    pub renderer: Atom<Option<Rc<RefCell<WaveformRenderer>>>>,
-    /// Canvas initialization status
-    pub initialized: Atom<bool>,
+pub struct WaveformCanvas {
+    pub canvas_actor: Actor,
+    pub canvas_initialized_relay: Relay,
+    pub redraw_requested_relay: Relay,
+    pub canvas_dimensions_changed_relay: Relay<(f32, f32)>,
+    pub theme_changed_relay: Relay<shared::Theme>,
+    pub initialization_status_actor: Actor<bool>,
 }
 
-impl Default for CanvasState {
-    fn default() -> Self {
-        Self {
-            renderer: Atom::new(None),
-            initialized: Atom::new(false),
+impl WaveformCanvas {
+    pub async fn new() -> Self {
+        let (canvas_initialized_relay, mut canvas_initialized_stream) = relay();
+        let (redraw_requested_relay, mut redraw_stream) = relay();
+        let (canvas_dimensions_changed_relay, mut dimensions_stream) = relay::<(f32, f32)>();
+        let (theme_changed_relay, mut theme_stream) = relay::<shared::Theme>();
+        let (initialization_status_changed_relay, mut initialization_status_stream) = relay();
+        let initialization_status_actor = Actor::new(false, async move |state_handle| {
+            while let Some(()) = initialization_status_stream.next().await {
+                state_handle.set_neq(true); // Always set to true when event received
+            }
+        });
+        
+        let canvas_actor = Actor::new((), {
+            let initialization_status_changed_relay = initialization_status_changed_relay.clone();
+            async move |_state_handle| {
+            // State as local variables - no Clone requirement
+            let mut renderer: Option<WaveformRenderer> = None;
+            let mut initialized = false;
+            let mut current_theme = shared::Theme::default();
+            let mut canvas_dimensions = (0.0, 0.0);
+            
+            loop {
+                select! {
+                    canvas_init = canvas_initialized_stream.next() => {
+                        if let Some(()) = canvas_init {
+                            if !initialized {
+                                let mut new_renderer = WaveformRenderer::new().await;
+                                let novyui_theme = match current_theme {
+                                    shared::Theme::Dark => moonzoon_novyui::tokens::theme::Theme::Dark,
+                                    shared::Theme::Light => moonzoon_novyui::tokens::theme::Theme::Light,
+                                };
+                                new_renderer.set_theme(novyui_theme);
+                                renderer = Some(new_renderer);
+                                initialized = true;
+                                initialization_status_changed_relay.send(());
+                            }
+                        }
+                    }
+                    redraw_request = redraw_stream.next() => {
+                        if let Some(()) = redraw_request {
+                            if let Some(ref mut renderer) = renderer {
+                                if renderer.has_canvas() {
+                                    // Will be updated to get variables from domain signal
+                                    renderer.render_frame(&[]);
+                                }
+                            }
+                        }
+                    }
+                    dimensions_change = dimensions_stream.next() => {
+                        if let Some((width, height)) = dimensions_change {
+                            canvas_dimensions = (width, height);
+                            if let Some(ref mut renderer) = renderer {
+                                renderer.set_dimensions(width, height);
+                            }
+                        }
+                    }
+                    theme_change = theme_stream.next() => {
+                        if let Some(theme) = theme_change {
+                            current_theme = theme;
+                            if let Some(ref mut renderer) = renderer {
+                                let novyui_theme = match theme {
+                                    shared::Theme::Dark => moonzoon_novyui::tokens::theme::Theme::Dark,
+                                    shared::Theme::Light => moonzoon_novyui::tokens::theme::Theme::Light,
+                                };
+                                renderer.set_theme(novyui_theme);
+                            }
+                        }
+                    }
+                }
+            }
         }
+        });
+        
+        Self {
+            canvas_actor,
+            canvas_initialized_relay,
+            redraw_requested_relay,
+            canvas_dimensions_changed_relay,
+            theme_changed_relay,
+            initialization_status_actor,
+        }
+    }
+    
+    /// Signal indicating if canvas is initialized and ready for rendering
+    pub fn initialized_signal(&self) -> impl Signal<Item = bool> {
+        self.initialization_status_actor.signal()
     }
 }
 
-/// Main waveform canvas UI component
 pub fn waveform_canvas(
-    canvas_state: &CanvasState,
+    waveform_canvas: &WaveformCanvas,
     selected_variables: &crate::selected_variables::SelectedVariables,
     waveform_timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline,
     app_config: &crate::config::AppConfig,
 ) -> impl Element {
-    // Initialize renderer instance first (using Atom instead of thread_local)
-    if canvas_state.renderer.get().is_none() {
-        canvas_state.renderer.set(Some(Rc::new(RefCell::new(WaveformRenderer::new()))));
-    }
-
-    // Start signal listeners for canvas updates
-    setup_canvas_signal_listeners(canvas_state, selected_variables, waveform_timeline, app_config);
+    // Set up event connections between domains
+    setup_canvas_event_connections(waveform_canvas, selected_variables, waveform_timeline, app_config);
 
     El::new()
         .s(Width::fill())
         .s(Height::fill())
-        .child(create_canvas_element(canvas_state, waveform_timeline))
+        .child(create_canvas_element(waveform_canvas, waveform_timeline))
 }
 
-/// Canvas element creation with Fast2D integration
-fn create_canvas_element(canvas_state: &CanvasState, waveform_timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline) -> impl Element {
+fn create_canvas_element(waveform_canvas: &WaveformCanvas, waveform_timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline) -> impl Element {
     Canvas::new()
-        // ✅ RESPONSIVE: Use reactive dimensions from timeline domain
-        .width_signal(waveform_timeline.canvas_width.signal().map(|width| *width as u32))
-        .height_signal(waveform_timeline.canvas_height.signal().map(|height| *height as u32))
+        .s(Width::exact_signal(waveform_timeline.canvas_width.signal().map(|width| *width as u32)))
+        .s(Height::exact_signal(waveform_timeline.canvas_height.signal().map(|height| *height as u32)))
         .update_raw_el({
-            let canvas_state_for_resize = canvas_state.clone();
+            let dimensions_relay = waveform_canvas.canvas_dimensions_changed_relay.clone();
             move |raw_el| {
                 raw_el
                     .on_resize(move |width, height| {
                         if width > 0 && height > 0 {
-                            crate::visualizer::timeline::timeline_actor::set_canvas_dimensions_temporary(width as f32, height as f32);
-
-                            // Trigger canvas redraw on resize (using Atom-based state)
-                            trigger_canvas_redraw(&canvas_state_for_resize);
+                            dimensions_relay.send((width as f32, height as f32));
                         }
                     })
             }
         })
         .after_insert({
-                    let canvas_state_for_insert = canvas_state.clone();
-                    move |raw_element| {
-                        // Initialize Fast2D rendering with DOM canvas element
-                        let canvas_clone = raw_element.clone();
-                        let canvas_state_clone = canvas_state_for_insert.clone();
-                        Task::start(async move {
-                            Task::next_macro_tick().await;
-
-                            let _width = canvas_clone.width();
-                            let _height = canvas_clone.height();
-
-                            // Initialize Fast2D canvas with the local renderer (using Atom instead of thread_local)
-                            if let Some(renderer_rc) = canvas_state_clone.renderer.get() {
-                                let renderer_clone = renderer_rc.clone();
-                                let canvas_state_for_task = canvas_state_clone.clone();
-                                Task::start(async move {
-                                    // Initialize Fast2D canvas asynchronously
-                                    let fast2d_canvas =
-                                        fast2d::CanvasWrapper::new_with_canvas(canvas_clone)
-                                            .await;
-
-                                    // Set canvas on renderer
-                                    match renderer_clone.try_borrow_mut() {
-                                        Ok(mut renderer) => {
-                                            // TODO: In Actor+Relay architecture, get selected_variables from domain parameter
-                                            let empty_variables: Vec<shared::SelectedVariable> = vec![];
-                                            renderer.set_canvas(fast2d_canvas, &empty_variables);
-
-                                            // ✅ FIX: Mark initialization complete and trigger initial render
-                                            canvas_state_for_task.initialized.set(true);
-                                        }
-                                        Err(_) => {}
-                                    }
-                                });
-
-                                // NOTE: Initial render will be triggered automatically by set_canvas() method
-                            }
-                        });
-                    }
-                })
+            let canvas_initialized_relay = waveform_canvas.canvas_initialized_relay.clone();
+            move |_raw_element| {
+                canvas_initialized_relay.send(());
+            }
+        })
 }
 
-/// Setup signal listeners to trigger canvas redraws when state changes
-fn setup_canvas_signal_listeners(
-    canvas_state: &CanvasState,
+fn setup_canvas_event_connections(
+    waveform_canvas: &WaveformCanvas,
     selected_variables: &crate::selected_variables::SelectedVariables,
     waveform_timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline,
     app_config: &crate::config::AppConfig,
 ) {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    static LISTENERS_SETUP: AtomicBool = AtomicBool::new(false);
-
-    // Only setup listeners once
-    if LISTENERS_SETUP.swap(true, Ordering::SeqCst) {
-        return;
-    }
-
-    // TODO: Listen to timeline state changes when proper viewport signal is available
-    // TODO: Listen to cursor position changes when proper signal is available
-
-    // Listen to selected variables changes
-    Task::start({
+    // Connect domain events to canvas events using relay patterns
+    let event_connector_actor = Actor::new(false, {
         let selected_variables = selected_variables.clone();
-        let canvas_state_for_variables = canvas_state.clone();
-        async move {
-            selected_variables.variables_vec_actor.signal()
-                .for_each_sync(move |_variables| {
-                    trigger_canvas_redraw(&canvas_state_for_variables);
-                })
-                .await;
-        }
-    });
-
-    // Listen to theme changes
-    Task::start({
+        let waveform_timeline = waveform_timeline.clone();
         let app_config = app_config.clone();
-        let canvas_state_for_theme = canvas_state.clone();
-        async move {
-            app_config
-                .theme_actor
-                .signal()
-                .for_each_sync(move |theme| {
-                let novyui_theme = match theme {
-                    shared::Theme::Dark => moonzoon_novyui::tokens::theme::Theme::Dark,
-                    shared::Theme::Light => moonzoon_novyui::tokens::theme::Theme::Light,
-                };
-                // Update theme on renderer and trigger redraw (using Atom instead of thread_local)
-                if let Some(renderer_rc) = canvas_state_for_theme.renderer.get() {
-                    if let Ok(mut renderer) = renderer_rc.try_borrow_mut() {
-                        renderer.set_theme(novyui_theme);
-                    }
-                }
-                trigger_canvas_redraw(&canvas_state_for_theme);
-            })
-            .await;
-        }
-    });
-}
-
-// ✅ FIXED: mark_canvas_initialized and is_canvas_initialized functions eliminated
-// Canvas initialization now managed directly through CanvasState.initialized Atom
-
-/// Canvas redraw function using Atom-based state (Actor+Relay architecture)
-pub fn trigger_canvas_redraw(canvas_state: &CanvasState) {
-    // ✅ FIX: Only attempt renders after canvas is fully initialized (using Atom)
-    if !canvas_state.initialized.get() {
-        return;
-    }
-
-    if let Some(renderer_rc) = canvas_state.renderer.get() {
-        match renderer_rc.try_borrow_mut() {
-            Ok(mut renderer) => {
-                if renderer.has_canvas() {
-                    if renderer.needs_redraw() {
-                        // TODO: In Actor+Relay architecture, get selected_variables from domain parameter
-                        let empty_variables: Vec<shared::SelectedVariable> = vec![];
-                        renderer.render_frame(&empty_variables);
+        let waveform_canvas = waveform_canvas.clone();
+        async move |state_handle| {
+            if !state_handle.get() {
+                let mut variables_stream = selected_variables.variables_vec_actor.signal().to_stream();
+                let mut theme_stream = app_config.theme_actor.signal().to_stream();
+                
+                state_handle.set(true);
+                
+                loop {
+                    select! {
+                        _ = variables_stream.next() => {
+                            // Variables changed - trigger redraw
+                            waveform_canvas.redraw_requested_relay.send(());
+                        }
+                        theme_change = theme_stream.next() => {
+                            if let Some(theme) = theme_change {
+                                // Theme changed - update canvas theme and redraw
+                                waveform_canvas.theme_changed_relay.send(theme);
+                                waveform_canvas.redraw_requested_relay.send(());
+                            }
+                        }
                     }
                 }
             }
-            Err(_) => {}
         }
-    }
+    });
+    
+    // Connect canvas dimension changes to timeline
+    let dimension_connector_actor = Actor::new(false, {
+        let waveform_canvas = waveform_canvas.clone();
+        let waveform_timeline = waveform_timeline.clone();
+        async move |state_handle| {
+            if !state_handle.get() {
+                let mut dimensions_stream = waveform_canvas.canvas_dimensions_changed_relay.signal().to_stream();
+                
+                state_handle.set(true);
+                
+                loop {
+                    select! {
+                        dimensions_change = dimensions_stream.next() => {
+                            if let Some((width, height)) = dimensions_change {
+                                // Forward canvas dimensions to timeline
+                                waveform_timeline.canvas_dimensions_changed_relay.send((width, height));
+                                waveform_canvas.redraw_requested_relay.send(());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    });
 }
+

@@ -1141,4 +1141,106 @@ let zoom_actor = Actor::new(ZoomState::default(), {
 
 **Pattern Rule:** Centralize derived state instead of scattering computation logic across the codebase.
 
+## State Management Migration Patterns
+
+### Bool → Unit Event Transition Pattern
+
+**When to use `Relay` (unit events) instead of `Relay<bool>`:**
+
+For **one-time lifecycle events** like initialization, deinitialization, or completion events:
+
+```rust
+// ❌ UNNECESSARY: Boolean payload for one-way events
+let (initialized_relay, mut stream) = relay::<bool>();
+initialization_relay.send(true); // Always sends true
+
+// ✅ CLEAN: Unit event for "initialization happened"
+let (initialized_relay, mut stream) = relay();
+initialization_relay.send(()); // Event occurrence is the signal
+
+let actor = Actor::new(false, async move |state| {
+    while let Some(()) = stream.next().await {
+        state.set_neq(true); // Event = state change
+    }
+});
+```
+
+**Key principle:** Use **event occurrence** rather than **event payload** for one-way state transitions.
+
+### Atom → Actor Encapsulation Pattern
+
+**Problem with public Atoms - external mutation exposure:**
+
+```rust
+// ❌ ANTIPATTERN: Public Atom breaks encapsulation
+pub struct Domain {
+    pub status: Atom<bool>, // External code can call .set()!
+}
+
+// External code can corrupt domain state:
+domain.status.set(true); // ❌ Bypasses domain logic
+```
+
+**Solution with Actor - controlled access:**
+
+```rust
+// ✅ CORRECT: Actor provides encapsulated state
+pub struct Domain {
+    pub status_actor: Actor<bool>, // Only provides signal access
+    status_changed_relay: Relay,   // Internal event relay
+}
+
+// External code gets read-only access:
+domain.status_actor.signal(); // ✅ Read-only signal
+// domain.status_actor.set(); // ❌ No public set method
+
+// Internal domain controls all changes:
+status_changed_relay.send(()); // ✅ Proper event-driven updates
+```
+
+**Key benefit:** Actor encapsulation prevents external state corruption while providing reactive signal access.
+
+### Complex Type Elimination Pattern
+
+**Antipattern recognition - fighting Rust's ownership system:**
+
+```rust
+// ❌ ANTIPATTERN: Multiple indirection layers indicate design issues
+pub renderer: Atom<Option<Rc<RefCell<WaveformRenderer>>>>,
+//            ^^^^  ^^^^^^ ^^  ^^^^^^^
+//            |     |      |   Interior mutability (fighting borrow checker)
+//            |     |      Reference counting (shared ownership confusion)
+//            |     Maybe pattern (uninitialized state management)
+//            Reactive wrapper (attempting reactivity on complex type)
+```
+
+**Clean Actor-based solution:**
+
+```rust
+// ✅ CORRECT: Direct ownership with Actor-managed state
+let canvas_actor = Actor::new((), async move |_state_handle| {
+    // State as local variables - no Clone/RefCell complexity
+    let mut renderer: Option<WaveformRenderer> = None; // Direct ownership
+    let mut initialized = false;
+    
+    loop {
+        select! {
+            // Handle events using local state - no borrowing conflicts
+            canvas_ready = canvas_stream.next() => {
+                renderer = Some(WaveformRenderer::new().await);
+                initialized = true;
+            }
+        }
+    }
+});
+```
+
+**Architecture rule:** If you need `Rc<RefCell<T>>` in reactive code, consider Actor<()> with inline state variables instead.
+
+**Recognition patterns for this antipattern:**
+- Multiple angle brackets: `Type<Option<Rc<RefCell<T>>>>`
+- Defensive RefCell programming: `if let Ok(mut x) = y.try_borrow_mut() { ... }`
+- Manual Clone implementations that discard fields
+- Fighting Rust's ownership system instead of working with it
+
 This comprehensive guide provides everything needed to implement proper Actor+Relay architecture in NovyWave.

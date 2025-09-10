@@ -1,119 +1,228 @@
-use crate::visualizer::timeline::timeline_actor::set_cursor_position_seconds;
+use crate::dataflow::*;
 use zoon::*;
-// Cursor position would be accessed through reactive signals instead of synchronous position functions
-use js_sys;
+use futures::{select, stream::StreamExt};
+use shared::SignalTransition;
 
-// Constants for navigation timing and precision
-const TRANSITION_NAVIGATION_DEBOUNCE_MS: u64 = 100; // 100ms debounce
-const F64_PRECISION_TOLERANCE: f64 = 1e-15;
-
-/// Get current time in nanoseconds for high-precision timing (WASM-compatible)
-fn get_current_time_ns() -> u64 {
-    // Use performance.now() in WASM which provides high-precision timestamps
-    (js_sys::Date::now() * 1_000_000.0) as u64 // Convert milliseconds to nanoseconds
+#[derive(Clone, Debug, PartialEq)]
+pub enum NavigationType {
+    PreviousTransition,
+    NextTransition,
 }
 
-// collect_all_transitions function removed - uses deprecated global access patterns
-// TODO: Implement transition collection using proper Actor+Relay architecture
+#[derive(Clone, Debug)]
+pub struct NavigationResult {
+    pub target_time_seconds: f64,
+    pub navigation_type: NavigationType,
+    pub wrapped: bool,
+}
 
-/// Jump to the previous transition relative to current cursor position
-pub fn jump_to_previous_transition(timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline) {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static LAST_NAVIGATION_TIME: AtomicU64 = AtomicU64::new(0);
+#[derive(Clone)]
+pub struct NavigationController {
+    pub debounce_state: Actor<NavigationDebounceState>,
+    pub previous_transition_requested_relay: Relay,
+    pub next_transition_requested_relay: Relay,
+    pub navigation_completed_relay: Relay<NavigationResult>,
+}
 
-    // Debounce rapid key presses to prevent precision issues
-    let now = get_current_time_ns();
-    let last_navigation = LAST_NAVIGATION_TIME.load(Ordering::Relaxed);
-    if now - last_navigation < TRANSITION_NAVIGATION_DEBOUNCE_MS * 1_000_000 {
-        return; // Still within debounce period
+#[derive(Clone, Debug)]
+struct NavigationDebounceState {
+    last_navigation_time_ns: u64,
+    debounce_period_ms: u64,
+}
+
+impl Default for NavigationDebounceState {
+    fn default() -> Self {
+        Self {
+            last_navigation_time_ns: 0,
+            debounce_period_ms: 100,
+        }
     }
-    LAST_NAVIGATION_TIME.store(now, Ordering::Relaxed);
+}
 
-    // Validate timeline range exists before attempting transition jump
-    // Timeline range validation now handled by MaximumTimelineRange Actor
-    // Skip validation for now - proper implementation needs Actor+Relay integration
+impl NavigationController {
+    pub async fn new(
+        timeline_cache: crate::visualizer::timeline::timeline_cache::TimelineCacheController,
+        cursor_position: Actor<crate::visualizer::timeline::time_domain::TimeNs>,
+        selected_variables: crate::selected_variables::SelectedVariables,
+    ) -> Self {
+        let (previous_transition_requested_relay, mut previous_transition_stream) = relay();
+        let (next_transition_requested_relay, mut next_transition_stream) = relay();
+        let (navigation_completed_relay, _navigation_completed_stream) = relay();
 
-    // Transition jumping would be implemented through proper Actor+Relay events in waveform_timeline_domain
-    let current_cursor = Some(0.0); // Fallback - proper implementation needs Actor+Relay event
-    let transitions = Vec::<f64>::new(); // TODO: Implement transition collection using proper Actor+Relay architecture
+        let debounce_state = Actor::new(NavigationDebounceState::default(), async move |state| {
+            let mut cached_cursor_position: Option<f64> = None;
+            let mut cached_transitions: Vec<f64> = Vec::new();
 
-    if transitions.is_empty() {
-        return; // No transitions available
-    }
+            let mut cursor_stream = cursor_position.signal().to_stream();
+            let mut variables_stream = selected_variables.variables_vec_signal.signal_cloned().to_stream();
 
-    // Find the largest transition time that's less than current cursor
-    let mut previous_transition: Option<f64> = None;
+            loop {
+                select! {
+                    cursor_update = cursor_stream.next() => {
+                        if let Some(cursor_ns) = cursor_update {
+                            cached_cursor_position = Some(cursor_ns.display_seconds());
+                        }
+                    }
+                    variables_update = variables_stream.next() => {
+                        if let Some(variables) = variables_update {
+                            let cache = timeline_cache.cache.signal().to_stream().next().await;
+                            if let Some(cache_data) = cache {
+                                cached_transitions = Self::extract_transitions_from_cache(&cache_data, &variables);
+                            }
+                        }
+                    }
+                    previous_request = previous_transition_stream.next() => {
+                        if let Some(()) = previous_request {
+                            if let Some(result) = Self::process_navigation_request(
+                                &mut state,
+                                NavigationType::PreviousTransition,
+                                cached_cursor_position,
+                                &cached_transitions,
+                            ).await {
+                                navigation_completed_relay.send(result);
+                            }
+                        }
+                    }
+                    next_request = next_transition_stream.next() => {
+                        if let Some(()) = next_request {
+                            if let Some(result) = Self::process_navigation_request(
+                                &mut state,
+                                NavigationType::NextTransition,
+                                cached_cursor_position,
+                                &cached_transitions,
+                            ).await {
+                                navigation_completed_relay.send(result);
+                            }
+                        }
+                    }
+                }
+            }
+        });
 
-    for &transition_time in transitions.iter() {
-        if transition_time < current_cursor.unwrap_or(0.0) - F64_PRECISION_TOLERANCE {
-            // f64 precision tolerance
-            previous_transition = Some(transition_time);
-        } else {
-            break; // Transitions are sorted, so we can stop here
+        Self {
+            debounce_state,
+            previous_transition_requested_relay,
+            next_transition_requested_relay,
+            navigation_completed_relay,
         }
     }
 
-    if let Some(prev_time) = previous_transition {
-        // Jump to previous transition
-        set_cursor_position_seconds(timeline, prev_time);
-        // Cursor synchronization would use dedicated relay events in WaveformTimeline Actor
-        // timeline.cursor_synced_relay.send((prev_time, prev_time));  // (current, target)
-        // Jumped to previous transition
-    } else if !transitions.is_empty() {
-        // If no previous transition, wrap to the last transition
-        let last_transition = transitions[transitions.len() - 1];
-        set_cursor_position_seconds(timeline, last_transition);
-        // Cursor synchronization would use dedicated relay events in WaveformTimeline Actor
-        // timeline.cursor_synced_relay.send((last_transition, last_transition));  // (current, target)
-        // Wrapped to last transition
-    }
-}
+    fn extract_transitions_from_cache(
+        cache: &crate::visualizer::timeline::timeline_cache::TimelineCache,
+        variables: &[crate::selected_variables::SelectedVariable],
+    ) -> Vec<f64> {
+        let mut all_transitions = Vec::new();
 
-/// Jump to the next transition relative to current cursor position
-pub fn jump_to_next_transition(timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline) {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static LAST_NAVIGATION_TIME: AtomicU64 = AtomicU64::new(0);
+        for variable in variables {
+            let signal_id = match variable.file_path() {
+                Some(file_path) => format!("{}|{}|{}", file_path, variable.scope_path, variable.variable_name),
+                None => continue,
+            };
 
-    // Debounce rapid key presses to prevent precision issues
-    let now = get_current_time_ns();
-    let last_navigation = LAST_NAVIGATION_TIME.load(Ordering::Relaxed);
-    if now - last_navigation < TRANSITION_NAVIGATION_DEBOUNCE_MS * 1_000_000 {
-        return; // Still within debounce period
-    }
-    LAST_NAVIGATION_TIME.store(now, Ordering::Relaxed);
+            if let Some(transitions) = cache.raw_transitions.get(&signal_id) {
+                for transition in transitions {
+                    all_transitions.push(transition.time_ns as f64 / 1_000_000_000.0);
+                }
+            }
+        }
 
-    // Validate timeline range exists before attempting transition jump
-    // Timeline range validation now handled by MaximumTimelineRange Actor
-    // Skip validation for now - proper implementation needs Actor+Relay integration
-
-    // Transition jumping would be implemented through proper Actor+Relay events in waveform_timeline_domain
-    let current_cursor = Some(0.0); // Fallback - proper implementation needs Actor+Relay event
-    let transitions = Vec::<f64>::new(); // TODO: Implement transition collection using proper Actor+Relay architecture
-
-    if transitions.is_empty() {
-        return; // No transitions available
+        all_transitions.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        all_transitions.dedup_by(|a, b| (a - b).abs() < 1e-15);
+        all_transitions
     }
 
-    // Find the smallest transition time that's greater than current cursor
-    let next_transition = transitions
-        .iter()
-        .find(|&&transition_time| {
-            transition_time > current_cursor.unwrap_or(0.0) + F64_PRECISION_TOLERANCE
-        }) // f64 precision tolerance
-        .copied();
+    async fn process_navigation_request(
+        state: &mut Actor<NavigationDebounceState>,
+        navigation_type: NavigationType,
+        current_cursor: Option<f64>,
+        transitions: &[f64],
+    ) -> Option<NavigationResult> {
+        let current_time = (zoon::performance().now() * 1_000_000.0) as u64;
+        let mut debounce_state = state.lock_mut();
 
-    if let Some(next_time) = next_transition {
-        // Jump to next transition
-        set_cursor_position_seconds(timeline, next_time);
-        // Cursor synchronization would use dedicated relay events in WaveformTimeline Actor
-        // timeline.cursor_synced_relay.send((next_time, next_time));  // (current, target)
-        // Jumped to next transition
-    } else if !transitions.is_empty() {
-        // If no next transition, wrap to the first transition
-        let first_transition = transitions[0];
-        set_cursor_position_seconds(timeline, first_transition);
-        // Cursor synchronization would use dedicated relay events in WaveformTimeline Actor
-        // timeline.cursor_synced_relay.send((first_transition, first_transition));  // (current, target)
-        // Wrapped to first transition
+        let time_since_last = current_time - debounce_state.last_navigation_time_ns;
+        let debounce_threshold = debounce_state.debounce_period_ms * 1_000_000;
+
+        if time_since_last < debounce_threshold {
+            return None;
+        }
+
+        debounce_state.last_navigation_time_ns = current_time;
+        drop(debounce_state);
+
+        let cursor_pos = current_cursor?;
+        if transitions.is_empty() {
+            return None;
+        }
+
+        let (target_time, wrapped) = match navigation_type {
+            NavigationType::PreviousTransition => {
+                Self::find_previous_transition(cursor_pos, transitions)
+            }
+            NavigationType::NextTransition => {
+                Self::find_next_transition(cursor_pos, transitions)
+            }
+        };
+
+        target_time.map(|time| NavigationResult {
+            target_time_seconds: time,
+            navigation_type,
+            wrapped,
+        })
+    }
+
+    fn find_previous_transition(current_cursor: f64, transitions: &[f64]) -> Option<(f64, bool)> {
+        const F64_PRECISION_TOLERANCE: f64 = 1e-15;
+
+        let mut previous_transition: Option<f64> = None;
+
+        for &transition_time in transitions.iter() {
+            if transition_time < current_cursor - F64_PRECISION_TOLERANCE {
+                previous_transition = Some(transition_time);
+            } else {
+                break;
+            }
+        }
+
+        if let Some(prev_time) = previous_transition {
+            Some((prev_time, false))
+        } else if !transitions.is_empty() {
+            let last_transition = transitions[transitions.len() - 1];
+            Some((last_transition, true))
+        } else {
+            None
+        }
+    }
+
+    fn find_next_transition(current_cursor: f64, transitions: &[f64]) -> Option<(f64, bool)> {
+        const F64_PRECISION_TOLERANCE: f64 = 1e-15;
+
+        let next_transition = transitions
+            .iter()
+            .find(|&&transition_time| {
+                transition_time > current_cursor + F64_PRECISION_TOLERANCE
+            })
+            .copied();
+
+        if let Some(next_time) = next_transition {
+            Some((next_time, false))
+        } else if !transitions.is_empty() {
+            let first_transition = transitions[0];
+            Some((first_transition, true))
+        } else {
+            None
+        }
+    }
+
+    pub fn request_previous_transition(&self) {
+        self.previous_transition_requested_relay.send(());
+    }
+
+    pub fn request_next_transition(&self) {
+        self.next_transition_requested_relay.send(());
+    }
+
+    pub fn navigation_completed_signal(&self) -> impl Signal<Item = NavigationResult> {
+        self.navigation_completed_relay.signal()
     }
 }

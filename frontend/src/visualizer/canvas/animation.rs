@@ -1,96 +1,144 @@
+use crate::dataflow::*;
 use zoon::*;
-use crate::visualizer::timeline::timeline_actor::{
-    current_ns_per_pixel
-};
-// Note: Some synchronous operations maintained for performance in animation loops
-use crate::visualizer::timeline::timeline_actor::NsPerPixel;
+use futures::{select, stream::StreamExt};
 
+#[derive(Clone, Debug)]
+pub struct AnimationController {
+    pub animation_state: Actor<AnimationState>,
+    
+    pub pan_left_requested_relay: Relay,
+    pub pan_right_requested_relay: Relay,
+    pub pan_left_stopped_relay: Relay,
+    pub pan_right_stopped_relay: Relay,
+    
+    pub cursor_left_requested_relay: Relay,
+    pub cursor_right_requested_relay: Relay,
+    pub cursor_left_stopped_relay: Relay,
+    pub cursor_right_stopped_relay: Relay,
+    
+    pub animation_tick_relay: Relay<AnimationFrame>,
+}
 
+#[derive(Clone, Debug)]
+struct AnimationState {
+    pub panning_left: bool,
+    pub panning_right: bool,
+    pub cursor_moving_left: bool,
+    pub cursor_moving_right: bool,
+    pub frame_count: u32,
+    pub zoom_level: Option<f64>,
+}
 
-
-
-/// Start smooth pan left animation
-pub fn start_smooth_pan_left(timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline) {
-    if !crate::visualizer::timeline::timeline_actor::is_panning_left() {
-        crate::visualizer::timeline::timeline_actor::panning_left_started_relay(timeline).send(());
-        Task::start(async move {
-            while crate::visualizer::timeline::timeline_actor::is_panning_left() {
-                let ns_per_pixel = current_ns_per_pixel();
-                // Allow panning when zoomed in OR when actively zooming in for simultaneous operation
-                // Lower ns_per_pixel means more zoomed in
-                if let Some(ns_per_pixel_val) = ns_per_pixel {
-                    if ns_per_pixel_val.nanos() < NsPerPixel::MEDIUM_ZOOM.nanos() || crate::visualizer::timeline::timeline_actor::is_zooming_in() {
-                        // Coordinate access would be refactored to use proper reactive patterns instead of synchronous position access
-                        break;
-                    }
-                } else {
-                    break; // Timeline not initialized yet, stop panning
-                }
-                // ✅ PROPER: Use Task::next_macro_tick for event loop yielding instead of Timer::sleep
-                Task::next_macro_tick().await;
-            }
-        });
+impl Default for AnimationState {
+    fn default() -> Self {
+        Self {
+            panning_left: false,
+            panning_right: false,
+            cursor_moving_left: false,
+            cursor_moving_right: false,
+            frame_count: 0,
+            zoom_level: None,
+        }
     }
 }
 
-/// Start smooth pan right animation
-pub fn start_smooth_pan_right(timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline) {
-    if !crate::visualizer::timeline::timeline_actor::is_panning_right() {
-        crate::visualizer::timeline::timeline_actor::panning_right_started_relay(timeline).send(());
-        Task::start(async move {
-            while crate::visualizer::timeline::timeline_actor::is_panning_right() {
-                let ns_per_pixel = current_ns_per_pixel();
-                // Allow panning when zoomed in OR when actively zooming in for simultaneous operation
-                // Lower ns_per_pixel means more zoomed in
-                if let Some(ns_per_pixel_val) = ns_per_pixel {
-                    if ns_per_pixel_val.nanos() < NsPerPixel::MEDIUM_ZOOM.nanos() || crate::visualizer::timeline::timeline_actor::is_zooming_in() {
-                        // Coordinate access would be refactored to use proper reactive patterns instead of synchronous position access
-                        break;
+#[derive(Clone, Debug)]
+pub struct AnimationFrame {
+    pub frame_number: u32,
+    pub delta_time_ms: f32,
+    pub active_animations: Vec<AnimationType>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum AnimationType {
+    PanLeft,
+    PanRight,
+    CursorLeft,
+    CursorRight,
+}
+
+impl AnimationController {
+    pub async fn new(
+        waveform_timeline: crate::visualizer::timeline::timeline_actor::WaveformTimeline,
+    ) -> Self {
+        let (pan_left_requested_relay, mut pan_left_requested_stream) = relay();
+        let (pan_right_requested_relay, mut pan_right_requested_stream) = relay();
+        let (pan_left_stopped_relay, mut pan_left_stopped_stream) = relay();
+        let (pan_right_stopped_relay, mut pan_right_stopped_stream) = relay();
+        
+        let (cursor_left_requested_relay, mut cursor_left_requested_stream) = relay();
+        let (cursor_right_requested_relay, mut cursor_right_requested_stream) = relay();
+        let (cursor_left_stopped_relay, mut cursor_left_stopped_stream) = relay();
+        let (cursor_right_stopped_relay, mut cursor_right_stopped_stream) = relay();
+        
+        let (animation_tick_relay, mut animation_tick_stream) = relay();
+        
+        let animation_state = Actor::new(AnimationState::default(), async move |state| {
+            loop {
+                select! {
+                    Some(()) = pan_left_requested_stream.next() => {
+                        let mut current_state = state.lock_mut();
+                        current_state.panning_left = true;
+                        drop(current_state);
                     }
-                } else {
-                    // Timeline not initialized yet - skip this pan frame
+                    Some(()) = pan_right_requested_stream.next() => {
+                        let mut current_state = state.lock_mut();
+                        current_state.panning_right = true;
+                        drop(current_state);
+                    }
+                    Some(()) = pan_left_stopped_stream.next() => {
+                        let mut current_state = state.lock_mut();
+                        current_state.panning_left = false;
+                        drop(current_state);
+                    }
+                    Some(()) = pan_right_stopped_stream.next() => {
+                        let mut current_state = state.lock_mut();
+                        current_state.panning_right = false;
+                        drop(current_state);
+                    }
+                    Some(()) = cursor_left_requested_stream.next() => {
+                        let mut current_state = state.lock_mut();
+                        current_state.cursor_moving_left = true;
+                        drop(current_state);
+                    }
+                    Some(()) = cursor_right_requested_stream.next() => {
+                        let mut current_state = state.lock_mut();
+                        current_state.cursor_moving_right = true;
+                        drop(current_state);
+                    }
+                    Some(()) = cursor_left_stopped_stream.next() => {
+                        let mut current_state = state.lock_mut();
+                        current_state.cursor_moving_left = false;
+                        drop(current_state);
+                    }
+                    Some(()) = cursor_right_stopped_stream.next() => {
+                        let mut current_state = state.lock_mut();
+                        current_state.cursor_moving_right = false;
+                        drop(current_state);
+                    }
+                    Some(frame) = animation_tick_stream.next() => {
+                        let mut current_state = state.lock_mut();
+                        current_state.frame_count = frame.frame_number;
+                        drop(current_state);
+                    }
                 }
-                // ✅ PROPER: Use Task::next_macro_tick for event loop yielding instead of Timer::sleep
-                Task::next_macro_tick().await;
             }
         });
+        
+        Self {
+            animation_state,
+            pan_left_requested_relay,
+            pan_right_requested_relay,
+            pan_left_stopped_relay,
+            pan_right_stopped_relay,
+            cursor_left_requested_relay,
+            cursor_right_requested_relay,
+            cursor_left_stopped_relay,
+            cursor_right_stopped_relay,
+            animation_tick_relay,
+        }
     }
+    
+    
 }
 
-/// Stop smooth pan left animation
-pub fn stop_smooth_pan_left(timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline) {
-    crate::visualizer::timeline::timeline_actor::panning_left_stopped_relay(timeline).send(());
-}
-
-/// Stop smooth pan right animation
-pub fn stop_smooth_pan_right(timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline) {
-    crate::visualizer::timeline::timeline_actor::panning_right_stopped_relay(timeline).send(());
-}
-
-
-
-
-
-/// Start smooth cursor movement to the left
-pub fn start_smooth_cursor_left(timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline) {
-    crate::visualizer::timeline::timeline_actor::cursor_moving_left_started_relay(timeline).send(());
-    // Animation system would use cursor_animation_started relay to handle direction and animation state events
-}
-
-/// Start smooth cursor movement to the right
-pub fn start_smooth_cursor_right(timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline) {
-    crate::visualizer::timeline::timeline_actor::cursor_moving_right_started_relay(timeline).send(());
-    // Animation system would use cursor_animation_started relay to handle direction and animation state events
-}
-
-/// Stop smooth cursor movement to the left
-pub fn stop_smooth_cursor_left(timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline) {
-    crate::visualizer::timeline::timeline_actor::cursor_moving_left_stopped_relay(timeline).send(());
-    // Animation system would use cursor_animation_stopped relay to handle animation state transitions properly
-}
-
-/// Stop smooth cursor movement to the right
-pub fn stop_smooth_cursor_right(timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline) {
-    crate::visualizer::timeline::timeline_actor::cursor_moving_right_stopped_relay(timeline).send(());
-    // Animation system would use cursor_animation_stopped relay to handle animation state transitions properly
-}
