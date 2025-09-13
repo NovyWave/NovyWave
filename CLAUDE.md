@@ -11,6 +11,13 @@ Core guidance for Claude Code when working with NovyWave.
 @.claude/extra/project/domain_map.md
 @.claude/extra/project/task_execution.md
 
+<!-- Project Specifications -->
+@.claude/extra/project/specs/specs.md
+
+<!-- Implementation Tracking -->
+@.claude/extra/project/specs/checklist.md
+<!-- NOTE: Checklist items are only marked complete after user confirmation of testing -->
+
 <!-- Technical Reference -->
 @.claude/extra/technical/reference.md
 @.claude/extra/technical/performance-debugging.md
