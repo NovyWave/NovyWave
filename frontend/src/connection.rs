@@ -1,5 +1,6 @@
 use zoon::*;
 use futures::stream::StreamExt;
+use std::sync::Arc;
 use crate::error_display::{log_error_console_only, ErrorAlert};
 use crate::tracked_files::update_tracked_file_state;
 use crate::selected_variables::find_scope_full_name;
@@ -8,20 +9,26 @@ use shared::LoadingStatus;
 use shared::{DownMsg, UpMsg};
 
 /// Actor+Relay compatible Connection adapter
+#[derive(Clone)]
 pub struct ConnectionAdapter {
-    connection: Connection<UpMsg, DownMsg>,
+    connection: Arc<SendWrapper<Connection<UpMsg, DownMsg>>>,
 }
 
 impl ConnectionAdapter {
     pub fn new() -> (Self, impl futures::stream::Stream<Item = DownMsg>) {
         let (message_sender, message_stream) = futures::channel::mpsc::unbounded();
-        
+
         let connection = Connection::new(move |down_msg, _| {
             let _ = message_sender.unbounded_send(down_msg);
         });
-        
-        let adapter = ConnectionAdapter { connection };
+
+        let adapter = ConnectionAdapter { connection: Arc::new(SendWrapper::new(connection)) };
         (adapter, message_stream)
+    }
+
+    /// Create ConnectionAdapter from existing Arc<Connection>
+    pub fn from_arc(connection: Arc<SendWrapper<Connection<UpMsg, DownMsg>>>) -> Self {
+        ConnectionAdapter { connection }
     }
     
     pub async fn send_up_msg(&self, up_msg: UpMsg) {
@@ -39,18 +46,18 @@ pub fn create_connection_message_handler(
     app_config: &crate::config::AppConfig,
 ) -> (ConnectionAdapter, crate::dataflow::Actor<()>) {
     let (connection_adapter, mut down_msg_stream) = ConnectionAdapter::new();
-    
+
     let tracked_files = tracked_files.clone();
     let selected_variables = selected_variables.clone();
     let waveform_timeline = waveform_timeline.clone();
     let app_config = app_config.clone();
-    
+
     let message_handler = crate::dataflow::Actor::new((), async move |_state| {
         while let Some(down_msg) = down_msg_stream.next().await {
             handle_down_msg(down_msg, &tracked_files, &selected_variables, &waveform_timeline, &app_config);
         }
     });
-    
+
     (connection_adapter, message_handler)
 }
 
@@ -113,12 +120,13 @@ fn handle_down_msg(
 
             }
             DownMsg::DirectoryContents { path, items } => {
-                let cache_mutable = zoon::Mutable::new(std::collections::HashMap::new());
-                cache_mutable.lock_mut().insert(path.clone(), items.clone());
+                zoon::println!("📥 CONNECTION: Received DirectoryContents for {} with {} items", path, items.len());
+                // ACTOR+RELAY FIX: Send to FilePickerDomain relay
+                app_config.file_picker_domain.directory_contents_received_relay.send((path.clone(), items.clone()));
 
+                // Auto-expand home directory ancestry
                 if path.contains("/home/") || path.starts_with("/Users/") {
                     let mut paths_to_expand = Vec::new();
-
                     paths_to_expand.push(path.clone());
 
                     let mut parent_path = std::path::Path::new(&path);
@@ -131,21 +139,19 @@ fn handle_down_msg(
                         parent_path = parent;
                     }
 
-                    let mut expanded = app_config
-                        .file_picker_expanded_directories
-                        .lock_mut();
+                    // Use FilePickerDomain to expand paths instead of legacy Mutable
                     for path in paths_to_expand {
-                        expanded.insert(path);
+                        app_config.file_picker_domain.directory_expanded_relay.send(path);
                     }
                 }
-
             }
             DownMsg::DirectoryError { path, error } => {
-                let error_alert = ErrorAlert::new_directory_error(path.clone(), error.clone());
+                // ACTOR+RELAY FIX: Send to FilePickerDomain relay
+                app_config.file_picker_domain.directory_error_received_relay.send((path.clone(), error.clone()));
+
+                // Log error for debugging
+                let error_alert = ErrorAlert::new_directory_error(path.clone(), error);
                 log_error_console_only(error_alert);
-
-                log_error_console_only(ErrorAlert::new_directory_error(path.clone(), error));
-
             }
             DownMsg::ConfigLoaded(_config) => {
             }
@@ -157,26 +163,19 @@ fn handle_down_msg(
                 for (path, result) in results {
                     match result {
                         Ok(items) => {
-                            let cache_mutable =
-                                zoon::Mutable::new(std::collections::HashMap::new());
-                            cache_mutable.lock_mut().insert(path.clone(), items);
-
+                            // ACTOR+RELAY FIX: Send to FilePickerDomain relay
+                            app_config.file_picker_domain.directory_contents_received_relay.send((path.clone(), items));
                         }
                         Err(error) => {
-                                        let error_alert = ErrorAlert::new_directory_error(
-                                path.clone(),
-                                error.clone(),
-                            );
-                            log_error_console_only(error_alert);
+                            // ACTOR+RELAY FIX: Send to FilePickerDomain relay
+                            app_config.file_picker_domain.directory_error_received_relay.send((path.clone(), error.clone()));
 
-                            log_error_console_only(ErrorAlert::new_directory_error(
-                                path.clone(),
-                                error,
-                            ));
+                            // Log error for debugging
+                            let error_alert = ErrorAlert::new_directory_error(path.clone(), error);
+                            log_error_console_only(error_alert);
                         }
                     }
                 }
-
             }
             DownMsg::SignalTransitions { file_path, results } => {
                 for result in results {
@@ -233,10 +232,10 @@ fn handle_down_msg(
                 }
             }
             DownMsg::UnifiedSignalResponse {
-                request_id,
-                signal_data,
+                request_id: _,
+                signal_data: _,
                 cursor_values,
-                statistics,
+                statistics: _,
                 cached_time_range_ns: _,
             } => {
                 for (_signal_id, value) in &cursor_values {

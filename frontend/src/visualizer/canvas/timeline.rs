@@ -3,7 +3,7 @@ use crate::visualizer::timeline::timeline_actor::NsPerPixel;
 use crate::dataflow::*;
 use futures::{select, stream::StreamExt, FutureExt};
 use std::collections::HashSet;
-use zoon::{SignalExt, Signal};
+use zoon::{SignalExt, Signal, SignalVecExt};
 
 #[derive(Clone)]
 pub struct TimelineContext {
@@ -34,7 +34,7 @@ pub fn get_min_valid_range_ns(canvas_width: u32) -> u64 {
 
 impl TimelineContext {
     pub async fn compute_maximum_timeline_range(&self) -> Option<(f64, f64)> {
-        let tracked_files = self.tracked_files.files_vec_signal.get_cloned();
+        let tracked_files = self.tracked_files.files.signal_vec().to_signal_cloned().to_stream().next().await.unwrap_or_default();
         let loaded_files: Vec<shared::WaveformFile> = tracked_files
             .iter()
             .filter_map(|tracked_file| match &tracked_file.state {
@@ -50,7 +50,7 @@ impl TimelineContext {
         let mut has_valid_files = false;
 
         if selected_file_paths.is_empty() {
-            let file_range_result = self.compute_full_file_range();
+            let file_range_result = self.compute_full_file_range().await;
             if let Some((file_min, file_max)) = file_range_result {
                 if file_min < file_max && file_min.is_finite() && file_max.is_finite() {
                     return Some((file_min, file_max));
@@ -108,8 +108,8 @@ impl TimelineContext {
             .collect()
     }
 
-    pub fn compute_full_file_range(&self) -> Option<(f64, f64)> {
-        let tracked_files = self.tracked_files.files_vec_signal.get_cloned();
+    pub async fn compute_full_file_range(&self) -> Option<(f64, f64)> {
+        let tracked_files = self.tracked_files.files.signal_vec().to_signal_cloned().to_stream().next().await.unwrap_or_default();
         let loaded_files: Vec<shared::WaveformFile> = tracked_files
             .iter()
             .filter_map(|tracked_file| match &tracked_file.state {

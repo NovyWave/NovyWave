@@ -94,8 +94,8 @@ where
     #[track_caller]
     pub fn new<F, Fut>(initial_state: T, processor: F) -> Self
     where
-        F: FnOnce(Mutable<T>) -> Fut + Send + 'static,
-        Fut: Future<Output = ()> + Send + 'static,
+        F: FnOnce(Mutable<T>) -> Fut + 'static,
+        Fut: Future<Output = ()> + 'static,
     {
         let state = Mutable::new(initial_state);
 

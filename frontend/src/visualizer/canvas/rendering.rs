@@ -376,7 +376,7 @@ impl WaveformRenderer {
     fn add_cursor_lines(
         objects: &mut Vec<Object2d>,
         params: &RenderingParameters,
-        theme_colors: &ThemeColors,
+        _theme_colors: &ThemeColors,
     ) {
         let time_range = params.viewport_end - params.viewport_start;
         if time_range <= 0.0 {
@@ -541,8 +541,8 @@ impl WaveformRenderer {
     }
     
     fn get_variable_transitions(
-        variable: &SelectedVariable,
-        params: &RenderingParameters,
+        _variable: &SelectedVariable,
+        _params: &RenderingParameters,
     ) -> Vec<(f32, SignalValue)> {
         Vec::new()
     }

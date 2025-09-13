@@ -119,6 +119,12 @@ if let Some(_unused_value) = some_option {
     // Empty block - variable not actually needed
 }
 
+// ❌ ESPECIALLY WRONG: Underscore prefix on Actor parameters - hard to debug!
+let actor = Actor::new((), async move |_state| {
+    // Actor drops because _state suggests it's unused, but it's NOT!
+    _state.set(new_value);  // This line might get overlooked
+});
+
 // ✅ CORRECT: Remove unused variables or fix the logic
 if some_option.is_some() {
     // If you don't need the value, don't bind it
@@ -127,6 +133,12 @@ if some_option.is_some() {
 // ✅ CORRECT: Use the variable properly if it's needed
 if let Some(value) = some_option {
     process_value(value);  // Actually use it
+}
+
+// ✅ CORRECT: Use meaningful names for Actor parameters
+let actor = Actor::new((), async move |state_handle| {
+    state_handle.set(new_value);  // Clear intent, no confusion
+});
 }
 ```
 

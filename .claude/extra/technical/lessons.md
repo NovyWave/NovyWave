@@ -1055,3 +1055,110 @@ struct FilePickerDomain {
 - Eliminate bridge patterns completely rather than trying to fix them
 - Comment out problematic unused functions rather than fighting lifetime issues
 - Ensure proper types for external component APIs (MutableVec vs Mutable)
+
+## Loading State Diagnostic Pattern (CRITICAL)
+
+### Remember: "Loading..." Text Indicates Broken Async Operations
+
+**Recognition Rule:** In most cases, operations like directory scanning, file parsing, or network requests should complete in milliseconds. If you can capture "Loading..." text during browser testing, it means the operation is stuck indefinitely - not actually loading.
+
+**Diagnostic Approach:**
+```rust
+// ❌ BAD SIGN: Visible "Loading..." in browser snapshots means stuck operation
+// tree "Tree" [ref=s5e157]:
+//   - treeitem "Loading..." [level=2] [ref=s5e179]  // Stuck indefinitely
+
+// ✅ GOOD: Immediate response or clear error state
+// tree "Tree" [ref=s5e157]:
+//   - treeitem "home" [level=1]
+//   - treeitem "Documents" [level=2]
+```
+
+**Common Root Causes:**
+- **Signal chain breaks** - Reactive updates not triggering UI rebuilds
+- **Backend communication failures** - Messages sent but not processed
+- **Race conditions** - UI state not synced with data state
+- **Broken reactivity** - Using `lock_mut().insert()` instead of `set_neq()` for HashMap updates
+
+**Immediate Actions When You See "Loading...":**
+1. **Check communication logs** - Are backend messages actually being sent/received?
+2. **Trace signal chain** - Are reactive signals firing when data updates?
+3. **Verify cache updates** - Is data being stored but UI not updating?
+4. **Test reactivity** - Use `set_neq()` instead of `lock_mut().insert()` for HashMap updates
+
+**Real Example:** Load Files dialog showing "Loading directory contents..." meant:
+- Backend was responding correctly with DirectoryContents messages
+- Global cache was being updated with directory data
+- But `GLOBAL_DIRECTORY_CACHE.signal_cloned()` wasn't firing because we used `lock_mut().insert()`
+- Fix: Use `set_neq()` to trigger reactive signals properly
+
+**Key Insight:** Fast operations appearing slow = broken reactivity, not slow backend.
+
+## Duplicate Connection Architecture Debugging (CRITICAL)
+
+### Remember: Connection Duplication Can Take Hours to Debug
+
+**Problem Pattern:** "Loading directory contents..." persists despite backend responding correctly - indicates duplicate Connection objects where messages go to wrong connection.
+
+**Recognition Signs:**
+- Backend logs show successful DirectoryContents responses
+- Frontend cache receives data correctly
+- UI still shows "Loading..." indefinitely
+- Multiple Connection/ConnectionAdapter patterns in codebase
+
+**Debugging Approach:**
+```rust
+// ❌ PROBLEMATIC PATTERN: Multiple connection objects
+// File 1: ConnectionAdapter creating its own Connection
+let (connection_adapter, stream) = ConnectionAdapter::new();
+
+// File 2: Main app.rs with separate Connection handling DirectoryContents
+let connection = Connection::new(move |down_msg, _| {
+    match down_msg {
+        DownMsg::DirectoryContents { path, items } => {
+            // Messages go here, but FilePickerDomain listens to ConnectionAdapter!
+        }
+    }
+});
+```
+
+**Root Cause Investigation:**
+1. **Trace message flow**: Backend → which Connection → which domain?
+2. **Count Connection objects**: How many Connection::new() calls exist?
+3. **Check domain routing**: Where do DirectoryContents messages actually go?
+4. **Identify listening domains**: Which domains expect which connection?
+
+**Successful Solution Pattern:**
+```rust
+// ✅ CORRECT: Single Connection shared via Arc
+pub async fn new() -> Self {
+    // 1. Create Connection FIRST
+    let connection = Self::create_connection_with_domain_integration(&tracked_files).await;
+    let connection_arc = std::sync::Arc::new(connection);
+
+    // 2. Pass Arc<Connection> to all domains
+    let config = AppConfig::new(connection_arc.clone()).await;
+
+    // 3. Create MessageRouter for post-initialization routing
+    let message_router = MessageRouter::new(config.file_picker_domain.clone());
+    MESSAGE_ROUTER.set(message_router);
+}
+```
+
+**Architecture Fix Benefits:**
+- **Single source of truth** - All backend messages go through one Connection
+- **Proper message routing** - MessageRouter directs messages to correct domains
+- **Clean initialization** - Connection → Config → Routing setup
+- **No duplicate listening** - Each domain receives messages from single source
+
+**Diagnostic Commands:**
+```bash
+# Find all Connection creation sites
+rg "Connection::new" --type rust
+# Check for ConnectionAdapter patterns
+rg "ConnectionAdapter" --type rust -A 5
+# Verify message routing logs
+grep "DirectoryContents\|ROUTER" dev_server.log
+```
+
+**Key Insight:** Complex "Loading..." issues often indicate architectural duplication problems, not performance issues. Always check for multiple connection objects before optimizing signal chains.

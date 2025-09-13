@@ -3,6 +3,56 @@ use moonzoon_novyui::*;
 use zoon::*;
 use shared::{FileState, ScopeData, TrackedFile};
 use std::collections::HashMap;
+use crate::dataflow::atom::Atom;
+
+/// Create the main files panel with proper Load Files button integration
+pub fn files_panel_with_dialog(
+    tracked_files: crate::tracked_files::TrackedFiles,
+    selected_variables: crate::selected_variables::SelectedVariables,
+    file_dialog_visible: Atom<bool>,
+) -> impl Element {
+    let file_count_broadcaster = tracked_files.files.signal_vec().len().broadcast();
+    El::new().s(Height::fill()).child(crate::panel_layout::create_panel(
+        Row::new()
+            .s(Gap::new().x(SPACING_8))
+            .s(Align::new().center_y())
+            .item(El::new().s(Font::new().no_wrap()).child("Files & Scopes"))
+            .item(El::new().s(Width::growable()))
+            .item(crate::action_buttons::load_files_button_with_progress(
+                tracked_files.clone(),
+                ButtonVariant::Outline,
+                ButtonSize::Small,
+                Some(IconName::Folder),
+                file_dialog_visible
+            ))
+            .item(El::new().s(Width::growable()))
+            .item(crate::action_buttons::clear_all_files_button(&tracked_files, &selected_variables)),
+        Column::new()
+            .s(Gap::new().y(SPACING_4))
+            .s(Padding::new().top(SPACING_4).right(SPACING_4))
+            .s(Height::fill())
+            .s(Width::growable())
+            .item(
+                El::new().s(Height::fill()).s(Width::growable()).child(
+                    Column::new().s(Width::fill()).s(Height::fill()).item(
+                        El::new().s(Height::fill()).s(Width::fill()).child_signal({
+                            let tracked_files_for_map = tracked_files.clone();
+                            let selected_variables_for_map = selected_variables.clone();
+                            file_count_broadcaster.signal().map(move |file_count| {
+                                if file_count == 0 {
+                                    empty_state_hint("Click 'Load Files' to add waveform files.")
+                                        .unify()
+                                } else {
+                                    create_stable_tree_view(tracked_files_for_map.clone(), selected_variables_for_map.clone()).unify()
+                                }
+                            })
+                        }),
+                        ),
+                    ),
+                ),
+            ),
+    )
+}
 
 /// Create the main files panel with header and content
 pub fn files_panel(
@@ -10,7 +60,7 @@ pub fn files_panel(
     selected_variables: crate::selected_variables::SelectedVariables,
     load_files_button: impl Element + 'static,
 ) -> impl Element {
-    let file_count_broadcaster = tracked_files.files_vec_signal.signal_cloned().map(|files| files.len()).broadcast();
+    let file_count_broadcaster = tracked_files.files.signal_vec().len().broadcast();
     El::new().s(Height::fill()).child(crate::panel_layout::create_panel(
         Row::new()
             .s(Gap::new().x(SPACING_8))

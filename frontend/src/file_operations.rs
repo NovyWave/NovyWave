@@ -85,24 +85,11 @@ pub fn clear_all_files(
 }
 
 /// Monitor directory expansions for file picker
+/// NOTE: This function is currently unused - directory expansion monitoring is handled
+/// directly by the FilePickerDomain Actor system through directory_expanded_relay
 pub fn monitor_directory_expansions(expanded: std::collections::HashSet<String>, app_config: &crate::config::AppConfig) {
-    let config = app_config;
-    let current_config_expanded = config.file_picker_expanded_directories.lock_ref();
-    let last_expanded: std::collections::HashSet<String> = current_config_expanded.iter().cloned().collect();
-
-    let new_expansions: Vec<String> = expanded.difference(&last_expanded).cloned().collect();
-
-    let paths_to_request: Vec<String> = new_expansions
-        .into_iter()
-        .filter(|path| path.starts_with("/") && !path.is_empty())
-        .collect();
-
-    if !paths_to_request.is_empty() {
-        Task::start(async move {
-            use crate::platform::{CurrentPlatform, Platform};
-            let _ = CurrentPlatform::send_message(shared::UpMsg::BrowseDirectories(paths_to_request)).await;
-        });
-    }
+    // This function is deprecated - use FilePickerDomain actors instead
+    zoon::println!("⚠️ monitor_directory_expansions is deprecated - use FilePickerDomain actors");
 }
 
 /// Extract filename from a full path

@@ -249,8 +249,8 @@ impl WaveformTimeline {
         let (left_key_pressed_relay, left_key_pressed_stream) = relay::<()>();
         let (right_key_pressed_relay, right_key_pressed_stream) = relay::<()>();
         // Note: zoom_in_pressed_relay and zoom_out_pressed_relay will come from zoom_controller
-        let (pan_left_pressed_relay, _pan_left_pressed_stream) = relay::<()>();
-        let (pan_right_pressed_relay, _pan_right_pressed_stream) = relay::<()>();
+        let (pan_left_pressed_relay, pan_left_pressed_stream) = relay::<()>();
+        let (pan_right_pressed_relay, pan_right_pressed_stream) = relay::<()>();
         let (jump_to_previous_pressed_relay, _jump_to_previous_pressed_stream) = relay::<()>();
         let (jump_to_next_pressed_relay, _jump_to_next_pressed_stream) = relay::<()>();
         // Note: reset_zoom_pressed_relay and reset_zoom_center_pressed_relay will come from zoom_controller
@@ -275,61 +275,77 @@ impl WaveformTimeline {
         // Create cursor position actor with comprehensive event handling
         let initial_cursor_position = TimeNs::ZERO;
         
-        let cursor_position = Actor::new(initial_cursor_position, async move |cursor_handle| {
-            let mut cursor_clicked = cursor_clicked_stream;
-            let mut cursor_moved = cursor_moved_stream;
-            let mut left_key_pressed = left_key_pressed_stream;
-            let mut right_key_pressed = right_key_pressed_stream;
-            let mut cursor_center_at_viewport = cursor_center_at_viewport_stream;
-            
-            loop {
-                select! {
-                    event = cursor_clicked.next() => {
-                        match event {
-                            Some(time_ns) => {
-                                cursor_handle.set(time_ns);
-                            },
-                            None => break,
+        let cursor_position = Actor::new(initial_cursor_position, {
+            let cursor_moving_left_started = cursor_moving_left_started_relay_var.clone();
+            let cursor_moving_right_started = cursor_moving_right_started_relay_var.clone();
+            async move |cursor_handle| {
+                let mut cursor_clicked = cursor_clicked_stream;
+                let mut cursor_moved = cursor_moved_stream;
+                let mut left_key_pressed = left_key_pressed_stream;
+                let mut right_key_pressed = right_key_pressed_stream;
+                let mut cursor_center_at_viewport = cursor_center_at_viewport_stream;
+
+                loop {
+                    select! {
+                        event = cursor_clicked.next() => {
+                            match event {
+                                Some(time_ns) => {
+                                    cursor_handle.set(time_ns);
+                                },
+                                None => break,
+                            }
                         }
-                    }
-                    event = cursor_moved.next() => {
-                        match event {
-                            Some(time_ns) => cursor_handle.set(time_ns),
-                            None => break,
+                        event = cursor_moved.next() => {
+                            match event {
+                                Some(time_ns) => cursor_handle.set(time_ns),
+                                None => break,
+                            }
                         }
-                    }
-                    event = left_key_pressed.next() => {
-                        match event {
-                            Some(()) => cursor_handle.update_mut(|current| {
-                                let step_size = 1_000_000; // 1 millisecond in nanoseconds
-                                let new_time = current.nanos().saturating_sub(step_size);
-                                *current = TimeNs::from_nanos(new_time);
-                            }),
-                            None => break,
+                        event = left_key_pressed.next() => {
+                            match event {
+                                Some(()) => {
+                                    // Trigger smooth cursor movement animation
+                                    cursor_moving_left_started.send(());
+
+                                    // Move cursor by step
+                                    cursor_handle.update_mut(|current| {
+                                        let step_size = 1_000_000; // 1 millisecond in nanoseconds
+                                        let new_time = current.nanos().saturating_sub(step_size);
+                                        *current = TimeNs::from_nanos(new_time);
+                                    });
+                                },
+                                None => break,
+                            }
                         }
-                    }
-                    event = right_key_pressed.next() => {
-                        match event {
-                            Some(()) => cursor_handle.update_mut(|current| {
-                                let step_size = 1_000_000; // 1 millisecond in nanoseconds
-                                let old_time = current.nanos();
-                                let new_time = old_time.saturating_add(step_size);
-                                *current = TimeNs::from_nanos(new_time);
-                            }),
-                            None => break,
+                        event = right_key_pressed.next() => {
+                            match event {
+                                Some(()) => {
+                                    // Trigger smooth cursor movement animation
+                                    cursor_moving_right_started.send(());
+
+                                    // Move cursor by step
+                                    cursor_handle.update_mut(|current| {
+                                        let step_size = 1_000_000; // 1 millisecond in nanoseconds
+                                        let old_time = current.nanos();
+                                        let new_time = old_time.saturating_add(step_size);
+                                        *current = TimeNs::from_nanos(new_time);
+                                    });
+                                },
+                                None => break,
+                            }
                         }
-                    }
-                    event = cursor_center_at_viewport.next() => {
-                        match event {
-                            Some(()) => {
-                                // TODO: Cursor centering will be handled by viewport Actor
-                                // which has access to viewport state. For now, set to zero.
-                                cursor_handle.set(TimeNs::ZERO);
-                            },
-                            None => break,
+                        event = cursor_center_at_viewport.next() => {
+                            match event {
+                                Some(()) => {
+                                    // TODO: Cursor centering will be handled by viewport Actor
+                                    // which has access to viewport state. For now, set to zero.
+                                    cursor_handle.set(TimeNs::ZERO);
+                                },
+                                None => break,
+                            }
                         }
+                        complete => break,
                     }
-                    complete => break,
                 }
             }
         });
@@ -410,7 +426,35 @@ impl WaveformTimeline {
         
         // Initialize panning controller
         let panning_controller = PanningController::new().await;
-        
+
+        // Connect keyboard pan events to panning controller
+        {
+            let pan_left_started = panning_controller.pan_left_started_relay.clone();
+            let pan_right_started = panning_controller.pan_right_started_relay.clone();
+            zoon::Task::start(async move {
+                let mut pan_left_pressed = pan_left_pressed_stream;
+                let mut pan_right_pressed = pan_right_pressed_stream;
+
+                loop {
+                    select! {
+                        event = pan_left_pressed.next() => {
+                            match event {
+                                Some(()) => pan_left_started.send(()),
+                                None => break,
+                            }
+                        }
+                        event = pan_right_pressed.next() => {
+                            match event {
+                                Some(()) => pan_right_started.send(()),
+                                None => break,
+                            }
+                        }
+                        complete => break,
+                    }
+                }
+            });
+        }
+
         // Create cursor moving actors for controller dependency
         let cursor_moving_left = Actor::new(false, async move |handle| {
             let mut cursor_started = cursor_moving_left_started_stream;

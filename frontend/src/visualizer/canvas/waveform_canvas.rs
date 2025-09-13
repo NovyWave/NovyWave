@@ -160,9 +160,9 @@ fn setup_canvas_event_connections(
     app_config: &crate::config::AppConfig,
 ) {
     // Connect domain events to canvas events using relay patterns
-    let event_connector_actor = Actor::new(false, {
+    let _event_connector_actor = Actor::new(false, {
         let selected_variables = selected_variables.clone();
-        let waveform_timeline = waveform_timeline.clone();
+        let _waveform_timeline = waveform_timeline.clone();
         let app_config = app_config.clone();
         let waveform_canvas = waveform_canvas.clone();
         async move |state_handle| {
@@ -192,7 +192,7 @@ fn setup_canvas_event_connections(
     });
     
     // Connect canvas dimension changes to timeline
-    let dimension_connector_actor = Actor::new(false, {
+    let _dimension_connector_actor = Actor::new(false, {
         let waveform_canvas = waveform_canvas.clone();
         let waveform_timeline = waveform_timeline.clone();
         async move |state_handle| {

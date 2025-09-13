@@ -1,0 +1,23 @@
+//! Web platform implementation using MoonZone Connection
+//!
+//! Uses existing SSE/WebSocket connection for frontend-backend communication.
+//! NOTE: This platform abstraction layer is currently broken and bypassed.
+
+use shared::UpMsg;
+use crate::platform::Platform;
+
+/// Web platform implementation (currently broken and bypassed)
+pub struct WebPlatform;
+
+impl Platform for WebPlatform {
+    async fn send_message(_msg: UpMsg) -> Result<(), String> {
+        Err("Platform layer bypassed - using direct connection".to_string())
+    }
+
+    async fn request_response<T>(_msg: UpMsg) -> Result<T, String>
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        Err("Platform layer bypassed - using direct connection".to_string())
+    }
+}

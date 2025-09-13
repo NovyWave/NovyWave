@@ -12,7 +12,7 @@ const FALLBACK_CONTAINER_HEIGHT: f64 = 400.0; // Typical panel height for initia
 const FAST_SCROLL_VELOCITY_THRESHOLD: f64 = 800.0; // Threshold for dynamic buffer adjustment
 const FAST_SCROLL_BUFFER_SIZE: usize = 15; // Additional buffer elements for fast scrolling
 
-fn empty_state_hint(text: &str) -> impl Element {
+pub fn empty_state_hint(text: &str) -> impl Element {
     El::new()
         .s(Padding::all(SPACING_20))
         .s(Font::new().color_signal(neutral_8()).italic())

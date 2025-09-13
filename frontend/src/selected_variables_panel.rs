@@ -1,0 +1,526 @@
+/*!
+ * Selected Variables Panel Implementation
+ *
+ * Comprehensive three-column Selected Variables Panel as specified:
+ * - Header: Title, Theme button, Dock toggle, Remove All button
+ * - Name Column: Variable names with remove buttons, keyboard shortcuts footer
+ * - Value Column: Format dropdowns with values, timeline boundaries footer
+ * - Wave Column: Fast2D canvas for waveform visualization
+ */
+
+use moonzoon_novyui::tokens::color::{neutral_8, neutral_11, primary_6};
+use moonzoon_novyui::components::{KbdSize, KbdVariant, kbd};
+use moonzoon_novyui::*;
+use zoon::*;
+use shared::{VarFormat, SelectedVariable, TrackedFile};
+use crate::dragging::{
+    variables_name_column_width_signal,
+    variables_value_column_width_signal,
+};
+
+/// Selected Variables panel row height constant
+pub const SELECTED_VARIABLES_ROW_HEIGHT: u32 = 30;
+
+/// Enhanced Selected Variables Panel with proper three-column layout
+pub fn selected_variables_panel(
+    selected_variables: crate::selected_variables::SelectedVariables,
+    waveform_timeline: crate::visualizer::timeline::timeline_actor::WaveformTimeline,
+    tracked_files: crate::tracked_files::TrackedFiles,
+    app_config: crate::config::AppConfig,
+    dragging_system: crate::dragging::DraggingSystem,
+    waveform_canvas: crate::visualizer::canvas::waveform_canvas::WaveformCanvas,
+) -> impl Element {
+    let selected_variables_for_header = selected_variables.clone();
+
+    Column::new()
+        .s(Width::growable())
+        .s(Height::fill())
+        .item(
+            crate::panel_layout::create_panel(
+                // Header with title and action buttons
+                selected_variables_panel_header(&selected_variables_for_header, &app_config.clone()),
+                // Three-column content area
+                selected_variables_panel_content(
+                    selected_variables,
+                    waveform_timeline,
+                    tracked_files,
+                    app_config,
+                    dragging_system,
+                    waveform_canvas,
+                )
+            )
+        )
+}
+
+/// Panel header with title and action buttons
+fn selected_variables_panel_header(
+    selected_variables: &crate::selected_variables::SelectedVariables,
+    app_config: &crate::config::AppConfig,
+) -> impl Element {
+    Row::new()
+        .s(Gap::new().x(SPACING_8))
+        .s(Align::new().center_y())
+        .s(Width::fill())
+        .item(
+            // Title - left aligned
+            El::new()
+                .s(Font::new().no_wrap())
+                .child("Selected Variables")
+        )
+        .item(
+            // Spacer to push buttons to center and right
+            El::new()
+                .s(Width::growable())
+        )
+        .item(
+            // Theme toggle button (center-left)
+            crate::action_buttons::theme_toggle_button(app_config)
+        )
+        .item(
+            // Dock mode toggle button (center-right)
+            crate::action_buttons::dock_toggle_button(app_config)
+        )
+        .item(
+            // Spacer to push Clear All to right
+            El::new()
+                .s(Width::growable())
+        )
+        .item(
+            // Remove All button - right aligned
+            crate::action_buttons::clear_all_variables_button(selected_variables)
+        )
+}
+
+/// Three-column content area with proper layout
+fn selected_variables_panel_content(
+    selected_variables: crate::selected_variables::SelectedVariables,
+    waveform_timeline: crate::visualizer::timeline::timeline_actor::WaveformTimeline,
+    tracked_files: crate::tracked_files::TrackedFiles,
+    app_config: crate::config::AppConfig,
+    dragging_system: crate::dragging::DraggingSystem,
+    waveform_canvas: crate::visualizer::canvas::waveform_canvas::WaveformCanvas,
+) -> impl Element {
+    let selected_variables_for_height = selected_variables.clone();
+    let name_column_width_signal = variables_name_column_width_signal(app_config.clone());
+    let value_column_width_signal = variables_value_column_width_signal(app_config.clone());
+
+    El::new()
+        .s(Height::exact_signal(
+            selected_variables_for_height.variables.signal_vec().to_signal_cloned().map(|vars| {
+                // Account for variables + footer row
+                (vars.len() + 1) as u32 * SELECTED_VARIABLES_ROW_HEIGHT
+            })
+        ))
+        .s(Width::fill())
+        .s(Scrollbars::x_and_clip_y())
+        .child(
+            Row::new()
+                .s(Height::fill())
+                .s(Width::fill())
+                .s(Align::new().top())
+                .item(
+                    // Name Column
+                    selected_variables_name_column(
+                        selected_variables.clone(),
+                        tracked_files.clone(),
+                        waveform_timeline.clone(),
+                        name_column_width_signal
+                    )
+                )
+                .item(
+                    // Name-Value divider
+                    crate::panel_layout::variables_name_vertical_divider(&app_config, dragging_system.clone())
+                )
+                .item(
+                    // Value Column
+                    selected_variables_value_column(
+                        selected_variables.clone(),
+                        waveform_timeline.clone(),
+                        value_column_width_signal
+                    )
+                )
+                .item(
+                    // Value-Wave divider
+                    crate::panel_layout::variables_value_vertical_divider(&app_config, dragging_system.clone())
+                )
+                .item(
+                    // Wave Column
+                    selected_variables_wave_column(
+                        &selected_variables,
+                        &waveform_timeline,
+                        &waveform_canvas,
+                        &app_config
+                    )
+                )
+        )
+}
+
+/// Name Column with remove buttons and keyboard shortcuts footer
+fn selected_variables_name_column(
+    selected_variables: crate::selected_variables::SelectedVariables,
+    tracked_files: crate::tracked_files::TrackedFiles,
+    waveform_timeline: crate::visualizer::timeline::timeline_actor::WaveformTimeline,
+    width_signal: impl Signal<Item = f32> + Unpin + 'static,
+) -> impl Element {
+    let selected_variables_for_items = selected_variables.clone();
+
+    Column::new()
+        .s(Width::exact_signal(width_signal.map(|w| w as u32)))
+        .s(Height::fill())
+        .s(Align::new().top())
+        .s(Scrollbars::x_and_clip_y())
+        .update_raw_el(|raw_el| {
+            raw_el.style("scrollbar-width", "thin")
+        })
+        .items_signal_vec({
+            let tracked_files_for_items = tracked_files.clone();
+            selected_variables.variables.signal_vec().map(move |selected_var| {
+                name_column_variable_row(
+                    selected_var,
+                    selected_variables_for_items.clone(),
+                    tracked_files_for_items.clone()
+                )
+            })
+        })
+        .item(
+            // Name Column Footer with keyboard shortcuts
+            name_column_footer(waveform_timeline)
+        )
+}
+
+/// Individual variable row in Name Column
+fn name_column_variable_row(
+    selected_var: SelectedVariable,
+    selected_variables: crate::selected_variables::SelectedVariables,
+    tracked_files: crate::tracked_files::TrackedFiles,
+) -> impl Element {
+    let unique_id = selected_var.unique_id.clone();
+    let selected_variables_for_remove = selected_variables.clone();
+    let tracked_files_broadcaster = tracked_files.files.signal_vec().to_signal_cloned().broadcast();
+
+    Row::new()
+        .s(Height::exact(SELECTED_VARIABLES_ROW_HEIGHT))
+        .s(Width::fill())
+        .s(Padding::new().x(SPACING_2).y(SPACING_4))
+        .s(Gap::new().x(SPACING_4))
+        .item(
+            // Remove button
+            button()
+                .left_icon(IconName::X)
+                .variant(ButtonVariant::DestructiveGhost)
+                .size(ButtonSize::Small)
+                .custom_padding(2, 2)
+                .on_press({
+                    let remove_relay = selected_variables_for_remove.variable_removed_relay.clone();
+                    move || {
+                        remove_relay.send(unique_id.clone());
+                    }
+                })
+                .build()
+        )
+        .item(
+            // Variable name and type
+            Row::new()
+                .s(Gap::new().x(SPACING_8))
+                .s(Width::fill())
+                .item(
+                    // Variable name
+                    El::new()
+                        .s(Font::new().color_signal(neutral_11()).size(13).no_wrap())
+                        .s(Width::growable())
+                        .update_raw_el(|raw_el| {
+                            raw_el.style("white-space", "nowrap")
+                        })
+                        .child(&selected_var.variable_name().unwrap_or_default())
+                )
+                .item(
+                    // Variable type (right-aligned)
+                    El::new()
+                        .s(Font::new().color_signal(primary_6()).size(11).no_wrap())
+                        .s(Align::new().right())
+                        .s(Padding::new().right(8))
+                        .update_raw_el(|raw_el| {
+                            raw_el
+                                .style("text-overflow", "ellipsis")
+                                .style("max-width", "100%")
+                        })
+                        .child_signal({
+                            let selected_var = selected_var.clone();
+                            tracked_files_broadcaster.signal_cloned().map(move |files: Vec<TrackedFile>| {
+                                crate::signal_processing::get_signal_type_for_selected_variable_from_files(&selected_var, &files)
+                            })
+                        })
+                )
+                .update_raw_el({
+                    let selected_var = selected_var.clone();
+                    let tracked_files_broadcaster = tracked_files_broadcaster.clone();
+                    move |raw_el| {
+                        // Tooltip with full variable information
+                        let title_signal = tracked_files_broadcaster.signal_cloned().map({
+                            let selected_var = selected_var.clone();
+                            move |files: Vec<TrackedFile>| {
+                                let signal_type = crate::signal_processing::get_signal_type_for_selected_variable_from_files(&selected_var, &files);
+                                format!("{} - {} - {}",
+                                    selected_var.file_path().unwrap_or_default(),
+                                    selected_var.scope_path().unwrap_or_default(),
+                                    signal_type
+                                )
+                            }
+                        });
+                        raw_el.attr_signal("title", title_signal)
+                    }
+                })
+        )
+}
+
+/// Name Column Footer with keyboard shortcuts for zoom
+fn name_column_footer(waveform_timeline: crate::visualizer::timeline::timeline_actor::WaveformTimeline) -> impl Element {
+    El::new()
+        .s(Height::exact(SELECTED_VARIABLES_ROW_HEIGHT))
+        .s(Width::fill())
+        .s(Padding::all(8))
+        .s(Font::new().color_signal(neutral_8()).size(12).center())
+        .s(Transform::new().move_up(4))
+        .child(
+            Row::new()
+                .s(Align::new().center_y())
+                .item(
+                    // Z key - Reset zoom center
+                    kbd("Z")
+                        .size(KbdSize::Small)
+                        .variant(KbdVariant::Outlined)
+                        .title("Press Z to move zoom center to 0")
+                        .build()
+                )
+                .item(El::new().s(Width::fill()))
+                .item(
+                    // Zoom controls section
+                    Row::new()
+                        .s(Align::center())
+                        .s(Gap::new().x(SPACING_6))
+                        .item(
+                            // W key - Zoom in
+                            kbd("W")
+                                .size(KbdSize::Small)
+                                .variant(KbdVariant::Outlined)
+                                .title("Press W to zoom in. Press Shift+W to zoom in faster.")
+                                .build()
+                        )
+                        .item(
+                            // Dynamic zoom level display (ns/px)
+                            El::new()
+                                .update_raw_el(|raw_el| {
+                                    raw_el
+                                        .style("min-width", "45px")
+                                        .style("width", "fit-content")
+                                        .style("max-width", "80px")
+                                })
+                                .s(Font::new().color_signal(neutral_11()).center())
+                                .child(
+                                    // TODO: Connect to actual zoom level signal
+                                    Text::new("15ns/px")
+                                )
+                        )
+                        .item(
+                            // S key - Zoom out
+                            kbd("S")
+                                .size(KbdSize::Small)
+                                .variant(KbdVariant::Outlined)
+                                .title("Press S to zoom out. Press Shift+S to zoom out faster.")
+                                .build()
+                        )
+                )
+                .item(El::new().s(Width::fill()))
+                .item(
+                    // R key - Reset zoom
+                    El::new()
+                        .on_click({
+                            let relay = waveform_timeline.reset_zoom_pressed_relay.clone();
+                            move || {
+                                relay.send(());
+                            }
+                        })
+                        .child(
+                            kbd("R")
+                                .size(KbdSize::Small)
+                                .variant(KbdVariant::Outlined)
+                                .title("Press R to reset to default zoom center, zoom and cursor position.")
+                                .build()
+                        )
+                )
+        )
+}
+
+/// Value Column with format dropdowns and timeline footer
+fn selected_variables_value_column(
+    selected_variables: crate::selected_variables::SelectedVariables,
+    waveform_timeline: crate::visualizer::timeline::timeline_actor::WaveformTimeline,
+    width_signal: impl Signal<Item = f32> + Unpin + 'static,
+) -> impl Element {
+    let selected_variables_for_values = selected_variables.clone();
+    let waveform_timeline_for_values = waveform_timeline.clone();
+
+    Column::new()
+        .s(Width::exact_signal(width_signal.map(|w| w as u32)))
+        .s(Height::fill())
+        .s(Align::new().top())
+        .s(Scrollbars::x_and_clip_y())
+        .update_raw_el(|raw_el| {
+            raw_el.style("scrollbar-width", "thin")
+        })
+        .items_signal_vec({
+            selected_variables.variables.signal_vec().map(move |selected_var| {
+                value_column_variable_row(
+                    selected_var,
+                    selected_variables_for_values.clone(),
+                    waveform_timeline_for_values.clone()
+                )
+            })
+        })
+        .item(
+            // Value Column Footer with timeline boundaries
+            value_column_footer()
+        )
+}
+
+/// Individual variable row in Value Column with format dropdown
+fn value_column_variable_row(
+    selected_var: SelectedVariable,
+    selected_variables: crate::selected_variables::SelectedVariables,
+    waveform_timeline: crate::visualizer::timeline::timeline_actor::WaveformTimeline,
+) -> impl Element {
+    El::new()
+        .s(Height::exact(SELECTED_VARIABLES_ROW_HEIGHT))
+        .s(Width::fill())
+        .child(
+            crate::format_selection::create_format_dropdown(
+                &selected_var.unique_id,
+                selected_var.formatter.unwrap_or(VarFormat::Hexadecimal),
+                &selected_variables,
+                &waveform_timeline
+            )
+        )
+}
+
+/// Value Column Footer with timeline boundaries and cursor controls
+fn value_column_footer() -> impl Element {
+    El::new()
+        .s(Height::exact(SELECTED_VARIABLES_ROW_HEIGHT))
+        .s(Width::fill())
+        .s(Padding::all(8))
+        .s(Transform::new().move_up(4))
+        .child(
+            Row::new()
+                .s(Align::new().center_y())
+                .s(Font::new().color_signal(neutral_8()).size(12))
+                .item(
+                    // Left boundary and pan left controls
+                    Row::new()
+                        .s(Gap::new().x(SPACING_6))
+                        .item(
+                            // Timeline start boundary (0s)
+                            El::new()
+                                .s(Font::new().color_signal(neutral_11()).center().size(11))
+                                .update_raw_el(|raw_el| {
+                                    raw_el.style("width", "max-content")
+                                })
+                                .child(
+                                    // TODO: Connect to actual timeline start signal
+                                    Text::new("0s")
+                                )
+                        )
+                        .item(
+                            // A key - Pan left
+                            kbd("A")
+                                .size(KbdSize::Small)
+                                .variant(KbdVariant::Outlined)
+                                .title("Press A to pan left. Press Shift+A to pan left faster.")
+                                .build()
+                        )
+                )
+                .item(El::new().s(Width::fill()))
+                .item(
+                    // Cursor controls section
+                    Row::new()
+                        .s(Gap::new().x(SPACING_2))
+                        .item(
+                            // Q key - Move cursor left
+                            kbd("Q")
+                                .size(KbdSize::Small)
+                                .variant(KbdVariant::Outlined)
+                                .title("Press Q to move cursor left. Press Shift+Q to jump to the previous transition.")
+                                .build()
+                        )
+                        .item(
+                            // Dynamic cursor position display
+                            El::new()
+                                .update_raw_el(|raw_el| {
+                                    raw_el
+                                        .style("min-width", "45px")
+                                        .style("width", "fit-content")
+                                        .style("max-width", "90px")
+                                })
+                                .s(Font::new().color_signal(neutral_11()).center())
+                                .child(
+                                    // TODO: Connect to actual cursor position signal
+                                    Text::new("125s")
+                                )
+                        )
+                        .item(
+                            // E key - Move cursor right
+                            kbd("E")
+                                .size(KbdSize::Small)
+                                .variant(KbdVariant::Outlined)
+                                .title("Press E to move cursor right. Press Shift+E to jump to the next transition.")
+                                .build()
+                        )
+                )
+                .item(El::new().s(Width::fill()))
+                .item(
+                    // Right boundary and pan right controls
+                    Row::new()
+                        .s(Gap::new().x(SPACING_6))
+                        .item(
+                            // D key - Pan right
+                            kbd("D")
+                                .size(KbdSize::Small)
+                                .variant(KbdVariant::Outlined)
+                                .title("Press D to pan right. Press Shift+D to pan right faster.")
+                                .build()
+                        )
+                        .item(
+                            // Timeline end boundary (250s)
+                            El::new()
+                                .s(Font::new().color_signal(neutral_11()).center().size(11))
+                                .update_raw_el(|raw_el| {
+                                    raw_el.style("width", "max-content")
+                                })
+                                .child(
+                                    // TODO: Connect to actual timeline end signal
+                                    Text::new("250s")
+                                )
+                        )
+                )
+        )
+}
+
+/// Wave Column with Fast2D canvas integration
+fn selected_variables_wave_column(
+    selected_variables: &crate::selected_variables::SelectedVariables,
+    waveform_timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline,
+    waveform_canvas: &crate::visualizer::canvas::waveform_canvas::WaveformCanvas,
+    app_config: &crate::config::AppConfig,
+) -> impl Element {
+    El::new()
+        .s(Width::fill())
+        .s(Height::fill())
+        .s(Background::new().color_signal(moonzoon_novyui::tokens::color::neutral_2()))
+        .child(
+            crate::visualizer::canvas::waveform_canvas::waveform_canvas(
+                waveform_canvas,
+                selected_variables,
+                waveform_timeline,
+                app_config
+            )
+        )
+}

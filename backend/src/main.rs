@@ -1141,10 +1141,12 @@ async fn send_progress_update(file_id: String, progress: f32, session_id: Sessio
 }
 
 async fn send_down_msg(msg: DownMsg, session_id: SessionId, cor_id: CorId) {
+    eprintln!("📤 BACKEND: Sending message: {:?}", msg);
     if let Some(session) = sessions::by_session_id().wait_for(session_id).await {
         session.send_down_msg(&msg, cor_id).await;
+        eprintln!("📤 BACKEND: Message sent successfully");
     } else {
-        // Session not found - likely disconnected
+        eprintln!("❌ BACKEND: Session not found for message: {:?}", msg);
     }
 }
 
@@ -1156,19 +1158,28 @@ async fn load_config(session_id: SessionId, cor_id: CorId) {
     
     let config = match fs::read_to_string(CONFIG_FILE_PATH) {
         Ok(content) => {
+            println!("🔍 BACKEND: Read config file content, length: {}", content.len());
             match toml::from_str::<AppConfig>(&content) {
                 Ok(mut config) => {
+                    println!("🔍 BACKEND: TOML parsed successfully");
+                    println!("🔍 BACKEND: Loaded {} expanded directories from TOML: {:?}",
+                        config.workspace.load_files_expanded_directories.len(),
+                        config.workspace.load_files_expanded_directories);
+
                     // Enable migration system - validate and fix config after loading
                     let migration_warnings = config.validate_and_fix();
-                    
+
                     // Log migration warnings if any
                     if !migration_warnings.is_empty() {
+                        println!("🔍 BACKEND: Applied {} migration warnings", migration_warnings.len());
                         // Save migrated config to persist changes
                         if let Err(_save_err) = save_config_to_file(&config) {
                             // Migration applied but failed to save - continue with in-memory config
                         }
                     }
-                    
+
+                    println!("🔍 BACKEND: Final config has {} expanded directories before sending to frontend",
+                        config.workspace.load_files_expanded_directories.len());
                     config
                 },
                 Err(e) => {
@@ -1227,6 +1238,8 @@ async fn load_config(session_id: SessionId, cor_id: CorId) {
         });
     }
 
+    println!("🚀 BACKEND: Sending ConfigLoaded to frontend with {} expanded directories",
+        config.workspace.load_files_expanded_directories.len());
     send_down_msg(DownMsg::ConfigLoaded(config), session_id, cor_id).await;
 }
 
@@ -1271,7 +1284,8 @@ fn cleanup_parsing_session(file_id: &str) {
 
 
 async fn browse_directory(dir_path: String, session_id: SessionId, cor_id: CorId) {
-    
+    eprintln!("🔍 BACKEND: browse_directory called for path: {}", dir_path);
+
     // Handle Windows multi-root scenario - enumerate drives when browsing "/"
     #[cfg(windows)]
     if dir_path == "/" {
@@ -1299,13 +1313,51 @@ async fn browse_directory(dir_path: String, session_id: SessionId, cor_id: CorId
         // Sort drives alphabetically
         drive_items.sort_by(|a, b| a.name.cmp(&b.name));
         
-        send_down_msg(DownMsg::DirectoryContents { 
-            path: "/".to_string(), 
-            items: drive_items 
+        send_down_msg(DownMsg::DirectoryContents {
+            path: "/".to_string(),
+            items: drive_items
         }, session_id, cor_id).await;
         return;
     }
-    
+
+    // Handle Linux/Unix root directory - provide useful starting points instead of actual "/"
+    #[cfg(unix)]
+    if dir_path == "/" {
+        eprintln!("🔍 BACKEND: Linux root directory requested, providing common paths");
+        let mut root_items = Vec::new();
+
+        // Add common useful directories for file selection
+        let useful_paths = vec![
+            ("/home", "home"),
+            ("/tmp", "tmp"),
+            ("/opt", "opt"),
+            ("/usr", "usr"),
+            ("/var", "var"),
+        ];
+
+        for (path, name) in useful_paths {
+            let path_obj = Path::new(path);
+            if path_obj.exists() && path_obj.is_dir() {
+                root_items.push(FileSystemItem {
+                    name: name.to_string(),
+                    path: path.to_string(),
+                    is_directory: true,
+                    file_size: None,
+                    is_waveform_file: false,
+                    file_extension: None,
+                    has_expandable_content: true,
+                });
+            }
+        }
+
+        eprintln!("🔍 BACKEND: Returning {} Linux root items", root_items.len());
+        send_down_msg(DownMsg::DirectoryContents {
+            path: "/".to_string(),
+            items: root_items
+        }, session_id, cor_id).await;
+        return;
+    }
+
     // Expand ~ to home directory
     let expanded_path = if dir_path == "~" {
         match dirs::home_dir() {

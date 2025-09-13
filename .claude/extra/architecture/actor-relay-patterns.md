@@ -91,6 +91,24 @@ let actor = ActorVec::new(vec![], async move |state| {
 // ❌ NEVER cache values anywhere else - use signals instead
 ```
 
+### 5. Relay Data Type Constraints (CRITICAL)
+Only send simple cloneable data through relays:
+
+```rust
+// ✅ CORRECT: Simple, cloneable data types
+file_dropped_relay: Relay<Vec<PathBuf>>,        // Simple data structures
+variable_clicked_relay: Relay<String>,          // Primitive types
+parse_completed_relay: Relay<(String, Result)>, // Tuples of simple types
+initialization_complete_relay: Relay,           // Unit type (empty event)
+
+// ❌ NEVER: Complex types that break Send/Sync bounds
+async_operation_relay: Relay<Box<dyn Future>>,  // Futures are not Send
+connection_relay: Relay<Arc<Connection>>,       // Complex objects may not be Send
+callback_relay: Relay<Box<dyn FnOnce()>>,      // Closures are not Send
+```
+
+**Key principle:** Relays are for simple data passing between components. Complex operations should be handled within Actor loops using the "Cache Current Values" pattern, not passed through relays.
+
 ## Verified Working Pattern
 
 **✅ VERIFIED IMPLEMENTATION** (from verified chat_example.md):

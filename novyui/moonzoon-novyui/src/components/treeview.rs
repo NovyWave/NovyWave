@@ -990,16 +990,22 @@ fn render_tree_item(
                         let mut expanded = external.lock_mut();
                         let was_expanded = expanded.contains(&item_id);
                         if was_expanded {
+                            zoon::println!("📁 TREEVIEW_COLLAPSE: Collapsing directory: {}", item_id);
                             expanded.shift_remove(&item_id);
+                            zoon::println!("📁 TREEVIEW_COLLAPSE: External expanded now has {} directories", expanded.len());
                         } else {
+                            zoon::println!("📂 TREEVIEW_EXPAND: Expanding directory: {}", item_id);
                             expanded.insert(item_id.clone());
+                            zoon::println!("📂 TREEVIEW_EXPAND: External expanded now has {} directories", expanded.len());
                         }
                     } else {
                         let mut expanded = expanded_items.lock_mut();
                         let was_expanded = expanded.contains(&item_id);
                         if was_expanded {
+                            zoon::println!("📁 TREEVIEW_COLLAPSE: Collapsing directory (internal): {}", item_id);
                             expanded.shift_remove(&item_id);
                         } else {
+                            zoon::println!("📂 TREEVIEW_EXPAND: Expanding directory (internal): {}", item_id);
                             expanded.insert(item_id.clone());
                         }
                     }

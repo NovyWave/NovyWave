@@ -415,7 +415,7 @@ Once I understand these details clearly, I'll implement all the improvements eff
 ### Server Management Rules
 - **ABSOLUTE PROHIBITION: NEVER run dev server or compilation commands yourself**
 - **DO NOT** execute `makers start`, `makers kill`, `makers build`, or any compilation commands
-- **DO NOT** attempt to manage the mzoon dev server process  
+- **DO NOT** attempt to manage the mzoon dev server process
 - **ALWAYS** read `dev_server.log` to check compilation status - this is everything you need
 - If auto-compilation appears to not be working, **TELL THE DEVELOPER** to start the mzoon CLI
 - Backend/shared crate compilation takes DOZENS OF SECONDS TO MINUTES - this is normal
@@ -426,6 +426,14 @@ Once I understand these details clearly, I'll implement all the improvements eff
 - Monitor: `makers start > dev_server.log 2>&1 &`
 - Check: `tail -f dev_server.log` for build status
 - Use: `makers kill` and `makers start` commands only
+
+### WASM I/O Constraints (CRITICAL)
+- **MANDATORY: All I/O operations must be performed on the backend side**
+- **NEVER use synchronous filesystem operations in WASM**: `std::fs::read_dir()`, `std::fs::File::open()` block the main thread
+- **Main thread blocking causes browser tab freezes**: Requires force-kill to recover
+- **Proper pattern**: Frontend sends `UpMsg` to backend → Backend performs I/O → Backend responds with `DownMsg`
+- **Example**: File browsing uses `UpMsg::BrowseDirectory` → backend filesystem operations → `DownMsg::DirectoryContents`
+- **Why this matters**: WASM runs on browser main thread - any blocking operation freezes the entire tab
 
 ### Log Monitoring Patterns
 ```bash
@@ -802,6 +810,33 @@ if width >= CANVAS_MIN_LOGGABLE_SIZE {
 **Key principle:** If logging is causing performance issues, reduce by removing entire log categories, not by adding mysterious conditional thresholds.
 
 ## Work Integrity & Problem-Solving Ethics
+
+### Check for Existing Functional Code First (CRITICAL)
+
+**MANDATORY: Always look for existing working code before implementing new features or debugging**
+
+- **Integration over reinvention** - Existing working systems often just need proper connection
+- **Architecture archaeology** - Search codebase for similar functionality that may already exist
+- **Backend-first assumption** - Check if backend implementation exists before building frontend from scratch
+- **Connection over creation** - Often the solution is connecting to working code, not writing new code
+
+**Real-World Success Example (Load Files Dialog Fix):**
+```rust
+// ❌ WRONG: Reimplementing filesystem operations in WASM
+std::fs::read_dir(path) // Causes browser freeze
+
+// ✅ CORRECT: Connecting to existing working backend
+connection.send_up_msg(UpMsg::BrowseDirectory { path }).await;
+// Backend already had working directory browsing - just needed connection!
+```
+
+**Key Questions to Ask:**
+- **Does this functionality already exist somewhere?**
+- **Is there a working backend implementation I should connect to?**
+- **Am I reinventing something that already works?**
+- **What existing patterns can I extend rather than replace?**
+
+**User Guidance Pattern:** *"backend implementation for getting directories was perfectly working before, your job was to connect it with already partly functioning dialog"*
 
 ### No Shortcuts or Paper-Over Solutions
 

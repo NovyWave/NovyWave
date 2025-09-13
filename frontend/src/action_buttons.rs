@@ -12,7 +12,7 @@ pub fn load_files_button_with_progress(
     icon: Option<IconName>,
     file_dialog_visible: Atom<bool>
 ) -> impl Element {
-    let file_count_signal = tracked_files.files_vec_signal.signal_cloned().map(|files| files.len());
+    let file_count_signal = tracked_files.files.signal_vec().len();
     El::new().child_signal(
         file_count_signal.map(move |file_count| {
             let is_loading = file_count > 0; // Simple loading state based on file activity

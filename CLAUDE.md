@@ -14,10 +14,6 @@ Core guidance for Claude Code when working with NovyWave.
 <!-- Project Specifications -->
 @.claude/extra/project/specs/specs.md
 
-<!-- Implementation Tracking -->
-@.claude/extra/project/specs/checklist.md
-<!-- NOTE: Checklist items are only marked complete after user confirmation of testing -->
-
 <!-- Technical Reference -->
 @.claude/extra/technical/reference.md
 @.claude/extra/technical/performance-debugging.md
@@ -31,7 +27,7 @@ Core guidance for Claude Code when working with NovyWave.
 
 **CRITICAL: NovyWave uses Actor+Relay architecture - NO raw Mutables allowed**
 
-> **📖 Complete API Reference:** See `docs/actors_relays/moonzoon/api.md` for full API specification with all methods and the critical "Cache Current Values" pattern.
+> **📖 Complete API Reference:** See `frontend/src/dataflow/` for full API specification with all methods and the critical "Cache Current Values" pattern. See `docs/actors_relays/actor_relay_architecture.md` for conceptual guidance and architectural patterns.
 
 ### Core Architectural Rules
 

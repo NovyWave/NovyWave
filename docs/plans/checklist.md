@@ -31,51 +31,51 @@
 ## 🏗️ Core Architecture
 
 ### Configuration System
-- [ ] **[MVP]** Development mode (.novywave file in project root)
+- [x] **[MVP]** Development mode (.novywave file in project root)
 - [ ] Production mode (Tauri user storage)
-- [ ] **[MVP]** TOML configuration format parsing
-- [ ] **[MVP]** Per-project configuration support
-- [ ] **[MVP]** Auto-save with debouncing (500ms panels, 1000ms timeline)
-- [ ] **[MVP]** Configuration error handling (corruption recovery)
+- [x] **[MVP]** TOML configuration format parsing
+- [x] **[MVP]** Per-project configuration support
+- [x] **[MVP]** Auto-save with debouncing (500ms panels, 1000ms timeline)
+- [x] **[MVP]** Configuration error handling (corruption recovery)
 - [ ] Configuration schema validation
-- [ ] **[MVP]** Centralized configuration management system
+- [x] **[MVP]** Centralized configuration management system
 
 ### Data Architecture
-- [ ] **[MVP]** Nanosecond (u64) internal time representation
-- [ ] **[MVP]** Dynamic unit formatting (ns, μs, ms, s)
-- [ ] **[MVP]** Multi-file time alignment system
+- [x] **[MVP]** Nanosecond (u64) internal time representation
+- [x] **[MVP]** Dynamic unit formatting (ns, μs, ms, s)
+- [x] **[MVP]** Multi-file time alignment system
 - [ ] **[MVP]** Peak-preserving decimation algorithm
-- [ ] **[MVP]** Frontend-backend communication protocol
-- [ ] **[MVP]** Request/response data formats
-- [ ] **[MVP]** Batching strategy implementation
-- [ ] Data request optimization (incremental loading)
+- [x] **[MVP]** Frontend-backend communication protocol
+- [x] **[MVP]** Request/response data formats
+- [x] **[MVP]** Batching strategy implementation
+- [x] Data request optimization (incremental loading)
 
 ---
 
 ## 🖥️ Layout & UI Framework
 
 ### Core Layout
-- [ ] **[MVP]** 3-panel layout system (Files & Scopes, Variables, Selected Variables)
-- [ ] **[MVP]** Draggable divider lines with resize functionality
-- [ ] **[MVP]** Transparent overlay for dragging operations
-- [ ] **[MVP]** Dock mode switching (Right ↔ Bottom)
-- [ ] **[MVP]** Panel dimension persistence per dock mode
-- [ ] **[MVP]** Height inheritance chain (Height::fill() pattern)
-- [ ] Responsive width handling (Width::fill())
+- [x] **[MVP]** 3-panel layout system (Files & Scopes, Variables, Selected Variables)
+- [x] **[MVP]** Draggable divider lines with resize functionality
+- [x] **[MVP]** Transparent overlay for dragging operations
+- [x] **[MVP]** Dock mode switching (Right ↔ Bottom)
+- [x] **[MVP]** Panel dimension persistence per dock mode
+- [x] **[MVP]** Height inheritance chain (Height::fill() pattern)
+- [x] Responsive width handling (Width::fill())
 
 ### Theme System
-- [ ] **[MVP]** Dark theme (default)
-- [ ] Light theme
-- [ ] **[MVP]** Theme toggle button (sun/moon icons)
-- [ ] **[MVP]** Fixed color palettes (no customization)
-- [ ] CSS custom properties for dynamic switching
-- [ ] Canvas theme integration (Fast2D colors)
-- [ ] **[MVP]** Ctrl+T keyboard shortcut for theme toggle
+- [x] **[MVP]** Dark theme (default)
+- [x] Light theme
+- [x] **[MVP]** Theme toggle button (sun/moon icons)
+- [x] **[MVP]** Fixed color palettes (no customization)
+- [x] CSS custom properties for dynamic switching
+- [x] Canvas theme integration (Fast2D colors)
+- [x] **[MVP]** Ctrl+T keyboard shortcut for theme toggle
 
 ### Global Shortcuts
-- [ ] **[MVP]** Ctrl+D dock mode toggle
-- [ ] **[MVP]** Ctrl+T theme toggle
-- [ ] **[MVP]** Focus-based shortcut disable (when input focused)
+- [x] **[MVP]** Ctrl+D dock mode toggle
+- [x] **[MVP]** Ctrl+T theme toggle
+- [x] **[MVP]** Focus-based shortcut disable (when input focused)
 - [ ] Modal dialog shortcut handling (Enter/Escape)
 - [ ] No shortcut customization initially
 
@@ -84,10 +84,10 @@
 ## 📁 Files & Scopes Panel
 
 ### Header Components
-- [ ] **[MVP]** "Files & Scopes" title (left aligned)
-- [ ] **[MVP]** "Load Files" button with folder icon (center)
-- [ ] **[MVP]** "Remove All" button with X icon (right)
-- [ ] **[MVP]** Empty state placeholder text
+- [x] **[MVP]** "Files & Scopes" title (left aligned)
+- [x] **[MVP]** "Load Files" button with folder icon (center)
+- [x] **[MVP]** "Remove All" button with X icon (right)
+- [x] **[MVP]** Empty state placeholder text
 
 ### File Tree View
 - [ ] **[MVP]** Tree view with loaded files as roots
@@ -122,41 +122,41 @@
 ## 📄 Load Files Dialog
 
 ### Dialog Structure
-- [ ] **[MVP]** Modal with semi-transparent overlay
-- [ ] **[MVP]** Overlay click to close
-- [ ] **[MVP]** Escape key to close
-- [ ] **[MVP]** Cancel button
-- [ ] **[MVP]** Dynamic "Load N Files" button
-- [ ] **[MVP]** Button disabled until file selected
+- [x] **[MVP]** Modal with semi-transparent overlay
+- [x] **[MVP]** Overlay click to close
+- [x] **[MVP]** Escape key to close
+- [x] **[MVP]** Cancel button
+- [x] **[MVP]** Dynamic "Load N Files" button
+- [x] **[MVP]** Button disabled until file selected
 
 ### Dialog Header
-- [ ] **[MVP]** "Select Waveform Files" title
-- [ ] **[MVP]** Less contrasting "(*.vcd, *.fst, *.ghw)" subtitle
+- [x] **[MVP]** "Select Waveform Files" title
+- [x] **[MVP]** Less contrasting "(*.vcd, *.fst, *.ghw)" subtitle
 - [ ] Optional X button to close
 
 ### File Tree Navigation
-- [ ] **[MVP]** Standard file system tree view
-- [ ] **[MVP]** Directory expansion/collapse
-- [ ] **[MVP]** File filtering (VCD, FST, GHW only)
-- [ ] **[MVP]** Multiple file selection via checkboxes
-- [ ] **[MVP]** File highlighting on selection
-- [ ] **[MVP]** Tree starts from root (/) on Linux
+- [x] **[MVP]** Standard file system tree view
+- [x] **[MVP]** Directory expansion/collapse
+- [x] **[MVP]** File filtering (VCD, FST, GHW only)
+- [x] **[MVP]** Multiple file selection via checkboxes
+- [x] **[MVP]** File highlighting on selection
+- [x] **[MVP]** Tree starts from root (/) on Linux
 
 ### Directory State Management
-- [ ] **[MVP]** Directory expansion state persistence
-- [ ] **[MVP]** Default home directory expansion on first use
-- [ ] **[MVP]** Ancestor directory expansion for home
-- [ ] **[MVP]** Symbolic link transparent handling
-- [ ] **[MVP]** Inaccessible symlink error handling
+- [x] **[MVP]** Directory expansion state persistence
+- [x] **[MVP]** Default home directory expansion on first use
+- [x] **[MVP]** Ancestor directory expansion for home
+- [x] **[MVP]** Symbolic link transparent handling
+- [x] **[MVP]** Inaccessible symlink error handling
 
 ### Placeholder Messages
-- [ ] **[MVP]** Empty directory placeholder ("Empty")
-- [ ] **[MVP]** No supported files placeholder ("No supported files")
-- [ ] **[MVP]** Permission error placeholder ("Can't access this directory")
-- [ ] **[MVP]** Contrasting colors for error placeholders
+- [x] **[MVP]** Empty directory placeholder ("Empty")
+- [x] **[MVP]** No supported files placeholder ("No supported files")
+- [x] **[MVP]** Permission error placeholder ("Can't access this directory")
+- [x] **[MVP]** Contrasting colors for error placeholders
 
 ### Selected Files Display
-- [ ] **[MVP]** Selected files as pills/tags below tree
+- [x] **[MVP]** Selected files as pills/tags below tree
 - [ ] **[MVP]** X button on pills to deselect
 - [ ] **[MVP]** Automatic tree view unchecking
 - [ ] **[MVP]** Tooltip with absolute path on pill hover
@@ -172,27 +172,27 @@
 ## 📊 Variables Panel
 
 ### Header Components
-- [ ] **[MVP]** "Variables" title (left aligned)
-- [ ] **[MVP]** Variable count display (less contrasting)
-- [ ] **[MVP]** Search/filter input with magnifying glass icon
-- [ ] **[MVP]** X icon in search input for clearing
-- [ ] **[MVP]** Real-time filtering on input change
-- [ ] **[MVP]** Case-insensitive substring filtering
-- [ ] **[MVP]** Filtered results count update
+- [x] **[MVP]** "Variables" title (left aligned)
+- [x] **[MVP]** Variable count display (less contrasting)
+- [x] **[MVP]** Search/filter input with magnifying glass icon
+- [x] **[MVP]** X icon in search input for clearing
+- [x] **[MVP]** Real-time filtering on input change
+- [x] **[MVP]** Case-insensitive substring filtering
+- [x] **[MVP]** Filtered results count update
 
 ### Virtual List Implementation
-- [ ] **[MVP]** Virtual list for 5,000+ variables
-- [ ] **[MVP]** Constant row height for performance
-- [ ] **[MVP]** No text wrapping (horizontal scrollbar)
-- [ ] **[MVP]** Stable scrolling performance
-- [ ] **[MVP]** Search filtering integration with virtual list
-- [ ] **[MVP]** Memory efficient (visible items + buffer only)
-- [ ] **[MVP]** 60fps scroll responsiveness
-- [ ] Selection state persistence across virtual recycling
+- [x] **[MVP]** Virtual list for 5,000+ variables
+- [x] **[MVP]** Constant row height for performance
+- [x] **[MVP]** No text wrapping (horizontal scrollbar)
+- [x] **[MVP]** Stable scrolling performance
+- [x] **[MVP]** Search filtering integration with virtual list
+- [x] **[MVP]** Memory efficient (visible items + buffer only)
+- [x] **[MVP]** 60fps scroll responsiveness
+- [x] Selection state persistence across virtual recycling
 
 ### Variable Display
-- [ ] **[MVP]** Variable name (left aligned)
-- [ ] **[MVP]** Variable type (right aligned, e.g., "Wire 1-bit")
+- [x] **[MVP]** Variable name (left aligned)
+- [x] **[MVP]** Variable type (right aligned, e.g., "Wire 1-bit")
 - [ ] **[MVP]** Smaller font and blue-ish color for types
 - [ ] **[MVP]** Common prefix graying (AB, (AB)C, (ABC)D)
 - [ ] **[MVP]** Hover highlighting
@@ -211,31 +211,31 @@
 ## ⚡ Selected Variables Panel
 
 ### Header Components
-- [ ] **[MVP]** "Selected Variables" title (left aligned)
-- [ ] **[MVP]** Theme toggle button (sun/moon, no text)
-- [ ] **[MVP]** Dock mode toggle button with icon and text
-- [ ] **[MVP]** "Remove All" button (right aligned)
-- [ ] **[MVP]** Button text updates based on dock mode
-- [ ] **[MVP]** Icon updates based on dock mode
+- [x] **[MVP]** "Selected Variables" title (left aligned)
+- [x] **[MVP]** Theme toggle button (sun/moon, no text)
+- [x] **[MVP]** Dock mode toggle button with icon and text
+- [x] **[MVP]** "Remove All" button (right aligned)
+- [x] **[MVP]** Button text updates based on dock mode
+- [x] **[MVP]** Icon updates based on dock mode
 
 ### Column Structure
-- [ ] **[MVP]** Three-column layout (Name, Value, Wave)
-- [ ] **[MVP]** Draggable dividers between columns
-- [ ] **[MVP]** Column width persistence per dock mode
-- [ ] **[MVP]** Consistent row height across all columns
-- [ ] **[MVP]** Table-like alignment
+- [x] **[MVP]** Three-column layout (Name, Value, Wave)
+- [x] **[MVP]** Draggable dividers between columns
+- [x] **[MVP]** Column width persistence per dock mode
+- [x] **[MVP]** Consistent row height across all columns
+- [x] **[MVP]** Table-like alignment
 
 ### Name Column
-- [ ] **[MVP]** Remove X button per variable
-- [ ] **[MVP]** Variable name display
-- [ ] **[MVP]** Variable type display (same styling as Variables panel)
-- [ ] **[MVP]** Tooltip with variable ID on hover (file|scope|path)
+- [x] **[MVP]** Remove X button per variable
+- [x] **[MVP]** Variable name display
+- [x] **[MVP]** Variable type display (same styling as Variables panel)
+- [x] **[MVP]** Tooltip with variable ID on hover (file|scope|path)
 
 ### Name Column Footer
-- [ ] **[MVP]** Keyboard shortcut indicators [Z] [W] [S] [R]
-- [ ] **[MVP]** Current zoom display (15ns/px format)
-- [ ] **[MVP]** Tooltips for all shortcut keys
-- [ ] **[MVP]** Dynamic zoom unit formatting
+- [x] **[MVP]** Keyboard shortcut indicators [Z] [W] [S] [R]
+- [x] **[MVP]** Current zoom display (15ns/px format)
+- [x] **[MVP]** Tooltips for all shortcut keys
+- [x] **[MVP]** Dynamic zoom unit formatting
 
 ### Value Column
 - [ ] **[MVP]** Dropdown/Select element per variable
@@ -288,32 +288,32 @@
 ## ⌨️ Keyboard Shortcuts System
 
 ### Timeline Navigation
-- [ ] **[MVP]** Z key - Move zoom center to 0
-- [ ] **[MVP]** R key - Reset to default state (full reset)
-- [ ] **[MVP]** W key - Zoom in (centered on zoom center)
+- [x] **[MVP]** Z key - Move zoom center to 0
+- [x] **[MVP]** R key - Reset to default state (full reset)
+- [x] **[MVP]** W key - Zoom in (centered on zoom center)
 - [ ] **[MVP]** Shift+W - Zoom in faster (3-5x acceleration)
-- [ ] **[MVP]** S key - Zoom out (centered on zoom center)
+- [x] **[MVP]** S key - Zoom out (centered on zoom center)
 - [ ] **[MVP]** Shift+S - Zoom out faster (3-5x acceleration)
 
 ### Cursor Movement
-- [ ] **[MVP]** Q key - Move cursor left continuously
-- [ ] **[MVP]** Shift+Q - Jump to previous signal transition
-- [ ] **[MVP]** E key - Move cursor right continuously
-- [ ] **[MVP]** Shift+E - Jump to next signal transition
-- [ ] **[MVP]** Smooth cursor movement when holding keys
+- [x] **[MVP]** Q key - Move cursor left continuously
+- [x] **[MVP]** Shift+Q - Jump to previous signal transition
+- [x] **[MVP]** E key - Move cursor right continuously
+- [x] **[MVP]** Shift+E - Jump to next signal transition
+- [x] **[MVP]** Smooth cursor movement when holding keys
 
 ### Viewport Panning
-- [ ] **[MVP]** A key - Pan timeline left
+- [x] **[MVP]** A key - Pan timeline left
 - [ ] **[MVP]** Shift+A - Pan timeline left faster (2-3x)
-- [ ] **[MVP]** D key - Pan timeline right
+- [x] **[MVP]** D key - Pan timeline right
 - [ ] **[MVP]** Shift+D - Pan timeline right faster (2-3x)
-- [ ] **[MVP]** Smooth panning when holding keys
+- [x] **[MVP]** Smooth panning when holding keys
 
 ### Focus Management
-- [ ] **[MVP]** Disable all shortcuts when filter input focused
-- [ ] **[MVP]** Clear focus outline indication
-- [ ] **[MVP]** Theme/dock shortcuts work in modals
-- [ ] **[MVP]** Timeline navigation works in modals
+- [x] **[MVP]** Disable all shortcuts when filter input focused
+- [x] **[MVP]** Clear focus outline indication
+- [x] **[MVP]** Theme/dock shortcuts work in modals
+- [x] **[MVP]** Timeline navigation works in modals
 
 ---
 

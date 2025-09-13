@@ -25,6 +25,12 @@ TRACKED_FILES.signal_vec_cloned().to_signal_cloned().map(|files| { ... })
 
 // For single-value signals: Use dedicated Mutable<Vec<T>>
 static STABLE_FILES: Lazy<Mutable<Vec<TrackedFile>>> = Lazy::new(Mutable::new);
+
+// For count/length: Use direct .len() method on SignalVec
+tracked_files.files.signal_vec().len()  // ✅ Direct, efficient
+
+// NOT the inefficient conversion pattern:
+tracked_files.files.signal_vec().to_signal_cloned().map(|files| files.len())  // ❌ Unnecessary conversion
 ```
 
 ### 2. **Downstream Signal Deduplication Fallacy**
@@ -584,16 +590,23 @@ let variable_index = Actor::new(IndexSet::new(), async move |_index_handle| {
 ```
 
 **Recognition Signs:**
-- **`std::future::pending::<()>().await`** - Actor never handles events
+- **`std::future::pending::<()>().await`** - Ugly code that creates zombie actors
 - **Underscore parameter names** - `|_handle|` indicates unused state handle
 - **"Maintained by" comments** - Suggests manual synchronization instead of proper event streams
 - **Never changes from initial value** - State remains static forever
 
+**Why `std::future::pending::<()>().await` is particularly bad:**
+- **Ugly, nonsensical code** - Complex type annotation `<()>()` for no meaningful purpose
+- **Doesn't make architectural sense** - If Actor needs to stay alive, it should handle events
+- **Hard to debug** - Creates infinite pending loops that consume resources silently
+- **Code smell** - Usually indicates the Actor shouldn't exist at all
+
 **Why This Is Harmful:**
 - **Memory waste** - Each Actor allocates heap space and task overhead
-- **CPU waste** - Async tasks running infinite pending loops  
+- **CPU waste** - Async tasks running infinite pending loops
 - **Architectural confusion** - Fake reactive state that never reacts
 - **Debugging complexity** - Dead actors appear in state but never update
+- **Maintenance burden** - Code that looks like it works but doesn't
 
 ### ✅ CORRECT: Connect Actors to Real Event Streams
 

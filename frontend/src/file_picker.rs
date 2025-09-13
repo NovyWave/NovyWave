@@ -3,19 +3,202 @@ use moonzoon_novyui::tokens::theme::Theme;
 use moonzoon_novyui::*;
 use zoon::events::{Click, KeyDown};
 use zoon::*;
-use crate::dataflow::{atom::Atom, relay};
+use zoon::map_ref;
+use crate::dataflow::{atom::Atom, relay, Actor};
 use std::collections::{HashMap, HashSet};
+use indexmap::IndexSet;
+use shared::{UpMsg, FileSystemItem};
+use futures::{stream::StreamExt as FuturesStreamExt, stream::FusedStream};
+
+/// TreeView sync actors to handle bi-directional sync between FilePickerDomain and TreeView
+/// Replaces zoon::Task pattern with proper Actor+Relay architecture
+struct TreeViewSyncActors {
+    domain_to_treeview_sync: Actor<()>,
+    treeview_to_domain_sync: Actor<()>,
+}
+
+impl TreeViewSyncActors {
+    fn new(
+        domain: crate::config::FilePickerDomain,
+        external_expanded: zoon::Mutable<IndexSet<String>>,
+    ) -> Self {
+        // ✅ ACTOR+RELAY: Domain → TreeView sync
+        let domain_to_treeview_sync = Actor::new((), {
+            let external_expanded_sync = external_expanded.clone();
+            let domain_clone = domain.clone();
+            async move |_state| {
+                zoon::println!("📂 SYNC_ACTOR: Starting domain → TreeView sync");
+                let mut signal_stream = domain_clone.expanded_directories_signal().to_stream();
+                while let Some(index_set) = signal_stream.next().await {
+                    zoon::println!("📂 SYNC_ACTOR: Syncing {} expanded dirs from domain to TreeView", index_set.len());
+                    external_expanded_sync.set_neq(index_set);
+                }
+            }
+        });
+
+        // ✅ ACTOR+RELAY: TreeView → Domain sync
+        let treeview_to_domain_sync = Actor::new((), {
+            let domain_for_expansion = domain.clone();
+            let external_expanded_for_expansion = external_expanded.clone();
+            async move |_state| {
+                let mut previous_expanded: IndexSet<String> = IndexSet::new();
+                let mut external_signal_stream = external_expanded_for_expansion.signal_cloned().to_stream();
+                let mut is_first_sync = true;
+                zoon::println!("📂 EXPANSION_HANDLER: Starting TreeView → Domain sync");
+
+                while let Some(current_expanded) = external_signal_stream.next().await {
+                    zoon::println!("📂 TREEVIEW_EXPAND: External expanded changed, now has {} directories", current_expanded.len());
+
+                    // Skip the first sync if it's empty to prevent clearing config on initialization
+                    if is_first_sync && current_expanded.is_empty() {
+                        zoon::println!("📂 TREEVIEW_EXPAND: Skipping initial empty state to preserve config");
+                        is_first_sync = false;
+                        continue;
+                    }
+                    is_first_sync = false;
+
+                    for path in current_expanded.iter() {
+                        if !previous_expanded.contains(path) {
+                            zoon::println!("📂 TREEVIEW_EXPAND: Expanding directory: {}", path);
+                            domain_for_expansion.directory_expanded_relay.send(path.clone());
+                            domain_for_expansion.directory_load_requested_relay.send(path.clone());
+                        }
+                    }
+
+                    for path in previous_expanded.iter() {
+                        if !current_expanded.contains(path) {
+                            domain_for_expansion.directory_collapsed_relay.send(path.clone());
+                        }
+                    }
+
+                    previous_expanded = current_expanded;
+                }
+            }
+        });
+
+        Self {
+            domain_to_treeview_sync,
+            treeview_to_domain_sync,
+        }
+    }
+}
+
+
+/// Initialize directories on first use and when restored from config
+fn initialize_directories_and_request_contents(
+    file_picker_domain: &crate::config::FilePickerDomain,
+) -> crate::dataflow::Actor<()> {
+    file_picker_domain.directory_load_requested_relay.send("/".to_string());
+
+    let domain_clone = file_picker_domain.clone();
+
+    let initialization_actor = crate::dataflow::Actor::new((), async move |state_handle| {
+
+        let mut current_expanded = domain_clone.expanded_directories_actor.signal().to_stream();
+        if let Some(expanded) = current_expanded.next().await {
+            if expanded.is_empty() {
+                if let Some(home_dir) = std::env::var("HOME").ok().or_else(|| std::env::var("USERPROFILE").ok()) {
+                    domain_clone.directory_expanded_relay.send("/".to_string());
+                    domain_clone.directory_expanded_relay.send(home_dir.clone());
+                    domain_clone.directory_load_requested_relay.send(home_dir);
+                } else {
+                    domain_clone.directory_expanded_relay.send("/".to_string());
+                }
+            } else {
+                for directory in &expanded {
+                    domain_clone.directory_load_requested_relay.send(directory.clone());
+                }
+            }
+        }
+
+        domain_clone.directory_load_requested_relay.send("/".to_string());
+        state_handle.set(());
+    });
+
+    initialization_actor
+}
+
+
+/// Build tree data for TreeView component using Actor signals
+fn build_tree_data(
+    root_path: &str,
+    cache: &HashMap<String, Vec<FileSystemItem>>,
+    errors: &HashMap<String, String>
+) -> Vec<TreeViewItemData> {
+    let mut root_items = Vec::new();
+
+    if let Some(items) = cache.get(root_path) {
+        for item in items {
+            if item.is_directory {
+                root_items.push(build_directory_item(&item.path, &item.name, cache, errors));
+            } else if item.is_waveform_file {
+                root_items.push(
+                    TreeViewItemData::new(item.path.clone(), item.name.clone())
+                        .icon("file".to_string())
+                        .item_type(TreeViewItemType::File)
+                        .is_waveform_file(true)
+                );
+            }
+        }
+    }
+
+    root_items
+}
+
+/// Build directory tree item with children
+fn build_directory_item(
+    path: &str,
+    name: &str,
+    cache: &HashMap<String, Vec<shared::FileSystemItem>>,
+    errors: &HashMap<String, String>
+) -> TreeViewItemData {
+    let mut item = TreeViewItemData::new(path.to_string(), name.to_string())
+        .icon("folder".to_string())
+        .item_type(TreeViewItemType::Folder);
+
+    if let Some(_error) = errors.get(path) {
+        // Directory has access error
+        item = item.with_children(vec![
+            TreeViewItemData::new("error".to_string(), "Can't access this directory".to_string())
+                .disabled(true)
+                .item_type(TreeViewItemType::Default)
+        ]);
+    } else if let Some(children) = cache.get(path) {
+        let child_items = build_tree_data(path, cache, errors);
+
+        if child_items.is_empty() {
+            // Directory is empty
+            item = item.with_children(vec![
+                TreeViewItemData::new("empty".to_string(), "Empty".to_string())
+                    .disabled(true)
+                    .item_type(TreeViewItemType::Default)
+            ]);
+        } else {
+            item = item.with_children(child_items);
+        }
+    } else {
+        item = item.with_children(vec![
+            TreeViewItemData::new("loading".to_string(), "Loading...".to_string())
+                .disabled(true)
+                .item_type(TreeViewItemType::Default)
+        ]);
+    }
+
+    item
+}
 
 /// Main file paths dialog for selecting waveform files
 pub fn file_paths_dialog(
     tracked_files: crate::tracked_files::TrackedFiles,
-    _selected_variables: crate::selected_variables::SelectedVariables,
+    selected_variables: crate::selected_variables::SelectedVariables,
     app_config: crate::config::AppConfig,
-    file_dialog_visible: Atom<bool>
+    file_dialog_visible: Atom<bool>,
+    connection: crate::connection::ConnectionAdapter,
 ) -> impl Element {
-    let file_count_broadcaster = tracked_files.files_vec_signal.signal_cloned().map(|files| files.len()).broadcast();
-    
-    let selected_files = zoon::Mutable::new(Vec::<String>::new());
+    let file_count_broadcaster = tracked_files.files.signal_vec().len().broadcast();
+
+    // Simple selected files state - no bi-directional sync
+    let selected_files = Atom::new(Vec::<String>::new());
 
     let close_dialog = {
         let file_dialog_visible = file_dialog_visible.clone();
@@ -106,14 +289,14 @@ pub fn file_paths_dialog(
                                         .style("overflow-x", "auto")   // Enable horizontal scroll
                                         .style("overflow-y", "hidden") // Prevent double scrollbars
                                 })
-                                .child(file_picker_content(&app_config, &selected_files))
+                                .child(file_picker_content(&app_config, &selected_files, connection))
                         )
                         .item(
                             El::new()
                                 .s(Padding::all(4))
-                                .child_signal(
-                                    selected_files.signal_cloned().map(|selected_paths| {
-
+                                .child_signal({
+                                    let selected_files_for_map = selected_files.clone();
+                                    selected_files.signal().map(move |selected_paths| {
                                         if selected_paths.is_empty() {
                                             El::new()
                                                 .s(Font::new().italic().color_signal(neutral_8()))
@@ -126,22 +309,34 @@ pub fn file_paths_dialog(
                                                 .s(Align::new().left().top())
                                                 .items(selected_paths.iter().map(|path| {
                                                     let filename = crate::file_operations::extract_filename(path);
-                                                    badge(filename)
-                                                        .variant(BadgeVariant::Outline)
-                                                        .size(BadgeSize::Small)
-                                                        .removable()
-                                                        .on_remove({
-                                                            let path = path.clone();
-                                                            move || {
-                                                                zoon::println!("Remove file: {}", path);
+                                                    El::new()
+                                                        .update_raw_el({
+                                                            let path_for_tooltip = path.clone();
+                                                            move |raw_el| {
+                                                                raw_el.attr("title", &path_for_tooltip)
                                                             }
                                                         })
-                                                        .build()
+                                                        .child(
+                                                            badge(filename)
+                                                                .variant(BadgeVariant::Outline)
+                                                                .size(BadgeSize::Small)
+                                                                .removable()
+                                                                .on_remove({
+                                                                    let path = path.clone();
+                                                                    let selected_files_for_remove = selected_files_for_map.clone();
+                                                                    move || {
+                                                                        let mut current = selected_files_for_remove.get_cloned();
+                                                                        current.retain(|p| p != &path);
+                                                                        selected_files_for_remove.set(current);
+                                                                    }
+                                                                })
+                                                                .build()
+                                                        )
                                                 }))
                                                 .unify()
                                         }
                                     })
-                                )
+                                })
                         )
                         .item(
                             Row::new()
@@ -160,7 +355,7 @@ pub fn file_paths_dialog(
                                         .label_signal(
                                             map_ref! {
                                                 let file_count = file_count_broadcaster.signal(),
-                                                let selected_files = selected_files.signal_cloned() =>
+                                                let selected_files = selected_files.signal() =>
                                                 move {
                                                     let is_loading = *file_count > 0;
                                                     let selected_count = selected_files.len();
@@ -177,7 +372,7 @@ pub fn file_paths_dialog(
                                         .disabled_signal(
                                             map_ref! {
                                                 let file_count = file_count_broadcaster.signal(),
-                                                let selected_files = selected_files.signal_cloned() => {
+                                                let selected_files = selected_files.signal() => {
                                                 let is_loading = *file_count > 0;
                                                 let selected_count = selected_files.len();
                                                 is_loading || selected_count == 0
@@ -208,73 +403,79 @@ pub fn file_paths_dialog(
 /// File picker content with directory tree
 pub fn file_picker_content(
     app_config: &crate::config::AppConfig,
-    selected_files: &zoon::Mutable<Vec<String>>,
+    selected_files: &Atom<Vec<String>>,
+    connection: crate::connection::ConnectionAdapter,
 ) -> impl Element {
+    // Use TreeView-compatible MutableVec that syncs one-way from Atom
+    let selected_files_vec = zoon::MutableVec::<String>::new();
+
     El::new()
         .s(Height::fill())
         .s(Scrollbars::both())
+        // Scroll position handled by FilePickerDomain actors
         .update_raw_el(|raw_el| {
-            raw_el.style("scrollbar-width", "thin").style_signal(
-                "scrollbar-color",
-                primary_6()
-                    .map(|thumb| primary_3().map(move |track| format!("{} {}", thumb, track)))
-                    .flatten(),
-            )
+            raw_el
+                .style("min-height", "0")      // Allow flex shrinking
         })
-        .child_signal(simple_file_picker_tree(app_config.clone()).into_signal_option())
+        .child(file_picker_tree(&app_config, selected_files_vec.clone(), connection.clone()))
 }
 
-/// Simple file picker tree implementation
-pub async fn simple_file_picker_tree(app_config: crate::config::AppConfig) -> impl Element {
-    let selected_files = zoon::MutableVec::<String>::new();
-    let scroll_position = app_config
-        .file_picker_scroll_position
-        .signal()
-        .to_stream()
-        .next()
-        .await;
-    let (tree_view_rendering_relay, mut tree_view_rendering_stream) = relay();
+/// File picker tree using FilePickerDomain Actors
+pub fn file_picker_tree(
+    app_config: &crate::config::AppConfig,
+    selected_files: zoon::MutableVec<String>,
+    connection: crate::connection::ConnectionAdapter,
+) -> impl Element {
+    // Initialize directories and request contents for expanded directories from config
+    let initialization_actor = initialize_directories_and_request_contents(&app_config.file_picker_domain);
+
+    let domain_for_treeview = app_config.file_picker_domain.clone();
+    let cache_signal = app_config.file_picker_domain.directory_cache_signal();
+
     El::new()
         .s(Height::fill())
         .s(Width::fill())
-        .s(Scrollbars::both())
-        .viewport_y_signal(signal::from_future(Box::pin(async move {
-            tree_view_rendering_stream.next().await;
-            Task::next_macro_tick().await;
-            scroll_position
-        })).map(|position| position.flatten().unwrap_or_default()))
-        .on_viewport_location_change({
-            let scroll_position_mutable = app_config.file_picker_scroll_position.clone();
-            move |_scene, viewport| {
-                scroll_position_mutable.set_neq(viewport.y);
-            }
-        })
         .update_raw_el(|raw_el| {
             raw_el
                 .style("min-width", "fit-content")
                 .style("width", "100%")
                 .style("scrollbar-width", "thin")
-                .style_signal("scrollbar-color", primary_6().map(|thumb| primary_3().map(move |track| format!("{} {}", thumb, track))).flatten())
+                .style_signal("scrollbar-color", primary_6().map(|thumb|
+                    primary_3().map(move |track| format!("{} {}", thumb, track))
+                ).flatten())
         })
-        .child_signal(
-            map_ref! {
-                let tree_cache = zoon::always(std::collections::HashMap::new()), // Use empty cache for now
-                let error_cache = zoon::always(std::collections::HashMap::new()),
-                let expanded = app_config.file_picker_expanded_directories.signal_cloned() =>
-                move {
+        .child_signal({
+            let initialization_actor_for_closure = initialization_actor.clone();
+            cache_signal.map(move |cache| {
+                if cache.contains_key("/") {
+                    // Root directory loaded - show tree
+                    let tree_data = build_tree_data("/", &cache, &std::collections::HashMap::new());
 
-                    crate::file_operations::monitor_directory_expansions(expanded.iter().cloned().collect::<HashSet<_>>(), &app_config);
+                    {
+                        // Create Mutable and sync actors outside of TreeView to control lifecycle
+                        use indexmap::IndexSet;
+                        // ✅ FIX: Initialize external_expanded as empty - Domain→TreeView sync will populate it
+                        let external_expanded = zoon::Mutable::new(IndexSet::<String>::new());
+                        zoon::println!("📂 EXTERNAL_EXPANDED: Created empty external_expanded Mutable for TreeView sync");
 
-                    if let Some(_root_items) = tree_cache.get("/") {
-                        let tree_data = vec![
-                            TreeViewItemData::new("/".to_string(), "/".to_string())
-                                .with_children(build_hierarchical_tree("/", &tree_cache, &error_cache))
-                        ];
+                        // ✅ ACTOR+RELAY FIX: Replace zoon::Task with proper Actors
+                        let sync_actors = TreeViewSyncActors::new(
+                            domain_for_treeview.clone(),
+                            external_expanded.clone(),
+                        );
+
+                        // Store initialization actor for proper lifecycle management
+                        let _initialization_actor = initialization_actor_for_closure.clone();
 
                         El::new()
-                            .after_insert(clone!((tree_view_rendering_relay) move |_| {
-                                tree_view_rendering_relay.send(());
-                            }))
+                            .s(Height::fill())
+                            .s(Width::fill())
+                            .after_remove(move |_| {
+                                // ✅ PROPER ACTOR STORAGE: Keep all actors alive until element drops
+                                drop(sync_actors);
+                                drop(_initialization_actor);
+                                zoon::println!("📂 ACTORS: TreeView and initialization actors properly dropped");
+                            })
                             .child(
                                 tree_view()
                                     .data(tree_data)
@@ -282,23 +483,27 @@ pub async fn simple_file_picker_tree(app_config: crate::config::AppConfig) -> im
                                     .variant(TreeViewVariant::Basic)
                                     .show_icons(true)
                                     .show_checkboxes(true)
-                                    .external_expanded(app_config.file_picker_expanded_directories.clone())
+                                    .external_expanded(external_expanded)
                                     .external_selected_vec(selected_files.clone())
                                     .build()
+                                    .into_raw()
                             )
-                            .unify()
-
-                    } else {
-                        El::new()
-                            .s(Padding::all(20))
-                            .s(Font::new().color_signal(neutral_8()).italic())
-                            .child("Loading directory contents...")
-                            .unify()
+                            .into_element()
                     }
+                } else {
+                    // Still loading root directory
+                    El::new()
+                        .s(Padding::all(20))
+                        .s(Font::new().color_signal(neutral_8()).italic())
+                        .child("Loading directory contents...")
+                        .into_element()
                 }
-            }
-        )
+            })
+        })
 }
+
+
+
 
 /// Check if folder should be disabled based on content
 pub fn should_disable_folder(
@@ -317,7 +522,7 @@ pub fn should_disable_folder(
     false
 }
 
-/// Build hierarchical tree structure from cache data
+/// Build hierarchical tree structure from cache data with expansion handlers
 pub fn build_hierarchical_tree(
     path: &str,
     tree_cache: &HashMap<String, Vec<shared::FileSystemItem>>,

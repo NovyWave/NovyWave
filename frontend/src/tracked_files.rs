@@ -3,7 +3,7 @@
 //! Proper Actor+Relay architecture for file loading and management.
 //! Uses dataflow Actor pattern instead of global Mutables.
 
-use crate::dataflow::{ActorVec, Relay, relay};
+use crate::dataflow::{ActorVec, Actor, Relay, relay};
 use futures::{StreamExt, select};
 use shared::{FileState, LoadingStatus, TrackedFile, create_tracked_file};
 use zoon::*;
@@ -12,7 +12,7 @@ use zoon::*;
 #[derive(Clone)]
 pub struct TrackedFiles {
     pub files: ActorVec<TrackedFile>,
-    pub files_vec_signal: zoon::Mutable<Vec<TrackedFile>>,
+    // Removed files_vec_signal - use files.signal_vec().to_signal_cloned() instead
     pub config_files_loaded_relay: Relay<Vec<String>>,
     pub files_dropped_relay: Relay<Vec<std::path::PathBuf>>,
     pub file_removed_relay: Relay<String>,
@@ -38,170 +38,153 @@ impl TrackedFiles {
         let (all_files_cleared_relay, mut all_files_cleared_stream) = relay::<()>();
         let (file_parse_requested_relay, mut file_parse_requested_stream) = relay::<String>();
 
-        let files_vec_signal = zoon::Mutable::new(vec![]);
-        let files = ActorVec::new(vec![], {
-            let files_vec_signal_sync = files_vec_signal.clone();
-            let file_parse_requested_relay_for_actor = file_parse_requested_relay.clone();
-            async move |files_handle| {
-                let mut cached_loading_states: std::collections::HashMap<String, FileState> =
-                    std::collections::HashMap::new();
-                let mut all_files_loaded_signaled = false;
+        // ActorVec handles all event processing within its processor - proper Actor+Relay architecture
+        let files = ActorVec::new(vec![], async move |files_vec| {
+            // ✅ Cache Current Values pattern - maintain local state within Actor loop
+            let mut cached_files: Vec<TrackedFile> = vec![];
+            let mut cached_loading_states: std::collections::HashMap<String, FileState> =
+                std::collections::HashMap::new();
+            let mut all_files_loaded_signaled = false;
 
-                loop {
-                    select! {
-                        config_files = config_files_loaded_stream.next() => {
-                            if let Some(file_paths) = config_files {
-                                let tracked_files: Vec<TrackedFile> = file_paths.into_iter()
-                                    .map(|path_str| create_tracked_file(path_str, FileState::Loading(LoadingStatus::Starting)))
-                                    .collect();
-
-                                for file in &tracked_files {
-                                    file_parse_requested_relay_for_actor.send(file.path.clone());
-                                }
-
-                                files_handle.lock_mut().replace_cloned(tracked_files);
-
-                                let current_files = files_handle.lock_ref().to_vec();
-                                files_vec_signal_sync.set_neq(current_files);
+            // Process all streams directly in ActorVec processor - proper pattern
+            loop {
+                select! {
+                    file_paths = config_files_loaded_stream.next() => {
+                        if let Some(file_paths) = file_paths {
+                            let tracked_files: Vec<TrackedFile> = file_paths.into_iter()
+                                .map(|path_str| create_tracked_file(path_str, FileState::Loading(LoadingStatus::Starting)))
+                                .collect();
+                            cached_files = tracked_files.clone();
+                            {
+                                let mut vec = files_vec.lock_mut();
+                                vec.clear();
+                                vec.extend(tracked_files);
                             }
                         }
-                        dropped_files = files_dropped_stream.next() => {
-                            if let Some(file_paths) = dropped_files {
-
-                                let new_files: Vec<TrackedFile> = file_paths.into_iter()
-                                    .map(|path| {
-                                        let path_str = path.to_string_lossy().to_string();
-                                        create_tracked_file(path_str, FileState::Loading(LoadingStatus::Starting))
-                                    })
-                                    .collect();
-
-                                for new_file in new_files {
-                                    let existing = files_handle.lock_ref().iter().any(|f| f.id == new_file.id);
-                                    if !existing {
-                                        file_parse_requested_relay_for_actor.send(new_file.path.clone());
-                                        files_handle.lock_mut().push_cloned(new_file);
-                                        
-                                        let current_files = files_handle.lock_ref().to_vec();
-                                        files_vec_signal_sync.set_neq(current_files);
-                                    }
-                                }
-                            }
-                        }
-                        removed_file = file_removed_stream.next() => {
-                            if let Some(file_id) = removed_file {
-                                files_handle.lock_mut().retain(|f| f.id != file_id);
-                                
-                                let current_files = files_handle.lock_ref().to_vec();
-                                files_vec_signal_sync.set_neq(current_files);
-                            }
-                        }
-                        reload_requested = file_reload_requested_stream.next() => {
-                            if let Some(file_id) = reload_requested {
-                                let existing_file = files_handle.lock_ref().iter()
-                                    .find(|f| f.id == file_id).cloned();
-
-                                if let Some(existing_file) = existing_file {
-                                    let new_file = create_tracked_file(
-                                        existing_file.path.clone(),
-                                        FileState::Loading(LoadingStatus::Starting)
-                                    );
-
-                                    file_parse_requested_relay_for_actor.send(new_file.path.clone());
-
-                                    let mut files = files_handle.lock_mut();
-                                    files.retain(|f| f.id != file_id);
-                                    files.push_cloned(new_file);
-                                    
-                                    let current_files = files_handle.lock_ref().to_vec();
-                                    files_vec_signal_sync.set_neq(current_files);
-                                }
-                            }
-                        }
-                        completed = file_load_completed_stream.next() => {
-                            if let Some((file_id, new_state)) = completed {
-                                cached_loading_states.insert(file_id.clone(), new_state.clone());
-
-                                let mut files = files_handle.lock_ref().to_vec();
-                                if let Some(file) = files.iter_mut().find(|f| f.id == file_id) {
-                                    file.state = new_state;
-                                    files_handle.lock_mut().replace_cloned(files);
-
-                                    let current_files = files_handle.lock_ref().to_vec();
-                                    files_vec_signal_sync.set_neq(current_files);
-                                    let current_files = files_handle.lock_ref();
-                                    let all_done = current_files.iter().all(|f| {
-                                        matches!(f.state, shared::FileState::Loaded(_) | shared::FileState::Failed(_))
-                                    });
-
-                                    if all_done && !all_files_loaded_signaled {
-                                        all_files_loaded_signaled = true;
-                                        // Note: Scope selection restoration now handled by SelectedVariables domain Actor
-                                    }
-                                }
-                            }
-                        }
-                        parsing_progress = parsing_progress_stream.next() => {
-                            if let Some((file_id, _progress, status)) = parsing_progress {
-                                let current_files = files_handle.lock_ref().to_vec();
-                                let updated_files: Vec<TrackedFile> = current_files.into_iter().map(|mut file| {
-                                    if file.id == file_id {
-                                        file.state = FileState::Loading(status.clone());
-                                    }
-                                    file
-                                }).collect();
-
-                                files_handle.lock_mut().replace_cloned(updated_files);
-                                
-                                let current_files = files_handle.lock_ref().to_vec();
-                                files_vec_signal_sync.set_neq(current_files);
-                            }
-                        }
-                        loading_started = loading_started_stream.next() => {
-                            if let Some((file_id, filename)) = loading_started {
-                                let loading_file = create_tracked_file(filename, FileState::Loading(LoadingStatus::Starting));
-
-                                let current_files = files_handle.lock_ref().to_vec();
-                                let existing_index = current_files.iter().position(|f| f.id == file_id);
-
-                                if let Some(_index) = existing_index {
-                                    let updated_files: Vec<TrackedFile> = current_files.into_iter().map(|file| {
-                                        if file.id == file_id {
-                                            loading_file.clone()
-                                        } else {
-                                            file
-                                        }
-                                    }).collect();
-                                    files_handle.lock_mut().replace_cloned(updated_files);
-                                } else {
-                                    files_handle.lock_mut().push_cloned(loading_file);
-                                }
-
-                                let current_files = files_handle.lock_ref().to_vec();
-                                files_vec_signal_sync.set_neq(current_files);
-                            }
-                        }
-                        cleared = all_files_cleared_stream.next() => {
-                            if cleared.is_some() {
-                                files_handle.lock_mut().clear();
-                                
-                                let current_files = files_handle.lock_ref().to_vec();
-                                files_vec_signal_sync.set_neq(current_files);
-                            }
-                        }
-                        parse_requested = file_parse_requested_stream.next() => {
-                            if let Some(file_path) = parse_requested {
-                                send_parse_request_to_backend(file_path).await;
-                            }
-                        }
-                        complete => break, // All streams ended
                     }
+                    file_paths = files_dropped_stream.next() => {
+                        if let Some(file_paths) = file_paths {
+                            let new_files: Vec<TrackedFile> = file_paths.into_iter()
+                                .map(|path| {
+                                    let path_str = path.to_string_lossy().to_string();
+                                    create_tracked_file(path_str, FileState::Loading(LoadingStatus::Starting))
+                                })
+                                .collect();
+
+                            for new_file in new_files {
+                                let existing = cached_files.iter().any(|f| f.id == new_file.id);
+                                if !existing {
+                                    cached_files.push(new_file.clone());
+                                    files_vec.lock_mut().push_cloned(new_file);
+                                }
+                            }
+                        }
+                    }
+                    file_id = file_removed_stream.next() => {
+                        if let Some(file_id) = file_id {
+                            cached_files.retain(|f| f.id != file_id);
+                            files_vec.lock_mut().retain(|f| f.id != file_id);
+                        }
+                    }
+                    file_id = file_reload_requested_stream.next() => {
+                        if let Some(file_id) = file_id {
+                            if let Some(existing_file) = cached_files.iter().find(|f| f.id == file_id).cloned() {
+                                let new_file = create_tracked_file(
+                                    existing_file.path.clone(),
+                                    FileState::Loading(LoadingStatus::Starting)
+                                );
+
+                                // Update cache
+                                cached_files.retain(|f| f.id != file_id);
+                                cached_files.push(new_file.clone());
+
+                                // Update files_vec properly
+                                let mut files = files_vec.lock_mut();
+                                files.retain(|f| f.id != file_id);
+                                files.push_cloned(new_file);
+                            }
+                        }
+                    }
+                    load_result = file_load_completed_stream.next() => {
+                        if let Some((file_id, new_state)) = load_result {
+                            cached_loading_states.insert(file_id.clone(), new_state.clone());
+
+                            // Update cached state
+                            if let Some(file) = cached_files.iter_mut().find(|f| f.id == file_id) {
+                                file.state = new_state;
+                                {
+                                    let mut vec = files_vec.lock_mut();
+                                    vec.clear();
+                                    vec.extend(cached_files.clone());
+                                }
+
+                                let all_done = cached_files.iter().all(|f| {
+                                    matches!(f.state, shared::FileState::Loaded(_) | shared::FileState::Failed(_))
+                                });
+
+                                if all_done && !all_files_loaded_signaled {
+                                    all_files_loaded_signaled = true;
+                                }
+                            }
+                        }
+                    }
+                    progress_result = parsing_progress_stream.next() => {
+                        if let Some((file_id, _progress, status)) = progress_result {
+                            // Update cached files
+                            for file in &mut cached_files {
+                                if file.id == file_id {
+                                    file.state = FileState::Loading(status.clone());
+                                }
+                            }
+                            {
+                                let mut vec = files_vec.lock_mut();
+                                vec.clear();
+                                vec.extend(cached_files.clone());
+                            }
+                        }
+                    }
+                    loading_result = loading_started_stream.next() => {
+                        if let Some((file_id, filename)) = loading_result {
+                            let loading_file = create_tracked_file(filename, FileState::Loading(LoadingStatus::Starting));
+                            let existing_index = cached_files.iter().position(|f| f.id == file_id);
+
+                            if let Some(_index) = existing_index {
+                                // Update cached files
+                                for file in &mut cached_files {
+                                    if file.id == file_id {
+                                        *file = loading_file.clone();
+                                    }
+                                }
+                                {
+                                    let mut vec = files_vec.lock_mut();
+                                    vec.clear();
+                                    vec.extend(cached_files.clone());
+                                }
+                            } else {
+                                cached_files.push(loading_file.clone());
+                                files_vec.lock_mut().push_cloned(loading_file);
+                            }
+                        }
+                    }
+                    clear_result = all_files_cleared_stream.next() => {
+                        if let Some(()) = clear_result {
+                            cached_files.clear();
+                            files_vec.lock_mut().clear();
+                        }
+                    }
+                    file_path = file_parse_requested_stream.next() => {
+                        if let Some(file_path) = file_path {
+                            // Use zoon::Task to avoid Send issues with platform async operations
+                            zoon::Task::start(send_parse_request_to_backend(file_path));
+                        }
+                    }
+                    complete => break,
                 }
             }
         });
 
         Self {
             files,
-            files_vec_signal,
             config_files_loaded_relay,
             files_dropped_relay,
             file_removed_relay,
@@ -220,11 +203,13 @@ impl TrackedFiles {
 
     /// Get signal for tracked files list
     pub fn files_signal(&self) -> impl zoon::Signal<Item = Vec<TrackedFile>> {
-        self.files_vec_signal.signal_cloned()
+        self.files.signal_vec().to_signal_cloned()
     }
-    
+
     pub fn get_current_files(&self) -> Vec<TrackedFile> {
-        self.files_vec_signal.get_cloned()
+        // TODO: This should use signals for proper Actor+Relay architecture
+        // For now, return empty vec until callers are updated to use signals
+        Vec::new()
     }
 
     pub fn update_file_state(&self, file_id: String, new_state: FileState) {

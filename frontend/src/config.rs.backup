@@ -1,7 +1,7 @@
 use crate::dataflow::{Actor, Relay, relay};
 use crate::platform::{CurrentPlatform, Platform};
 use crate::visualizer::timeline::TimeNs;
-use futures::{StreamExt, FutureExt, select, stream::FusedStream};
+use futures::{StreamExt, FutureExt, select};
 use serde::{Deserialize, Serialize};
 use shared::{UpMsg, DownMsg};
 use shared::{self, AppConfig as SharedAppConfig, DockMode, Theme as SharedTheme};
@@ -68,236 +68,11 @@ pub const MAX_COLUMN_WIDTH: f32 = 400.0;
 pub const MIN_FILES_PANEL_WIDTH: f32 = 200.0;
 pub const MAX_FILES_PANEL_WIDTH: f32 = 600.0;
 
-/// File picker domain with proper Actor+Relay architecture
-#[derive(Clone)]
-pub struct FilePickerDomain {
-    pub expanded_directories_actor: Actor<indexmap::IndexSet<String>>,
-    pub scroll_position_actor: Actor<i32>,
-    pub directory_cache_actor: Actor<std::collections::HashMap<String, Vec<shared::FileSystemItem>>>,
-    pub directory_errors_actor: Actor<std::collections::HashMap<String, String>>,
-    pub directory_loading_actor: Actor<std::collections::HashSet<String>>,
-    pub backend_sender_actor: Actor<()>,
-
-    // Event-source relays for UI interactions
-    pub directory_expanded_relay: Relay<String>,
-    pub directory_collapsed_relay: Relay<String>,
-    pub scroll_position_changed_relay: Relay<i32>,
-    pub config_save_requested_relay: Relay,
-
-    // Internal relays for async operations (replaces zoon::Task)
-    pub directory_load_requested_relay: Relay<String>,
-
-    // System event relays from connection.rs
-    pub directory_contents_received_relay: Relay<(String, Vec<shared::FileSystemItem>)>,
-    pub directory_error_received_relay: Relay<(String, String)>,
-}
-
-impl FilePickerDomain {
-    pub async fn new(
-        initial_expanded: indexmap::IndexSet<String>,
-        initial_scroll: i32,
-        config_save_relay: Relay,
-        connection: std::sync::Arc<SendWrapper<Connection<shared::UpMsg, shared::DownMsg>>>,
-    ) -> Self {
-        let (directory_expanded_relay, mut directory_expanded_stream) = relay::<String>();
-        let (directory_collapsed_relay, mut directory_collapsed_stream) = relay::<String>();
-        let (scroll_position_changed_relay, mut scroll_position_changed_stream) = relay::<i32>();
-        let (directory_load_requested_relay, mut directory_load_requested_stream) = relay::<String>();
-        let (directory_contents_received_relay, mut directory_contents_received_stream) = relay::<(String, Vec<shared::FileSystemItem>)>();
-        let (directory_error_received_relay, mut directory_error_received_stream) = relay::<(String, String)>();
-        let config_save_requested_relay = config_save_relay;
-
-        let expanded_directories_actor = Actor::new(initial_expanded, {
-            let save_relay = config_save_requested_relay.clone();
-            async move |state| {
-                let mut expanded_stream = directory_expanded_stream.fuse();
-                let mut collapsed_stream = directory_collapsed_stream.fuse();
-
-                loop {
-                    futures::select! {
-                        dir = expanded_stream.next() => {
-                            if let Some(dir) = dir {
-                                let mut current = state.get_cloned();
-                                if current.insert(dir) {
-                                    state.set_neq(current);
-                                    save_relay.send(()); // Trigger config save
-                                }
-                            }
-                        }
-                        dir = collapsed_stream.next() => {
-                            if let Some(dir) = dir {
-                                let mut current = state.get_cloned();
-                                if current.shift_remove(&dir) {
-                                    state.set_neq(current);
-                                    save_relay.send(()); // Trigger config save
-                                }
-                            }
-                        }
-                        complete => break,
-                    }
-                }
-            }
-        });
-
-        let scroll_position_actor = Actor::new(initial_scroll, {
-            let save_relay = config_save_requested_relay.clone();
-            async move |state| {
-                let mut position_stream = scroll_position_changed_stream.fuse();
-
-                loop {
-                    futures::select! {
-                        position = position_stream.next() => {
-                            if let Some(position) = position {
-                                state.set_neq(position);
-                                save_relay.send(()); // Trigger config save
-                            }
-                        }
-                        complete => break,
-                    }
-                }
-            }
-        });
-
-
-        zoon::println!("🏗️ DIRECTORY_CACHE_ACTOR: Creating new cache Actor instance");
-        let directory_cache_actor = Actor::new(std::collections::HashMap::new(), {
-            async move |state| {
-                loop {
-                    futures::select! {
-                        contents = directory_contents_received_stream.next() => {
-                            if let Some((path, items)) = contents {
-                                zoon::println!("📦 DIRECTORY_CACHE_ACTOR: Received {} items for path: {}", items.len(), path);
-
-                                // Use set_neq with proper change detection - this MUST trigger signals
-                                let mut cache = state.get_cloned();
-                                cache.insert(path.clone(), items);
-                                let cache_size = cache.len();
-
-                                state.set_neq(cache);
-                                zoon::println!("📦 DIRECTORY_CACHE_ACTOR: Called set_neq(), cache now contains {} paths", cache_size);
-                                zoon::println!("📦 DIRECTORY_CACHE_ACTOR: Signal should fire to update TreeView");
-                            }
-                        }
-                        complete => break,
-                    }
-                }
-            }
-        });
-
-        let directory_errors_actor = Actor::new(std::collections::HashMap::new(), async move |state| {
-            loop {
-                futures::select! {
-                    error = directory_error_received_stream.next() => {
-                        if let Some((path, error_message)) = error {
-                            let mut errors = state.get_cloned();
-                            errors.insert(path, error_message);
-                            state.set_neq(errors);
-                        }
-                    }
-                    complete => break,
-                }
-            }
-        });
-
-        // ✅ ACTOR+RELAY FIX: Add directory loading Actor to handle load requests
-        // Since connection can't be used directly in Actor (Send trait issues), we use a different approach:
-        // The Actor tracks loading requests and the UI layer polls for pending requests
-        let directory_loading_actor = Actor::new(std::collections::HashSet::<String>::new(), {
-            async move |state| {
-                loop {
-                    futures::select! {
-                        requested_path = directory_load_requested_stream.next() => {
-                            if let Some(path) = requested_path {
-                                zoon::println!("📁 DIRECTORY_LOADING_ACTOR: Queuing load request for: {}", path);
-                                let mut pending_requests = state.get_cloned();
-                                pending_requests.insert(path);
-                                state.set_neq(pending_requests);
-                            }
-                        }
-                        complete => break,
-                    }
-                }
-            }
-        });
-
-        // ✅ ACTOR+RELAY PATTERN: Backend request sender using nested Actor pattern
-        let backend_sender_actor = {
-            let connection_clone = connection.clone();
-            let directory_cache_for_sender = directory_cache_actor.clone();
-            let directory_loading_for_sender = directory_loading_actor.clone();
-
-            Actor::new((), async move |_state| {
-                let mut directory_loading_stream = directory_loading_for_sender.signal().to_stream().fuse();
-
-                loop {
-                    if let Some(pending_requests) = directory_loading_stream.next().await {
-                        zoon::println!("📤 BACKEND_SENDER: Processing {} pending requests", pending_requests.len());
-
-                        // Check cache to avoid sending requests for directories that already have data
-                        let current_cache = directory_cache_for_sender.signal().to_stream().next().await.unwrap_or_default();
-
-                        for request_path in pending_requests.iter() {
-                            if !current_cache.contains_key(request_path) {
-                                zoon::println!("📤 BACKEND_SENDER: Sending directory request for: {}", request_path);
-                                let path_for_request = request_path.clone();
-
-                                // Connection requires async handling within Actor context
-                                connection_clone.send_up_msg(shared::UpMsg::BrowseDirectory(path_for_request)).await.unwrap_throw();
-                            } else {
-                                zoon::println!("📤 BACKEND_SENDER: Skipping request for {} (already in cache)", request_path);
-                            }
-                        }
-                    } else {
-                        // Stream ended
-                        break;
-                    }
-                }
-            })
-        };
-
-        Self {
-            expanded_directories_actor,
-            scroll_position_actor,
-            directory_cache_actor,
-            directory_errors_actor,
-            directory_loading_actor,
-            backend_sender_actor,
-            directory_expanded_relay,
-            directory_collapsed_relay,
-            scroll_position_changed_relay,
-            config_save_requested_relay,
-            directory_load_requested_relay,
-            directory_contents_received_relay,
-            directory_error_received_relay,
-        }
-    }
-
-    pub fn expanded_directories_signal(&self) -> impl Signal<Item = indexmap::IndexSet<String>> {
-        self.expanded_directories_actor.signal()
-    }
-
-    pub fn scroll_position_signal(&self) -> impl Signal<Item = i32> {
-        self.scroll_position_actor.signal()
-    }
-
-    pub fn directory_cache_signal(&self) -> impl Signal<Item = std::collections::HashMap<String, Vec<shared::FileSystemItem>>> + use<> {
-        self.directory_cache_actor.signal()
-    }
-
-    pub fn directory_errors_signal(&self) -> impl Signal<Item = std::collections::HashMap<String, String>> {
-        self.directory_errors_actor.signal()
-    }
-
-    pub fn pending_directory_loads_signal(&self) -> impl Signal<Item = std::collections::HashSet<String>> {
-        self.directory_loading_actor.signal()
-    }
-}
-
 #[derive(Clone)]
 pub struct AppConfig {
     pub theme_actor: Actor<SharedTheme>,
     pub dock_mode_actor: Actor<DockMode>,
-
+    
     pub files_panel_width_right_actor: Actor<f32>,
     pub files_panel_height_right_actor: Actor<f32>,
     pub files_panel_width_bottom_actor: Actor<f32>,
@@ -306,12 +81,12 @@ pub struct AppConfig {
     pub timeline_panel_height_actor: Actor<f32>,
     pub variables_name_column_width_actor: Actor<f32>,
     pub variables_value_column_width_actor: Actor<f32>,
-
+    
     pub session_state_actor: Actor<SessionState>,
     pub toast_dismiss_ms_actor: Actor<u32>,
 
-    // File picker domain with proper Actor+Relay architecture
-    pub file_picker_domain: FilePickerDomain,
+    pub file_picker_expanded_directories: Mutable<indexmap::IndexSet<String>>,
+    pub file_picker_scroll_position: Mutable<i32>,
 
     pub loaded_selected_variables: Vec<shared::SelectedVariable>,
 
@@ -331,26 +106,27 @@ pub struct AppConfig {
     pub session_state_changed_relay: Relay<SessionState>,
 
     pub config_save_requested_relay: Relay,
-
+    
     pub clipboard_copy_requested_relay: Relay<String>,
 
     pub error_display: crate::error_display::ErrorDisplay,
+
+    // Connection for saving - will be set after AppConfig creation
+
+    _config_saver_actor: Actor<()>,
     _expanded_sync_actor: Actor<()>,
     _scroll_sync_actor: Actor<()>,
     _clipboard_actor: Actor<()>,
-    _save_trigger_actor: Actor<()>,
-    _config_save_debouncer_actor: Actor<()>,
 }
 
 impl AppConfig {
     async fn load_config_from_backend() -> Result<SharedAppConfig, String> {
-        // Platform layer fallback - using defaults until proper backend config loading
-        zoon::println!("⚙️ CONFIG: Using default configuration");
+        // TEMPORARY: Platform layer is broken, use defaults and load through connection later
+        zoon::println!("🚨 CONFIG: Platform layer broken, using defaults for now");
         Ok(SharedAppConfig::default())
     }
 
-    pub async fn new(connection: std::sync::Arc<SendWrapper<Connection<shared::UpMsg, shared::DownMsg>>>) -> Self {
-        zoon::println!("🚀 CONFIG: Starting AppConfig::new() initialization");
+    pub async fn new() -> Self {
         let config = Self::load_config_from_backend()
             .await
             .unwrap_or_else(|_error| SharedAppConfig::default());
@@ -364,9 +140,9 @@ impl AppConfig {
         let session_state_changed_stream_for_config_saver = session_state_changed_relay.subscribe();
         let session_state_changed_stream_for_session_actor = session_state_changed_relay.subscribe();
         let (config_save_requested_relay, mut config_save_requested_stream) = relay();
-
+        
         let (clipboard_copy_requested_relay, mut clipboard_copy_requested_stream) = relay::<String>();
-
+        
         let (files_width_right_changed_relay, mut files_width_right_changed_stream) = relay();
         let (files_height_right_changed_relay, mut files_height_right_changed_stream) = relay();
         let (files_width_bottom_changed_relay, mut files_width_bottom_changed_stream) = relay();
@@ -402,8 +178,9 @@ impl AppConfig {
                             };
                             theme::set_theme(novyui_theme);
 
-                            // Config save handled by Task-based ConfigSaver
-                            zoon::println!("💾 THEME_ACTOR: Theme button clicked, Task-based config saver will handle save");
+                            // DIRECT SAVE TEST: Save config immediately on theme change
+                            zoon::println!("💾 DIRECT TEST: Theme button clicked, saving config now");
+                            config_save_requested_relay.send(());
                         }
                     }
                     direct_change = theme_changed_stream.next() => {
@@ -418,12 +195,9 @@ impl AppConfig {
                             theme::set_theme(novyui_theme);
                         }
                     }
-                    complete => break,
                 }
             }
         });
-
-        zoon::println!("✅ CONFIG: Theme actor created successfully");
 
         let dock_mode_actor = Actor::new(config.workspace.dock_mode.clone(), async move |state| {
             let mut current_dock_mode = config.workspace.dock_mode.clone();
@@ -446,7 +220,6 @@ impl AppConfig {
                             state.set(new_mode);
                         }
                     }
-                    complete => break,
                 }
             }
         });
@@ -599,7 +372,6 @@ impl AppConfig {
                                 });
                             }
                         }
-                        complete => break,
                     }
                 }
             }
@@ -614,42 +386,229 @@ impl AppConfig {
         // Clone actors for config_saver_actor closure
         let theme_actor_clone = theme_actor.clone();
         let dock_mode_actor_clone = dock_mode_actor.clone();
+        let files_width_right_actor_clone = files_panel_width_right_actor.clone();
+        let files_height_right_actor_clone = files_panel_height_right_actor.clone();
+        let files_width_bottom_actor_clone = files_panel_width_bottom_actor.clone();
+        let files_height_bottom_actor_clone = files_panel_height_bottom_actor.clone();
+        let variables_width_actor_clone = variables_panel_width_actor.clone();
+        let timeline_height_actor_clone = timeline_panel_height_actor.clone();
+        let name_width_actor_clone = variables_name_column_width_actor.clone();
+        let value_width_actor_clone = variables_value_column_width_actor.clone();
         let session_actor_clone = session_state_actor.clone();
         let toast_actor_clone = toast_dismiss_ms_actor.clone();
 
-        // FIX: Connect ConfigSaver to button click relays for immediate save trigger
-        zoon::println!("🔧 CONFIG_SAVER: Setting up button-click-based config saving");
+        // Simple for_each_sync approach for config saving
+        zoon::Task::start(theme_actor_clone.signal().for_each_sync({
+            let config_save_requested_relay = config_save_requested_relay.clone();
+            move |_theme| {
+                zoon::println!("💾 CONFIG_SAVER: Theme changed via for_each_sync, triggering save");
+                config_save_requested_relay.send(());
+            }
+        }));
 
-        // Clone the relay for struct return since it will be moved into Tasks
-        let config_save_requested_relay_for_struct = config_save_requested_relay.clone();
+        zoon::Task::start(dock_mode_actor_clone.signal().for_each_sync({
+            let config_save_requested_relay = config_save_requested_relay.clone();
+            move |_dock_mode| {
+                zoon::println!("💾 CONFIG_SAVER: Dock mode changed via for_each_sync, triggering save");
+                config_save_requested_relay.send(());
+            }
+        }));
 
-        // Use Actor to handle config save triggering (eliminates zoon::Task)
-        let save_trigger_actor = Actor::new((), {
-            let theme_button_stream = theme_button_clicked_relay.subscribe();
-            let dock_button_stream = dock_mode_button_clicked_relay.subscribe();
-            let config_save_relay = config_save_requested_relay.clone();
-            async move |_state| {
-                let mut theme_stream = theme_button_stream;
-                let mut dock_stream = dock_button_stream;
+        // Simple config save processor using for_each
+        zoon::Task::start(async move {
+            config_save_requested_stream.for_each(|_| {
+                let theme_actor_clone = theme_actor_clone.clone();
+                let dock_mode_actor_clone = dock_mode_actor_clone.clone();
+                let session_actor_clone = session_actor_clone.clone();
+                let toast_actor_clone = toast_actor_clone.clone();
 
-                loop {
-                    select! {
-                        result = theme_stream.next() => {
-                            match result {
-                                Some(_) => {
-                                    zoon::println!("💾 CONFIG_SAVER: Theme button clicked, triggering save");
-                                    config_save_relay.send(());
+                async move {
+                    // Add debounce delay
+                    zoon::Timer::sleep(300).await;
+
+                    zoon::Task::start(async move {
+                        let theme = theme_actor_clone.signal().to_stream().next().await.unwrap_or_default();
+                        let dock_mode = dock_mode_actor_clone.signal().to_stream().next().await.unwrap_or_default();
+                        let session = session_actor_clone.signal().to_stream().next().await.unwrap_or_default();
+                        let toast_dismiss_ms = toast_actor_clone.signal().to_stream().next().await.unwrap_or_default();
+
+                        let shared_config = shared::AppConfig {
+                            app: shared::AppSection::default(),
+                            workspace: shared::WorkspaceSection {
+                                opened_files: session.opened_files,
+                                docked_bottom_dimensions: shared::DockedBottomDimensions {
+                                    files_and_scopes_panel_width: 470.0,
+                                    files_and_scopes_panel_height: 375.0,
+                                    selected_variables_panel_name_column_width: Some(338.0),
+                                    selected_variables_panel_value_column_width: Some(247.0),
+                                },
+                                docked_right_dimensions: shared::DockedRightDimensions {
+                                    files_and_scopes_panel_width: 528.0,
+                                    files_and_scopes_panel_height: 278.0,
+                                    selected_variables_panel_name_column_width: Some(177.0),
+                                    selected_variables_panel_value_column_width: Some(201.0),
+                                },
+                                dock_mode,
+                                expanded_scopes: session.file_picker_expanded_directories.clone(),
+                                load_files_expanded_directories: session.file_picker_expanded_directories,
+                                selected_scope_id: None,
+                                load_files_scroll_position: session.file_picker_scroll_position,
+                                variables_search_filter: session.variables_search_filter,
+                                selected_variables: Vec::new(),
+                                timeline_cursor_position_ns: 0,
+                                timeline_visible_range_start_ns: None,
+                                timeline_visible_range_end_ns: None,
+                                timeline_zoom_level: 1.0,
+                            },
+                            ui: shared::UiSection {
+                                theme,
+                                toast_dismiss_ms: toast_dismiss_ms as u64,
+                            },
+                        };
+
+                        if let Err(e) = CurrentPlatform::send_message(UpMsg::SaveConfig(shared_config)).await {
+                            zoon::println!("❌ CONFIG_SAVER: Failed to save config: {:?}", e);
+                        } else {
+                            zoon::println!("💾 CONFIG_SAVER: Theme/dock config saved successfully");
+                        }
+                    });
+                }
+            }).await;
+        });
+                                                toast_dismiss_ms: toast_dismiss_ms as u64,
+                                            },
+                                        };
+
+                                        if let Err(e) = CurrentPlatform::send_message(UpMsg::SaveConfig(shared_config)).await {
+                                            zoon::println!("❌ CONFIG_SAVER: Failed to save config: {:?}", e);
+                                        } else {
+                                            zoon::println!("💾 Theme/dock config saved successfully");
+                                        }
+                                    });
+                                    break;
                                 }
-                                None => break, // Stream ended
                             }
                         }
-                        result = dock_stream.next() => {
-                            match result {
-                                Some(_) => {
-                                    zoon::println!("💾 CONFIG_SAVER: Dock mode button clicked, triggering save");
-                                    config_save_relay.send(());
+                    }
+                    // Session changed - same as before
+                    _ = session_state_changed_stream.next() => {
+                        zoon::println!("💾 CONFIG_SAVER: Session state changed, triggering save");
+                        loop {
+                            select! {
+                                _ = theme_save_stream.next() => continue,
+                                _ = dock_mode_save_stream.next() => continue,
+                                _ = session_state_changed_stream.next() => continue,
+                                _ = config_save_requested_stream.next() => continue,
+                                _ = Timer::sleep(1000) => {
+                                    zoon::Task::start(async move {
+                                        let theme = theme_actor_clone.signal().to_stream().next().await.unwrap_or_default();
+                                        let dock_mode = dock_mode_actor_clone.signal().to_stream().next().await.unwrap_or_default();
+                                        let session = session_actor_clone.signal().to_stream().next().await.unwrap_or_default();
+                                        let toast_dismiss_ms = toast_actor_clone.signal().to_stream().next().await.unwrap_or_default();
+
+                                        let shared_config = shared::AppConfig {
+                                            app: shared::AppSection::default(),
+                                            workspace: shared::WorkspaceSection {
+                                                opened_files: session.opened_files,
+                                                docked_bottom_dimensions: shared::DockedBottomDimensions {
+                                                    files_and_scopes_panel_width: 470.0,
+                                                    files_and_scopes_panel_height: 375.0,
+                                                    selected_variables_panel_name_column_width: Some(338.0),
+                                                    selected_variables_panel_value_column_width: Some(247.0),
+                                                },
+                                                docked_right_dimensions: shared::DockedRightDimensions {
+                                                    files_and_scopes_panel_width: 528.0,
+                                                    files_and_scopes_panel_height: 278.0,
+                                                    selected_variables_panel_name_column_width: Some(177.0),
+                                                    selected_variables_panel_value_column_width: Some(201.0),
+                                                },
+                                                dock_mode,
+                                                expanded_scopes: session.file_picker_expanded_directories.clone(),
+                                                load_files_expanded_directories: session.file_picker_expanded_directories,
+                                                selected_scope_id: None,
+                                                load_files_scroll_position: session.file_picker_scroll_position,
+                                                variables_search_filter: session.variables_search_filter,
+                                                selected_variables: Vec::new(),
+                                                timeline_cursor_position_ns: 0,
+                                                timeline_visible_range_start_ns: None,
+                                                timeline_visible_range_end_ns: None,
+                                                timeline_zoom_level: 1.0,
+                                            },
+                                            ui: shared::UiSection {
+                                                theme,
+                                                toast_dismiss_ms: toast_dismiss_ms as u64,
+                                            },
+                                        };
+
+                                        if let Err(e) = CurrentPlatform::send_message(UpMsg::SaveConfig(shared_config)).await {
+                                            zoon::println!("❌ CONFIG_SAVER: Failed to save config: {:?}", e);
+                                        } else {
+                                            zoon::println!("💾 Session config saved successfully");
+                                        }
+                                    });
+                                    break;
                                 }
-                                None => break, // Stream ended
+                            }
+                        }
+                    }
+                    // Manual save request
+                    _ = config_save_requested_stream.next() => {
+                        zoon::println!("💾 CONFIG_SAVER: Config save requested");
+                        loop {
+                            select! {
+                                _ = theme_save_stream.next() => continue,
+                                _ = dock_mode_save_stream.next() => continue,
+                                _ = session_state_changed_stream.next() => continue,
+                                _ = config_save_requested_stream.next() => continue,
+                                _ = Timer::sleep(1000) => {
+                                    zoon::Task::start(async move {
+                                        let theme = theme_actor_clone.signal().to_stream().next().await.unwrap_or_default();
+                                        let dock_mode = dock_mode_actor_clone.signal().to_stream().next().await.unwrap_or_default();
+                                        let session = session_actor_clone.signal().to_stream().next().await.unwrap_or_default();
+                                        let toast_dismiss_ms = toast_actor_clone.signal().to_stream().next().await.unwrap_or_default();
+
+                                        let shared_config = shared::AppConfig {
+                                            app: shared::AppSection::default(),
+                                            workspace: shared::WorkspaceSection {
+                                                opened_files: session.opened_files,
+                                                docked_bottom_dimensions: shared::DockedBottomDimensions {
+                                                    files_and_scopes_panel_width: 470.0,
+                                                    files_and_scopes_panel_height: 375.0,
+                                                    selected_variables_panel_name_column_width: Some(338.0),
+                                                    selected_variables_panel_value_column_width: Some(247.0),
+                                                },
+                                                docked_right_dimensions: shared::DockedRightDimensions {
+                                                    files_and_scopes_panel_width: 528.0,
+                                                    files_and_scopes_panel_height: 278.0,
+                                                    selected_variables_panel_name_column_width: Some(177.0),
+                                                    selected_variables_panel_value_column_width: Some(201.0),
+                                                },
+                                                dock_mode,
+                                                expanded_scopes: session.file_picker_expanded_directories.clone(),
+                                                load_files_expanded_directories: session.file_picker_expanded_directories,
+                                                selected_scope_id: None,
+                                                load_files_scroll_position: session.file_picker_scroll_position,
+                                                variables_search_filter: session.variables_search_filter,
+                                                selected_variables: Vec::new(),
+                                                timeline_cursor_position_ns: 0,
+                                                timeline_visible_range_start_ns: None,
+                                                timeline_visible_range_end_ns: None,
+                                                timeline_zoom_level: 1.0,
+                                            },
+                                            ui: shared::UiSection {
+                                                theme,
+                                                toast_dismiss_ms: toast_dismiss_ms as u64,
+                                            },
+                                        };
+
+                                        if let Err(e) = CurrentPlatform::send_message(UpMsg::SaveConfig(shared_config)).await {
+                                            zoon::println!("❌ CONFIG_SAVER: Failed to save config: {:?}", e);
+                                        } else {
+                                            zoon::println!("💾 Manual config saved successfully");
+                                        }
+                                    });
+                                    break;
+                                }
                             }
                         }
                     }
@@ -657,8 +616,8 @@ impl AppConfig {
             }
         });
 
-        // Create FilePickerDomain with proper Actor+Relay architecture
-        let initial_expanded_set = {
+
+        let file_picker_expanded_directories = {
             let mut expanded_set = indexmap::IndexSet::new();
             zoon::println!("🔍 CONFIG_LOAD: Loading {} expanded directories from config", config.workspace.load_files_expanded_directories.len());
             for dir in &config.workspace.load_files_expanded_directories {
@@ -666,112 +625,43 @@ impl AppConfig {
                 expanded_set.insert(dir.clone());
             }
             zoon::println!("🔍 CONFIG_LOAD: Final expanded set has {} directories", expanded_set.len());
-            expanded_set
+            Mutable::new(expanded_set)
         };
 
-        let file_picker_domain = FilePickerDomain::new(
-            initial_expanded_set.clone(),
-            config.workspace.load_files_scroll_position,
-            config_save_requested_relay.clone(),
-            connection,
-        ).await;
+        let file_picker_scroll_position = Mutable::new(config.workspace.load_files_scroll_position);
 
-        // File picker changes now trigger config save through FilePickerDomain
-        // Use nested Actor pattern for debouncing instead of Task::start
-        let config_save_debouncer_actor = {
-            let theme_actor_clone = theme_actor.clone();
-            let dock_mode_actor_clone = dock_mode_actor.clone();
-            let session_actor_clone = session_state_actor.clone();
-            let toast_actor_clone = toast_dismiss_ms_actor.clone();
-            let file_picker_domain_clone = file_picker_domain.clone();
-
-            Actor::new((), async move |_state| {
-                let mut config_save_requested_stream = config_save_requested_stream.fuse();
-
-                loop {
-                    select! {
-                        result = config_save_requested_stream.next() => {
-                            if let Some(()) = result {
-                                // Debounce loop - wait for quiet period, cancelling if new request arrives
-                                loop {
-                                    select! {
-                                        // New save request cancels timer
-                                        result = config_save_requested_stream.next() => {
-                                            if let Some(()) = result {
-                                                continue; // Restart timer
-                                            }
-                                        }
-                                        // Timer completes - do the save
-                                        _ = zoon::Timer::sleep(300).fuse() => {
-                                            let theme = theme_actor_clone.signal().to_stream().next().await.unwrap_or_default();
-                                            let dock_mode = dock_mode_actor_clone.signal().to_stream().next().await.unwrap_or_default();
-                                            let session = session_actor_clone.signal().to_stream().next().await.unwrap_or_default();
-                                            let toast_dismiss_ms = toast_actor_clone.signal().to_stream().next().await.unwrap_or_default();
-
-                                            // Get file picker data from domain instead of session
-                                            let expanded_directories: Vec<String> = file_picker_domain_clone.expanded_directories_signal().to_stream().next().await.unwrap_or_default().into_iter().collect();
-                                            let scroll_position = file_picker_domain_clone.scroll_position_signal().to_stream().next().await.unwrap_or_default();
-
-                                            let shared_config = shared::AppConfig {
-                                                app: shared::AppSection::default(),
-                                                workspace: shared::WorkspaceSection {
-                                                    opened_files: session.opened_files,
-                                                    docked_bottom_dimensions: shared::DockedBottomDimensions {
-                                                        files_and_scopes_panel_width: 470.0,
-                                                        files_and_scopes_panel_height: 375.0,
-                                                        selected_variables_panel_name_column_width: Some(338.0),
-                                                        selected_variables_panel_value_column_width: Some(247.0),
-                                                    },
-                                                    docked_right_dimensions: shared::DockedRightDimensions {
-                                                        files_and_scopes_panel_width: 528.0,
-                                                        files_and_scopes_panel_height: 278.0,
-                                                        selected_variables_panel_name_column_width: Some(177.0),
-                                                        selected_variables_panel_value_column_width: Some(201.0),
-                                                    },
-                                                    dock_mode,
-                                                    expanded_scopes: Vec::new(), // Reserved for Files & Scopes panel scope expansion
-                                                    load_files_expanded_directories: expanded_directories,
-                                                    selected_scope_id: None,
-                                                    load_files_scroll_position: scroll_position,
-                                                    variables_search_filter: session.variables_search_filter,
-                                                    selected_variables: Vec::new(),
-                                                    timeline_cursor_position_ns: 0,
-                                                    timeline_visible_range_start_ns: None,
-                                                    timeline_visible_range_end_ns: None,
-                                                    timeline_zoom_level: 1.0,
-                                                },
-                                                ui: shared::UiSection {
-                                                    theme,
-                                                    toast_dismiss_ms: toast_dismiss_ms as u64,
-                                                },
-                                            };
-
-                                        if let Err(e) = CurrentPlatform::send_message(UpMsg::SaveConfig(shared_config)).await {
-                                            zoon::println!("❌ CONFIG_SAVER: Failed to save config: {:?}", e);
-                                        } else {
-                                            zoon::println!("💾 CONFIG_SAVER: Theme/dock config saved successfully");
-                                        }
-                                        break; // Back to outer loop
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    }
-                }
-            })
-        };
-
-        // Complex bridge pattern removed - using direct FilePickerDomain events
-
-        let scroll_sync_actor = Actor::new((), {
-            let scroll_position_sync = file_picker_domain.scroll_position_actor.clone();
-            let session_scroll_sync = session_state_actor.clone();
-            let session_scroll_changed_relay = session_state_changed_relay.clone();
+        let expanded_sync_actor = Actor::new((), {
+            let file_picker_sync = file_picker_expanded_directories.clone();
+            let session_sync = session_state_actor.clone();
+            let session_changed_relay = session_state_changed_relay.clone();
+            let config_save_relay = config_save_requested_relay.clone();
 
             async move |_state| {
-                let mut scroll_stream = scroll_position_sync.signal().to_stream();
+                let mut expanded_stream = file_picker_sync.signal_cloned().to_stream();
 
+                while let Some(expanded_set) = expanded_stream.next().await {
+                    zoon::println!("💾 CONFIG_SYNC: Syncing expanded directories to session: {:?}", expanded_set);
+                    // Create updated session with new expanded directories
+                    let current_session = session_sync.signal().to_stream().next().await.unwrap_or_default();
+                    let updated_session = SessionState {
+                        file_picker_expanded_directories: expanded_set.iter().cloned().collect(),
+                        ..current_session
+                    };
+                    zoon::println!("💾 CONFIG_SYNC: Sending session update with {} directories",
+                        updated_session.file_picker_expanded_directories.len());
+                    session_changed_relay.send(updated_session);
+                }
+            }
+        });
+
+        let scroll_sync_actor = Actor::new((), {
+            let scroll_position_sync = file_picker_scroll_position.clone();
+            let session_scroll_sync = session_state_actor.clone();
+            let session_scroll_changed_relay = session_state_changed_relay.clone();
+            
+            async move |_state| {
+                let mut scroll_stream = scroll_position_sync.signal().to_stream();
+                
                 while let Some(scroll_position) = scroll_stream.next().await {
                     // Create updated session with new scroll position
                     let current_session = session_scroll_sync.signal().to_stream().next().await.unwrap_or_default();
@@ -791,7 +681,7 @@ impl AppConfig {
                 spawn_local(async move {
                     if let Some(window) = web_sys::window() {
                         let navigator = window.navigator();
-
+                        
                         #[cfg(web_sys_unstable_apis)]
                         {
                             let clipboard = navigator.clipboard();
@@ -804,7 +694,7 @@ impl AppConfig {
                                 }
                             }
                         }
-
+                        
                         #[cfg(not(web_sys_unstable_apis))]
                         {
                             zoon::println!("Clipboard error: Clipboard API requires unstable APIs flag");
@@ -830,7 +720,8 @@ impl AppConfig {
             session_state_actor,
             toast_dismiss_ms_actor,
 
-            file_picker_domain,
+            file_picker_expanded_directories,
+            file_picker_scroll_position,
 
             loaded_selected_variables: config.workspace.selected_variables.clone(),
 
@@ -848,18 +739,22 @@ impl AppConfig {
             name_column_width_changed_relay,
             value_column_width_changed_relay,
             session_state_changed_relay,
-            config_save_requested_relay: config_save_requested_relay_for_struct,
-
+            config_save_requested_relay,
+            
             clipboard_copy_requested_relay,
-
+            
             error_display,
-            _expanded_sync_actor: Actor::new((), async move |_| { loop { Task::next_macro_tick().await; } }),
+
+            // Share the connection with the config saver
+
+            _config_saver_actor: config_saver_actor,
+            _expanded_sync_actor: expanded_sync_actor,
             _scroll_sync_actor: scroll_sync_actor,
             _clipboard_actor: clipboard_actor,
-            _save_trigger_actor: save_trigger_actor,
-            _config_save_debouncer_actor: config_save_debouncer_actor,
         }
     }
+
+
 
     /// Update config from loaded backend data
     pub fn update_from_loaded_config(&self, loaded_config: shared::AppConfig) {
@@ -873,23 +768,18 @@ impl AppConfig {
         self.dock_mode_changed_relay.send(loaded_config.workspace.dock_mode);
         zoon::println!("📍 CONFIG: Sent dock mode change to {:?}", loaded_config.workspace.dock_mode);
 
-        // Update expanded directories using FilePickerDomain
+        // Update expanded directories
         let mut expanded_set = indexmap::IndexSet::new();
         zoon::println!("📁 CONFIG: Loading {} expanded directories", loaded_config.workspace.load_files_expanded_directories.len());
         for dir in &loaded_config.workspace.load_files_expanded_directories {
             zoon::println!("📁 CONFIG: Adding expanded directory: {}", dir);
             expanded_set.insert(dir.clone());
         }
-        // Use FilePickerDomain relays to update expanded directories
-        for dir in &expanded_set {
-            self.file_picker_domain.directory_expanded_relay.send(dir.clone());
-        }
+        self.file_picker_expanded_directories.set_neq(expanded_set);
 
-        // Update scroll position using FilePickerDomain relay
-        self.file_picker_domain.scroll_position_changed_relay.send(loaded_config.workspace.load_files_scroll_position);
+        // Update other config values as needed
+        self.file_picker_scroll_position.set_neq(loaded_config.workspace.load_files_scroll_position);
 
         zoon::println!("✅ CONFIG: Successfully updated all config from backend");
     }
-
-
 }

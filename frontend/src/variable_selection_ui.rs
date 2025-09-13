@@ -13,6 +13,15 @@ use crate::dragging::{
 /// Selected Variables panel row height
 pub const SELECTED_VARIABLES_ROW_HEIGHT: u32 = 30;
 
+/// Context enum for Variables Panel display states
+#[derive(Clone, Debug)]
+pub enum VariableDisplayContext {
+    NoScopeSelected,
+    ScopeHasNoVariables,
+    NoFilterMatches,
+    Variables(Vec<VariableWithContext>),
+}
+
 /// Main variables panel for browsing and searching variables
 pub fn variables_panel(
     tracked_files: &crate::tracked_files::TrackedFiles,
@@ -441,7 +450,7 @@ pub fn variables_panel_with_fill(
         }))
 }
 
-/// Simple variables content for the variables panel
+/// Simple variables content for the variables panel with improved empty state handling
 pub fn simple_variables_content(
     tracked_files: &crate::tracked_files::TrackedFiles,
     selected_variables: &crate::selected_variables::SelectedVariables,
@@ -453,10 +462,29 @@ pub fn simple_variables_content(
         .s(Height::fill())
         .s(Width::fill())
         .item(El::new().s(Height::fill()).s(Width::fill()).child_signal(
-            variables_display_signal(tracked_files.clone(), selected_variables.clone()).map({
+            variables_display_context_signal(tracked_files.clone(), selected_variables.clone()).map({
                 let selected_variables = selected_variables.clone();
-                move |filtered_variables| {
-                    virtual_variables_list_pre_filtered(filtered_variables, &selected_variables).into_element()
+                move |context| {
+                    match context {
+                        VariableDisplayContext::NoScopeSelected => {
+                            Column::new()
+                                .s(Height::fill()).s(Width::fill())
+                                .item(crate::virtual_list::empty_state_hint("Select scope in the Files & Scopes panel"))
+                        }
+                        VariableDisplayContext::ScopeHasNoVariables => {
+                            Column::new()
+                                .s(Height::fill()).s(Width::fill())
+                                .item(crate::virtual_list::empty_state_hint("Selected scope does not have any variables"))
+                        }
+                        VariableDisplayContext::NoFilterMatches => {
+                            Column::new()
+                                .s(Height::fill()).s(Width::fill())
+                                .item(crate::virtual_list::empty_state_hint("No variables match search filter"))
+                        }
+                        VariableDisplayContext::Variables(filtered_variables) => {
+                            virtual_variables_list_pre_filtered(filtered_variables, &selected_variables)
+                        }
+                    }
                 }
             }),
         ))
@@ -467,7 +495,7 @@ pub fn variables_loading_signal(
     tracked_files: crate::tracked_files::TrackedFiles,
     selected_variables: crate::selected_variables::SelectedVariables,
 ) -> impl Signal<Item = Vec<VariableWithContext>> {
-    let files_signal = tracked_files.files_vec_signal.signal_cloned();
+    let files_signal = tracked_files.files.signal_vec().to_signal_cloned();
     let selected_scope_signal = selected_variables.selected_scope.signal();
     
     map_ref! {
@@ -491,6 +519,37 @@ pub fn variables_display_signal(
         let variables = variables_loading_signal(tracked_files.clone(), selected_variables.clone()),
         let search_filter = selected_variables.search_filter.signal() => {
             filter_variables_with_context(&variables, &search_filter)
+        }
+    }
+}
+
+/// Signal providing context for variables panel display with proper empty state handling
+pub fn variables_display_context_signal(
+    tracked_files: crate::tracked_files::TrackedFiles,
+    selected_variables: crate::selected_variables::SelectedVariables,
+) -> impl Signal<Item = VariableDisplayContext> {
+    map_ref! {
+        let selected_scope_id = selected_variables.selected_scope.signal(),
+        let unfiltered_variables = variables_loading_signal(tracked_files.clone(), selected_variables.clone()),
+        let search_filter = selected_variables.search_filter.signal() => {
+            // Determine the appropriate context based on state
+            if selected_scope_id.is_none() {
+                // No scope selected at all
+                VariableDisplayContext::NoScopeSelected
+            } else if unfiltered_variables.is_empty() {
+                // Scope selected but it has no variables
+                VariableDisplayContext::ScopeHasNoVariables
+            } else {
+                // Scope has variables, apply filter
+                let filtered_variables = filter_variables_with_context(&unfiltered_variables, &search_filter);
+                if filtered_variables.is_empty() && !search_filter.is_empty() {
+                    // Variables exist but filter matches none
+                    VariableDisplayContext::NoFilterMatches
+                } else {
+                    // Show filtered variables (could be all if no filter)
+                    VariableDisplayContext::Variables(filtered_variables)
+                }
+            }
         }
     }
 }

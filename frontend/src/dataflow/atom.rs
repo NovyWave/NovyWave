@@ -215,7 +215,18 @@ where
         self.setter.send(AtomUpdate::SetNeq(value));
     }
 
-    
+    /// Get current value (for event handlers only)
+    ///
+    /// This provides immediate access to the current value for use in
+    /// event handlers where signal-based access isn't practical.
+    ///
+    /// **Use sparingly** - prefer signal-based access when possible.
+    pub fn get_cloned(&self) -> T {
+        // This uses the actor's internal state directly
+        // It's a compromise for event handler patterns
+        self.actor.state.lock_ref().clone()
+    }
+
     // Note: update() methods are not implemented.
     // These would require mutable closure access to internal state,
     // which conflicts with the Actor+Relay architecture.

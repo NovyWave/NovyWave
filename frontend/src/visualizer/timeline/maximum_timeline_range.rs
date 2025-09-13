@@ -5,9 +5,9 @@
 
 use crate::dataflow::Actor;
 use super::time_domain::TimeNs;
-use shared::{FileState, WaveformFile};
+use shared::{FileState, WaveformFile, TrackedFile};
 use futures::{StreamExt, select};
-use zoon::Signal;
+use zoon::{Signal, SignalVecExt, SignalExt};
 
 
 /// Maximum Timeline Range actor - stores computed timeline range for efficient access
@@ -22,28 +22,21 @@ impl MaximumTimelineRange {
         selected_variables: crate::selected_variables::SelectedVariables,
     ) -> Self {
         let range = Actor::new(None, async move |state| {
-            // Set initial range
-            let initial_range = Self::compute_maximum_range(
-                &tracked_files, 
-                &selected_variables
-            );
-            state.set(initial_range);
-            
-            // This derived state actor computes once and provides the range
-            // Higher-level components will create new instances when files change
+            let mut files_stream = tracked_files.files.signal_vec().to_signal_cloned().to_stream();
+
+            // Wait for files and compute range reactively
+            while let Some(files) = files_stream.next().await {
+                let range = Self::compute_range_from_files(&files);
+                state.set(range);
+            }
         });
-        
+
         Self { range }
     }
 
-    /// Compute maximum timeline range - extracted from zoon::Task logic
-    fn compute_maximum_range(
-        tracked_files: &crate::tracked_files::TrackedFiles,
-        _selected_variables: &crate::selected_variables::SelectedVariables,
-    ) -> Option<(f64, f64)> {
-        // Inline get_maximum_timeline_range logic to avoid circular dependency
-        let tracked_files_vec = tracked_files.files_vec_signal.get_cloned();
-        let loaded_files: Vec<WaveformFile> = tracked_files_vec
+    /// Pure function to compute maximum range from file vector
+    fn compute_range_from_files(tracked_files: &[TrackedFile]) -> Option<(f64, f64)> {
+        let loaded_files: Vec<WaveformFile> = tracked_files
             .iter()
             .filter_map(|tracked_file| match &tracked_file.state {
                 FileState::Loaded(waveform_file) => Some(waveform_file.clone()),

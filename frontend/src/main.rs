@@ -23,11 +23,12 @@ mod file_operations;
 mod file_picker;
 mod format_selection;
 mod panel_layout;
+mod selected_variables_panel;
 mod signal_processing;
 mod variable_selection_ui;
 
 /// Main application layout function
-/// 
+///
 /// Implements dock-responsive 3-panel layout as specified:
 /// - Default (dock to bottom): Files & Scopes + Variables (top row), Selected Variables (bottom)
 /// - Dock to right: Files & Scopes over Variables (left column), Selected Variables (right)
@@ -38,11 +39,12 @@ pub fn main_layout(
     app_config: &crate::config::AppConfig,
     dragging_system: &crate::dragging::DraggingSystem,
     waveform_canvas: &crate::visualizer::canvas::waveform_canvas::WaveformCanvas,
+    file_dialog_visible: &crate::dataflow::atom::Atom<bool>,
 ) -> impl Element {
     use moonzoon_novyui::*;
-    use crate::file_management::files_panel;
+    use crate::file_management::files_panel_with_dialog;
     use crate::variable_selection_ui::{selected_variables_with_waveform_panel, variables_panel_with_fill};
-    
+
     El::new().s(Width::fill()).s(Height::fill()).child_signal(
         app_config.dock_mode_actor.signal().map({
             let tracked_files = tracked_files.clone();
@@ -51,7 +53,8 @@ pub fn main_layout(
             let app_config = app_config.clone();
             let dragging_system = dragging_system.clone();
             let waveform_canvas = waveform_canvas.clone();
-            
+            let file_dialog_visible = file_dialog_visible.clone();
+
             move |dock_mode| {
                 match dock_mode {
                     // Default layout: Files & Variables (top row), Selected Variables (bottom)
@@ -67,10 +70,10 @@ pub fn main_layout(
                                         Row::new()
                                             .s(Width::fill())
                                             .s(Height::fill())
-                                            .item(files_panel(
+                                            .item(files_panel_with_dialog(
                                                 tracked_files.clone(),
                                                 selected_variables.clone(),
-                                                button().label("Load Files").disabled(true).build() // Placeholder
+                                                file_dialog_visible.clone()
                                             ))
                                             .item(crate::panel_layout::files_panel_vertical_divider(&app_config, dragging_system.clone()))
                                             .item(variables_panel_with_fill(
@@ -82,7 +85,7 @@ pub fn main_layout(
                                             ))
                                     )
                                     .item(crate::panel_layout::files_panel_horizontal_divider(&app_config, dragging_system.clone()))
-                                    .item(selected_variables_with_waveform_panel(
+                                    .item(crate::selected_variables_panel::selected_variables_panel(
                                         selected_variables.clone(),
                                         waveform_timeline.clone(),
                                         tracked_files.clone(),
@@ -106,10 +109,10 @@ pub fn main_layout(
                                         Column::new()
                                             .s(Width::fill())
                                             .s(Height::fill())
-                                            .item(files_panel(
+                                            .item(files_panel_with_dialog(
                                                 tracked_files.clone(),
                                                 selected_variables.clone(),
-                                                button().label("Load Files").disabled(true).build() // Placeholder
+                                                file_dialog_visible.clone()
                                             ))
                                             .item(crate::panel_layout::files_panel_horizontal_divider(&app_config, dragging_system.clone()))
                                             .item(variables_panel_with_fill(
@@ -121,7 +124,7 @@ pub fn main_layout(
                                             ))
                                     )
                                     .item(crate::panel_layout::files_panel_vertical_divider(&app_config, dragging_system.clone()))
-                                    .item(selected_variables_with_waveform_panel(
+                                    .item(crate::selected_variables_panel::selected_variables_panel(
                                         selected_variables.clone(),
                                         waveform_timeline.clone(),
                                         tracked_files.clone(),

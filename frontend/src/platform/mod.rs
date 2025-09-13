@@ -20,7 +20,7 @@ pub trait Platform {
 #[cfg(NOVYWAVE_PLATFORM = "WEB")]
 pub mod web;
 #[cfg(NOVYWAVE_PLATFORM = "WEB")]
-pub use web::WebPlatform as CurrentPlatform;
+pub use web::{WebPlatform as CurrentPlatform, set_platform_connection};
 
 #[cfg(NOVYWAVE_PLATFORM = "TAURI")]
 pub mod tauri;
@@ -31,4 +31,4 @@ pub use tauri::TauriPlatform as CurrentPlatform;
 #[cfg(not(any(NOVYWAVE_PLATFORM = "WEB", NOVYWAVE_PLATFORM = "TAURI")))]
 pub mod web;
 #[cfg(not(any(NOVYWAVE_PLATFORM = "WEB", NOVYWAVE_PLATFORM = "TAURI")))]
-pub use web::WebPlatform as CurrentPlatform;
+pub use web::{WebPlatform as CurrentPlatform, set_platform_connection};
