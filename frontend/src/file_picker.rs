@@ -163,7 +163,7 @@ fn build_directory_item(
                 .disabled(true)
                 .item_type(TreeViewItemType::Default)
         ]);
-    } else if let Some(children) = cache.get(path) {
+    } else if cache.contains_key(path) {
         let child_items = build_tree_data(path, cache, errors);
 
         if child_items.is_empty() {
@@ -447,7 +447,14 @@ pub fn file_picker_tree(
         .child_signal({
             let initialization_actor_for_closure = initialization_actor.clone();
             cache_signal.map(move |cache| {
+                zoon::println!("🌳 TREE_VIEW_SIGNAL: Cache signal fired! Cache contains {} keys", cache.len());
+                zoon::println!("🌳 TREE_VIEW_SIGNAL: Cache keys: {:?}", cache.keys().collect::<Vec<_>>());
+                zoon::println!("🌳 TREE_VIEW_SIGNAL: Checking if cache contains root key '/'...");
                 if cache.contains_key("/") {
+                    zoon::println!("✅ TREE_VIEW_SIGNAL: Root directory '/' found in cache! Rendering TreeView");
+                    if let Some(root_items) = cache.get("/") {
+                        zoon::println!("📊 TREE_VIEW_SIGNAL: Root directory contains {} items", root_items.len());
+                    }
                     // Root directory loaded - show tree
                     let tree_data = build_tree_data("/", &cache, &std::collections::HashMap::new());
 
@@ -492,6 +499,8 @@ pub fn file_picker_tree(
                     }
                 } else {
                     // Still loading root directory
+                    zoon::println!("⏳ TREE_VIEW_SIGNAL: Root directory '/' NOT found in cache. Showing 'Loading directory contents...'");
+                    zoon::println!("🔍 TREE_VIEW_SIGNAL: Cache keys available: {:?}", cache.keys().collect::<Vec<_>>());
                     El::new()
                         .s(Padding::all(20))
                         .s(Font::new().color_signal(neutral_8()).italic())
@@ -552,11 +561,11 @@ pub fn build_hierarchical_tree(
                             ]);
                         data
                     } else if let Some(_children) = tree_cache.get(&item.path) {
-                        let children = build_hierarchical_tree(&item.path, tree_cache, error_cache);
+                        let _children = build_hierarchical_tree(&item.path, tree_cache, error_cache);
                         let mut data = TreeViewItemData::new(item.path.clone(), item.name.clone())
                             .icon("folder".to_string())
                             .item_type(TreeViewItemType::Folder)
-                            .with_children(children);
+                            .with_children(_children);
 
                         if should_disable_folder(&item.path, tree_cache) {
                             data = data.with_children(vec![

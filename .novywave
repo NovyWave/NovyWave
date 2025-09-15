@@ -18,7 +18,6 @@ load_files_expanded_directories = [
     "/home/martinkavik/repos",
     "/home/martinkavik/repos/NovyWave",
     "/home/martinkavik/repos/NovyWave/test_files",
-    "/home/martinkavik/repos/NovyWave/test_files/nested_dir",
 ]
 load_files_scroll_position = 0
 selected_variables = []

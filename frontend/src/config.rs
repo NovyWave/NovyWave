@@ -94,7 +94,7 @@ impl FilePickerDomain {
         initial_scroll: i32,
         config_save_relay: Relay,
         connection: std::sync::Arc<SendWrapper<Connection<shared::UpMsg, shared::DownMsg>>>,
-        connection_message_actor: &crate::app::ConnectionMessageActor,
+        connection_message_actor: crate::app::ConnectionMessageActor,
     ) -> Self {
         let (directory_expanded_relay, mut directory_expanded_stream) = relay::<String>();
         let (directory_collapsed_relay, mut directory_collapsed_stream) = relay::<String>();
@@ -160,40 +160,64 @@ impl FilePickerDomain {
 
         zoon::println!("🏗️ DIRECTORY_CACHE_ACTOR: Creating new cache Actor instance");
         let directory_cache_actor = Actor::new(std::collections::HashMap::new(), {
+            // ✅ FIX: Move stream into closure to prevent reference capture after Send bounds removal
+            let mut directory_contents_stream = directory_contents_received_stream;
+            async move |state| {
+                zoon::println!("📦 DIRECTORY_CACHE_ACTOR: Actor loop started, waiting for directory contents messages");
+                let mut message_count = 0;
+                loop {
+                    use futures::StreamExt;
+                    if let Some((path, items)) = directory_contents_stream.next().await {
+                        message_count += 1;
+                        zoon::println!("📦 DIRECTORY_CACHE_ACTOR: [{}] Received {} items for path: '{}'", message_count, items.len(), path);
+                        zoon::println!("📦 DIRECTORY_CACHE_ACTOR: [{}] Items for '{}': {:?}", message_count, path, items.iter().map(|i| &i.name).collect::<Vec<_>>());
+
+                        // Check current cache state before update
+                        let current_cache = state.get_cloned();
+                        zoon::println!("📦 DIRECTORY_CACHE_ACTOR: [{}] Cache before update has {} keys: {:?}", message_count, current_cache.len(), current_cache.keys().collect::<Vec<_>>());
+
+                        // Use set_neq with proper change detection - this MUST trigger signals
+                        let mut cache = current_cache;
+                        cache.insert(path.clone(), items);
+                        let cache_size = cache.len();
+
+                        zoon::println!("📦 DIRECTORY_CACHE_ACTOR: [{}] About to call set_neq() with {} paths", message_count, cache_size);
+                        state.set_neq(cache);
+                        zoon::println!("📦 DIRECTORY_CACHE_ACTOR: [{}] Called set_neq(), cache now contains {} paths", message_count, cache_size);
+                        zoon::println!("📦 DIRECTORY_CACHE_ACTOR: [{}] Signal should fire to update TreeView UI", message_count);
+
+                        // Verify the update took effect
+                        let updated_cache = state.get_cloned();
+                        zoon::println!("📦 DIRECTORY_CACHE_ACTOR: [{}] Verification: cache after update has {} keys: {:?}", message_count, updated_cache.len(), updated_cache.keys().collect::<Vec<_>>());
+                        if updated_cache.contains_key(&path) {
+                            zoon::println!("✅ DIRECTORY_CACHE_ACTOR: [{}] Confirmed: path '{}' is now in cache", message_count, path);
+                        } else {
+                            zoon::println!("❌ DIRECTORY_CACHE_ACTOR: [{}] ERROR: path '{}' NOT in cache after update!", message_count, path);
+                        }
+                    } else {
+                        zoon::println!("💔 DIRECTORY_CACHE_ACTOR: Received None from directory_contents_stream - stream ended");
+                        break;
+                    }
+                }
+                zoon::println!("⛔ DIRECTORY_CACHE_ACTOR: Actor loop ended");
+            }
+        });
+
+        let directory_errors_actor = Actor::new(std::collections::HashMap::new(), {
+            // ✅ FIX: Move stream into closure to prevent reference capture after Send bounds removal
+            let mut directory_error_stream = directory_error_received_stream;
             async move |state| {
                 loop {
                     futures::select! {
-                        contents = directory_contents_received_stream.next() => {
-                            if let Some((path, items)) = contents {
-                                zoon::println!("📦 DIRECTORY_CACHE_ACTOR: Received {} items for path: {}", items.len(), path);
-
-                                // Use set_neq with proper change detection - this MUST trigger signals
-                                let mut cache = state.get_cloned();
-                                cache.insert(path.clone(), items);
-                                let cache_size = cache.len();
-
-                                state.set_neq(cache);
-                                zoon::println!("📦 DIRECTORY_CACHE_ACTOR: Called set_neq(), cache now contains {} paths", cache_size);
-                                zoon::println!("📦 DIRECTORY_CACHE_ACTOR: Signal should fire to update TreeView");
+                        error = directory_error_stream.next() => {
+                            if let Some((path, error_message)) = error {
+                                let mut errors = state.get_cloned();
+                                errors.insert(path, error_message);
+                                state.set_neq(errors);
                             }
                         }
                         complete => break,
                     }
-                }
-            }
-        });
-
-        let directory_errors_actor = Actor::new(std::collections::HashMap::new(), async move |state| {
-            loop {
-                futures::select! {
-                    error = directory_error_received_stream.next() => {
-                        if let Some((path, error_message)) = error {
-                            let mut errors = state.get_cloned();
-                            errors.insert(path, error_message);
-                            state.set_neq(errors);
-                        }
-                    }
-                    complete => break,
                 }
             }
         });
@@ -224,31 +248,58 @@ impl FilePickerDomain {
             let connection_clone = connection.clone();
             let directory_cache_for_sender = directory_cache_actor.clone();
             let directory_loading_for_sender = directory_loading_actor.clone();
+            // ✅ FIX: Create separate stream subscription for directory expansion events
+            let mut directory_expanded_stream_for_sender = directory_expanded_relay.subscribe();
 
             Actor::new((), async move |_state| {
                 let mut directory_loading_stream = directory_loading_for_sender.signal().to_stream().fuse();
 
                 loop {
-                    if let Some(pending_requests) = directory_loading_stream.next().await {
-                        zoon::println!("📤 BACKEND_SENDER: Processing {} pending requests", pending_requests.len());
+                    futures::select! {
+                        // Handle directory loading requests (existing logic)
+                        pending_requests = directory_loading_stream.next() => {
+                            if let Some(pending_requests) = pending_requests {
+                                zoon::println!("📤 BACKEND_SENDER: Processing {} pending requests", pending_requests.len());
 
-                        // Check cache to avoid sending requests for directories that already have data
-                        let current_cache = directory_cache_for_sender.signal().to_stream().next().await.unwrap_or_default();
+                                // Check cache to avoid sending requests for directories that already have data
+                                let current_cache = directory_cache_for_sender.signal().to_stream().next().await.unwrap_or_default();
 
-                        for request_path in pending_requests.iter() {
-                            if !current_cache.contains_key(request_path) {
-                                zoon::println!("📤 BACKEND_SENDER: Sending directory request for: {}", request_path);
-                                let path_for_request = request_path.clone();
+                                for request_path in pending_requests.iter() {
+                                    if !current_cache.contains_key(request_path) {
+                                        zoon::println!("📤 BACKEND_SENDER: Sending directory request for: {}", request_path);
+                                        let path_for_request = request_path.clone();
 
-                                // Connection requires async handling within Actor context
-                                connection_clone.send_up_msg(shared::UpMsg::BrowseDirectory(path_for_request)).await.unwrap_throw();
+                                        // Connection requires async handling within Actor context
+                                        connection_clone.send_up_msg(shared::UpMsg::BrowseDirectory(path_for_request)).await.unwrap_throw();
+                                    } else {
+                                        zoon::println!("📤 BACKEND_SENDER: Skipping request for {} (already in cache)", request_path);
+                                    }
+                                }
                             } else {
-                                zoon::println!("📤 BACKEND_SENDER: Skipping request for {} (already in cache)", request_path);
+                                // Stream ended
+                                break;
                             }
                         }
-                    } else {
-                        // Stream ended
-                        break;
+                        // ✅ NEW: Handle directory expansion events (auto-browse expanded directories)
+                        expanded_dir = directory_expanded_stream_for_sender.next() => {
+                            if let Some(dir_path) = expanded_dir {
+                                zoon::println!("📂 BACKEND_SENDER: Directory expanded, requesting browse for: {}", dir_path);
+
+                                // Check cache to avoid duplicate requests
+                                let current_cache = directory_cache_for_sender.signal().to_stream().next().await.unwrap_or_default();
+
+                                if !current_cache.contains_key(&dir_path) {
+                                    zoon::println!("📤 BACKEND_SENDER: Sending auto-browse request for expanded directory: {}", dir_path);
+                                    connection_clone.send_up_msg(shared::UpMsg::BrowseDirectory(dir_path)).await.unwrap_throw();
+                                } else {
+                                    zoon::println!("📤 BACKEND_SENDER: Skipping auto-browse for {} (already in cache)", dir_path);
+                                }
+                            }
+                        }
+                        complete => {
+                            zoon::println!("💔 BACKEND_SENDER: Actor select! completed - ending loop");
+                            break;
+                        }
                     }
                 }
             })
@@ -309,6 +360,9 @@ pub struct AppConfig {
 
     // File picker domain with proper Actor+Relay architecture
     pub file_picker_domain: FilePickerDomain,
+
+    // Keep ConnectionMessageActor alive to prevent channel disconnection
+    _connection_message_actor: crate::app::ConnectionMessageActor,
 
     pub loaded_selected_variables: Vec<shared::SelectedVariable>,
 
@@ -675,7 +729,7 @@ impl AppConfig {
             config.workspace.load_files_scroll_position,
             config_save_requested_relay.clone(),
             connection,
-            &connection_message_actor,
+            connection_message_actor.clone(),
         ).await;
 
         // File picker changes now trigger config save through FilePickerDomain
@@ -897,6 +951,7 @@ impl AppConfig {
             _save_trigger_actor: save_trigger_actor,
             _config_save_debouncer_actor: config_save_debouncer_actor,
             _config_loaded_actor: config_loaded_actor,
+            _connection_message_actor: connection_message_actor,
         }
     }
 

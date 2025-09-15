@@ -186,7 +186,7 @@ where
     /// large_list.signal_ref(|list| list.len())
     /// ```
     #[allow(dead_code)] // Actor+Relay API method - preserve for completeness
-    pub fn signal_ref<U>(&self, f: impl Fn(&T) -> U + Send + Sync + 'static) -> impl Signal<Item = U>
+    pub fn signal_ref<U>(&self, f: impl Fn(&T) -> U + 'static) -> impl Signal<Item = U>
     where
         U: PartialEq + Send + Sync + 'static,
     {

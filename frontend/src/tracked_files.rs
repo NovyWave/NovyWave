@@ -174,8 +174,8 @@ impl TrackedFiles {
                     }
                     file_path = file_parse_requested_stream.next() => {
                         if let Some(file_path) = file_path {
-                            // Use zoon::Task to avoid Send issues with platform async operations
-                            zoon::Task::start(send_parse_request_to_backend(file_path));
+                            // ✅ CORRECT: Direct async call within Actor - NO zoon::Task needed!
+                            send_parse_request_to_backend(file_path).await;
                         }
                     }
                     complete => break,

@@ -72,16 +72,17 @@ where
     T: Clone + Send + Sync + 'static,
 {
     /// Create a new Relay.
-    /// 
+    ///
     /// Use `subscribe()` to get streams for receiving events.
     /// Use the `relay()` function for convenient creation with immediate stream access.
-    /// 
+    ///
     /// # Examples
-    /// 
+    ///
     /// ```rust
     /// let relay = Relay::new();
     /// let stream = relay.subscribe();
     /// ```
+    #[track_caller]
     pub fn new() -> Self {
         Relay {
             subscribers: Arc::new(Mutex::new(Vec::new())),
@@ -284,6 +285,7 @@ where
     let stream = relay.subscribe();
     (relay, stream)
 }
+
 
 #[cfg(test)]
 mod tests {

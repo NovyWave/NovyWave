@@ -102,8 +102,8 @@ where
     #[track_caller]
     pub fn new<F, Fut>(initial_map: BTreeMap<K, V>, processor: F) -> Self
     where
-        F: FnOnce(MutableBTreeMap<K, V>) -> Fut + Send + 'static,
-        Fut: Future<Output = ()> + Send + 'static,
+        F: FnOnce(MutableBTreeMap<K, V>) -> Fut + 'static,
+        Fut: Future<Output = ()> + 'static,
     {
         let map = MutableBTreeMap::new();
         for (k, v) in initial_map {

@@ -57,10 +57,6 @@ where
     // Part of public Actor+Relay API - will be used when moved to standalone crate
     #[allow(dead_code)]
     task_handle: Arc<TaskHandle>,
-    // Part of public Actor+Relay API - will be used when moved to standalone crate
-    #[cfg(debug_assertions)]
-    #[allow(dead_code)]
-    creation_location: &'static std::panic::Location<'static>,
 }
 
 impl<T> Actor<T>
@@ -102,11 +98,9 @@ where
         // Start the async processor task with droppable handle
         let task_handle = Arc::new(Task::start_droppable(processor(state.clone())));
 
-        Self { 
+        Self {
             state,
             task_handle,
-            #[cfg(debug_assertions)]
-            creation_location: std::panic::Location::caller(),
         }
     }
 
@@ -143,16 +137,15 @@ where
     /// // Use signal_ref to avoid cloning large vector
     /// large_data.signal_ref(|data| data.len())
     /// ```
-    pub fn signal_ref<U>(&self, f: impl Fn(&T) -> U + Send + Sync + 'static) -> impl Signal<Item = U>
+    pub fn signal_ref<U>(&self, f: impl Fn(&T) -> U + 'static) -> impl Signal<Item = U>
     where
         U: PartialEq + Send + Sync + 'static,
     {
         self.state.signal_ref(f)
     }
 
-    
-}
 
+}
 
 
 #[cfg(test)]

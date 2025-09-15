@@ -1162,3 +1162,44 @@ grep "DirectoryContents\|ROUTER" dev_server.log
 ```
 
 **Key Insight:** Complex "Loading..." issues often indicate architectural duplication problems, not performance issues. Always check for multiple connection objects before optimizing signal chains.
+
+### CRITICAL FIX PATTERN: Store Message Routing Actors as Struct Fields
+
+**The Root Cause Discovery:** ConnectionMessageActor was being dropped immediately after `AppConfig::new()` completed because it wasn't stored anywhere, causing its internal channels to close before backend messages could arrive.
+
+**Timing Signature:**
+- DirectoryCacheActor stream ended at ~117ms
+- First DirectoryContents message arrived at ~136ms
+- **19ms gap** where messages were lost due to disconnected channels
+
+**✅ SOLUTION: Always store message routing actors as struct fields**
+```rust
+// ✅ CORRECT: Store in long-lived struct to prevent dropping
+pub struct AppConfig {
+    // Keep ConnectionMessageActor alive to prevent channel disconnection
+    _connection_message_actor: crate::app::ConnectionMessageActor,
+    // ... other fields
+}
+
+impl AppConfig {
+    pub async fn new(connection_message_actor: ConnectionMessageActor) -> Self {
+        Self {
+            _connection_message_actor: connection_message_actor, // CRITICAL: Store the actor
+            // ... other initialization
+        }
+    }
+}
+```
+
+**Why this works:**
+- Actor stored as struct field remains alive for entire AppConfig lifetime
+- Internal `down_msg_receiver` channel stays open for backend messages
+- No `TrySendError { kind: Disconnected }` errors
+- Messages arrive when expected, no timing gaps
+
+**Recognition Pattern:**
+- "Loading..." stuck + `TrySendError { kind: Disconnected }` = Actor dropped prematurely
+- Backend responds correctly but frontend streams end before messages arrive
+- Timing gap between stream closure and message arrival (typically 10-50ms)
+
+**Universal Rule:** Message routing actors must be stored as struct fields in long-lived objects to maintain channel connectivity.

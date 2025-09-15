@@ -96,8 +96,8 @@ where
     #[track_caller]
     pub fn new<F, Fut>(initial_items: Vec<T>, processor: F) -> Self
     where
-        F: FnOnce(MutableVec<T>) -> Fut + Send + 'static,
-        Fut: Future<Output = ()> + Send + 'static,
+        F: FnOnce(MutableVec<T>) -> Fut + 'static,
+        Fut: Future<Output = ()> + 'static,
     {
         let vec = MutableVec::new_with_values(initial_items);
 
