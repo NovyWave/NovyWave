@@ -86,10 +86,6 @@ pub struct FilePickerDomain {
 
     // Internal relays for async operations (replaces zoon::Task)
     pub directory_load_requested_relay: Relay<String>,
-
-    // System event relays from connection.rs
-    pub directory_contents_received_relay: Relay<(String, Vec<shared::FileSystemItem>)>,
-    pub directory_error_received_relay: Relay<(String, String)>,
 }
 
 impl FilePickerDomain {
@@ -98,13 +94,16 @@ impl FilePickerDomain {
         initial_scroll: i32,
         config_save_relay: Relay,
         connection: std::sync::Arc<SendWrapper<Connection<shared::UpMsg, shared::DownMsg>>>,
+        connection_message_actor: &crate::app::ConnectionMessageActor,
     ) -> Self {
         let (directory_expanded_relay, mut directory_expanded_stream) = relay::<String>();
         let (directory_collapsed_relay, mut directory_collapsed_stream) = relay::<String>();
         let (scroll_position_changed_relay, mut scroll_position_changed_stream) = relay::<i32>();
         let (directory_load_requested_relay, mut directory_load_requested_stream) = relay::<String>();
-        let (directory_contents_received_relay, mut directory_contents_received_stream) = relay::<(String, Vec<shared::FileSystemItem>)>();
-        let (directory_error_received_relay, mut directory_error_received_stream) = relay::<(String, String)>();
+
+        // ✅ ACTOR+RELAY: Subscribe to ConnectionMessageActor relays instead of internal ones
+        let mut directory_contents_received_stream = connection_message_actor.directory_contents_relay.subscribe();
+        let mut directory_error_received_stream = connection_message_actor.directory_error_relay.subscribe();
         let config_save_requested_relay = config_save_relay;
 
         let expanded_directories_actor = Actor::new(initial_expanded, {
@@ -267,8 +266,6 @@ impl FilePickerDomain {
             scroll_position_changed_relay,
             config_save_requested_relay,
             directory_load_requested_relay,
-            directory_contents_received_relay,
-            directory_error_received_relay,
         }
     }
 
@@ -340,6 +337,7 @@ pub struct AppConfig {
     _clipboard_actor: Actor<()>,
     _save_trigger_actor: Actor<()>,
     _config_save_debouncer_actor: Actor<()>,
+    _config_loaded_actor: Actor<()>,
 }
 
 impl AppConfig {
@@ -349,7 +347,10 @@ impl AppConfig {
         Ok(SharedAppConfig::default())
     }
 
-    pub async fn new(connection: std::sync::Arc<SendWrapper<Connection<shared::UpMsg, shared::DownMsg>>>) -> Self {
+    pub async fn new(
+        connection: std::sync::Arc<SendWrapper<Connection<shared::UpMsg, shared::DownMsg>>>,
+        connection_message_actor: crate::app::ConnectionMessageActor,
+    ) -> Self {
         zoon::println!("🚀 CONFIG: Starting AppConfig::new() initialization");
         let config = Self::load_config_from_backend()
             .await
@@ -674,6 +675,7 @@ impl AppConfig {
             config.workspace.load_files_scroll_position,
             config_save_requested_relay.clone(),
             connection,
+            &connection_message_actor,
         ).await;
 
         // File picker changes now trigger config save through FilePickerDomain
@@ -816,6 +818,42 @@ impl AppConfig {
 
         let error_display = crate::error_display::ErrorDisplay::new().await;
 
+        // ✅ ACTOR+RELAY: Subscribe to config_loaded_relay from ConnectionMessageActor
+        let config_loaded_actor = {
+            let config_loaded_stream = connection_message_actor.config_loaded_relay.subscribe();
+            let theme_relay = theme_changed_relay.clone();
+            let dock_relay = dock_mode_changed_relay.clone();
+            let file_picker_domain_clone = file_picker_domain.clone();
+
+            Actor::new((), async move |_state| {
+                let mut config_stream = config_loaded_stream;
+
+                while let Some(loaded_config) = config_stream.next().await {
+                    zoon::println!("🔄 CONFIG_LOADED_ACTOR: Received config from ConnectionMessageActor");
+
+                    // Update theme using proper relay
+                    theme_relay.send(loaded_config.ui.theme);
+                    zoon::println!("🎨 CONFIG_LOADED_ACTOR: Sent theme change to {:?}", loaded_config.ui.theme);
+
+                    // Update dock mode using proper relay
+                    dock_relay.send(loaded_config.workspace.dock_mode);
+                    zoon::println!("📍 CONFIG_LOADED_ACTOR: Sent dock mode change to {:?}", loaded_config.workspace.dock_mode);
+
+                    // Update expanded directories using FilePickerDomain
+                    zoon::println!("📁 CONFIG_LOADED_ACTOR: Loading {} expanded directories", loaded_config.workspace.load_files_expanded_directories.len());
+                    for dir in &loaded_config.workspace.load_files_expanded_directories {
+                        zoon::println!("📁 CONFIG_LOADED_ACTOR: Expanding directory: {}", dir);
+                        file_picker_domain_clone.directory_expanded_relay.send(dir.clone());
+                    }
+
+                    // Update scroll position using FilePickerDomain relay
+                    file_picker_domain_clone.scroll_position_changed_relay.send(loaded_config.workspace.load_files_scroll_position);
+
+                    zoon::println!("✅ CONFIG_LOADED_ACTOR: Successfully processed config via Actor+Relay");
+                }
+            })
+        };
+
         Self {
             theme_actor,
             dock_mode_actor,
@@ -858,6 +896,7 @@ impl AppConfig {
             _clipboard_actor: clipboard_actor,
             _save_trigger_actor: save_trigger_actor,
             _config_save_debouncer_actor: config_save_debouncer_actor,
+            _config_loaded_actor: config_loaded_actor,
         }
     }
 

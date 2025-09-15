@@ -22,6 +22,7 @@ Core guidance for Claude Code when working with NovyWave.
 
 <!-- Architecture Patterns -->
 @.claude/extra/architecture/actor-relay-patterns.md
+@.claude/extra/architecture/connection-message-actor-pattern.md
 
 ## Actor+Relay Architecture (MANDATORY)
 

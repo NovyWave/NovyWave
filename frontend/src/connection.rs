@@ -121,8 +121,7 @@ fn handle_down_msg(
             }
             DownMsg::DirectoryContents { path, items } => {
                 zoon::println!("📥 CONNECTION: Received DirectoryContents for {} with {} items", path, items.len());
-                // ACTOR+RELAY FIX: Send to FilePickerDomain relay
-                app_config.file_picker_domain.directory_contents_received_relay.send((path.clone(), items.clone()));
+                // ✅ ACTOR+RELAY: FilePickerDomain automatically receives via ConnectionMessageActor subscription
 
                 // Auto-expand home directory ancestry
                 if path.contains("/home/") || path.starts_with("/Users/") {
@@ -146,8 +145,7 @@ fn handle_down_msg(
                 }
             }
             DownMsg::DirectoryError { path, error } => {
-                // ACTOR+RELAY FIX: Send to FilePickerDomain relay
-                app_config.file_picker_domain.directory_error_received_relay.send((path.clone(), error.clone()));
+                // ✅ ACTOR+RELAY: FilePickerDomain automatically receives via ConnectionMessageActor subscription
 
                 // Log error for debugging
                 let error_alert = ErrorAlert::new_directory_error(path.clone(), error);
@@ -160,16 +158,14 @@ fn handle_down_msg(
             DownMsg::ConfigError(_error) => {
             }
             DownMsg::BatchDirectoryContents { results } => {
+                // ✅ ACTOR+RELAY: FilePickerDomain automatically receives via ConnectionMessageActor subscription
                 for (path, result) in results {
                     match result {
-                        Ok(items) => {
-                            // ACTOR+RELAY FIX: Send to FilePickerDomain relay
-                            app_config.file_picker_domain.directory_contents_received_relay.send((path.clone(), items));
+                        Ok(_items) => {
+                            // Directory contents automatically routed via ConnectionMessageActor
                         }
                         Err(error) => {
-                            // ACTOR+RELAY FIX: Send to FilePickerDomain relay
-                            app_config.file_picker_domain.directory_error_received_relay.send((path.clone(), error.clone()));
-
+                            // Directory errors automatically routed via ConnectionMessageActor
                             // Log error for debugging
                             let error_alert = ErrorAlert::new_directory_error(path.clone(), error);
                             log_error_console_only(error_alert);
