@@ -77,6 +77,8 @@ pub struct FilePickerDomain {
     pub directory_errors_actor: Actor<std::collections::HashMap<String, String>>,
     pub directory_loading_actor: Actor<std::collections::HashSet<String>>,
     pub backend_sender_actor: Actor<()>,
+    pub selected_files: crate::dataflow::ActorVec<String>,
+    pub selected_files_vec_signal: zoon::Mutable<Vec<String>>,
 
     // Event-source relays for UI interactions
     pub directory_expanded_relay: Relay<String>,
@@ -84,8 +86,16 @@ pub struct FilePickerDomain {
     pub scroll_position_changed_relay: Relay<i32>,
     pub config_save_requested_relay: Relay,
 
+    // File selection relays for load files dialog
+    pub file_selected_relay: Relay<String>,
+    pub file_deselected_relay: Relay<String>,
+    pub clear_selection_relay: Relay,
+
     // Internal relays for async operations (replaces zoon::Task)
     pub directory_load_requested_relay: Relay<String>,
+
+    // Tree rendering timing coordination
+    pub tree_rendering_relay: Relay,
 }
 
 impl FilePickerDomain {
@@ -100,6 +110,12 @@ impl FilePickerDomain {
         let (directory_collapsed_relay, mut directory_collapsed_stream) = relay::<String>();
         let (scroll_position_changed_relay, mut scroll_position_changed_stream) = relay::<i32>();
         let (directory_load_requested_relay, mut directory_load_requested_stream) = relay::<String>();
+        let (tree_rendering_relay, _tree_rendering_stream) = relay();
+
+        // File selection relays for load files dialog
+        let (file_selected_relay, mut file_selected_stream) = relay::<String>();
+        let (file_deselected_relay, mut file_deselected_stream) = relay::<String>();
+        let (clear_selection_relay, mut clear_selection_stream) = relay();
 
         // ✅ ACTOR+RELAY: Subscribe to ConnectionMessageActor relays instead of internal ones
         let mut directory_contents_received_stream = connection_message_actor.directory_contents_relay.subscribe();
@@ -147,8 +163,27 @@ impl FilePickerDomain {
                     futures::select! {
                         position = position_stream.next() => {
                             if let Some(position) = position {
+                                // Update actor state immediately for UI reactivity
                                 state.set_neq(position);
-                                save_relay.send(()); // Trigger config save
+
+                                // ✅ Debounce pattern: nested select loop for config save
+                                let mut latest_position = position;
+                                loop {
+                                    futures::select! {
+                                        // Check for newer scroll position updates
+                                        newer_position = position_stream.next() => {
+                                            if let Some(newer_pos) = newer_position {
+                                                state.set_neq(newer_pos); // Update state immediately
+                                                latest_position = newer_pos; // Update latest for saving
+                                            }
+                                        }
+                                        // Debounce timer - save after 500ms of no changes
+                                        _ = zoon::Timer::sleep(500).fuse() => {
+                                            save_relay.send(()); // Trigger config save
+                                            break; // Back to outer loop
+                                        }
+                                    }
+                                }
                             }
                         }
                         complete => break,
@@ -158,48 +193,32 @@ impl FilePickerDomain {
         });
 
 
-        zoon::println!("🏗️ DIRECTORY_CACHE_ACTOR: Creating new cache Actor instance");
         let directory_cache_actor = Actor::new(std::collections::HashMap::new(), {
             // ✅ FIX: Move stream into closure to prevent reference capture after Send bounds removal
             let mut directory_contents_stream = directory_contents_received_stream;
             async move |state| {
-                zoon::println!("📦 DIRECTORY_CACHE_ACTOR: Actor loop started, waiting for directory contents messages");
                 let mut message_count = 0;
                 loop {
                     use futures::StreamExt;
                     if let Some((path, items)) = directory_contents_stream.next().await {
                         message_count += 1;
-                        zoon::println!("📦 DIRECTORY_CACHE_ACTOR: [{}] Received {} items for path: '{}'", message_count, items.len(), path);
-                        zoon::println!("📦 DIRECTORY_CACHE_ACTOR: [{}] Items for '{}': {:?}", message_count, path, items.iter().map(|i| &i.name).collect::<Vec<_>>());
 
                         // Check current cache state before update
                         let current_cache = state.get_cloned();
-                        zoon::println!("📦 DIRECTORY_CACHE_ACTOR: [{}] Cache before update has {} keys: {:?}", message_count, current_cache.len(), current_cache.keys().collect::<Vec<_>>());
 
                         // Use set_neq with proper change detection - this MUST trigger signals
                         let mut cache = current_cache;
                         cache.insert(path.clone(), items);
                         let cache_size = cache.len();
 
-                        zoon::println!("📦 DIRECTORY_CACHE_ACTOR: [{}] About to call set_neq() with {} paths", message_count, cache_size);
                         state.set_neq(cache);
-                        zoon::println!("📦 DIRECTORY_CACHE_ACTOR: [{}] Called set_neq(), cache now contains {} paths", message_count, cache_size);
-                        zoon::println!("📦 DIRECTORY_CACHE_ACTOR: [{}] Signal should fire to update TreeView UI", message_count);
 
                         // Verify the update took effect
-                        let updated_cache = state.get_cloned();
-                        zoon::println!("📦 DIRECTORY_CACHE_ACTOR: [{}] Verification: cache after update has {} keys: {:?}", message_count, updated_cache.len(), updated_cache.keys().collect::<Vec<_>>());
-                        if updated_cache.contains_key(&path) {
-                            zoon::println!("✅ DIRECTORY_CACHE_ACTOR: [{}] Confirmed: path '{}' is now in cache", message_count, path);
-                        } else {
-                            zoon::println!("❌ DIRECTORY_CACHE_ACTOR: [{}] ERROR: path '{}' NOT in cache after update!", message_count, path);
-                        }
+                        // Cache successfully updated
                     } else {
-                        zoon::println!("💔 DIRECTORY_CACHE_ACTOR: Received None from directory_contents_stream - stream ended");
                         break;
                     }
                 }
-                zoon::println!("⛔ DIRECTORY_CACHE_ACTOR: Actor loop ended");
             }
         });
 
@@ -231,7 +250,6 @@ impl FilePickerDomain {
                     futures::select! {
                         requested_path = directory_load_requested_stream.next() => {
                             if let Some(path) = requested_path {
-                                zoon::println!("📁 DIRECTORY_LOADING_ACTOR: Queuing load request for: {}", path);
                                 let mut pending_requests = state.get_cloned();
                                 pending_requests.insert(path);
                                 state.set_neq(pending_requests);
@@ -259,20 +277,17 @@ impl FilePickerDomain {
                         // Handle directory loading requests (existing logic)
                         pending_requests = directory_loading_stream.next() => {
                             if let Some(pending_requests) = pending_requests {
-                                zoon::println!("📤 BACKEND_SENDER: Processing {} pending requests", pending_requests.len());
 
                                 // Check cache to avoid sending requests for directories that already have data
                                 let current_cache = directory_cache_for_sender.signal().to_stream().next().await.unwrap_or_default();
 
                                 for request_path in pending_requests.iter() {
                                     if !current_cache.contains_key(request_path) {
-                                        zoon::println!("📤 BACKEND_SENDER: Sending directory request for: {}", request_path);
                                         let path_for_request = request_path.clone();
 
                                         // Connection requires async handling within Actor context
                                         connection_clone.send_up_msg(shared::UpMsg::BrowseDirectory(path_for_request)).await.unwrap_throw();
                                     } else {
-                                        zoon::println!("📤 BACKEND_SENDER: Skipping request for {} (already in cache)", request_path);
                                     }
                                 }
                             } else {
@@ -283,27 +298,61 @@ impl FilePickerDomain {
                         // ✅ NEW: Handle directory expansion events (auto-browse expanded directories)
                         expanded_dir = directory_expanded_stream_for_sender.next() => {
                             if let Some(dir_path) = expanded_dir {
-                                zoon::println!("📂 BACKEND_SENDER: Directory expanded, requesting browse for: {}", dir_path);
 
                                 // Check cache to avoid duplicate requests
                                 let current_cache = directory_cache_for_sender.signal().to_stream().next().await.unwrap_or_default();
 
                                 if !current_cache.contains_key(&dir_path) {
-                                    zoon::println!("📤 BACKEND_SENDER: Sending auto-browse request for expanded directory: {}", dir_path);
                                     connection_clone.send_up_msg(shared::UpMsg::BrowseDirectory(dir_path)).await.unwrap_throw();
                                 } else {
-                                    zoon::println!("📤 BACKEND_SENDER: Skipping auto-browse for {} (already in cache)", dir_path);
                                 }
                             }
                         }
                         complete => {
-                            zoon::println!("💔 BACKEND_SENDER: Actor select! completed - ending loop");
                             break;
                         }
                     }
                 }
             })
         };
+
+        // Create dedicated vector signal to avoid SignalVec → Signal conversion antipattern
+        let selected_files_vec_signal = zoon::Mutable::new(Vec::<String>::new());
+
+        // Selected files ActorVec for file selection management
+        let selected_files = {
+            let selected_files_vec_signal_clone = selected_files_vec_signal.clone();
+            crate::dataflow::ActorVec::new(vec![], async move |files_vec| {
+            loop {
+                futures::select! {
+                    file_path = file_selected_stream.next() => {
+                        if let Some(file_path) = file_path {
+                            let mut current_files = files_vec.lock_ref().to_vec();
+                            if !current_files.contains(&file_path) {
+                                files_vec.lock_mut().push_cloned(file_path.clone());
+                                current_files.push(file_path.clone());
+                                selected_files_vec_signal_clone.set_neq(current_files);
+                            }
+                        }
+                    }
+                    file_path = file_deselected_stream.next() => {
+                        if let Some(file_path) = file_path {
+                            files_vec.lock_mut().retain(|f| f != &file_path);
+                            let current_files = files_vec.lock_ref().to_vec();
+                            selected_files_vec_signal_clone.set_neq(current_files);
+                        }
+                    }
+                    _ = clear_selection_stream.next() => {
+                        files_vec.lock_mut().clear();
+                        selected_files_vec_signal_clone.set_neq(Vec::new());
+                    }
+                    complete => break,
+                }
+            }
+        })
+        };
+
+        // The selected_files_vec_signal is kept updated from within the ActorVec loop above
 
         Self {
             expanded_directories_actor,
@@ -312,11 +361,17 @@ impl FilePickerDomain {
             directory_errors_actor,
             directory_loading_actor,
             backend_sender_actor,
+            selected_files,
+            selected_files_vec_signal,
             directory_expanded_relay,
             directory_collapsed_relay,
             scroll_position_changed_relay,
             config_save_requested_relay,
+            file_selected_relay,
+            file_deselected_relay,
+            clear_selection_relay,
             directory_load_requested_relay,
+            tree_rendering_relay,
         }
     }
 
@@ -397,7 +452,6 @@ pub struct AppConfig {
 impl AppConfig {
     async fn load_config_from_backend() -> Result<SharedAppConfig, String> {
         // Platform layer fallback - using defaults until proper backend config loading
-        zoon::println!("⚙️ CONFIG: Using default configuration");
         Ok(SharedAppConfig::default())
     }
 
@@ -405,7 +459,6 @@ impl AppConfig {
         connection: std::sync::Arc<SendWrapper<Connection<shared::UpMsg, shared::DownMsg>>>,
         connection_message_actor: crate::app::ConnectionMessageActor,
     ) -> Self {
-        zoon::println!("🚀 CONFIG: Starting AppConfig::new() initialization");
         let config = Self::load_config_from_backend()
             .await
             .unwrap_or_else(|_error| SharedAppConfig::default());
@@ -458,7 +511,6 @@ impl AppConfig {
                             theme::set_theme(novyui_theme);
 
                             // Config save handled by Task-based ConfigSaver
-                            zoon::println!("💾 THEME_ACTOR: Theme button clicked, Task-based config saver will handle save");
                         }
                     }
                     direct_change = theme_changed_stream.next() => {
@@ -478,7 +530,6 @@ impl AppConfig {
             }
         });
 
-        zoon::println!("✅ CONFIG: Theme actor created successfully");
 
         let dock_mode_actor = Actor::new(config.workspace.dock_mode.clone(), async move |state| {
             let mut current_dock_mode = config.workspace.dock_mode.clone();
@@ -637,18 +688,11 @@ impl AppConfig {
                     select! {
                         session_change = session_stream.next() => {
                             if let Some(new_session) = session_change {
-                                zoon::println!("🗃️ SESSION_ACTOR: Received session update with {} expanded directories",
-                                    new_session.file_picker_expanded_directories.len());
-                                for dir in &new_session.file_picker_expanded_directories {
-                                    zoon::println!("🗃️ SESSION_ACTOR: Expanded dir: {}", dir);
-                                }
                                 state.set_neq(new_session);
-                                zoon::println!("🗃️ SESSION_ACTOR: Session state updated successfully");
                             }
                         }
                         filter_change = variables_filter_stream.next() => {
                             if let Some(new_filter) = filter_change {
-                                zoon::println!("🔍 SESSION_ACTOR: Received filter update: {}", new_filter);
                                 state.update_mut(|session| {
                                     session.variables_search_filter = new_filter;
                                 });
@@ -673,7 +717,6 @@ impl AppConfig {
         let toast_actor_clone = toast_dismiss_ms_actor.clone();
 
         // FIX: Connect ConfigSaver to button click relays for immediate save trigger
-        zoon::println!("🔧 CONFIG_SAVER: Setting up button-click-based config saving");
 
         // Clone the relay for struct return since it will be moved into Tasks
         let config_save_requested_relay_for_struct = config_save_requested_relay.clone();
@@ -692,7 +735,6 @@ impl AppConfig {
                         result = theme_stream.next() => {
                             match result {
                                 Some(_) => {
-                                    zoon::println!("💾 CONFIG_SAVER: Theme button clicked, triggering save");
                                     config_save_relay.send(());
                                 }
                                 None => break, // Stream ended
@@ -701,7 +743,6 @@ impl AppConfig {
                         result = dock_stream.next() => {
                             match result {
                                 Some(_) => {
-                                    zoon::println!("💾 CONFIG_SAVER: Dock mode button clicked, triggering save");
                                     config_save_relay.send(());
                                 }
                                 None => break, // Stream ended
@@ -715,12 +756,9 @@ impl AppConfig {
         // Create FilePickerDomain with proper Actor+Relay architecture
         let initial_expanded_set = {
             let mut expanded_set = indexmap::IndexSet::new();
-            zoon::println!("🔍 CONFIG_LOAD: Loading {} expanded directories from config", config.workspace.load_files_expanded_directories.len());
             for dir in &config.workspace.load_files_expanded_directories {
-                zoon::println!("🔍 CONFIG_LOAD: Restoring expanded directory: {}", dir);
                 expanded_set.insert(dir.clone());
             }
-            zoon::println!("🔍 CONFIG_LOAD: Final expanded set has {} directories", expanded_set.len());
             expanded_set
         };
 
@@ -803,9 +841,7 @@ impl AppConfig {
                                             };
 
                                         if let Err(e) = CurrentPlatform::send_message(UpMsg::SaveConfig(shared_config)).await {
-                                            zoon::println!("❌ CONFIG_SAVER: Failed to save config: {:?}", e);
                                         } else {
-                                            zoon::println!("💾 CONFIG_SAVER: Theme/dock config saved successfully");
                                         }
                                         break; // Back to outer loop
                                     }
@@ -835,7 +871,6 @@ impl AppConfig {
                         file_picker_scroll_position: scroll_position,
                         ..current_session
                     };
-                    zoon::println!("💾 CONFIG_SYNC: Sending session update with scroll position {}", scroll_position);
                     session_scroll_changed_relay.send(updated_session);
                 }
             }
@@ -856,14 +891,12 @@ impl AppConfig {
                                     // Clipboard copy successful
                                 }
                                 Err(e) => {
-                                    zoon::println!("Clipboard error: {:?}", e);
                                 }
                             }
                         }
 
                         #[cfg(not(web_sys_unstable_apis))]
                         {
-                            zoon::println!("Clipboard error: Clipboard API requires unstable APIs flag");
                         }
                     }
                 });
@@ -883,27 +916,21 @@ impl AppConfig {
                 let mut config_stream = config_loaded_stream;
 
                 while let Some(loaded_config) = config_stream.next().await {
-                    zoon::println!("🔄 CONFIG_LOADED_ACTOR: Received config from ConnectionMessageActor");
 
                     // Update theme using proper relay
                     theme_relay.send(loaded_config.ui.theme);
-                    zoon::println!("🎨 CONFIG_LOADED_ACTOR: Sent theme change to {:?}", loaded_config.ui.theme);
 
                     // Update dock mode using proper relay
                     dock_relay.send(loaded_config.workspace.dock_mode);
-                    zoon::println!("📍 CONFIG_LOADED_ACTOR: Sent dock mode change to {:?}", loaded_config.workspace.dock_mode);
 
                     // Update expanded directories using FilePickerDomain
-                    zoon::println!("📁 CONFIG_LOADED_ACTOR: Loading {} expanded directories", loaded_config.workspace.load_files_expanded_directories.len());
                     for dir in &loaded_config.workspace.load_files_expanded_directories {
-                        zoon::println!("📁 CONFIG_LOADED_ACTOR: Expanding directory: {}", dir);
                         file_picker_domain_clone.directory_expanded_relay.send(dir.clone());
                     }
 
                     // Update scroll position using FilePickerDomain relay
                     file_picker_domain_clone.scroll_position_changed_relay.send(loaded_config.workspace.load_files_scroll_position);
 
-                    zoon::println!("✅ CONFIG_LOADED_ACTOR: Successfully processed config via Actor+Relay");
                 }
             })
         };
@@ -957,21 +984,16 @@ impl AppConfig {
 
     /// Update config from loaded backend data
     pub fn update_from_loaded_config(&self, loaded_config: shared::AppConfig) {
-        zoon::println!("🔄 CONFIG: Updating from loaded backend config");
 
         // Update theme using proper relay (not direct state access)
         self.theme_changed_relay.send(loaded_config.ui.theme);
-        zoon::println!("🎨 CONFIG: Sent theme change to {:?}", loaded_config.ui.theme);
 
         // Update dock mode using proper relay (not direct state access)
         self.dock_mode_changed_relay.send(loaded_config.workspace.dock_mode);
-        zoon::println!("📍 CONFIG: Sent dock mode change to {:?}", loaded_config.workspace.dock_mode);
 
         // Update expanded directories using FilePickerDomain
         let mut expanded_set = indexmap::IndexSet::new();
-        zoon::println!("📁 CONFIG: Loading {} expanded directories", loaded_config.workspace.load_files_expanded_directories.len());
         for dir in &loaded_config.workspace.load_files_expanded_directories {
-            zoon::println!("📁 CONFIG: Adding expanded directory: {}", dir);
             expanded_set.insert(dir.clone());
         }
         // Use FilePickerDomain relays to update expanded directories
@@ -982,7 +1004,6 @@ impl AppConfig {
         // Update scroll position using FilePickerDomain relay
         self.file_picker_domain.scroll_position_changed_relay.send(loaded_config.workspace.load_files_scroll_position);
 
-        zoon::println!("✅ CONFIG: Successfully updated all config from backend");
     }
 
 
