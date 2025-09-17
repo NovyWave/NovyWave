@@ -9,9 +9,17 @@ theme = "dark"
 toast_dismiss_ms = 10000
 
 [workspace]
-opened_files = []
+opened_files = [
+    "/home/martinkavik/repos/NovyWave/test_files/simple.vcd",
+    "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst",
+]
 dock_mode = "right"
-expanded_scopes = []
+expanded_scopes = [
+    "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst",
+    "scope_/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP",
+    "/home/martinkavik/repos/NovyWave/test_files/simple.vcd",
+    "scope_/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb",
+]
 load_files_expanded_directories = [
     "/home",
     "/home/martinkavik",
@@ -20,6 +28,7 @@ load_files_expanded_directories = [
     "/home/martinkavik/repos/NovyWave/test_files",
     "/home/martinkavik/repos/NovyWave/test_files/nested_dir",
 ]
+selected_scope_id = "scope_/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s"
 load_files_scroll_position = 973
 selected_variables = []
 timeline_cursor_position_ns = 0

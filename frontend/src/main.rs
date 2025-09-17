@@ -73,7 +73,8 @@ pub fn main_layout(
                                             .item(files_panel_with_dialog(
                                                 tracked_files.clone(),
                                                 selected_variables.clone(),
-                                                file_dialog_visible.clone()
+                                                file_dialog_visible.clone(),
+                                                app_config.clone(),
                                             ))
                                             .item(crate::panel_layout::files_panel_vertical_divider(&app_config, dragging_system.clone()))
                                             .item(variables_panel_with_fill(
@@ -112,7 +113,8 @@ pub fn main_layout(
                                             .item(files_panel_with_dialog(
                                                 tracked_files.clone(),
                                                 selected_variables.clone(),
-                                                file_dialog_visible.clone()
+                                                file_dialog_visible.clone(),
+                                                app_config.clone(),
                                             ))
                                             .item(crate::panel_layout::files_panel_horizontal_divider(&app_config, dragging_system.clone()))
                                             .item(variables_panel_with_fill(
@@ -148,3 +150,4 @@ pub fn main() {
     });
 }
 
+// Rebuild trigger

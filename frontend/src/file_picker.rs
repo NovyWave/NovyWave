@@ -286,7 +286,15 @@ pub fn file_paths_dialog(
     file_dialog_visible: Atom<bool>,
     connection: crate::connection::ConnectionAdapter,
 ) -> impl Element {
-    let file_count_broadcaster = tracked_files.files.signal_vec().len().broadcast();
+    // Count files that are actually in loading state, not total files
+    let loading_count_broadcaster = tracked_files.files.signal_vec()
+        .to_signal_cloned()
+        .map(move |files| {
+            files.iter()
+                .filter(|file| matches!(file.state, shared::FileState::Loading(_)))
+                .count()
+        })
+        .broadcast();
 
     // Get file picker domain for proper selected files management
     let file_picker_domain = app_config.file_picker_domain.clone();
@@ -313,6 +321,9 @@ pub fn file_paths_dialog(
         })
         .update_raw_el({
             let close_dialog = close_dialog.clone();
+            let tracked_files_for_enter = tracked_files.clone();
+            let file_picker_domain_for_enter = file_picker_domain.clone();
+            let file_dialog_visible_for_enter = file_dialog_visible.clone();
             move |raw_el| {
                 raw_el
                     .event_handler({
@@ -322,10 +333,26 @@ pub fn file_paths_dialog(
                         }
                     })
                     .global_event_handler({
+                        let tracked_files_for_enter = tracked_files_for_enter.clone();
+                        let file_picker_domain_for_enter = file_picker_domain_for_enter.clone();
+                        let file_dialog_visible_for_enter = file_dialog_visible_for_enter.clone();
+                        let close_dialog = close_dialog.clone();
                         move |event: KeyDown| {
                             if event.key() == "Escape" {
                                 close_dialog();
                             } else if event.key() == "Enter" {
+                                // Get the selected files and load them
+                                let selected_files_value = file_picker_domain_for_enter.selected_files_vec_signal.get_cloned();
+                                if !selected_files_value.is_empty() {
+                                    zoon::println!("🎯 Loading {} selected files via Enter key", selected_files_value.len());
+                                    crate::file_operations::process_file_picker_selection(
+                                        tracked_files_for_enter.clone(),
+                                        selected_files_value,
+                                        file_dialog_visible_for_enter.clone()
+                                    );
+                                    // Clear the selection after loading files so dialog is ready for next selection
+                                    file_picker_domain_for_enter.clear_selection_relay.send(());
+                                }
                             }
                         }
                     })
@@ -464,10 +491,10 @@ pub fn file_paths_dialog(
                                         .label_signal({
                                             let file_picker_domain_for_button = file_picker_domain.clone();
                                             map_ref! {
-                                                let file_count = file_count_broadcaster.signal(),
+                                                let loading_count = loading_count_broadcaster.signal(),
                                                 let selected_count = file_picker_domain_for_button.selected_files.signal_vec().len() =>
                                                 move {
-                                                    let is_loading = *file_count > 0;
+                                                    let is_loading = *loading_count > 0;
                                                     if is_loading {
                                                         "Loading...".to_string()
                                                     } else if *selected_count > 0 {
@@ -481,9 +508,9 @@ pub fn file_paths_dialog(
                                         .disabled_signal({
                                             let file_picker_domain_for_disabled = file_picker_domain.clone();
                                             map_ref! {
-                                                let file_count = file_count_broadcaster.signal(),
+                                                let loading_count = loading_count_broadcaster.signal(),
                                                 let selected_count = file_picker_domain_for_disabled.selected_files.signal_vec().len() => {
-                                                let is_loading = *file_count > 0;
+                                                let is_loading = *loading_count > 0;
                                                 is_loading || *selected_count == 0
                                                 }
                                             }
@@ -493,13 +520,16 @@ pub fn file_paths_dialog(
                                             let file_picker_domain_for_press = file_picker_domain.clone();
                                             let file_dialog_visible_for_press = file_dialog_visible.clone();
                                             move || {
-                                                // For now, use empty vector to fix compilation
-                                                let selected_files_value = Vec::<String>::new();
+                                                // Get the actual selected files from the FilePickerDomain
+                                                let selected_files_value = file_picker_domain_for_press.selected_files_vec_signal.get_cloned();
+                                                zoon::println!("🎯 Loading {} selected files", selected_files_value.len());
                                                 crate::file_operations::process_file_picker_selection(
                                                     tracked_files_for_press.clone(),
                                                     selected_files_value,
                                                     file_dialog_visible_for_press.clone()
                                                 );
+                                                // Clear the selection after loading files so dialog is ready for next selection
+                                                file_picker_domain_for_press.clear_selection_relay.send(());
                                             }
                                         })
                                         .variant(ButtonVariant::Primary)

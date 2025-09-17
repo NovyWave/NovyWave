@@ -225,7 +225,9 @@ impl NovyWaveApp {
         crate::platform::set_platform_connection(connection_arc.clone());
 
         // Create main config with proper connection and message routing
-        let config = AppConfig::new(connection_arc.clone(), connection_message_actor.clone()).await;
+        zoon::println!("🎯 APP: About to call AppConfig::new()");
+        let config = AppConfig::new(connection_arc.clone(), connection_message_actor.clone(), tracked_files.clone()).await;
+        zoon::println!("🎯 APP: AppConfig::new() completed");
 
         // Initialize dragging system after config is ready
         let dragging_system = crate::dragging::DraggingSystem::new(config.clone()).await;

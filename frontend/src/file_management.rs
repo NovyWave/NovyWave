@@ -10,6 +10,7 @@ pub fn files_panel_with_dialog(
     tracked_files: crate::tracked_files::TrackedFiles,
     selected_variables: crate::selected_variables::SelectedVariables,
     file_dialog_visible: Atom<bool>,
+    app_config: crate::config::AppConfig,
 ) -> impl Element {
     let file_count_broadcaster = tracked_files.files.signal_vec().len().broadcast();
     El::new().s(Height::fill()).child(crate::panel_layout::create_panel(
@@ -43,7 +44,7 @@ pub fn files_panel_with_dialog(
                                     empty_state_hint("Click 'Load Files' to add waveform files.")
                                         .unify()
                                 } else {
-                                    create_stable_tree_view(tracked_files_for_map.clone(), selected_variables_for_map.clone()).unify()
+                                    create_stable_tree_view(tracked_files_for_map.clone(), selected_variables_for_map.clone(), app_config.clone()).unify()
                                 }
                             })
                         }),
@@ -59,6 +60,7 @@ pub fn files_panel(
     tracked_files: crate::tracked_files::TrackedFiles,
     selected_variables: crate::selected_variables::SelectedVariables,
     load_files_button: impl Element + 'static,
+    app_config: crate::config::AppConfig,
 ) -> impl Element {
     let file_count_broadcaster = tracked_files.files.signal_vec().len().broadcast();
     El::new().s(Height::fill()).child(crate::panel_layout::create_panel(
@@ -86,7 +88,7 @@ pub fn files_panel(
                                     empty_state_hint("Click 'Load Files' to add waveform files.")
                                         .unify()
                                 } else {
-                                    create_stable_tree_view(tracked_files_for_map.clone(), selected_variables_for_map.clone()).unify()
+                                    create_stable_tree_view(tracked_files_for_map.clone(), selected_variables_for_map.clone(), app_config.clone()).unify()
                                 }
                             })
                         }),
@@ -101,6 +103,7 @@ pub fn files_panel(
 pub fn create_stable_tree_view(
     tracked_files: crate::tracked_files::TrackedFiles,
     selected_variables: crate::selected_variables::SelectedVariables,
+    app_config: crate::config::AppConfig,
 ) -> impl Element {
     El::new().s(Width::fill()).s(Height::fill()).child(
         Column::new()
@@ -116,6 +119,7 @@ pub fn create_stable_tree_view(
                 let tracked_files_for_signals = tracked_files.clone();
                 let tracked_files_for_closure = tracked_files.clone();
                 let selected_variables_for_closure = selected_variables.clone();
+                let app_config_for_closure = app_config.clone();
                 tracked_files_for_signals.files.signal_vec().map(move |tracked_file| {
                     let smart_label = compute_smart_label_for_file(&tracked_file);
                     render_tracked_file_as_tree_item_with_label_and_expanded_state(
@@ -123,6 +127,7 @@ pub fn create_stable_tree_view(
                         smart_label,
                         tracked_files_for_closure.clone(),
                         selected_variables_for_closure.clone(),
+                        app_config_for_closure.clone(),
                     )
                 })
             }),
@@ -135,6 +140,7 @@ pub fn render_tracked_file_as_tree_item_with_label_and_expanded_state(
     smart_label: String,
     tracked_files_domain: crate::tracked_files::TrackedFiles,
     selected_variables: crate::selected_variables::SelectedVariables,
+    app_config: crate::config::AppConfig,
 ) -> impl Element {
     let display_name = smart_label;
     let tree_data = match &tracked_file.state {
@@ -199,6 +205,7 @@ pub fn render_tracked_file_as_tree_item_with_label_and_expanded_state(
         }
     };
 
+
     tree_view()
         .data(tree_data)
         .size(TreeViewSize::Medium)
@@ -207,6 +214,8 @@ pub fn render_tracked_file_as_tree_item_with_label_and_expanded_state(
         .show_checkboxes(true)
         .show_checkboxes_on_scopes_only(true)
         .single_scope_selection(true)
+        .external_expanded(app_config.files_expanded_scopes.clone())
+        .external_selected_vec(app_config.files_selected_scope.clone())
         .build()
 }
 
@@ -268,20 +277,23 @@ pub fn render_tracked_file_reactive(
     expanded_scopes_signal: impl zoon::Signal<Item = indexmap::IndexSet<String>> + 'static + std::marker::Unpin,
     tracked_files: crate::tracked_files::TrackedFiles,
     selected_variables: crate::selected_variables::SelectedVariables,
+    app_config: crate::config::AppConfig,
 ) -> impl Element {
     let smart_label = compute_smart_label_for_file(&tracked_file);
-    
+
     El::new().child_signal({
         let tracked_file = tracked_file.clone();
         let smart_label = smart_label.clone();
         let tracked_files = tracked_files.clone();
         let selected_variables = selected_variables.clone();
-        expanded_scopes_signal.map(move |expanded_scopes| {
+        let app_config_for_closure = app_config.clone();
+        expanded_scopes_signal.map(move |_expanded_scopes| {
             render_tracked_file_as_tree_item_with_label_and_expanded_state(
                 tracked_file.clone(),
                 smart_label.clone(),
                 tracked_files.clone(),
                 selected_variables.clone(),
+                app_config_for_closure.clone(),
             )
             .into_element()
         })
@@ -348,8 +360,9 @@ pub fn files_panel_with_height(
             )
         })
         .child(files_panel(
-            tracked_files.clone(), 
+            tracked_files.clone(),
             selected_variables.clone(),
-            button().label("Load Files").disabled(true).build() // Placeholder - no file_dialog_visible access
+            button().label("Load Files").disabled(true).build(), // Placeholder - no file_dialog_visible access
+            app_config.clone(),
         ))
 }

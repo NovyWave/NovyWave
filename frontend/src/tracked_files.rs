@@ -12,7 +12,7 @@ use zoon::*;
 #[derive(Clone)]
 pub struct TrackedFiles {
     pub files: ActorVec<TrackedFile>,
-    // Removed files_vec_signal - use files.signal_vec().to_signal_cloned() instead
+    pub files_vec_signal: zoon::Mutable<Vec<TrackedFile>>,  // Dedicated Vec signal for sync
     pub config_files_loaded_relay: Relay<Vec<String>>,
     pub files_dropped_relay: Relay<Vec<std::path::PathBuf>>,
     pub file_removed_relay: Relay<String>,
@@ -38,6 +38,10 @@ impl TrackedFiles {
         let (all_files_cleared_relay, mut all_files_cleared_stream) = relay::<()>();
         let (file_parse_requested_relay, mut file_parse_requested_stream) = relay::<String>();
 
+        // Create dedicated vector signal to avoid SignalVec → Signal conversion antipattern
+        let files_vec_signal = zoon::Mutable::new(Vec::<TrackedFile>::new());
+        let files_vec_signal_for_actor = files_vec_signal.clone();
+
         // ActorVec handles all event processing within its processor - proper Actor+Relay architecture
         let files = ActorVec::new(vec![], async move |files_vec| {
             // ✅ Cache Current Values pattern - maintain local state within Actor loop
@@ -51,14 +55,28 @@ impl TrackedFiles {
                 select! {
                     file_paths = config_files_loaded_stream.next() => {
                         if let Some(file_paths) = file_paths {
+                            zoon::println!("📂 TRACKED_FILES: Config loading {} files", file_paths.len());
                             let tracked_files: Vec<TrackedFile> = file_paths.into_iter()
-                                .map(|path_str| create_tracked_file(path_str, FileState::Loading(LoadingStatus::Starting)))
+                                .map(|path_str| {
+                                    let tracked_file = create_tracked_file(path_str.clone(), FileState::Loading(LoadingStatus::Starting));
+                                    zoon::println!("📂 TRACKED_FILES: Created TrackedFile with ID: '{}' for path: '{}'", tracked_file.id, path_str);
+                                    tracked_file
+                                })
                                 .collect();
                             cached_files = tracked_files.clone();
                             {
                                 let mut vec = files_vec.lock_mut();
                                 vec.clear();
-                                vec.extend(tracked_files);
+                                vec.extend(tracked_files.clone());
+                            }
+                            // Update dedicated Vec signal
+                            files_vec_signal_for_actor.set_neq(cached_files.clone());
+                            zoon::println!("📂 TRACKED_FILES: Updated cached_files with {} items", cached_files.len());
+
+                            // Send parse requests for config-loaded files
+                            for file in tracked_files {
+                                zoon::println!("📤 Sending parse request for config file: {}", file.path);
+                                send_parse_request_to_backend(file.path.clone()).await;
                             }
                         }
                     }
@@ -74,8 +92,22 @@ impl TrackedFiles {
                             for new_file in new_files {
                                 let existing = cached_files.iter().any(|f| f.id == new_file.id);
                                 if !existing {
+                                    zoon::println!("📝 TRACKED_FILES: Adding new file with ID: '{}'", new_file.id);
                                     cached_files.push(new_file.clone());
-                                    files_vec.lock_mut().push_cloned(new_file);
+                                    files_vec.lock_mut().push_cloned(new_file.clone());
+                                    // Update dedicated Vec signal
+                                    let current_value_before = files_vec_signal_for_actor.get_cloned();
+                                    zoon::println!("📝 TRACKED_FILES: Before set_neq - current signal has {} files", current_value_before.len());
+                                    let new_files_vec = cached_files.clone();
+                                    zoon::println!("📝 TRACKED_FILES: About to set_neq with {} files", new_files_vec.len());
+                                    files_vec_signal_for_actor.set_neq(new_files_vec.clone());
+                                    let current_value_after = files_vec_signal_for_actor.get_cloned();
+                                    zoon::println!("📝 TRACKED_FILES: After set_neq - signal now has {} files", current_value_after.len());
+                                    zoon::println!("📝 TRACKED_FILES: Signal should have triggered with: {:?}", current_value_after.iter().map(|f| &f.path).collect::<Vec<_>>());
+
+                                    // Send parse request to backend for the new file
+                                    zoon::println!("📤 Sending parse request for file: {}", new_file.path);
+                                    send_parse_request_to_backend(new_file.path.clone()).await;
                                 }
                             }
                         }
@@ -84,6 +116,8 @@ impl TrackedFiles {
                         if let Some(file_id) = file_id {
                             cached_files.retain(|f| f.id != file_id);
                             files_vec.lock_mut().retain(|f| f.id != file_id);
+                            // Update dedicated Vec signal
+                            files_vec_signal_for_actor.set_neq(cached_files.clone());
                         }
                     }
                     file_id = file_reload_requested_stream.next() => {
@@ -101,13 +135,32 @@ impl TrackedFiles {
                                 // Update files_vec properly
                                 let mut files = files_vec.lock_mut();
                                 files.retain(|f| f.id != file_id);
-                                files.push_cloned(new_file);
+                                files.push_cloned(new_file.clone());
+
+                                // Send parse request for reloaded file
+                                zoon::println!("📤 Sending parse request for reloaded file: {}", new_file.path);
+                                send_parse_request_to_backend(new_file.path.clone()).await;
                             }
                         }
                     }
                     load_result = file_load_completed_stream.next() => {
                         if let Some((file_id, new_state)) = load_result {
+                            zoon::println!("🎯 TRACKED_FILES: Received file_load_completed for file_id: '{}'", file_id);
+                            zoon::println!("🎯 TRACKED_FILES: New state type: {}", match &new_state {
+                                FileState::Loading(_) => "Loading",
+                                FileState::Loaded(_) => "Loaded",
+                                FileState::Failed(_) => "Failed",
+                                FileState::Missing(_) => "Missing",
+                                FileState::Unsupported(_) => "Unsupported",
+                            });
                             cached_loading_states.insert(file_id.clone(), new_state.clone());
+
+                            // Debug: Print all cached file IDs
+                            zoon::println!("🔍 TRACKED_FILES: Looking for file_id '{}' in {} cached_files", file_id, cached_files.len());
+                            for (index, cached_file) in cached_files.iter().enumerate() {
+                                zoon::println!("🔍 TRACKED_FILES: cached_files[{}] ID: '{}' (equal: {})",
+                                    index, cached_file.id, cached_file.id == file_id);
+                            }
 
                             // Update cached state
                             if let Some(file) = cached_files.iter_mut().find(|f| f.id == file_id) {
@@ -117,6 +170,10 @@ impl TrackedFiles {
                                     vec.clear();
                                     vec.extend(cached_files.clone());
                                 }
+                                // Update dedicated Vec signal
+                                files_vec_signal_for_actor.set_neq(cached_files.clone());
+                                zoon::println!("✅ TRACKED_FILES: Found matching file, updating state");
+                                zoon::println!("🎯 TRACKED_FILES: Updated files_vec_signal with {} files", cached_files.len());
 
                                 let all_done = cached_files.iter().all(|f| {
                                     matches!(f.state, shared::FileState::Loaded(_) | shared::FileState::Failed(_))
@@ -125,6 +182,8 @@ impl TrackedFiles {
                                 if all_done && !all_files_loaded_signaled {
                                     all_files_loaded_signaled = true;
                                 }
+                            } else {
+                                zoon::println!("❌ TRACKED_FILES: No matching file found for ID: '{}'", file_id);
                             }
                         }
                     }
@@ -141,6 +200,8 @@ impl TrackedFiles {
                                 vec.clear();
                                 vec.extend(cached_files.clone());
                             }
+                            // Update dedicated Vec signal
+                            files_vec_signal_for_actor.set_neq(cached_files.clone());
                         }
                     }
                     loading_result = loading_started_stream.next() => {
@@ -160,9 +221,13 @@ impl TrackedFiles {
                                     vec.clear();
                                     vec.extend(cached_files.clone());
                                 }
+                                // Update dedicated Vec signal
+                                files_vec_signal_for_actor.set_neq(cached_files.clone());
                             } else {
                                 cached_files.push(loading_file.clone());
                                 files_vec.lock_mut().push_cloned(loading_file);
+                                // Update dedicated Vec signal
+                                files_vec_signal_for_actor.set_neq(cached_files.clone());
                             }
                         }
                     }
@@ -170,6 +235,8 @@ impl TrackedFiles {
                         if let Some(()) = clear_result {
                             cached_files.clear();
                             files_vec.lock_mut().clear();
+                            // Update dedicated Vec signal
+                            files_vec_signal_for_actor.set_neq(Vec::new());
                         }
                     }
                     file_path = file_parse_requested_stream.next() => {
@@ -185,6 +252,7 @@ impl TrackedFiles {
 
         Self {
             files,
+            files_vec_signal,
             config_files_loaded_relay,
             files_dropped_relay,
             file_removed_relay,

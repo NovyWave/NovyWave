@@ -50,7 +50,12 @@ pub fn process_file_picker_selection(
             let tracked_files = &tracked_files;
 
             if !new_files.is_empty() {
+                zoon::println!("📤 FILE_OPERATIONS: Sending {} files through files_dropped_relay", new_files.len());
+                for file in &new_files {
+                    zoon::println!("  📄 File: {:?}", file);
+                }
                 tracked_files.files_dropped_relay.send(new_files);
+                zoon::println!("✅ FILE_OPERATIONS: Sent files through relay");
             }
 
             if !reload_files.is_empty() {
