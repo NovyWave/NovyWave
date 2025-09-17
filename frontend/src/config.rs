@@ -337,8 +337,13 @@ impl FilePickerDomain {
                     }
                     file_path = file_deselected_stream.next() => {
                         if let Some(file_path) = file_path {
+                            zoon::println!("📥 FilePickerDomain received deselection: {}", file_path);
+                            let before_count = files_vec.lock_ref().len();
                             files_vec.lock_mut().retain(|f| f != &file_path);
+                            let after_count = files_vec.lock_ref().len();
+                            zoon::println!("   Files count: {} → {}", before_count, after_count);
                             let current_files = files_vec.lock_ref().to_vec();
+                            zoon::println!("   Updating selected_files_vec_signal with: {:?}", current_files);
                             selected_files_vec_signal_clone.set_neq(current_files);
                         }
                     }

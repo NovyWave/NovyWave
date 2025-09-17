@@ -414,6 +414,12 @@ pub fn file_paths_dialog(
                                                                         .s(Gap::new().x(8))
                                                                         .s(Align::new().center_y())
                                                                         .s(Font::new().size(14).color_signal(neutral_11()))
+                                                                        .update_raw_el({
+                                                                            let path_for_tooltip = path.clone();
+                                                                            move |raw_el| {
+                                                                                raw_el.attr("title", &path_for_tooltip)
+                                                                            }
+                                                                        })
                                                                         .item(Text::new(&extract_filename(&path)))
                                                                         .item(
                                                                             Button::new()
@@ -427,6 +433,7 @@ pub fn file_paths_dialog(
                                                                                 .on_press({
                                                                                     let path = path.to_string();
                                                                                     move || {
+                                                                                        zoon::println!("🗑️ Badge X clicked for: {}", path);
                                                                                         file_picker_domain_for_tag.file_deselected_relay.send(path.clone());
                                                                                     }
                                                                                 })
@@ -624,11 +631,8 @@ pub fn file_picker_tree(
                             external_expanded.clone(),
                         );
 
-                        // Create sync actors for selected files
-                        let selected_files_sync = SelectedFilesSyncActors::new(
-                            domain_for_treeview.clone(),
-                            selected_files.clone(),
-                        );
+                        // Selected files sync is already created in file_picker_content
+                        // Don't create duplicate sync actors
 
                         // Store initialization actor for proper lifecycle management
                         let _initialization_actor = initialization_actor_for_closure.clone();
@@ -639,7 +643,6 @@ pub fn file_picker_tree(
                             .after_remove(move |_| {
                                 // Keep all actors alive until element drops
                                 drop(sync_actors);
-                                drop(selected_files_sync);
                                 drop(_initialization_actor);
                             })
                             // Signal tree rendering completion for scroll position coordination

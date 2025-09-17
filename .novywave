@@ -20,7 +20,7 @@ load_files_expanded_directories = [
     "/home/martinkavik/repos/NovyWave/test_files",
     "/home/martinkavik/repos/NovyWave/test_files/nested_dir",
 ]
-load_files_scroll_position = 845
+load_files_scroll_position = 973
 selected_variables = []
 timeline_cursor_position_ns = 0
 timeline_zoom_level = 1.0

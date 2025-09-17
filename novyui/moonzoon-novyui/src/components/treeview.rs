@@ -623,15 +623,29 @@ fn render_tree_item(
                     .s(Borders::new())
                     .s(Align::new().center_y())
                     .s(Cursor::new(CursorIcon::Pointer))
-                    .label_signal(selected_items.signal_ref({
-                        let item_id = item_id.clone();
-                        move |selected| {
-                            CheckboxBuilder::new()
-                                .size(CheckboxSize::Small)
-                                .checked(selected.contains(&item_id))
-                                .build()
-                        }
-                    }))
+                    .label_signal(if let Some(ref vec_state) = external_selected_vec {
+                        // Use MutableVec signal when provided
+                        vec_state.signal_vec_cloned().to_signal_cloned().map({
+                            let item_id = item_id.clone();
+                            move |selected_vec| {
+                                CheckboxBuilder::new()
+                                    .size(CheckboxSize::Small)
+                                    .checked(selected_vec.contains(&item_id))
+                                    .build()
+                            }
+                        }).boxed_local()
+                    } else {
+                        // Use IndexSet signal as fallback
+                        selected_items.signal_ref({
+                            let item_id = item_id.clone();
+                            move |selected| {
+                                CheckboxBuilder::new()
+                                    .size(CheckboxSize::Small)
+                                    .checked(selected.contains(&item_id))
+                                    .build()
+                            }
+                        }).boxed_local()
+                    })
                     .on_press_event({
                         let item_id = item_id.clone();
                         let selected_items = selected_items.clone();
