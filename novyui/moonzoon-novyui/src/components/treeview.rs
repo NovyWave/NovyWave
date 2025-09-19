@@ -1,7 +1,7 @@
-use zoon::*;
-use crate::tokens::*;
 use crate::components::*;
+use crate::tokens::*;
 use indexmap::IndexSet;
+use zoon::*;
 // Force recompilation to test hover remove buttons
 
 // Tree node data structure matching Vue TreeViewItemData interface
@@ -18,7 +18,7 @@ pub struct TreeViewItemData {
     pub is_waveform_file: Option<bool>,
     pub tooltip: Option<String>, // Hover tooltip text (usually full file path)
     pub error_message: Option<String>, // Error message for problematic files
-    // Removed styled_label field due to Zoon trait compatibility issues
+                                 // Removed styled_label field due to Zoon trait compatibility issues
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -86,9 +86,9 @@ impl TreeViewItemData {
         self
     }
 
-    pub fn on_remove<F>(mut self, callback: F) -> Self 
-    where 
-        F: Fn(&str) + 'static 
+    pub fn on_remove<F>(mut self, callback: F) -> Self
+    where
+        F: Fn(&str) + 'static,
     {
         self.on_remove = Some(std::rc::Rc::new(callback));
         self
@@ -116,7 +116,9 @@ impl TreeViewItemData {
         if let Some(has_expandable) = self.has_expandable_content {
             has_expandable
         } else {
-            self.children.as_ref().map_or(false, |children| !children.is_empty())
+            self.children
+                .as_ref()
+                .map_or(false, |children| !children.is_empty())
         }
     }
 
@@ -247,7 +249,7 @@ impl TreeViewBuilder {
         } else {
             Mutable::new(IndexSet::from_iter(self.default_selected.clone()))
         };
-        
+
         // Store external_vec reference separately for direct handling
         let external_selected_vec = self.external_selected_vec;
 
@@ -272,44 +274,44 @@ impl TreeViewBuilder {
             })
             .s(Gap::new().y(SPACING_2))
             .items(
-                data.into_iter().map({
-                    let expanded_items = expanded_items.clone();
-                    let selected_items = selected_items.clone();
-                    let focused_item = focused_item.clone();
-                    let external_expanded_ref = external_expanded_ref.clone();
-                    let external_selected_vec = external_selected_vec.clone();
-                    move |item| {
-                        render_tree_item(
-                            item,
-                            0,
-                            size,
-                            variant,
-                            show_icons,
-                            show_checkboxes,
-                            show_checkboxes_on_scopes_only,
-                            single_scope_selection,
-                            disabled,
-                            expanded_items.clone(),
-                            selected_items.clone(),
-                            focused_item.clone(),
-                            external_expanded_ref.clone(),
-                            external_selected_vec.clone(),
-                        ).unify()
-                    }
-                }).collect::<Vec<_>>()
+                data.into_iter()
+                    .map({
+                        let expanded_items = expanded_items.clone();
+                        let selected_items = selected_items.clone();
+                        let focused_item = focused_item.clone();
+                        let external_expanded_ref = external_expanded_ref.clone();
+                        let external_selected_vec = external_selected_vec.clone();
+                        move |item| {
+                            render_tree_item(
+                                item,
+                                0,
+                                size,
+                                variant,
+                                show_icons,
+                                show_checkboxes,
+                                show_checkboxes_on_scopes_only,
+                                single_scope_selection,
+                                disabled,
+                                expanded_items.clone(),
+                                selected_items.clone(),
+                                focused_item.clone(),
+                                external_expanded_ref.clone(),
+                                external_selected_vec.clone(),
+                            )
+                            .unify()
+                        }
+                    })
+                    .collect::<Vec<_>>(),
             );
 
         // Apply variant-specific styling
         match variant {
-            TreeViewVariant::Basic => {
-                tree_container
-                    .s(Background::new().color("transparent"))
-            }
+            TreeViewVariant::Basic => tree_container.s(Background::new().color("transparent")),
             TreeViewVariant::Bordered => {
                 tree_container
                     .s(Background::new().color_signal(theme().map(|t| match t {
                         Theme::Light => "oklch(100% 0 0)", // neutral_1 light
-                        Theme::Dark => "oklch(10% 0 0)", // neutral_1 dark
+                        Theme::Dark => "oklch(10% 0 0)",   // neutral_1 dark
                     })))
                     .s(Borders::all_signal(theme().map(|t| match t {
                         Theme::Light => Border::new().width(1).color("oklch(85% 0.14 250)"), // neutral_4 light
@@ -322,7 +324,7 @@ impl TreeViewBuilder {
                 tree_container
                     .s(Background::new().color_signal(theme().map(|t| match t {
                         Theme::Light => "oklch(100% 0 0)", // neutral_1 light
-                        Theme::Dark => "oklch(10% 0 0)", // neutral_1 dark
+                        Theme::Dark => "oklch(10% 0 0)",   // neutral_1 dark
                     })))
                     .s(Shadows::new([
                         Shadow::new().blur(3).y(1).color("oklch(65% 0.14 250)20"), // neutral_9 with alpha
@@ -349,7 +351,7 @@ fn handle_selection_change(
 ) {
     let mut selected = selected_items.lock_mut();
     let is_selected = selected.contains(item_id);
-    
+
     // Handle scope selection logic
     if item_id.starts_with("scope_") {
         // Special handling for scopes when single_scope_selection is enabled
@@ -378,7 +380,6 @@ fn handle_selection_change(
             selected.insert(item_id.to_string());
         }
     }
-    
 }
 
 // Helper function for MutableVec selection changes
@@ -388,7 +389,7 @@ fn handle_selection_change_vec(
     single_scope_selection: bool,
 ) {
     let mut selected = selected_items_vec.lock_mut();
-    
+
     // Handle scope selection logic
     if item_id.starts_with("scope_") {
         // Special handling for scopes when single_scope_selection is enabled
@@ -417,9 +418,7 @@ fn handle_selection_change_vec(
             selected.push_cloned(item_id.to_string());
         }
     }
-    
 }
-
 
 // Render individual tree item with full functionality
 fn render_tree_item(
@@ -441,13 +440,12 @@ fn render_tree_item(
     let item_id = item.id.clone();
     let has_children = item.has_children();
     let is_disabled = tree_disabled || item.is_disabled();
-    
-    
+
     // Clone values needed for closures before moving
     let item_id_for_remove = item_id.clone();
     let item_on_remove = item.on_remove.clone();
     let item_type = item.item_type;
-    
+
     // Hover state for remove button
     // Hover state tracking for interactive tree item styling
     #[allow(unused_variables)]
@@ -1052,12 +1050,9 @@ fn render_tree_item(
             el
         });
 
-    
     // Create the base column with the item row
-    let mut column = Column::new()
-        .s(Width::growable())
-        .item(item_row);
-    
+    let mut column = Column::new().s(Width::growable()).item(item_row);
+
     // Add children using item_signal for reactivity
     if has_children {
         column = column.item_signal({
@@ -1065,22 +1060,27 @@ fn render_tree_item(
             let item_children = item.children.clone();
             let expanded_items = expanded_items.clone();
             let external_expanded = external_expanded.clone();
-            
+
             // Create signal based on expansion source
             let expansion_signal = if let Some(external) = external_expanded.clone() {
-                external.signal_ref(move |expanded_set| expanded_set.contains(&item_id)).boxed()
+                external
+                    .signal_ref(move |expanded_set| expanded_set.contains(&item_id))
+                    .boxed()
             } else {
-                expanded_items.signal_ref(move |expanded_set| expanded_set.contains(&item_id)).boxed()
+                expanded_items
+                    .signal_ref(move |expanded_set| expanded_set.contains(&item_id))
+                    .boxed()
             };
-            
+
             expansion_signal.map(move |is_expanded| {
                 if is_expanded {
                     Some(
                         Column::new()
                             .s(Width::growable())
-                            .items(
-                                if let Some(children) = &item_children {
-                                    children.iter().map({
+                            .items(if let Some(children) = &item_children {
+                                children
+                                    .iter()
+                                    .map({
                                         let expanded_items = expanded_items.clone();
                                         let selected_items = selected_items.clone();
                                         let focused_item = focused_item.clone();
@@ -1102,17 +1102,16 @@ fn render_tree_item(
                                                 focused_item.clone(),
                                                 external_expanded.clone(),
                                                 external_selected_vec.clone(),
-                                            ).unify()
+                                            )
+                                            .unify()
                                         }
-                                    }).collect::<Vec<_>>()
-                                } else {
-                                    Vec::new()
-                                }
-                            )
-                            .update_raw_el(|raw_el| {
-                                raw_el.attr("role", "group")
+                                    })
+                                    .collect::<Vec<_>>()
+                            } else {
+                                Vec::new()
                             })
-                            .into_element()
+                            .update_raw_el(|raw_el| raw_el.attr("role", "group"))
+                            .into_element(),
                     )
                 } else {
                     None
@@ -1120,7 +1119,7 @@ fn render_tree_item(
             })
         });
     }
-    
+
     column
 }
 

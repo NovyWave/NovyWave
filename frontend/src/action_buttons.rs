@@ -1,8 +1,8 @@
+use crate::dataflow::atom::Atom;
 use moonzoon_novyui::tokens::color::neutral_8;
 use moonzoon_novyui::tokens::theme::Theme;
 use moonzoon_novyui::*;
 use zoon::*;
-use crate::dataflow::atom::Atom;
 
 /// Load files button with progress indicator
 pub fn load_files_button_with_progress(
@@ -10,46 +10,46 @@ pub fn load_files_button_with_progress(
     variant: ButtonVariant,
     size: ButtonSize,
     icon: Option<IconName>,
-    file_dialog_visible: Atom<bool>
+    file_dialog_visible: Atom<bool>,
 ) -> impl Element {
     // Count files that are actually in loading state
     // Use files.signal_vec().to_signal_cloned() as per TrackedFiles architecture
-    let loading_count_signal = tracked_files.files.signal_vec()
-        .to_signal_cloned()
-        .map(move |files| {
-            files.iter()
-                .filter(|file| matches!(file.state, shared::FileState::Loading(_)))
-                .count()
-        });
+    let loading_count_signal =
+        tracked_files
+            .files
+            .signal_vec()
+            .to_signal_cloned()
+            .map(move |files| {
+                files
+                    .iter()
+                    .filter(|file| matches!(file.state, shared::FileState::Loading(_)))
+                    .count()
+            });
 
-    El::new().child_signal(
-        loading_count_signal.map(move |loading_count| {
-            let is_loading = loading_count > 0; // Only true when files are actively loading
-            let mut btn = button();
+    El::new().child_signal(loading_count_signal.map(move |loading_count| {
+        let is_loading = loading_count > 0; // Only true when files are actively loading
+        let mut btn = button();
 
-            if is_loading {
-                btn = btn.label("Loading...").disabled(true);
-                if let Some(icon) = icon {
-                    btn = btn.left_icon(icon);
-                }
-            } else {
-                btn = btn
-                    .label("Load Files")
-                    .on_press({
-                        let file_dialog_visible = file_dialog_visible.clone();
-                        move || file_dialog_visible.set(true)
-                    });
-                if let Some(icon) = icon {
-                    btn = btn.left_icon(icon);
-                }
+        if is_loading {
+            btn = btn.label("Loading...").disabled(true);
+            if let Some(icon) = icon {
+                btn = btn.left_icon(icon);
             }
+        } else {
+            btn = btn.label("Load Files").on_press({
+                let file_dialog_visible = file_dialog_visible.clone();
+                move || file_dialog_visible.set(true)
+            });
+            if let Some(icon) = icon {
+                btn = btn.left_icon(icon);
+            }
+        }
 
-            btn.variant(variant.clone())
-                .size(size.clone())
-                .build()
-                .into_element()
-        })
-    )
+        btn.variant(variant.clone())
+            .size(size.clone())
+            .build()
+            .into_element()
+    }))
 }
 
 /// Clear all files button
@@ -65,7 +65,10 @@ pub fn clear_all_files_button(
         .variant(ButtonVariant::DestructiveGhost)
         .size(ButtonSize::Small)
         .on_press(move || {
-            crate::file_operations::clear_all_files(&tracked_files_clone, &selected_variables_clone);
+            crate::file_operations::clear_all_files(
+                &tracked_files_clone,
+                &selected_variables_clone,
+            );
         })
         .build()
 }
@@ -121,21 +124,26 @@ pub fn dock_toggle_button(app_config: &crate::config::AppConfig) -> impl Element
             })
             .left_icon_element(move || {
                 El::new()
-                    .child_signal(app_config_for_icon.dock_mode_actor.signal().map(|dock_mode| {
-                        let is_docked = matches!(dock_mode, shared::DockMode::Bottom);
-                        let icon_el = icon(IconName::ArrowDownToLine)
-                            .size(IconSize::Small)
-                            .color(IconColor::Primary)
-                            .build();
-                        if is_docked {
-                            El::new()
-                                .s(Transform::new().rotate(-90))
-                                .child(icon_el)
-                                .into_element()
-                        } else {
-                            El::new().child(icon_el).into_element()
-                        }
-                    }))
+                    .child_signal(
+                        app_config_for_icon
+                            .dock_mode_actor
+                            .signal()
+                            .map(|dock_mode| {
+                                let is_docked = matches!(dock_mode, shared::DockMode::Bottom);
+                                let icon_el = icon(IconName::ArrowDownToLine)
+                                    .size(IconSize::Small)
+                                    .color(IconColor::Primary)
+                                    .build();
+                                if is_docked {
+                                    El::new()
+                                        .s(Transform::new().rotate(-90))
+                                        .child(icon_el)
+                                        .into_element()
+                                } else {
+                                    El::new().child(icon_el).into_element()
+                                }
+                            }),
+                    )
                     .unify()
             })
             .variant(ButtonVariant::Outline)

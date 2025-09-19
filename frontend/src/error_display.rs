@@ -1,6 +1,6 @@
-use zoon::*;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use futures::StreamExt;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use zoon::*;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ErrorAlert {
@@ -126,8 +126,9 @@ pub struct ErrorDisplay {
 impl ErrorDisplay {
     pub async fn new() -> Self {
         let (toast_added_relay, mut toast_added_stream) = crate::dataflow::relay::<ErrorAlert>();
-        let (toast_dismissed_relay, mut toast_dismissed_stream) = crate::dataflow::relay::<String>();
-        
+        let (toast_dismissed_relay, mut toast_dismissed_stream) =
+            crate::dataflow::relay::<String>();
+
         let active_toasts = crate::dataflow::ActorVec::new(vec![], async move |toasts| {
             loop {
                 futures::select! {
@@ -144,25 +145,33 @@ impl ErrorDisplay {
                 }
             }
         });
-        
-        Self { active_toasts, toast_added_relay, toast_dismissed_relay }
+
+        Self {
+            active_toasts,
+            toast_added_relay,
+            toast_dismissed_relay,
+        }
     }
 }
 
-
-
 pub async fn add_error_alert(mut alert: ErrorAlert, app_config: &crate::config::AppConfig) {
     zoon::println!("Error: {}", alert.technical_error);
-    
+
     let toast_id = TOAST_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
     alert.id = format!("toast_{}", toast_id);
-    
-    if let Some(dismiss_ms) = app_config.toast_dismiss_ms_actor.signal().to_stream().next().await {
+
+    if let Some(dismiss_ms) = app_config
+        .toast_dismiss_ms_actor
+        .signal()
+        .to_stream()
+        .next()
+        .await
+    {
         alert.auto_dismiss_ms = dismiss_ms as u64;
     } else {
         alert.auto_dismiss_ms = 5000;
     }
-    
+
     app_config.error_display.toast_added_relay.send(alert);
 }
 
@@ -174,10 +183,14 @@ pub fn log_error_console_only(alert: ErrorAlert) {
 }
 
 pub async fn dismiss_error_alert(id: &str, app_config: &crate::config::AppConfig) {
-    app_config.error_display.toast_dismissed_relay.send(id.to_string());
+    app_config
+        .error_display
+        .toast_dismissed_relay
+        .send(id.to_string());
 }
 
-pub fn active_toasts_signal_vec(app_config: crate::config::AppConfig) -> impl zoon::SignalVec<Item = ErrorAlert> {
+pub fn active_toasts_signal_vec(
+    app_config: crate::config::AppConfig,
+) -> impl zoon::SignalVec<Item = ErrorAlert> {
     app_config.error_display.active_toasts.signal_vec()
 }
-

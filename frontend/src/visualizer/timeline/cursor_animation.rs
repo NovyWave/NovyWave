@@ -4,8 +4,8 @@
 //! for coordinated smooth cursor movement animations in the timeline.
 
 use crate::dataflow::{Actor, Relay, relay};
-use zoon::*;
 use futures::{StreamExt, select};
+use zoon::*;
 
 // Import time domain
 use super::time_domain::TimeNs;
@@ -14,11 +14,11 @@ use super::time_domain::TimeNs;
 #[derive(Clone, Debug)]
 pub struct CursorAnimationController {
     /// Cursor animation state actors
-    pub cursor_animation_position: Actor<f64>,     // Current position in seconds (high precision)
-    pub cursor_animation_target: Actor<f64>,       // Target position in seconds  
-    pub cursor_animation_active: Actor<bool>,      // Animation active flag
-    pub cursor_animation_direction: Actor<i8>,     // -1 for left, 1 for right, 0 for stopped
-    
+    pub cursor_animation_position: Actor<f64>, // Current position in seconds (high precision)
+    pub cursor_animation_target: Actor<f64>, // Target position in seconds
+    pub cursor_animation_active: Actor<bool>, // Animation active flag
+    pub cursor_animation_direction: Actor<i8>, // -1 for left, 1 for right, 0 for stopped
+
     /// Animation state relays
     pub cursor_moving_left_started_relay: Relay<()>,
     pub cursor_moving_left_stopped_relay: Relay<()>,
@@ -32,19 +32,19 @@ impl CursorAnimationController {
         cursor_moving_left: Actor<bool>,
         cursor_moving_right: Actor<bool>,
     ) -> Self {
-        // Create animation state relays  
+        // Create animation state relays
         let (cursor_moving_left_started_relay, cursor_moving_left_started_stream) = relay::<()>();
         let (cursor_moving_left_stopped_relay, cursor_moving_left_stopped_stream) = relay::<()>();
         let (cursor_moving_right_started_relay, cursor_moving_right_started_stream) = relay::<()>();
         let (cursor_moving_right_stopped_relay, cursor_moving_right_stopped_stream) = relay::<()>();
-        
+
         // Cursor animation actors for smooth cursor movement
         let cursor_animation_position = Actor::new(0.0f64, {
             let cursor_position_for_animation = cursor_position.clone();
             async move |position_handle| {
                 // Track actual cursor position changes for animation
                 let mut cursor_stream = cursor_position_for_animation.signal().to_stream().fuse();
-                
+
                 loop {
                     select! {
                         cursor_update = cursor_stream.next() => {
@@ -61,16 +61,18 @@ impl CursorAnimationController {
                 }
             }
         });
-        
+
         let cursor_animation_target = Actor::new(0.0f64, {
             let cursor_moving_left_for_target = cursor_moving_left.clone();
             let cursor_moving_right_for_target = cursor_moving_right.clone();
             let cursor_position_for_target = cursor_position.clone();
             async move |target_handle| {
                 let mut cursor_stream = cursor_position_for_target.signal().to_stream().fuse();
-                let mut moving_left_stream = cursor_moving_left_for_target.signal().to_stream().fuse();
-                let mut moving_right_stream = cursor_moving_right_for_target.signal().to_stream().fuse();
-                
+                let mut moving_left_stream =
+                    cursor_moving_left_for_target.signal().to_stream().fuse();
+                let mut moving_right_stream =
+                    cursor_moving_right_for_target.signal().to_stream().fuse();
+
                 loop {
                     select! {
                         cursor_update = cursor_stream.next() => {
@@ -107,14 +109,16 @@ impl CursorAnimationController {
                 }
             }
         });
-        
+
         let cursor_animation_active = Actor::new(false, {
             let cursor_moving_left_for_active = cursor_moving_left.clone();
             let cursor_moving_right_for_active = cursor_moving_right.clone();
             async move |active_handle| {
-                let mut moving_left_stream = cursor_moving_left_for_active.signal().to_stream().fuse();
-                let mut moving_right_stream = cursor_moving_right_for_active.signal().to_stream().fuse();
-                
+                let mut moving_left_stream =
+                    cursor_moving_left_for_active.signal().to_stream().fuse();
+                let mut moving_right_stream =
+                    cursor_moving_right_for_active.signal().to_stream().fuse();
+
                 loop {
                     select! {
                         moving_left = moving_left_stream.next() => {
@@ -134,14 +138,18 @@ impl CursorAnimationController {
                 }
             }
         });
-        
+
         let cursor_animation_direction = Actor::new(0i8, {
             let cursor_moving_left_for_direction = cursor_moving_left.clone();
             let cursor_moving_right_for_direction = cursor_moving_right.clone();
             async move |direction_handle| {
-                let mut moving_left_stream = cursor_moving_left_for_direction.signal().to_stream().fuse();
-                let mut moving_right_stream = cursor_moving_right_for_direction.signal().to_stream().fuse();
-                
+                let mut moving_left_stream =
+                    cursor_moving_left_for_direction.signal().to_stream().fuse();
+                let mut moving_right_stream = cursor_moving_right_for_direction
+                    .signal()
+                    .to_stream()
+                    .fuse();
+
                 loop {
                     select! {
                         moving_left = moving_left_stream.next() => {
@@ -163,7 +171,7 @@ impl CursorAnimationController {
                 }
             }
         });
-        
+
         Self {
             cursor_animation_position,
             cursor_animation_target,

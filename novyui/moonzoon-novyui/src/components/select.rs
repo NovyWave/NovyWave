@@ -1,8 +1,8 @@
 // Select Component
 // Dropdown select component with proper dropdown functionality
 
+use crate::components::icon::{IconBuilder, IconColor, IconName, IconSize};
 use crate::tokens::*;
-use crate::components::icon::{IconBuilder, IconName, IconSize, IconColor};
 use zoon::*;
 
 // Select sizes
@@ -122,13 +122,27 @@ impl SelectBuilder {
     }
 
     // Placeholder methods for compatibility
-    pub fn multiple(self, _multiple: bool) -> Self { self }
-    pub fn searchable(self, _searchable: bool) -> Self { self }
-    pub fn search_placeholder(self, _placeholder: impl Into<String>) -> Self { self }
-    pub fn selected_values(self, _values: Vec<String>) -> Self { self }
-    pub fn error(self, _error: bool) -> Self { self }
-    pub fn required(self, _required: bool) -> Self { self }
-    pub fn no_options_text(self, _text: impl Into<String>) -> Self { self }
+    pub fn multiple(self, _multiple: bool) -> Self {
+        self
+    }
+    pub fn searchable(self, _searchable: bool) -> Self {
+        self
+    }
+    pub fn search_placeholder(self, _placeholder: impl Into<String>) -> Self {
+        self
+    }
+    pub fn selected_values(self, _values: Vec<String>) -> Self {
+        self
+    }
+    pub fn error(self, _error: bool) -> Self {
+        self
+    }
+    pub fn required(self, _required: bool) -> Self {
+        self
+    }
+    pub fn no_options_text(self, _text: impl Into<String>) -> Self {
+        self
+    }
 
     pub fn build(self) -> impl Element {
         // State management
@@ -144,7 +158,10 @@ impl SelectBuilder {
 
         let disabled = self.disabled;
         let options = self.options.clone();
-        let placeholder_text = self.placeholder.clone().unwrap_or_else(|| "Select an option...".to_string());
+        let placeholder_text = self
+            .placeholder
+            .clone()
+            .unwrap_or_else(|| "Select an option...".to_string());
 
         // Create the select trigger (the clickable part)
         let min_width = self.min_width.unwrap_or(320);
@@ -152,26 +169,30 @@ impl SelectBuilder {
             .s(Width::default().min(min_width)) // Configurable min-width
             .s(Padding::new().x(padding_x).y(padding_y))
             .s(Borders::all_signal(theme().map(|t| {
-                Border::new()
-                    .width(1)
-                    .color(match t {
-                        Theme::Light => "oklch(75% 0.14 250)", // neutral_4
-                        Theme::Dark => "oklch(25% 0.14 250)", // neutral_4 dark
-                    })
+                Border::new().width(1).color(match t {
+                    Theme::Light => "oklch(75% 0.14 250)", // neutral_4
+                    Theme::Dark => "oklch(25% 0.14 250)",  // neutral_4 dark
+                })
             })))
             .s(RoundedCorners::all(6))
-            .s(Background::new().color_signal(theme().map(move |t| match t {
-                Theme::Light => if disabled {
-                    "oklch(92% 0.02 0)" // neutral gray without cyan tint
-                } else {
-                    "oklch(100% 0 0)" // white
-                },
-                Theme::Dark => if disabled {
-                    "oklch(18% 0.02 0)" // dark neutral gray without cyan tint
-                } else {
-                    "oklch(10% 0.14 250)" // neutral_2 dark
-                },
-            })))
+            .s(
+                Background::new().color_signal(theme().map(move |t| match t {
+                    Theme::Light => {
+                        if disabled {
+                            "oklch(92% 0.02 0)" // neutral gray without cyan tint
+                        } else {
+                            "oklch(100% 0 0)" // white
+                        }
+                    }
+                    Theme::Dark => {
+                        if disabled {
+                            "oklch(18% 0.02 0)" // dark neutral gray without cyan tint
+                        } else {
+                            "oklch(10% 0.14 250)" // neutral_2 dark
+                        }
+                    }
+                })),
+            )
             .s(Cursor::new(if disabled {
                 CursorIcon::NotAllowed
             } else {
@@ -181,81 +202,73 @@ impl SelectBuilder {
             .item(
                 El::new()
                     .s(Width::fill())
-                    .child_signal(
-                        selected_value.signal_cloned().map({
-                            let options = options.clone();
-                            let placeholder_text = placeholder_text.clone();
-                            move |selected| {
-                                let display_text = if let Some(ref value) = selected {
-                                    // Find the label for the selected value
-                                    options
-                                        .iter()
-                                        .find(|opt| opt.value == *value)
-                                        .map(|opt| opt.label.clone())
-                                        .unwrap_or_else(|| value.clone())
-                                } else {
-                                    placeholder_text.clone()
-                                };
+                    .child_signal(selected_value.signal_cloned().map({
+                        let options = options.clone();
+                        let placeholder_text = placeholder_text.clone();
+                        move |selected| {
+                            let display_text = if let Some(ref value) = selected {
+                                // Find the label for the selected value
+                                options
+                                    .iter()
+                                    .find(|opt| opt.value == *value)
+                                    .map(|opt| opt.label.clone())
+                                    .unwrap_or_else(|| value.clone())
+                            } else {
+                                placeholder_text.clone()
+                            };
 
-                                El::new()
-                                    .child(Text::new(&display_text))
-                                    .s(Font::new()
-                                        .size(font_size)
-                                        .color_signal(theme().map(move |t| {
-                                            if disabled {
-                                                match t {
-                                                    Theme::Light => "oklch(45% 0.14 250)", // neutral_6
-                                                    Theme::Dark => "oklch(55% 0.14 250)", // neutral_6 dark
-                                                }
-                                            } else if selected.is_none() {
-                                                match t {
-                                                    Theme::Light => "oklch(65% 0.14 250)", // neutral_7 (placeholder)
-                                                    Theme::Dark => "oklch(45% 0.14 250)", // neutral_7 dark
-                                                }
-                                            } else {
-                                                match t {
-                                                    Theme::Light => "oklch(15% 0.14 250)", // neutral_9
-                                                    Theme::Dark => "oklch(95% 0.14 250)", // neutral_11 dark
-                                                }
-                                            }
-                                        }))
-                                    )
-                            }
-                        })
-                    )
+                            El::new().child(Text::new(&display_text)).s(Font::new()
+                                .size(font_size)
+                                .color_signal(theme().map(move |t| {
+                                    if disabled {
+                                        match t {
+                                            Theme::Light => "oklch(45% 0.14 250)", // neutral_6
+                                            Theme::Dark => "oklch(55% 0.14 250)",  // neutral_6 dark
+                                        }
+                                    } else if selected.is_none() {
+                                        match t {
+                                            Theme::Light => "oklch(65% 0.14 250)", // neutral_7 (placeholder)
+                                            Theme::Dark => "oklch(45% 0.14 250)",  // neutral_7 dark
+                                        }
+                                    } else {
+                                        match t {
+                                            Theme::Light => "oklch(15% 0.14 250)", // neutral_9
+                                            Theme::Dark => "oklch(95% 0.14 250)", // neutral_11 dark
+                                        }
+                                    }
+                                })))
+                        }
+                    })),
             )
             .item(
                 // Chevron icon
-                El::new()
-                    .child_signal(
-                        map_ref! {
-                            let theme = theme(),
-                            let is_open = is_open.signal() => {
-                                let color = if disabled {
-                                    match *theme {
-                                        Theme::Light => "oklch(45% 0.14 250)", // neutral_6
-                                        Theme::Dark => "oklch(55% 0.14 250)", // neutral_6 dark
-                                    }
-                                } else {
-                                    match *theme {
-                                        Theme::Light => "oklch(65% 0.14 250)", // neutral_7
-                                        Theme::Dark => "oklch(45% 0.14 250)", // neutral_7 dark
-                                    }
-                                };
-
-                                let icon_name = if *is_open {
-                                    IconName::ChevronUp
-                                } else {
-                                    IconName::ChevronDown
-                                };
-
-                                IconBuilder::new(icon_name)
-                                    .size(IconSize::Small)
-                                    .color(IconColor::Custom(color))
-                                    .build()
+                El::new().child_signal(map_ref! {
+                    let theme = theme(),
+                    let is_open = is_open.signal() => {
+                        let color = if disabled {
+                            match *theme {
+                                Theme::Light => "oklch(45% 0.14 250)", // neutral_6
+                                Theme::Dark => "oklch(55% 0.14 250)", // neutral_6 dark
                             }
-                        }
-                    )
+                        } else {
+                            match *theme {
+                                Theme::Light => "oklch(65% 0.14 250)", // neutral_7
+                                Theme::Dark => "oklch(45% 0.14 250)", // neutral_7 dark
+                            }
+                        };
+
+                        let icon_name = if *is_open {
+                            IconName::ChevronUp
+                        } else {
+                            IconName::ChevronDown
+                        };
+
+                        IconBuilder::new(icon_name)
+                            .size(IconSize::Small)
+                            .color(IconColor::Custom(color))
+                            .build()
+                    }
+                }),
             )
             .on_click({
                 let is_open = is_open.clone();
@@ -410,50 +423,44 @@ impl SelectBuilder {
             let mut items = Vec::new();
 
             // Label
-            let label_element = El::new()
-                .child(Text::new(label_text))
-                .s(Font::new()
-                    .size(FONT_SIZE_14)
-                    .weight(FontWeight::Number(FONT_WEIGHT_5))
-                    .color_signal(theme().map(move |t| {
-                        if disabled {
-                            match t {
-                                Theme::Light => "oklch(45% 0.14 250)", // neutral_6
-                                Theme::Dark => "oklch(55% 0.14 250)", // neutral_6 dark
-                            }
-                        } else {
-                            match t {
-                                Theme::Light => "oklch(15% 0.14 250)", // neutral_9
-                                Theme::Dark => "oklch(95% 0.14 250)", // neutral_11 dark
-                            }
+            let label_element = El::new().child(Text::new(label_text)).s(Font::new()
+                .size(FONT_SIZE_14)
+                .weight(FontWeight::Number(FONT_WEIGHT_5))
+                .color_signal(theme().map(move |t| {
+                    if disabled {
+                        match t {
+                            Theme::Light => "oklch(45% 0.14 250)", // neutral_6
+                            Theme::Dark => "oklch(55% 0.14 250)",  // neutral_6 dark
                         }
-                    }))
-                );
+                    } else {
+                        match t {
+                            Theme::Light => "oklch(15% 0.14 250)", // neutral_9
+                            Theme::Dark => "oklch(95% 0.14 250)",  // neutral_11 dark
+                        }
+                    }
+                })));
 
             items.push(label_element.unify());
             items.push(select_container.unify());
 
             // Description
             if let Some(description) = &self.description {
-                let desc_element = El::new()
-                    .child(Text::new(description))
-                    .s(Font::new()
-                        .size(FONT_SIZE_12)
-                        .weight(FontWeight::Number(FONT_WEIGHT_4))
-                        .color_signal(theme().map(move |t| {
-                            if disabled {
-                                match t {
-                                    Theme::Light => "oklch(45% 0.14 250)", // neutral_6
-                                    Theme::Dark => "oklch(55% 0.14 250)", // neutral_6 dark
-                                }
-                            } else {
-                                match t {
-                                    Theme::Light => "oklch(35% 0.14 250)", // neutral_7
-                                    Theme::Dark => "oklch(65% 0.14 250)", // neutral_7 dark
-                                }
+                let desc_element = El::new().child(Text::new(description)).s(Font::new()
+                    .size(FONT_SIZE_12)
+                    .weight(FontWeight::Number(FONT_WEIGHT_4))
+                    .color_signal(theme().map(move |t| {
+                        if disabled {
+                            match t {
+                                Theme::Light => "oklch(45% 0.14 250)", // neutral_6
+                                Theme::Dark => "oklch(55% 0.14 250)",  // neutral_6 dark
                             }
-                        }))
-                    );
+                        } else {
+                            match t {
+                                Theme::Light => "oklch(35% 0.14 250)", // neutral_7
+                                Theme::Dark => "oklch(65% 0.14 250)",  // neutral_7 dark
+                            }
+                        }
+                    })));
                 items.push(desc_element.unify());
             }
 

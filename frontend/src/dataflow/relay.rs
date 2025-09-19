@@ -3,37 +3,37 @@
 //! Relay provides type-safe event streaming for Actor+Relay architecture
 //! using simple unbounded channels instead of complex custom Stream implementation.
 
-use futures::channel::mpsc::{unbounded, UnboundedSender};
-use futures::stream::{Stream, FusedStream};
+use futures::channel::mpsc::{UnboundedSender, unbounded};
+use futures::stream::{FusedStream, Stream};
 use std::sync::{Arc, Mutex, OnceLock};
 
 /// Type-safe event streaming relay for Actor+Relay architecture.
-/// 
+///
 /// Relays provide reliable message passing from UI components to Actors
 /// using broadcast channels for multiple subscriber support.
-/// 
+///
 /// # Event-Source Naming Convention
-/// 
+///
 /// All relays MUST follow `{source}_{event}_relay` naming pattern:
 /// - `file_dropped_relay` - User dropped files on UI
 /// - `parse_completed_relay` - Parser finished processing
 /// - `cursor_clicked_relay` - User clicked timeline at position
-/// 
+///
 /// # Examples
-/// 
+///
 /// ```rust
 /// use crate::dataflow::{Relay, relay};
-/// 
+///
 /// // Create relay with subscription stream
 /// let (file_dropped_relay, mut stream) = relay::<Vec<PathBuf>>();
-/// 
+///
 /// // Or create relay and subscribe separately
 /// let file_dropped_relay = Relay::new();
 /// let mut stream = file_dropped_relay.subscribe();
-/// 
+///
 /// // Emit events from UI
 /// file_dropped_relay.send(vec![PathBuf::from("test.vcd")]);
-/// 
+///
 /// // Process events in Actor
 /// while let Some(paths) = stream.next().await {
 /// }
@@ -92,18 +92,18 @@ where
     }
 
     /// Subscribe to receive events from this relay.
-    /// 
-    /// Returns a fused stream (implements FusedStream) that will receive all future 
+    ///
+    /// Returns a fused stream (implements FusedStream) that will receive all future
     /// events sent through this relay. Safe to use directly in futures::select! loops
     /// without manual .fuse() calls. Multiple subscribers can be created from the same relay.
-    /// 
+    ///
     /// # Examples
-    /// 
+    ///
     /// ```rust
     /// let relay = Relay::new();
     /// let mut stream1 = relay.subscribe(); // Already fused - no .fuse() needed!
     /// let mut stream2 = relay.subscribe();
-    /// 
+    ///
     /// // Safe to use directly in select! loops
     /// loop {
     ///     select! {
@@ -114,16 +114,16 @@ where
     /// ```
     pub fn subscribe(&self) -> impl Stream<Item = T> + FusedStream + use<T> {
         let (sender, receiver) = unbounded();
-        
+
         if let Ok(mut subscribers) = self.subscribers.lock() {
             subscribers.push(sender);
         }
-        
+
         receiver
     }
 
     /// Check that this relay is only being sent from a single source location.
-    /// 
+    ///
     /// In debug builds, enforces single-source constraint for relays.
     /// Returns an error if the relay has been sent from a different location.
     #[cfg(debug_assertions)]
@@ -131,7 +131,7 @@ where
     fn check_single_source(&self) -> Result<(), RelayError> {
         let caller = std::panic::Location::caller();
         match self.emit_location.set(caller) {
-            Ok(()) => Ok(()), // First call, location set
+            Ok(()) => Ok(()),                              // First call, location set
             Err(previous) if previous == caller => Ok(()), // Same location, allowed
             Err(previous) => Err(RelayError::MultipleEmitters {
                 previous,
@@ -141,16 +141,16 @@ where
     }
 
     /// Send an event through the relay.
-    /// 
+    ///
     /// Broadcasts the event to all current subscribers.
     /// If a subscriber's receiver has been dropped, it's automatically removed.
     /// Use `try_send()` if you need to handle send failures.
-    /// 
+    ///
     /// In debug builds, panics if this relay has been sent from a different
     /// location in the code (enforces single-source constraint).
-    /// 
+    ///
     /// # Examples
-    /// 
+    ///
     /// ```rust
     /// file_dropped_relay.send(vec![PathBuf::from("test.vcd")]);
     /// ```
@@ -160,24 +160,22 @@ where
         if let Err(e) = self.check_single_source() {
             panic!("{:?}", e);
         }
-        
+
         if let Ok(mut subscribers) = self.subscribers.lock() {
             // Send to all subscribers, removing closed ones
-            subscribers.retain(|sender| {
-                sender.unbounded_send(value.clone()).is_ok()
-            });
+            subscribers.retain(|sender| sender.unbounded_send(value.clone()).is_ok());
         }
     }
 
     /// Try to send an event through the relay with explicit error handling.
-    /// 
+    ///
     /// Broadcasts the event to all current subscribers.
     /// Returns an error if no subscribers are available.
     /// In debug builds, also returns an error if this relay has been sent
     /// from a different location in the code.
-    /// 
+    ///
     /// # Examples
-    /// 
+    ///
     /// ```rust
     /// match relay.try_send(event) {
     ///     #[cfg(debug_assertions)]
@@ -189,20 +187,22 @@ where
     pub fn try_send(&self, value: T) -> Result<(), RelayError> {
         #[cfg(debug_assertions)]
         self.check_single_source()?;
-        
+
         if let Ok(mut subscribers) = self.subscribers.lock() {
             if subscribers.is_empty() {
                 return Err(RelayError::ChannelClosed);
             }
-            
+
             // Send to all subscribers, removing closed ones
             let mut any_success = false;
             subscribers.retain(|sender| {
                 let success = sender.unbounded_send(value.clone()).is_ok();
-                if success { any_success = true; }
+                if success {
+                    any_success = true;
+                }
                 success
             });
-            
+
             if any_success {
                 Ok(())
             } else {
@@ -212,7 +212,6 @@ where
             Err(RelayError::ChannelClosed)
         }
     }
-
 }
 
 impl<T> Default for Relay<T>
@@ -220,17 +219,17 @@ where
     T: Clone + Send + Sync + 'static,
 {
     /// Create a new Relay with no subscribers.
-    /// 
+    ///
     /// Events sent to this relay will be discarded until a subscriber is added.
     /// Use `subscribe()` to add subscribers.
-    /// 
+    ///
     /// # Examples
-    /// 
+    ///
     /// ```rust
     /// struct DialogComponent {
     ///     close_relay: Relay<()>,  // Start with no subscribers
     /// }
-    /// 
+    ///
     /// impl Default for DialogComponent {
     ///     fn default() -> Self {
     ///         Self {
@@ -245,25 +244,25 @@ where
 }
 
 /// Creates a new Relay with an associated fused stream, following Rust's channel pattern.
-/// 
+///
 /// This is the idiomatic way to create a Relay for use with Actors,
 /// eliminating clone! macro boilerplate and providing direct stream access.
-/// The returned stream implements FusedStream and can be used directly in 
+/// The returned stream implements FusedStream and can be used directly in
 /// futures::select! loops without manual .fuse() calls.
-/// 
+///
 /// # Examples
-/// 
+///
 /// ```rust
 /// use crate::dataflow::relay;
 /// use futures::StreamExt;
-/// 
+///
 /// // Just like Rust channels:
 /// // let (tx, rx) = channel();
-/// 
+///
 /// // Actor+Relay pattern - streams are already fused:
 /// let (increment_relay, mut increment_stream) = relay(); // No .fuse() needed!
 /// let (decrement_relay, mut decrement_stream) = relay();
-/// 
+///
 /// let counter = Actor::new(0, async move |state| {
 ///     loop {
 ///         select! {
@@ -286,7 +285,6 @@ where
     (relay, stream)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -298,7 +296,7 @@ mod tests {
         let mut receiver = relay.subscribe();
 
         relay.send("test_event".to_string());
-        
+
         let received = receiver.next().await;
         assert_eq!(received, Some("test_event".to_string()));
     }
@@ -324,7 +322,7 @@ mod tests {
         let (relay, mut stream) = relay::<String>();
 
         relay.send("via_function".to_string());
-        
+
         assert_eq!(stream.next().await, Some("via_function".to_string()));
     }
 
@@ -335,7 +333,7 @@ mod tests {
         let mut stream2 = relay.subscribe();
 
         relay.send("broadcast".to_string());
-        
+
         // Both subscribers should receive the event
         assert_eq!(stream1.next().await, Some("broadcast".to_string()));
         assert_eq!(stream2.next().await, Some("broadcast".to_string()));
@@ -346,15 +344,15 @@ mod tests {
         let relay = Relay::new();
         let mut stream1 = relay.subscribe();
         let stream2 = relay.subscribe(); // Will be dropped
-        
+
         // Drop one subscriber
         drop(stream2);
-        
+
         relay.send("cleanup_test".to_string());
-        
+
         // Remaining subscriber should still work
         assert_eq!(stream1.next().await, Some("cleanup_test".to_string()));
-        
+
         // Should still work after cleanup
         assert!(relay.try_send("still_works".to_string()).is_ok());
     }

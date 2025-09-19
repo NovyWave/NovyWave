@@ -20,44 +20,46 @@ pub const MS_DISPLAY_THRESHOLD_NS: u64 = 100_000;
 pub const US_DISPLAY_THRESHOLD_NS: u64 = 1_000;
 
 /// Represents a point in time as nanoseconds since the start of a waveform file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct TimeNs(pub u64);
 
 impl TimeNs {
     pub const ZERO: TimeNs = TimeNs(0);
-    
+
     pub fn from_nanos(nanos: u64) -> Self {
         TimeNs(nanos)
     }
-    
+
     pub fn from_external_seconds(seconds: f64) -> Self {
         TimeNs((seconds * NS_PER_SECOND) as u64)
     }
-    
+
     pub fn nanos(self) -> u64 {
         self.0
     }
-    
+
     pub fn display_seconds(self) -> f64 {
         self.0 as f64 / NS_PER_SECOND
     }
-    
+
     pub fn display_millis(self) -> f64 {
         self.0 as f64 / NS_PER_MILLISECOND
     }
-    
+
     pub fn display_micros(self) -> f64 {
         self.0 as f64 / NS_PER_MICROSECOND
     }
-    
+
     pub fn duration_since(self, earlier: TimeNs) -> DurationNs {
         DurationNs(self.0.saturating_sub(earlier.0))
     }
-    
+
     pub fn add_duration(self, duration: DurationNs) -> TimeNs {
         TimeNs(self.0.saturating_add(duration.0))
     }
-    
+
     pub fn sub_duration(self, duration: DurationNs) -> TimeNs {
         TimeNs(self.0.saturating_sub(duration.0))
     }
@@ -86,15 +88,15 @@ impl DurationNs {
     pub fn from_nanos(nanos: u64) -> Self {
         DurationNs(nanos)
     }
-    
+
     pub fn from_external_seconds(seconds: f64) -> Self {
         DurationNs((seconds * NS_PER_SECOND) as u64)
     }
-    
+
     pub fn nanos(self) -> u64 {
         self.0
     }
-    
+
     pub fn display_seconds(self) -> f64 {
         self.0 as f64 / NS_PER_SECOND
     }
@@ -117,7 +119,7 @@ impl fmt::Display for DurationNs {
 
 impl Add for DurationNs {
     type Output = DurationNs;
-    
+
     fn add(self, rhs: DurationNs) -> DurationNs {
         DurationNs(self.0.saturating_add(rhs.0))
     }
@@ -125,7 +127,7 @@ impl Add for DurationNs {
 
 impl Sub for DurationNs {
     type Output = DurationNs;
-    
+
     fn sub(self, rhs: DurationNs) -> DurationNs {
         DurationNs(self.0.saturating_sub(rhs.0))
     }
@@ -138,16 +140,16 @@ pub struct NsPerPixel(pub u64);
 impl NsPerPixel {
     pub const MAX_ZOOM_IN: NsPerPixel = NsPerPixel(1);
     pub const MEDIUM_ZOOM: NsPerPixel = NsPerPixel(MIN_CURSOR_STEP_NS);
-    
+
     pub fn nanos(self) -> u64 {
         self.0
     }
-    
+
     pub fn zoom_in_smooth(self, factor: f64) -> Self {
         let new_ns_per_pixel = ((self.0 as f64) * (1.0 - factor.clamp(0.0, 0.9))).max(1.0) as u64;
         NsPerPixel(new_ns_per_pixel.max(1))
     }
-    
+
     pub fn zoom_out_smooth(self, factor: f64) -> Self {
         let new_ns_per_pixel = ((self.0 as f64) * (1.0 + factor.clamp(0.0, 10.0))) as u64;
         NsPerPixel(new_ns_per_pixel)
@@ -192,20 +194,20 @@ impl Default for Viewport {
 
 impl Viewport {
     pub fn new(start: TimeNs, end: TimeNs) -> Self {
-        Viewport { 
-            start: start.min(end), 
-            end: start.max(end) 
+        Viewport {
+            start: start.min(end),
+            end: start.max(end),
         }
     }
-    
+
     pub fn duration(self) -> DurationNs {
         self.end.duration_since(self.start)
     }
-    
+
     pub fn contains(self, time: TimeNs) -> bool {
         time >= self.start && time <= self.end
     }
-    
+
     pub fn center(self) -> TimeNs {
         let duration = self.duration();
         self.start.add_duration(DurationNs(duration.0 / 2))
@@ -222,7 +224,7 @@ impl fmt::Display for Viewport {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TimelineCoordinates {
     pub cursor_ns: TimeNs,
-    pub viewport_start_ns: TimeNs, 
+    pub viewport_start_ns: TimeNs,
     pub ns_per_pixel: NsPerPixel,
     pub canvas_width_pixels: u32,
 }
@@ -230,9 +232,9 @@ pub struct TimelineCoordinates {
 impl TimelineCoordinates {
     pub fn new(
         cursor_ns: TimeNs,
-        viewport_start_ns: TimeNs, 
+        viewport_start_ns: TimeNs,
         ns_per_pixel: NsPerPixel,
-        canvas_width_pixels: u32
+        canvas_width_pixels: u32,
     ) -> Self {
         TimelineCoordinates {
             cursor_ns,

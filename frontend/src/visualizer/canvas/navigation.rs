@@ -1,7 +1,7 @@
 use crate::dataflow::*;
-use zoon::*;
 use futures::{select, stream::StreamExt};
 use shared::SignalTransition;
+use zoon::*;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum NavigationType {
@@ -56,50 +56,54 @@ impl NavigationController {
                 let mut cached_transitions: Vec<f64> = Vec::new();
 
                 let mut cursor_stream = cursor_position.signal().to_stream().fuse();
-                let mut variables_stream = selected_variables.variables_vec_actor.signal().to_stream().fuse();
+                let mut variables_stream = selected_variables
+                    .variables_vec_actor
+                    .signal()
+                    .to_stream()
+                    .fuse();
 
-            loop {
-                select! {
-                    cursor_update = cursor_stream.next() => {
-                        if let Some(cursor_ns) = cursor_update {
-                            cached_cursor_position = Some(cursor_ns.display_seconds());
-                        }
-                    }
-                    variables_update = variables_stream.next() => {
-                        if let Some(variables) = variables_update {
-                            let cache = timeline_cache.cache.signal().to_stream().next().await;
-                            if let Some(cache_data) = cache {
-                                cached_transitions = Self::extract_transitions_from_cache(&cache_data, &variables);
+                loop {
+                    select! {
+                        cursor_update = cursor_stream.next() => {
+                            if let Some(cursor_ns) = cursor_update {
+                                cached_cursor_position = Some(cursor_ns.display_seconds());
                             }
                         }
-                    }
-                    previous_request = previous_transition_stream.next() => {
-                        if let Some(()) = previous_request {
-                            if let Some(result) = Self::process_navigation_with_state_handle(
-                                &mut state.lock_mut(),
-                                NavigationType::PreviousTransition,
-                                cached_cursor_position,
-                                &cached_transitions,
-                            ) {
-                                navigation_completed_relay_for_actor.send(result);
+                        variables_update = variables_stream.next() => {
+                            if let Some(variables) = variables_update {
+                                let cache = timeline_cache.cache.signal().to_stream().next().await;
+                                if let Some(cache_data) = cache {
+                                    cached_transitions = Self::extract_transitions_from_cache(&cache_data, &variables);
+                                }
                             }
                         }
-                    }
-                    next_request = next_transition_stream.next() => {
-                        if let Some(()) = next_request {
-                            if let Some(result) = Self::process_navigation_with_state_handle(
-                                &mut state.lock_mut(),
-                                NavigationType::NextTransition,
-                                cached_cursor_position,
-                                &cached_transitions,
-                            ) {
-                                navigation_completed_relay_for_actor.send(result);
+                        previous_request = previous_transition_stream.next() => {
+                            if let Some(()) = previous_request {
+                                if let Some(result) = Self::process_navigation_with_state_handle(
+                                    &mut state.lock_mut(),
+                                    NavigationType::PreviousTransition,
+                                    cached_cursor_position,
+                                    &cached_transitions,
+                                ) {
+                                    navigation_completed_relay_for_actor.send(result);
+                                }
+                            }
+                        }
+                        next_request = next_transition_stream.next() => {
+                            if let Some(()) = next_request {
+                                if let Some(result) = Self::process_navigation_with_state_handle(
+                                    &mut state.lock_mut(),
+                                    NavigationType::NextTransition,
+                                    cached_cursor_position,
+                                    &cached_transitions,
+                                ) {
+                                    navigation_completed_relay_for_actor.send(result);
+                                }
                             }
                         }
                     }
                 }
             }
-        }
         });
 
         Self {
@@ -117,10 +121,14 @@ impl NavigationController {
         let mut all_transitions = Vec::new();
 
         for variable in variables {
-            let signal_id = match (variable.file_path(), variable.scope_path(), variable.variable_name()) {
+            let signal_id = match (
+                variable.file_path(),
+                variable.scope_path(),
+                variable.variable_name(),
+            ) {
                 (Some(file_path), Some(scope_path), Some(variable_name)) => {
                     format!("{}|{}|{}", file_path, scope_path, variable_name)
-                },
+                }
                 _ => continue, // Skip variables with incomplete path information
             };
 
@@ -135,7 +143,6 @@ impl NavigationController {
         all_transitions.dedup_by(|a, b| (*a - *b).abs() < 1e-15);
         all_transitions
     }
-
 
     fn find_previous_transition(current_cursor: f64, transitions: &[f64]) -> Option<(f64, bool)> {
         const F64_PRECISION_TOLERANCE: f64 = 1e-15;
@@ -165,9 +172,7 @@ impl NavigationController {
 
         let next_transition = transitions
             .iter()
-            .find(|&&transition_time| {
-                transition_time > current_cursor + F64_PRECISION_TOLERANCE
-            })
+            .find(|&&transition_time| transition_time > current_cursor + F64_PRECISION_TOLERANCE)
             .copied();
 
         if let Some(next_time) = next_transition {
@@ -207,9 +212,7 @@ impl NavigationController {
             NavigationType::PreviousTransition => {
                 Self::find_previous_transition(cursor_pos, transitions)
             }
-            NavigationType::NextTransition => {
-                Self::find_next_transition(cursor_pos, transitions)
-            }
+            NavigationType::NextTransition => Self::find_next_transition(cursor_pos, transitions),
         }?;
 
         Some(NavigationResult {

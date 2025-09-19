@@ -2,8 +2,8 @@
 // Proper SVG implementation matching Vue Storybook version
 
 use crate::tokens::*;
-use zoon::*;
 use futures_signals::signal::{Signal, SignalExt};
+use zoon::*;
 // Removed unused HashMap import since we use include_str! for inline SVG
 
 // Typed icon names matching Vue Storybook exactly
@@ -176,15 +176,13 @@ impl IconName {
     }
 }
 
-
-
 // Icon size variants matching design system
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum IconSize {
-    Small,   // 16px
-    Medium,  // 20px
-    Large,   // 24px
-    XLarge,  // 32px
+    Small,  // 16px
+    Medium, // 20px
+    Large,  // 24px
+    XLarge, // 32px
 }
 
 impl IconSize {
@@ -201,12 +199,12 @@ impl IconSize {
 // Icon color variants with theme support
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum IconColor {
-    Current,    // Inherit from parent (default)
-    Primary,    // Primary theme color
-    Secondary,  // Secondary theme color
-    Muted,      // Muted text color
-    Success,    // Success color
-    Error,      // Error color
+    Current,              // Inherit from parent (default)
+    Primary,              // Primary theme color
+    Secondary,            // Secondary theme color
+    Muted,                // Muted text color
+    Success,              // Success color
+    Error,                // Error color
     Custom(&'static str), // Custom color value
 }
 
@@ -224,9 +222,9 @@ impl IconBuilder {
         Self {
             name,
             size: IconSize::Medium,
-            color: IconColor::Secondary,  // Use Secondary instead of Current for better visibility
+            color: IconColor::Secondary, // Use Secondary instead of Current for better visibility
             aria_label: None,
-            center_align: true,  // Default to centered for backward compatibility
+            center_align: true, // Default to centered for backward compatibility
         }
     }
 
@@ -258,15 +256,15 @@ impl IconBuilder {
         let color_signal = theme().map(move |t| match (color, t) {
             (IconColor::Current, _) => "currentColor",
             (IconColor::Primary, Theme::Light) => "oklch(55% 0.16 250)",
-            (IconColor::Primary, Theme::Dark) => "oklch(75% 0.16 250)",  // Brighter for dark theme
+            (IconColor::Primary, Theme::Dark) => "oklch(75% 0.16 250)", // Brighter for dark theme
             (IconColor::Secondary, Theme::Light) => "oklch(45% 0.05 255)",
-            (IconColor::Secondary, Theme::Dark) => "oklch(75% 0.05 255)",  // Much brighter for dark theme
+            (IconColor::Secondary, Theme::Dark) => "oklch(75% 0.05 255)", // Much brighter for dark theme
             (IconColor::Muted, Theme::Light) => "oklch(60% 0.02 255)",
-            (IconColor::Muted, Theme::Dark) => "oklch(65% 0.02 255)",  // Brighter for dark theme
+            (IconColor::Muted, Theme::Dark) => "oklch(65% 0.02 255)", // Brighter for dark theme
             (IconColor::Success, Theme::Light) => "oklch(55% 0.16 140)",
-            (IconColor::Success, Theme::Dark) => "oklch(70% 0.16 140)",  // Brighter for dark theme
+            (IconColor::Success, Theme::Dark) => "oklch(70% 0.16 140)", // Brighter for dark theme
             (IconColor::Error, Theme::Light) => "oklch(55% 0.16 15)",
-            (IconColor::Error, Theme::Dark) => "oklch(70% 0.16 15)",  // Brighter for dark theme
+            (IconColor::Error, Theme::Dark) => "oklch(70% 0.16 15)", // Brighter for dark theme
             (IconColor::Custom(color), _) => color,
         });
 
@@ -274,9 +272,7 @@ impl IconBuilder {
         let svg_element = create_svg_icon(self.name, color_signal, size_px);
 
         // Wrap in container with proper accessibility and sizing
-        let mut container = El::new()
-            .s(Width::exact(size_px))
-            .s(Height::exact(size_px));
+        let mut container = El::new().s(Width::exact(size_px)).s(Height::exact(size_px));
 
         if self.center_align {
             container = container.s(Align::center());
@@ -287,23 +283,25 @@ impl IconBuilder {
 }
 
 // SVG icon creation function with proper inline SVG using include_str! macro
-fn create_svg_icon(name: IconName, color_signal: impl Signal<Item = &'static str> + Unpin + 'static, size_px: u32) -> impl Element {
+fn create_svg_icon(
+    name: IconName,
+    color_signal: impl Signal<Item = &'static str> + Unpin + 'static,
+    size_px: u32,
+) -> impl Element {
     // For stroke-based SVG icons, we need to use inline SVG with currentColor
     El::new()
         .s(Width::exact(size_px))
         .s(Height::exact(size_px))
         .s(Align::center())
-        .child_signal(
-            color_signal.map(move |color| {
-                // Get inline SVG content with proper stroke color
-                let svg_content = get_svg_content(name, size_px);
+        .child_signal(color_signal.map(move |color| {
+            // Get inline SVG content with proper stroke color
+            let svg_content = get_svg_content(name, size_px);
 
-                RawHtmlEl::new("div")
-                    .style("color", color)
-                    .inner_markup(&svg_content)
-                    .into_element()
-            })
-        )
+            RawHtmlEl::new("div")
+                .style("color", color)
+                .inner_markup(&svg_content)
+                .into_element()
+        }))
 }
 
 // Get inline SVG content using include_str! macro for all 87 icons
@@ -406,14 +404,6 @@ fn process_svg_for_size_and_color(svg_content: &str, size_px: u32) -> String {
 
     processed
 }
-
-
-
-
-
-
-
-
 
 // String to IconName conversion for backward compatibility
 pub fn icon_name_from_str(name: &str) -> IconName {
@@ -519,25 +509,25 @@ pub fn icon_str(name: &str) -> IconBuilder {
 pub fn validate_icon_registry() {
     let commonly_used_icons = [
         "arrow-down-to-line",
-        "arrow-down", 
+        "arrow-down",
         "arrow-left",
-        "arrow-right", 
+        "arrow-right",
         "arrow-up",
         "check",
-        "x", 
+        "x",
         "folder",
-        "download"
+        "download",
     ];
-    
+
     let mut missing_icons = Vec::new();
-    
+
     for icon_name in commonly_used_icons.iter() {
         let resolved = icon_name_from_str(icon_name);
         if matches!(resolved, IconName::CircleHelp) && *icon_name != "circle-help" {
             missing_icons.push(*icon_name);
         }
     }
-    
+
     if missing_icons.is_empty() {
     } else {
     }

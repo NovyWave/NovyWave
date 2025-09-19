@@ -1,10 +1,10 @@
 // Input Component
 // Matches Vue Storybook Input component exactly
 
+use crate::components::icon::{IconColor, IconName, IconSize, icon_str};
 use crate::tokens::*;
-use crate::components::icon::{icon_str, IconName, IconSize, IconColor};
-use zoon::*;
 use std::rc::Rc;
+use zoon::*;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum InputSize {
@@ -139,7 +139,10 @@ impl InputBuilder {
         self
     }
 
-    pub fn right_icon_signal(mut self, signal: impl Signal<Item = Option<IconName>> + Unpin + 'static) -> Self {
+    pub fn right_icon_signal(
+        mut self,
+        signal: impl Signal<Item = Option<IconName>> + Unpin + 'static,
+    ) -> Self {
         self.right_icon_signal = Some(Box::new(signal));
         self
     }
@@ -198,59 +201,54 @@ impl InputBuilder {
             .s(Gap::new().y(SPACING_2))
             .item_signal(always(label).map(move |label_opt| {
                 label_opt.map(|label| {
-                    let mut label_row = Row::new()
-                        .s(Gap::new().x(SPACING_2))
-                        .item(
-                            El::new()
-                                .child(Text::new(&label))
-                                .s(Font::new()
-                                    .size(match size {
-                                        InputSize::Small => FONT_SIZE_12,
-                                        InputSize::Medium => FONT_SIZE_14,
-                                        InputSize::Large => FONT_SIZE_16,
-                                    })
-                                    .weight(FontWeight::Number(FONT_WEIGHT_6))
-                                    .color_signal(theme().map(|t| match t {
-                                        Theme::Light => "oklch(30% 0.07 255)", // neutral_9 light (Vue exact)
-                                        Theme::Dark => "oklch(92% 0.07 255)", // neutral_9 dark (Vue exact)
-                                    }))
-                                )
-                        );
+                    let mut label_row = Row::new().s(Gap::new().x(SPACING_2)).item(
+                        El::new().child(Text::new(&label)).s(Font::new()
+                            .size(match size {
+                                InputSize::Small => FONT_SIZE_12,
+                                InputSize::Medium => FONT_SIZE_14,
+                                InputSize::Large => FONT_SIZE_16,
+                            })
+                            .weight(FontWeight::Number(FONT_WEIGHT_6))
+                            .color_signal(theme().map(|t| match t {
+                                Theme::Light => "oklch(30% 0.07 255)", // neutral_9 light (Vue exact)
+                                Theme::Dark => "oklch(92% 0.07 255)",  // neutral_9 dark (Vue exact)
+                            }))),
+                    );
 
                     // Add required indicator if needed
                     if required {
-                        label_row = label_row.item(
-                            El::new()
-                                .child(Text::new("*"))
-                                .s(Font::new()
-                                    .color_signal(theme().map(|t| match t {
-                                        Theme::Light => "oklch(50% 0.21 30)", // error_7 light (Vue exact)
-                                        Theme::Dark => "oklch(70% 0.21 30)", // error_7 dark (Vue exact)
-                                    }))
-                                )
-                        );
+                        label_row = label_row.item(El::new().child(Text::new("*")).s(
+                            Font::new().color_signal(theme().map(|t| match t {
+                                Theme::Light => "oklch(50% 0.21 30)", // error_7 light (Vue exact)
+                                Theme::Dark => "oklch(70% 0.21 30)",  // error_7 dark (Vue exact)
+                            })),
+                        ));
                     }
 
                     label_row
                 })
             }))
-            .item(self.build_input_container(focused, focused_signal, container_height, padding_x, padding_y, font_size))
+            .item(self.build_input_container(
+                focused,
+                focused_signal,
+                container_height,
+                padding_x,
+                padding_y,
+                font_size,
+            ))
             .item_signal(always(error_message).map(move |error_opt| {
                 error_opt.map(|error_msg| {
-                    El::new()
-                        .child(Text::new(&error_msg))
-                        .s(Font::new()
-                            .size(match size {
-                                InputSize::Small => FONT_SIZE_12,
-                                InputSize::Medium => FONT_SIZE_12,
-                                InputSize::Large => FONT_SIZE_14,
-                            })
-                            .weight(FontWeight::Number(FONT_WEIGHT_5))
-                            .color_signal(theme().map(|t| match t {
-                                Theme::Light => "oklch(50% 0.21 30)", // error_7 light (Vue exact)
-                                Theme::Dark => "oklch(70% 0.21 30)", // error_7 dark (Vue exact)
-                            }))
-                        )
+                    El::new().child(Text::new(&error_msg)).s(Font::new()
+                        .size(match size {
+                            InputSize::Small => FONT_SIZE_12,
+                            InputSize::Medium => FONT_SIZE_12,
+                            InputSize::Large => FONT_SIZE_14,
+                        })
+                        .weight(FontWeight::Number(FONT_WEIGHT_5))
+                        .color_signal(theme().map(|t| match t {
+                            Theme::Light => "oklch(50% 0.21 30)", // error_7 light (Vue exact)
+                            Theme::Dark => "oklch(70% 0.21 30)",  // error_7 dark (Vue exact)
+                        })))
                 })
             }))
     }
@@ -283,8 +281,8 @@ impl InputBuilder {
             .s(Align::new().center_y())
             .s(RoundedCorners::all(CORNER_RADIUS_4)) // cornerRadius['4px']
             .s(transition_colors())
-            .s(Background::new().color_signal(
-                theme().map(move |t| match (state, t) {
+            .s(
+                Background::new().color_signal(theme().map(move |t| match (state, t) {
                     // Disabled: More muted background (revert to original)
                     (InputState::Disabled, Theme::Light) => "oklch(92% 0.045 255)", // neutral_3 light (more muted)
                     (InputState::Disabled, Theme::Dark) => "oklch(30% 0.045 255)", // neutral_3 dark (more muted) - reverted
@@ -294,66 +292,98 @@ impl InputBuilder {
                     (InputState::Error, Theme::Light) => "oklch(98% 0.03 30)", // error_1 light (Vue exact)
                     (InputState::Error, Theme::Dark) => "oklch(12% 0.03 30)", // error_1 dark (Vue exact)
                     (_, Theme::Light) => "oklch(99% 0.025 255)", // neutral_1 light (Vue exact)
-                    (_, Theme::Dark) => "oklch(12% 0.025 255)", // neutral_1 dark (Vue exact)
-                })
-            ))
-            .s(Outline::with_signal_self(
-                map_ref! {
-                    let focused = focused_signal,
-                    let theme = theme() => move {
-                        let width = 1;
-                        let color = match (state, *focused, theme) {
-                            (InputState::Error, _, _) => match theme {
-                                Theme::Light => "oklch(50% 0.21 30)", // error_7 light (Vue exact)
-                                Theme::Dark => "oklch(70% 0.21 30)", // error_7 dark (Vue exact)
-                            },
-                            (InputState::Disabled, _, _) => match theme {
-                                Theme::Light => "oklch(88% 0.055 255)", // neutral_4 light (more muted for disabled)
-                                Theme::Dark => "oklch(35% 0.055 255)", // neutral_4 dark (more muted for disabled) - reverted
-                            },
-                            (InputState::Readonly, _, _) => match theme {
-                                Theme::Light => "oklch(92% 0.045 255)", // neutral_3 light (Vue exact)
-                                Theme::Dark => "oklch(33% 0.055 255)", // closer to disabled border for similar appearance
-                            },
-                            (_, true, _) => match theme {
-                                Theme::Light => "oklch(55% 0.16 250)", // primary_7 light (Vue exact)
-                                Theme::Dark => "oklch(65% 0.16 250)", // primary_7 dark (Vue exact)
-                            },
-                            (_, false, _) => match theme {
-                                Theme::Light => "oklch(90% 0.05 250)", // neutral_3 light (Vue exact)
-                                Theme::Dark => "oklch(30% 0.05 250)", // neutral_3 dark (Vue exact)
-                            },
-                        };
-                        Some(Outline::inner().width(width).color(color))
-                    }
+                    (_, Theme::Dark) => "oklch(12% 0.025 255)",  // neutral_1 dark (Vue exact)
+                })),
+            )
+            .s(Outline::with_signal_self(map_ref! {
+                let focused = focused_signal,
+                let theme = theme() => move {
+                    let width = 1;
+                    let color = match (state, *focused, theme) {
+                        (InputState::Error, _, _) => match theme {
+                            Theme::Light => "oklch(50% 0.21 30)", // error_7 light (Vue exact)
+                            Theme::Dark => "oklch(70% 0.21 30)", // error_7 dark (Vue exact)
+                        },
+                        (InputState::Disabled, _, _) => match theme {
+                            Theme::Light => "oklch(88% 0.055 255)", // neutral_4 light (more muted for disabled)
+                            Theme::Dark => "oklch(35% 0.055 255)", // neutral_4 dark (more muted for disabled) - reverted
+                        },
+                        (InputState::Readonly, _, _) => match theme {
+                            Theme::Light => "oklch(92% 0.045 255)", // neutral_3 light (Vue exact)
+                            Theme::Dark => "oklch(33% 0.055 255)", // closer to disabled border for similar appearance
+                        },
+                        (_, true, _) => match theme {
+                            Theme::Light => "oklch(55% 0.16 250)", // primary_7 light (Vue exact)
+                            Theme::Dark => "oklch(65% 0.16 250)", // primary_7 dark (Vue exact)
+                        },
+                        (_, false, _) => match theme {
+                            Theme::Light => "oklch(90% 0.05 250)", // neutral_3 light (Vue exact)
+                            Theme::Dark => "oklch(30% 0.05 250)", // neutral_3 dark (Vue exact)
+                        },
+                    };
+                    Some(Outline::inner().width(width).color(color))
                 }
-            ))
+            }))
             .s(Cursor::new(match state {
                 InputState::Disabled => CursorIcon::NotAllowed,
                 _ => CursorIcon::Text,
             }))
-            .s(Shadows::with_signal(
-                theme().map(move |t| {
-                    if matches!(state, InputState::Disabled) {
-                        // No shadows for disabled inputs
-                        vec![]
-                    } else {
-                        // Add inner shadows to create inset appearance (like form fields) - enhanced visibility
-                        match t {
-                            Theme::Light => vec![
-                                Shadow::new().inner().y(2).x(0).blur(4).spread(0).color("rgba(0, 0, 0, 0.12)"),
-                                Shadow::new().inner().y(1).x(0).blur(2).spread(0).color("rgba(0, 0, 0, 0.18)"),
-                                Shadow::new().inner().y(0).x(1).blur(2).spread(0).color("rgba(0, 0, 0, 0.08)"),
-                            ],
-                            Theme::Dark => vec![
-                                Shadow::new().inner().y(-2).x(0).blur(4).spread(0).color("rgba(255, 255, 255, 0.25)"),
-                                Shadow::new().inner().y(-1).x(0).blur(2).spread(0).color("rgba(255, 255, 255, 0.35)"),
-                                Shadow::new().inner().y(0).x(-1).blur(2).spread(0).color("rgba(255, 255, 255, 0.2)"),
-                            ],
-                        }
+            .s(Shadows::with_signal(theme().map(move |t| {
+                if matches!(state, InputState::Disabled) {
+                    // No shadows for disabled inputs
+                    vec![]
+                } else {
+                    // Add inner shadows to create inset appearance (like form fields) - enhanced visibility
+                    match t {
+                        Theme::Light => vec![
+                            Shadow::new()
+                                .inner()
+                                .y(2)
+                                .x(0)
+                                .blur(4)
+                                .spread(0)
+                                .color("rgba(0, 0, 0, 0.12)"),
+                            Shadow::new()
+                                .inner()
+                                .y(1)
+                                .x(0)
+                                .blur(2)
+                                .spread(0)
+                                .color("rgba(0, 0, 0, 0.18)"),
+                            Shadow::new()
+                                .inner()
+                                .y(0)
+                                .x(1)
+                                .blur(2)
+                                .spread(0)
+                                .color("rgba(0, 0, 0, 0.08)"),
+                        ],
+                        Theme::Dark => vec![
+                            Shadow::new()
+                                .inner()
+                                .y(-2)
+                                .x(0)
+                                .blur(4)
+                                .spread(0)
+                                .color("rgba(255, 255, 255, 0.25)"),
+                            Shadow::new()
+                                .inner()
+                                .y(-1)
+                                .x(0)
+                                .blur(2)
+                                .spread(0)
+                                .color("rgba(255, 255, 255, 0.35)"),
+                            Shadow::new()
+                                .inner()
+                                .y(0)
+                                .x(-1)
+                                .blur(2)
+                                .spread(0)
+                                .color("rgba(255, 255, 255, 0.2)"),
+                        ],
                     }
-                })
-            ))
+                }
+            })))
             .update_raw_el(move |raw_el| {
                 if matches!(state, InputState::Disabled) {
                     // Disabled state - use opacity token
@@ -386,25 +416,21 @@ impl InputBuilder {
                     .s(Font::new()
                         .size(font_size)
                         .weight(FontWeight::Number(FONT_WEIGHT_5))
-                        .color_signal(
-                            theme().map(move |t| match (state, t) {
-                                (InputState::Disabled, _) => "oklch(70% 0.09 255)", // neutral_6 (muted for disabled)
-                                (InputState::Readonly, Theme::Light) => "oklch(35% 0.08 255)", // slightly muted for readonly
-                                (InputState::Readonly, Theme::Dark) => "oklch(90% 0.04 255)", // slightly muted for readonly
-                                (_, Theme::Light) => "oklch(30% 0.07 255)", // neutral_9 light (Vue exact)
-                                (_, Theme::Dark) => "oklch(96% 0.035 255)", // neutral_10 dark (Vue exact)
-                            })
-                        )
-                    )
+                        .color_signal(theme().map(move |t| match (state, t) {
+                            (InputState::Disabled, _) => "oklch(70% 0.09 255)", // neutral_6 (muted for disabled)
+                            (InputState::Readonly, Theme::Light) => "oklch(35% 0.08 255)", // slightly muted for readonly
+                            (InputState::Readonly, Theme::Dark) => "oklch(90% 0.04 255)", // slightly muted for readonly
+                            (_, Theme::Light) => "oklch(30% 0.07 255)", // neutral_9 light (Vue exact)
+                            (_, Theme::Dark) => "oklch(96% 0.035 255)", // neutral_10 dark (Vue exact)
+                        })))
                     .s(Background::new().color("transparent"))
                     .s(Borders::new())
-                    .placeholder(
-                        Placeholder::new(&placeholder)
-                            .s(Font::new().color_signal(theme().map(|t| match t {
-                                Theme::Light => "oklch(35% 0.14 250)", // primary_9 light (Vue exact)
-                                Theme::Dark => "oklch(85% 0.14 250)", // primary_9 dark (Vue exact)
-                            })))
-                    )
+                    .placeholder(Placeholder::new(&placeholder).s(Font::new().color_signal(
+                        theme().map(|t| match t {
+                            Theme::Light => "oklch(35% 0.14 250)", // primary_9 light (Vue exact)
+                            Theme::Dark => "oklch(85% 0.14 250)",  // primary_9 dark (Vue exact)
+                        }),
+                    )))
                     .text_signal(if let Some(signal) = value_signal {
                         signal
                     } else {
@@ -439,7 +465,7 @@ impl InputBuilder {
                                 handler();
                             }
                         }
-                    })
+                    }),
             )
             .item_signal({
                 // Use signal if available, otherwise fall back to static right_icon
@@ -448,7 +474,7 @@ impl InputBuilder {
                 } else {
                     Box::new(always(right_icon))
                 };
-                
+
                 icon_signal.map({
                     let on_right_icon_click = on_right_icon_click.clone();
                     move |icon_opt| {
@@ -476,9 +502,7 @@ impl InputBuilder {
                                     .on_click(move || handler())
                                     .into_element()
                             } else {
-                                El::new()
-                                    .child(icon_element)
-                                    .into_element()
+                                El::new().child(icon_element).into_element()
                             }
                         })
                     }

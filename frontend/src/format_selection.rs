@@ -2,8 +2,8 @@ use moonzoon_novyui::tokens::color::{
     neutral_1, neutral_3, neutral_4, neutral_6, neutral_8, neutral_11, primary_6, primary_8,
 };
 use moonzoon_novyui::*;
-use zoon::*;
 use shared::{VarFormat, truncate_value};
+use zoon::*;
 
 /// Format options for dropdown - contains value and disabled state
 #[derive(Debug, Clone)]
@@ -46,7 +46,7 @@ pub fn create_format_dropdown(
         (VarFormat::Unsigned, "Unsigned"),
         (VarFormat::ASCII, "ASCII"),
     ];
-    
+
     El::new()
         .s(Width::fill())
         .s(Height::fill())
@@ -59,33 +59,41 @@ pub fn create_format_dropdown(
                     let unique_id_clone = unique_id.clone();
                     let selected_variables_clone = selected_variables.clone();
                     let waveform_timeline_clone = waveform_timeline.clone();
-                    
+
                     El::new()
-                        .s(Background::new().color_signal(
-                            if is_current { primary_6().boxed_local() } else { neutral_3().boxed_local() }
-                        ))
+                        .s(Background::new().color_signal(if is_current {
+                            primary_6().boxed_local()
+                        } else {
+                            neutral_3().boxed_local()
+                        }))
                         .s(Borders::all_signal(
-                            (if is_current { primary_8().boxed_local() } else { neutral_6().boxed_local() })
-                            .map(|color| Border::new().width(1).color(color))
+                            (if is_current {
+                                primary_8().boxed_local()
+                            } else {
+                                neutral_6().boxed_local()
+                            })
+                            .map(|color| Border::new().width(1).color(color)),
                         ))
                         .s(Padding::new().x(6).y(2))
                         .s(RoundedCorners::all(4))
-                        .s(Font::new().size(11).color_signal(
-                            if is_current { neutral_1().boxed_local() } else { neutral_11().boxed_local() }
-                        ))
+                        .s(Font::new().size(11).color_signal(if is_current {
+                            neutral_1().boxed_local()
+                        } else {
+                            neutral_11().boxed_local()
+                        }))
                         .s(Cursor::new(CursorIcon::Pointer))
                         .on_click(move || {
                             if !is_current {
                                 update_variable_format(
-                                    &unique_id_clone, 
-                                    format, 
-                                    &selected_variables_clone, 
-                                    &waveform_timeline_clone
+                                    &unique_id_clone,
+                                    format,
+                                    &selected_variables_clone,
+                                    &waveform_timeline_clone,
                                 );
                             }
                         })
                         .child(Text::new(label))
-                }))
+                })),
         )
 }
 
@@ -336,7 +344,7 @@ pub fn create_smart_dropdown(
                                             let filtered_value = value_only
                                                 .chars()
                                                 .filter(|&c| {
-                                                            c == ' '
+                                                    c == ' '
                                                         || (c.is_ascii() && c.is_ascii_graphic())
                                                 })
                                                 .collect::<String>()
@@ -392,13 +400,15 @@ pub fn create_smart_dropdown(
                                 ),
                         )
                         .on_click({
-                            let variable_format_changed_relay = selected_variables.variable_format_changed_relay.clone();
+                            let variable_format_changed_relay =
+                                selected_variables.variable_format_changed_relay.clone();
                             let unique_id_for_relay = unique_id.clone();
                             let is_open = is_open.clone();
                             let option_format_enum = option.format; // Use the actual enum, not the string
                             move || {
                                 if !option_disabled {
-                                    variable_format_changed_relay.send((unique_id_for_relay.clone(), option_format_enum));
+                                    variable_format_changed_relay
+                                        .send((unique_id_for_relay.clone(), option_format_enum));
                                     is_open.set(false);
                                 }
                             }
@@ -410,12 +420,16 @@ pub fn create_smart_dropdown(
 
 /// Update the format for a selected variable using Actor+Relay architecture
 pub fn update_variable_format(
-    unique_id: &str, 
-    new_format: shared::VarFormat, 
+    unique_id: &str,
+    new_format: shared::VarFormat,
     selected_variables: &crate::selected_variables::SelectedVariables,
-    waveform_timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline
+    waveform_timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline,
 ) {
-    selected_variables.variable_format_changed_relay.send((unique_id.to_string(), new_format));
+    selected_variables
+        .variable_format_changed_relay
+        .send((unique_id.to_string(), new_format));
 
-    waveform_timeline.variable_format_updated_relay.send((unique_id.to_string(), new_format));
+    waveform_timeline
+        .variable_format_updated_relay
+        .send((unique_id.to_string(), new_format));
 }

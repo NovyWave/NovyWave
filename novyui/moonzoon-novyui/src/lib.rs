@@ -1,5 +1,4 @@
 #![allow(ambiguous_glob_reexports)]
-
 // KNOWN ISSUE: Ambiguous glob re-exports between components::* and tokens::*
 // The 'typography' module is exported from both, causing naming conflicts
 // This is acceptable as consumers can use qualified imports if needed

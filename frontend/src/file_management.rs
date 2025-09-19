@@ -1,9 +1,10 @@
-use moonzoon_novyui::tokens::color::{neutral_8, neutral_11, primary_6};
-use moonzoon_novyui::*;
-use zoon::*;
-use shared::{FileState, ScopeData, TrackedFile};
-use std::collections::HashMap;
 use crate::dataflow::atom::Atom;
+use moonzoon_novyui::tokens::color::{neutral_11, neutral_8, primary_6};
+use moonzoon_novyui::*;
+use shared::{generate_smart_labels, FileState, ScopeData, TrackedFile};
+use std::collections::HashMap;
+use std::sync::Arc;
+use zoon::*;
 
 /// Create the main files panel with proper Load Files button integration
 pub fn files_panel_with_dialog(
@@ -13,28 +14,32 @@ pub fn files_panel_with_dialog(
     app_config: crate::config::AppConfig,
 ) -> impl Element {
     let file_count_broadcaster = tracked_files.files.signal_vec().len().broadcast();
-    El::new().s(Height::fill()).child(crate::panel_layout::create_panel(
-        Row::new()
-            .s(Gap::new().x(SPACING_8))
-            .s(Align::new().center_y())
-            .item(El::new().s(Font::new().no_wrap()).child("Files & Scopes"))
-            .item(El::new().s(Width::growable()))
-            .item(crate::action_buttons::load_files_button_with_progress(
-                tracked_files.clone(),
-                ButtonVariant::Outline,
-                ButtonSize::Small,
-                Some(IconName::Folder),
-                file_dialog_visible
-            ))
-            .item(El::new().s(Width::growable()))
-            .item(crate::action_buttons::clear_all_files_button(&tracked_files, &selected_variables)),
-        Column::new()
-            .s(Gap::new().y(SPACING_4))
-            .s(Padding::new().top(SPACING_4).right(SPACING_4))
-            .s(Height::fill())
-            .s(Width::growable())
-            .item(
-                El::new().s(Height::fill()).s(Width::growable()).child(
+    El::new()
+        .s(Height::fill())
+        .child(crate::panel_layout::create_panel(
+            Row::new()
+                .s(Gap::new().x(SPACING_8))
+                .s(Align::new().center_y())
+                .item(El::new().s(Font::new().no_wrap()).child("Files & Scopes"))
+                .item(El::new().s(Width::growable()))
+                .item(crate::action_buttons::load_files_button_with_progress(
+                    tracked_files.clone(),
+                    ButtonVariant::Outline,
+                    ButtonSize::Small,
+                    Some(IconName::Folder),
+                    file_dialog_visible,
+                ))
+                .item(El::new().s(Width::growable()))
+                .item(crate::action_buttons::clear_all_files_button(
+                    &tracked_files,
+                    &selected_variables,
+                )),
+            Column::new()
+                .s(Gap::new().y(SPACING_4))
+                .s(Padding::new().top(SPACING_4).right(SPACING_4))
+                .s(Height::fill())
+                .s(Width::growable())
+                .item(El::new().s(Height::fill()).s(Width::growable()).child(
                     Column::new().s(Width::fill()).s(Height::fill()).item(
                         El::new().s(Height::fill()).s(Width::fill()).child_signal({
                             let tracked_files_for_map = tracked_files.clone();
@@ -44,15 +49,18 @@ pub fn files_panel_with_dialog(
                                     empty_state_hint("Click 'Load Files' to add waveform files.")
                                         .unify()
                                 } else {
-                                    create_stable_tree_view(tracked_files_for_map.clone(), selected_variables_for_map.clone(), app_config.clone()).unify()
+                                    create_stable_tree_view(
+                                        tracked_files_for_map.clone(),
+                                        selected_variables_for_map.clone(),
+                                        app_config.clone(),
+                                    )
+                                    .unify()
                                 }
                             })
                         }),
-                        ),
                     ),
-                ),
-            ),
-    )
+                )),
+        ))
 }
 
 /// Create the main files panel with header and content
@@ -63,22 +71,26 @@ pub fn files_panel(
     app_config: crate::config::AppConfig,
 ) -> impl Element {
     let file_count_broadcaster = tracked_files.files.signal_vec().len().broadcast();
-    El::new().s(Height::fill()).child(crate::panel_layout::create_panel(
-        Row::new()
-            .s(Gap::new().x(SPACING_8))
-            .s(Align::new().center_y())
-            .item(El::new().s(Font::new().no_wrap()).child("Files & Scopes"))
-            .item(El::new().s(Width::growable()))
-            .item(load_files_button)
-            .item(El::new().s(Width::growable()))
-            .item(crate::action_buttons::clear_all_files_button(&tracked_files, &selected_variables)),
-        Column::new()
-            .s(Gap::new().y(SPACING_4))
-            .s(Padding::new().top(SPACING_4).right(SPACING_4))
-            .s(Height::fill())
-            .s(Width::growable())
-            .item(
-                El::new().s(Height::fill()).s(Width::growable()).child(
+    El::new()
+        .s(Height::fill())
+        .child(crate::panel_layout::create_panel(
+            Row::new()
+                .s(Gap::new().x(SPACING_8))
+                .s(Align::new().center_y())
+                .item(El::new().s(Font::new().no_wrap()).child("Files & Scopes"))
+                .item(El::new().s(Width::growable()))
+                .item(load_files_button)
+                .item(El::new().s(Width::growable()))
+                .item(crate::action_buttons::clear_all_files_button(
+                    &tracked_files,
+                    &selected_variables,
+                )),
+            Column::new()
+                .s(Gap::new().y(SPACING_4))
+                .s(Padding::new().top(SPACING_4).right(SPACING_4))
+                .s(Height::fill())
+                .s(Width::growable())
+                .item(El::new().s(Height::fill()).s(Width::growable()).child(
                     Column::new().s(Width::fill()).s(Height::fill()).item(
                         El::new().s(Height::fill()).s(Width::fill()).child_signal({
                             let tracked_files_for_map = tracked_files.clone();
@@ -88,15 +100,82 @@ pub fn files_panel(
                                     empty_state_hint("Click 'Load Files' to add waveform files.")
                                         .unify()
                                 } else {
-                                    create_stable_tree_view(tracked_files_for_map.clone(), selected_variables_for_map.clone(), app_config.clone()).unify()
+                                    create_stable_tree_view(
+                                        tracked_files_for_map.clone(),
+                                        selected_variables_for_map.clone(),
+                                        app_config.clone(),
+                                    )
+                                    .unify()
                                 }
                             })
                         }),
-                        ),
                     ),
-                ),
-            ),
-    )
+                )),
+        ))
+}
+
+#[derive(Clone)]
+struct FileSortKey {
+    filename_key: String,
+    prefix_key: String,
+}
+
+fn disambiguation_labels(files: &[TrackedFile]) -> HashMap<String, String> {
+    if files.is_empty() {
+        return HashMap::new();
+    }
+
+    let paths = files
+        .iter()
+        .map(|file| file.path.clone())
+        .collect::<Vec<_>>();
+
+    generate_smart_labels(&paths)
+}
+
+fn compute_sort_metadata(
+    files: &[TrackedFile],
+    disambiguation_map: &HashMap<String, String>,
+) -> HashMap<String, FileSortKey> {
+    let mut filename_counts: HashMap<String, usize> = HashMap::with_capacity(files.len());
+    for file in files {
+        *filename_counts
+            .entry(file.filename.to_lowercase())
+            .or_insert(0) += 1;
+    }
+
+    let mut metadata = HashMap::with_capacity(files.len());
+    for file in files {
+        let filename_key = file.filename.to_lowercase();
+        let duplicate_count = filename_counts.get(&filename_key).copied().unwrap_or(0);
+        let prefix_key = if duplicate_count > 1 {
+            disambiguation_map
+                .get(&file.path)
+                .and_then(|label| {
+                    label
+                        .rsplit_once('/')
+                        .map(|(prefix, _)| prefix.to_lowercase())
+                })
+                .unwrap_or_else(|| {
+                    std::path::Path::new(&file.path)
+                        .parent()
+                        .map(|parent| parent.to_string_lossy().to_lowercase())
+                        .unwrap_or_default()
+                })
+        } else {
+            String::new()
+        };
+
+        metadata.insert(
+            file.path.clone(),
+            FileSortKey {
+                filename_key,
+                prefix_key,
+            },
+        );
+    }
+
+    metadata
 }
 
 /// Create the stable tree view component for file display
@@ -105,33 +184,76 @@ pub fn create_stable_tree_view(
     selected_variables: crate::selected_variables::SelectedVariables,
     app_config: crate::config::AppConfig,
 ) -> impl Element {
-    El::new().s(Width::fill()).s(Height::fill()).child(
-        Column::new()
-            .s(Width::fill())
-            .s(Height::fill())
-            .s(Gap::new().y(SPACING_2))
-            .update_raw_el(|raw_el| {
-                raw_el
-                    .style("width", "100%")
-                    .style("min-width", "fit-content")
+    El::new().s(Width::fill()).s(Height::fill()).child_signal({
+        let tracked_files_for_closure = tracked_files.clone();
+        let selected_variables_for_closure = selected_variables.clone();
+        let app_config_for_closure = app_config.clone();
+
+        tracked_files
+            .files_vec_signal
+            .signal_cloned()
+            .map(move |files| {
+                let disambiguation_map = Arc::new(disambiguation_labels(&files));
+                let sort_metadata = compute_sort_metadata(&files, disambiguation_map.as_ref());
+
+                let mut entries: Vec<_> = files
+                    .into_iter()
+                    .map(|file| {
+                        let path = file.path.clone();
+                        let key =
+                            sort_metadata
+                                .get(&path)
+                                .cloned()
+                                .unwrap_or_else(|| FileSortKey {
+                                    filename_key: file.filename.to_lowercase(),
+                                    prefix_key: String::new(),
+                                });
+                        (file, key)
+                    })
+                    .collect();
+
+                entries.sort_by(|a, b| {
+                    let a_key = &a.1;
+                    let b_key = &b.1;
+                    a_key
+                        .filename_key
+                        .cmp(&b_key.filename_key)
+                        .then_with(|| a_key.prefix_key.cmp(&b_key.prefix_key))
+                        .then_with(|| a.0.path.cmp(&b.0.path))
+                });
+
+                let disambiguation_map_for_labels = Arc::clone(&disambiguation_map);
+                let tracked_files_for_items = tracked_files_for_closure.clone();
+                let selected_variables_for_items = selected_variables_for_closure.clone();
+                let app_config_for_items = app_config_for_closure.clone();
+
+                Column::new()
+                    .s(Width::fill())
+                    .s(Height::fill())
+                    .s(Gap::new().y(SPACING_2))
+                    .update_raw_el(|raw_el| {
+                        raw_el
+                            .style("width", "100%")
+                            .style("min-width", "fit-content")
+                    })
+                    .items(entries.into_iter().map(move |(tracked_file, _)| {
+                        let map_for_iteration = Arc::clone(&disambiguation_map_for_labels);
+                        let tracked_files_for_iteration = tracked_files_for_items.clone();
+                        let selected_variables_for_iteration = selected_variables_for_items.clone();
+                        let app_config_for_iteration = app_config_for_items.clone();
+                        let smart_label =
+                            compute_smart_label_for_file(&tracked_file, map_for_iteration.as_ref());
+                        render_tracked_file_as_tree_item_with_label_and_expanded_state(
+                            tracked_file,
+                            smart_label,
+                            tracked_files_for_iteration,
+                            selected_variables_for_iteration,
+                            app_config_for_iteration,
+                        )
+                    }))
+                    .into_element()
             })
-            .items_signal_vec({
-                let tracked_files_for_signals = tracked_files.clone();
-                let tracked_files_for_closure = tracked_files.clone();
-                let selected_variables_for_closure = selected_variables.clone();
-                let app_config_for_closure = app_config.clone();
-                tracked_files_for_signals.files.signal_vec().map(move |tracked_file| {
-                    let smart_label = compute_smart_label_for_file(&tracked_file);
-                    render_tracked_file_as_tree_item_with_label_and_expanded_state(
-                        tracked_file.clone(),
-                        smart_label,
-                        tracked_files_for_closure.clone(),
-                        selected_variables_for_closure.clone(),
-                        app_config_for_closure.clone(),
-                    )
-                })
-            }),
-    )
+    })
 }
 
 /// Render a tracked file as a tree item with proper labeling and expanded state
@@ -162,7 +284,11 @@ pub fn render_tracked_file_as_tree_item_with_label_and_expanded_state(
                 TreeViewItemData::new(tracked_file.id.clone(), display_name.clone())
                     .item_type(TreeViewItemType::File)
                     .icon("file")
-                    .on_remove(create_enhanced_file_remove_handler(tracked_file.id.clone(), tracked_files_domain.clone(), selected_variables.clone()))
+                    .on_remove(create_enhanced_file_remove_handler(
+                        tracked_file.id.clone(),
+                        tracked_files_domain.clone(),
+                        selected_variables.clone(),
+                    ))
                     .with_children(children),
             ]
         }
@@ -178,7 +304,11 @@ pub fn render_tracked_file_as_tree_item_with_label_and_expanded_state(
                     ))
                     .error_message(file_error.user_friendly_message())
                     .disabled(true)
-                    .on_remove(create_enhanced_file_remove_handler(tracked_file.id.clone(), tracked_files_domain.clone(), selected_variables.clone())),
+                    .on_remove(create_enhanced_file_remove_handler(
+                        tracked_file.id.clone(),
+                        tracked_files_domain.clone(),
+                        selected_variables.clone(),
+                    )),
             ]
         }
         shared::FileState::Missing(_file_path) => {
@@ -189,7 +319,11 @@ pub fn render_tracked_file_as_tree_item_with_label_and_expanded_state(
                     .tooltip(format!("{}\nFile no longer exists", tracked_file.path))
                     .error_message("File no longer exists".to_string())
                     .disabled(true)
-                    .on_remove(create_enhanced_file_remove_handler(tracked_file.id.clone(), tracked_files_domain.clone(), selected_variables.clone())),
+                    .on_remove(create_enhanced_file_remove_handler(
+                        tracked_file.id.clone(),
+                        tracked_files_domain.clone(),
+                        selected_variables.clone(),
+                    )),
             ]
         }
         shared::FileState::Unsupported(reason) => {
@@ -200,11 +334,14 @@ pub fn render_tracked_file_as_tree_item_with_label_and_expanded_state(
                     .tooltip(format!("{}\nUnsupported: {}", tracked_file.path, reason))
                     .error_message(format!("Unsupported: {}", reason))
                     .disabled(true)
-                    .on_remove(create_enhanced_file_remove_handler(tracked_file.id.clone(), tracked_files_domain.clone(), selected_variables.clone())),
+                    .on_remove(create_enhanced_file_remove_handler(
+                        tracked_file.id.clone(),
+                        tracked_files_domain.clone(),
+                        selected_variables.clone(),
+                    )),
             ]
         }
     };
-
 
     tree_view()
         .data(tree_data)
@@ -220,20 +357,14 @@ pub fn render_tracked_file_as_tree_item_with_label_and_expanded_state(
 }
 
 /// Compute smart label for a single file with duplicate detection AND time intervals
-pub fn compute_smart_label_for_file(target_file: &TrackedFile) -> String {
-    let base_name = if target_file.filename == "wave_27.fst" {
-        if let Some(parent) = std::path::Path::new(&target_file.path).parent() {
-            if let Some(dir_name) = parent.file_name() {
-                format!("{}/{}", dir_name.to_string_lossy(), target_file.filename)
-            } else {
-                target_file.filename.clone()
-            }
-        } else {
-            target_file.filename.clone()
-        }
-    } else {
-        target_file.filename.clone()
-    };
+pub fn compute_smart_label_for_file(
+    target_file: &TrackedFile,
+    disambiguation_map: &HashMap<String, String>,
+) -> String {
+    let base_name = disambiguation_map
+        .get(&target_file.path)
+        .cloned()
+        .unwrap_or_else(|| target_file.filename.clone());
 
     match &target_file.state {
         shared::FileState::Loaded(waveform_file) => {
@@ -265,21 +396,23 @@ pub fn compute_smart_label_for_file(target_file: &TrackedFile) -> String {
         shared::FileState::Loading(_) => {
             format!("{} (Loading...)", base_name)
         }
-        _ => {
-            base_name
-        }
+        _ => base_name,
     }
 }
 
 /// Render tracked file reactively with expanded scopes signal
 pub fn render_tracked_file_reactive(
     tracked_file: TrackedFile,
-    expanded_scopes_signal: impl zoon::Signal<Item = indexmap::IndexSet<String>> + 'static + std::marker::Unpin,
+    expanded_scopes_signal: impl zoon::Signal<Item = indexmap::IndexSet<String>>
+        + 'static
+        + std::marker::Unpin,
     tracked_files: crate::tracked_files::TrackedFiles,
     selected_variables: crate::selected_variables::SelectedVariables,
     app_config: crate::config::AppConfig,
 ) -> impl Element {
-    let smart_label = compute_smart_label_for_file(&tracked_file);
+    let all_files = tracked_files.files_vec_signal.get_cloned();
+    let disambiguation_map = disambiguation_labels(&all_files);
+    let smart_label = compute_smart_label_for_file(&tracked_file, &disambiguation_map);
 
     El::new().child_signal({
         let tracked_file = tracked_file.clone();
@@ -326,7 +459,11 @@ pub fn create_enhanced_file_remove_handler(
 ) -> impl Fn(&str) + 'static {
     move |id: &str| {
         let current_tracked_files = tracked_files.get_current_files();
-        crate::file_operations::cleanup_file_related_state(id, &current_tracked_files, &selected_variables);
+        crate::file_operations::cleanup_file_related_state(
+            id,
+            &current_tracked_files,
+            &selected_variables,
+        );
 
         tracked_files.file_removed_relay.send(id.to_string());
     }
@@ -355,7 +492,10 @@ pub fn files_panel_with_height(
             raw_el.style("scrollbar-width", "thin").style_signal(
                 "scrollbar-color",
                 primary_6()
-                    .map(|thumb| moonzoon_novyui::tokens::color::primary_3().map(move |track| format!("{} {}", thumb, track)))
+                    .map(|thumb| {
+                        moonzoon_novyui::tokens::color::primary_3()
+                            .map(move |track| format!("{} {}", thumb, track))
+                    })
                     .flatten(),
             )
         })

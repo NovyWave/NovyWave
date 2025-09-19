@@ -6,17 +6,17 @@ use zoon::*;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum CardVariant {
-    Default,    // Standard card with border
-    Elevated,   // Card with shadow
-    Outlined,   // Card with prominent border
-    Filled,     // Card with background fill
+    Default,  // Standard card with border
+    Elevated, // Card with shadow
+    Outlined, // Card with prominent border
+    Filled,   // Card with background fill
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum CardSize {
-    Small,      // Compact padding
-    Medium,     // Standard padding
-    Large,      // Spacious padding
+    Small,  // Compact padding
+    Medium, // Standard padding
+    Large,  // Spacious padding
 }
 
 pub struct CardBuilder {
@@ -77,9 +77,7 @@ impl CardBuilder {
         // Add border if needed
         if border_width > 0 {
             card = card.s(Borders::all(
-                Border::new()
-                    .width(border_width)
-                    .color(border_color)
+                Border::new().width(border_width).color(border_color),
             ));
         }
 
@@ -88,9 +86,7 @@ impl CardBuilder {
             // Note: MoonZoon shadow implementation would go here
             // For now, we'll use a subtle border to simulate elevation
             card = card.s(Borders::all(
-                Border::new()
-                    .width(1)
-                    .color("oklch(95% 0.025 255)")
+                Border::new().width(1).color("oklch(95% 0.025 255)"),
             ));
         }
 
@@ -103,10 +99,7 @@ impl CardBuilder {
 
         // Add simple content - using El wrapper for Text to avoid styling issues
         let content = El::new()
-            .s(Font::new()
-                .size(FONT_SIZE_16)
-                .color_signal(neutral_11())
-            )
+            .s(Font::new().size(FONT_SIZE_16).color_signal(neutral_11()))
             .child(Text::new("Card Content"));
 
         card.child(content)

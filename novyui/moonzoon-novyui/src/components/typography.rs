@@ -66,7 +66,9 @@ pub fn small(text: impl Into<String>) -> impl Element {
 // Code Component - Using proper token names
 pub fn code(text: impl Into<String>) -> impl Element {
     El::new()
-        .s(Font::new().size(FONT_SIZE_14).family([FontFamily::new(FONT_FAMILY_MONO)]))
+        .s(Font::new()
+            .size(FONT_SIZE_14)
+            .family([FontFamily::new(FONT_FAMILY_MONO)]))
         .s(Padding::new().x(SPACING_4).y(SPACING_2))
         .s(RoundedCorners::all(4))
         .s(Background::new().color_signal(neutral_2()))

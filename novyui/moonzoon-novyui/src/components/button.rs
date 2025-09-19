@@ -1,11 +1,11 @@
 // Button Component
 // Research-validated pattern with MoonZoon styling and animation
 
-use crate::tokens::*;
-use crate::tokens::shadow::*;
 use crate::components::icon::*;
+use crate::tokens::shadow::*;
+use crate::tokens::*;
+use futures_signals::signal::{SignalExt, always};
 use zoon::*;
-use futures_signals::signal::{always, SignalExt};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ButtonVariant {
@@ -74,7 +74,7 @@ impl ButtonBuilder {
         self
     }
 
-    pub fn label_signal<S>(mut self, label_signal: S) -> Self 
+    pub fn label_signal<S>(mut self, label_signal: S) -> Self
     where
         S: Signal<Item = String> + Unpin + 'static,
     {
@@ -99,7 +99,7 @@ impl ButtonBuilder {
         self
     }
 
-    pub fn disabled_signal<S>(mut self, disabled_signal: S) -> Self 
+    pub fn disabled_signal<S>(mut self, disabled_signal: S) -> Self
     where
         S: Signal<Item = bool> + Unpin + 'static,
     {
@@ -168,7 +168,6 @@ impl ButtonBuilder {
         self
     }
 
-
     pub fn build(self) -> impl Element {
         let (hovered, hovered_signal) = Mutable::new_and_signal(false);
         let (focused, focused_signal) = Mutable::new_and_signal(false);
@@ -188,7 +187,11 @@ impl ButtonBuilder {
         };
 
         // Determine if this is an icon-only button
-        let is_icon_only = self.label.is_none() && (self.left_icon.is_some() || self.left_icon_element.is_some() || self.right_icon.is_some() || self.right_icon_element.is_some());
+        let is_icon_only = self.label.is_none()
+            && (self.left_icon.is_some()
+                || self.left_icon_element.is_some()
+                || self.right_icon.is_some()
+                || self.right_icon_element.is_some());
 
         // Adjust padding for icon-only buttons (unless custom padding is set)
         let (final_padding_x, final_padding_y) = if is_icon_only && self.custom_padding.is_none() {
@@ -228,16 +231,19 @@ impl ButtonBuilder {
         let loading = self.loading;
 
         // Create a shared mutable for disabled state
-        let (is_disabled_mutable, is_disabled_signal) = Mutable::new_and_signal(disabled || loading);
-        
+        let (is_disabled_mutable, is_disabled_signal) =
+            Mutable::new_and_signal(disabled || loading);
+
         // If we have a disabled_signal, update the mutable when it changes
         if let Some(signal) = disabled_signal {
-            Task::start(signal.for_each(clone!((is_disabled_mutable) move |signal_disabled| {
-                is_disabled_mutable.set(disabled || loading || signal_disabled);
-                async {}
-            })));
+            Task::start(
+                signal.for_each(clone!((is_disabled_mutable) move |signal_disabled| {
+                    is_disabled_mutable.set(disabled || loading || signal_disabled);
+                    async {}
+                })),
+            );
         }
-        
+
         // Broadcast the signal for multiple use
         let is_disabled_broadcast = is_disabled_signal.broadcast();
 
@@ -281,7 +287,7 @@ impl ButtonBuilder {
         // Extract values before building button to avoid partial move
         let align = self.align.take();
         let on_press = self.on_press.take();
-        
+
         // Create shadow signal using the theme signal and disabled state
         let shadows_signal = map_ref! {
             let is_disabled = is_disabled_broadcast.signal(),
@@ -333,11 +339,9 @@ impl ButtonBuilder {
                 }
             }
         }.boxed_local();
-        
+
         // Create button content with icons and text
         let button_content = self.create_button_content(icon_size);
-
-
 
         let mut button = Button::new()
             .s(Padding::new().x(padding_x).y(padding_y))
@@ -488,13 +492,19 @@ impl ButtonBuilder {
 
         // Extract the signal to own it
         let label_signal = self.label_signal.take();
-        
+
         // If loading, show spinner instead of normal content
         if loading {
-            return self.create_loading_content(icon_size, has_label, has_left_icon, has_right_icon, label_signal);
+            return self.create_loading_content(
+                icon_size,
+                has_label,
+                has_left_icon,
+                has_right_icon,
+                label_signal,
+            );
         }
         let label = self.label.clone();
-        
+
         // Helper to create label based on what's available
         let create_label = || {
             if let Some(ref label) = label {
@@ -514,190 +524,219 @@ impl ButtonBuilder {
                 .s(Font::new().no_wrap())
                 .child_signal(signal.map(|text| Text::new(text)))
                 .unify();
-            
+
             match (has_left_icon, has_label, has_right_icon) {
                 // Icon-only buttons
-                (true, false, false) => {
-                    self.create_left_icon_element(icon_size)
-                }
-                (false, false, true) => {
-                    self.create_right_icon_element(icon_size)
-                }
+                (true, false, false) => self.create_left_icon_element(icon_size),
+                (false, false, true) => self.create_right_icon_element(icon_size),
                 // Both icons, no label (rare case)
-                (true, false, true) => {
-                    Row::new()
-                        .s(Align::new().center_y())
-                        .s(Gap::new().x(SPACING_8))
-                        .item(
-                            self.create_left_icon_element(icon_size)
-                        )
-                        .item(
-                            self.create_right_icon_element(icon_size)
-                        )
-                        .unify()
-                }
+                (true, false, true) => Row::new()
+                    .s(Align::new().center_y())
+                    .s(Gap::new().x(SPACING_8))
+                    .item(self.create_left_icon_element(icon_size))
+                    .item(self.create_right_icon_element(icon_size))
+                    .unify(),
                 // Label with left icon
-                (true, true, false) => {
-                    Row::new()
-                        .s(Align::new().center_y())
-                        .s(Gap::new().x(SPACING_8))
-                        .item(
-                            self.create_left_icon_element(icon_size)
-                        )
-                        .item(signal_label_element)
-                        .unify()
-                }
+                (true, true, false) => Row::new()
+                    .s(Align::new().center_y())
+                    .s(Gap::new().x(SPACING_8))
+                    .item(self.create_left_icon_element(icon_size))
+                    .item(signal_label_element)
+                    .unify(),
                 // Label with right icon
-                (false, true, true) => {
-                    Row::new()
-                        .s(Align::new().center_y())
-                        .s(Gap::new().x(SPACING_8))
-                        .item(signal_label_element)
-                        .item(
-                            self.create_right_icon_element(icon_size)
-                        )
-                        .unify()
-                }
+                (false, true, true) => Row::new()
+                    .s(Align::new().center_y())
+                    .s(Gap::new().x(SPACING_8))
+                    .item(signal_label_element)
+                    .item(self.create_right_icon_element(icon_size))
+                    .unify(),
                 // Label with both icons
-                (true, true, true) => {
-                    Row::new()
-                        .s(Align::new().center_y())
-                        .s(Gap::new().x(SPACING_8))
-                        .item(
-                            self.create_left_icon_element(icon_size)
-                        )
-                        .item(signal_label_element)
-                        .item(
-                            self.create_right_icon_element(icon_size)
-                        )
-                        .unify()
-                }
+                (true, true, true) => Row::new()
+                    .s(Align::new().center_y())
+                    .s(Gap::new().x(SPACING_8))
+                    .item(self.create_left_icon_element(icon_size))
+                    .item(signal_label_element)
+                    .item(self.create_right_icon_element(icon_size))
+                    .unify(),
                 // Label only
-                (false, true, false) => {
-                    signal_label_element
-                }
+                (false, true, false) => signal_label_element,
                 // Empty button (fallback)
-                (false, false, false) => {
-                    Text::new("").unify()
-                }
+                (false, false, false) => Text::new("").unify(),
             }
         } else {
             // Static label case
             match (has_left_icon, has_label, has_right_icon) {
-            // Icon-only buttons
-            (true, false, false) => {
-                self.create_left_icon_element(icon_size)
-            }
-            (false, false, true) => {
-                self.create_right_icon_element(icon_size)
-            }
-            // Both icons, no label (rare case)
-            (true, false, true) => {
-                Row::new()
+                // Icon-only buttons
+                (true, false, false) => self.create_left_icon_element(icon_size),
+                (false, false, true) => self.create_right_icon_element(icon_size),
+                // Both icons, no label (rare case)
+                (true, false, true) => Row::new()
                     .s(Align::new().center_y())
                     .s(Gap::new().x(SPACING_8))
-                    .item(
-                        self.create_left_icon_element(icon_size)
-                    )
-                    .item(
-                        self.create_right_icon_element(icon_size)
-                    )
-                    .unify()
-            }
-            // Label with left icon
-            (true, true, false) => {
-                Row::new()
+                    .item(self.create_left_icon_element(icon_size))
+                    .item(self.create_right_icon_element(icon_size))
+                    .unify(),
+                // Label with left icon
+                (true, true, false) => Row::new()
                     .s(Align::new().center_y())
                     .s(Gap::new().x(SPACING_8))
-                    .item(
-                        self.create_left_icon_element(icon_size)
-                    )
+                    .item(self.create_left_icon_element(icon_size))
                     .item(create_label())
-                    .unify()
-            }
-            // Label with right icon
-            (false, true, true) => {
-                Row::new()
+                    .unify(),
+                // Label with right icon
+                (false, true, true) => Row::new()
                     .s(Align::new().center_y())
                     .s(Gap::new().x(SPACING_8))
                     .item(create_label())
-                    .item(
-                        self.create_right_icon_element(icon_size)
-                    )
-                    .unify()
-            }
-            // Label with both icons
-            (true, true, true) => {
-                Row::new()
+                    .item(self.create_right_icon_element(icon_size))
+                    .unify(),
+                // Label with both icons
+                (true, true, true) => Row::new()
                     .s(Align::new().center_y())
                     .s(Gap::new().x(SPACING_8))
-                    .item(
-                        self.create_left_icon_element(icon_size)
-                    )
+                    .item(self.create_left_icon_element(icon_size))
                     .item(create_label())
-                    .item(
-                        self.create_right_icon_element(icon_size)
-                    )
-                    .unify()
-            }
-            // Label only
-            (false, true, false) => {
-                create_label()
-            }
-            // Empty button (fallback)
-            (false, false, false) => {
-                Text::new("").unify()
-            }
+                    .item(self.create_right_icon_element(icon_size))
+                    .unify(),
+                // Label only
+                (false, true, false) => create_label(),
+                // Empty button (fallback)
+                (false, false, false) => Text::new("").unify(),
             }
         }
     }
 
     #[allow(dead_code)]
-    fn get_button_shadows_signal(&self, variant: ButtonVariant) -> impl Signal<Item = Vec<Shadow>> + use<> {
+    fn get_button_shadows_signal(
+        &self,
+        variant: ButtonVariant,
+    ) -> impl Signal<Item = Vec<Shadow>> + use<> {
         theme().map(move |t| {
             match (variant, t) {
                 // Primary buttons get blue-tinted shadows
                 (ButtonVariant::Primary, Theme::Light) => vec![
-                    Shadow::new().y(4).x(0).blur(6).spread(-1).color(SHADOW_COLOR_PRIMARY_LIGHT),
-                    Shadow::new().y(2).x(0).blur(4).spread(-1).color(SHADOW_COLOR_NEUTRAL_LIGHT),
+                    Shadow::new()
+                        .y(4)
+                        .x(0)
+                        .blur(6)
+                        .spread(-1)
+                        .color(SHADOW_COLOR_PRIMARY_LIGHT),
+                    Shadow::new()
+                        .y(2)
+                        .x(0)
+                        .blur(4)
+                        .spread(-1)
+                        .color(SHADOW_COLOR_NEUTRAL_LIGHT),
                 ],
                 (ButtonVariant::Primary, Theme::Dark) => vec![
-                    Shadow::new().y(4).x(0).blur(6).spread(-1).color(SHADOW_COLOR_PRIMARY_DARK),
-                    Shadow::new().y(2).x(0).blur(4).spread(-1).color(SHADOW_COLOR_PRIMARY_LIGHT),
+                    Shadow::new()
+                        .y(4)
+                        .x(0)
+                        .blur(6)
+                        .spread(-1)
+                        .color(SHADOW_COLOR_PRIMARY_DARK),
+                    Shadow::new()
+                        .y(2)
+                        .x(0)
+                        .blur(4)
+                        .spread(-1)
+                        .color(SHADOW_COLOR_PRIMARY_LIGHT),
                 ],
 
                 // Secondary buttons get neutral shadows
                 (ButtonVariant::Secondary, Theme::Light) => vec![
-                    Shadow::new().y(3).x(0).blur(6).spread(-1).color(SHADOW_COLOR_BLACK_MEDIUM),
-                    Shadow::new().y(1).x(0).blur(3).spread(-1).color(SHADOW_COLOR_BLACK_LIGHT),
+                    Shadow::new()
+                        .y(3)
+                        .x(0)
+                        .blur(6)
+                        .spread(-1)
+                        .color(SHADOW_COLOR_BLACK_MEDIUM),
+                    Shadow::new()
+                        .y(1)
+                        .x(0)
+                        .blur(3)
+                        .spread(-1)
+                        .color(SHADOW_COLOR_BLACK_LIGHT),
                 ],
                 (ButtonVariant::Secondary, Theme::Dark) => vec![
-                    Shadow::new().y(3).x(0).blur(6).spread(-1).color(SHADOW_COLOR_BLACK_STRONG),
-                    Shadow::new().y(1).x(0).blur(3).spread(-1).color(SHADOW_COLOR_BLACK_DARK),
+                    Shadow::new()
+                        .y(3)
+                        .x(0)
+                        .blur(6)
+                        .spread(-1)
+                        .color(SHADOW_COLOR_BLACK_STRONG),
+                    Shadow::new()
+                        .y(1)
+                        .x(0)
+                        .blur(3)
+                        .spread(-1)
+                        .color(SHADOW_COLOR_BLACK_DARK),
                 ],
 
                 // Outline buttons get subtle shadows
                 (ButtonVariant::Outline, Theme::Light) => vec![
-                    Shadow::new().y(2).x(0).blur(4).spread(-1).color(SHADOW_COLOR_BLACK_LIGHT),
-                    Shadow::new().y(1).x(0).blur(2).spread(-1).color(SHADOW_COLOR_BLACK_SUBTLE),
+                    Shadow::new()
+                        .y(2)
+                        .x(0)
+                        .blur(4)
+                        .spread(-1)
+                        .color(SHADOW_COLOR_BLACK_LIGHT),
+                    Shadow::new()
+                        .y(1)
+                        .x(0)
+                        .blur(2)
+                        .spread(-1)
+                        .color(SHADOW_COLOR_BLACK_SUBTLE),
                 ],
                 (ButtonVariant::Outline, Theme::Dark) => vec![
-                    Shadow::new().y(2).x(0).blur(4).spread(-1).color(SHADOW_COLOR_BLACK_STRONG),
-                    Shadow::new().y(1).x(0).blur(2).spread(-1).color(SHADOW_COLOR_BLACK_DARK),
+                    Shadow::new()
+                        .y(2)
+                        .x(0)
+                        .blur(4)
+                        .spread(-1)
+                        .color(SHADOW_COLOR_BLACK_STRONG),
+                    Shadow::new()
+                        .y(1)
+                        .x(0)
+                        .blur(2)
+                        .spread(-1)
+                        .color(SHADOW_COLOR_BLACK_DARK),
                 ],
 
                 // Destructive buttons get red-tinted shadows
                 (ButtonVariant::Destructive, Theme::Light) => vec![
-                    Shadow::new().y(4).x(0).blur(6).spread(-1).color(SHADOW_COLOR_ERROR_LIGHT),
-                    Shadow::new().y(2).x(0).blur(4).spread(-1).color(SHADOW_COLOR_NEUTRAL_LIGHT),
+                    Shadow::new()
+                        .y(4)
+                        .x(0)
+                        .blur(6)
+                        .spread(-1)
+                        .color(SHADOW_COLOR_ERROR_LIGHT),
+                    Shadow::new()
+                        .y(2)
+                        .x(0)
+                        .blur(4)
+                        .spread(-1)
+                        .color(SHADOW_COLOR_NEUTRAL_LIGHT),
                 ],
                 (ButtonVariant::Destructive, Theme::Dark) => vec![
-                    Shadow::new().y(4).x(0).blur(6).spread(-1).color(SHADOW_COLOR_ERROR_DARK),
-                    Shadow::new().y(2).x(0).blur(4).spread(-1).color(SHADOW_COLOR_ERROR_LIGHT),
+                    Shadow::new()
+                        .y(4)
+                        .x(0)
+                        .blur(6)
+                        .spread(-1)
+                        .color(SHADOW_COLOR_ERROR_DARK),
+                    Shadow::new()
+                        .y(2)
+                        .x(0)
+                        .blur(4)
+                        .spread(-1)
+                        .color(SHADOW_COLOR_ERROR_LIGHT),
                 ],
 
                 // Ghost and Link buttons get no shadows for minimal appearance
-                (ButtonVariant::Ghost, _) | (ButtonVariant::Link, _) | (ButtonVariant::DestructiveGhost, _) => vec![],
+                (ButtonVariant::Ghost, _)
+                | (ButtonVariant::Link, _)
+                | (ButtonVariant::DestructiveGhost, _) => vec![],
             }
         })
     }
@@ -722,13 +761,13 @@ impl ButtonBuilder {
             .s(Transform::with_signal_self(
                 spinner_oscillator
                     .signal()
-                    .map(|factor| Transform::new().rotate(factor * 360.))
+                    .map(|factor| Transform::new().rotate(factor * 360.)),
             ))
             .child(
                 refresh_cw()
                     .size(icon_size)
                     .color(IconColor::Current)
-                    .build()
+                    .build(),
             );
 
         // Helper function to create label text for loading state

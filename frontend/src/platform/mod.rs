@@ -1,5 +1,5 @@
 //! Platform abstraction layer for NovyWave
-//! 
+//!
 //! Provides unified interface for communication between frontend and backend
 //! across different deployment modes (web vs desktop).
 
@@ -9,7 +9,7 @@ use shared::UpMsg;
 pub trait Platform {
     /// Send a message to the backend
     async fn send_message(msg: UpMsg) -> Result<(), String>;
-    
+
     /// Send a request and wait for response
     async fn request_response<T>(msg: UpMsg) -> Result<T, String>
     where

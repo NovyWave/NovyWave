@@ -1,4 +1,4 @@
-use shared::{FileState, TrackedFile, SelectedVariable, UpMsg};
+use shared::{FileState, SelectedVariable, TrackedFile, UpMsg};
 use zoon::*;
 
 /// Get signal type information for a selected variable (signal-based version)
@@ -34,7 +34,6 @@ pub fn get_signal_type_for_selected_variable(
     tracked_files: &[TrackedFile],
 ) -> String {
     if let Some((file_path, scope_path, variable_name)) = selected_var.parse_unique_id() {
-
         for tracked_file in tracked_files.iter() {
             if tracked_file.path == file_path {
                 if let FileState::Loaded(waveform_file) = &tracked_file.state {

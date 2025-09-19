@@ -4,10 +4,10 @@
 //! and provide unified cache invalidation and performance tracking.
 
 use crate::dataflow::{Actor, Relay, relay};
-use shared::{SignalTransition, SignalValue, WaveformFile};
-use zoon::*;
 use futures::{StreamExt, select};
+use shared::{SignalTransition, SignalValue, WaveformFile};
 use std::collections::HashMap;
+use zoon::*;
 
 // Import time domain
 use super::time_domain::{TimeNs, Viewport};
@@ -24,8 +24,7 @@ pub struct TimelineCache {
 
 /// Signal data optimized for viewport rendering
 #[derive(Clone, Debug)]
-pub struct ViewportSignalData {
-}
+pub struct ViewportSignalData {}
 
 /// Request state for cache deduplication
 #[derive(Clone, Debug)]
@@ -83,19 +82,20 @@ impl TimelineCache {
             },
         }
     }
-    
+
     /// Invalidate cache when cursor position changes
     pub fn invalidate_cursor(&mut self, new_cursor: TimeNs) {
         self.metadata.current_cursor = new_cursor;
         self.metadata.validity.cursor_valid = false;
         self.metadata.last_invalidation_ns = new_cursor;
     }
-    
+
     /// Invalidate cache when viewport changes
     pub fn invalidate_viewport(&mut self, new_viewport: Viewport) {
         self.metadata.current_viewport = new_viewport;
         self.metadata.validity.viewport_valid = false;
-        self.metadata.last_invalidation_ns = TimeNs::from_external_seconds(js_sys::Date::now() / 1000.0);
+        self.metadata.last_invalidation_ns =
+            TimeNs::from_external_seconds(js_sys::Date::now() / 1000.0);
     }
 }
 
@@ -110,7 +110,7 @@ impl Default for TimelineCache {
 pub struct TimelineCacheController {
     /// Unified timeline cache - replaces 4 separate cache systems
     pub cache: Actor<TimelineCache>,
-    
+
     /// System event relays
     pub data_loaded_relay: Relay<(String, WaveformFile)>,
     pub transitions_cached_relay: Relay<(String, Vec<SignalTransition>)>,
@@ -118,15 +118,14 @@ pub struct TimelineCacheController {
 }
 
 impl TimelineCacheController {
-    pub async fn new(
-        cursor_position: Actor<TimeNs>,
-        viewport: Actor<Viewport>,
-    ) -> Self {
+    pub async fn new(cursor_position: Actor<TimeNs>, viewport: Actor<Viewport>) -> Self {
         // Create relays for system events
         let (data_loaded_relay, data_loaded_stream) = relay::<(String, WaveformFile)>();
-        let (transitions_cached_relay, transitions_cached_stream) = relay::<(String, Vec<SignalTransition>)>();
-        let (cursor_values_updated_relay, cursor_values_updated_stream) = relay::<std::collections::BTreeMap<String, SignalValue>>();
-        
+        let (transitions_cached_relay, transitions_cached_stream) =
+            relay::<(String, Vec<SignalTransition>)>();
+        let (cursor_values_updated_relay, cursor_values_updated_stream) =
+            relay::<std::collections::BTreeMap<String, SignalValue>>();
+
         // Create timeline cache actor (Actor+Relay pattern)
         let cache = Actor::new(TimelineCache::new(), {
             let cursor_position_for_cache = cursor_position.clone();
@@ -135,11 +134,11 @@ impl TimelineCacheController {
                 let mut transitions_cached = transitions_cached_stream;
                 let mut data_loaded = data_loaded_stream;
                 let mut cursor_values_updated = cursor_values_updated_stream;
-                
+
                 // Watch cursor and viewport changes
                 let mut cursor_stream = cursor_position_for_cache.signal().to_stream().fuse();
                 let mut viewport_stream = viewport_for_cache.signal().to_stream().fuse();
-                
+
                 loop {
                     select! {
                         event = transitions_cached.next() => {
@@ -197,7 +196,7 @@ impl TimelineCacheController {
                 }
             }
         });
-        
+
         Self {
             cache,
             data_loaded_relay,

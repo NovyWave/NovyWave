@@ -55,7 +55,8 @@ impl SelectedVariables {
             relay::<(String, shared::VarFormat)>();
 
         // Create dedicated Vec Actor that syncs with ActorVec changes (no conversion antipattern)
-        let (variables_vec_updated_relay, variables_vec_updated_stream) = relay::<Vec<SelectedVariable>>();
+        let (variables_vec_updated_relay, variables_vec_updated_stream) =
+            relay::<Vec<SelectedVariable>>();
         let variables_vec_actor = Actor::new(vec![], async move |state| {
             let mut vec_updates = variables_vec_updated_stream;
             while let Some(new_vec) = vec_updates.next().await {
@@ -75,7 +76,7 @@ impl SelectedVariables {
 
                 loop {
                     use futures::select;
-                    
+
                     select! {
                         variable_id = variable_clicked.next() => {
                             if let Some(variable_id) = variable_id {
@@ -161,7 +162,7 @@ impl SelectedVariables {
 
             loop {
                 use futures::select;
-                
+
                 select! {
                     scope_id = scope_expanded.next() => {
                         if let Some(scope_id) = scope_id {
@@ -241,9 +242,10 @@ impl SelectedVariables {
         }
     }
 
-
-
-    pub fn file_variables_signal(&self, file_path: String) -> impl zoon::Signal<Item = Vec<SelectedVariable>> {
+    pub fn file_variables_signal(
+        &self,
+        file_path: String,
+    ) -> impl zoon::Signal<Item = Vec<SelectedVariable>> {
         self.variables_vec_actor.signal().map(move |vars| {
             vars.iter()
                 .filter(|v| v.file_path().as_ref() == Some(&file_path))
@@ -264,7 +266,6 @@ impl SelectedVariables {
     pub fn tree_selection_actor(&self) -> &Actor<IndexSet<String>> {
         &self.tree_selection
     }
-
 }
 
 impl SelectedVariables {
@@ -285,19 +286,25 @@ impl SelectedVariables {
             unique_id: variable_id,
             formatter: None,
         };
-        
+
         variables_mutable.lock_mut().push_cloned(placeholder_var);
-        
+
         let current_vars = variables_mutable.lock_ref().to_vec();
         variables_vec_relay.send(current_vars);
     }
 
     #[allow(dead_code)]
-    async fn find_and_create_selected_variable(_variable_id: &str, _scope_id: &str) -> Option<SelectedVariable> {
+    async fn find_and_create_selected_variable(
+        _variable_id: &str,
+        _scope_id: &str,
+    ) -> Option<SelectedVariable> {
         None
     }
 
-    fn find_signal_in_scopes(scopes: &[shared::ScopeData], signal_name: &str) -> Option<(shared::Signal, String)> {
+    fn find_signal_in_scopes(
+        scopes: &[shared::ScopeData],
+        signal_name: &str,
+    ) -> Option<(shared::Signal, String)> {
         for scope in scopes {
             for signal in &scope.variables {
                 if signal.name == signal_name {
@@ -316,7 +323,9 @@ impl SelectedVariables {
         variables_vec_relay: &Relay<Vec<SelectedVariable>>,
         variable_id: String,
     ) {
-        variables_mutable.lock_mut().retain(|var| var.unique_id != variable_id);
+        variables_mutable
+            .lock_mut()
+            .retain(|var| var.unique_id != variable_id);
         let current_vars = variables_mutable.lock_ref().to_vec();
         variables_vec_relay.send(current_vars);
     }
@@ -335,7 +344,9 @@ impl SelectedVariables {
         variables_vec_relay: &Relay<Vec<SelectedVariable>>,
         restored_variables: Vec<SelectedVariable>,
     ) {
-        variables_mutable.lock_mut().replace_cloned(restored_variables);
+        variables_mutable
+            .lock_mut()
+            .replace_cloned(restored_variables);
         let current_vars = variables_mutable.lock_ref().to_vec();
         variables_vec_relay.send(current_vars);
     }
@@ -347,18 +358,22 @@ impl SelectedVariables {
         new_format: shared::VarFormat,
     ) {
         let variables = variables_mutable.lock_ref().to_vec();
-        let updated_variables: Vec<_> = variables.into_iter().map(|mut var| {
-            if var.unique_id == variable_id {
-                var.formatter = Some(new_format);
-            }
-            var
-        }).collect();
+        let updated_variables: Vec<_> = variables
+            .into_iter()
+            .map(|mut var| {
+                if var.unique_id == variable_id {
+                    var.formatter = Some(new_format);
+                }
+                var
+            })
+            .collect();
 
-        variables_mutable.lock_mut().replace_cloned(updated_variables);
+        variables_mutable
+            .lock_mut()
+            .replace_cloned(updated_variables);
         let current_vars = variables_mutable.lock_ref().to_vec();
         variables_vec_relay.send(current_vars);
     }
-
 }
 
 // Variable context types and functions
@@ -386,13 +401,15 @@ pub fn filter_variables_with_context(
     }
 }
 
-
-
-pub fn create_selected_variable(variable: shared::Signal, _file_id: &str, scope_id: &str) -> Option<shared::SelectedVariable> {
+pub fn create_selected_variable(
+    variable: shared::Signal,
+    _file_id: &str,
+    scope_id: &str,
+) -> Option<shared::SelectedVariable> {
     let selected_var = shared::SelectedVariable::new(
         variable,
         "placeholder_path".to_string(),
-        scope_id.to_string()
+        scope_id.to_string(),
     );
     Some(selected_var)
 }
@@ -400,15 +417,16 @@ pub fn create_selected_variable(variable: shared::Signal, _file_id: &str, scope_
 /// Get variables from tracked files for a specific scope
 pub fn get_variables_from_tracked_files(
     scope_id: &str,
-    tracked_files: &[shared::TrackedFile]
+    tracked_files: &[shared::TrackedFile],
 ) -> Vec<VariableWithContext> {
     let mut variables_with_context = Vec::new();
-    
+
     // Iterate through all loaded waveform files
     for tracked_file in tracked_files.iter() {
         if let shared::FileState::Loaded(waveform_file) = &tracked_file.state {
             // Use existing utility function to find variables in the specific scope
-            if let Some(signals) = shared::find_variables_in_scope(&waveform_file.scopes, scope_id) {
+            if let Some(signals) = shared::find_variables_in_scope(&waveform_file.scopes, scope_id)
+            {
                 // Convert each signal to VariableWithContext
                 for signal in signals {
                     variables_with_context.push(VariableWithContext {
@@ -420,7 +438,7 @@ pub fn get_variables_from_tracked_files(
             }
         }
     }
-    
+
     variables_with_context
 }
 

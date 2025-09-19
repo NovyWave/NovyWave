@@ -3,12 +3,11 @@
 //! Centralized computation of timeline range from multiple files to eliminate
 //! scattered computation and provide single source of truth for timeline bounds.
 
-use crate::dataflow::Actor;
 use super::time_domain::TimeNs;
-use shared::{FileState, WaveformFile, TrackedFile};
+use crate::dataflow::Actor;
 use futures::{StreamExt, select};
-use zoon::{Signal, SignalVecExt, SignalExt};
-
+use shared::{FileState, TrackedFile, WaveformFile};
+use zoon::{Signal, SignalExt, SignalVecExt};
 
 /// Maximum Timeline Range actor - stores computed timeline range for efficient access
 #[derive(Clone, Debug)]
@@ -22,7 +21,11 @@ impl MaximumTimelineRange {
         selected_variables: crate::selected_variables::SelectedVariables,
     ) -> Self {
         let range = Actor::new(None, async move |state| {
-            let mut files_stream = tracked_files.files.signal_vec().to_signal_cloned().to_stream();
+            let mut files_stream = tracked_files
+                .files
+                .signal_vec()
+                .to_signal_cloned()
+                .to_stream();
 
             // Wait for files and compute range reactively
             while let Some(files) = files_stream.next().await {
@@ -69,5 +72,4 @@ impl MaximumTimelineRange {
             None
         }
     }
-    
 }

@@ -1,20 +1,20 @@
-use zoon::*;
 use crate::tokens::*;
+use zoon::*;
 
 // FileInput variants
 #[derive(Debug, Clone, Copy)]
 pub enum FileInputVariant {
-    Default,    // Standard file input
-    Dropzone,   // Drag and drop area
-    Button,     // Button-style file input
+    Default,  // Standard file input
+    Dropzone, // Drag and drop area
+    Button,   // Button-style file input
 }
 
 // FileInput sizes
 #[derive(Debug, Clone, Copy)]
 pub enum FileInputSize {
-    Small,   // Compact size
-    Medium,  // Default size
-    Large,   // Larger size
+    Small,  // Compact size
+    Medium, // Default size
+    Large,  // Larger size
 }
 
 // File type restrictions
@@ -45,7 +45,7 @@ pub struct FileInputBuilder {
     multiple: bool,
     disabled: bool,
     placeholder: Option<String>,
-    max_size: Option<u64>, // Max file size in bytes
+    max_size: Option<u64>,                       // Max file size in bytes
     on_change: Option<Box<dyn Fn(Vec<String>)>>, // File names for demo
     on_error: Option<Box<dyn Fn(String)>>,
 }
@@ -102,7 +102,7 @@ impl FileInputBuilder {
 
     pub fn on_change<F>(mut self, handler: F) -> Self
     where
-        F: Fn(Vec<String>) + 'static
+        F: Fn(Vec<String>) + 'static,
     {
         self.on_change = Some(Box::new(handler));
         self
@@ -110,7 +110,7 @@ impl FileInputBuilder {
 
     pub fn on_error<F>(mut self, handler: F) -> Self
     where
-        F: Fn(String) + 'static
+        F: Fn(String) + 'static,
     {
         self.on_error = Some(Box::new(handler));
         self
@@ -167,19 +167,15 @@ impl FileInputBuilder {
             .item(
                 El::new()
                     .s(Width::fill())
-                    .s(Font::new()
-                        .size(font_size)
-                        .color(text_color)
-                    )
-                    .child(Text::new(&placeholder_text))
+                    .s(Font::new().size(font_size).color(text_color))
+                    .child(Text::new(&placeholder_text)),
             )
             .item(
                 El::new()
-                    .s(Font::new()
-                        .size(FONT_SIZE_14)
-                        .color("#6b7280") // gray-500
+                    .s(
+                        Font::new().size(FONT_SIZE_14).color("#6b7280"), // gray-500
                     )
-                    .child(Text::new("📁"))
+                    .child(Text::new("📁")),
             );
 
         if !self.disabled {
@@ -203,9 +199,9 @@ impl FileInputBuilder {
             FileInputSize::Large => (SPACING_32, FONT_SIZE_18),
         };
 
-        let placeholder_text = self.placeholder.unwrap_or_else(|| {
-            "Drag and drop files here, or click to select".to_string()
-        });
+        let placeholder_text = self
+            .placeholder
+            .unwrap_or_else(|| "Drag and drop files here, or click to select".to_string());
 
         let border_color = if self.disabled {
             "#d1d5db" // gray-300
@@ -235,20 +231,13 @@ impl FileInputBuilder {
             .s(Gap::new().y(SPACING_8))
             .item(
                 El::new()
-                    .s(Font::new()
-                        .size(32)
-                        .color(text_color)
-                    )
-                    .child(Text::new("📤"))
+                    .s(Font::new().size(32).color(text_color))
+                    .child(Text::new("📤")),
             )
             .item(
                 El::new()
-                    .s(Font::new()
-                        .size(font_size)
-                        .color(text_color)
-                        .center()
-                    )
-                    .child(Text::new(&placeholder_text))
+                    .s(Font::new().size(font_size).color(text_color).center())
+                    .child(Text::new(&placeholder_text)),
             );
 
         if !self.disabled {
@@ -295,20 +284,16 @@ impl FileInputBuilder {
             .s(Gap::new().x(SPACING_8))
             .item(
                 El::new()
-                    .s(Font::new()
-                        .size(font_size)
-                        .color(text_color)
-                    )
-                    .child(Text::new("📁"))
+                    .s(Font::new().size(font_size).color(text_color))
+                    .child(Text::new("📁")),
             )
             .item(
                 El::new()
                     .s(Font::new()
                         .size(font_size)
                         .color(text_color)
-                        .weight(FontWeight::Medium)
-                    )
-                    .child(Text::new(&button_text))
+                        .weight(FontWeight::Medium))
+                    .child(Text::new(&button_text)),
             );
 
         if !self.disabled {

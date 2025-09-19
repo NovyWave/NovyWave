@@ -1,10 +1,10 @@
+use crate::dataflow::atom::Atom;
 use shared::TrackedFile;
 use zoon::*;
-use crate::dataflow::atom::Atom;
 
 /// Clean up file-related state when a file is removed
 pub fn cleanup_file_related_state(
-    file_id: &str, 
+    file_id: &str,
     tracked_files: &[TrackedFile],
     selected_variables: &crate::selected_variables::SelectedVariables,
 ) {
@@ -21,12 +21,10 @@ pub fn cleanup_file_related_state(
 pub fn process_file_picker_selection(
     tracked_files: crate::tracked_files::TrackedFiles,
     selected_files: Vec<String>,
-    file_dialog_visible: Atom<bool>
+    file_dialog_visible: Atom<bool>,
 ) {
     Task::start(async move {
-
         if !selected_files.is_empty() {
-
             use std::path::PathBuf;
 
             let tracked_files_snapshot = tracked_files.get_current_files();
@@ -50,7 +48,10 @@ pub fn process_file_picker_selection(
             let tracked_files = &tracked_files;
 
             if !new_files.is_empty() {
-                zoon::println!("📤 FILE_OPERATIONS: Sending {} files through files_dropped_relay", new_files.len());
+                zoon::println!(
+                    "📤 FILE_OPERATIONS: Sending {} files through files_dropped_relay",
+                    new_files.len()
+                );
                 for file in &new_files {
                     zoon::println!("  📄 File: {:?}", file);
                 }
@@ -74,7 +75,6 @@ pub fn clear_all_files(
     tracked_files: &crate::tracked_files::TrackedFiles,
     selected_variables: &crate::selected_variables::SelectedVariables,
 ) {
-
     let file_ids: Vec<String> = tracked_files
         .get_current_files()
         .iter()
@@ -92,7 +92,10 @@ pub fn clear_all_files(
 /// Monitor directory expansions for file picker
 /// NOTE: This function is currently unused - directory expansion monitoring is handled
 /// directly by the FilePickerDomain Actor system through directory_expanded_relay
-pub fn monitor_directory_expansions(expanded: std::collections::HashSet<String>, app_config: &crate::config::AppConfig) {
+pub fn monitor_directory_expansions(
+    expanded: std::collections::HashSet<String>,
+    app_config: &crate::config::AppConfig,
+) {
     // This function is deprecated - use FilePickerDomain actors instead
     zoon::println!("⚠️ monitor_directory_expansions is deprecated - use FilePickerDomain actors");
 }

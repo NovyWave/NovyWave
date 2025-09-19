@@ -1,12 +1,12 @@
-use zoon::*;
 use crate::tokens::*;
+use zoon::*;
 
 // Kbd sizes
 #[derive(Debug, Clone, Copy)]
 pub enum KbdSize {
-    Small,   // 12px font, 4px padding, 20px min-width, 2px border-radius
-    Medium,  // 14px font, 8px padding, 24px min-width, 4px border-radius (default)
-    Large,   // 16px font, 12px padding, 32px min-width, 4px border-radius
+    Small,  // 12px font, 4px padding, 20px min-width, 2px border-radius
+    Medium, // 14px font, 8px padding, 24px min-width, 4px border-radius (default)
+    Large,  // 16px font, 12px padding, 32px min-width, 4px border-radius
 }
 
 // Kbd variants

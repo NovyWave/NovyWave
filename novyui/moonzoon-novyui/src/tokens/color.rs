@@ -1,7 +1,7 @@
 // Color Token System
 // Reactive approach using theme signals
 
-use super::theme::{theme, Theme};
+use super::theme::{Theme, theme};
 use zoon::*;
 
 // Primary Color Scale - Reactive signals
@@ -145,8 +145,6 @@ pub fn neutral_11() -> impl Signal<Item = &'static str> {
         Theme::Dark => "oklch(85% 0.025 255)",
     })
 }
-
-
 
 pub fn neutral_12() -> impl Signal<Item = &'static str> {
     theme().map(|t| match t {

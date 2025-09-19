@@ -2,10 +2,10 @@
 // Based on NovyUI Vue shadow tokens - VERIFIED TO MATCH ORIGINAL
 
 // Shadow Sizes - VERIFIED TO MATCH ORIGINAL
-pub const SHADOW_SIZE_1: &str = "0 1px 2px";    // Subtle elevation
-pub const SHADOW_SIZE_2: &str = "0 2px 8px";    // Medium elevation
-pub const SHADOW_SIZE_3: &str = "0 4px 16px";   // High elevation
-pub const SHADOW_FOCUS: &str = "0 0 0 4px";     // Focus ring
+pub const SHADOW_SIZE_1: &str = "0 1px 2px"; // Subtle elevation
+pub const SHADOW_SIZE_2: &str = "0 2px 8px"; // Medium elevation
+pub const SHADOW_SIZE_3: &str = "0 4px 16px"; // High elevation
+pub const SHADOW_FOCUS: &str = "0 0 0 4px"; // Focus ring
 
 // Shadow Colors - VERIFIED TO MATCH ORIGINAL
 pub const SHADOW_COLOR_NEUTRAL: &str = "oklch(70% 0.09 255 / 0.22)";

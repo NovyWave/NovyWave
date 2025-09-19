@@ -1,5 +1,5 @@
 //! Core dataflow primitives for reactive state management
-//! 
+//!
 //! This module provides the foundational Actor+Relay architecture
 //! components that are independent of business logic. These primitives
 //! form the basis for all reactive state management in NovyWave.
@@ -19,16 +19,15 @@
 //! 3. **No Direct Access** - No `.get()` methods, all access through signals
 //! 4. **Cache Values Only in Actors** - Value caching only inside Actor loops
 
-pub mod relay;
 pub mod actor;
-pub mod actor_vec;
 pub mod actor_map;
+pub mod actor_vec;
 pub mod atom;
+pub mod relay;
 
 // Core exports
-pub use relay::{Relay, relay};
 pub use actor::Actor;
-pub use actor_vec::ActorVec;
 pub use actor_map::ActorMap;
+pub use actor_vec::ActorVec;
 pub use atom::Atom;
-
+pub use relay::{Relay, relay};

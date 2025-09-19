@@ -1,21 +1,21 @@
 use crate::dataflow::*;
-use zoon::*;
 use futures::{select, stream::StreamExt};
+use zoon::*;
 
 #[derive(Clone, Debug)]
 pub struct AnimationController {
     pub animation_state: Actor<AnimationState>,
-    
+
     pub pan_left_requested_relay: Relay,
     pub pan_right_requested_relay: Relay,
     pub pan_left_stopped_relay: Relay,
     pub pan_right_stopped_relay: Relay,
-    
+
     pub cursor_left_requested_relay: Relay,
     pub cursor_right_requested_relay: Relay,
     pub cursor_left_stopped_relay: Relay,
     pub cursor_right_stopped_relay: Relay,
-    
+
     pub animation_tick_relay: Relay<AnimationFrame>,
 }
 
@@ -65,14 +65,14 @@ impl AnimationController {
         let (pan_right_requested_relay, mut pan_right_requested_stream) = relay();
         let (pan_left_stopped_relay, mut pan_left_stopped_stream) = relay();
         let (pan_right_stopped_relay, mut pan_right_stopped_stream) = relay();
-        
+
         let (cursor_left_requested_relay, mut cursor_left_requested_stream) = relay();
         let (cursor_right_requested_relay, mut cursor_right_requested_stream) = relay();
         let (cursor_left_stopped_relay, mut cursor_left_stopped_stream) = relay();
         let (cursor_right_stopped_relay, mut cursor_right_stopped_stream) = relay();
-        
+
         let (animation_tick_relay, mut animation_tick_stream) = relay::<AnimationFrame>();
-        
+
         let animation_state = Actor::new(AnimationState::default(), async move |state| {
             loop {
                 select! {
@@ -142,7 +142,7 @@ impl AnimationController {
                 }
             }
         });
-        
+
         Self {
             animation_state,
             pan_left_requested_relay,
@@ -156,7 +156,4 @@ impl AnimationController {
             animation_tick_relay,
         }
     }
-    
-    
 }
-

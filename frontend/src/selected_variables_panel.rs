@@ -8,15 +8,12 @@
  * - Wave Column: Fast2D canvas for waveform visualization
  */
 
-use moonzoon_novyui::tokens::color::{neutral_8, neutral_11, primary_6};
+use crate::dragging::{variables_name_column_width_signal, variables_value_column_width_signal};
 use moonzoon_novyui::components::{KbdSize, KbdVariant, kbd};
+use moonzoon_novyui::tokens::color::{neutral_8, neutral_11, primary_6};
 use moonzoon_novyui::*;
+use shared::{SelectedVariable, TrackedFile, VarFormat};
 use zoon::*;
-use shared::{VarFormat, SelectedVariable, TrackedFile};
-use crate::dragging::{
-    variables_name_column_width_signal,
-    variables_value_column_width_signal,
-};
 
 /// Selected Variables panel row height constant
 pub const SELECTED_VARIABLES_ROW_HEIGHT: u32 = 30;
@@ -35,21 +32,19 @@ pub fn selected_variables_panel(
     Column::new()
         .s(Width::growable())
         .s(Height::fill())
-        .item(
-            crate::panel_layout::create_panel(
-                // Header with title and action buttons
-                selected_variables_panel_header(&selected_variables_for_header, &app_config.clone()),
-                // Three-column content area
-                selected_variables_panel_content(
-                    selected_variables,
-                    waveform_timeline,
-                    tracked_files,
-                    app_config,
-                    dragging_system,
-                    waveform_canvas,
-                )
-            )
-        )
+        .item(crate::panel_layout::create_panel(
+            // Header with title and action buttons
+            selected_variables_panel_header(&selected_variables_for_header, &app_config.clone()),
+            // Three-column content area
+            selected_variables_panel_content(
+                selected_variables,
+                waveform_timeline,
+                tracked_files,
+                app_config,
+                dragging_system,
+                waveform_canvas,
+            ),
+        ))
 }
 
 /// Panel header with title and action buttons
@@ -65,29 +60,27 @@ fn selected_variables_panel_header(
             // Title - left aligned
             El::new()
                 .s(Font::new().no_wrap())
-                .child("Selected Variables")
+                .child("Selected Variables"),
         )
         .item(
             // Spacer to push buttons to center and right
-            El::new()
-                .s(Width::growable())
+            El::new().s(Width::growable()),
         )
         .item(
             // Theme toggle button (center-left)
-            crate::action_buttons::theme_toggle_button(app_config)
+            crate::action_buttons::theme_toggle_button(app_config),
         )
         .item(
             // Dock mode toggle button (center-right)
-            crate::action_buttons::dock_toggle_button(app_config)
+            crate::action_buttons::dock_toggle_button(app_config),
         )
         .item(
             // Spacer to push Clear All to right
-            El::new()
-                .s(Width::growable())
+            El::new().s(Width::growable()),
         )
         .item(
             // Remove All button - right aligned
-            crate::action_buttons::clear_all_variables_button(selected_variables)
+            crate::action_buttons::clear_all_variables_button(selected_variables),
         )
 }
 
@@ -106,10 +99,14 @@ fn selected_variables_panel_content(
 
     El::new()
         .s(Height::exact_signal(
-            selected_variables_for_height.variables.signal_vec().to_signal_cloned().map(|vars| {
-                // Account for variables + footer row
-                (vars.len() + 1) as u32 * SELECTED_VARIABLES_ROW_HEIGHT
-            })
+            selected_variables_for_height
+                .variables
+                .signal_vec()
+                .to_signal_cloned()
+                .map(|vars| {
+                    // Account for variables + footer row
+                    (vars.len() + 1) as u32 * SELECTED_VARIABLES_ROW_HEIGHT
+                }),
         ))
         .s(Width::fill())
         .s(Scrollbars::x_and_clip_y())
@@ -124,24 +121,30 @@ fn selected_variables_panel_content(
                         selected_variables.clone(),
                         tracked_files.clone(),
                         waveform_timeline.clone(),
-                        name_column_width_signal
-                    )
+                        name_column_width_signal,
+                    ),
                 )
                 .item(
                     // Name-Value divider
-                    crate::panel_layout::variables_name_vertical_divider(&app_config, dragging_system.clone())
+                    crate::panel_layout::variables_name_vertical_divider(
+                        &app_config,
+                        dragging_system.clone(),
+                    ),
                 )
                 .item(
                     // Value Column
                     selected_variables_value_column(
                         selected_variables.clone(),
                         waveform_timeline.clone(),
-                        value_column_width_signal
-                    )
+                        value_column_width_signal,
+                    ),
                 )
                 .item(
                     // Value-Wave divider
-                    crate::panel_layout::variables_value_vertical_divider(&app_config, dragging_system.clone())
+                    crate::panel_layout::variables_value_vertical_divider(
+                        &app_config,
+                        dragging_system.clone(),
+                    ),
                 )
                 .item(
                     // Wave Column
@@ -149,9 +152,9 @@ fn selected_variables_panel_content(
                         &selected_variables,
                         &waveform_timeline,
                         &waveform_canvas,
-                        &app_config
-                    )
-                )
+                        &app_config,
+                    ),
+                ),
         )
 }
 
@@ -169,22 +172,23 @@ fn selected_variables_name_column(
         .s(Height::fill())
         .s(Align::new().top())
         .s(Scrollbars::x_and_clip_y())
-        .update_raw_el(|raw_el| {
-            raw_el.style("scrollbar-width", "thin")
-        })
+        .update_raw_el(|raw_el| raw_el.style("scrollbar-width", "thin"))
         .items_signal_vec({
             let tracked_files_for_items = tracked_files.clone();
-            selected_variables.variables.signal_vec().map(move |selected_var| {
-                name_column_variable_row(
-                    selected_var,
-                    selected_variables_for_items.clone(),
-                    tracked_files_for_items.clone()
-                )
-            })
+            selected_variables
+                .variables
+                .signal_vec()
+                .map(move |selected_var| {
+                    name_column_variable_row(
+                        selected_var,
+                        selected_variables_for_items.clone(),
+                        tracked_files_for_items.clone(),
+                    )
+                })
         })
         .item(
             // Name Column Footer with keyboard shortcuts
-            name_column_footer(waveform_timeline)
+            name_column_footer(waveform_timeline),
         )
 }
 
@@ -196,7 +200,11 @@ fn name_column_variable_row(
 ) -> impl Element {
     let unique_id = selected_var.unique_id.clone();
     let selected_variables_for_remove = selected_variables.clone();
-    let tracked_files_broadcaster = tracked_files.files.signal_vec().to_signal_cloned().broadcast();
+    let tracked_files_broadcaster = tracked_files
+        .files
+        .signal_vec()
+        .to_signal_cloned()
+        .broadcast();
 
     Row::new()
         .s(Height::exact(SELECTED_VARIABLES_ROW_HEIGHT))
@@ -274,7 +282,9 @@ fn name_column_variable_row(
 }
 
 /// Name Column Footer with keyboard shortcuts for zoom
-fn name_column_footer(waveform_timeline: crate::visualizer::timeline::timeline_actor::WaveformTimeline) -> impl Element {
+fn name_column_footer(
+    waveform_timeline: crate::visualizer::timeline::timeline_actor::WaveformTimeline,
+) -> impl Element {
     El::new()
         .s(Height::exact(SELECTED_VARIABLES_ROW_HEIGHT))
         .s(Width::fill())
@@ -365,21 +375,22 @@ fn selected_variables_value_column(
         .s(Height::fill())
         .s(Align::new().top())
         .s(Scrollbars::x_and_clip_y())
-        .update_raw_el(|raw_el| {
-            raw_el.style("scrollbar-width", "thin")
-        })
+        .update_raw_el(|raw_el| raw_el.style("scrollbar-width", "thin"))
         .items_signal_vec({
-            selected_variables.variables.signal_vec().map(move |selected_var| {
-                value_column_variable_row(
-                    selected_var,
-                    selected_variables_for_values.clone(),
-                    waveform_timeline_for_values.clone()
-                )
-            })
+            selected_variables
+                .variables
+                .signal_vec()
+                .map(move |selected_var| {
+                    value_column_variable_row(
+                        selected_var,
+                        selected_variables_for_values.clone(),
+                        waveform_timeline_for_values.clone(),
+                    )
+                })
         })
         .item(
             // Value Column Footer with timeline boundaries
-            value_column_footer()
+            value_column_footer(),
         )
 }
 
@@ -392,14 +403,12 @@ fn value_column_variable_row(
     El::new()
         .s(Height::exact(SELECTED_VARIABLES_ROW_HEIGHT))
         .s(Width::fill())
-        .child(
-            crate::format_selection::create_format_dropdown(
-                &selected_var.unique_id,
-                selected_var.formatter.unwrap_or(VarFormat::Hexadecimal),
-                &selected_variables,
-                &waveform_timeline
-            )
-        )
+        .child(crate::format_selection::create_format_dropdown(
+            &selected_var.unique_id,
+            selected_var.formatter.unwrap_or(VarFormat::Hexadecimal),
+            &selected_variables,
+            &waveform_timeline,
+        ))
 }
 
 /// Value Column Footer with timeline boundaries and cursor controls
@@ -515,12 +524,10 @@ fn selected_variables_wave_column(
         .s(Width::fill())
         .s(Height::fill())
         .s(Background::new().color_signal(moonzoon_novyui::tokens::color::neutral_2()))
-        .child(
-            crate::visualizer::canvas::waveform_canvas::waveform_canvas(
-                waveform_canvas,
-                selected_variables,
-                waveform_timeline,
-                app_config
-            )
-        )
+        .child(crate::visualizer::canvas::waveform_canvas::waveform_canvas(
+            waveform_canvas,
+            selected_variables,
+            waveform_timeline,
+            app_config,
+        ))
 }

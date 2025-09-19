@@ -2,8 +2,8 @@
 // Provides background pattern integration using HeroPatterns
 
 // Removed unused assets import since we use direct URLs for patterns
-use crate::tokens::*;
 use crate::components::typography::*;
+use crate::tokens::*;
 use zoon::*;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -74,13 +74,13 @@ pub fn pattern_showcase() -> impl Element {
                 .s(Gap::new().x(SPACING_12))
                 .item(pattern_demo_card(PatternType::Hexagons))
                 .item(pattern_demo_card(PatternType::Jigsaw))
-                .item(pattern_demo_card(PatternType::Overcast))
+                .item(pattern_demo_card(PatternType::Overcast)),
         )
         .item(
             Row::new()
                 .s(Gap::new().x(SPACING_12))
                 .item(pattern_demo_card(PatternType::Topography))
-                .item(pattern_demo_card(PatternType::Wiggle))
+                .item(pattern_demo_card(PatternType::Wiggle)),
         )
 }
 

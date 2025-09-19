@@ -13,21 +13,15 @@ pub use zoon::ease;
 
 // Helper functions for common animations
 pub fn transition_fast() -> impl Style<'static> {
-    Transitions::new([
-        Transition::all().duration(DURATION_FAST),
-    ])
+    Transitions::new([Transition::all().duration(DURATION_FAST)])
 }
 
 pub fn transition_normal() -> impl Style<'static> {
-    Transitions::new([
-        Transition::all().duration(DURATION_NORMAL),
-    ])
+    Transitions::new([Transition::all().duration(DURATION_NORMAL)])
 }
 
 pub fn transition_slow() -> impl Style<'static> {
-    Transitions::new([
-        Transition::all().duration(DURATION_SLOW),
-    ])
+    Transitions::new([Transition::all().duration(DURATION_SLOW)])
 }
 
 // Specific transition helpers
@@ -40,15 +34,11 @@ pub fn transition_colors() -> impl Style<'static> {
 }
 
 pub fn transition_transform() -> impl Style<'static> {
-    Transitions::new([
-        Transition::property("transform").duration(DURATION_NORMAL),
-    ])
+    Transitions::new([Transition::property("transform").duration(DURATION_NORMAL)])
 }
 
 pub fn transition_opacity() -> impl Style<'static> {
-    Transitions::new([
-        Transition::property("opacity").duration(DURATION_NORMAL),
-    ])
+    Transitions::new([Transition::property("opacity").duration(DURATION_NORMAL)])
 }
 
 // Animation helper for height changes (accordion-style)

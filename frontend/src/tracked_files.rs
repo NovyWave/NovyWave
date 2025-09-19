@@ -3,7 +3,7 @@
 //! Proper Actor+Relay architecture for file loading and management.
 //! Uses dataflow Actor pattern instead of global Mutables.
 
-use crate::dataflow::{ActorVec, Actor, Relay, relay};
+use crate::dataflow::{Actor, ActorVec, Relay, relay};
 use futures::{StreamExt, select};
 use shared::{FileState, LoadingStatus, TrackedFile, create_tracked_file};
 use zoon::*;
@@ -12,7 +12,7 @@ use zoon::*;
 #[derive(Clone)]
 pub struct TrackedFiles {
     pub files: ActorVec<TrackedFile>,
-    pub files_vec_signal: zoon::Mutable<Vec<TrackedFile>>,  // Dedicated Vec signal for sync
+    pub files_vec_signal: zoon::Mutable<Vec<TrackedFile>>, // Dedicated Vec signal for sync
     pub config_files_loaded_relay: Relay<Vec<String>>,
     pub files_dropped_relay: Relay<Vec<std::path::PathBuf>>,
     pub file_removed_relay: Relay<String>,
@@ -288,17 +288,19 @@ impl TrackedFiles {
 /// Update the state of an existing tracked file
 /// Utility function for compatibility with existing code
 pub fn update_tracked_file_state(
-    file_id: &str, 
+    file_id: &str,
     new_state: FileState,
     tracked_files: &TrackedFiles,
 ) {
-    tracked_files.file_load_completed_relay.send((file_id.to_string(), new_state));
+    tracked_files
+        .file_load_completed_relay
+        .send((file_id.to_string(), new_state));
 }
 
 async fn send_parse_request_to_backend(file_path: String) {
     use crate::platform::{CurrentPlatform, Platform};
     use shared::UpMsg;
-    
+
     match CurrentPlatform::send_message(UpMsg::LoadWaveformFile(file_path.clone())).await {
         Ok(()) => {}
         Err(e) => {

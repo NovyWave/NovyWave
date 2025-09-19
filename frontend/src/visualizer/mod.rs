@@ -14,5 +14,5 @@ pub mod timeline;
 // Testing utilities and patterns
 // pub mod testing; // Module does not exist
 
-// Re-export commonly used types for convenience  
+// Re-export commonly used types for convenience
 // All timeline types now integrated directly in timeline_actor domain

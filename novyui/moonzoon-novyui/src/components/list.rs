@@ -1,5 +1,5 @@
-use zoon::*;
 use crate::tokens::*;
+use zoon::*;
 
 // Simplified List component - focusing on getting it working first
 pub struct ListBuilder {
@@ -12,9 +12,7 @@ pub struct ListItemBuilder {
 
 impl ListBuilder {
     pub fn new() -> Self {
-        Self {
-            items: Vec::new(),
-        }
+        Self { items: Vec::new() }
     }
 
     pub fn item(mut self, text: impl Into<String>) -> Self {
@@ -30,10 +28,7 @@ impl ListBuilder {
                 El::new()
                     .s(Width::fill())
                     .s(Padding::new().x(SPACING_16).y(SPACING_12))
-                    .s(Font::new()
-                        .size(FONT_SIZE_16)
-                        .color_signal(neutral_11())
-                    )
+                    .s(Font::new().size(FONT_SIZE_16).color_signal(neutral_11()))
                     .child(Text::new(&text))
             }))
     }
@@ -41,20 +36,15 @@ impl ListBuilder {
 
 impl ListItemBuilder {
     pub fn new(text: impl Into<String>) -> Self {
-        Self {
-            text: text.into(),
-        }
+        Self { text: text.into() }
     }
-    
+
     // Individual list item build method with consistent styling
     pub fn build(self) -> impl Element {
         El::new()
             .s(Width::fill())
             .s(Padding::new().x(SPACING_16).y(SPACING_12))
-            .s(Font::new()
-                .size(FONT_SIZE_16)
-                .color_signal(neutral_11())
-            )
+            .s(Font::new().size(FONT_SIZE_16).color_signal(neutral_11()))
             .child(Text::new(&self.text))
     }
 }

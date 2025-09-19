@@ -4,10 +4,10 @@
 //! and performance tracking for timeline rendering optimization.
 
 use crate::dataflow::{Actor, ActorMap, Relay, relay};
-use shared::SignalValue;
-use zoon::*;
 use futures::{StreamExt, select};
+use shared::SignalValue;
 use std::collections::BTreeMap;
+use zoon::*;
 
 // Import time domain
 use super::time_domain::Viewport;
@@ -32,7 +32,7 @@ pub struct CanvasStateController {
     /// Canvas dimensions for coordinate calculations
     pub canvas_width: Actor<f32>,
     pub canvas_height: Actor<f32>,
-    
+
     /// Canvas state actors
     pub has_pending_request: Actor<bool>,
     pub canvas_cache: ActorMap<String, Vec<(f32, SignalValue)>>,
@@ -40,7 +40,7 @@ pub struct CanvasStateController {
     pub last_redraw_time: Actor<f64>,
     pub last_canvas_update: Actor<u64>,
     pub timeline_stats: Actor<TimelineStats>,
-    
+
     /// Canvas event relays
     pub canvas_resized_relay: Relay<(f32, f32)>,
     pub redraw_requested_relay: Relay<()>,
@@ -55,33 +55,34 @@ impl CanvasStateController {
         // Create canvas event relays
         let (canvas_resized_relay, canvas_resized_stream) = relay::<(f32, f32)>();
         let (redraw_requested_relay, redraw_requested_stream) = relay::<()>();
-        
+
         // Canvas dimension actors
         let canvas_width = Actor::new(DEFAULT_CANVAS_WIDTH, {
             let canvas_resized_relay_clone = canvas_resized_relay.clone();
             async move |width_handle| {
                 let mut canvas_resized = canvas_resized_relay_clone.subscribe();
-            
-            loop {
-                select! {
-                    event = canvas_resized.next() => {
-                        match event {
-                            Some((width, _height)) => {
-                                width_handle.set(width);
+
+                loop {
+                    select! {
+                        event = canvas_resized.next() => {
+                            match event {
+                                Some((width, _height)) => {
+                                    width_handle.set(width);
+                                }
+                                None => break,
                             }
-                            None => break,
                         }
+                        complete => break,
                     }
-                    complete => break,
                 }
             }
-        }});
-        
+        });
+
         let canvas_height = Actor::new(DEFAULT_CANVAS_HEIGHT, {
             let canvas_resized_relay_clone = canvas_resized_relay.clone();
             async move |height_handle| {
                 let mut canvas_resized_stream = canvas_resized_relay_clone.subscribe();
-                
+
                 loop {
                     select! {
                         event = canvas_resized_stream.next() => {
@@ -95,13 +96,13 @@ impl CanvasStateController {
                 }
             }
         });
-        
+
         let has_pending_request = Actor::new(false, {
             let cache_for_request_tracking = cache.clone();
             async move |request_handle| {
                 // Watch cache active_requests to track pending status
                 let mut cache_stream = cache_for_request_tracking.signal().to_stream().fuse();
-                
+
                 loop {
                     select! {
                         cache_update = cache_stream.next() => {
@@ -118,15 +119,19 @@ impl CanvasStateController {
                 }
             }
         });
-        
+
         let canvas_cache = ActorMap::new(BTreeMap::new(), {
             let viewport_for_canvas_cache = viewport.clone();
             let signal_values_for_canvas = signal_values.clone();
             async move |canvas_cache_handle| {
                 // Watch viewport and signal values changes to update canvas cache
                 let mut viewport_stream = viewport_for_canvas_cache.signal().to_stream().fuse();
-                let mut signal_values_stream = signal_values_for_canvas.entries_signal_vec().to_signal_cloned().to_stream().fuse();
-                
+                let mut signal_values_stream = signal_values_for_canvas
+                    .entries_signal_vec()
+                    .to_signal_cloned()
+                    .to_stream()
+                    .fuse();
+
                 loop {
                     select! {
                         viewport_update = viewport_stream.next() => {
@@ -156,10 +161,10 @@ impl CanvasStateController {
                 }
             }
         });
-        
+
         let force_redraw = Actor::new(0_u32, async move |redraw_handle| {
             let mut redraw_requested = redraw_requested_stream;
-            
+
             loop {
                 select! {
                     event = redraw_requested.next() => {
@@ -176,13 +181,13 @@ impl CanvasStateController {
                 }
             }
         });
-        
+
         let last_redraw_time = Actor::new(0.0_f64, {
             let force_redraw_for_timing = force_redraw.clone();
             async move |redraw_time_handle| {
                 // Watch force_redraw counter to track redraw timing
                 let mut redraw_stream = force_redraw_for_timing.signal().to_stream().fuse();
-                
+
                 loop {
                     select! {
                         redraw_update = redraw_stream.next() => {
@@ -200,13 +205,17 @@ impl CanvasStateController {
                 }
             }
         });
-        
+
         let last_canvas_update = Actor::new(0_u64, {
             let canvas_cache_for_update_tracking = canvas_cache.clone();
             async move |canvas_update_handle| {
                 // Watch canvas_cache changes to track last update time
-                let mut canvas_stream = canvas_cache_for_update_tracking.entries_signal_vec().to_signal_cloned().to_stream().fuse();
-                
+                let mut canvas_stream = canvas_cache_for_update_tracking
+                    .entries_signal_vec()
+                    .to_signal_cloned()
+                    .to_stream()
+                    .fuse();
+
                 loop {
                     select! {
                         canvas_update = canvas_stream.next() => {
@@ -224,7 +233,7 @@ impl CanvasStateController {
                 }
             }
         });
-        
+
         let timeline_stats = Actor::new(TimelineStats::default(), {
             let cache_for_stats = cache.clone();
             let signal_values_for_stats = signal_values.clone();
@@ -232,9 +241,13 @@ impl CanvasStateController {
             async move |stats_handle| {
                 // Watch cache, signal values, and viewport to calculate statistics
                 let mut cache_stream = cache_for_stats.signal().to_stream().fuse();
-                let mut signal_values_stream = signal_values_for_stats.entries_signal_vec().to_signal_cloned().to_stream().fuse();
+                let mut signal_values_stream = signal_values_for_stats
+                    .entries_signal_vec()
+                    .to_signal_cloned()
+                    .to_stream()
+                    .fuse();
                 let mut viewport_stream = viewport_for_stats.signal().to_stream().fuse();
-                
+
                 loop {
                     select! {
                         cache_update = cache_stream.next() => {
@@ -274,7 +287,7 @@ impl CanvasStateController {
                 }
             }
         });
-        
+
         Self {
             canvas_width,
             canvas_height,

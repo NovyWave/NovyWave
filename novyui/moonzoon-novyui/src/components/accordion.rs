@@ -1,5 +1,5 @@
-use zoon::*;
 use crate::tokens::*;
+use zoon::*;
 
 // Accordion item data
 #[derive(Debug, Clone)]
@@ -61,7 +61,8 @@ impl AccordionBuilder {
     }
 
     pub fn build(self) -> impl Element {
-        let expanded_states: Vec<Mutable<bool>> = self.items
+        let expanded_states: Vec<Mutable<bool>> = self
+            .items
             .iter()
             .enumerate()
             .map(|(index, _)| Mutable::new(self.default_expanded.contains(&index)))
@@ -81,130 +82,119 @@ impl AccordionBuilder {
 
                         build_accordion_item_simple(item, expanded)
                     })
-                    .collect::<Vec<_>>()
+                    .collect::<Vec<_>>(),
             )
     }
-
 }
 
-fn build_accordion_item_simple(
-    item: AccordionItem,
-    expanded: Mutable<bool>,
-) -> impl Element {
+fn build_accordion_item_simple(item: AccordionItem, expanded: Mutable<bool>) -> impl Element {
     let disabled = item.disabled;
 
     Column::new()
-            .s(Width::fill())
-            .s(Borders::all_signal(theme().map(|t| match t {
-                Theme::Light => Border::new().width(1).color("oklch(85% 0.14 250)"), // neutral_4 light
-                Theme::Dark => Border::new().width(1).color("oklch(25% 0.14 250)"), // neutral_4 dark
-            })))
-            .s(RoundedCorners::all(6))
-            .s(Background::new().color_signal(theme().map(|t| match t {
-                Theme::Light => "oklch(98% 0.14 250)", // neutral_1 light
-                Theme::Dark => "oklch(8% 0.14 250)", // neutral_2 dark
-            })))
-            .item(
-                // Header button
-                Button::new()
-                    .s(Width::fill())
-                    .s(Padding::new().x(SPACING_16).y(SPACING_12))
-                    .s(Background::new().color("transparent"))
-                    .s(Borders::new())
-                    .s(RoundedCorners::new().top(6))
-                    .s(Cursor::new(if disabled {
-                        CursorIcon::NotAllowed
-                    } else {
-                        CursorIcon::Pointer
-                    }))
-                    .s(Align::new().left())
-                    .label(
-                        Row::new()
-                            .s(Width::fill())
-                            .s(Align::new().center_y())
-                            .s(Gap::new().x(SPACING_12))
-                            .item(
-                                El::new()
-                                    .s(Width::fill())
-                                    .child(Text::new(&item.title))
-                                    .s(Font::new()
-                                        .size(FONT_SIZE_16)
-                                        .weight(FontWeight::Number(FONT_WEIGHT_5))
-                                        .color_signal(theme().map(move |t| {
-                                            if disabled {
-                                                match t {
-                                                    Theme::Light => "oklch(45% 0.14 250)", // neutral_5 light
-                                                    Theme::Dark => "oklch(55% 0.14 250)", // neutral_5 dark
-                                                }
-                                            } else {
-                                                match t {
-                                                    Theme::Light => "oklch(15% 0.14 250)", // neutral_9 light
-                                                    Theme::Dark => "oklch(95% 0.14 250)", // neutral_11 dark
-                                                }
-                                            }
-                                        }))
-                                    )
-                            )
-                            .item(
-                                El::new()
-                                    .child_signal(
-                                        expanded.signal().map(|is_expanded| {
-                                            Text::new(if is_expanded { "▼" } else { "▶" })
-                                        })
-                                    )
-                                    .s(Font::new()
-                                        .size(FONT_SIZE_12)
-                                        .color_signal(theme().map(move |t| {
-                                            if disabled {
-                                                match t {
-                                                    Theme::Light => "oklch(45% 0.14 250)", // neutral_5 light
-                                                    Theme::Dark => "oklch(55% 0.14 250)", // neutral_5 dark
-                                                }
-                                            } else {
-                                                match t {
-                                                    Theme::Light => "oklch(65% 0.14 250)", // neutral_6 light
-                                                    Theme::Dark => "oklch(55% 0.14 250)", // neutral_7 dark
-                                                }
-                                            }
-                                        }))
-                                    )
-                            )
-                    )
-                    .on_press({
-                        let expanded = expanded.clone();
-                        move || {
-                            if !disabled {
-                                // Toggle current item
-                                expanded.update(|current| !current);
-                            }
-                        }
-                    })
-            )
-            .item_signal(
-                expanded.signal().map(move |is_expanded| {
-                    if is_expanded {
-                        Some(
+        .s(Width::fill())
+        .s(Borders::all_signal(theme().map(|t| match t {
+            Theme::Light => Border::new().width(1).color("oklch(85% 0.14 250)"), // neutral_4 light
+            Theme::Dark => Border::new().width(1).color("oklch(25% 0.14 250)"),  // neutral_4 dark
+        })))
+        .s(RoundedCorners::all(6))
+        .s(Background::new().color_signal(theme().map(|t| match t {
+            Theme::Light => "oklch(98% 0.14 250)", // neutral_1 light
+            Theme::Dark => "oklch(8% 0.14 250)",   // neutral_2 dark
+        })))
+        .item(
+            // Header button
+            Button::new()
+                .s(Width::fill())
+                .s(Padding::new().x(SPACING_16).y(SPACING_12))
+                .s(Background::new().color("transparent"))
+                .s(Borders::new())
+                .s(RoundedCorners::new().top(6))
+                .s(Cursor::new(if disabled {
+                    CursorIcon::NotAllowed
+                } else {
+                    CursorIcon::Pointer
+                }))
+                .s(Align::new().left())
+                .label(
+                    Row::new()
+                        .s(Width::fill())
+                        .s(Align::new().center_y())
+                        .s(Gap::new().x(SPACING_12))
+                        .item(
                             El::new()
-                                .s(Padding::new().x(SPACING_16).y(SPACING_12))
-                                .s(Borders::new().top_signal(theme().map(|t| match t {
-                                    Theme::Light => Border::new().width(1).color("oklch(85% 0.14 250)"), // neutral_4 light
-                                    Theme::Dark => Border::new().width(1).color("oklch(25% 0.14 250)"), // neutral_4 dark
-                                })))
-                                .child(Text::new(&item.content))
+                                .s(Width::fill())
+                                .child(Text::new(&item.title))
                                 .s(Font::new()
-                                    .size(FONT_SIZE_14)
-                                    .weight(FontWeight::Number(FONT_WEIGHT_4))
-                                    .color_signal(theme().map(|t| match t {
-                                        Theme::Light => "oklch(35% 0.14 250)", // neutral_7 light
-                                        Theme::Dark => "oklch(75% 0.14 250)", // neutral_9 dark
-                                    }))
-                                )
+                                    .size(FONT_SIZE_16)
+                                    .weight(FontWeight::Number(FONT_WEIGHT_5))
+                                    .color_signal(theme().map(move |t| {
+                                        if disabled {
+                                            match t {
+                                                Theme::Light => "oklch(45% 0.14 250)", // neutral_5 light
+                                                Theme::Dark => "oklch(55% 0.14 250)", // neutral_5 dark
+                                            }
+                                        } else {
+                                            match t {
+                                                Theme::Light => "oklch(15% 0.14 250)", // neutral_9 light
+                                                Theme::Dark => "oklch(95% 0.14 250)", // neutral_11 dark
+                                            }
+                                        }
+                                    }))),
                         )
-                    } else {
-                        None
+                        .item(
+                            El::new()
+                                .child_signal(expanded.signal().map(|is_expanded| {
+                                    Text::new(if is_expanded { "▼" } else { "▶" })
+                                }))
+                                .s(Font::new().size(FONT_SIZE_12).color_signal(theme().map(
+                                    move |t| {
+                                        if disabled {
+                                            match t {
+                                                Theme::Light => "oklch(45% 0.14 250)", // neutral_5 light
+                                                Theme::Dark => "oklch(55% 0.14 250)", // neutral_5 dark
+                                            }
+                                        } else {
+                                            match t {
+                                                Theme::Light => "oklch(65% 0.14 250)", // neutral_6 light
+                                                Theme::Dark => "oklch(55% 0.14 250)", // neutral_7 dark
+                                            }
+                                        }
+                                    },
+                                ))),
+                        ),
+                )
+                .on_press({
+                    let expanded = expanded.clone();
+                    move || {
+                        if !disabled {
+                            // Toggle current item
+                            expanded.update(|current| !current);
+                        }
                     }
-                })
-            )
+                }),
+        )
+        .item_signal(expanded.signal().map(move |is_expanded| {
+            if is_expanded {
+                Some(
+                    El::new()
+                        .s(Padding::new().x(SPACING_16).y(SPACING_12))
+                        .s(Borders::new().top_signal(theme().map(|t| match t {
+                            Theme::Light => Border::new().width(1).color("oklch(85% 0.14 250)"), // neutral_4 light
+                            Theme::Dark => Border::new().width(1).color("oklch(25% 0.14 250)"), // neutral_4 dark
+                        })))
+                        .child(Text::new(&item.content))
+                        .s(Font::new()
+                            .size(FONT_SIZE_14)
+                            .weight(FontWeight::Number(FONT_WEIGHT_4))
+                            .color_signal(theme().map(|t| match t {
+                                Theme::Light => "oklch(35% 0.14 250)", // neutral_7 light
+                                Theme::Dark => "oklch(75% 0.14 250)",  // neutral_9 dark
+                            }))),
+                )
+            } else {
+                None
+            }
+        }))
 }
 
 // Convenience functions

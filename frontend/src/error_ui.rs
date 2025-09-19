@@ -1,14 +1,13 @@
-use zoon::*;
-use zoon::events::Click;
-use moonzoon_novyui::components::icon::{icon, IconName, IconSize, IconColor};
-use moonzoon_novyui::tokens::*;
-use crate::error_display::ErrorAlert;
 use crate::dataflow::*;
+use crate::error_display::ErrorAlert;
 use futures::{select, stream::StreamExt};
+use moonzoon_novyui::components::icon::{IconColor, IconName, IconSize, icon};
+use moonzoon_novyui::tokens::*;
+use zoon::events::Click;
+use zoon::*;
 
 /// Progress percentage for toast auto-dismiss timer (0.0 to 100.0)
 type Progress = f32;
-
 
 pub fn toast_notifications_container(app_config: crate::config::AppConfig) -> impl Element {
     El::new()
@@ -21,7 +20,7 @@ pub fn toast_notifications_container(app_config: crate::config::AppConfig) -> im
                 .style("position", "fixed")
                 .style("top", "0")
                 .style("left", "0")
-                .style("pointer-events", "none")  // Allow clicks to pass through empty areas
+                .style("pointer-events", "none") // Allow clicks to pass through empty areas
                 .style("z-index", "1000")
         })
         .child(
@@ -30,35 +29,31 @@ pub fn toast_notifications_container(app_config: crate::config::AppConfig) -> im
                 .s(Width::exact(400))
                 .s(Align::new().top().right())
                 .update_raw_el(|raw_el| {
-                    raw_el.style("pointer-events", "auto")  // Re-enable pointer events for toast content
+                    raw_el.style("pointer-events", "auto") // Re-enable pointer events for toast content
                 })
                 .items_signal_vec(
                     crate::error_display::active_toasts_signal_vec(app_config.clone()).map({
                         let app_config_for_toast = app_config.clone();
-                        move |alert: ErrorAlert| {
-                            toast_element(alert, app_config_for_toast.clone())
-                        }
-                    })
-                )
+                        move |alert: ErrorAlert| toast_element(alert, app_config_for_toast.clone())
+                    }),
+                ),
         )
 }
 
-
 fn toast_element(alert: ErrorAlert, app_config: crate::config::AppConfig) -> impl Element {
-    
     let (toast_clicked_relay, mut toast_clicked_stream) = relay();
     let (dismiss_button_clicked_relay, mut dismiss_button_clicked_stream) = relay();
     let auto_dismiss_ms = alert.auto_dismiss_ms as f32;
-    
+
     // Clone necessary data for async closure
     let error_display = app_config.error_display.clone();
     let alert_id = alert.id.clone();
-    
+
     let toast_actor = Actor::new(100.0 as Progress, async move |state_handle| {
         let mut elapsed_time = 0.0f32;
         let mut is_paused = false;
         let update_interval_ms = 50.0f32;
-        
+
         loop {
             select! {
                 // NOTE: .fuse() required due to broken FusedFuture in oneshot::Receiver
@@ -68,11 +63,11 @@ fn toast_element(alert: ErrorAlert, app_config: crate::config::AppConfig) -> imp
                 _ = Timer::sleep(update_interval_ms as u32).fuse() => {
                     if !is_paused {
                         elapsed_time += update_interval_ms;
-                        
+
                         let remaining_percent = 100.0 - (elapsed_time / auto_dismiss_ms * 100.0);
                         let progress = remaining_percent.max(0.0);
                         state_handle.set(progress);
-                        
+
                         if elapsed_time >= auto_dismiss_ms {
                             error_display.toast_dismissed_relay.send(alert_id.clone());
                             break;
@@ -93,23 +88,19 @@ fn toast_element(alert: ErrorAlert, app_config: crate::config::AppConfig) -> imp
             }
         }
     });
-    
+
     Column::new()
         .s(Width::fill())
         .s(Background::new().color_signal(error_1()))
-        .s(Borders::all_signal(error_7().map(|color| Border::new().width(1).color(color))))
+        .s(Borders::all_signal(
+            error_7().map(|color| Border::new().width(1).color(color)),
+        ))
         .s(RoundedCorners::all(CORNER_RADIUS_8))
         .s(Shadows::new(vec![
-            Shadow::new()
-                .color(hsluv!(0, 0, 0, 10))
-                .x(0)
-                .y(2)
-                .blur(8)
+            Shadow::new().color(hsluv!(0, 0, 0, 10)).x(0).y(2).blur(8),
         ]))
         .s(Cursor::new(CursorIcon::Pointer))
-        .update_raw_el(|raw_el| {
-            raw_el.attr("title", "Click to pause/resume auto-dismiss")
-        })
+        .update_raw_el(|raw_el| raw_el.attr("title", "Click to pause/resume auto-dismiss"))
         .on_click(move || toast_clicked_relay.send(()))
         .item(
             // Main toast content
@@ -123,7 +114,7 @@ fn toast_element(alert: ErrorAlert, app_config: crate::config::AppConfig) -> imp
                     icon(IconName::TriangleAlert)
                         .size(IconSize::Medium)
                         .color(IconColor::Error)
-                        .build()
+                        .build(),
                 )
                 .item(
                     // Error content
@@ -135,27 +126,22 @@ fn toast_element(alert: ErrorAlert, app_config: crate::config::AppConfig) -> imp
                                 .s(Font::new()
                                     .size(FONT_SIZE_16)
                                     .weight(FontWeight::SemiBold)
-                                    .color_signal(error_9())
-                                )
-                                .child(&alert.title)
+                                    .color_signal(error_9()))
+                                .child(&alert.title),
                         )
                         .item(
                             El::new()
                                 .s(Font::new()
                                     .size(FONT_SIZE_14)
                                     .color_signal(error_8())
-                                    .wrap_anywhere()
-                                )
-                                .child(&alert.message)
-                        )
+                                    .wrap_anywhere())
+                                .child(&alert.message),
+                        ),
                 )
                 .item(
                     // Dismiss button
                     El::new()
-                        .s(Font::new()
-                            .size(FONT_SIZE_14)
-                            .color_signal(error_8())
-                        )
+                        .s(Font::new().size(FONT_SIZE_14).color_signal(error_8()))
                         .s(Cursor::new(CursorIcon::Pointer))
                         .s(Padding::all(SPACING_4))
                         .s(RoundedCorners::all(CORNER_RADIUS_4))
@@ -165,8 +151,8 @@ fn toast_element(alert: ErrorAlert, app_config: crate::config::AppConfig) -> imp
                                 event.stop_propagation();
                                 dismiss_button_clicked_relay.send(());
                             })
-                        })
-                )
+                        }),
+                ),
         )
         .item(
             // Progress bar container
@@ -176,8 +162,7 @@ fn toast_element(alert: ErrorAlert, app_config: crate::config::AppConfig) -> imp
                 .s(Background::new().color_signal(error_3()))
                 .s(RoundedCorners::new()
                     .bottom_left(CORNER_RADIUS_8)
-                    .bottom_right(CORNER_RADIUS_8)
-                )
+                    .bottom_right(CORNER_RADIUS_8))
                 .child(
                     // Progress bar fill
                     El::new()
@@ -186,19 +171,14 @@ fn toast_element(alert: ErrorAlert, app_config: crate::config::AppConfig) -> imp
                         .s(Background::new().color_signal(error_7()))
                         .s(RoundedCorners::new()
                             .bottom_left(CORNER_RADIUS_8)
-                            .bottom_right(CORNER_RADIUS_8)
-                        )
+                            .bottom_right(CORNER_RADIUS_8))
                         .s(Transitions::new([
                             Transition::property("width").duration(150)
                         ]))
-                        .update_raw_el(|raw_el| {
-                            raw_el.style("transform-origin", "left")
-                        })
-                )
+                        .update_raw_el(|raw_el| raw_el.style("transform-origin", "left")),
+                ),
         )
         .after_remove(move |_| {
             drop(toast_actor);
         })
 }
-
-

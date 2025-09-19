@@ -16,16 +16,14 @@ static THEME: Lazy<Mutable<Theme>> = Lazy::new(|| {
     Mutable::new(Theme::Dark) // Will be initialized properly via init_theme
 });
 
-static CUSTOM_PERSISTENCE: Lazy<Mutable<ThemePersistenceFn>> = Lazy::new(|| {
-    Mutable::new(None)
-});
+static CUSTOM_PERSISTENCE: Lazy<Mutable<ThemePersistenceFn>> = Lazy::new(|| Mutable::new(None));
 
 /// Initialize theme system with optional custom persistence
 /// If custom_persistence is provided, localStorage will not be used
 pub fn init_theme(initial_theme: Option<Theme>, custom_persistence: ThemePersistenceFn) {
     // Set custom persistence handler
     CUSTOM_PERSISTENCE.set(custom_persistence);
-    
+
     let theme_to_use = if let Some(theme) = initial_theme {
         theme
     } else if CUSTOM_PERSISTENCE.lock_ref().is_some() {
@@ -43,7 +41,7 @@ pub fn init_theme(initial_theme: Option<Theme>, custom_persistence: ThemePersist
             _ => Theme::Dark,
         }
     };
-    
+
     THEME.set(theme_to_use);
 }
 

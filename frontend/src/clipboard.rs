@@ -10,16 +10,17 @@ pub fn copy_variable_value(value: &str, app_config: &crate::config::AppConfig) {
         .bytes()
         .filter(|&b| b.is_ascii() && (!b.is_ascii_control() || b == b'\n' || b == b'\t'))
         .collect();
-    
+
     let filtered_value = String::from_utf8(filtered_bytes)
         .unwrap_or_else(|_| {
             // Fallback: strip all non-ASCII and try again
-            value.chars()
+            value
+                .chars()
                 .filter(|c| c.is_ascii() && (!c.is_control() || *c == '\n' || *c == '\t'))
                 .collect()
         })
         .trim()
         .to_string();
-    
+
     copy_to_clipboard(filtered_value, app_config);
 }

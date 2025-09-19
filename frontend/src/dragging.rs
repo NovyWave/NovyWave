@@ -2,10 +2,10 @@
 //!
 //! Data flows: Mouse Events → Dragging Actor → Config Updates → UI Signals
 
-use zoon::*;
-use shared::DockMode;
 use crate::dataflow::{Actor, Relay, relay};
-use futures::{select, StreamExt};
+use futures::{StreamExt, select};
+use shared::DockMode;
+use zoon::*;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum DividerType {
@@ -20,7 +20,7 @@ pub enum DividerType {
 pub struct DraggingSystem {
     // State managed by Actor
     drag_state_actor: Actor<DragState>,
-    
+
     // Event relays for mouse interactions
     pub drag_started_relay: Relay<(DividerType, (f32, f32))>,
     pub drag_moved_relay: Relay<(f32, f32)>,
@@ -39,22 +39,46 @@ impl DraggingSystem {
         let (drag_started_relay, mut drag_started_stream) = relay::<(DividerType, (f32, f32))>();
         let (drag_moved_relay, mut drag_moved_stream) = relay::<(f32, f32)>();
         let (drag_ended_relay, mut drag_ended_stream) = relay::<()>();
-        
+
         let drag_state_actor = Actor::new(DragState::default(), async move |state_handle| {
             // Cache current values pattern - ONLY in Actor loops
             let mut cached_dock_mode = DockMode::Right;
             let mut cached_dimensions = (300.0, 300.0, 300.0, 300.0); // width_right, width_bottom, height_right, height_bottom
             let mut cached_column_widths = (190.0, 220.0); // name, value
-            
+
             // Signal streams for cached values
             let mut dock_mode_stream = app_config.dock_mode_actor.signal().to_stream().fuse();
-            let mut width_right_stream = app_config.files_panel_width_right_actor.signal().to_stream().fuse();
-            let mut width_bottom_stream = app_config.files_panel_width_bottom_actor.signal().to_stream().fuse();
-            let mut height_right_stream = app_config.files_panel_height_right_actor.signal().to_stream().fuse();
-            let mut height_bottom_stream = app_config.files_panel_height_bottom_actor.signal().to_stream().fuse();
-            let mut name_width_stream = app_config.variables_name_column_width_actor.signal().to_stream().fuse();
-            let mut value_width_stream = app_config.variables_value_column_width_actor.signal().to_stream().fuse();
-            
+            let mut width_right_stream = app_config
+                .files_panel_width_right_actor
+                .signal()
+                .to_stream()
+                .fuse();
+            let mut width_bottom_stream = app_config
+                .files_panel_width_bottom_actor
+                .signal()
+                .to_stream()
+                .fuse();
+            let mut height_right_stream = app_config
+                .files_panel_height_right_actor
+                .signal()
+                .to_stream()
+                .fuse();
+            let mut height_bottom_stream = app_config
+                .files_panel_height_bottom_actor
+                .signal()
+                .to_stream()
+                .fuse();
+            let mut name_width_stream = app_config
+                .variables_name_column_width_actor
+                .signal()
+                .to_stream()
+                .fuse();
+            let mut value_width_stream = app_config
+                .variables_value_column_width_actor
+                .signal()
+                .to_stream()
+                .fuse();
+
             loop {
                 select! {
                     // Update cached config values
@@ -100,7 +124,7 @@ impl DraggingSystem {
                             None => break, // Stream closed
                         }
                     }
-                    
+
                     // Process drag events with cached values
                     drag_event = drag_started_stream.next() => {
                         match drag_event {
@@ -117,7 +141,7 @@ impl DraggingSystem {
                             DividerType::VariablesNameColumn => cached_column_widths.0,
                             DividerType::VariablesValueColumn => cached_column_widths.1,
                         };
-                        
+
                         state_handle.set(DragState {
                             active_divider: Some(divider_type),
                             drag_start_position: start_pos,
@@ -127,13 +151,13 @@ impl DraggingSystem {
                             None => break, // Stream closed
                         }
                     }
-                    
+
                     drag_moved = drag_moved_stream.next() => {
                         match drag_moved {
                             Some(current_position) => {
                         // Use Actor's own cached state - no external state queries
                         let mut current_drag_state = state_handle.lock_mut();
-                        
+
                         if let Some(ref divider_type) = current_drag_state.active_divider {
                             let (delta, new_value) = match divider_type {
                                 DividerType::FilesPanelMain => {
@@ -157,7 +181,7 @@ impl DraggingSystem {
                                     (delta_x, new_width)
                                 }
                             };
-                            
+
                             if delta.abs() > 1.0 {
                                 // Emit config updates via relays
                                 match (divider_type, cached_dock_mode) {
@@ -186,7 +210,7 @@ impl DraggingSystem {
                             None => break, // Stream closed
                         }
                     }
-                    
+
                     drag_ended = drag_ended_stream.next() => {
                         match drag_ended {
                             Some(()) => {
@@ -198,7 +222,7 @@ impl DraggingSystem {
                 }
             }
         });
-        
+
         Self {
             drag_state_actor,
             drag_started_relay,
@@ -206,22 +230,24 @@ impl DraggingSystem {
             drag_ended_relay,
         }
     }
-    
+
     /// Check if any divider is currently being dragged
     pub fn is_any_divider_dragging(&self) -> impl Signal<Item = bool> {
-        self.drag_state_actor.signal_ref(|state| state.active_divider.is_some())
+        self.drag_state_actor
+            .signal_ref(|state| state.active_divider.is_some())
     }
-    
+
     /// Check if a specific divider type is being dragged
     pub fn is_divider_dragging(&self, divider_type: DividerType) -> impl Signal<Item = bool> {
         self.drag_state_actor.signal_ref(move |state| {
             matches!(state.active_divider, Some(ref active_type) if *active_type == divider_type)
         })
     }
-    
+
     /// Get the currently active divider type
     pub fn active_divider_type_signal(&self) -> impl Signal<Item = Option<DividerType>> {
-        self.drag_state_actor.signal_ref(|state| state.active_divider)
+        self.drag_state_actor
+            .signal_ref(|state| state.active_divider)
     }
 }
 
@@ -243,12 +269,16 @@ pub fn files_panel_height_signal(app_config: crate::config::AppConfig) -> impl S
 }
 
 /// Get variables name column width signal
-pub fn variables_name_column_width_signal(app_config: crate::config::AppConfig) -> impl Signal<Item = f32> {
+pub fn variables_name_column_width_signal(
+    app_config: crate::config::AppConfig,
+) -> impl Signal<Item = f32> {
     app_config.variables_name_column_width_actor.signal()
 }
 
 /// Get variables value column width signal
-pub fn variables_value_column_width_signal(app_config: crate::config::AppConfig) -> impl Signal<Item = f32> {
+pub fn variables_value_column_width_signal(
+    app_config: crate::config::AppConfig,
+) -> impl Signal<Item = f32> {
     app_config.variables_value_column_width_actor.signal()
 }
 
@@ -257,7 +287,9 @@ pub fn variables_value_column_width_signal(app_config: crate::config::AppConfig)
 
 /// Start dragging a divider
 pub fn start_drag(system: &DraggingSystem, divider_type: DividerType, start_position: (f32, f32)) {
-    system.drag_started_relay.send((divider_type, start_position));
+    system
+        .drag_started_relay
+        .send((divider_type, start_position));
 }
 
 /// Process mouse movement during drag
@@ -276,6 +308,9 @@ pub fn is_any_divider_dragging(system: &DraggingSystem) -> impl Signal<Item = bo
 }
 
 /// Check if a specific divider type is being dragged (legacy compatibility)
-pub fn is_divider_dragging(system: &DraggingSystem, divider_type: DividerType) -> impl Signal<Item = bool> {
+pub fn is_divider_dragging(
+    system: &DraggingSystem,
+    divider_type: DividerType,
+) -> impl Signal<Item = bool> {
     system.is_divider_dragging(divider_type)
 }

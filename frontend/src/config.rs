@@ -1,14 +1,14 @@
 use crate::dataflow::{Actor, Relay, relay};
 use crate::platform::{CurrentPlatform, Platform};
 use crate::visualizer::timeline::TimeNs;
-use futures::{StreamExt, FutureExt, select, stream::FusedStream};
-use serde::{Deserialize, Serialize};
-use shared::{UpMsg, DownMsg};
-use shared::{self, AppConfig as SharedAppConfig, DockMode, Theme as SharedTheme};
-use std::sync::Arc;
-use zoon::*;
+use futures::{FutureExt, StreamExt, select, stream::FusedStream};
 use moonzoon_novyui::tokens::theme;
+use serde::{Deserialize, Serialize};
+use shared::{self, AppConfig as SharedAppConfig, DockMode, Theme as SharedTheme};
+use shared::{DownMsg, UpMsg};
+use std::sync::Arc;
 use wasm_bindgen_futures::{JsFuture, spawn_local};
+use zoon::*;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
 pub struct TimeRange {
@@ -77,7 +77,8 @@ pub const MAX_FILES_PANEL_WIDTH: f32 = 600.0;
 pub struct FilePickerDomain {
     pub expanded_directories_actor: Actor<indexmap::IndexSet<String>>,
     pub scroll_position_actor: Actor<i32>,
-    pub directory_cache_actor: Actor<std::collections::HashMap<String, Vec<shared::FileSystemItem>>>,
+    pub directory_cache_actor:
+        Actor<std::collections::HashMap<String, Vec<shared::FileSystemItem>>>,
     pub directory_errors_actor: Actor<std::collections::HashMap<String, String>>,
     pub directory_loading_actor: Actor<std::collections::HashSet<String>>,
     pub backend_sender_actor: Actor<()>,
@@ -113,7 +114,8 @@ impl FilePickerDomain {
         let (directory_expanded_relay, mut directory_expanded_stream) = relay::<String>();
         let (directory_collapsed_relay, mut directory_collapsed_stream) = relay::<String>();
         let (scroll_position_changed_relay, mut scroll_position_changed_stream) = relay::<i32>();
-        let (directory_load_requested_relay, mut directory_load_requested_stream) = relay::<String>();
+        let (directory_load_requested_relay, mut directory_load_requested_stream) =
+            relay::<String>();
         let (tree_rendering_relay, _tree_rendering_stream) = relay();
 
         // File selection relays for load files dialog
@@ -122,8 +124,11 @@ impl FilePickerDomain {
         let (clear_selection_relay, mut clear_selection_stream) = relay();
 
         // ✅ ACTOR+RELAY: Subscribe to ConnectionMessageActor relays instead of internal ones
-        let mut directory_contents_received_stream = connection_message_actor.directory_contents_relay.subscribe();
-        let mut directory_error_received_stream = connection_message_actor.directory_error_relay.subscribe();
+        let mut directory_contents_received_stream = connection_message_actor
+            .directory_contents_relay
+            .subscribe();
+        let mut directory_error_received_stream =
+            connection_message_actor.directory_error_relay.subscribe();
         let config_save_requested_relay = config_save_relay;
 
         let expanded_directories_actor = Actor::new(initial_expanded, {
@@ -195,7 +200,6 @@ impl FilePickerDomain {
                 }
             }
         });
-
 
         let directory_cache_actor = Actor::new(std::collections::HashMap::new(), {
             // ✅ FIX: Move stream into closure to prevent reference capture after Send bounds removal
@@ -274,7 +278,8 @@ impl FilePickerDomain {
             let mut directory_expanded_stream_for_sender = directory_expanded_relay.subscribe();
 
             Actor::new((), async move |_state| {
-                let mut directory_loading_stream = directory_loading_for_sender.signal().to_stream().fuse();
+                let mut directory_loading_stream =
+                    directory_loading_for_sender.signal().to_stream().fuse();
 
                 loop {
                     futures::select! {
@@ -327,38 +332,38 @@ impl FilePickerDomain {
         let selected_files = {
             let selected_files_vec_signal_clone = selected_files_vec_signal.clone();
             crate::dataflow::ActorVec::new(vec![], async move |files_vec| {
-            loop {
-                futures::select! {
-                    file_path = file_selected_stream.next() => {
-                        if let Some(file_path) = file_path {
-                            let mut current_files = files_vec.lock_ref().to_vec();
-                            if !current_files.contains(&file_path) {
-                                files_vec.lock_mut().push_cloned(file_path.clone());
-                                current_files.push(file_path.clone());
+                loop {
+                    futures::select! {
+                        file_path = file_selected_stream.next() => {
+                            if let Some(file_path) = file_path {
+                                let mut current_files = files_vec.lock_ref().to_vec();
+                                if !current_files.contains(&file_path) {
+                                    files_vec.lock_mut().push_cloned(file_path.clone());
+                                    current_files.push(file_path.clone());
+                                    selected_files_vec_signal_clone.set_neq(current_files);
+                                }
+                            }
+                        }
+                        file_path = file_deselected_stream.next() => {
+                            if let Some(file_path) = file_path {
+                                zoon::println!("📥 FilePickerDomain received deselection: {}", file_path);
+                                let before_count = files_vec.lock_ref().len();
+                                files_vec.lock_mut().retain(|f| f != &file_path);
+                                let after_count = files_vec.lock_ref().len();
+                                zoon::println!("   Files count: {} → {}", before_count, after_count);
+                                let current_files = files_vec.lock_ref().to_vec();
+                                zoon::println!("   Updating selected_files_vec_signal with: {:?}", current_files);
                                 selected_files_vec_signal_clone.set_neq(current_files);
                             }
                         }
-                    }
-                    file_path = file_deselected_stream.next() => {
-                        if let Some(file_path) = file_path {
-                            zoon::println!("📥 FilePickerDomain received deselection: {}", file_path);
-                            let before_count = files_vec.lock_ref().len();
-                            files_vec.lock_mut().retain(|f| f != &file_path);
-                            let after_count = files_vec.lock_ref().len();
-                            zoon::println!("   Files count: {} → {}", before_count, after_count);
-                            let current_files = files_vec.lock_ref().to_vec();
-                            zoon::println!("   Updating selected_files_vec_signal with: {:?}", current_files);
-                            selected_files_vec_signal_clone.set_neq(current_files);
+                        _ = clear_selection_stream.next() => {
+                            files_vec.lock_mut().clear();
+                            selected_files_vec_signal_clone.set_neq(Vec::new());
                         }
+                        complete => break,
                     }
-                    _ = clear_selection_stream.next() => {
-                        files_vec.lock_mut().clear();
-                        selected_files_vec_signal_clone.set_neq(Vec::new());
-                    }
-                    complete => break,
                 }
-            }
-        })
+            })
         };
 
         // The selected_files_vec_signal is kept updated from within the ActorVec loop above
@@ -392,15 +397,22 @@ impl FilePickerDomain {
         self.scroll_position_actor.signal()
     }
 
-    pub fn directory_cache_signal(&self) -> impl Signal<Item = std::collections::HashMap<String, Vec<shared::FileSystemItem>>> + use<> {
+    pub fn directory_cache_signal(
+        &self,
+    ) -> impl Signal<Item = std::collections::HashMap<String, Vec<shared::FileSystemItem>>> + use<>
+    {
         self.directory_cache_actor.signal()
     }
 
-    pub fn directory_errors_signal(&self) -> impl Signal<Item = std::collections::HashMap<String, String>> {
+    pub fn directory_errors_signal(
+        &self,
+    ) -> impl Signal<Item = std::collections::HashMap<String, String>> {
         self.directory_errors_actor.signal()
     }
 
-    pub fn pending_directory_loads_signal(&self) -> impl Signal<Item = std::collections::HashSet<String>> {
+    pub fn pending_directory_loads_signal(
+        &self,
+    ) -> impl Signal<Item = std::collections::HashSet<String>> {
         self.directory_loading_actor.signal()
     }
 }
@@ -486,10 +498,12 @@ impl AppConfig {
         let (variables_filter_changed_relay, variables_filter_changed_stream) = relay();
         let (session_state_changed_relay, session_state_changed_stream) = relay::<SessionState>();
         let session_state_changed_stream_for_config_saver = session_state_changed_relay.subscribe();
-        let session_state_changed_stream_for_session_actor = session_state_changed_relay.subscribe();
+        let session_state_changed_stream_for_session_actor =
+            session_state_changed_relay.subscribe();
         let (config_save_requested_relay, mut config_save_requested_stream) = relay();
 
-        let (clipboard_copy_requested_relay, mut clipboard_copy_requested_stream) = relay::<String>();
+        let (clipboard_copy_requested_relay, mut clipboard_copy_requested_stream) =
+            relay::<String>();
 
         let (files_width_right_changed_relay, mut files_width_right_changed_stream) = relay();
         let (files_height_right_changed_relay, mut files_height_right_changed_stream) = relay();
@@ -546,7 +560,6 @@ impl AppConfig {
             }
         });
 
-
         let dock_mode_actor = Actor::new(config.workspace.dock_mode.clone(), async move |state| {
             let mut current_dock_mode = config.workspace.dock_mode.clone();
 
@@ -574,7 +587,10 @@ impl AppConfig {
         });
 
         let files_panel_width_right_actor = Actor::new(
-            config.workspace.docked_right_dimensions.files_and_scopes_panel_width as f32,
+            config
+                .workspace
+                .docked_right_dimensions
+                .files_and_scopes_panel_width as f32,
             async move |state| {
                 loop {
                     select! {
@@ -585,11 +601,14 @@ impl AppConfig {
                         }
                     }
                 }
-            }
+            },
         );
 
         let files_panel_height_right_actor = Actor::new(
-            config.workspace.docked_right_dimensions.files_and_scopes_panel_height as f32,
+            config
+                .workspace
+                .docked_right_dimensions
+                .files_and_scopes_panel_height as f32,
             async move |state| {
                 loop {
                     select! {
@@ -600,11 +619,14 @@ impl AppConfig {
                         }
                     }
                 }
-            }
+            },
         );
 
         let files_panel_width_bottom_actor = Actor::new(
-            config.workspace.docked_bottom_dimensions.files_and_scopes_panel_width as f32,
+            config
+                .workspace
+                .docked_bottom_dimensions
+                .files_and_scopes_panel_width as f32,
             async move |state| {
                 loop {
                     select! {
@@ -615,11 +637,14 @@ impl AppConfig {
                         }
                     }
                 }
-            }
+            },
         );
 
         let files_panel_height_bottom_actor = Actor::new(
-            config.workspace.docked_bottom_dimensions.files_and_scopes_panel_height as f32,
+            config
+                .workspace
+                .docked_bottom_dimensions
+                .files_and_scopes_panel_height as f32,
             async move |state| {
                 loop {
                     select! {
@@ -630,7 +655,7 @@ impl AppConfig {
                         }
                     }
                 }
-            }
+            },
         );
 
         let variables_panel_width_actor = Actor::new(DEFAULT_PANEL_WIDTH, async move |state| {
@@ -658,7 +683,10 @@ impl AppConfig {
         });
 
         let variables_name_column_width_actor = Actor::new(
-            config.workspace.docked_right_dimensions.selected_variables_panel_name_column_width
+            config
+                .workspace
+                .docked_right_dimensions
+                .selected_variables_panel_name_column_width
                 .unwrap_or(DEFAULT_NAME_COLUMN_WIDTH as f64) as f32,
             async move |state| {
                 loop {
@@ -670,11 +698,14 @@ impl AppConfig {
                         }
                     }
                 }
-            }
+            },
         );
 
         let variables_value_column_width_actor = Actor::new(
-            config.workspace.docked_right_dimensions.selected_variables_panel_value_column_width
+            config
+                .workspace
+                .docked_right_dimensions
+                .selected_variables_panel_value_column_width
                 .unwrap_or(DEFAULT_VALUE_COLUMN_WIDTH as f64) as f32,
             async move |state| {
                 loop {
@@ -686,17 +717,20 @@ impl AppConfig {
                         }
                     }
                 }
-            }
+            },
         );
 
         let session_state_actor = Actor::new(
             SessionState {
-                opened_files: Vec::new(),  // Will be populated from TrackedFiles sync
-                expanded_scopes: Vec::new(),  // Will be populated from TreeView sync
-                selected_scope_id: None,  // Will be populated from TreeView sync
+                opened_files: Vec::new(),    // Will be populated from TrackedFiles sync
+                expanded_scopes: Vec::new(), // Will be populated from TreeView sync
+                selected_scope_id: None,     // Will be populated from TreeView sync
                 variables_search_filter: config.workspace.variables_search_filter,
                 file_picker_scroll_position: config.workspace.load_files_scroll_position,
-                file_picker_expanded_directories: config.workspace.load_files_expanded_directories.clone(),
+                file_picker_expanded_directories: config
+                    .workspace
+                    .load_files_expanded_directories
+                    .clone(),
             },
             async move |state| {
                 let mut session_stream = session_state_changed_stream_for_session_actor;
@@ -719,14 +753,15 @@ impl AppConfig {
                         complete => break,
                     }
                 }
-            }
+            },
         );
 
-        let toast_dismiss_ms_actor = Actor::new(config.ui.toast_dismiss_ms as u32, async move |_state| {
-            loop {
-                Task::next_macro_tick().await;
-            }
-        });
+        let toast_dismiss_ms_actor =
+            Actor::new(config.ui.toast_dismiss_ms as u32, async move |_state| {
+                loop {
+                    Task::next_macro_tick().await;
+                }
+            });
 
         // Clone actors for config_saver_actor closure
         let theme_actor_clone = theme_actor.clone();
@@ -786,14 +821,20 @@ impl AppConfig {
             config_save_requested_relay.clone(),
             connection,
             connection_message_actor.clone(),
-        ).await;
+        )
+        .await;
 
         // Initialize TreeView Mutables for Files & Scopes panel
         let files_expanded_scopes = zoon::Mutable::new(indexmap::IndexSet::from_iter(
-            config.workspace.expanded_scopes.iter().cloned()
+            config.workspace.expanded_scopes.iter().cloned(),
         ));
         let files_selected_scope = zoon::MutableVec::new_with_values(
-            config.workspace.selected_scope_id.clone().into_iter().collect()
+            config
+                .workspace
+                .selected_scope_id
+                .clone()
+                .into_iter()
+                .collect(),
         );
 
         // Sync TreeView state changes to session state
@@ -803,7 +844,11 @@ impl AppConfig {
         let session_actor_for_treeview = session_state_actor.clone();
         let treeview_sync_actor = Actor::new((), async move |_| {
             let mut expanded_stream = expanded_scopes_for_sync.signal_cloned().to_stream().fuse();
-            let mut selected_stream = selected_scope_for_sync.signal_vec_cloned().to_signal_cloned().to_stream().fuse();
+            let mut selected_stream = selected_scope_for_sync
+                .signal_vec_cloned()
+                .to_signal_cloned()
+                .to_stream()
+                .fuse();
 
             loop {
                 select! {
@@ -845,13 +890,22 @@ impl AppConfig {
 
                 // Force initial sync with current value
                 let initial_files = files_signal.get_cloned();
-                zoon::println!("🔄 CONFIG: TrackedFiles sync actor starting with {} initial files", initial_files.len());
+                zoon::println!(
+                    "🔄 CONFIG: TrackedFiles sync actor starting with {} initial files",
+                    initial_files.len()
+                );
                 if !initial_files.is_empty() {
-                    let file_paths: Vec<String> = initial_files.iter()
+                    let file_paths: Vec<String> = initial_files
+                        .iter()
                         .map(|tracked_file| tracked_file.path.clone())
                         .collect();
 
-                    let mut current_session = session_state_actor_for_files.signal().to_stream().next().await.unwrap_or_default();
+                    let mut current_session = session_state_actor_for_files
+                        .signal()
+                        .to_stream()
+                        .next()
+                        .await
+                        .unwrap_or_default();
                     current_session.opened_files = file_paths;
 
                     // Preserve expanded scopes and selected scope from TreeView Mutables
@@ -866,34 +920,54 @@ impl AppConfig {
                 }
 
                 // Now listen for changes
-                zoon::println!("🔄 CONFIG: TrackedFiles sync actor now listening for signal changes...");
+                zoon::println!(
+                    "🔄 CONFIG: TrackedFiles sync actor now listening for signal changes..."
+                );
 
                 let mut stream = files_signal.signal_cloned().to_stream();
                 zoon::println!("🔄 CONFIG: Stream created, waiting for updates...");
                 while let Some(files) = stream.next().await {
-                    zoon::println!("🔄 CONFIG: TrackedFiles sync actor received {} files", files.len());
+                    zoon::println!(
+                        "🔄 CONFIG: TrackedFiles sync actor received {} files",
+                        files.len()
+                    );
 
                     // Extract file paths from TrackedFile structs
-                    let file_paths: Vec<String> = files.iter()
+                    let file_paths: Vec<String> = files
+                        .iter()
                         .map(|tracked_file| tracked_file.path.clone())
                         .collect();
 
                     zoon::println!("🔄 CONFIG: Extracted file paths: {:?}", file_paths);
 
                     // Update session state - preserve other fields
-                    let mut current_session = session_state_actor_for_files.signal().to_stream().next().await.unwrap_or_default();
+                    let mut current_session = session_state_actor_for_files
+                        .signal()
+                        .to_stream()
+                        .next()
+                        .await
+                        .unwrap_or_default();
                     current_session.opened_files = file_paths.clone();
 
                     // CRITICAL: Read expanded_scopes from TreeView Mutables, not from stale session
                     let current_expanded = files_expanded_for_sync.get_cloned();
                     current_session.expanded_scopes = current_expanded.into_iter().collect();
-                    zoon::println!("🔄 CONFIG: Reading expanded_scopes from TreeView: {:?}", current_session.expanded_scopes);
+                    zoon::println!(
+                        "🔄 CONFIG: Reading expanded_scopes from TreeView: {:?}",
+                        current_session.expanded_scopes
+                    );
 
                     let current_selected = files_selected_for_sync.lock_ref();
                     current_session.selected_scope_id = current_selected.first().cloned();
 
-                    zoon::println!("🔄 CONFIG: Updated session state opened_files to: {:?}", current_session.opened_files);
-                    zoon::println!("🔄 CONFIG: Preserving expanded_scopes: {:?}", current_session.expanded_scopes);
+                    zoon::println!(
+                        "🔄 CONFIG: Updated session state opened_files to: {:?}",
+                        current_session.opened_files
+                    );
+                    zoon::println!(
+                        "🔄 CONFIG: Preserving expanded_scopes: {:?}",
+                        current_session.expanded_scopes
+                    );
 
                     // Trigger save
                     session_relay_for_files.send(current_session);
@@ -1077,7 +1151,12 @@ impl AppConfig {
 
                 while let Some(scroll_position) = scroll_stream.next().await {
                     // Create updated session with new scroll position
-                    let current_session = session_scroll_sync.signal().to_stream().next().await.unwrap_or_default();
+                    let current_session = session_scroll_sync
+                        .signal()
+                        .to_stream()
+                        .next()
+                        .await
+                        .unwrap_or_default();
                     let updated_session = SessionState {
                         file_picker_scroll_position: scroll_position,
                         ..current_session
@@ -1101,14 +1180,12 @@ impl AppConfig {
                                 Ok(_) => {
                                     // Clipboard copy successful
                                 }
-                                Err(e) => {
-                                }
+                                Err(e) => {}
                             }
                         }
 
                         #[cfg(not(web_sys_unstable_apis))]
-                        {
-                        }
+                        {}
                     }
                 });
             }
@@ -1130,7 +1207,6 @@ impl AppConfig {
                 let mut config_stream = config_loaded_stream;
 
                 while let Some(loaded_config) = config_stream.next().await {
-
                     // Update theme using proper relay
                     theme_relay.send(loaded_config.ui.theme);
 
@@ -1139,22 +1215,33 @@ impl AppConfig {
 
                     // Update expanded directories using FilePickerDomain
                     for dir in &loaded_config.workspace.load_files_expanded_directories {
-                        file_picker_domain_clone.directory_expanded_relay.send(dir.clone());
+                        file_picker_domain_clone
+                            .directory_expanded_relay
+                            .send(dir.clone());
                     }
 
                     // Update scroll position using FilePickerDomain relay
-                    file_picker_domain_clone.scroll_position_changed_relay.send(loaded_config.workspace.load_files_scroll_position);
+                    file_picker_domain_clone
+                        .scroll_position_changed_relay
+                        .send(loaded_config.workspace.load_files_scroll_position);
 
                     // Restore tracked files from config
                     if !loaded_config.workspace.opened_files.is_empty() {
-                        zoon::println!("🔄 CONFIG: Restoring {} files from config", loaded_config.workspace.opened_files.len());
-                        tracked_files_for_config.config_files_loaded_relay.send(loaded_config.workspace.opened_files.clone());
+                        zoon::println!(
+                            "🔄 CONFIG: Restoring {} files from config",
+                            loaded_config.workspace.opened_files.len()
+                        );
+                        tracked_files_for_config
+                            .config_files_loaded_relay
+                            .send(loaded_config.workspace.opened_files.clone());
                     }
 
                     // IMPORTANT: Restore expanded scopes AFTER files are sent
                     // Add a small delay to ensure files are processed first
-                    let expanded_scopes_to_restore = loaded_config.workspace.expanded_scopes.clone();
-                    let selected_scope_to_restore = loaded_config.workspace.selected_scope_id.clone();
+                    let expanded_scopes_to_restore =
+                        loaded_config.workspace.expanded_scopes.clone();
+                    let selected_scope_to_restore =
+                        loaded_config.workspace.selected_scope_id.clone();
                     let files_expanded_for_delay = files_expanded_scopes_for_config.clone();
                     let files_selected_for_delay = files_selected_scope_for_config.clone();
 
@@ -1163,8 +1250,13 @@ impl AppConfig {
                         zoon::Timer::sleep(100).await;
 
                         // Now restore expanded scopes in TreeView
-                        let expanded_set: indexmap::IndexSet<String> = expanded_scopes_to_restore.iter().cloned().collect();
-                        zoon::println!("🔄 CONFIG: Restoring {} expanded scopes after delay: {:?}", expanded_set.len(), expanded_set);
+                        let expanded_set: indexmap::IndexSet<String> =
+                            expanded_scopes_to_restore.iter().cloned().collect();
+                        zoon::println!(
+                            "🔄 CONFIG: Restoring {} expanded scopes after delay: {:?}",
+                            expanded_set.len(),
+                            expanded_set
+                        );
                         files_expanded_for_delay.set(expanded_set);
 
                         // Restore selected scope in TreeView
@@ -1217,7 +1309,11 @@ impl AppConfig {
             error_display,
             files_expanded_scopes,
             files_selected_scope,
-            _expanded_sync_actor: Actor::new((), async move |_| { loop { Task::next_macro_tick().await; } }),
+            _expanded_sync_actor: Actor::new((), async move |_| {
+                loop {
+                    Task::next_macro_tick().await;
+                }
+            }),
             _scroll_sync_actor: scroll_sync_actor,
             _clipboard_actor: clipboard_actor,
             _save_trigger_actor: save_trigger_actor,
@@ -1231,12 +1327,12 @@ impl AppConfig {
 
     /// Update config from loaded backend data
     pub fn update_from_loaded_config(&self, loaded_config: shared::AppConfig) {
-
         // Update theme using proper relay (not direct state access)
         self.theme_changed_relay.send(loaded_config.ui.theme);
 
         // Update dock mode using proper relay (not direct state access)
-        self.dock_mode_changed_relay.send(loaded_config.workspace.dock_mode);
+        self.dock_mode_changed_relay
+            .send(loaded_config.workspace.dock_mode);
 
         // Update expanded directories using FilePickerDomain
         let mut expanded_set = indexmap::IndexSet::new();
@@ -1245,13 +1341,14 @@ impl AppConfig {
         }
         // Use FilePickerDomain relays to update expanded directories
         for dir in &expanded_set {
-            self.file_picker_domain.directory_expanded_relay.send(dir.clone());
+            self.file_picker_domain
+                .directory_expanded_relay
+                .send(dir.clone());
         }
 
         // Update scroll position using FilePickerDomain relay
-        self.file_picker_domain.scroll_position_changed_relay.send(loaded_config.workspace.load_files_scroll_position);
-
+        self.file_picker_domain
+            .scroll_position_changed_relay
+            .send(loaded_config.workspace.load_files_scroll_position);
     }
-
-
 }

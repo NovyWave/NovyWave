@@ -1,11 +1,13 @@
 //! Web platform implementation - cache cleared v6
-use shared::{UpMsg, DownMsg};
 use crate::platform::Platform;
+use shared::{DownMsg, UpMsg};
 use std::sync::Arc;
-use zoon::{Mutable,SendWrapper};
+use zoon::{Mutable, SendWrapper};
 
 // Global connection holder for platform layer using zoon patterns
-static CONNECTION: std::sync::LazyLock<Mutable<Option<Arc<SendWrapper<zoon::Connection<UpMsg, DownMsg>>>>>> = std::sync::LazyLock::new(|| Mutable::new(None));
+static CONNECTION: std::sync::LazyLock<
+    Mutable<Option<Arc<SendWrapper<zoon::Connection<UpMsg, DownMsg>>>>>,
+> = std::sync::LazyLock::new(|| Mutable::new(None));
 
 pub struct WebPlatform;
 

@@ -1,10 +1,9 @@
-use serde::{Serialize, Deserialize, Deserializer};
-use std::collections::{HashMap, BTreeMap};
-use std::str::FromStr;
 use convert_base;
+use serde::{Deserialize, Deserializer, Serialize};
+use std::collections::{BTreeMap, HashMap};
+use std::str::FromStr;
 
 // ===== TIME TYPES =====
-
 
 // ===== MESSAGE TYPES =====
 
@@ -39,16 +38,36 @@ pub enum UpMsg {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum DownMsg {
-    ParsingStarted { file_id: String, filename: String },
-    ParsingProgress { file_id: String, progress: f32 },
-    FileLoaded { file_id: String, hierarchy: FileHierarchy },
-    ParsingError { file_id: String, error: String },
+    ParsingStarted {
+        file_id: String,
+        filename: String,
+    },
+    ParsingProgress {
+        file_id: String,
+        progress: f32,
+    },
+    FileLoaded {
+        file_id: String,
+        hierarchy: FileHierarchy,
+    },
+    ParsingError {
+        file_id: String,
+        error: String,
+    },
     ConfigLoaded(AppConfig),
     ConfigSaved,
     ConfigError(String),
-    DirectoryContents { path: String, items: Vec<FileSystemItem> },
-    DirectoryError { path: String, error: String },
-    BatchDirectoryContents { results: HashMap<String, Result<Vec<FileSystemItem>, String>> }, // Parallel directory results
+    DirectoryContents {
+        path: String,
+        items: Vec<FileSystemItem>,
+    },
+    DirectoryError {
+        path: String,
+        error: String,
+    },
+    BatchDirectoryContents {
+        results: HashMap<String, Result<Vec<FileSystemItem>, String>>,
+    }, // Parallel directory results
     SignalValues {
         file_path: String,
         results: Vec<SignalValueResult>,
@@ -102,32 +121,32 @@ impl SignalValue {
     pub fn present(value: impl Into<String>) -> Self {
         SignalValue::Present(value.into())
     }
-    
+
     /// Create a missing value
     pub fn missing() -> Self {
         SignalValue::Missing
     }
-    
+
     /// Create a loading value
     pub fn loading() -> Self {
         SignalValue::Loading
     }
-    
+
     /// Check if the value is present
     pub fn is_present(&self) -> bool {
         matches!(self, SignalValue::Present(_))
     }
-    
+
     /// Check if the value is missing
     pub fn is_missing(&self) -> bool {
         matches!(self, SignalValue::Missing)
     }
-    
+
     /// Check if the value is loading
     pub fn is_loading(&self) -> bool {
         matches!(self, SignalValue::Loading)
     }
-    
+
     /// Get the value as Option<String> for backward compatibility
     pub fn as_option(&self) -> Option<String> {
         match self {
@@ -136,7 +155,7 @@ impl SignalValue {
             SignalValue::Loading => None,
         }
     }
-    
+
     /// Get the value or a placeholder for UI display
     pub fn display_value(&self, placeholder: &str) -> String {
         match self {
@@ -145,17 +164,17 @@ impl SignalValue {
             SignalValue::Loading => "Loading...".to_string(),
         }
     }
-    
+
     /// Get the value with default "-" placeholder (matches UI conventions)
     pub fn display_value_or_dash(&self) -> String {
         self.display_value("-")
     }
-    
+
     /// Check if this represents actual signal data (not missing)
     pub fn has_data(&self) -> bool {
         self.is_present()
     }
-    
+
     /// Apply a format transformation to present values only
     pub fn map_present<F>(&self, f: F) -> SignalValue
     where
@@ -216,17 +235,29 @@ impl SignalValue {
     pub fn get_display_with_format(&self, format: &VarFormat) -> String {
         let formatted_value = self.get_formatted(format);
         let format_name = format.as_static_str();
-        
-        let display_value = if formatted_value.is_empty() { "-" } else { &formatted_value };
+
+        let display_value = if formatted_value.is_empty() {
+            "-"
+        } else {
+            &formatted_value
+        };
         format!("{} {}", display_value, format_name)
     }
 
     /// Get display string with truncated value for dropdowns (e.g., "101010101...1010 Bin")
-    pub fn get_truncated_display_with_format(&self, format: &VarFormat, max_chars: usize) -> String {
+    pub fn get_truncated_display_with_format(
+        &self,
+        format: &VarFormat,
+        max_chars: usize,
+    ) -> String {
         let formatted_value = self.get_formatted(format);
         let format_name = format.as_static_str();
-        
-        let display_value = if formatted_value.is_empty() { "-" } else { &formatted_value };
+
+        let display_value = if formatted_value.is_empty() {
+            "-"
+        } else {
+            &formatted_value
+        };
         let truncated_value = truncate_value(display_value, max_chars);
         format!("{} {}", truncated_value, format_name)
     }
@@ -247,7 +278,7 @@ pub fn truncate_value(value: &str, max_chars: usize) -> String {
     if value.len() <= max_chars {
         return value.to_string();
     }
-    
+
     let truncate_at = max_chars.saturating_sub(3);
     format!("{}...", &value[..truncate_at])
 }
@@ -267,7 +298,7 @@ pub struct SignalValueResult {
     pub time_seconds: f64,
     pub raw_value: Option<String>, // Raw binary value from waveform
     pub formatted_value: Option<String>, // Formatted according to requested format
-    pub format: VarFormat, // Format used for this result
+    pub format: VarFormat,         // Format used for this result
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -301,16 +332,12 @@ pub struct SignalTransitionResult {
 pub struct SignalTransition {
     pub time_ns: u64,
     pub value: String,
-    
 }
 
 impl SignalTransition {
     /// Create new signal transition with nanosecond precision
     pub fn new(time_ns: u64, value: String) -> Self {
-        Self {
-            time_ns,
-            value,
-        }
+        Self { time_ns, value }
     }
 }
 
@@ -323,7 +350,7 @@ pub struct UnifiedSignalRequest {
     pub scope_path: String,
     pub variable_name: String,
     pub time_range_ns: Option<(u64, u64)>, // None = all available data
-    pub max_transitions: Option<usize>, // For downsampling large datasets
+    pub max_transitions: Option<usize>,    // For downsampling large datasets
     pub format: VarFormat,
 }
 
@@ -392,9 +419,7 @@ pub struct WaveformFile {
     pub scopes: Vec<ScopeData>,
     pub min_time_ns: Option<u64>,
     pub max_time_ns: Option<u64>,
-    
 }
-
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum FileFormat {
@@ -429,41 +454,49 @@ pub struct SelectedVariable {
     pub formatter: Option<VarFormat>,
 }
 
-
 impl SelectedVariable {
     pub fn new(variable: Signal, file_path: String, scope_full_name: String) -> Self {
         let unique_id = format!("{}|{}|{}", file_path, scope_full_name, variable.name);
-        
+
         Self {
             unique_id,
             formatter: None, // Use default (Hexadecimal)
         }
     }
-    
-    pub fn new_with_formatter(variable: Signal, file_path: String, scope_full_name: String, formatter: VarFormat) -> Self {
+
+    pub fn new_with_formatter(
+        variable: Signal,
+        file_path: String,
+        scope_full_name: String,
+        formatter: VarFormat,
+    ) -> Self {
         let unique_id = format!("{}|{}|{}", file_path, scope_full_name, variable.name);
-        
+
         Self {
             unique_id,
             formatter: Some(formatter), // Explicitly set by user
         }
     }
-    
+
     /// Parse the unique_id into its components
     pub fn parse_unique_id(&self) -> Option<(String, String, String)> {
         let parts: Vec<&str> = self.unique_id.splitn(3, '|').collect();
         if parts.len() == 3 {
-            Some((parts[0].to_string(), parts[1].to_string(), parts[2].to_string()))
+            Some((
+                parts[0].to_string(),
+                parts[1].to_string(),
+                parts[2].to_string(),
+            ))
         } else {
             None
         }
     }
-    
+
     /// Get the file path component
     pub fn file_path(&self) -> Option<String> {
         self.parse_unique_id().map(|(path, _, _)| path)
     }
-    
+
     /// Get the file name component
     pub fn file_name(&self) -> Option<String> {
         let path = self.file_path()?;
@@ -473,17 +506,17 @@ impl SelectedVariable {
             .and_then(|name| name.to_str())
             .map(|s| s.to_string())
     }
-    
+
     /// Get the scope path component
     pub fn scope_path(&self) -> Option<String> {
         self.parse_unique_id().map(|(_, scope, _)| scope)
     }
-    
+
     /// Get the variable name component
     pub fn variable_name(&self) -> Option<String> {
         self.parse_unique_id().map(|(_, _, var)| var)
     }
-    
+
     /// Create a Signal struct from this SelectedVariable (for backward compatibility)
     pub fn to_signal(&self) -> Option<Signal> {
         let (_, _, variable_name) = self.parse_unique_id()?;
@@ -491,10 +524,10 @@ impl SelectedVariable {
             id: variable_name.clone(),
             name: variable_name,
             signal_type: "Unknown".to_string(), // Type info not stored in new format
-            width: 0, // Width info not stored in new format
+            width: 0,                           // Width info not stored in new format
         })
     }
-    
+
     /// Get display name for UI purposes
     pub fn display_name(&self) -> String {
         if let Some((file_path, scope_path, variable_name)) = self.parse_unique_id() {
@@ -543,7 +576,7 @@ impl<'de> Deserialize<'de> for VarFormat {
             // Backward compatibility for old config files
             "DEFAULT" => Ok(VarFormat::Hexadecimal), // Map old DEFAULT to Hexadecimal
             _ => Err(D::Error::custom(format!(
-                "unknown variant `{}`, expected one of `ASCII`, `Binary`, `BinaryWithGroups`, `Hexadecimal`, `Octal`, `Signed`, `Unsigned` (or legacy `DEFAULT`)", 
+                "unknown variant `{}`, expected one of `ASCII`, `Binary`, `BinaryWithGroups`, `Hexadecimal`, `Octal`, `Signed`, `Unsigned` (or legacy `DEFAULT`)",
                 s
             ))),
         }
@@ -588,7 +621,7 @@ impl VarFormat {
                 if binary_value.len() < 8 {
                     return "-".to_string();
                 }
-                
+
                 let mut ascii_bytes = Vec::with_capacity(binary_value.len() / 8);
                 for group_index in 0..binary_value.len() / 8 {
                     let offset = group_index * 8;
@@ -598,7 +631,10 @@ impl VarFormat {
                             // Handle NULL bytes (0x00) specially - keep them for now, we'll trim later
                             if byte_value == 0x00 {
                                 ascii_bytes.push(0x00);
-                            } else if byte_value.is_ascii() && (byte_value.is_ascii_graphic() || byte_value.is_ascii_whitespace()) {
+                            } else if byte_value.is_ascii()
+                                && (byte_value.is_ascii_graphic()
+                                    || byte_value.is_ascii_whitespace())
+                            {
                                 ascii_bytes.push(byte_value);
                             } else {
                                 // Non-printable or control character - replace with '?'
@@ -606,41 +642,41 @@ impl VarFormat {
                             }
                         }
                         Err(_) => {
-                            // Invalid binary group - replace with '?' 
+                            // Invalid binary group - replace with '?'
                             ascii_bytes.push(b'?');
                         }
                     }
                 }
-                
+
                 // Strip trailing NULL bytes for cleaner display
                 while let Some(&0x00) = ascii_bytes.last() {
                     ascii_bytes.pop();
                 }
-                
+
                 // Now replace any remaining NULL bytes with '?' (embedded nulls)
                 for byte in ascii_bytes.iter_mut() {
                     if *byte == 0x00 {
                         *byte = b'?';
                     }
                 }
-                
+
                 // Convert to string - this should always succeed since we only push valid ASCII
                 String::from_utf8(ascii_bytes).unwrap_or_else(|_| "?".to_string())
             }
             VarFormat::Binary => binary_value.to_string(),
             VarFormat::BinaryWithGroups => {
                 let char_count = binary_value.len();
-                binary_value
-                    .chars()
-                    .enumerate()
-                    .fold(String::new(), |mut value, (index, one_or_zero)| {
+                binary_value.chars().enumerate().fold(
+                    String::new(),
+                    |mut value, (index, one_or_zero)| {
                         value.push(one_or_zero);
                         let is_last = index == char_count - 1;
                         if !is_last && (index + 1) % 4 == 0 {
                             value.push(' ');
                         }
                         value
-                    })
+                    },
+                )
             }
             VarFormat::Hexadecimal => {
                 let ones_and_zeros = binary_value
@@ -656,10 +692,18 @@ impl VarFormat {
                     .map(|number| char::from_digit(number, 16).unwrap_or('?'))
                     .collect();
                 // Remove leading zeros but keep at least one digit
-                value.trim_start_matches('0').chars().next().map_or("0".to_string(), |_| {
-                    let trimmed = value.trim_start_matches('0');
-                    if trimmed.is_empty() { "0".to_string() } else { trimmed.to_string() }
-                })
+                value
+                    .trim_start_matches('0')
+                    .chars()
+                    .next()
+                    .map_or("0".to_string(), |_| {
+                        let trimmed = value.trim_start_matches('0');
+                        if trimmed.is_empty() {
+                            "0".to_string()
+                        } else {
+                            trimmed.to_string()
+                        }
+                    })
             }
             VarFormat::Octal => {
                 let ones_and_zeros = binary_value
@@ -676,7 +720,11 @@ impl VarFormat {
                     .collect();
                 // Remove leading zeros but keep at least one digit
                 let trimmed = value.trim_start_matches('0');
-                if trimmed.is_empty() { "0".to_string() } else { trimmed.to_string() }
+                if trimmed.is_empty() {
+                    "0".to_string()
+                } else {
+                    trimmed.to_string()
+                }
             }
             VarFormat::Signed => {
                 let mut ones_and_zeros = binary_value
@@ -729,7 +777,11 @@ impl VarFormat {
                     .collect();
                 // Remove leading zeros but keep at least one digit
                 let trimmed = value.trim_start_matches('0');
-                if trimmed.is_empty() { "0".to_string() } else { trimmed.to_string() }
+                if trimmed.is_empty() {
+                    "0".to_string()
+                } else {
+                    trimmed.to_string()
+                }
             }
         }
     }
@@ -740,42 +792,32 @@ impl VarFormat {
 #[derive(Clone, Debug, PartialEq)]
 pub enum FileError {
     /// Wellen parsing error with context
-    ParseError { 
-        source: String, // wellen error description
+    ParseError {
+        source: String,  // wellen error description
         context: String, // additional context (file path, format, etc.)
     },
     /// File not found at specified path
-    FileNotFound { 
-        path: String,
-    },
+    FileNotFound { path: String },
     /// Permission denied accessing file
-    PermissionDenied { 
-        path: String,
-    },
+    PermissionDenied { path: String },
     /// Unsupported file format
-    UnsupportedFormat { 
+    UnsupportedFormat {
         path: String,
         extension: String,
         supported_formats: Vec<String>,
     },
     /// File appears corrupted or has invalid structure
-    CorruptedFile { 
-        path: String,
-        details: String,
-    },
+    CorruptedFile { path: String, details: String },
     /// File is too large to process
-    FileTooLarge { 
+    FileTooLarge {
         path: String,
         size: u64,
         max_size: u64,
     },
     /// I/O error during file operations
-    IoError { 
-        path: String,
-        error: String,
-    },
+    IoError { path: String, error: String },
     /// Invalid file content (not valid VCD/FST)
-    InvalidFormat { 
+    InvalidFormat {
         path: String,
         expected_format: String,
         reason: String,
@@ -787,34 +829,50 @@ impl FileError {
         match self {
             FileError::ParseError { source, context } => {
                 format!("Failed to parse file: {} ({})", source, context)
-            },
+            }
             FileError::FileNotFound { path } => {
                 format!("File not found: {}", path)
-            },
+            }
             FileError::PermissionDenied { path } => {
                 format!("Permission denied accessing: {}", path)
-            },
-            FileError::UnsupportedFormat { path, extension, supported_formats } => {
+            }
+            FileError::UnsupportedFormat {
+                path,
+                extension,
+                supported_formats,
+            } => {
                 let supported = supported_formats.join(", ");
-                format!("Unsupported format '{}' in file: {}. Supported formats: {}", 
-                        extension, path, supported)
-            },
+                format!(
+                    "Unsupported format '{}' in file: {}. Supported formats: {}",
+                    extension, path, supported
+                )
+            }
             FileError::CorruptedFile { path, details } => {
                 format!("Corrupted file: {} ({})", path, details)
-            },
-            FileError::FileTooLarge { path, size, max_size } => {
-                format!("File too large: {} ({} bytes). Maximum size: {} bytes", 
-                        path, size, max_size)
-            },
+            }
+            FileError::FileTooLarge {
+                path,
+                size,
+                max_size,
+            } => {
+                format!(
+                    "File too large: {} ({} bytes). Maximum size: {} bytes",
+                    path, size, max_size
+                )
+            }
             FileError::IoError { path, error } => {
                 format!("I/O error reading: {} ({})", path, error)
-            },
-            FileError::InvalidFormat { path, expected_format, reason } => {
+            }
+            FileError::InvalidFormat {
+                path,
+                expected_format,
+                reason,
+            } => {
                 format!("Invalid {} file: {} ({})", expected_format, path, reason)
-            },
+            }
         }
     }
-    
+
     pub fn icon_name(&self) -> &'static str {
         match self {
             FileError::ParseError { .. } => "triangle-alert",
@@ -862,7 +920,7 @@ pub enum FileState {
     Loading(LoadingStatus),
     Loaded(WaveformFile),
     Failed(FileError),
-    Missing(String), // file path
+    Missing(String),     // file path
     Unsupported(String), // file path + reason
 }
 
@@ -893,12 +951,15 @@ impl Default for Theme {
 
 impl FromStr for Theme {
     type Err = String;
-    
+
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "dark" => Ok(Theme::Dark),
             "light" => Ok(Theme::Light),
-            _ => Err(format!("Invalid theme: '{}'. Valid themes are: dark, light", s)),
+            _ => Err(format!(
+                "Invalid theme: '{}'. Valid themes are: dark, light",
+                s
+            )),
         }
     }
 }
@@ -928,12 +989,15 @@ impl Default for DockMode {
 
 impl FromStr for DockMode {
     type Err = String;
-    
+
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "right" => Ok(DockMode::Right),
             "bottom" => Ok(DockMode::Bottom),
-            _ => Err(format!("Invalid dock mode: '{}'. Valid modes are: right, bottom", s)),
+            _ => Err(format!(
+                "Invalid dock mode: '{}'. Valid modes are: right, bottom",
+                s
+            )),
         }
     }
 }
@@ -1033,7 +1097,7 @@ impl PanelDimensions {
             variables_value_column_width: None,
         }
     }
-    
+
     /// Create dimensions with constraints (frontend usage)
     pub fn with_constraints(width: f64, height: f64, min_width: f64, min_height: f64) -> Self {
         Self {
@@ -1045,7 +1109,7 @@ impl PanelDimensions {
             variables_value_column_width: None,
         }
     }
-    
+
     /// Convert to basic dimensions for backend compatibility
     pub fn to_basic(&self) -> (f64, f64) {
         (self.width, self.height)
@@ -1069,7 +1133,7 @@ pub struct AppSection {
 impl AppSection {
     /// Current configuration format version
     pub const CURRENT_VERSION: &'static str = "1.0.0";
-    
+
     /// Check if this config version is supported
     pub fn is_supported_version(&self) -> bool {
         match self.version.as_str() {
@@ -1077,7 +1141,6 @@ impl AppSection {
             _ => false,
         }
     }
-    
 }
 
 impl Default for AppSection {
@@ -1087,7 +1150,6 @@ impl Default for AppSection {
         }
     }
 }
-
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct UiSection {
@@ -1104,7 +1166,6 @@ fn default_toast_dismiss_ms() -> u64 {
 fn default_timeline_cursor_position_ns() -> u64 {
     10_000_000_000 // Default timeline cursor position: 10 seconds in nanoseconds
 }
-
 
 fn default_timeline_zoom_level() -> f32 {
     1.0 // Default zoom level (1.0 = normal, no zoom)
@@ -1128,7 +1189,6 @@ where
     let s = String::deserialize(deserializer)?;
     Theme::from_str(&s).map_err(D::Error::custom)
 }
-
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct WorkspaceSection {
@@ -1155,16 +1215,15 @@ pub struct WorkspaceSection {
     // Timeline cursor position in nanoseconds
     #[serde(default = "default_timeline_cursor_position_ns")]
     pub timeline_cursor_position_ns: u64,
-    
+
     #[serde(default = "default_timeline_zoom_level")]
     pub timeline_zoom_level: f32,
-    
+
     // Timeline visible range in nanoseconds
     #[serde(default)]
     pub timeline_visible_range_start_ns: Option<u64>,
     #[serde(default)]
     pub timeline_visible_range_end_ns: Option<u64>,
-    
 }
 
 impl Default for WorkspaceSection {
@@ -1184,12 +1243,11 @@ impl Default for WorkspaceSection {
             timeline_cursor_position_ns: default_timeline_cursor_position_ns(),
             timeline_visible_range_start_ns: None,
             timeline_visible_range_end_ns: None,
-            
+
             timeline_zoom_level: default_timeline_zoom_level(),
         }
     }
 }
-
 
 // Custom deserializer for dock mode with backward compatibility
 fn deserialize_dock_mode<'de, D>(deserializer: D) -> Result<DockMode, D::Error>
@@ -1201,23 +1259,22 @@ where
     DockMode::from_str(&s).map_err(D::Error::custom)
 }
 
-
 impl WorkspaceSection {
     /// Get current docked bottom dimensions
     pub fn get_docked_bottom_dimensions(&self) -> &DockedBottomDimensions {
         &self.docked_bottom_dimensions
     }
-    
+
     /// Get current docked right dimensions
     pub fn get_docked_right_dimensions(&self) -> &DockedRightDimensions {
         &self.docked_right_dimensions
     }
-    
+
     /// Update docked bottom dimensions
     pub fn set_docked_bottom_dimensions(&mut self, dimensions: DockedBottomDimensions) {
         self.docked_bottom_dimensions = dimensions;
     }
-    
+
     /// Update docked right dimensions  
     pub fn set_docked_right_dimensions(&mut self, dimensions: DockedRightDimensions) {
         self.docked_right_dimensions = dimensions;
@@ -1229,31 +1286,71 @@ impl AppConfig {
     /// Validate the entire configuration and fix any inconsistencies
     pub fn validate_and_fix(&mut self) -> Vec<String> {
         let mut warnings = Vec::new();
-        
+
         // Validate theme
         // Theme validation is handled by the custom deserializer
-        
+
         // Validate dock mode
         // Dock mode validation is handled by the custom deserializer
-        
+
         // Validate docked dimensions for both dock modes
-        if self.workspace.docked_bottom_dimensions.files_and_scopes_panel_width < 50.0 {
-            warnings.push("Bottom dock files and scopes panel width too small, setting to minimum 50px".to_string());
-            self.workspace.docked_bottom_dimensions.files_and_scopes_panel_width = 50.0;
+        if self
+            .workspace
+            .docked_bottom_dimensions
+            .files_and_scopes_panel_width
+            < 50.0
+        {
+            warnings.push(
+                "Bottom dock files and scopes panel width too small, setting to minimum 50px"
+                    .to_string(),
+            );
+            self.workspace
+                .docked_bottom_dimensions
+                .files_and_scopes_panel_width = 50.0;
         }
-        if self.workspace.docked_bottom_dimensions.files_and_scopes_panel_height < 50.0 {
-            warnings.push("Bottom dock files and scopes panel height too small, setting to minimum 50px".to_string());
-            self.workspace.docked_bottom_dimensions.files_and_scopes_panel_height = 50.0;
+        if self
+            .workspace
+            .docked_bottom_dimensions
+            .files_and_scopes_panel_height
+            < 50.0
+        {
+            warnings.push(
+                "Bottom dock files and scopes panel height too small, setting to minimum 50px"
+                    .to_string(),
+            );
+            self.workspace
+                .docked_bottom_dimensions
+                .files_and_scopes_panel_height = 50.0;
         }
-        if self.workspace.docked_right_dimensions.files_and_scopes_panel_width < 50.0 {
-            warnings.push("Right dock files and scopes panel width too small, setting to minimum 50px".to_string());
-            self.workspace.docked_right_dimensions.files_and_scopes_panel_width = 50.0;
+        if self
+            .workspace
+            .docked_right_dimensions
+            .files_and_scopes_panel_width
+            < 50.0
+        {
+            warnings.push(
+                "Right dock files and scopes panel width too small, setting to minimum 50px"
+                    .to_string(),
+            );
+            self.workspace
+                .docked_right_dimensions
+                .files_and_scopes_panel_width = 50.0;
         }
-        if self.workspace.docked_right_dimensions.files_and_scopes_panel_height < 50.0 {
-            warnings.push("Right dock files and scopes panel height too small, setting to minimum 50px".to_string());
-            self.workspace.docked_right_dimensions.files_and_scopes_panel_height = 50.0;
+        if self
+            .workspace
+            .docked_right_dimensions
+            .files_and_scopes_panel_height
+            < 50.0
+        {
+            warnings.push(
+                "Right dock files and scopes panel height too small, setting to minimum 50px"
+                    .to_string(),
+            );
+            self.workspace
+                .docked_right_dimensions
+                .files_and_scopes_panel_height = 50.0;
         }
-        
+
         // Validate toast dismiss time
         if self.ui.toast_dismiss_ms < 1000 {
             warnings.push("Toast dismiss time too short, setting to minimum 1 second".to_string());
@@ -1263,27 +1360,33 @@ impl AppConfig {
             warnings.push("Toast dismiss time too long, setting to maximum 5 minutes".to_string());
             self.ui.toast_dismiss_ms = 300000;
         }
-        
+
         // Migrate expanded_scopes from old format to new format
         warnings.extend(self.migrate_expanded_scopes());
-        
+
         warnings
     }
-    
+
     /// Migrate expanded_scopes from old format ({file_id}_{scope}) to new format ({full_path}|{scope})
     fn migrate_expanded_scopes(&mut self) -> Vec<String> {
         let mut warnings = Vec::new();
         let mut migrated_scopes = Vec::new();
         let mut migration_occurred = false;
-        
+
         for scope_id in &self.workspace.expanded_scopes {
             if self.is_old_scope_format(scope_id) {
                 if let Some(migrated_id) = self.convert_to_new_format(scope_id) {
-                    warnings.push(format!("Migrated scope ID: '{}' -> '{}'", scope_id, migrated_id));
+                    warnings.push(format!(
+                        "Migrated scope ID: '{}' -> '{}'",
+                        scope_id, migrated_id
+                    ));
                     migrated_scopes.push(migrated_id);
                     migration_occurred = true;
                 } else {
-                    warnings.push(format!("Could not migrate scope ID '{}' - keeping old format", scope_id));
+                    warnings.push(format!(
+                        "Could not migrate scope ID '{}' - keeping old format",
+                        scope_id
+                    ));
                     migrated_scopes.push(scope_id.clone());
                 }
             } else {
@@ -1291,27 +1394,27 @@ impl AppConfig {
                 migrated_scopes.push(scope_id.clone());
             }
         }
-        
+
         if migration_occurred {
             self.workspace.expanded_scopes = migrated_scopes;
             warnings.push("Expanded scopes format migration completed".to_string());
         }
-        
+
         warnings
     }
-    
+
     /// Check if scope ID is in old format
     fn is_old_scope_format(&self, scope_id: &str) -> bool {
         // New format: {full_path}|{scope} or just {full_path} (starting with /)
         if scope_id.contains('|') || scope_id.starts_with('/') {
             return false;
         }
-        
+
         // Old format includes:
         // 1. {file_id}_{scope} entries (with underscore separator)
         // 2. Sanitized file-only entries that match generate_file_id() output
         //    (e.g., "home_user_path_file.ext" should become "/home/user/path/file.ext")
-        
+
         // Check if it matches generate_file_id() output - if so, it's old sanitized format
         for opened_file_path in &self.workspace.opened_files {
             let generated_file_id = generate_file_id(opened_file_path);
@@ -1320,16 +1423,16 @@ impl AppConfig {
                 return true;
             }
         }
-        
+
         // Check if it contains underscore (old scope format like "file_scope")
         if scope_id.contains('_') {
             return true;
         }
-        
+
         // If we get here, it's likely an orphaned entry - don't migrate
         false
     }
-    
+
     /// Convert old format scope ID to new format using opened_files as lookup
     fn convert_to_new_format(&self, old_scope_id: &str) -> Option<String> {
         // First check if this is a sanitized file-only entry (direct match with generate_file_id)
@@ -1340,20 +1443,24 @@ impl AppConfig {
                 return Some(opened_file_path.clone());
             }
         }
-        
+
         // Parse old format: {file_id}_{scope} or {file_id}
         let parts: Vec<&str> = old_scope_id.splitn(2, '_').collect();
         if parts.is_empty() {
             return None;
         }
-        
+
         let file_id = parts[0];
-        let scope_name = if parts.len() > 1 { Some(parts[1]) } else { None };
-        
+        let scope_name = if parts.len() > 1 {
+            Some(parts[1])
+        } else {
+            None
+        };
+
         // Find matching file in opened_files by looking for files whose generated ID matches
         for opened_file_path in &self.workspace.opened_files {
             let generated_file_id = generate_file_id(opened_file_path);
-            
+
             // Check for file_id match (for entries like "wave_27.fst_TOP")
             if generated_file_id == file_id {
                 // Found matching file - construct new format
@@ -1362,7 +1469,7 @@ impl AppConfig {
                     None => opened_file_path.clone(), // File-only entry
                 });
             }
-            
+
             // Check legacy format (filename-only ID) for backwards compatibility
             let filename = std::path::Path::new(opened_file_path)
                 .file_name()
@@ -1376,11 +1483,11 @@ impl AppConfig {
                 });
             }
         }
-        
+
         // Could not find matching file
         None
     }
-    
+
     /// Create a config with validation applied
     pub fn new_validated() -> Self {
         let mut config = Self::default();
@@ -1395,18 +1502,18 @@ impl AppConfig {
 /// Uses the sanitized full path to ensure uniqueness and readability
 pub fn generate_file_id(file_path: &str) -> String {
     let sanitized = sanitize_path_for_id(file_path);
-    
+
     // For extremely long paths (>255 chars), truncate but preserve uniqueness
     // This is a reasonable limit for HTML IDs and config keys
     if sanitized.len() > 255 {
         // Keep first 200 chars + hash of full path for uniqueness
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-        
+
         let mut hasher = DefaultHasher::new();
         sanitized.hash(&mut hasher);
         let hash = hasher.finish();
-        
+
         format!("{}_{:x}", &sanitized[..200], hash)
     } else {
         sanitized
@@ -1443,7 +1550,7 @@ pub fn file_contains_scope(scopes: &[ScopeData], scope_id: &str) -> bool {
         if scope.id == scope_id {
             return true;
         }
-        
+
         if file_contains_scope(&scope.children, scope_id) {
             return true;
         }
@@ -1456,7 +1563,7 @@ pub fn find_variables_in_scope(scopes: &[ScopeData], scope_id: &str) -> Option<V
         if scope.id == scope_id {
             return Some(scope.variables.clone());
         }
-        
+
         if let Some(variables) = find_variables_in_scope(&scope.children, scope_id) {
             return Some(variables);
         }
@@ -1482,11 +1589,12 @@ pub fn count_variables_in_scopes(scopes: &[ScopeData]) -> usize {
 
 pub fn filter_variables(variables: &[Signal], search_filter: &str) -> Vec<Signal> {
     if search_filter.is_empty() {
-        variables.to_vec()  // Already sorted from backend
+        variables.to_vec() // Already sorted from backend
     } else {
         // Filter only, order preserved from backend sorting
         let filter_lower = search_filter.to_lowercase();
-        variables.iter()
+        variables
+            .iter()
             .filter(|var| var.name.to_lowercase().contains(&filter_lower))
             .cloned()
             .collect()
@@ -1508,7 +1616,7 @@ pub fn get_all_variables_from_files(files: &[WaveformFile]) -> Vec<Signal> {
 pub fn generate_smart_labels(file_paths: &[String]) -> HashMap<String, String> {
     let mut path_to_label = HashMap::new();
     let mut filename_to_paths: HashMap<String, Vec<String>> = HashMap::new();
-    
+
     // Group paths by filename
     for path in file_paths {
         let filename = std::path::Path::new(path)
@@ -1516,9 +1624,12 @@ pub fn generate_smart_labels(file_paths: &[String]) -> HashMap<String, String> {
             .and_then(|n| n.to_str())
             .unwrap_or(path)
             .to_string();
-        filename_to_paths.entry(filename).or_default().push(path.clone());
+        filename_to_paths
+            .entry(filename)
+            .or_default()
+            .push(path.clone());
     }
-    
+
     for (filename, paths) in filename_to_paths {
         if paths.len() == 1 {
             // Unique filename - use as-is
@@ -1531,7 +1642,7 @@ pub fn generate_smart_labels(file_paths: &[String]) -> HashMap<String, String> {
             }
         }
     }
-    
+
     path_to_label
 }
 
@@ -1539,31 +1650,32 @@ pub fn generate_smart_labels(file_paths: &[String]) -> HashMap<String, String> {
 /// Uses shortest unique path suffix that distinguishes each file from others in the group
 fn find_minimal_disambiguation(paths: &[String]) -> Vec<String> {
     let mut labels = Vec::new();
-    
+
     for path in paths {
         let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
         let filename = segments.last().map(|s| *s).unwrap_or(path.as_str());
-        
+
         // Start with just filename, then add parent directories until unique
         let mut label = filename.to_string();
         for depth in 1..segments.len() {
             let start_idx = segments.len().saturating_sub(depth + 1);
             let suffix = segments[start_idx..].join("/");
-            
+
             // Check if this suffix is unique among other paths
-            let is_unique = paths.iter()
+            let is_unique = paths
+                .iter()
                 .filter(|&other_path| other_path != path)
                 .all(|other_path| !other_path.ends_with(&suffix));
-                
+
             if is_unique || depth == segments.len() - 1 {
                 label = suffix;
                 break;
             }
         }
-        
+
         labels.push(label);
     }
-    
+
     labels
 }
 
@@ -1574,7 +1686,7 @@ pub fn create_tracked_file(file_path: String, state: FileState) -> TrackedFile {
         .and_then(|n| n.to_str())
         .unwrap_or(&file_path)
         .to_string();
-    
+
     TrackedFile {
         id: file_path.clone(), // Use full path as ID for new format consistency
         path: file_path,
@@ -1583,7 +1695,6 @@ pub fn create_tracked_file(file_path: String, state: FileState) -> TrackedFile {
         smart_label: String::new(), // Unused - smart labels computed by derived signal
     }
 }
-
 
 // ===== FILESYSTEM UTILITIES =====
 
@@ -1595,15 +1706,14 @@ pub fn is_waveform_file(path: &str) -> bool {
         match extension.to_lowercase().as_str() {
             // ✅ TESTED: Confirmed working with test files
             "vcd" | "fst" => true,
-            
+
             // DISABLED: Additional waveform formats pending testing
             // Enable these once test files are available and parsing is verified:
             // "ghw" => true,  // GHDL waveform format
-            // "vzt" => true,  // GTKWave compressed format  
+            // "vzt" => true,  // GTKWave compressed format
             // "lxt" => true,  // GTKWave format
             // "lx2" => true,  // GTKWave format
             // "shm" => true,  // Cadence format
-            
             _ => false,
         }
     } else {
@@ -1621,94 +1731,169 @@ pub fn get_file_extension(path: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_theme_serialization() {
         // Test enum serialization
         assert_eq!(serde_json::to_string(&Theme::Dark).unwrap(), "\"dark\"");
         assert_eq!(serde_json::to_string(&Theme::Light).unwrap(), "\"light\"");
-        
+
         // Test enum deserialization
-        assert_eq!(serde_json::from_str::<Theme>("\"dark\"").unwrap(), Theme::Dark);
-        assert_eq!(serde_json::from_str::<Theme>("\"light\"").unwrap(), Theme::Light);
-        
+        assert_eq!(
+            serde_json::from_str::<Theme>("\"dark\"").unwrap(),
+            Theme::Dark
+        );
+        assert_eq!(
+            serde_json::from_str::<Theme>("\"light\"").unwrap(),
+            Theme::Light
+        );
+
         // Test case insensitive deserialization via custom deserializer
         let ui_section: UiSection = serde_json::from_str(r#"{"theme": "DARK"}"#).unwrap();
         assert_eq!(ui_section.theme, Theme::Dark);
     }
-    
+
     #[test]
     fn test_dock_mode_serialization() {
         // Test enum serialization
-        assert_eq!(serde_json::to_string(&DockMode::Right).unwrap(), "\"right\"");
-        assert_eq!(serde_json::to_string(&DockMode::Bottom).unwrap(), "\"bottom\"");
-        
+        assert_eq!(
+            serde_json::to_string(&DockMode::Right).unwrap(),
+            "\"right\""
+        );
+        assert_eq!(
+            serde_json::to_string(&DockMode::Bottom).unwrap(),
+            "\"bottom\""
+        );
+
         // Test enum deserialization
-        assert_eq!(serde_json::from_str::<DockMode>("\"right\"").unwrap(), DockMode::Right);
-        assert_eq!(serde_json::from_str::<DockMode>("\"bottom\"").unwrap(), DockMode::Bottom);
+        assert_eq!(
+            serde_json::from_str::<DockMode>("\"right\"").unwrap(),
+            DockMode::Right
+        );
+        assert_eq!(
+            serde_json::from_str::<DockMode>("\"bottom\"").unwrap(),
+            DockMode::Bottom
+        );
     }
-    
+
     #[test]
     fn test_panel_dimensions_serialization() {
         let dims = PanelDimensions::new(300.0, 200.0);
         let json = serde_json::to_string(&dims).unwrap();
         let deserialized: PanelDimensions = serde_json::from_str(&json).unwrap();
         assert_eq!(dims, deserialized);
-        
+
         // Test that optional fields are omitted when None (skip_serializing_if works)
         let basic_json = serde_json::to_value(&dims).unwrap();
         // When skip_serializing_if = "Option::is_none", the fields are omitted entirely
         assert!(!basic_json.as_object().unwrap().contains_key("min_width"));
         assert!(!basic_json.as_object().unwrap().contains_key("min_height"));
-        
+
         // Test with constraints - fields should be present
         let dims_with_constraints = PanelDimensions::with_constraints(400.0, 300.0, 100.0, 80.0);
         let json_with_constraints = serde_json::to_value(&dims_with_constraints).unwrap();
-        assert!(json_with_constraints.as_object().unwrap().contains_key("min_width"));
-        assert!(json_with_constraints.as_object().unwrap().contains_key("min_height"));
+        assert!(
+            json_with_constraints
+                .as_object()
+                .unwrap()
+                .contains_key("min_width")
+        );
+        assert!(
+            json_with_constraints
+                .as_object()
+                .unwrap()
+                .contains_key("min_height")
+        );
         assert_eq!(json_with_constraints["min_width"], 100.0);
         assert_eq!(json_with_constraints["min_height"], 80.0);
     }
-    
-    
+
     #[test]
     fn test_config_validation() {
         let mut config = AppConfig::default();
-        
+
         // Set invalid values
-        config.workspace.docked_bottom_dimensions.files_and_scopes_panel_width = 10.0; // Too small
-        config.workspace.docked_bottom_dimensions.files_and_scopes_panel_height = 10.0; // Too small
-        config.workspace.docked_right_dimensions.files_and_scopes_panel_width = 10.0; // Too small 
-        config.workspace.docked_right_dimensions.files_and_scopes_panel_height = 10.0; // Too small
+        config
+            .workspace
+            .docked_bottom_dimensions
+            .files_and_scopes_panel_width = 10.0; // Too small
+        config
+            .workspace
+            .docked_bottom_dimensions
+            .files_and_scopes_panel_height = 10.0; // Too small
+        config
+            .workspace
+            .docked_right_dimensions
+            .files_and_scopes_panel_width = 10.0; // Too small 
+        config
+            .workspace
+            .docked_right_dimensions
+            .files_and_scopes_panel_height = 10.0; // Too small
         config.ui.toast_dismiss_ms = 500; // Too short
-        
+
         let warnings = config.validate_and_fix();
-        
+
         // Check that values were fixed
-        assert_eq!(config.workspace.docked_bottom_dimensions.files_and_scopes_panel_width, 50.0);
-        assert_eq!(config.workspace.docked_bottom_dimensions.files_and_scopes_panel_height, 50.0);
-        assert_eq!(config.workspace.docked_right_dimensions.files_and_scopes_panel_width, 50.0);
-        assert_eq!(config.workspace.docked_right_dimensions.files_and_scopes_panel_height, 50.0);
+        assert_eq!(
+            config
+                .workspace
+                .docked_bottom_dimensions
+                .files_and_scopes_panel_width,
+            50.0
+        );
+        assert_eq!(
+            config
+                .workspace
+                .docked_bottom_dimensions
+                .files_and_scopes_panel_height,
+            50.0
+        );
+        assert_eq!(
+            config
+                .workspace
+                .docked_right_dimensions
+                .files_and_scopes_panel_width,
+            50.0
+        );
+        assert_eq!(
+            config
+                .workspace
+                .docked_right_dimensions
+                .files_and_scopes_panel_height,
+            50.0
+        );
         assert_eq!(config.ui.toast_dismiss_ms, 1000);
-        
+
         // Check that warnings were generated
         assert_eq!(warnings.len(), 5);
     }
-    
+
     #[test]
     fn test_var_format_serialization() {
         // Test enum serialization
-        assert_eq!(serde_json::to_string(&VarFormat::Hexadecimal).unwrap(), "\"Hexadecimal\"");
-        assert_eq!(serde_json::to_string(&VarFormat::Binary).unwrap(), "\"Binary\"");
-        
+        assert_eq!(
+            serde_json::to_string(&VarFormat::Hexadecimal).unwrap(),
+            "\"Hexadecimal\""
+        );
+        assert_eq!(
+            serde_json::to_string(&VarFormat::Binary).unwrap(),
+            "\"Binary\""
+        );
+
         // Test enum deserialization
-        assert_eq!(serde_json::from_str::<VarFormat>("\"Binary\"").unwrap(), VarFormat::Binary);
-        assert_eq!(serde_json::from_str::<VarFormat>("\"Hexadecimal\"").unwrap(), VarFormat::Hexadecimal);
-        
+        assert_eq!(
+            serde_json::from_str::<VarFormat>("\"Binary\"").unwrap(),
+            VarFormat::Binary
+        );
+        assert_eq!(
+            serde_json::from_str::<VarFormat>("\"Hexadecimal\"").unwrap(),
+            VarFormat::Hexadecimal
+        );
+
         // Test default
         assert_eq!(VarFormat::default(), VarFormat::Hexadecimal);
     }
-    
+
     #[test]
     fn test_var_format_as_static_str() {
         assert_eq!(VarFormat::ASCII.as_static_str(), "ASCII");
@@ -1719,7 +1904,7 @@ mod tests {
         assert_eq!(VarFormat::Signed.as_static_str(), "Int");
         assert_eq!(VarFormat::Unsigned.as_static_str(), "UInt");
     }
-    
+
     #[test]
     fn test_var_format_next() {
         assert_eq!(VarFormat::ASCII.next(), VarFormat::Binary);
@@ -1730,137 +1915,140 @@ mod tests {
         assert_eq!(VarFormat::Signed.next(), VarFormat::Unsigned);
         assert_eq!(VarFormat::Unsigned.next(), VarFormat::ASCII);
     }
-    
+
     #[test]
     fn test_var_format_binary_formatting() {
         let binary_value = "10110101";
-        
+
         // Test binary format (should be unchanged)
         assert_eq!(VarFormat::Binary.format(binary_value), "10110101");
-        
+
         // Test binary with groups
-        assert_eq!(VarFormat::BinaryWithGroups.format(binary_value), "1011 0101");
-        
+        assert_eq!(
+            VarFormat::BinaryWithGroups.format(binary_value),
+            "1011 0101"
+        );
+
         // Test empty string
         assert_eq!(VarFormat::Binary.format(""), "");
         assert_eq!(VarFormat::Hexadecimal.format(""), "");
     }
-    
+
     #[test]
     fn test_var_format_hexadecimal() {
         let binary_value = "10110101"; // Should be B5 in hex
         assert_eq!(VarFormat::Hexadecimal.format(binary_value), "b5");
-        
+
         let binary_value2 = "11111111"; // Should be FF in hex
         assert_eq!(VarFormat::Hexadecimal.format(binary_value2), "ff");
-        
+
         let binary_value3 = "00001010"; // Should be 0A in hex
         assert_eq!(VarFormat::Hexadecimal.format(binary_value3), "a");
     }
-    
+
     #[test]
     fn test_var_format_octal() {
         let binary_value = "10110101"; // Should be 265 in octal
         assert_eq!(VarFormat::Octal.format(binary_value), "265");
-        
+
         let binary_value2 = "11111111"; // Should be 377 in octal
         assert_eq!(VarFormat::Octal.format(binary_value2), "377");
     }
-    
+
     #[test]
     fn test_var_format_unsigned() {
         let binary_value = "10110101"; // Should be 181 in decimal
         assert_eq!(VarFormat::Unsigned.format(binary_value), "181");
-        
+
         let binary_value2 = "11111111"; // Should be 255 in decimal
         assert_eq!(VarFormat::Unsigned.format(binary_value2), "255");
-        
+
         let binary_value3 = "00000000"; // Should be 0 in decimal
         assert_eq!(VarFormat::Unsigned.format(binary_value3), "0");
     }
-    
+
     #[test]
     fn test_var_format_signed() {
         // Positive numbers (MSB = 0)
         let binary_value = "01111111"; // Should be 127 in signed decimal
         assert_eq!(VarFormat::Signed.format(binary_value), "127");
-        
+
         // Negative numbers (MSB = 1) - two's complement
         let binary_value2 = "10000001"; // Should be -127 in signed decimal
         assert_eq!(VarFormat::Signed.format(binary_value2), "-127");
-        
+
         let binary_value3 = "11111111"; // Should be -1 in signed decimal
         assert_eq!(VarFormat::Signed.format(binary_value3), "-1");
-        
+
         let binary_value4 = "10000000"; // Should be -128 in signed decimal
         assert_eq!(VarFormat::Signed.format(binary_value4), "-128");
     }
-    
+
     #[test]
     fn test_var_format_ascii() {
         // Test ASCII conversion - 8-bit groups
         let binary_value = "0100100001000101"; // Should be "HE" (0x48, 0x45)
         assert_eq!(VarFormat::ASCII.format(binary_value), "HE");
-        
+
         // Test single character
         let binary_value2 = "01001000"; // Should be "H" (0x48)
         assert_eq!(VarFormat::ASCII.format(binary_value2), "H");
-        
+
         // Test incomplete group (should be ignored)
         let binary_value3 = "0100100001000101010"; // 17 bits, only first 16 used
         assert_eq!(VarFormat::ASCII.format(binary_value3), "HE");
-        
+
         // Test binary values shorter than 8 bits should show placeholder
         assert_eq!(VarFormat::ASCII.format("0"), "-");
         assert_eq!(VarFormat::ASCII.format("1"), "-");
         assert_eq!(VarFormat::ASCII.format("101"), "-");
         assert_eq!(VarFormat::ASCII.format("1010101"), "-"); // 7 bits
-        
+
         // Test 9+ bits processes complete 8-bit groups, ignores remainder
         assert_eq!(VarFormat::ASCII.format("010010000"), "H"); // 9 bits, processes first 8
-        
+
         // Test control characters get replaced with '?'
         assert_eq!(VarFormat::ASCII.format("00000000"), "?"); // NULL character
         assert_eq!(VarFormat::ASCII.format("00000001"), "?"); // SOH control character
-        
+
         // Test printable ASCII works
         assert_eq!(VarFormat::ASCII.format("00100000"), " "); // Space (32)
         assert_eq!(VarFormat::ASCII.format("00110000"), "0"); // '0' character (48)
     }
-    
+
     #[test]
     fn test_signal_value_enum() {
         // Test creation
         let present_value = SignalValue::present("10110101");
         let missing_value = SignalValue::missing();
-        
+
         // Test type checks
         assert!(present_value.is_present());
         assert!(!present_value.is_missing());
         assert!(present_value.has_data());
-        
+
         assert!(!missing_value.is_present());
         assert!(missing_value.is_missing());
         assert!(!missing_value.has_data());
-        
+
         // Test as_option conversion
         assert_eq!(present_value.as_option(), Some("10110101".to_string()));
         assert_eq!(missing_value.as_option(), None);
-        
+
         // Test display methods
         assert_eq!(present_value.display_value("N/A"), "10110101");
         assert_eq!(missing_value.display_value("N/A"), "N/A");
         assert_eq!(present_value.display_value_or_dash(), "10110101");
         assert_eq!(missing_value.display_value_or_dash(), "-");
-        
+
         // Test map_present
         let formatted = present_value.map_present(|v| format!("0b{}", v));
         assert_eq!(formatted.as_option(), Some("0b10110101".to_string()));
-        
+
         let formatted_missing = missing_value.map_present(|v| format!("0b{}", v));
         assert_eq!(formatted_missing.as_option(), None);
     }
-    
+
     #[test]
     fn test_signal_value_from_conversions() {
         // Test From<Option<String>>
@@ -1868,94 +2056,126 @@ mod tests {
         let from_none: SignalValue = None::<String>.into();
         assert_eq!(from_some, SignalValue::Present("test".to_string()));
         assert_eq!(from_none, SignalValue::Missing);
-        
+
         // Test From<String>
         let from_string: SignalValue = "hello".to_string().into();
         assert_eq!(from_string, SignalValue::Present("hello".to_string()));
-        
+
         // Test From<&str>
         let from_str: SignalValue = "world".into();
         assert_eq!(from_str, SignalValue::Present("world".to_string()));
     }
-    
+
     #[test]
     fn test_signal_value_distinguishes_zero_from_missing() {
         // This is the core enhancement - distinguish actual "0" from missing data
         let actual_zero = SignalValue::present("0");
         let missing_data = SignalValue::missing();
-        
+
         // Both could be displayed as "0" or "-" but we can now distinguish them programmatically
         assert!(actual_zero.is_present());
         assert!(missing_data.is_missing());
-        
+
         // Actual zero has real data
         assert_eq!(actual_zero.display_value_or_dash(), "0");
         // Missing data shows placeholder
         assert_eq!(missing_data.display_value_or_dash(), "-");
-        
+
         // This enables proper UI styling - missing data can be styled differently
         assert_eq!(actual_zero.has_data(), true);
         assert_eq!(missing_data.has_data(), false);
     }
-    
+
     #[test]
     fn test_generate_file_id_path_based() {
         // Test that different paths generate different IDs using full path
         let id1 = generate_file_id("/path/to/test.vcd");
         let id2 = generate_file_id("/different/path/test.vcd");
         let id3 = generate_file_id("/path/to/other.vcd");
-        
+
         // IDs should be different for different paths, even with same filename
         assert_ne!(id1, id2);
         assert_ne!(id1, id3);
         assert_ne!(id2, id3);
-        
+
         // Same path should generate same ID consistently
         let id1_repeat = generate_file_id("/path/to/test.vcd");
         assert_eq!(id1, id1_repeat);
-        
+
         // ID should be the sanitized full path
         assert_eq!(id1, "path_to_test.vcd");
         assert_eq!(id2, "different_path_test.vcd");
         assert_eq!(id3, "path_to_other.vcd");
-        
+
         // Test Windows-style paths
         let windows_id = generate_file_id("C:\\Users\\Test\\file.vcd");
         assert_eq!(windows_id, "C_Users_Test_file.vcd");
-        
+
         // Test path with spaces and special characters
         let special_id = generate_file_id("/home/user name/test file: v2.vcd");
         assert_eq!(special_id, "home_user_name_test_file_v2.vcd");
-        
+
         // Test very long path gets truncated but remains unique
         let long_path = format!("/very/long/path/{}/test.vcd", "x".repeat(300));
         let long_id = generate_file_id(&long_path);
-        assert!(long_id.len() <= 255, "Long path ID should be truncated to max 255 chars");
-        assert!(long_id.starts_with("very_long_path"), "Long path ID should start with path prefix");
-        assert!(long_id.contains("_"), "Long path ID should contain hash separator");
-        
+        assert!(
+            long_id.len() <= 255,
+            "Long path ID should be truncated to max 255 chars"
+        );
+        assert!(
+            long_id.starts_with("very_long_path"),
+            "Long path ID should start with path prefix"
+        );
+        assert!(
+            long_id.contains("_"),
+            "Long path ID should contain hash separator"
+        );
+
         // Different long paths should generate different IDs
         let long_path2 = format!("/very/long/path/{}/test.vcd", "y".repeat(300));
         let long_id2 = generate_file_id(&long_path2);
-        assert_ne!(long_id, long_id2, "Different long paths should have different IDs");
+        assert_ne!(
+            long_id, long_id2,
+            "Different long paths should have different IDs"
+        );
     }
-    
+
     #[test]
     fn test_sanitize_path_for_id() {
         // Test basic path sanitization
-        assert_eq!(sanitize_path_for_id("/home/user/test.vcd"), "home_user_test.vcd");
-        assert_eq!(sanitize_path_for_id("C:\\Windows\\test.vcd"), "C_Windows_test.vcd");
-        
+        assert_eq!(
+            sanitize_path_for_id("/home/user/test.vcd"),
+            "home_user_test.vcd"
+        );
+        assert_eq!(
+            sanitize_path_for_id("C:\\Windows\\test.vcd"),
+            "C_Windows_test.vcd"
+        );
+
         // Test special characters
-        assert_eq!(sanitize_path_for_id("/path with spaces/test.vcd"), "path_with_spaces_test.vcd");
-        assert_eq!(sanitize_path_for_id("/path:with:colons/test.vcd"), "path_with_colons_test.vcd");
-        assert_eq!(sanitize_path_for_id("/path<with>problematic\"chars/test.vcd"), "path_with_problematic_chars_test.vcd");
-        
+        assert_eq!(
+            sanitize_path_for_id("/path with spaces/test.vcd"),
+            "path_with_spaces_test.vcd"
+        );
+        assert_eq!(
+            sanitize_path_for_id("/path:with:colons/test.vcd"),
+            "path_with_colons_test.vcd"
+        );
+        assert_eq!(
+            sanitize_path_for_id("/path<with>problematic\"chars/test.vcd"),
+            "path_with_problematic_chars_test.vcd"
+        );
+
         // Test consecutive separators are cleaned up
-        assert_eq!(sanitize_path_for_id("//multiple///separators//test.vcd"), "multiple_separators_test.vcd");
-        
+        assert_eq!(
+            sanitize_path_for_id("//multiple///separators//test.vcd"),
+            "multiple_separators_test.vcd"
+        );
+
         // Test that valid characters are preserved
-        assert_eq!(sanitize_path_for_id("/valid-path_123/test-file_v2.vcd"), "valid-path_123_test-file_v2.vcd");
+        assert_eq!(
+            sanitize_path_for_id("/valid-path_123/test-file_v2.vcd"),
+            "valid-path_123_test-file_v2.vcd"
+        );
     }
-    
 }

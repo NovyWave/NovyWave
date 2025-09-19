@@ -1,37 +1,37 @@
-use zoon::*;
+use crate::components::icon::{IconBuilder, IconColor, IconName, IconSize};
 use crate::tokens::*;
-use crate::components::icon::{IconBuilder, IconName, IconSize, IconColor};
+use zoon::*;
 
 // Switch sizes - Made larger to match Vue Storybook and accommodate icons better
 #[derive(Debug, Clone, Copy)]
 pub enum SwitchSize {
-    Small,   // 40x24px - Increased for better icon visibility
-    Medium,  // 52x28px - Increased for better proportions
-    Large,   // 64x32px - Increased for better icon space
+    Small,  // 40x24px - Increased for better icon visibility
+    Medium, // 52x28px - Increased for better proportions
+    Large,  // 64x32px - Increased for better icon space
 }
 
 impl SwitchSize {
     pub fn track_width(self) -> u32 {
         match self {
-            SwitchSize::Small => 49,   // Updated to 49px
-            SwitchSize::Medium => 52,  // +8px wider
-            SwitchSize::Large => 64,   // +12px wider
+            SwitchSize::Small => 49,  // Updated to 49px
+            SwitchSize::Medium => 52, // +8px wider
+            SwitchSize::Large => 64,  // +12px wider
         }
     }
 
     pub fn track_height(self) -> u32 {
         match self {
-            SwitchSize::Small => 24,   // +4px taller
-            SwitchSize::Medium => 28,  // +4px taller
-            SwitchSize::Large => 32,   // +4px taller
+            SwitchSize::Small => 24,  // +4px taller
+            SwitchSize::Medium => 28, // +4px taller
+            SwitchSize::Large => 32,  // +4px taller
         }
     }
 
     pub fn thumb_size(self) -> u32 {
         match self {
-            SwitchSize::Small => 20,   // +4px larger
-            SwitchSize::Medium => 24,  // +4px larger
-            SwitchSize::Large => 28,   // +4px larger
+            SwitchSize::Small => 20,  // +4px larger
+            SwitchSize::Medium => 24, // +4px larger
+            SwitchSize::Large => 28,  // +4px larger
         }
     }
 
@@ -539,8 +539,7 @@ impl SwitchBuilder {
                                                 Theme::Dark => "oklch(95% 0.14 250)", // neutral_11 dark
                                             }
                                         }
-                                    }))
-                                )
+                                    })))
                                 // Make label clickable to toggle switch
                                 .s(Cursor::new(if disabled {
                                     CursorIcon::NotAllowed
@@ -554,26 +553,23 @@ impl SwitchBuilder {
                                             checked_clone_for_label.update(|current| !current);
                                         }
                                     }
-                                })
+                                }),
                         )
                         .item_signal(always(self.required).map(|required| {
                             if required {
                                 Some(
-                                    El::new()
-                                        .child(Text::new("*"))
-                                        .s(Font::new()
-                                            .size(FONT_SIZE_16)
-                                            .weight(FontWeight::Number(FONT_WEIGHT_5))
-                                            .color_signal(theme().map(|t| match t {
-                                                Theme::Light => "oklch(50% 0.21 30)", // error_7 light
-                                                Theme::Dark => "oklch(70% 0.21 30)", // error_7 dark
-                                            }))
-                                        )
+                                    El::new().child(Text::new("*")).s(Font::new()
+                                        .size(FONT_SIZE_16)
+                                        .weight(FontWeight::Number(FONT_WEIGHT_5))
+                                        .color_signal(theme().map(|t| match t {
+                                            Theme::Light => "oklch(50% 0.21 30)", // error_7 light
+                                            Theme::Dark => "oklch(70% 0.21 30)",  // error_7 dark
+                                        }))),
                                 )
                             } else {
                                 None
                             }
-                        }))
+                        })),
                 )
                 .item_signal(always(self.description.clone()).map({
                     let checked_clone_for_desc = checked_clone_for_label.clone();
@@ -596,8 +592,7 @@ impl SwitchBuilder {
                                                 Theme::Dark => "oklch(75% 0.14 250)", // neutral_9 dark
                                             }
                                         }
-                                    }))
-                                )
+                                    })))
                                 // Make description clickable to toggle switch
                                 .s(Cursor::new(if disabled {
                                     CursorIcon::NotAllowed
@@ -618,20 +613,16 @@ impl SwitchBuilder {
 
             // Main row with switch and label - order based on label_position
             let main_row = match self.label_position {
-                LabelPosition::Left => {
-                    Row::new()
-                        .s(Gap::new().x(SPACING_12))
-                        .s(Align::new().top())
-                        .item(label_column)
-                        .item(switch_track)
-                }
-                LabelPosition::Right => {
-                    Row::new()
-                        .s(Gap::new().x(SPACING_12))
-                        .s(Align::new().top())
-                        .item(switch_track)
-                        .item(label_column)
-                }
+                LabelPosition::Left => Row::new()
+                    .s(Gap::new().x(SPACING_12))
+                    .s(Align::new().top())
+                    .item(label_column)
+                    .item(switch_track),
+                LabelPosition::Right => Row::new()
+                    .s(Gap::new().x(SPACING_12))
+                    .s(Align::new().top())
+                    .item(switch_track)
+                    .item(label_column),
             };
 
             items.push(main_row.unify());

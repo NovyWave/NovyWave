@@ -1,14 +1,16 @@
-use moonzoon_novyui::tokens::color::{neutral_8, neutral_11, primary_6};
-use moonzoon_novyui::components::{KbdSize, KbdVariant, kbd};
-use moonzoon_novyui::*;
-use zoon::*;
-use shared::{VarFormat, SelectedVariable, TrackedFile};
-use crate::selected_variables::{VariableWithContext, filter_variables_with_context, get_variables_from_tracked_files};
-use crate::virtual_list::virtual_variables_list_pre_filtered;
 use crate::dragging::{
     files_panel_height_signal, variables_name_column_width_signal,
     variables_value_column_width_signal,
 };
+use crate::selected_variables::{
+    VariableWithContext, filter_variables_with_context, get_variables_from_tracked_files,
+};
+use crate::virtual_list::virtual_variables_list_pre_filtered;
+use moonzoon_novyui::components::{KbdSize, KbdVariant, kbd};
+use moonzoon_novyui::tokens::color::{neutral_8, neutral_11, primary_6};
+use moonzoon_novyui::*;
+use shared::{SelectedVariable, TrackedFile, VarFormat};
+use zoon::*;
 
 /// Selected Variables panel row height
 pub const SELECTED_VARIABLES_ROW_HEIGHT: u32 = 30;
@@ -32,7 +34,7 @@ pub fn variables_panel(
     let tracked_files = tracked_files.clone();
     let selected_variables = selected_variables.clone();
     let _waveform_timeline = waveform_timeline.clone();
-    
+
     let search_filter_relay = selected_variables.search_filter_changed_relay.clone();
     let search_focus_relay = selected_variables.search_focus_changed_relay.clone();
     El::new()
@@ -48,8 +50,11 @@ pub fn variables_panel(
                     El::new()
                         .s(Font::new().no_wrap().color_signal(neutral_8()).size(13))
                         .child_signal(
-                            variables_display_signal(tracked_files.clone(), selected_variables.clone())
-                                .map(|filtered_variables| filtered_variables.len().to_string()),
+                            variables_display_signal(
+                                tracked_files.clone(),
+                                selected_variables.clone(),
+                            )
+                            .map(|filtered_variables| filtered_variables.len().to_string()),
                         ),
                 )
                 .item(
@@ -61,13 +66,15 @@ pub fn variables_panel(
                                 .placeholder("variable_name")
                                 .value_signal(selected_variables.search_filter.signal())
                                 .left_icon(IconName::Search)
-                                .right_icon_signal(selected_variables.search_filter.signal().map(|text| {
-                                    if text.is_empty() {
-                                        None
-                                    } else {
-                                        Some(IconName::X)
-                                    }
-                                }))
+                                .right_icon_signal(selected_variables.search_filter.signal().map(
+                                    |text| {
+                                        if text.is_empty() {
+                                            None
+                                        } else {
+                                            Some(IconName::X)
+                                        }
+                                    },
+                                ))
                                 .on_right_icon_click({
                                     let relay = search_filter_relay.clone();
                                     move || relay.send(String::new())
@@ -102,12 +109,16 @@ pub fn selected_variables_with_waveform_panel(
     waveform_canvas: crate::visualizer::canvas::waveform_canvas::WaveformCanvas,
 ) -> impl Element {
     let selected_variables_for_signals = selected_variables.clone();
-    let tracked_files_broadcaster = tracked_files.files.signal_vec().to_signal_cloned().broadcast();
+    let tracked_files_broadcaster = tracked_files
+        .files
+        .signal_vec()
+        .to_signal_cloned()
+        .broadcast();
     let waveform_timeline_clone = waveform_timeline.clone();
-    
+
     let name_column_width_signal = variables_name_column_width_signal(app_config.clone());
     let value_column_width_signal = variables_value_column_width_signal(app_config.clone());
-    
+
     Column::new()
         .s(Width::growable())
         .s(Height::fill())
@@ -405,7 +416,7 @@ pub fn variables_panel_with_fill(
     let waveform_timeline = waveform_timeline.clone();
     let waveform_canvas = waveform_canvas.clone();
     let app_config = app_config.clone();
-    
+
     El::new()
         .s(Width::growable())
         .s(Height::fill())
@@ -423,12 +434,18 @@ pub fn variables_panel_with_fill(
                             "scrollbar-color",
                             primary_6()
                                 .map(|thumb| {
-                                    moonzoon_novyui::tokens::color::primary_3().map(move |track| format!("{} {}", thumb, track))
+                                    moonzoon_novyui::tokens::color::primary_3()
+                                        .map(move |track| format!("{} {}", thumb, track))
                                 })
                                 .flatten(),
                         )
                     })
-                    .child(variables_panel(&tracked_files, &selected_variables, &waveform_timeline, &waveform_canvas))
+                    .child(variables_panel(
+                        &tracked_files,
+                        &selected_variables,
+                        &waveform_timeline,
+                        &waveform_canvas,
+                    ))
                     .into_element()
             } else {
                 El::new()
@@ -439,12 +456,18 @@ pub fn variables_panel_with_fill(
                             "scrollbar-color",
                             primary_6()
                                 .map(|thumb| {
-                                    moonzoon_novyui::tokens::color::primary_3().map(move |track| format!("{} {}", thumb, track))
+                                    moonzoon_novyui::tokens::color::primary_3()
+                                        .map(move |track| format!("{} {}", thumb, track))
                                 })
                                 .flatten(),
                         )
                     })
-                    .child(variables_panel(&tracked_files, &selected_variables, &waveform_timeline, &waveform_canvas))
+                    .child(variables_panel(
+                        &tracked_files,
+                        &selected_variables,
+                        &waveform_timeline,
+                        &waveform_canvas,
+                    ))
                     .into_element()
             }
         }))
@@ -461,33 +484,40 @@ pub fn simple_variables_content(
         .s(Gap::new().y(0))
         .s(Height::fill())
         .s(Width::fill())
-        .item(El::new().s(Height::fill()).s(Width::fill()).child_signal(
-            variables_display_context_signal(tracked_files.clone(), selected_variables.clone()).map({
-                let selected_variables = selected_variables.clone();
-                move |context| {
-                    match context {
-                        VariableDisplayContext::NoScopeSelected => {
-                            Column::new()
-                                .s(Height::fill()).s(Width::fill())
-                                .item(crate::virtual_list::empty_state_hint("Select scope in the Files & Scopes panel"))
+        .item(
+            El::new().s(Height::fill()).s(Width::fill()).child_signal(
+                variables_display_context_signal(tracked_files.clone(), selected_variables.clone())
+                    .map({
+                        let selected_variables = selected_variables.clone();
+                        move |context| match context {
+                            VariableDisplayContext::NoScopeSelected => Column::new()
+                                .s(Height::fill())
+                                .s(Width::fill())
+                                .item(crate::virtual_list::empty_state_hint(
+                                    "Select scope in the Files & Scopes panel",
+                                )),
+                            VariableDisplayContext::ScopeHasNoVariables => Column::new()
+                                .s(Height::fill())
+                                .s(Width::fill())
+                                .item(crate::virtual_list::empty_state_hint(
+                                    "Selected scope does not have any variables",
+                                )),
+                            VariableDisplayContext::NoFilterMatches => Column::new()
+                                .s(Height::fill())
+                                .s(Width::fill())
+                                .item(crate::virtual_list::empty_state_hint(
+                                    "No variables match search filter",
+                                )),
+                            VariableDisplayContext::Variables(filtered_variables) => {
+                                virtual_variables_list_pre_filtered(
+                                    filtered_variables,
+                                    &selected_variables,
+                                )
+                            }
                         }
-                        VariableDisplayContext::ScopeHasNoVariables => {
-                            Column::new()
-                                .s(Height::fill()).s(Width::fill())
-                                .item(crate::virtual_list::empty_state_hint("Selected scope does not have any variables"))
-                        }
-                        VariableDisplayContext::NoFilterMatches => {
-                            Column::new()
-                                .s(Height::fill()).s(Width::fill())
-                                .item(crate::virtual_list::empty_state_hint("No variables match search filter"))
-                        }
-                        VariableDisplayContext::Variables(filtered_variables) => {
-                            virtual_variables_list_pre_filtered(filtered_variables, &selected_variables)
-                        }
-                    }
-                }
-            }),
-        ))
+                    }),
+            ),
+        )
 }
 
 /// Signal for loading variables from tracked files
@@ -497,7 +527,7 @@ pub fn variables_loading_signal(
 ) -> impl Signal<Item = Vec<VariableWithContext>> {
     let files_signal = tracked_files.files.signal_vec().to_signal_cloned();
     let selected_scope_signal = selected_variables.selected_scope.signal();
-    
+
     map_ref! {
         let selected_scope_id = selected_scope_signal,
         let tracked_files = files_signal => {

@@ -1,48 +1,65 @@
 // Component Library for NovyUI MoonZoon Migration
 // Research-validated component patterns
 
+pub mod accordion;
+pub mod alert;
+pub mod avatar;
+pub mod badge;
 pub mod button;
+pub mod card;
+pub mod checkbox;
+pub mod fileinput;
 pub mod icon;
 pub mod input;
-pub mod typography;
-pub mod badge;
-pub mod card;
-pub mod list;
-pub mod avatar;
-pub mod switch;
-pub mod checkbox;
-pub mod textarea;
 pub mod kbd;
-pub mod accordion;
-pub mod select;
-pub mod alert;
-pub mod treeview;
-pub mod fileinput;
+pub mod list;
 pub mod pattern;
+pub mod select;
+pub mod switch;
+pub mod textarea;
+pub mod treeview;
+pub mod typography;
 
 // Re-export components for easy access
+pub use accordion::*;
+pub use alert::*;
+pub use avatar::*;
+pub use badge::*;
 pub use button::*;
+pub use card::*;
+pub use checkbox::*;
+pub use fileinput::*;
 pub use icon::{
-    IconName, IconSize, IconColor, IconBuilder,
-    icon, icon_str, icon_name_from_str,
-    chevron_down, chevron_up, chevron_left, chevron_right,
-    search, check, x, plus, minus, eye, eye_off,
-    user, star, heart, settings, refresh_cw
-    // Note: arrow_right is excluded to avoid conflict with kbd::arrow_right
+    IconBuilder,
+    IconColor,
+    IconName,
+    IconSize,
+    check,
+    chevron_down,
+    chevron_left,
+    chevron_right,
+    chevron_up,
+    eye,
+    eye_off,
+    heart,
+    icon,
+    icon_name_from_str,
+    icon_str,
+    minus,
+    plus,
+    refresh_cw, // Note: arrow_right is excluded to avoid conflict with kbd::arrow_right
+    search,
+    settings,
+    star,
+    user,
+    x,
 };
 pub use input::*;
-pub use typography::*;
-pub use badge::*;
-pub use card::*;
-pub use list::*;
-pub use avatar::*;
-pub use switch::*;
-pub use checkbox::*;
-pub use textarea::*;
 pub use kbd::*;
-pub use accordion::*;
-pub use select::*;
-pub use alert::*;
-pub use treeview::*;
-pub use fileinput::*;
+pub use list::*;
 pub use pattern::*;
+pub use select::*;
+pub use switch::*;
+pub use textarea::*;
+pub use treeview::*;
+pub use typography::*;

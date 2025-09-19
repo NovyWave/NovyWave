@@ -1,13 +1,13 @@
-use zoon::*;
 use crate::tokens::*;
+use zoon::*;
 
 // Avatar sizes
 #[derive(Debug, Clone, Copy)]
 pub enum AvatarSize {
-    Small,   // 24px
-    Medium,  // 32px
-    Large,   // 40px
-    XLarge,  // 48px
+    Small,  // 24px
+    Medium, // 32px
+    Large,  // 40px
+    XLarge, // 48px
 }
 
 impl AvatarSize {
@@ -24,9 +24,9 @@ impl AvatarSize {
 // Avatar variants
 #[derive(Debug, Clone, Copy)]
 pub enum AvatarVariant {
-    Initials,   // Show initials
-    Image,      // Show image (simplified for now)
-    Icon,       // Show icon
+    Initials, // Show initials
+    Image,    // Show image (simplified for now)
+    Icon,     // Show icon
 }
 
 // Avatar builder
@@ -73,7 +73,8 @@ impl AvatarBuilder {
         let content = match self.variant {
             AvatarVariant::Initials => {
                 // Extract initials from text
-                let initials = self.text
+                let initials = self
+                    .text
                     .split_whitespace()
                     .take(2)
                     .map(|word| word.chars().next().unwrap_or('?'))
@@ -89,15 +90,15 @@ impl AvatarBuilder {
                             AvatarSize::XLarge => FONT_SIZE_18,
                         })
                         .color_signal(neutral_11())
-                        .weight(FontWeight::Medium)
-                    )
+                        .weight(FontWeight::Medium))
                     .s(Align::center())
                     .child(Text::new(&initials))
-            },
+            }
             AvatarVariant::Image => {
                 // For now, just show initials as placeholder
                 // In a real implementation, you'd use an img element
-                let initials = self.text
+                let initials = self
+                    .text
                     .split_whitespace()
                     .take(2)
                     .map(|word| word.chars().next().unwrap_or('?'))
@@ -113,25 +114,21 @@ impl AvatarBuilder {
                             AvatarSize::XLarge => FONT_SIZE_18,
                         })
                         .color_signal(neutral_11())
-                        .weight(FontWeight::Medium)
-                    )
+                        .weight(FontWeight::Medium))
                     .s(Align::center())
                     .child(Text::new(&initials))
-            },
-            AvatarVariant::Icon => {
-                El::new()
-                    .s(Font::new()
-                        .size(match self.size {
-                            AvatarSize::Small => FONT_SIZE_14,
-                            AvatarSize::Medium => FONT_SIZE_16,
-                            AvatarSize::Large => FONT_SIZE_18,
-                            AvatarSize::XLarge => FONT_SIZE_20,
-                        })
-                        .color_signal(neutral_9())
-                    )
-                    .s(Align::center())
-                    .child(Text::new(self.icon.unwrap_or("👤")))
             }
+            AvatarVariant::Icon => El::new()
+                .s(Font::new()
+                    .size(match self.size {
+                        AvatarSize::Small => FONT_SIZE_14,
+                        AvatarSize::Medium => FONT_SIZE_16,
+                        AvatarSize::Large => FONT_SIZE_18,
+                        AvatarSize::XLarge => FONT_SIZE_20,
+                    })
+                    .color_signal(neutral_9()))
+                .s(Align::center())
+                .child(Text::new(self.icon.unwrap_or("👤"))),
         };
 
         El::new()

@@ -1,9 +1,9 @@
 use crate::visualizer::timeline::timeline_actor::NsPerPixel;
 // use crate::visualizer::timeline::timeline_actor::{current_ns_per_pixel, current_viewport}; // Functions do not exist
 use crate::dataflow::*;
-use futures::{select, stream::StreamExt, FutureExt};
+use futures::{FutureExt, select, stream::StreamExt};
 use std::collections::HashSet;
-use zoon::{SignalExt, Signal, SignalVecExt};
+use zoon::{Signal, SignalExt, SignalVecExt};
 
 #[derive(Clone)]
 pub struct TimelineContext {
@@ -26,15 +26,21 @@ impl TimelineContext {
     }
 }
 
-
 pub fn get_min_valid_range_ns(canvas_width: u32) -> u64 {
     NsPerPixel::MAX_ZOOM_IN.nanos() * canvas_width as u64
 }
 
-
 impl TimelineContext {
     pub async fn compute_maximum_timeline_range(&self) -> Option<(f64, f64)> {
-        let tracked_files = self.tracked_files.files.signal_vec().to_signal_cloned().to_stream().next().await.unwrap_or_default();
+        let tracked_files = self
+            .tracked_files
+            .files
+            .signal_vec()
+            .to_signal_cloned()
+            .to_stream()
+            .next()
+            .await
+            .unwrap_or_default();
         let loaded_files: Vec<shared::WaveformFile> = tracked_files
             .iter()
             .filter_map(|tracked_file| match &tracked_file.state {
@@ -86,22 +92,36 @@ impl TimelineContext {
         }
 
         let file_range = max_time - min_time;
-        let canvas_width = self.waveform_timeline.canvas_width_signal().to_stream().next().await.unwrap_or(0.0);
+        let canvas_width = self
+            .waveform_timeline
+            .canvas_width_signal()
+            .to_stream()
+            .next()
+            .await
+            .unwrap_or(0.0);
         if file_range < get_min_valid_range_ns(canvas_width as u32) as f64 / 1_000_000_000.0 {
-            let expanded_end = min_time + get_min_valid_range_ns(canvas_width as u32) as f64 / 1_000_000_000.0;
+            let expanded_end =
+                min_time + get_min_valid_range_ns(canvas_width as u32) as f64 / 1_000_000_000.0;
             if expanded_end.is_finite() {
                 return Some((min_time, expanded_end));
             } else {
                 return None;
             }
         }
-        
+
         let result = (min_time, max_time);
         Some(result)
     }
 
     pub async fn get_selected_variable_file_paths(&self) -> HashSet<String> {
-        let selected_vars = self.selected_variables.variables_vec_actor.signal().to_stream().next().await.unwrap_or_default();
+        let selected_vars = self
+            .selected_variables
+            .variables_vec_actor
+            .signal()
+            .to_stream()
+            .next()
+            .await
+            .unwrap_or_default();
         selected_vars
             .iter()
             .filter_map(|var| var.file_path())
@@ -109,7 +129,15 @@ impl TimelineContext {
     }
 
     pub async fn compute_full_file_range(&self) -> Option<(f64, f64)> {
-        let tracked_files = self.tracked_files.files.signal_vec().to_signal_cloned().to_stream().next().await.unwrap_or_default();
+        let tracked_files = self
+            .tracked_files
+            .files
+            .signal_vec()
+            .to_signal_cloned()
+            .to_stream()
+            .next()
+            .await
+            .unwrap_or_default();
         let loaded_files: Vec<shared::WaveformFile> = tracked_files
             .iter()
             .filter_map(|tracked_file| match &tracked_file.state {
@@ -146,13 +174,13 @@ impl TimelineContext {
         if let Some((_file, file_min, file_max, _span)) = file_candidates.first() {
             let min_time = *file_min;
             let max_time = *file_max;
-            
+
             if min_time < max_time {
                 let time_range = max_time - min_time;
                 let buffer = time_range * 0.2;
                 let expanded_min = (min_time - buffer).max(0.0);
                 let expanded_max = max_time + buffer;
-                
+
                 validate_timeline_range(expanded_min, expanded_max)
             } else {
                 None
@@ -177,13 +205,29 @@ impl TimelineContext {
     // }
 
     pub async fn compute_current_timeline_range(&self) -> Option<(f64, f64)> {
-        let current_viewport = self.waveform_timeline.viewport_signal().to_stream().next().await.unwrap_or_default();
-        
+        let current_viewport = self
+            .waveform_timeline
+            .viewport_signal()
+            .to_stream()
+            .next()
+            .await
+            .unwrap_or_default();
+
         let range_start = current_viewport.start.display_seconds();
         let range_end = current_viewport.end.display_seconds();
 
-        if range_end > range_start && range_start >= 0.0 && range_start.is_finite() && range_end.is_finite() {
-            let canvas_width = self.waveform_timeline.canvas_width_signal().to_stream().next().await.unwrap_or(0.0) as u32;
+        if range_end > range_start
+            && range_start >= 0.0
+            && range_start.is_finite()
+            && range_end.is_finite()
+        {
+            let canvas_width = self
+                .waveform_timeline
+                .canvas_width_signal()
+                .to_stream()
+                .next()
+                .await
+                .unwrap_or(0.0) as u32;
             let min_zoom_range = get_min_valid_range_ns(canvas_width) as f64 / 1_000_000_000.0;
             let current_range = range_end - range_start;
 
@@ -209,7 +253,7 @@ impl MaximumTimelineRange {
         waveform_timeline: crate::visualizer::timeline::timeline_actor::WaveformTimeline,
     ) -> Self {
         let (range_updated_relay, mut range_updated_stream) = relay();
-        
+
         let range = Actor::new(None, async move |state| {
             loop {
                 select! {
@@ -223,16 +267,21 @@ impl MaximumTimelineRange {
                 }
             }
         });
-        
-        let timeline_context = TimelineContext::new(tracked_files.clone(), selected_variables.clone(), waveform_timeline.clone());
+
+        let timeline_context = TimelineContext::new(
+            tracked_files.clone(),
+            selected_variables.clone(),
+            waveform_timeline.clone(),
+        );
         let range_relay = range_updated_relay.clone();
-        
+
         let range_computation_actor = Actor::new(false, async move |state_handle| {
             let mut files_dropped_stream = tracked_files.files_dropped_relay.subscribe();
             let mut file_loaded_stream = tracked_files.file_load_completed_relay.subscribe();
             let mut variables_stream = selected_variables.variable_clicked_relay.subscribe();
-            let mut selection_cleared_stream = selected_variables.selection_cleared_relay.subscribe();
-            
+            let mut selection_cleared_stream =
+                selected_variables.selection_cleared_relay.subscribe();
+
             loop {
                 select! {
                     _ = files_dropped_stream.next() => {
@@ -257,10 +306,13 @@ impl MaximumTimelineRange {
                 }
             }
         });
-        
-        Self { range, range_updated_relay }
+
+        Self {
+            range,
+            range_updated_relay,
+        }
     }
-    
+
     pub fn range_signal(&self) -> impl Signal<Item = Option<(f64, f64)>> {
         self.range.signal()
     }
@@ -279,7 +331,7 @@ impl CurrentTimelineRange {
         waveform_timeline: crate::visualizer::timeline::timeline_actor::WaveformTimeline,
     ) -> Self {
         let (range_updated_relay, mut range_updated_stream) = relay();
-        
+
         let range = Actor::new(None, async move |state| {
             loop {
                 select! {
@@ -293,17 +345,14 @@ impl CurrentTimelineRange {
                 }
             }
         });
-        
-        let timeline_context = TimelineContext::new(
-            tracked_files, 
-            selected_variables, 
-            waveform_timeline.clone()
-        );
+
+        let timeline_context =
+            TimelineContext::new(tracked_files, selected_variables, waveform_timeline.clone());
         let range_relay = range_updated_relay.clone();
-        
+
         let range_computation_actor = Actor::new(false, async move |state_handle| {
             let mut viewport_stream = waveform_timeline.viewport_signal().to_stream().fuse();
-            
+
             loop {
                 select! {
                     _ = viewport_stream.next() => {
@@ -313,10 +362,13 @@ impl CurrentTimelineRange {
                 }
             }
         });
-        
-        Self { range, range_updated_relay }
+
+        Self {
+            range,
+            range_updated_relay,
+        }
     }
-    
+
     pub fn range_signal(&self) -> impl Signal<Item = Option<(f64, f64)>> {
         self.range.signal()
     }
@@ -329,6 +381,3 @@ pub fn validate_timeline_range(start: f64, end: f64) -> Option<(f64, f64)> {
         Some((start, end))
     }
 }
-
-
-

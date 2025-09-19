@@ -9,7 +9,7 @@ pub mod time_domain;
 // Main timeline actors domain - WaveformTimeline and related actors with operations
 pub mod timeline_actors;
 
-// MaximumTimelineRange domain - standalone derived state actor for range calculations  
+// MaximumTimelineRange domain - standalone derived state actor for range calculations
 pub mod maximum_timeline_range;
 
 // Timeline cache domain - signal data storage and cache management
@@ -28,18 +28,20 @@ pub mod canvas_state;
 pub mod zoom_controller;
 
 // Re-exports for API compatibility from respective domains
-pub use time_domain::{TimeNs, DurationNs, NsPerPixel, Viewport, TimelineCoordinates};
-pub use timeline_actors::WaveformTimeline;
-pub use maximum_timeline_range::MaximumTimelineRange;
-pub use timeline_cache::{TimelineCache, TimelineCacheController, ViewportSignalData, CacheRequestState, CacheRequestType};
-pub use cursor_animation::CursorAnimationController;
-pub use panning_controller::PanningController;
 pub use canvas_state::{CanvasStateController, TimelineStats};
+pub use cursor_animation::CursorAnimationController;
+pub use maximum_timeline_range::MaximumTimelineRange;
+pub use panning_controller::PanningController;
+pub use time_domain::{DurationNs, NsPerPixel, TimeNs, TimelineCoordinates, Viewport};
+pub use timeline_actors::WaveformTimeline;
+pub use timeline_cache::{
+    CacheRequestState, CacheRequestType, TimelineCache, TimelineCacheController, ViewportSignalData,
+};
 pub use zoom_controller::ZoomController;
 
 // Compatibility module alias for timeline_actor -> timeline_actors
 pub mod timeline_actor {
     pub use super::timeline_actors::*;
     // Re-export types from time_domain for compatibility
-    pub use super::time_domain::{TimeNs, DurationNs, NsPerPixel, Viewport, TimelineCoordinates};
+    pub use super::time_domain::{DurationNs, NsPerPixel, TimeNs, TimelineCoordinates, Viewport};
 }

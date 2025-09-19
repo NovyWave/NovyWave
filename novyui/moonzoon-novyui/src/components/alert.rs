@@ -1,15 +1,15 @@
-use zoon::*;
-use crate::tokens::*;
 use crate::tokens::color::*;
+use crate::tokens::*;
+use zoon::*;
 
 // Alert variants
 #[derive(Debug, Clone, Copy)]
 pub enum AlertVariant {
-    Info,       // Blue theme
-    Success,    // Green theme
-    Warning,    // Yellow theme
-    Error,      // Red theme
-    Default,    // Neutral theme
+    Info,    // Blue theme
+    Success, // Green theme
+    Warning, // Yellow theme
+    Error,   // Red theme
+    Default, // Neutral theme
 }
 
 impl AlertVariant {
@@ -17,7 +17,7 @@ impl AlertVariant {
         match self {
             AlertVariant::Info => primary_1().boxed_local(),
             AlertVariant::Success => success_1().boxed_local(),
-            AlertVariant::Warning => warning_1().boxed_local(), 
+            AlertVariant::Warning => warning_1().boxed_local(),
             AlertVariant::Error => error_1().boxed_local(),
             AlertVariant::Default => neutral_2().boxed_local(),
         }
@@ -98,7 +98,7 @@ impl AlertBuilder {
 
     pub fn on_dismiss<F>(mut self, handler: F) -> Self
     where
-        F: Fn() + 'static
+        F: Fn() + 'static,
     {
         self.on_dismiss = Some(Box::new(handler));
         self
@@ -124,7 +124,11 @@ impl AlertBuilder {
             .s(Width::fill())
             .s(Padding::new().x(SPACING_16).y(SPACING_12))
             .s(Gap::new().x(SPACING_12))
-            .s(Borders::new().left_signal(self.variant.border_color().map(|color| Border::new().width(4).color(color))))
+            .s(Borders::new().left_signal(
+                self.variant
+                    .border_color()
+                    .map(|color| Border::new().width(4).color(color)),
+            ))
             .s(Background::new().color_signal(self.variant.background_color()))
             .s(RoundedCorners::all(CORNER_RADIUS_6))
             .s(Align::new().center_y())
@@ -133,17 +137,15 @@ impl AlertBuilder {
                     .s(Width::fill())
                     .s(Font::new()
                         .size(FONT_SIZE_14)
-                        .color_signal(self.variant.text_color())
-                    )
-                    .child(Text::new(&display_text))
+                        .color_signal(self.variant.text_color()))
+                    .child(Text::new(&display_text)),
             );
 
         if self.dismissible {
             let mut dismiss_button = El::new()
                 .s(Font::new()
                     .size(FONT_SIZE_14)
-                    .color_signal(self.variant.text_color())
-                )
+                    .color_signal(self.variant.text_color()))
                 .s(Cursor::new(CursorIcon::Pointer))
                 .child(Text::new(dismiss_text));
 

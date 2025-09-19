@@ -1,4 +1,6 @@
-use moonzoon_novyui::tokens::color::{neutral_2, neutral_4, neutral_11, primary_3, primary_6, primary_7};
+use moonzoon_novyui::tokens::color::{
+    neutral_2, neutral_4, neutral_11, primary_3, primary_6, primary_7,
+};
 use moonzoon_novyui::*;
 use zoon::*;
 
@@ -77,7 +79,11 @@ pub fn variables_name_vertical_divider(
             let app_config = app_config.clone();
             let dragging_system = dragging_system.clone();
             move || {
-                start_drag(&dragging_system, DividerType::VariablesNameColumn, (0.0, 0.0));
+                start_drag(
+                    &dragging_system,
+                    DividerType::VariablesNameColumn,
+                    (0.0, 0.0),
+                );
             }
         })
 }
@@ -103,7 +109,11 @@ pub fn variables_value_vertical_divider(
             let app_config = app_config.clone();
             let dragging_system = dragging_system.clone();
             move || {
-                start_drag(&dragging_system, DividerType::VariablesValueColumn, (0.0, 0.0));
+                start_drag(
+                    &dragging_system,
+                    DividerType::VariablesValueColumn,
+                    (0.0, 0.0),
+                );
             }
         })
 }
@@ -154,7 +164,11 @@ pub fn files_panel_horizontal_divider(
             let app_config = app_config.clone();
             let dragging_system = dragging_system.clone();
             move || {
-                start_drag(&dragging_system, DividerType::FilesPanelSecondary, (0.0, 0.0));
+                start_drag(
+                    &dragging_system,
+                    DividerType::FilesPanelSecondary,
+                    (0.0, 0.0),
+                );
             }
         })
 }

@@ -2,8 +2,8 @@ use moonzoon_novyui::tokens::color::{
     neutral_2, neutral_4, neutral_8, neutral_11, primary_3, primary_6,
 };
 use moonzoon_novyui::*;
-use zoon::*;
 use wasm_bindgen::JsCast;
+use zoon::*;
 
 use crate::selected_variables::VariableWithContext;
 
@@ -67,7 +67,11 @@ pub fn rust_virtual_variables_list_simple_fill(
                 })
                 .child(
                     // Child uses exact height from parent measurement
-                    rust_virtual_variables_list_with_signal(variables, virtual_list_height, selected_variables.clone()),
+                    rust_virtual_variables_list_with_signal(
+                        variables,
+                        virtual_list_height,
+                        selected_variables.clone(),
+                    ),
                 ),
         )
 }
@@ -613,9 +617,9 @@ fn create_stable_variable_element_hybrid(
 ) -> impl Element {
     // Clone selected_variables for the multiple closures that need it
     let selected_variables_1 = selected_variables.clone();
-    let selected_variables_2 = selected_variables.clone(); 
+    let selected_variables_2 = selected_variables.clone();
     let selected_variables_3 = selected_variables.clone();
-    
+
     Row::new()
         .s(Gap::new().x(SPACING_8))
         .s(Width::fill())

@@ -4,15 +4,15 @@ use zoon::*;
 
 // Core modules
 mod app;
-mod dataflow;
-mod selected_variables;
-mod tracked_files;
 mod clipboard;
 mod config;
 mod connection;
+mod dataflow;
 mod error_display;
 mod error_ui;
 mod platform;
+mod selected_variables;
+mod tracked_files;
 mod virtual_list;
 mod visualizer;
 
@@ -41,9 +41,11 @@ pub fn main_layout(
     waveform_canvas: &crate::visualizer::canvas::waveform_canvas::WaveformCanvas,
     file_dialog_visible: &crate::dataflow::atom::Atom<bool>,
 ) -> impl Element {
-    use moonzoon_novyui::*;
     use crate::file_management::files_panel_with_dialog;
-    use crate::variable_selection_ui::{selected_variables_with_waveform_panel, variables_panel_with_fill};
+    use crate::variable_selection_ui::{
+        selected_variables_with_waveform_panel, variables_panel_with_fill,
+    };
+    use moonzoon_novyui::*;
 
     El::new().s(Width::fill()).s(Height::fill()).child_signal(
         app_config.dock_mode_actor.signal().map({
@@ -58,87 +60,89 @@ pub fn main_layout(
             move |dock_mode| {
                 match dock_mode {
                     // Default layout: Files & Variables (top row), Selected Variables (bottom)
-                    shared::DockMode::Bottom => {
-                        El::new()
+                    shared::DockMode::Bottom => El::new().s(Width::fill()).s(Height::fill()).child(
+                        Column::new()
                             .s(Width::fill())
                             .s(Height::fill())
-                            .child(
-                                Column::new()
-                                    .s(Width::fill())
-                                    .s(Height::fill())
-                                    .item(
-                                        Row::new()
-                                            .s(Width::fill())
-                                            .s(Height::fill())
-                                            .item(files_panel_with_dialog(
-                                                tracked_files.clone(),
-                                                selected_variables.clone(),
-                                                file_dialog_visible.clone(),
-                                                app_config.clone(),
-                                            ))
-                                            .item(crate::panel_layout::files_panel_vertical_divider(&app_config, dragging_system.clone()))
-                                            .item(variables_panel_with_fill(
-                                                &tracked_files,
-                                                &selected_variables,
-                                                &waveform_timeline,
-                                                &waveform_canvas,
-                                                &app_config,
-                                            ))
-                                    )
-                                    .item(crate::panel_layout::files_panel_horizontal_divider(&app_config, dragging_system.clone()))
-                                    .item(crate::selected_variables_panel::selected_variables_panel(
-                                        selected_variables.clone(),
-                                        waveform_timeline.clone(),
-                                        tracked_files.clone(),
-                                        app_config.clone(),
-                                        dragging_system.clone(),
-                                        waveform_canvas.clone(),
-                                    ))
-                            )
-                    }
-                    
-                    // Right dock layout: Files over Variables (left), Selected Variables (right)
-                    shared::DockMode::Right => {
-                        El::new()
-                            .s(Width::fill())
-                            .s(Height::fill())
-                            .child(
+                            .item(
                                 Row::new()
                                     .s(Width::fill())
                                     .s(Height::fill())
-                                    .item(
-                                        Column::new()
-                                            .s(Width::fill())
-                                            .s(Height::fill())
-                                            .item(files_panel_with_dialog(
-                                                tracked_files.clone(),
-                                                selected_variables.clone(),
-                                                file_dialog_visible.clone(),
-                                                app_config.clone(),
-                                            ))
-                                            .item(crate::panel_layout::files_panel_horizontal_divider(&app_config, dragging_system.clone()))
-                                            .item(variables_panel_with_fill(
-                                                &tracked_files,
-                                                &selected_variables,
-                                                &waveform_timeline,
-                                                &waveform_canvas,
-                                                &app_config,
-                                            ))
-                                    )
-                                    .item(crate::panel_layout::files_panel_vertical_divider(&app_config, dragging_system.clone()))
-                                    .item(crate::selected_variables_panel::selected_variables_panel(
-                                        selected_variables.clone(),
-                                        waveform_timeline.clone(),
+                                    .item(files_panel_with_dialog(
                                         tracked_files.clone(),
+                                        selected_variables.clone(),
+                                        file_dialog_visible.clone(),
                                         app_config.clone(),
-                                        dragging_system.clone(),
-                                        waveform_canvas.clone(),
                                     ))
+                                    .item(crate::panel_layout::files_panel_vertical_divider(
+                                        &app_config,
+                                        dragging_system.clone(),
+                                    ))
+                                    .item(variables_panel_with_fill(
+                                        &tracked_files,
+                                        &selected_variables,
+                                        &waveform_timeline,
+                                        &waveform_canvas,
+                                        &app_config,
+                                    )),
                             )
-                    }
+                            .item(crate::panel_layout::files_panel_horizontal_divider(
+                                &app_config,
+                                dragging_system.clone(),
+                            ))
+                            .item(crate::selected_variables_panel::selected_variables_panel(
+                                selected_variables.clone(),
+                                waveform_timeline.clone(),
+                                tracked_files.clone(),
+                                app_config.clone(),
+                                dragging_system.clone(),
+                                waveform_canvas.clone(),
+                            )),
+                    ),
+
+                    // Right dock layout: Files over Variables (left), Selected Variables (right)
+                    shared::DockMode::Right => El::new().s(Width::fill()).s(Height::fill()).child(
+                        Row::new()
+                            .s(Width::fill())
+                            .s(Height::fill())
+                            .item(
+                                Column::new()
+                                    .s(Width::fill())
+                                    .s(Height::fill())
+                                    .item(files_panel_with_dialog(
+                                        tracked_files.clone(),
+                                        selected_variables.clone(),
+                                        file_dialog_visible.clone(),
+                                        app_config.clone(),
+                                    ))
+                                    .item(crate::panel_layout::files_panel_horizontal_divider(
+                                        &app_config,
+                                        dragging_system.clone(),
+                                    ))
+                                    .item(variables_panel_with_fill(
+                                        &tracked_files,
+                                        &selected_variables,
+                                        &waveform_timeline,
+                                        &waveform_canvas,
+                                        &app_config,
+                                    )),
+                            )
+                            .item(crate::panel_layout::files_panel_vertical_divider(
+                                &app_config,
+                                dragging_system.clone(),
+                            ))
+                            .item(crate::selected_variables_panel::selected_variables_panel(
+                                selected_variables.clone(),
+                                waveform_timeline.clone(),
+                                tracked_files.clone(),
+                                app_config.clone(),
+                                dragging_system.clone(),
+                                waveform_canvas.clone(),
+                            )),
+                    ),
                 }
             }
-        })
+        }),
     )
 }
 
