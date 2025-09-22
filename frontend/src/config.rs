@@ -464,6 +464,7 @@ pub struct AppConfig {
     _config_loaded_actor: Actor<()>,
     _treeview_sync_actor: Actor<()>,
     _tracked_files_sync_actor: Actor<()>,
+    _selected_variables_snapshot_actor: Actor<Vec<shared::SelectedVariable>>,
 }
 
 impl AppConfig {
@@ -476,6 +477,7 @@ impl AppConfig {
         connection: std::sync::Arc<SendWrapper<Connection<shared::UpMsg, shared::DownMsg>>>,
         connection_message_actor: crate::app::ConnectionMessageActor,
         tracked_files: crate::tracked_files::TrackedFiles,
+        selected_variables: crate::selected_variables::SelectedVariables,
     ) -> Self {
         let config = Self::load_config_from_backend()
             .await
@@ -491,6 +493,8 @@ impl AppConfig {
         let session_state_changed_stream_for_session_actor =
             session_state_changed_relay.subscribe();
         let (config_save_requested_relay, mut config_save_requested_stream) = relay();
+
+        let config_loaded_flag = zoon::Mutable::new(false);
 
         let (clipboard_copy_requested_relay, mut clipboard_copy_requested_stream) =
             relay::<String>();
@@ -921,6 +925,31 @@ impl AppConfig {
             })
         };
 
+        // Track SelectedVariables changes to trigger config saves with latest snapshot
+        let selected_variables_snapshot_actor = {
+            let selected_variables_for_snapshot = selected_variables.clone();
+            let save_relay_for_snapshot = config_save_requested_relay.clone();
+
+            Actor::new(Vec::<shared::SelectedVariable>::new(), async move |state| {
+                let mut variables_stream = selected_variables_for_snapshot
+                    .variables_signal()
+                    .to_stream()
+                    .fuse();
+
+                while let Some(vars) = variables_stream.next().await {
+                    let should_update = {
+                        let current = state.lock_ref();
+                        *current != vars
+                    };
+
+                    if should_update {
+                        state.set_neq(vars.clone());
+                        save_relay_for_snapshot.send(());
+                    }
+                }
+            })
+        };
+
         // File picker changes now trigger config save through FilePickerDomain
         // Use nested Actor pattern for debouncing instead of Task::start
         let config_save_debouncer_actor = {
@@ -929,12 +958,26 @@ impl AppConfig {
             let session_actor_clone = session_state_actor.clone();
             let toast_actor_clone = toast_dismiss_ms_actor.clone();
             let file_picker_domain_clone = file_picker_domain.clone();
+            let selected_variables_snapshot_actor_clone = selected_variables_snapshot_actor.clone();
+            let config_loaded_flag_for_saver = config_loaded_flag.clone();
 
             Actor::new((), async move |_state| {
                 let mut config_save_requested_stream = config_save_requested_stream.fuse();
                 let mut session_state_stream = session_state_changed_stream_for_config_saver.fuse();
+                let mut config_loaded_stream =
+                    config_loaded_flag_for_saver.signal().to_stream().fuse();
+                let mut config_ready = false;
 
                 loop {
+                    if !config_ready {
+                        match config_loaded_stream.next().await {
+                            Some(is_loaded) => {
+                                config_ready = is_loaded;
+                                continue;
+                            }
+                            None => break,
+                        }
+                    }
                     select! {
                         result = config_save_requested_stream.next() => {
                             if let Some(()) = result {
@@ -957,6 +1000,7 @@ impl AppConfig {
                                             // Get file picker data from domain instead of session
                                             let expanded_directories: Vec<String> = file_picker_domain_clone.expanded_directories_signal().to_stream().next().await.unwrap_or_default().into_iter().collect();
                                             let scroll_position = file_picker_domain_clone.scroll_position_signal().to_stream().next().await.unwrap_or_default();
+                                            let selected_variables_snapshot = selected_variables_snapshot_actor_clone.signal().to_stream().next().await.unwrap_or_default();
 
 
 
@@ -982,7 +1026,7 @@ impl AppConfig {
                                                     selected_scope_id: session.selected_scope_id,
                                                     load_files_scroll_position: scroll_position,
                                                     variables_search_filter: session.variables_search_filter,
-                                                    selected_variables: Vec::new(),
+                                                    selected_variables: selected_variables_snapshot,
                                                     timeline_cursor_position_ns: 0,
                                                     timeline_visible_range_start_ns: None,
                                                     timeline_visible_range_end_ns: None,
@@ -994,10 +1038,10 @@ impl AppConfig {
                                                 },
                                             };
 
-                                        if let Err(e) = CurrentPlatform::send_message(UpMsg::SaveConfig(shared_config)).await {
-                                        } else {
-                                        }
-                                        break; // Back to outer loop
+                                            if let Err(e) = CurrentPlatform::send_message(UpMsg::SaveConfig(shared_config)).await {
+                                                zoon::eprintln!("❌ CONFIG: Failed to save config: {}", e);
+                                            }
+                                            break; // Back to outer loop
                                     }
                                 }
                             }
@@ -1026,6 +1070,7 @@ impl AppConfig {
                                             // Get file picker data from domain instead of session
                                             let expanded_directories: Vec<String> = file_picker_domain_clone.expanded_directories_signal().to_stream().next().await.unwrap_or_default().into_iter().collect();
                                             let scroll_position = file_picker_domain_clone.scroll_position_signal().to_stream().next().await.unwrap_or_default();
+                                            let selected_variables_snapshot = selected_variables_snapshot_actor_clone.signal().to_stream().next().await.unwrap_or_default();
 
                                             let shared_config = shared::AppConfig {
                                                 app: shared::AppSection::default(),
@@ -1049,7 +1094,7 @@ impl AppConfig {
                                                     selected_scope_id: session.selected_scope_id,
                                                     load_files_scroll_position: scroll_position,
                                                     variables_search_filter: session.variables_search_filter,
-                                                    selected_variables: Vec::new(),
+                                                    selected_variables: selected_variables_snapshot,
                                                     timeline_cursor_position_ns: 0,
                                                     timeline_visible_range_start_ns: None,
                                                     timeline_visible_range_end_ns: None,
@@ -1068,6 +1113,17 @@ impl AppConfig {
                                         }
                                     }
                                 }
+                            }
+                        }
+                        loaded = config_loaded_stream.next() => {
+                            match loaded {
+                                Some(is_loaded) => {
+                                    config_ready = is_loaded;
+                                    if !config_ready {
+                                        continue;
+                                    }
+                                }
+                                None => break,
                             }
                         }
                     }
@@ -1138,6 +1194,9 @@ impl AppConfig {
             let tracked_files_for_config = tracked_files.clone();
             let files_expanded_scopes_for_config = files_expanded_scopes.clone();
             let files_selected_scope_for_config = files_selected_scope.clone();
+            let selected_variables_for_config = selected_variables.clone();
+            let session_state_relay_for_config = session_state_changed_relay.clone();
+            let config_loaded_flag_for_actor = config_loaded_flag.clone();
 
             Actor::new((), async move |_state| {
                 let mut config_stream = config_loaded_stream;
@@ -1168,6 +1227,29 @@ impl AppConfig {
                             .send(loaded_config.workspace.opened_files.clone());
                     }
 
+                    // Synchronize session state with loaded config data
+                    session_state_relay_for_config.send(SessionState {
+                        opened_files: loaded_config.workspace.opened_files.clone(),
+                        expanded_scopes: loaded_config.workspace.expanded_scopes.clone(),
+                        selected_scope_id: loaded_config.workspace.selected_scope_id.clone(),
+                        variables_search_filter: loaded_config
+                            .workspace
+                            .variables_search_filter
+                            .clone(),
+                        file_picker_scroll_position: loaded_config
+                            .workspace
+                            .load_files_scroll_position,
+                        file_picker_expanded_directories: loaded_config
+                            .workspace
+                            .load_files_expanded_directories
+                            .clone(),
+                    });
+
+                    // Restore selected variables into domain state
+                    selected_variables_for_config
+                        .variables_restored_relay
+                        .send(loaded_config.workspace.selected_variables.clone());
+
                     // IMPORTANT: Restore expanded scopes AFTER files are sent
                     // Add a small delay to ensure files are processed first
                     let expanded_scopes_to_restore =
@@ -1193,6 +1275,8 @@ impl AppConfig {
                             files_selected_for_delay.lock_mut().push_cloned(scope_id);
                         }
                     });
+
+                    config_loaded_flag_for_actor.set(true);
                 }
             })
         };
@@ -1249,6 +1333,7 @@ impl AppConfig {
             _connection_message_actor: connection_message_actor,
             _treeview_sync_actor: treeview_sync_actor,
             _tracked_files_sync_actor: tracked_files_sync_actor,
+            _selected_variables_snapshot_actor: selected_variables_snapshot_actor,
         }
     }
 

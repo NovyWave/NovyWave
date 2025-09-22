@@ -252,6 +252,7 @@ impl NovyWaveApp {
             connection_arc.clone(),
             connection_message_actor.clone(),
             tracked_files.clone(),
+            selected_variables.clone(),
         )
         .await;
 
