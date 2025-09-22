@@ -35,8 +35,6 @@ impl ConnectionMessageActor {
     pub async fn new(
         mut down_msg_stream: impl futures::stream::Stream<Item = DownMsg> + Unpin + 'static,
     ) -> Self {
-        
-
         // Create all message-specific relays
         let (config_loaded_relay, _) = relay();
         let (config_saved_relay, _) = relay();
@@ -44,8 +42,6 @@ impl ConnectionMessageActor {
         let (directory_error_relay, _) = relay();
         let (file_loaded_relay, _) = relay();
         let (parsing_started_relay, _) = relay();
-
-        
 
         // Clone relays for use in Actor closure
         let config_loaded_relay_clone = config_loaded_relay.clone();
@@ -56,10 +52,8 @@ impl ConnectionMessageActor {
         let parsing_started_relay_clone = parsing_started_relay.clone();
 
         // Actor processes DownMsg stream and routes to appropriate relays
-        
-        let message_actor = Actor::new((), async move |_state| {
-            
 
+        let message_actor = Actor::new((), async move |_state| {
             let mut stream = down_msg_stream;
             let mut loop_counter = 0;
             loop {
@@ -68,7 +62,6 @@ impl ConnectionMessageActor {
                 use futures::StreamExt;
                 match stream.next().await {
                     Some(down_msg) => {
-                        
                         // Route each message type to its specific relay
                         match down_msg {
                             DownMsg::ConfigLoaded(config) => {
@@ -80,7 +73,6 @@ impl ConnectionMessageActor {
                             DownMsg::DirectoryContents { path, items } => {
                                 let path_for_relay = path.clone();
                                 directory_contents_relay_clone.send((path, items));
-                                
                             }
                             DownMsg::DirectoryError { path, error } => {
                                 directory_error_relay_clone.send((path, error));
@@ -100,18 +92,14 @@ impl ConnectionMessageActor {
                                 // Other message types can be added as needed
                             }
                         }
-                        
                     }
                     None => {
-                        
                         break;
                     }
                 }
-                
             }
-            
         });
-        
+
         Self {
             config_loaded_relay,
             config_saved_relay,
@@ -156,9 +144,7 @@ pub struct NovyWaveApp {
     pub connection_message_actor: ConnectionMessageActor,
 
     /// Synchronizes Files panel scope selection into SelectedVariables domain
-    _scope_selection_sync_actor: Actor<()>,
-    /// Bridges session state's selected_scope_id into SelectedVariables
-    _session_scope_sync_actor: Actor<()>,
+    scope_selection_sync_actor: Actor<()>,
 
     // === UI STATE (Atom pattern for local UI concerns) ===
     /// File picker dialog visibility
@@ -289,37 +275,10 @@ impl NovyWaveApp {
                     .fuse();
 
                 while let Some(current_selection) = selection_stream.next().await {
-                    Self::propagate_scope_selection(current_selection, &selected_variables_for_scope);
-                }
-            })
-        };
-
-        let session_scope_sync_actor = {
-            let session_state_actor = config.session_state_actor.clone();
-            let files_selected_scope = config.files_selected_scope.clone();
-
-            Actor::new((), async move |_state| {
-                let mut session_stream = session_state_actor.signal().to_stream().fuse();
-
-                while let Some(session_state) = session_stream.next().await {
-                    let target_scope = session_state.selected_scope_id.clone();
-
-                    let should_skip = {
-                        let guard = files_selected_scope.lock_ref();
-                        guard.get(0).cloned() == target_scope
-                    };
-
-                    if should_skip {
-                        continue;
-                    }
-
-                    {
-                        let mut guard = files_selected_scope.lock_mut();
-                        guard.clear();
-                        if let Some(ref scope_id) = target_scope {
-                            guard.push_cloned(scope_id.clone());
-                        }
-                    }
+                    Self::propagate_scope_selection(
+                        current_selection,
+                        &selected_variables_for_scope,
+                    );
                 }
             })
         };
@@ -330,8 +289,7 @@ impl NovyWaveApp {
                 shared::UpMsg::LoadConfig,
             )
             .await
-        {
-        }
+        {}
 
         let (shutdown_requested_relay, mut shutdown_requested_stream) = relay();
         let (app_initialized_relay, _app_initialized_stream) = relay();
@@ -354,8 +312,7 @@ impl NovyWaveApp {
             dragging_system,
             connection: connection_arc,
             connection_message_actor,
-            _scope_selection_sync_actor: scope_selection_sync_actor,
-            _session_scope_sync_actor: session_scope_sync_actor,
+            scope_selection_sync_actor,
             file_dialog_visible,
             search_filter,
             app_loading,
@@ -418,29 +375,7 @@ impl NovyWaveApp {
                             ));
                         }
                     }
-                    DownMsg::ConfigLoaded(config_loaded) => {
-                        if let Some(scope_id) = config_loaded.workspace.selected_scope_id.clone() {
-                            let cleaned_scope = scope_id
-                                .strip_prefix("scope_")
-                                .unwrap_or(scope_id.as_str())
-                                .to_string();
-
-                            selected_variables_relay
-                                .scope_selected_relay
-                                .send(Some(cleaned_scope));
-
-                            let mut selection_set = IndexSet::new();
-                            selection_set.insert(scope_id);
-                            selected_variables_relay
-                                .tree_selection_changed_relay
-                                .send(selection_set);
-                        } else {
-                            selected_variables_relay.scope_selected_relay.send(None);
-                            selected_variables_relay
-                                .tree_selection_changed_relay
-                                .send(IndexSet::new());
-                        }
-                    }
+                    DownMsg::ConfigLoaded(_config_loaded) => {}
                     DownMsg::ParsingStarted { file_id, .. } => {
                         tf_relay.send((
                             file_id.clone(),

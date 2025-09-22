@@ -1669,11 +1669,9 @@ async fn send_progress_update(
 }
 
 async fn send_down_msg(msg: DownMsg, session_id: SessionId, cor_id: CorId) {
-    
     if let Some(session) = sessions::by_session_id().wait_for(session_id).await {
         session.send_down_msg(&msg, cor_id).await;
     } else {
-        
     }
 }
 
@@ -1684,24 +1682,19 @@ async fn load_config(session_id: SessionId, cor_id: CorId) {
 
     let config = match fs::read_to_string(CONFIG_FILE_PATH) {
         Ok(content) => {
-            
             match toml::from_str::<AppConfig>(&content) {
                 Ok(mut config) => {
-                    
-
                     // Enable migration system - validate and fix config after loading
                     let migration_warnings = config.validate_and_fix();
 
                     // Log migration warnings if any
                     if !migration_warnings.is_empty() {
-                        
                         // Save migrated config to persist changes
                         if let Err(_save_err) = save_config_to_file(&config) {
                             // Migration applied but failed to save - continue with in-memory config
                         }
                     }
 
-                    
                     config
                 }
                 Err(e) => {

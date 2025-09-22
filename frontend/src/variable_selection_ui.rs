@@ -492,36 +492,40 @@ pub fn simple_variables_content(
         .s(Width::fill())
         .item(
             El::new().s(Height::fill()).s(Width::fill()).child_signal(
-                variables_display_context_signal(tracked_files.clone(), selected_variables.clone(), app_config.clone())
-                    .map({
-                        let selected_variables = selected_variables.clone();
-                        move |context| match context {
-                            VariableDisplayContext::NoScopeSelected => Column::new()
-                                .s(Height::fill())
-                                .s(Width::fill())
-                                .item(crate::virtual_list::empty_state_hint(
-                                    "Select scope in the Files & Scopes panel",
-                                )),
-                            VariableDisplayContext::ScopeHasNoVariables => Column::new()
-                                .s(Height::fill())
-                                .s(Width::fill())
-                                .item(crate::virtual_list::empty_state_hint(
-                                    "Selected scope does not have any variables",
-                                )),
-                            VariableDisplayContext::NoFilterMatches => Column::new()
-                                .s(Height::fill())
-                                .s(Width::fill())
-                                .item(crate::virtual_list::empty_state_hint(
-                                    "No variables match search filter",
-                                )),
-                            VariableDisplayContext::Variables(filtered_variables) => {
-                                virtual_variables_list_pre_filtered(
-                                    filtered_variables,
-                                    &selected_variables,
-                                )
-                            }
+                variables_display_context_signal(
+                    tracked_files.clone(),
+                    selected_variables.clone(),
+                    app_config.clone(),
+                )
+                .map({
+                    let selected_variables = selected_variables.clone();
+                    move |context| match context {
+                        VariableDisplayContext::NoScopeSelected => Column::new()
+                            .s(Height::fill())
+                            .s(Width::fill())
+                            .item(crate::virtual_list::empty_state_hint(
+                                "Select scope in the Files & Scopes panel",
+                            )),
+                        VariableDisplayContext::ScopeHasNoVariables => Column::new()
+                            .s(Height::fill())
+                            .s(Width::fill())
+                            .item(crate::virtual_list::empty_state_hint(
+                                "Selected scope does not have any variables",
+                            )),
+                        VariableDisplayContext::NoFilterMatches => Column::new()
+                            .s(Height::fill())
+                            .s(Width::fill())
+                            .item(crate::virtual_list::empty_state_hint(
+                                "No variables match search filter",
+                            )),
+                        VariableDisplayContext::Variables(filtered_variables) => {
+                            virtual_variables_list_pre_filtered(
+                                filtered_variables,
+                                &selected_variables,
+                            )
                         }
-                    }),
+                    }
+                }),
             ),
         )
 }
@@ -539,7 +543,12 @@ pub fn variables_loading_signal(
         .files_selected_scope
         .signal_vec_cloned()
         .to_signal_cloned()
-        .map(|vec| vec.into_iter().rev().find(|id| id.starts_with("scope_")).clone())
+        .map(|vec| {
+            vec.into_iter()
+                .rev()
+                .find(|id| id.starts_with("scope_"))
+                .clone()
+        })
         .map(|opt| opt.and_then(|raw| raw.strip_prefix("scope_").map(|s| s.to_string())));
 
     map_ref! {

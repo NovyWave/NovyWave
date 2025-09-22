@@ -146,7 +146,7 @@ impl TrackedFiles {
                                 }
                                 // Update dedicated Vec signal
                                 files_vec_signal_for_actor.set_neq(cached_files.clone());
-                                
+
                                 let all_done = cached_files.iter().all(|f| {
                                     matches!(f.state, shared::FileState::Loaded(_) | shared::FileState::Failed(_))
                                 });

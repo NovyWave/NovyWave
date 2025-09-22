@@ -233,18 +233,16 @@ impl FilePickerDomain {
         let directory_errors_actor = Actor::new(std::collections::HashMap::new(), {
             // ✅ FIX: Move stream into closure to prevent reference capture after Send bounds removal
             let mut directory_error_stream = directory_error_received_stream;
-            async move |state| {
-                loop {
-                    futures::select! {
-                        error = directory_error_stream.next() => {
-                            if let Some((path, error_message)) = error {
-                                let mut errors = state.get_cloned();
-                                errors.insert(path, error_message);
-                                state.set_neq(errors);
-                            }
+            async move |state| loop {
+                futures::select! {
+                    error = directory_error_stream.next() => {
+                        if let Some((path, error_message)) = error {
+                            let mut errors = state.get_cloned();
+                            errors.insert(path, error_message);
+                            state.set_neq(errors);
                         }
-                        complete => break,
                     }
+                    complete => break,
                 }
             }
         });
@@ -253,18 +251,16 @@ impl FilePickerDomain {
         // Since connection can't be used directly in Actor (Send trait issues), we use a different approach:
         // The Actor tracks loading requests and the UI layer polls for pending requests
         let directory_loading_actor = Actor::new(std::collections::HashSet::<String>::new(), {
-            async move |state| {
-                loop {
-                    futures::select! {
-                        requested_path = directory_load_requested_stream.next() => {
-                            if let Some(path) = requested_path {
-                                let mut pending_requests = state.get_cloned();
-                                pending_requests.insert(path);
-                                state.set_neq(pending_requests);
-                            }
+            async move |state| loop {
+                futures::select! {
+                    requested_path = directory_load_requested_stream.next() => {
+                        if let Some(path) = requested_path {
+                            let mut pending_requests = state.get_cloned();
+                            pending_requests.insert(path);
+                            state.set_neq(pending_requests);
                         }
-                        complete => break,
                     }
+                    complete => break,
                 }
             }
         });
@@ -585,13 +581,11 @@ impl AppConfig {
                 .workspace
                 .docked_right_dimensions
                 .files_and_scopes_panel_width as f32,
-            async move |state| {
-                loop {
-                    select! {
-                        new_width = files_width_right_changed_stream.next() => {
-                            if let Some(width) = new_width {
-                                state.set_neq(width);
-                            }
+            async move |state| loop {
+                select! {
+                    new_width = files_width_right_changed_stream.next() => {
+                        if let Some(width) = new_width {
+                            state.set_neq(width);
                         }
                     }
                 }
@@ -603,13 +597,11 @@ impl AppConfig {
                 .workspace
                 .docked_right_dimensions
                 .files_and_scopes_panel_height as f32,
-            async move |state| {
-                loop {
-                    select! {
-                        new_height = files_height_right_changed_stream.next() => {
-                            if let Some(height) = new_height {
-                                state.set_neq(height);
-                            }
+            async move |state| loop {
+                select! {
+                    new_height = files_height_right_changed_stream.next() => {
+                        if let Some(height) = new_height {
+                            state.set_neq(height);
                         }
                     }
                 }
@@ -621,13 +613,11 @@ impl AppConfig {
                 .workspace
                 .docked_bottom_dimensions
                 .files_and_scopes_panel_width as f32,
-            async move |state| {
-                loop {
-                    select! {
-                        new_width = files_width_bottom_changed_stream.next() => {
-                            if let Some(width) = new_width {
-                                state.set_neq(width);
-                            }
+            async move |state| loop {
+                select! {
+                    new_width = files_width_bottom_changed_stream.next() => {
+                        if let Some(width) = new_width {
+                            state.set_neq(width);
                         }
                     }
                 }
@@ -639,13 +629,11 @@ impl AppConfig {
                 .workspace
                 .docked_bottom_dimensions
                 .files_and_scopes_panel_height as f32,
-            async move |state| {
-                loop {
-                    select! {
-                        new_height = files_height_bottom_changed_stream.next() => {
-                            if let Some(height) = new_height {
-                                state.set_neq(height);
-                            }
+            async move |state| loop {
+                select! {
+                    new_height = files_height_bottom_changed_stream.next() => {
+                        if let Some(height) = new_height {
+                            state.set_neq(height);
                         }
                     }
                 }
@@ -682,13 +670,11 @@ impl AppConfig {
                 .docked_right_dimensions
                 .selected_variables_panel_name_column_width
                 .unwrap_or(DEFAULT_NAME_COLUMN_WIDTH as f64) as f32,
-            async move |state| {
-                loop {
-                    select! {
-                        new_width = name_column_width_changed_stream.next() => {
-                            if let Some(width) = new_width {
-                                state.set_neq(width);
-                            }
+            async move |state| loop {
+                select! {
+                    new_width = name_column_width_changed_stream.next() => {
+                        if let Some(width) = new_width {
+                            state.set_neq(width);
                         }
                     }
                 }
@@ -701,13 +687,11 @@ impl AppConfig {
                 .docked_right_dimensions
                 .selected_variables_panel_value_column_width
                 .unwrap_or(DEFAULT_VALUE_COLUMN_WIDTH as f64) as f32,
-            async move |state| {
-                loop {
-                    select! {
-                        new_width = value_column_width_changed_stream.next() => {
-                            if let Some(width) = new_width {
-                                state.set_neq(width);
-                            }
+            async move |state| loop {
+                select! {
+                    new_width = value_column_width_changed_stream.next() => {
+                        if let Some(width) = new_width {
+                            state.set_neq(width);
                         }
                     }
                 }
@@ -974,7 +958,7 @@ impl AppConfig {
                                             let expanded_directories: Vec<String> = file_picker_domain_clone.expanded_directories_signal().to_stream().next().await.unwrap_or_default().into_iter().collect();
                                             let scroll_position = file_picker_domain_clone.scroll_position_signal().to_stream().next().await.unwrap_or_default();
 
-                                            
+
 
                                             let shared_config = shared::AppConfig {
                                                 app: shared::AppSection::default(),
@@ -1200,12 +1184,11 @@ impl AppConfig {
                         // Now restore expanded scopes in TreeView
                         let expanded_set: indexmap::IndexSet<String> =
                             expanded_scopes_to_restore.iter().cloned().collect();
-                        
+
                         files_expanded_for_delay.set(expanded_set);
 
                         // Restore selected scope in TreeView
                         if let Some(scope_id) = selected_scope_to_restore {
-                            
                             files_selected_for_delay.lock_mut().clear();
                             files_selected_for_delay.lock_mut().push_cloned(scope_id);
                         }
