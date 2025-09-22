@@ -1,7 +1,7 @@
 use crate::dataflow::atom::Atom;
-use moonzoon_novyui::tokens::color::{neutral_11, neutral_8, primary_6};
+use moonzoon_novyui::tokens::color::{neutral_8, neutral_11, primary_6};
 use moonzoon_novyui::*;
-use shared::{generate_smart_labels, FileState, ScopeData, TrackedFile};
+use shared::{FileState, ScopeData, TrackedFile, generate_smart_labels};
 use std::collections::HashMap;
 use std::sync::Arc;
 use zoon::*;
@@ -404,8 +404,8 @@ pub fn compute_smart_label_for_file(
 pub fn render_tracked_file_reactive(
     tracked_file: TrackedFile,
     expanded_scopes_signal: impl zoon::Signal<Item = indexmap::IndexSet<String>>
-        + 'static
-        + std::marker::Unpin,
+    + 'static
+    + std::marker::Unpin,
     tracked_files: crate::tracked_files::TrackedFiles,
     selected_variables: crate::selected_variables::SelectedVariables,
     app_config: crate::config::AppConfig,

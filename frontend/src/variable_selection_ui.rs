@@ -30,6 +30,7 @@ pub fn variables_panel(
     selected_variables: &crate::selected_variables::SelectedVariables,
     waveform_timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline,
     waveform_canvas: &crate::visualizer::canvas::waveform_canvas::WaveformCanvas,
+    app_config: &crate::config::AppConfig,
 ) -> impl Element {
     let tracked_files = tracked_files.clone();
     let selected_variables = selected_variables.clone();
@@ -53,6 +54,7 @@ pub fn variables_panel(
                             variables_display_signal(
                                 tracked_files.clone(),
                                 selected_variables.clone(),
+                                app_config.clone(),
                             )
                             .map(|filtered_variables| filtered_variables.len().to_string()),
                         ),
@@ -95,7 +97,7 @@ pub fn variables_panel(
                                 .build(),
                         ),
                 ),
-            simple_variables_content(&tracked_files, &selected_variables),
+            simple_variables_content(&tracked_files, &selected_variables, &app_config),
         ))
 }
 
@@ -445,6 +447,7 @@ pub fn variables_panel_with_fill(
                         &selected_variables,
                         &waveform_timeline,
                         &waveform_canvas,
+                        &app_config,
                     ))
                     .into_element()
             } else {
@@ -467,6 +470,7 @@ pub fn variables_panel_with_fill(
                         &selected_variables,
                         &waveform_timeline,
                         &waveform_canvas,
+                        &app_config,
                     ))
                     .into_element()
             }
@@ -477,16 +481,18 @@ pub fn variables_panel_with_fill(
 pub fn simple_variables_content(
     tracked_files: &crate::tracked_files::TrackedFiles,
     selected_variables: &crate::selected_variables::SelectedVariables,
+    app_config: &crate::config::AppConfig,
 ) -> impl Element {
     let tracked_files = tracked_files.clone();
     let selected_variables = selected_variables.clone();
+    let app_config = app_config.clone();
     Column::new()
         .s(Gap::new().y(0))
         .s(Height::fill())
         .s(Width::fill())
         .item(
             El::new().s(Height::fill()).s(Width::fill()).child_signal(
-                variables_display_context_signal(tracked_files.clone(), selected_variables.clone())
+                variables_display_context_signal(tracked_files.clone(), selected_variables.clone(), app_config.clone())
                     .map({
                         let selected_variables = selected_variables.clone();
                         move |context| match context {
@@ -524,15 +530,25 @@ pub fn simple_variables_content(
 pub fn variables_loading_signal(
     tracked_files: crate::tracked_files::TrackedFiles,
     selected_variables: crate::selected_variables::SelectedVariables,
+    app_config: crate::config::AppConfig,
 ) -> impl Signal<Item = Vec<VariableWithContext>> {
     let files_signal = tracked_files.files.signal_vec().to_signal_cloned();
-    let selected_scope_signal = selected_variables.selected_scope.signal();
+    // Merge SelectedVariables.selected_scope with TreeView selection snapshot from AppConfig
+    let selected_scope_from_sv = selected_variables.selected_scope.signal();
+    let selected_scope_from_tree = app_config
+        .files_selected_scope
+        .signal_vec_cloned()
+        .to_signal_cloned()
+        .map(|vec| vec.into_iter().rev().find(|id| id.starts_with("scope_")).clone())
+        .map(|opt| opt.and_then(|raw| raw.strip_prefix("scope_").map(|s| s.to_string())));
 
     map_ref! {
-        let selected_scope_id = selected_scope_signal,
+        let sv_scope = selected_scope_from_sv,
+        let tree_scope = selected_scope_from_tree,
         let tracked_files = files_signal => {
-            if let Some(scope_id) = selected_scope_id {
-                get_variables_from_tracked_files(&scope_id, &tracked_files)
+            let effective_scope = sv_scope.clone().or_else(|| tree_scope.clone());
+            if let Some(scope_id) = effective_scope {
+                get_variables_from_tracked_files(scope_id.as_str(), &tracked_files)
             } else {
                 Vec::new()
             }
@@ -544,9 +560,10 @@ pub fn variables_loading_signal(
 pub fn variables_display_signal(
     tracked_files: crate::tracked_files::TrackedFiles,
     selected_variables: crate::selected_variables::SelectedVariables,
+    app_config: crate::config::AppConfig,
 ) -> impl Signal<Item = Vec<VariableWithContext>> {
     map_ref! {
-        let variables = variables_loading_signal(tracked_files.clone(), selected_variables.clone()),
+        let variables = variables_loading_signal(tracked_files.clone(), selected_variables.clone(), app_config.clone()),
         let search_filter = selected_variables.search_filter.signal() => {
             filter_variables_with_context(&variables, &search_filter)
         }
@@ -557,11 +574,24 @@ pub fn variables_display_signal(
 pub fn variables_display_context_signal(
     tracked_files: crate::tracked_files::TrackedFiles,
     selected_variables: crate::selected_variables::SelectedVariables,
+    app_config: crate::config::AppConfig,
 ) -> impl Signal<Item = VariableDisplayContext> {
     map_ref! {
-        let selected_scope_id = selected_variables.selected_scope.signal(),
-        let unfiltered_variables = variables_loading_signal(tracked_files.clone(), selected_variables.clone()),
+        let selected_scope_sv = selected_variables.selected_scope.signal(),
+        let selected_scope_tree = app_config.files_selected_scope
+            .signal_vec_cloned()
+            .to_signal_cloned()
+            .map(|vec| vec.into_iter().rev().find(|id| id.starts_with("scope_")).clone())
+            .map(|opt| opt.and_then(|raw| raw.strip_prefix("scope_").map(|s| s.to_string()))),
+        let unfiltered_variables = variables_loading_signal(tracked_files.clone(), selected_variables.clone(), app_config.clone()),
         let search_filter = selected_variables.search_filter.signal() => {
+            let selected_scope_id = selected_scope_sv.clone().or_else(|| selected_scope_tree.clone());
+            zoon::println!(
+                "🔎 VARIABLES_CONTEXT: selected_scope_id={:?}, unfiltered_count={}, filter='{}'",
+                selected_scope_id,
+                unfiltered_variables.len(),
+                search_filter
+            );
             // Determine the appropriate context based on state
             if selected_scope_id.is_none() {
                 // No scope selected at all

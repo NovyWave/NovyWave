@@ -1,8 +1,8 @@
 //! NovyWaveApp - Self-contained Actor+Relay Architecture
 
-use futures::{StreamExt, select};
-use moonzoon_novyui::{ButtonSize, ButtonVariant, IconName};
-use std::sync::OnceLock;
+use futures::StreamExt;
+use futures_signals::signal_vec::SignalVecExt;
+use indexmap::IndexSet;
 use zoon::events::KeyDown;
 use zoon::*;
 
@@ -35,7 +35,7 @@ impl ConnectionMessageActor {
     pub async fn new(
         mut down_msg_stream: impl futures::stream::Stream<Item = DownMsg> + Unpin + 'static,
     ) -> Self {
-        zoon::println!("🏗️ CONNECTION_MSG_ACTOR: Starting new() initialization");
+        
 
         // Create all message-specific relays
         let (config_loaded_relay, _) = relay();
@@ -45,7 +45,7 @@ impl ConnectionMessageActor {
         let (file_loaded_relay, _) = relay();
         let (parsing_started_relay, _) = relay();
 
-        zoon::println!("✅ CONNECTION_MSG_ACTOR: All relays created successfully");
+        
 
         // Clone relays for use in Actor closure
         let config_loaded_relay_clone = config_loaded_relay.clone();
@@ -56,72 +56,36 @@ impl ConnectionMessageActor {
         let parsing_started_relay_clone = parsing_started_relay.clone();
 
         // Actor processes DownMsg stream and routes to appropriate relays
-        zoon::println!("🚀 CONNECTION_MSG_ACTOR: Creating Actor with stream processing loop");
+        
         let message_actor = Actor::new((), async move |_state| {
-            zoon::println!("🔄 CONNECTION_MSG_ACTOR: Actor started, entering message loop");
-            zoon::println!("🔄 CONNECTION_MSG_ACTOR: Stream moved into Actor successfully");
+            
 
             let mut stream = down_msg_stream;
             let mut loop_counter = 0;
             loop {
                 loop_counter += 1;
-                zoon::println!(
-                    "🔄 CONNECTION_MSG_ACTOR: Starting loop iteration {}",
-                    loop_counter
-                );
-                zoon::println!("⏳ CONNECTION_MSG_ACTOR: Waiting for next message...");
 
                 use futures::StreamExt;
                 match stream.next().await {
                     Some(down_msg) => {
-                        zoon::println!("📨 CONNECTION_MSG_ACTOR: Received message in Actor loop");
+                        
                         // Route each message type to its specific relay
                         match down_msg {
                             DownMsg::ConfigLoaded(config) => {
-                                zoon::println!("🔄 CONNECTION_MSG_ACTOR: Routing ConfigLoaded");
                                 config_loaded_relay_clone.send(config);
                             }
                             DownMsg::ConfigSaved => {
-                                zoon::println!("🔄 CONNECTION_MSG_ACTOR: Routing ConfigSaved");
                                 config_saved_relay_clone.send(());
                             }
                             DownMsg::DirectoryContents { path, items } => {
-                                zoon::println!(
-                                    "🔄 CONNECTION_MSG_ACTOR: Routing DirectoryContents for path='{}' with {} items",
-                                    path,
-                                    items.len()
-                                );
-                                zoon::println!(
-                                    "📊 CONNECTION_MSG_ACTOR: Items list for '{}': {:?}",
-                                    path,
-                                    items
-                                        .iter()
-                                        .map(|item| format!(
-                                            "{}({})",
-                                            item.name,
-                                            if item.is_directory { "dir" } else { "file" }
-                                        ))
-                                        .collect::<Vec<_>>()
-                                );
                                 let path_for_relay = path.clone();
                                 directory_contents_relay_clone.send((path, items));
-                                zoon::println!(
-                                    "✅ CONNECTION_MSG_ACTOR: Successfully sent DirectoryContents via relay for '{}'",
-                                    path_for_relay
-                                );
+                                
                             }
                             DownMsg::DirectoryError { path, error } => {
-                                zoon::println!(
-                                    "🔄 CONNECTION_MSG_ACTOR: Routing DirectoryError for {}",
-                                    path
-                                );
                                 directory_error_relay_clone.send((path, error));
                             }
                             DownMsg::FileLoaded { file_id, hierarchy } => {
-                                zoon::println!(
-                                    "🔄 CONNECTION_MSG_ACTOR: Routing FileLoaded for {}",
-                                    file_id
-                                );
                                 if let Some(loaded_file) = hierarchy.files.first() {
                                     file_loaded_relay_clone.send((
                                         file_id,
@@ -130,43 +94,24 @@ impl ConnectionMessageActor {
                                 }
                             }
                             DownMsg::ParsingStarted { file_id, filename } => {
-                                zoon::println!(
-                                    "🔄 CONNECTION_MSG_ACTOR: Routing ParsingStarted for {}",
-                                    file_id
-                                );
                                 parsing_started_relay_clone.send((file_id, filename));
                             }
                             _ => {
                                 // Other message types can be added as needed
-                                zoon::println!(
-                                    "🔍 CONNECTION_MSG_ACTOR: Unhandled message type: {:?}",
-                                    std::mem::discriminant(&down_msg)
-                                );
                             }
                         }
-                        zoon::println!(
-                            "✅ CONNECTION_MSG_ACTOR: Finished processing message, continuing loop"
-                        );
+                        
                     }
                     None => {
-                        zoon::println!(
-                            "💔 CONNECTION_MSG_ACTOR: down_msg_stream ended, no more messages"
-                        );
-                        zoon::println!(
-                            "💔 CONNECTION_MSG_ACTOR: This means the message channel was closed!"
-                        );
+                        
                         break;
                     }
                 }
-                zoon::println!(
-                    "🔄 CONNECTION_MSG_ACTOR: Completed loop iteration {}",
-                    loop_counter
-                );
+                
             }
-            zoon::println!("⛔ CONNECTION_MSG_ACTOR: Actor loop ended");
+            
         });
-
-        zoon::println!("✅ CONNECTION_MSG_ACTOR: Actor created, returning instance");
+        
         Self {
             config_loaded_relay,
             config_saved_relay,
@@ -210,6 +155,11 @@ pub struct NovyWaveApp {
     /// Message routing actor (keeps relays alive)
     pub connection_message_actor: ConnectionMessageActor,
 
+    /// Synchronizes Files panel scope selection into SelectedVariables domain
+    _scope_selection_sync_actor: Actor<()>,
+    /// Bridges session state's selected_scope_id into SelectedVariables
+    _session_scope_sync_actor: Actor<()>,
+
     // === UI STATE (Atom pattern for local UI concerns) ===
     /// File picker dialog visibility
     pub file_dialog_visible: Atom<bool>,
@@ -238,11 +188,48 @@ pub struct NovyWaveApp {
 // Remove Default implementation - use new() method instead
 
 impl NovyWaveApp {
+    fn propagate_scope_selection(
+        selected_ids: Vec<String>,
+        selected_variables: &SelectedVariables,
+    ) {
+        let mut selection_set = IndexSet::new();
+        let mut last_scope: Option<String> = None;
+
+        for raw_id in selected_ids.into_iter() {
+            if !raw_id.starts_with("scope_") {
+                continue;
+            }
+
+            let cleaned = raw_id
+                .strip_prefix("scope_")
+                .unwrap_or(raw_id.as_str())
+                .to_string();
+            last_scope = Some(cleaned);
+
+            selection_set.insert(raw_id);
+        }
+
+        match last_scope {
+            Some(cleaned_scope) => {
+                selected_variables
+                    .scope_selected_relay
+                    .send(Some(cleaned_scope));
+            }
+            None => {
+                selected_variables.scope_selected_relay.send(None);
+            }
+        }
+
+        selected_variables
+            .tree_selection_changed_relay
+            .send(selection_set);
+    }
+
     /// Create new NovyWaveApp with proper async initialization
     ///
     /// This replaces the complex global domain initialization from main.rs
     pub async fn new() -> Self {
-        zoon::println!("🔥 APP: Starting NovyWaveApp::new() initialization");
+        // init
 
         // Load fonts first
         Self::load_and_register_fonts().await;
@@ -264,35 +251,86 @@ impl NovyWaveApp {
             crate::visualizer::canvas::waveform_canvas::WaveformCanvas::new().await;
 
         // ✅ ACTOR+RELAY: Use working connection with message actor integration
-        let (connection, connection_message_actor) =
-            Self::create_connection_with_message_actor(tracked_files.clone()).await;
+        let (connection, connection_message_actor) = Self::create_connection_with_message_actor(
+            tracked_files.clone(),
+            selected_variables.clone(),
+        )
+        .await;
 
         // Initialize platform layer with the working connection
         let connection_arc = std::sync::Arc::new(connection);
         crate::platform::set_platform_connection(connection_arc.clone());
 
         // Create main config with proper connection and message routing
-        zoon::println!("🎯 APP: About to call AppConfig::new()");
         let config = AppConfig::new(
             connection_arc.clone(),
             connection_message_actor.clone(),
             tracked_files.clone(),
         )
         .await;
-        zoon::println!("🎯 APP: AppConfig::new() completed");
 
         // Initialize dragging system after config is ready
         let dragging_system = crate::dragging::DraggingSystem::new(config.clone()).await;
 
+        let scope_selection_sync_actor = {
+            let selected_variables_for_scope = selected_variables.clone();
+            let files_selected_scope = config.files_selected_scope.clone();
+
+            Actor::new((), async move |_state| {
+                // Emit initial selection once
+                let initial = files_selected_scope.lock_ref().to_vec();
+                Self::propagate_scope_selection(initial, &selected_variables_for_scope);
+
+                // Subscribe to vector snapshots
+                let mut selection_stream = files_selected_scope
+                    .signal_vec_cloned()
+                    .to_signal_cloned()
+                    .to_stream()
+                    .fuse();
+
+                while let Some(current_selection) = selection_stream.next().await {
+                    Self::propagate_scope_selection(current_selection, &selected_variables_for_scope);
+                }
+            })
+        };
+
+        let session_scope_sync_actor = {
+            let session_state_actor = config.session_state_actor.clone();
+            let files_selected_scope = config.files_selected_scope.clone();
+
+            Actor::new((), async move |_state| {
+                let mut session_stream = session_state_actor.signal().to_stream().fuse();
+
+                while let Some(session_state) = session_stream.next().await {
+                    let target_scope = session_state.selected_scope_id.clone();
+
+                    let should_skip = {
+                        let guard = files_selected_scope.lock_ref();
+                        guard.get(0).cloned() == target_scope
+                    };
+
+                    if should_skip {
+                        continue;
+                    }
+
+                    {
+                        let mut guard = files_selected_scope.lock_mut();
+                        guard.clear();
+                        if let Some(ref scope_id) = target_scope {
+                            guard.push_cloned(scope_id.clone());
+                        }
+                    }
+                }
+            })
+        };
+
         // Request config loading through platform layer
-        zoon::println!("🔄 APP: Requesting config load through platform layer");
         if let Err(e) =
             <crate::platform::CurrentPlatform as crate::platform::Platform>::send_message(
                 shared::UpMsg::LoadConfig,
             )
             .await
         {
-            zoon::println!("❌ APP: Failed to request config load: {:?}", e);
         }
 
         let (shutdown_requested_relay, mut shutdown_requested_stream) = relay();
@@ -316,6 +354,8 @@ impl NovyWaveApp {
             dragging_system,
             connection: connection_arc,
             connection_message_actor,
+            _scope_selection_sync_actor: scope_selection_sync_actor,
+            _session_scope_sync_actor: session_scope_sync_actor,
             file_dialog_visible,
             search_filter,
             app_loading,
@@ -348,6 +388,7 @@ impl NovyWaveApp {
     /// Returns both connection and message actor for proper Actor+Relay architecture
     async fn create_connection_with_message_actor(
         tracked_files: TrackedFiles,
+        selected_variables: SelectedVariables,
     ) -> (
         SendWrapper<Connection<UpMsg, DownMsg>>,
         ConnectionMessageActor,
@@ -356,6 +397,7 @@ impl NovyWaveApp {
 
         let (down_msg_sender, down_msg_receiver) = mpsc::unbounded::<DownMsg>();
         let tf_relay = tracked_files.file_load_completed_relay.clone();
+        let selected_variables_relay = selected_variables.clone();
 
         // Create ConnectionMessageActor with the message stream
         // ✅ FIX: Move receiver into closure to prevent reference capture after Send bounds removal
@@ -366,20 +408,6 @@ impl NovyWaveApp {
             let sender = down_msg_sender; // Move sender explicitly before closure
             move |down_msg, _| {
                 // Log the received message
-                zoon::println!(
-                    "🔍 APP: Received message: {}",
-                    match &down_msg {
-                        DownMsg::DirectoryContents { path, items } =>
-                            format!("DirectoryContents(path={}, items={})", path, items.len()),
-                        DownMsg::DirectoryError { path, error } =>
-                            format!("DirectoryError(path={}, error={})", path, error),
-                        DownMsg::ConfigLoaded(_) => "ConfigLoaded".to_string(),
-                        DownMsg::ConfigSaved => "ConfigSaved".to_string(),
-                        DownMsg::FileLoaded { file_id, .. } => format!("FileLoaded({})", file_id),
-                        _ => format!("Other({:?})", std::mem::discriminant(&down_msg)),
-                    }
-                );
-
                 // Handle TrackedFiles messages directly (not routed through ConnectionMessageActor)
                 match &down_msg {
                     DownMsg::FileLoaded { file_id, hierarchy } => {
@@ -388,6 +416,29 @@ impl NovyWaveApp {
                                 file_id.clone(),
                                 shared::FileState::Loaded(loaded_file.clone()),
                             ));
+                        }
+                    }
+                    DownMsg::ConfigLoaded(config_loaded) => {
+                        if let Some(scope_id) = config_loaded.workspace.selected_scope_id.clone() {
+                            let cleaned_scope = scope_id
+                                .strip_prefix("scope_")
+                                .unwrap_or(scope_id.as_str())
+                                .to_string();
+
+                            selected_variables_relay
+                                .scope_selected_relay
+                                .send(Some(cleaned_scope));
+
+                            let mut selection_set = IndexSet::new();
+                            selection_set.insert(scope_id);
+                            selected_variables_relay
+                                .tree_selection_changed_relay
+                                .send(selection_set);
+                        } else {
+                            selected_variables_relay.scope_selected_relay.send(None);
+                            selected_variables_relay
+                                .tree_selection_changed_relay
+                                .send(IndexSet::new());
                         }
                     }
                     DownMsg::ParsingStarted { file_id, .. } => {
@@ -402,15 +453,7 @@ impl NovyWaveApp {
                 }
 
                 // Send all messages to ConnectionMessageActor for domain routing
-                if let Err(send_error) = sender.unbounded_send(down_msg) {
-                    zoon::println!(
-                        "❌ APP: Failed to send message to ConnectionMessageActor: {:?}",
-                        send_error
-                    );
-                    zoon::println!(
-                        "❌ APP: Channel is disconnected - receiver may have been dropped"
-                    );
-                }
+                let _ = sender.unbounded_send(down_msg);
             }
         });
 

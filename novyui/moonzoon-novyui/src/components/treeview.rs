@@ -388,6 +388,7 @@ fn handle_selection_change_vec(
     selected_items_vec: &MutableVec<String>,
     single_scope_selection: bool,
 ) {
+    // quiet
     let mut selected = selected_items_vec.lock_mut();
 
     // Handle scope selection logic
@@ -418,6 +419,8 @@ fn handle_selection_change_vec(
             selected.push_cloned(item_id.to_string());
         }
     }
+
+    let _snapshot: Vec<_> = selected.iter().cloned().collect();
 }
 
 // Render individual tree item with full functionality
@@ -581,10 +584,8 @@ fn render_tree_item(
             // Determine if checkbox should be shown (static decision)
             let should_show_checkbox = show_checkboxes && !is_disabled && 
                 if show_checkboxes_on_scopes_only {
-                    // Show checkboxes on scopes and variables, but NOT on waveform files
-                    // Waveform files have is_waveform_file = true OR item_type = File
-                    !item.is_waveform_file.unwrap_or(false) && 
-                    !matches!(item.item_type, Some(TreeViewItemType::File | TreeViewItemType::FileError))
+                    // Strict mode: show checkboxes ONLY for scopes
+                    item_id.starts_with("scope_")
                 } else {
                     // Original logic for backwards compatibility
                     if item_id.starts_with("scope_") {
@@ -1002,22 +1003,16 @@ fn render_tree_item(
                         let mut expanded = external.lock_mut();
                         let was_expanded = expanded.contains(&item_id);
                         if was_expanded {
-                            zoon::println!("📁 TREEVIEW_COLLAPSE: Collapsing directory: {}", item_id);
                             expanded.shift_remove(&item_id);
-                            zoon::println!("📁 TREEVIEW_COLLAPSE: External expanded now has {} directories", expanded.len());
                         } else {
-                            zoon::println!("📂 TREEVIEW_EXPAND: Expanding directory: {}", item_id);
                             expanded.insert(item_id.clone());
-                            zoon::println!("📂 TREEVIEW_EXPAND: External expanded now has {} directories", expanded.len());
                         }
                     } else {
                         let mut expanded = expanded_items.lock_mut();
                         let was_expanded = expanded.contains(&item_id);
                         if was_expanded {
-                            zoon::println!("📁 TREEVIEW_COLLAPSE: Collapsing directory (internal): {}", item_id);
                             expanded.shift_remove(&item_id);
                         } else {
-                            zoon::println!("📂 TREEVIEW_EXPAND: Expanding directory (internal): {}", item_id);
                             expanded.insert(item_id.clone());
                         }
                     }

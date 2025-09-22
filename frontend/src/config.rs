@@ -346,13 +346,8 @@ impl FilePickerDomain {
                         }
                         file_path = file_deselected_stream.next() => {
                             if let Some(file_path) = file_path {
-                                zoon::println!("📥 FilePickerDomain received deselection: {}", file_path);
-                                let before_count = files_vec.lock_ref().len();
                                 files_vec.lock_mut().retain(|f| f != &file_path);
-                                let after_count = files_vec.lock_ref().len();
-                                zoon::println!("   Files count: {} → {}", before_count, after_count);
                                 let current_files = files_vec.lock_ref().to_vec();
-                                zoon::println!("   Updating selected_files_vec_signal with: {:?}", current_files);
                                 selected_files_vec_signal_clone.set_neq(current_files);
                             }
                         }
@@ -486,7 +481,6 @@ impl AppConfig {
         connection_message_actor: crate::app::ConnectionMessageActor,
         tracked_files: crate::tracked_files::TrackedFiles,
     ) -> Self {
-        zoon::println!("🚀 CONFIG: AppConfig::new() starting!");
         let config = Self::load_config_from_backend()
             .await
             .unwrap_or_else(|_error| SharedAppConfig::default());
@@ -864,9 +858,11 @@ impl AppConfig {
                     }
                     selected = selected_stream.next() => {
                         if let Some(selected_vec) = selected {
+                            // Choose the first scope_* entry if present
+                            let scope_sel = selected_vec.iter().find(|id| id.starts_with("scope_")).cloned();
                             let current_session = session_actor_for_treeview.signal().to_stream().next().await.unwrap_or_default();
                             let updated_session = SessionState {
-                                selected_scope_id: selected_vec.first().cloned(),
+                                selected_scope_id: scope_sel,
                                 ..current_session
                             };
                             session_relay_for_treeview.send(updated_session);
@@ -877,7 +873,6 @@ impl AppConfig {
         });
 
         // Create sync actor for TrackedFiles to update opened_files
-        zoon::println!("🚀 CONFIG: About to create TrackedFiles sync actor");
         let tracked_files_sync_actor = {
             let session_state_actor_for_files = session_state_actor.clone();
             let files_signal = tracked_files.files_vec_signal.clone();
@@ -886,14 +881,8 @@ impl AppConfig {
             let files_selected_for_sync = files_selected_scope.clone();
 
             Actor::new((), async move |_state| {
-                zoon::println!("🔄 CONFIG: TrackedFiles sync actor CREATED and RUNNING");
-
                 // Force initial sync with current value
                 let initial_files = files_signal.get_cloned();
-                zoon::println!(
-                    "🔄 CONFIG: TrackedFiles sync actor starting with {} initial files",
-                    initial_files.len()
-                );
                 if !initial_files.is_empty() {
                     let file_paths: Vec<String> = initial_files
                         .iter()
@@ -916,29 +905,15 @@ impl AppConfig {
                     current_session.selected_scope_id = current_selected.first().cloned();
 
                     session_relay_for_files.send(current_session);
-                    zoon::println!("🔄 CONFIG: Sent initial files to save");
                 }
 
-                // Now listen for changes
-                zoon::println!(
-                    "🔄 CONFIG: TrackedFiles sync actor now listening for signal changes..."
-                );
-
                 let mut stream = files_signal.signal_cloned().to_stream();
-                zoon::println!("🔄 CONFIG: Stream created, waiting for updates...");
                 while let Some(files) = stream.next().await {
-                    zoon::println!(
-                        "🔄 CONFIG: TrackedFiles sync actor received {} files",
-                        files.len()
-                    );
-
                     // Extract file paths from TrackedFile structs
                     let file_paths: Vec<String> = files
                         .iter()
                         .map(|tracked_file| tracked_file.path.clone())
                         .collect();
-
-                    zoon::println!("🔄 CONFIG: Extracted file paths: {:?}", file_paths);
 
                     // Update session state - preserve other fields
                     let mut current_session = session_state_actor_for_files
@@ -952,26 +927,12 @@ impl AppConfig {
                     // CRITICAL: Read expanded_scopes from TreeView Mutables, not from stale session
                     let current_expanded = files_expanded_for_sync.get_cloned();
                     current_session.expanded_scopes = current_expanded.into_iter().collect();
-                    zoon::println!(
-                        "🔄 CONFIG: Reading expanded_scopes from TreeView: {:?}",
-                        current_session.expanded_scopes
-                    );
 
                     let current_selected = files_selected_for_sync.lock_ref();
                     current_session.selected_scope_id = current_selected.first().cloned();
 
-                    zoon::println!(
-                        "🔄 CONFIG: Updated session state opened_files to: {:?}",
-                        current_session.opened_files
-                    );
-                    zoon::println!(
-                        "🔄 CONFIG: Preserving expanded_scopes: {:?}",
-                        current_session.expanded_scopes
-                    );
-
                     // Trigger save
                     session_relay_for_files.send(current_session);
-                    zoon::println!("🔄 CONFIG: Sent session state update to trigger save");
                 }
             })
         };
@@ -1013,8 +974,7 @@ impl AppConfig {
                                             let expanded_directories: Vec<String> = file_picker_domain_clone.expanded_directories_signal().to_stream().next().await.unwrap_or_default().into_iter().collect();
                                             let scroll_position = file_picker_domain_clone.scroll_position_signal().to_stream().next().await.unwrap_or_default();
 
-                                            zoon::println!("💾 CONFIG: About to save config with {} opened_files", session.opened_files.len());
-                                            zoon::println!("💾 CONFIG: opened_files content: {:?}", session.opened_files);
+                                            
 
                                             let shared_config = shared::AppConfig {
                                                 app: shared::AppSection::default(),
@@ -1063,15 +1023,12 @@ impl AppConfig {
                         // Also trigger save when session state changes (file loads, etc.)
                         session_change = session_state_stream.next() => {
                             if let Some(_new_session) = session_change {
-                                zoon::println!("🔄 CONFIG: Session state changed, triggering config save");
-
                                 // Debounce loop for session state changes
                                 loop {
                                     select! {
                                         // New session change cancels timer
                                         session_change = session_state_stream.next() => {
                                             if let Some(_) = session_change {
-                                                zoon::println!("🔄 CONFIG: Another session state change, restarting timer");
                                                 continue; // Restart timer
                                             }
                                         }
@@ -1085,9 +1042,6 @@ impl AppConfig {
                                             // Get file picker data from domain instead of session
                                             let expanded_directories: Vec<String> = file_picker_domain_clone.expanded_directories_signal().to_stream().next().await.unwrap_or_default().into_iter().collect();
                                             let scroll_position = file_picker_domain_clone.scroll_position_signal().to_stream().next().await.unwrap_or_default();
-
-                                            zoon::println!("💾 CONFIG: About to save config with {} opened_files", session.opened_files.len());
-                                            zoon::println!("💾 CONFIG: opened_files content: {:?}", session.opened_files);
 
                                             let shared_config = shared::AppConfig {
                                                 app: shared::AppSection::default(),
@@ -1125,8 +1079,6 @@ impl AppConfig {
 
                                             if let Err(e) = CurrentPlatform::send_message(UpMsg::SaveConfig(shared_config)).await {
                                                 zoon::eprintln!("❌ CONFIG: Failed to save config: {}", e);
-                                            } else {
-                                                zoon::println!("✅ CONFIG: Config saved successfully");
                                             }
                                             break; // Back to outer loop
                                         }
@@ -1227,10 +1179,6 @@ impl AppConfig {
 
                     // Restore tracked files from config
                     if !loaded_config.workspace.opened_files.is_empty() {
-                        zoon::println!(
-                            "🔄 CONFIG: Restoring {} files from config",
-                            loaded_config.workspace.opened_files.len()
-                        );
                         tracked_files_for_config
                             .config_files_loaded_relay
                             .send(loaded_config.workspace.opened_files.clone());
@@ -1252,16 +1200,12 @@ impl AppConfig {
                         // Now restore expanded scopes in TreeView
                         let expanded_set: indexmap::IndexSet<String> =
                             expanded_scopes_to_restore.iter().cloned().collect();
-                        zoon::println!(
-                            "🔄 CONFIG: Restoring {} expanded scopes after delay: {:?}",
-                            expanded_set.len(),
-                            expanded_set
-                        );
+                        
                         files_expanded_for_delay.set(expanded_set);
 
                         // Restore selected scope in TreeView
                         if let Some(scope_id) = selected_scope_to_restore {
-                            zoon::println!("🔄 CONFIG: Restoring selected scope: {}", scope_id);
+                            
                             files_selected_for_delay.lock_mut().clear();
                             files_selected_for_delay.lock_mut().push_cloned(scope_id);
                         }

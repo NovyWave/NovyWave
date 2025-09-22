@@ -1669,12 +1669,11 @@ async fn send_progress_update(
 }
 
 async fn send_down_msg(msg: DownMsg, session_id: SessionId, cor_id: CorId) {
-    eprintln!("📤 BACKEND: Sending message: {:?}", msg);
+    
     if let Some(session) = sessions::by_session_id().wait_for(session_id).await {
         session.send_down_msg(&msg, cor_id).await;
-        eprintln!("📤 BACKEND: Message sent successfully");
     } else {
-        eprintln!("❌ BACKEND: Session not found for message: {:?}", msg);
+        
     }
 }
 
@@ -1685,38 +1684,24 @@ async fn load_config(session_id: SessionId, cor_id: CorId) {
 
     let config = match fs::read_to_string(CONFIG_FILE_PATH) {
         Ok(content) => {
-            println!(
-                "🔍 BACKEND: Read config file content, length: {}",
-                content.len()
-            );
+            
             match toml::from_str::<AppConfig>(&content) {
                 Ok(mut config) => {
-                    println!("🔍 BACKEND: TOML parsed successfully");
-                    println!(
-                        "🔍 BACKEND: Loaded {} expanded directories from TOML: {:?}",
-                        config.workspace.load_files_expanded_directories.len(),
-                        config.workspace.load_files_expanded_directories
-                    );
+                    
 
                     // Enable migration system - validate and fix config after loading
                     let migration_warnings = config.validate_and_fix();
 
                     // Log migration warnings if any
                     if !migration_warnings.is_empty() {
-                        println!(
-                            "🔍 BACKEND: Applied {} migration warnings",
-                            migration_warnings.len()
-                        );
+                        
                         // Save migrated config to persist changes
                         if let Err(_save_err) = save_config_to_file(&config) {
                             // Migration applied but failed to save - continue with in-memory config
                         }
                     }
 
-                    println!(
-                        "🔍 BACKEND: Final config has {} expanded directories before sending to frontend",
-                        config.workspace.load_files_expanded_directories.len()
-                    );
+                    
                     config
                 }
                 Err(e) => {

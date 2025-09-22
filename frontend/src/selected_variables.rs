@@ -51,6 +51,7 @@ impl SelectedVariables {
             relay::<IndexSet<String>>();
         let (tree_selection_changed_relay, tree_selection_changed_stream) =
             relay::<IndexSet<String>>();
+        let tree_selection_for_scope_stream = tree_selection_changed_relay.subscribe();
         let (variable_format_changed_relay, variable_format_changed_stream) =
             relay::<(String, shared::VarFormat)>();
 
@@ -139,9 +140,34 @@ impl SelectedVariables {
         // Create selected scope actor
         let selected_scope = Actor::new(None, async move |scope_handle| {
             let mut scope_selected = scope_selected_stream;
+            let mut tree_selection_updates = tree_selection_for_scope_stream;
 
-            while let Some(scope_id) = scope_selected.next().await {
-                scope_handle.set(scope_id);
+            loop {
+                use futures::select;
+
+                select! {
+                    scope_id = scope_selected.next() => {
+                        if let Some(scope_id) = scope_id {
+                            let _ = &scope_handle;
+                            scope_handle.set(scope_id);
+                        } else {
+                            break; // Stream closed
+                        }
+                    }
+                    selection = tree_selection_updates.next() => {
+                        if let Some(selection) = selection {
+                            let next_scope = selection
+                                .iter()
+                                .find(|raw_id| raw_id.starts_with("scope_"))
+                                .and_then(|raw_id| raw_id
+                                    .strip_prefix("scope_")
+                                    .map(|clean| clean.to_string()));
+                            scope_handle.set(next_scope);
+                        } else {
+                            break; // Stream closed
+                        }
+                    }
+                }
             }
         });
 
@@ -403,15 +429,23 @@ pub fn filter_variables_with_context(
 
 pub fn create_selected_variable(
     variable: shared::Signal,
-    _file_id: &str,
+    file_id: &str,
     scope_id: &str,
 ) -> Option<shared::SelectedVariable> {
-    let selected_var = shared::SelectedVariable::new(
+    if file_id.is_empty() {
+        return None;
+    }
+
+    let scope_full_name = scope_id
+        .split_once('|')
+        .map(|(_, scope)| scope.to_string())
+        .unwrap_or_else(|| scope_id.to_string());
+
+    Some(shared::SelectedVariable::new(
         variable,
-        "placeholder_path".to_string(),
-        scope_id.to_string(),
-    );
-    Some(selected_var)
+        file_id.to_string(),
+        scope_full_name,
+    ))
 }
 
 /// Get variables from tracked files for a specific scope
