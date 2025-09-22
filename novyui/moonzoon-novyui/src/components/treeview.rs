@@ -524,7 +524,7 @@ fn render_tree_item(
                         let item_id = item_id.clone();
                         let external_expanded = external_expanded.clone();
                         let expanded_items = expanded_items.clone();
-                        
+
                         if let Some(external) = external_expanded {
                             external.signal_ref(move |expanded_set| expanded_set.contains(&item_id)).boxed()
                         } else {
@@ -582,7 +582,7 @@ fn render_tree_item(
         // Checkbox (if enabled) - stable element to prevent recreation
         .item({
             // Determine if checkbox should be shown (static decision)
-            let should_show_checkbox = show_checkboxes && !is_disabled && 
+            let should_show_checkbox = show_checkboxes && !is_disabled &&
                 if show_checkboxes_on_scopes_only {
                     // Strict mode: show checkboxes ONLY for scopes
                     item_id.starts_with("scope_")
@@ -611,7 +611,7 @@ fn render_tree_item(
                         false
                     }
                 };
-            
+
             if should_show_checkbox {
                 // Create stable checkbox button that only updates visual state, not structure
                 Button::new()
@@ -680,10 +680,10 @@ fn render_tree_item(
             move |show| {
                 if show {
                     // Check if this is a Files & Scope item (no folder icons for these)
-                    let is_files_and_scope_item = item_id.starts_with("file_") || 
+                    let is_files_and_scope_item = item_id.starts_with("file_") ||
                                                   item_id.starts_with("scope_") ||
                                                   (!item_id.starts_with("/") && matches!(item.item_type, Some(TreeViewItemType::File)));
-                    
+
                     let icon_name = if let Some(icon) = &item.icon {
                         icon_name_from_str(icon)
                     } else {
@@ -779,11 +779,11 @@ fn render_tree_item(
                                         if let Some(last_slash) = item.label.rfind('/') {
                                             let prefix = &item.label[..=last_slash]; // Include trailing slash
                                             let rest = &item.label[last_slash + 1..]; // Everything after the slash
-                                            
+
                                             if let Some(timeline_start) = rest.rfind(" (") {
                                                 let filename = &rest[..timeline_start];
                                                 let timeline_info = &rest[timeline_start..];
-                                                
+
                                                 // Create Paragraph with styled prefix + filename + timeline
                                                 zoon::Paragraph::new()
                                                     .content(
@@ -818,7 +818,7 @@ fn render_tree_item(
                                         if let Some(last_slash) = item.label.rfind('/') {
                                             let prefix = &item.label[..=last_slash]; // Include trailing slash
                                             let filename = &item.label[last_slash + 1..];
-                                            
+
                                             // Create Paragraph with styled prefix and filename
                                             zoon::Paragraph::new()
                                                 .content(
@@ -844,7 +844,7 @@ fn render_tree_item(
                                         if let Some(timeline_start) = item.label.rfind(" (") {
                                             let filename = &item.label[..timeline_start];
                                             let timeline_info = &item.label[timeline_start..];
-                                            
+
                                             // Create Paragraph with filename and dimmed timeline info
                                             zoon::Paragraph::new()
                                                 .content(
@@ -875,7 +875,7 @@ fn render_tree_item(
                                         .size(font_size)
                                         .weight(FontWeight::Number(FONT_WEIGHT_4))
                                         .no_wrap();
-                                    
+
                                     // Only apply color signal for non-styled labels (styled labels handle their own colors)
                                     if !item.label.contains('/') {
                                         let item_id_for_error_check = item_id.clone();
@@ -957,7 +957,7 @@ fn render_tree_item(
                     let selected_items = selected_items.clone();
                     let external_selected_vec = external_selected_vec.clone();
                     move |event| {
-                        
+
                         if !is_disabled {
                             // Always set focus when clicking a label
                             focused_item.set(Some(item_id.clone()));
@@ -965,11 +965,11 @@ fn render_tree_item(
                             // Handle selection logic for scope items (regardless of children) or leaf items with checkboxes
                             // and prevent bubbling only in that case
                             let should_handle_selection = show_checkboxes && (item_id.starts_with("scope_") || !has_children);
-                            
+
                             if should_handle_selection {
                                 // Prevent event from bubbling up for selection handling
                                 event.pass_to_parent(false);
-                                
+
                                 // Use appropriate handler based on state type
                                 if let Some(ref vec_state) = external_selected_vec {
                                     handle_selection_change_vec(&item_id, vec_state, single_scope_selection);
@@ -992,11 +992,11 @@ fn render_tree_item(
             let expanded_items = expanded_items.clone();
             let external_expanded = external_expanded.clone();
             move || {
-                
+
                 if !is_disabled && has_children {
                     // Set focus when clicking row
                     focused_item.set(Some(item_id.clone()));
-                    
+
                     // Handle expansion/collapse for items with children
                     // Use external expansion state if provided, otherwise use internal state
                     if let Some(external) = &external_expanded {

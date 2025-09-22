@@ -17,10 +17,6 @@ dock_mode = "right"
 expanded_scopes = [
     "/home/martinkavik/repos/NovyWave/test_files/simple.vcd",
     "scope_/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb",
-    "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst",
-    "scope_/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP",
-    "/home/martinkavik/repos/NovyWave/test_files/nested_dir/wave_27.fst",
-    "scope_/home/martinkavik/repos/NovyWave/test_files/nested_dir/wave_27.fst|TOP",
 ]
 load_files_expanded_directories = [
     "/home",

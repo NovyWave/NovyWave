@@ -319,8 +319,8 @@ pub fn selected_variables_with_waveform_panel(
                                                         .child(
                                                             crate::format_selection::create_format_dropdown(
                                                                 &selected_var.unique_id,
-                                                                selected_var.formatter.unwrap_or(VarFormat::Hexadecimal), 
-                                                                &selected_variables_for_values, 
+                                                                selected_var.formatter.unwrap_or(VarFormat::Hexadecimal),
+                                                                &selected_variables_for_values,
                                                                 &waveform_timeline_for_values
                                                             )
                                                         )
