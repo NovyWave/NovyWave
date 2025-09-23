@@ -422,7 +422,7 @@ pub fn variables_panel_with_fill(
     let app_config = app_config.clone();
 
     El::new()
-        .s(Width::growable())
+        .s(Width::fill())
         .s(Height::fill())
         .s(Scrollbars::both())
         .child_signal(app_config.dock_mode_actor.signal().map(move |dock_mode| {

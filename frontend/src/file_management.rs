@@ -16,6 +16,7 @@ pub fn files_panel_with_dialog(
     let file_count_broadcaster = tracked_files.files.signal_vec().len().broadcast();
     El::new()
         .s(Height::fill())
+        .s(Width::fill())
         .child(crate::panel_layout::create_panel(
             Row::new()
                 .s(Gap::new().x(SPACING_8))
@@ -73,6 +74,7 @@ pub fn files_panel(
     let file_count_broadcaster = tracked_files.files.signal_vec().len().broadcast();
     El::new()
         .s(Height::fill())
+        .s(Width::fill())
         .child(crate::panel_layout::create_panel(
             Row::new()
                 .s(Gap::new().x(SPACING_8))

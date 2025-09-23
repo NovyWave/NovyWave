@@ -3,8 +3,10 @@
 use futures::StreamExt;
 use futures_signals::signal_vec::SignalVecExt;
 use indexmap::IndexSet;
-use zoon::events::KeyDown;
+use zoon::events::{KeyDown, KeyUp};
+use zoon::events_extra;
 use zoon::*;
+use zoon::{PointerEvent, RawPointerEvent};
 
 use crate::config::AppConfig;
 use crate::dataflow::atom::Atom;
@@ -408,6 +410,9 @@ impl NovyWaveApp {
 
     /// Root UI element
     pub fn root(&self) -> impl Element {
+        let dragging_system = self.dragging_system.clone();
+        let dragging_system_for_overlay = dragging_system.clone();
+
         Stack::new()
             .s(Height::screen())
             .s(Width::fill())
@@ -444,9 +449,10 @@ impl NovyWaveApp {
                 let reset_zoom = timeline.reset_zoom_pressed_relay.clone();
                 let shift_key_pressed = timeline.shift_key_pressed_relay.clone();
                 let shift_key_released = timeline.shift_key_released_relay.clone();
+                let dragging_system_for_events = dragging_system.clone();
 
                 move |raw_el| {
-                    raw_el.global_event_handler(move |event: KeyDown| {
+                    let raw_el = raw_el.global_event_handler(move |event: KeyDown| {
                         // Check if the active element is an input/textarea to disable shortcuts
                         // This prevents conflicts when user is typing in input fields
                         let should_handle_shortcuts = if let Some(window) = web_sys::window() {
@@ -545,10 +551,58 @@ impl NovyWaveApp {
                                 _ => {}
                             }
                         }
-                    })
+                    });
+
+                    let raw_el = raw_el.global_event_handler(move |event: KeyUp| {
+                        if matches!(event.key().as_str(), "Shift" | "ShiftLeft" | "ShiftRight") {
+                            shift_key_released.send(());
+                        }
+                    });
+
+                    let dragging_system_for_move = dragging_system_for_events.clone();
+                    let raw_el = raw_el.global_event_handler_with_options(
+                        EventOptions::new().preventable(),
+                        move |event: events_extra::PointerMove| {
+                            crate::dragging::process_drag_movement(
+                                &dragging_system_for_move,
+                                (event.x() as f32, event.y() as f32),
+                            );
+                        },
+                    );
+
+                    let dragging_system_for_up = dragging_system_for_events.clone();
+                    let raw_el = raw_el.global_event_handler_with_options(
+                        EventOptions::new().preventable(),
+                        move |_: events_extra::PointerUp| {
+                            crate::dragging::end_drag(&dragging_system_for_up);
+                        },
+                    );
+
+                    let dragging_system_for_cancel = dragging_system_for_events;
+                    raw_el.global_event_handler_with_options(
+                        EventOptions::new().preventable(),
+                        move |_: events_extra::PointerCancel| {
+                            crate::dragging::end_drag(&dragging_system_for_cancel);
+                        },
+                    )
                 }
             })
             .layer(self.main_layout())
+            .layer_signal({
+                let overlay_dragging_system = dragging_system_for_overlay.clone();
+                map_ref! {
+                    let is_dragging = dragging_system_for_overlay.is_any_divider_dragging(),
+                    let active_divider = dragging_system_for_overlay.active_divider_type_signal() => {
+                        if *is_dragging {
+                            active_divider.clone().map(|divider| {
+                                dragging_overlay_element(overlay_dragging_system.clone(), divider).unify()
+                            })
+                        } else {
+                            None
+                        }
+                    }
+                }
+            })
             .layer_signal(self.file_dialog_visible.signal().map_true({
                 let tracked_files = self.tracked_files.clone();
                 let selected_variables = self.selected_variables.clone();
@@ -584,4 +638,55 @@ impl NovyWaveApp {
     fn toast_notifications_container(&self) -> impl Element {
         crate::error_ui::toast_notifications_container(self.config.clone())
     }
+}
+
+fn dragging_overlay_element(
+    dragging_system: crate::dragging::DraggingSystem,
+    divider_type: crate::dragging::DividerType,
+) -> impl Element {
+    use crate::dragging::DividerType;
+
+    let cursor_icon = match divider_type {
+        DividerType::FilesPanelSecondary => CursorIcon::RowResize,
+        DividerType::VariablesNameColumn
+        | DividerType::VariablesValueColumn
+        | DividerType::FilesPanelMain => CursorIcon::ColumnResize,
+    };
+
+    let system_for_move = dragging_system.clone();
+    let system_for_up = dragging_system.clone();
+    let system_for_cancel = dragging_system.clone();
+
+    El::new()
+        .s(Width::fill())
+        .s(Height::fill())
+        .s(Cursor::new(cursor_icon))
+        .update_raw_el(|raw_el| {
+            raw_el
+                .style("position", "fixed")
+                .style("inset", "0")
+                .style("z-index", "9998")
+                .style("touch-action", "none")
+        })
+        .on_pointer_move_event(move |event: PointerEvent| {
+            if let RawPointerEvent::PointerMove(raw_event) = &event.raw_event {
+                raw_event.prevent_default();
+            }
+            crate::dragging::process_drag_movement(
+                &system_for_move,
+                (event.x() as f32, event.y() as f32),
+            );
+        })
+        .on_pointer_up_event(move |event: PointerEvent| {
+            if let RawPointerEvent::PointerUp(raw_event) = &event.raw_event {
+                raw_event.prevent_default();
+            }
+            crate::dragging::end_drag(&system_for_up);
+        })
+        .update_raw_el(move |raw_el| {
+            raw_el.event_handler(move |event: zoon::events_extra::PointerCancel| {
+                event.prevent_default();
+                crate::dragging::end_drag(&system_for_cancel);
+            })
+        })
 }

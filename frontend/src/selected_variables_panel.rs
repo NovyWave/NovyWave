@@ -30,7 +30,7 @@ pub fn selected_variables_panel(
     let selected_variables_for_header = selected_variables.clone();
 
     Column::new()
-        .s(Width::growable())
+        .s(Width::fill())
         .s(Height::fill())
         .item(crate::panel_layout::create_panel(
             // Header with title and action buttons

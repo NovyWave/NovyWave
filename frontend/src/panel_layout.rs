@@ -3,6 +3,7 @@ use moonzoon_novyui::tokens::color::{
 };
 use moonzoon_novyui::*;
 use zoon::*;
+use zoon::{PointerEvent, RawPointerEvent};
 
 /// Create a standard panel with header and content sections
 pub fn create_panel(header_content: impl Element, content: impl Element) -> impl Element {
@@ -60,10 +61,10 @@ pub fn create_panel(header_content: impl Element, content: impl Element) -> impl
 
 /// Vertical divider for variables name column
 pub fn variables_name_vertical_divider(
-    app_config: &crate::config::AppConfig,
+    _app_config: &crate::config::AppConfig,
     dragging_system: crate::dragging::DraggingSystem,
 ) -> impl Element {
-    use crate::dragging::{DividerType, is_divider_dragging, start_drag};
+    use crate::dragging::{DividerType, start_drag};
 
     // Use static appearance for now - dragging state will be handled at application level
     let is_dragging_signal = zoon::always(false);
@@ -75,14 +76,24 @@ pub fn variables_name_vertical_divider(
             .color_signal(is_dragging_signal.map_bool_signal(|| primary_7(), || primary_6())))
         .s(Cursor::new(CursorIcon::ColumnResize))
         .s(Padding::all(0))
-        .on_pointer_down({
-            let app_config = app_config.clone();
+        .on_pointer_down_event({
             let dragging_system = dragging_system.clone();
-            move || {
+            move |event: PointerEvent| {
+                let raw_pointer_down = match &event.raw_event {
+                    RawPointerEvent::PointerDown(raw_event) => raw_event,
+                    _ => return,
+                };
+
+                if raw_pointer_down.button() != events::MouseButton::Left {
+                    return;
+                }
+
+                raw_pointer_down.prevent_default();
+
                 start_drag(
                     &dragging_system,
                     DividerType::VariablesNameColumn,
-                    (0.0, 0.0),
+                    (event.x() as f32, event.y() as f32),
                 );
             }
         })
@@ -90,10 +101,10 @@ pub fn variables_name_vertical_divider(
 
 /// Vertical divider for variables value column
 pub fn variables_value_vertical_divider(
-    app_config: &crate::config::AppConfig,
+    _app_config: &crate::config::AppConfig,
     dragging_system: crate::dragging::DraggingSystem,
 ) -> impl Element {
-    use crate::dragging::{DividerType, is_divider_dragging, start_drag};
+    use crate::dragging::{DividerType, start_drag};
 
     // Use static appearance for now - dragging state will be handled at application level
     let is_dragging_signal = zoon::always(false);
@@ -105,14 +116,24 @@ pub fn variables_value_vertical_divider(
             .color_signal(is_dragging_signal.map_bool_signal(|| primary_7(), || primary_6())))
         .s(Cursor::new(CursorIcon::ColumnResize))
         .s(Padding::all(0))
-        .on_pointer_down({
-            let app_config = app_config.clone();
+        .on_pointer_down_event({
             let dragging_system = dragging_system.clone();
-            move || {
+            move |event: PointerEvent| {
+                let raw_pointer_down = match &event.raw_event {
+                    RawPointerEvent::PointerDown(raw_event) => raw_event,
+                    _ => return,
+                };
+
+                if raw_pointer_down.button() != events::MouseButton::Left {
+                    return;
+                }
+
+                raw_pointer_down.prevent_default();
+
                 start_drag(
                     &dragging_system,
                     DividerType::VariablesValueColumn,
-                    (0.0, 0.0),
+                    (event.x() as f32, event.y() as f32),
                 );
             }
         })
@@ -120,10 +141,10 @@ pub fn variables_value_vertical_divider(
 
 /// Vertical divider for files panel main section
 pub fn files_panel_vertical_divider(
-    app_config: &crate::config::AppConfig,
+    _app_config: &crate::config::AppConfig,
     dragging_system: crate::dragging::DraggingSystem,
 ) -> impl Element {
-    use crate::dragging::{DividerType, is_divider_dragging, start_drag};
+    use crate::dragging::{DividerType, start_drag};
 
     // Use static appearance for now - dragging state will be handled at application level
     let is_dragging_signal = zoon::always(false);
@@ -135,21 +156,35 @@ pub fn files_panel_vertical_divider(
             .color_signal(is_dragging_signal.map_bool_signal(|| primary_7(), || primary_6())))
         .s(Cursor::new(CursorIcon::ColumnResize))
         .s(Padding::all(0))
-        .on_pointer_down({
-            let app_config = app_config.clone();
+        .on_pointer_down_event({
             let dragging_system = dragging_system.clone();
-            move || {
-                start_drag(&dragging_system, DividerType::FilesPanelMain, (0.0, 0.0));
+            move |event: PointerEvent| {
+                let raw_pointer_down = match &event.raw_event {
+                    RawPointerEvent::PointerDown(raw_event) => raw_event,
+                    _ => return,
+                };
+
+                if raw_pointer_down.button() != events::MouseButton::Left {
+                    return;
+                }
+
+                raw_pointer_down.prevent_default();
+
+                start_drag(
+                    &dragging_system,
+                    DividerType::FilesPanelMain,
+                    (event.x() as f32, event.y() as f32),
+                );
             }
         })
 }
 
 /// Horizontal divider for files panel secondary section
 pub fn files_panel_horizontal_divider(
-    app_config: &crate::config::AppConfig,
+    _app_config: &crate::config::AppConfig,
     dragging_system: crate::dragging::DraggingSystem,
 ) -> impl Element {
-    use crate::dragging::{DividerType, is_divider_dragging, start_drag};
+    use crate::dragging::{DividerType, start_drag};
 
     // Use static appearance for now - dragging state will be handled at application level
     let is_dragging_signal = zoon::always(false);
@@ -160,14 +195,24 @@ pub fn files_panel_horizontal_divider(
         .s(Background::new()
             .color_signal(is_dragging_signal.map_bool_signal(|| primary_7(), || primary_6())))
         .s(Cursor::new(CursorIcon::RowResize))
-        .on_pointer_down({
-            let app_config = app_config.clone();
+        .on_pointer_down_event({
             let dragging_system = dragging_system.clone();
-            move || {
+            move |event: PointerEvent| {
+                let raw_pointer_down = match &event.raw_event {
+                    RawPointerEvent::PointerDown(raw_event) => raw_event,
+                    _ => return,
+                };
+
+                if raw_pointer_down.button() != events::MouseButton::Left {
+                    return;
+                }
+
+                raw_pointer_down.prevent_default();
+
                 start_drag(
                     &dragging_system,
                     DividerType::FilesPanelSecondary,
-                    (0.0, 0.0),
+                    (event.x() as f32, event.y() as f32),
                 );
             }
         })

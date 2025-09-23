@@ -20,3 +20,6 @@ Use rustfmt defaults (`cargo fmt --all`), keep modules snake_case and exported t
 
 ## Commit & Pull Request Guidelines
 Commits are brief sentence-case summaries (`Implement dock-responsive panel layout`). Explain non-obvious choices in the body and link specs or issues. Pull requests should cover user impact, note completed checks (`cargo fmt`, `cargo clippy`, `cargo test --workspace`), and attach screenshots or GIFs for UI differences.
+
+## Agent Notes
+- When the user asks to "create todos", log them in the Codex CLI todo tool instead of modifying repository files (e.g., avoid writing TODOs into `.novywave`).

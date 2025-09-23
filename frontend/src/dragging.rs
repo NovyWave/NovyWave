@@ -7,6 +7,16 @@ use futures::{StreamExt, select};
 use shared::DockMode;
 use zoon::*;
 
+// Panel sizing constraints (keep layout usable while permitting generous resizing)
+const MIN_FILES_PANEL_WIDTH_RIGHT: f32 = 240.0;
+const MAX_FILES_PANEL_WIDTH_RIGHT: f32 = 1200.0;
+const MIN_FILES_PANEL_WIDTH_BOTTOM: f32 = 240.0;
+const MAX_FILES_PANEL_WIDTH_BOTTOM: f32 = 1600.0;
+
+const MIN_FILES_PANEL_HEIGHT_RIGHT: f32 = 220.0;
+const MIN_FILES_PANEL_HEIGHT_BOTTOM: f32 = 220.0;
+const MAX_FILES_PANEL_HEIGHT: f32 = 900.0;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum DividerType {
     FilesPanelMain,
@@ -161,13 +171,31 @@ impl DraggingSystem {
                         if let Some(ref divider_type) = current_drag_state.active_divider {
                             let (delta, new_value) = match divider_type {
                                 DividerType::FilesPanelMain => {
-                                    let delta_x = current_position.0 - current_drag_state.drag_start_position.0;
-                                    let new_width = (current_drag_state.initial_value + delta_x).clamp(200.0, 600.0);
+                                    let delta_x =
+                                        current_position.0 - current_drag_state.drag_start_position.0;
+                                    let unclamped_width = current_drag_state.initial_value + delta_x;
+                                    let (min_width, max_width) = match cached_dock_mode {
+                                        DockMode::Right => (
+                                            MIN_FILES_PANEL_WIDTH_RIGHT,
+                                            MAX_FILES_PANEL_WIDTH_RIGHT,
+                                        ),
+                                        DockMode::Bottom => (
+                                            MIN_FILES_PANEL_WIDTH_BOTTOM,
+                                            MAX_FILES_PANEL_WIDTH_BOTTOM,
+                                        ),
+                                    };
+                                    let new_width = unclamped_width.clamp(min_width, max_width);
                                     (delta_x, new_width)
                                 }
                                 DividerType::FilesPanelSecondary => {
-                                    let delta_y = current_position.1 - current_drag_state.drag_start_position.1;
-                                    let new_height = (current_drag_state.initial_value + delta_y).clamp(150.0, 530.0);
+                                    let delta_y =
+                                        current_position.1 - current_drag_state.drag_start_position.1;
+                                    let unclamped_height = current_drag_state.initial_value + delta_y;
+                                    let min_height = match cached_dock_mode {
+                                        DockMode::Right => MIN_FILES_PANEL_HEIGHT_RIGHT,
+                                        DockMode::Bottom => MIN_FILES_PANEL_HEIGHT_BOTTOM,
+                                    };
+                                    let new_height = unclamped_height.clamp(min_height, MAX_FILES_PANEL_HEIGHT);
                                     (delta_y, new_height)
                                 }
                                 DividerType::VariablesNameColumn => {
@@ -232,22 +260,27 @@ impl DraggingSystem {
     }
 
     /// Check if any divider is currently being dragged
-    pub fn is_any_divider_dragging(&self) -> impl Signal<Item = bool> {
+    pub fn is_any_divider_dragging(&self) -> impl Signal<Item = bool> + 'static {
         self.drag_state_actor
-            .signal_ref(|state| state.active_divider.is_some())
+            .signal()
+            .map(|state| state.active_divider.is_some())
     }
 
     /// Check if a specific divider type is being dragged
-    pub fn is_divider_dragging(&self, divider_type: DividerType) -> impl Signal<Item = bool> {
-        self.drag_state_actor.signal_ref(move |state| {
+    pub fn is_divider_dragging(
+        &self,
+        divider_type: DividerType,
+    ) -> impl Signal<Item = bool> + 'static {
+        self.drag_state_actor.signal().map(move |state| {
             matches!(state.active_divider, Some(ref active_type) if *active_type == divider_type)
         })
     }
 
     /// Get the currently active divider type
-    pub fn active_divider_type_signal(&self) -> impl Signal<Item = Option<DividerType>> {
+    pub fn active_divider_type_signal(&self) -> impl Signal<Item = Option<DividerType>> + 'static {
         self.drag_state_actor
-            .signal_ref(|state| state.active_divider)
+            .signal()
+            .map(|state| state.active_divider)
     }
 }
 
@@ -263,6 +296,20 @@ pub fn files_panel_height_signal(app_config: crate::config::AppConfig) -> impl S
             match dock_mode {
                 DockMode::Right => *right_height,
                 DockMode::Bottom => *bottom_height,
+            }
+        }
+    }
+}
+
+/// Get files panel width signal for current dock mode
+pub fn files_panel_width_signal(app_config: crate::config::AppConfig) -> impl Signal<Item = f32> {
+    map_ref! {
+        let dock_mode = app_config.dock_mode_actor.signal(),
+        let right_width = app_config.files_panel_width_right_actor.signal(),
+        let bottom_width = app_config.files_panel_width_bottom_actor.signal() => {
+            match dock_mode {
+                DockMode::Right => *right_width,
+                DockMode::Bottom => *bottom_width,
             }
         }
     }

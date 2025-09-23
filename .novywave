@@ -13,7 +13,7 @@ opened_files = [
     "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst",
     "/home/martinkavik/repos/NovyWave/test_files/simple.vcd",
 ]
-dock_mode = "right"
+dock_mode = "bottom"
 expanded_scopes = []
 load_files_expanded_directories = [
     "/home",
