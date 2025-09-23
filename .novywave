@@ -14,10 +14,7 @@ opened_files = [
     "/home/martinkavik/repos/NovyWave/test_files/simple.vcd",
 ]
 dock_mode = "right"
-expanded_scopes = [
-    "/home/martinkavik/repos/NovyWave/test_files/simple.vcd",
-    "scope_/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb",
-]
+expanded_scopes = []
 load_files_expanded_directories = [
     "/home",
     "/home/martinkavik",

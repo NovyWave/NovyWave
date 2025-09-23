@@ -312,6 +312,7 @@ pub fn selected_variables_with_waveform_panel(
                                             .items_signal_vec({
                                                 let selected_variables_for_values = selected_variables.clone();
                                                 let waveform_timeline_for_values = waveform_timeline.clone();
+                                                let app_config_for_values = app_config.clone();
                                                 selected_variables_for_values.variables.signal_vec().map(move |selected_var| {
                                                     El::new()
                                                         .s(Height::exact(SELECTED_VARIABLES_ROW_HEIGHT))
@@ -321,7 +322,8 @@ pub fn selected_variables_with_waveform_panel(
                                                                 &selected_var.unique_id,
                                                                 selected_var.formatter.unwrap_or(VarFormat::Hexadecimal),
                                                                 &selected_variables_for_values,
-                                                                &waveform_timeline_for_values
+                                                                &waveform_timeline_for_values,
+                                                                app_config_for_values.clone()
                                                             )
                                                         )
                                                 })

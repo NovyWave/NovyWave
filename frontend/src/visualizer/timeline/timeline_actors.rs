@@ -204,6 +204,24 @@ impl WaveformTimeline {
         &self.zoom_controller.ns_per_pixel
     }
 
+    /// Reactive access to a specific signal value keyed by unique variable id
+    pub fn signal_value_signal(
+        &self,
+        unique_id: &str,
+    ) -> impl zoon::Signal<Item = Option<SignalValue>> + 'static {
+        let key = unique_id.to_string();
+        self.signal_values.value_signal(key)
+    }
+
+    /// Reactive access to the last known formatter selection for a variable
+    pub fn variable_format_signal(
+        &self,
+        unique_id: &str,
+    ) -> impl zoon::Signal<Item = Option<VarFormat>> + 'static {
+        let key = unique_id.to_string();
+        self.variable_formats.value_signal(key)
+    }
+
     /// Access to viewport signal
     pub fn viewport_signal(&self) -> impl zoon::Signal<Item = Viewport> {
         self.viewport.signal()

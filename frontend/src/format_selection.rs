@@ -1,9 +1,49 @@
+use crate::dataflow::Atom;
+use moonzoon_novyui::components::icon::{IconColor, IconName, IconSize, icon};
 use moonzoon_novyui::tokens::color::{
-    neutral_1, neutral_3, neutral_4, neutral_6, neutral_8, neutral_11, primary_6, primary_8,
+    neutral_1, neutral_2, neutral_3, neutral_4, neutral_6, neutral_8, neutral_11, primary_6,
+    primary_8,
 };
 use moonzoon_novyui::*;
-use shared::{VarFormat, truncate_value};
+use shared::{SignalValue, VarFormat, truncate_value};
+use zoon::events::{Click, KeyDown, PointerDown};
+use zoon::map_ref;
 use zoon::*;
+
+const COLLAPSED_VALUE_MAX_CHARS: usize = 32;
+const DROPDOWN_VALUE_MAX_CHARS: usize = 56;
+
+fn sanitize_dom_id(input: &str) -> String {
+    input
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect()
+}
+
+fn format_ui_label(format: VarFormat) -> &'static str {
+    match format {
+        VarFormat::ASCII => "Text",
+        VarFormat::Binary => "Bin",
+        VarFormat::BinaryWithGroups => "Bins",
+        VarFormat::Hexadecimal => "Hex",
+        VarFormat::Octal => "Oct",
+        VarFormat::Signed => "Int",
+        VarFormat::Unsigned => "UInt",
+    }
+}
+
+fn sanitize_tooltip_text(value: &str) -> String {
+    let filtered: String = value
+        .chars()
+        .filter(|&c| c == ' ' || c == '\n' || (c.is_ascii() && c.is_ascii_graphic()))
+        .collect();
+    let trimmed = filtered.trim();
+    if trimmed.is_empty() {
+        value.trim().to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
 
 /// Format options for dropdown - contains value and disabled state
 #[derive(Debug, Clone)]
@@ -36,65 +76,240 @@ pub fn create_format_dropdown(
     current_format: VarFormat,
     selected_variables: &crate::selected_variables::SelectedVariables,
     waveform_timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline,
+    app_config: crate::config::AppConfig,
 ) -> impl Element {
     let unique_id = variable_unique_id.to_string();
-    let format_options = vec![
-        (VarFormat::Binary, "Bin"),
-        (VarFormat::Hexadecimal, "Hex"),
-        (VarFormat::Octal, "Oct"),
-        (VarFormat::Signed, "Signed"),
-        (VarFormat::Unsigned, "Unsigned"),
-        (VarFormat::ASCII, "ASCII"),
-    ];
+    let trigger_id = format!("format-dropdown-trigger-{}", sanitize_dom_id(&unique_id));
 
-    El::new()
-        .s(Width::fill())
-        .s(Height::fill())
-        .s(Align::center())
-        .child(
-            Row::new()
-                .s(Gap::new().x(4))
-                .items(format_options.into_iter().map(|(format, label)| {
-                    let is_current = format == current_format;
-                    let unique_id_clone = unique_id.clone();
-                    let selected_variables_clone = selected_variables.clone();
-                    let waveform_timeline_clone = waveform_timeline.clone();
+    let is_open = Atom::new(false);
+    let latest_value = Atom::new(SignalValue::Loading);
+    let app_config_for_copy = app_config.clone();
 
-                    El::new()
-                        .s(Background::new().color_signal(if is_current {
-                            primary_6().boxed_local()
-                        } else {
-                            neutral_3().boxed_local()
-                        }))
-                        .s(Borders::all_signal(
-                            (if is_current {
-                                primary_8().boxed_local()
-                            } else {
-                                neutral_6().boxed_local()
+    let toggle_open = {
+        let is_open = is_open.clone();
+        move || {
+            let currently_open = is_open.get_cloned();
+            is_open.set(!currently_open);
+        }
+    };
+
+    let chevron_icon = El::new().child_signal(is_open.signal().map(|open| {
+        if open {
+            icon(IconName::ChevronUp)
+                .size(IconSize::Small)
+                .color(IconColor::Primary)
+                .build()
+                .unify()
+        } else {
+            icon(IconName::ChevronDown)
+                .size(IconSize::Small)
+                .color(IconColor::Primary)
+                .build()
+                .unify()
+        }
+    }));
+
+    let copy_button = button()
+        .variant(ButtonVariant::Ghost)
+        .size(ButtonSize::Small)
+        .left_icon(IconName::Copy)
+        .custom_padding(4, 4)
+        .on_press({
+            let latest_value = latest_value.clone();
+            let app_config = app_config_for_copy.clone();
+            move || {
+                let value = latest_value.get_cloned();
+                let formatted = value.get_formatted(&current_format);
+                crate::clipboard::copy_variable_value(&formatted, &app_config);
+            }
+        })
+        .build()
+        .into_element();
+
+    let toggle_open = {
+        let is_open = is_open.clone();
+        move || {
+            let currently_open = is_open.get_cloned();
+            is_open.set(!currently_open);
+        }
+    };
+
+    let dropdown_options_signal = map_ref! {
+        let open = is_open.signal(),
+        let value = waveform_timeline.signal_value_signal(&unique_id) => {
+            if !*open {
+                None
+            } else {
+                Some(value.clone().unwrap_or(SignalValue::Loading))
+            }
+        }
+    };
+
+    let selected_variables_shared = selected_variables.clone();
+    let waveform_timeline_shared = waveform_timeline.clone();
+
+    let overlay_signal = {
+        let is_open_for_signal = is_open.clone();
+        is_open.signal().map(move |open| {
+            if open {
+                let is_open_for_handlers = is_open_for_signal.clone();
+                El::new()
+                    .update_raw_el(|raw_el| {
+                        raw_el
+                            .style("position", "fixed")
+                            .style("inset", "0")
+                            .style("z-index", "9998")
+                            .style("background-color", "rgba(0,0,0,0)")
+                    })
+                    .on_pointer_down({
+                        let is_open = is_open_for_handlers.clone();
+                        move || {
+                            is_open.set(false);
+                        }
+                    })
+                    .update_raw_el({
+                        let is_open = is_open_for_handlers.clone();
+                        move |raw_el| {
+                            raw_el.global_event_handler(move |event: KeyDown| {
+                                if event.key() == "Escape" {
+                                    is_open.set(false);
+                                }
                             })
-                            .map(|color| Border::new().width(1).color(color)),
+                        }
+                    })
+            } else {
+                El::new()
+            }
+        })
+    };
+
+    Column::new()
+        .s(Width::fill())
+        .item(El::new().child_signal(overlay_signal.map(|overlay| overlay.unify())))
+        .item(
+            El::new()
+                .s(Width::fill())
+                .s(Height::fill())
+                .s(Background::new().color_signal(
+                    is_open
+                        .signal()
+                        .map_bool_signal(|| neutral_3(), || neutral_2()),
+                ))
+                .s(Borders::all_signal(
+                    is_open
+                        .signal()
+                        .map_bool_signal(|| primary_6(), || neutral_4())
+                        .map(|color| Border::new().width(1).color(color)),
+                ))
+                .s(RoundedCorners::all(4))
+                .s(Cursor::new(CursorIcon::Pointer))
+                .update_raw_el({
+                    let trigger_id = trigger_id.clone();
+                    move |raw_el| {
+                        raw_el
+                            .attr("id", &trigger_id)
+                            .style("position", "relative")
+                            .style("z-index", "10000")
+                    }
+                })
+                .on_click(toggle_open)
+                .child(
+                    Row::new()
+                        .s(Width::fill())
+                        .s(Height::fill())
+                        .s(Align::new().center_y())
+                        .s(Padding::new().x(SPACING_8))
+                        .s(Gap::new().x(SPACING_8))
+                        .item(El::new().s(Width::growable()).child_signal(
+                            waveform_timeline.signal_value_signal(&unique_id).map({
+                                let latest_value = latest_value.clone();
+                                move |maybe_value| {
+                                    let signal_value = maybe_value.unwrap_or(SignalValue::Loading);
+                                    latest_value.set(signal_value.clone());
+
+                                    let formatted = signal_value.get_formatted(&current_format);
+                                    let truncated =
+                                        truncate_value(&formatted, COLLAPSED_VALUE_MAX_CHARS);
+                                    let filtered_full = sanitize_tooltip_text(&formatted);
+                                    let display = if truncated.trim().is_empty() {
+                                        "-".to_string()
+                                    } else {
+                                        truncated
+                                    };
+                                    let is_placeholder = matches!(
+                                        signal_value,
+                                        SignalValue::Loading | SignalValue::Missing,
+                                    ) || display.trim() == "-";
+
+                                    El::new()
+                                        .s(Font::new().no_wrap().color_signal(
+                                            always(is_placeholder)
+                                                .map_bool_signal(|| neutral_8(), || neutral_11()),
+                                        ))
+                                        .update_raw_el(move |raw_el| {
+                                            if !filtered_full.is_empty() {
+                                                raw_el.attr("title", &filtered_full)
+                                            } else {
+                                                raw_el
+                                            }
+                                        })
+                                        .child(Text::new(display))
+                                        .unify()
+                                }
+                            }),
                         ))
-                        .s(Padding::new().x(6).y(2))
-                        .s(RoundedCorners::all(4))
-                        .s(Font::new().size(11).color_signal(if is_current {
-                            neutral_1().boxed_local()
-                        } else {
-                            neutral_11().boxed_local()
+                        .item(El::new().child(copy_button).update_raw_el(|raw_el| {
+                            raw_el
+                                .event_handler(|event: PointerDown| {
+                                    event.stop_propagation();
+                                })
+                                .event_handler(|event: Click| {
+                                    event.stop_propagation();
+                                })
+                                .attr("title", "Copy value to clipboard")
                         }))
-                        .s(Cursor::new(CursorIcon::Pointer))
-                        .on_click(move || {
-                            if !is_current {
-                                update_variable_format(
-                                    &unique_id_clone,
-                                    format,
-                                    &selected_variables_clone,
-                                    &waveform_timeline_clone,
-                                );
-                            }
-                        })
-                        .child(Text::new(label))
-                })),
+                        .item(
+                            El::new()
+                                .s(Font::new().size(11).color_signal(neutral_8()))
+                                .s(Align::new().right())
+                                .child(format_ui_label(current_format)),
+                        )
+                        .item(chevron_icon),
+                ),
         )
+        .item(El::new().child_signal(dropdown_options_signal.map({
+            let selected_variables = selected_variables.clone();
+            let waveform_timeline = waveform_timeline.clone();
+            let trigger_id = trigger_id.clone();
+            let is_open = is_open.clone();
+            let unique_id_outer = unique_id.clone();
+            move |maybe_signal_value| {
+                let selected_variables_for_map = selected_variables.clone();
+                let unique_id_for_map = unique_id_outer.clone();
+                let trigger_id_for_map = trigger_id.clone();
+                let waveform_timeline_for_map = waveform_timeline.clone();
+                let is_open_for_map = is_open.clone();
+                maybe_signal_value.map(move |signal_value| {
+                    let selected_variables = selected_variables_for_map.clone();
+                    let waveform_timeline = waveform_timeline_for_map.clone();
+                    let options =
+                        generate_ui_dropdown_options(&signal_value, "", DROPDOWN_VALUE_MAX_CHARS);
+                    let unique_id_for_call = unique_id_for_map.clone();
+                    let trigger_id_for_call = trigger_id_for_map.clone();
+                    let is_open_for_call = is_open_for_map.clone();
+                    create_smart_dropdown(
+                        options,
+                        current_format,
+                        selected_variables,
+                        waveform_timeline,
+                        is_open_for_call,
+                        trigger_id_for_call,
+                        unique_id_for_call,
+                    )
+                    .into_element()
+                })
+            }
+        })))
 }
 
 /// Generate dropdown options for UI from shared SignalValue
@@ -141,11 +356,12 @@ pub fn generate_ui_dropdown_options(
 /// Create a smart dropdown with viewport edge detection using web-sys APIs
 pub fn create_smart_dropdown(
     dropdown_options: Vec<DropdownFormatOption>,
-    format_actor: crate::dataflow::Actor<shared::VarFormat>,
-    is_open: zoon::Mutable<bool>,
+    current_format: VarFormat,
+    selected_variables: crate::selected_variables::SelectedVariables,
+    waveform_timeline: crate::visualizer::timeline::timeline_actor::WaveformTimeline,
+    is_open: Atom<bool>,
     trigger_id: String,
     unique_id: String,
-    selected_variables: &crate::selected_variables::SelectedVariables,
 ) -> impl Element {
     use wasm_bindgen::JsCast;
     use web_sys::{HtmlElement, window};
@@ -163,6 +379,8 @@ pub fn create_smart_dropdown(
     let dynamic_dropdown_height = (calculated_height.min(max_dropdown_height)).ceil();
 
     let dropdown_id = format!("smart-dropdown-{}", js_sys::Date::now() as u64);
+    let selected_variables_shared = selected_variables.clone();
+    let waveform_timeline_shared = waveform_timeline.clone();
 
     Column::new()
         .s(Transform::new().move_down(0))
@@ -208,7 +426,8 @@ pub fn create_smart_dropdown(
 
                                 let trigger_rect = trigger_element.get_bounding_client_rect();
                                 const MIN_DROPDOWN_WIDTH: f64 = 200.0; // Matches CSS min-width
-                                let dropdown_width = MIN_DROPDOWN_WIDTH;
+                                let trigger_width = trigger_rect.width();
+                                let dropdown_width = trigger_width.max(MIN_DROPDOWN_WIDTH);
                                 let dropdown_height = dynamic_dropdown_height; // Use the calculated height
 
                                 let mut x = trigger_rect.left();
@@ -236,6 +455,8 @@ pub fn create_smart_dropdown(
                                     y = 8.0;
                                 }
 
+                                let _ =
+                                    style.set_property("width", &format!("{}px", dropdown_width));
                                 let _ = style.set_property("left", &format!("{}px", x));
                                 let _ = style.set_property("top", &format!("{}px", y));
                             }
@@ -249,16 +470,21 @@ pub fn create_smart_dropdown(
         .items(
             dropdown_options
                 .iter()
-                .map(|option| {
-                    let option_format = format!("{:?}", option.format);
+                .map(move |option| {
                     let option_display = option.display_text.clone();
                     let option_full_text = option.full_text.clone();
                     let option_disabled = option.disabled;
+                    let is_selected = option.format == current_format;
+                    let selected_variables = selected_variables_shared.clone();
+                    let waveform_timeline = waveform_timeline_shared.clone();
 
                     El::new()
                         .s(Width::fill())
                         .s(Height::exact(28))
                         .s(Padding::new().x(SPACING_12).y(SPACING_6))
+                        .s(Background::new().color_signal(
+                            always(is_selected).map_bool_signal(|| primary_6(), || neutral_1()),
+                        ))
                         .s(Cursor::new(if option_disabled {
                             CursorIcon::NotAllowed
                         } else {
@@ -309,12 +535,7 @@ pub fn create_smart_dropdown(
                                 raw_el
                             }
                         })
-                        .s(Font::new()
-                            .color_signal(
-                                always(option_disabled)
-                                    .map_bool_signal(|| neutral_4(), || neutral_8()),
-                            )
-                            .size(12))
+                        .s(Font::new().size(12))
                         .child(
                             Row::new()
                                 .s(Width::fill())
@@ -322,12 +543,16 @@ pub fn create_smart_dropdown(
                                 .item(
                                     El::new()
                                         .s(Font::new()
-                                            .color_signal(
-                                                always(option_disabled).map_bool_signal(
-                                                    || neutral_4(),
-                                                    || neutral_11(),
-                                                ),
-                                            )
+                                            .color_signal(always(option_disabled).map_bool_signal(
+                                                || neutral_4(),
+                                                move || {
+                                                    let is_selected = is_selected;
+                                                    always(is_selected).map_bool_signal(
+                                                        || neutral_1(),
+                                                        || neutral_11(),
+                                                    )
+                                                },
+                                            ))
                                             .size(12)
                                             .line_height(16)
                                             .no_wrap())
@@ -355,8 +580,15 @@ pub fn create_smart_dropdown(
                                                     .color_signal(
                                                         always(filtered_value.trim() == "-")
                                                             .map_bool_signal(
-                                                                || neutral_8(),  // Muted color for placeholder
-                                                                || neutral_11(), // Normal color for real values
+                                                                || neutral_8(),
+                                                                move || {
+                                                                    let is_selected = is_selected;
+                                                                    always(is_selected)
+                                                                        .map_bool_signal(
+                                                                            || neutral_1(),
+                                                                            || neutral_11(),
+                                                                        )
+                                                                },
                                                             ),
                                                     )
                                                     .no_wrap())
@@ -367,48 +599,46 @@ pub fn create_smart_dropdown(
                                 .item(
                                     El::new()
                                         .s(Font::new()
-                                            .color_signal(
-                                                always(option_disabled).map_bool_signal(
-                                                    || neutral_4(),
-                                                    || primary_6(),
-                                                ),
-                                            )
+                                            .color_signal(always(option_disabled).map_bool_signal(
+                                                || neutral_4(),
+                                                move || {
+                                                    let is_selected = is_selected;
+                                                    always(is_selected).map_bool_signal(
+                                                        || neutral_1(),
+                                                        || primary_6(),
+                                                    )
+                                                },
+                                            ))
                                             .size(11)
                                             .line_height(16)
                                             .no_wrap())
                                         .s(Align::new().right())
                                         .child({
                                             let display_text = option.display_text.clone();
-                                            let format_name = if let Some(space_pos) =
-                                                display_text.rfind(' ')
-                                            {
-                                                display_text[space_pos + 1..].to_string()
-                                            } else {
-                                                match option.format {
-                                                    shared::VarFormat::ASCII => "ASCII",
-                                                    shared::VarFormat::Binary => "Bin",
-                                                    shared::VarFormat::BinaryWithGroups => "Bin",
-                                                    shared::VarFormat::Hexadecimal => "Hex",
-                                                    shared::VarFormat::Octal => "Oct",
-                                                    shared::VarFormat::Signed => "Signed",
-                                                    shared::VarFormat::Unsigned => "Unsigned",
-                                                }
-                                                .to_string()
-                                            };
+                                            let format_name =
+                                                if let Some(space_pos) = display_text.rfind(' ') {
+                                                    display_text[space_pos + 1..].to_string()
+                                                } else {
+                                                    format_ui_label(option.format).to_string()
+                                                };
                                             Text::new(&format_name)
                                         }),
                                 ),
                         )
                         .on_click({
-                            let variable_format_changed_relay =
-                                selected_variables.variable_format_changed_relay.clone();
                             let unique_id_for_relay = unique_id.clone();
                             let is_open = is_open.clone();
                             let option_format_enum = option.format; // Use the actual enum, not the string
+                            let selected_variables = selected_variables.clone();
+                            let waveform_timeline = waveform_timeline.clone();
                             move || {
                                 if !option_disabled {
-                                    variable_format_changed_relay
-                                        .send((unique_id_for_relay.clone(), option_format_enum));
+                                    update_variable_format(
+                                        &unique_id_for_relay,
+                                        option_format_enum,
+                                        &selected_variables,
+                                        &waveform_timeline,
+                                    );
                                     is_open.set(false);
                                 }
                             }

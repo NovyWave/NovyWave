@@ -136,6 +136,7 @@ fn selected_variables_panel_content(
                     selected_variables_value_column(
                         selected_variables.clone(),
                         waveform_timeline.clone(),
+                        app_config.clone(),
                         value_column_width_signal,
                     ),
                 )
@@ -365,10 +366,12 @@ fn name_column_footer(
 fn selected_variables_value_column(
     selected_variables: crate::selected_variables::SelectedVariables,
     waveform_timeline: crate::visualizer::timeline::timeline_actor::WaveformTimeline,
+    app_config: crate::config::AppConfig,
     width_signal: impl Signal<Item = f32> + Unpin + 'static,
 ) -> impl Element {
     let selected_variables_for_values = selected_variables.clone();
     let waveform_timeline_for_values = waveform_timeline.clone();
+    let app_config_for_values = app_config.clone();
 
     Column::new()
         .s(Width::exact_signal(width_signal.map(|w| w as u32)))
@@ -385,6 +388,7 @@ fn selected_variables_value_column(
                         selected_var,
                         selected_variables_for_values.clone(),
                         waveform_timeline_for_values.clone(),
+                        app_config_for_values.clone(),
                     )
                 })
         })
@@ -399,6 +403,7 @@ fn value_column_variable_row(
     selected_var: SelectedVariable,
     selected_variables: crate::selected_variables::SelectedVariables,
     waveform_timeline: crate::visualizer::timeline::timeline_actor::WaveformTimeline,
+    app_config: crate::config::AppConfig,
 ) -> impl Element {
     El::new()
         .s(Height::exact(SELECTED_VARIABLES_ROW_HEIGHT))
@@ -408,6 +413,7 @@ fn value_column_variable_row(
             selected_var.formatter.unwrap_or(VarFormat::Hexadecimal),
             &selected_variables,
             &waveform_timeline,
+            app_config,
         ))
 }
 
