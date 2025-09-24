@@ -112,6 +112,7 @@ pub struct WaveformTimeline {
     bounds_state: Mutable<Option<TimelineBounds>>,
     request_debounce: Rc<RefCell<Option<Timeout>>>,
     config_debounce: Rc<RefCell<Option<Timeout>>>,
+    viewport_initialized: Mutable<bool>,
 
     pub left_key_pressed_relay: Relay<()>,
     pub right_key_pressed_relay: Relay<()>,
@@ -172,6 +173,7 @@ impl WaveformTimeline {
         let bounds_state = Mutable::new(None);
         let request_debounce = Rc::new(RefCell::new(None));
         let config_debounce = Rc::new(RefCell::new(None));
+        let viewport_initialized = Mutable::new(false);
 
         let timeline = Self {
             cursor,
@@ -192,6 +194,7 @@ impl WaveformTimeline {
             bounds_state,
             request_debounce,
             config_debounce,
+            viewport_initialized,
             left_key_pressed_relay,
             right_key_pressed_relay,
             zoom_in_pressed_relay,
@@ -843,6 +846,9 @@ impl WaveformTimeline {
                 .state
                 .set(Viewport::new(range.start, range.end));
             self.zoom_center.state.set_neq(range.start);
+            self.viewport_initialized.set(true);
+        } else {
+            self.viewport_initialized.set(false);
         }
 
         if let Some(cursor) = stored_state.cursor_position {
@@ -1074,7 +1080,30 @@ impl WaveformTimeline {
                 if let Some((start, end)) = maybe_range {
                     let bounds = TimelineBounds { start, end };
                     timeline.bounds_state.set(Some(bounds.clone()));
-                    timeline.ensure_viewport_within_bounds();
+
+                    if !timeline.viewport_initialized.get() {
+                        timeline
+                            .viewport
+                            .state
+                            .set(Viewport::new(bounds.start, bounds.end));
+
+                        let start_ns = bounds.start.nanos();
+                        let end_ns = bounds.end.nanos();
+                        let midpoint = if end_ns > start_ns {
+                            start_ns.saturating_add((end_ns - start_ns) / 2)
+                        } else {
+                            start_ns
+                        };
+
+                        timeline.cursor.state.set_neq(TimeNs::from_nanos(midpoint));
+                        timeline.zoom_center.state.set_neq(bounds.start);
+                        timeline.viewport_initialized.set(true);
+                        timeline.update_render_state();
+                        timeline.schedule_request();
+                        timeline.schedule_config_save();
+                    } else {
+                        timeline.ensure_viewport_within_bounds();
+                    }
                 } else {
                     timeline.bounds_state.set(None);
                     timeline.viewport.state.set(Viewport::new(
@@ -1082,7 +1111,9 @@ impl WaveformTimeline {
                         TimeNs::from_nanos(1_000_000_000),
                     ));
                     timeline.update_render_state();
+                    timeline.schedule_request();
                     timeline.schedule_config_save();
+                    timeline.viewport_initialized.set(false);
                 }
             }
         });

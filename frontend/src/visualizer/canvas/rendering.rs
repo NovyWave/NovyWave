@@ -399,14 +399,15 @@ impl WaveformRenderer {
         }
 
         let total_rows = params.variables.len() + 1;
-        let available_height = (params.canvas_height as f32 - 5.0).max(1.0);
+        let available_height = params.canvas_height as f32;
         let row_height = available_height / total_rows.max(1) as f32;
         let timeline_y = (total_rows - 1) as f32 * row_height;
+        let timeline_height = (params.canvas_height as f32 - timeline_y).max(1.0);
 
         objects.push(
             Rectangle::new()
                 .position(0.0, timeline_y)
-                .size(params.canvas_width as f32, row_height)
+                .size(params.canvas_width as f32, timeline_height)
                 .color(
                     theme_colors.neutral_2.0,
                     theme_colors.neutral_2.1,
@@ -469,7 +470,7 @@ impl WaveformRenderer {
                     Text::new()
                         .text(label)
                         .position(x - 10.0, timeline_y + 15.0)
-                        .size(50.0, row_height - 15.0)
+                        .size(50.0, timeline_height - 15.0)
                         .color(
                             theme_colors.neutral_12.0,
                             theme_colors.neutral_12.1,
@@ -511,7 +512,7 @@ impl WaveformRenderer {
                     params.canvas_width as f32 - label_width - 5.0,
                     timeline_y + 15.0,
                 )
-                .size(label_width, row_height - 15.0)
+                .size(label_width, timeline_height - 15.0)
                 .color(
                     theme_colors.neutral_12.0,
                     theme_colors.neutral_12.1,
