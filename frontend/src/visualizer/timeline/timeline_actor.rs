@@ -414,20 +414,29 @@ impl WaveformTimeline {
     fn reset_zoom(&self) {
         if let Some(bounds) = self.bounds() {
             self.set_viewport_clamped(bounds.start, bounds.end);
+            let start = bounds.start.nanos();
+            let end = bounds.end.nanos();
+            if end > start {
+                let midpoint = start.saturating_add((end - start) / 2);
+                self.cursor.state.set_neq(TimeNs::from_nanos(midpoint));
+            } else {
+                self.cursor.state.set_neq(bounds.start);
+            }
         } else {
             self.viewport.state.set(Viewport::new(
                 TimeNs::ZERO,
                 TimeNs::from_nanos(1_000_000_000),
             ));
+            self.cursor.state.set_neq(TimeNs::from_nanos(500_000_000));
         }
+        self.set_zoom_center(TimeNs::ZERO);
         self.update_render_state();
         self.schedule_request();
         self.schedule_config_save();
     }
 
     fn reset_zoom_center(&self) {
-        self.zoom_center.state.set_neq(TimeNs::ZERO);
-        self.update_render_state();
+        self.set_zoom_center(TimeNs::ZERO);
     }
 
     fn set_zoom_center(&self, time: TimeNs) {

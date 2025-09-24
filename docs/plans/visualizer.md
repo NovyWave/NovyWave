@@ -74,12 +74,17 @@
 - [ ] Handle mixed file spans (non-zero starts) so reset zoom/view centers align with earliest actual data.
 
 ### Canvas & Rendering
-- [ ] Bind Fast2D canvas in `after_insert` (`fast2d::CanvasWrapper::from_element`) and update renderer when element resizes.
-- [ ] Drive canvas width/height from actual layout (use raw element `client_width`/`client_height` signals or columns widths from dragging system).
+- [x] Bind Fast2D canvas in `after_insert` (`fast2d::CanvasWrapper::from_element`) and update renderer when element resizes.
+- [x] Drive canvas width/height from actual layout (use raw element `client_width`/`client_height` signals or columns widths from dragging system).
 - [ ] Add dashed purple zoom-center line, maintain yellow cursor line thickness across DPI.
 - [ ] Refine tick generator to include edges, dynamic spacing, and collision avoidance with end labels.
 - [ ] Map special states (Z, X, U, N/A) to spec colors and attach tooltip metadata via overlay relays if needed.
 - [ ] Ensure render runs only once per state change (remove duplicate synchronous build vs actor loop).
+
+### Timeline Interaction Fixes
+- [x] Anchor pointer-to-time conversion to the canvas bounding box so mouse X → timeline mapping stays accurate regardless of preceding columns.
+- [x] Stretch waveform canvas rendering to fill full height (no residual gap beneath timeline decorations).
+- [x] Reset command (`R`) should also recenter the cursor and reset zoom center to 0, alongside viewport reset.
 
 ### UI Panels & Controls
 - [ ] Wire cursor value display in value column to timeline-provided `cursor_values_actor` (show Loading/Missing states explicitly).
@@ -105,4 +110,3 @@
 - Need guidance on caching strategy (per-variable window vs shared global) to avoid over-fetch; may require coordination with backend owners.
 - Fast2D text rendering under heavy row counts could stutter—may need batching or glyph caching follow-up.
 - `cargo test --workspace` currently fails (missing frontend harness). Decide whether to patch tests or document skip rationale for this sprint.
-

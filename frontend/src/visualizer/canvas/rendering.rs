@@ -202,7 +202,7 @@ impl WaveformRenderer {
         }
 
         let total_rows = params.variables.len() + 1;
-        let available_height = (params.canvas_height as f32 - 5.0).max(1.0);
+        let available_height = params.canvas_height as f32;
         let row_height = available_height / total_rows.max(1) as f32;
 
         for (index, variable) in params.variables.iter().enumerate() {

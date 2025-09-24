@@ -5,7 +5,6 @@ use crate::visualizer::timeline::timeline_actor::{TimelineRenderState, WaveformT
 use futures::{select, stream::StreamExt};
 use moonzoon_novyui::tokens::theme::Theme as NovyUITheme;
 use shared::Theme;
-use wasm_bindgen::JsCast;
 use web_sys::HtmlCanvasElement;
 use zoon::events::{PointerDown, PointerLeave, PointerMove};
 use zoon::*;
@@ -270,7 +269,7 @@ pub fn waveform_canvas(
                         move |event: PointerDown| {
                             if let Some(state) = render_state_store_click.get_cloned() {
                                 let width = state.canvas_width_px.max(1) as f32;
-                                let normalized = (event.x() as f32 / width).clamp(0.0, 1.0);
+                                let normalized = (event.offset_x() as f32 / width).clamp(0.0, 1.0);
                                 let span = state
                                     .viewport_end
                                     .duration_since(state.viewport_start)
@@ -290,7 +289,7 @@ pub fn waveform_canvas(
                         move |event: PointerMove| {
                             if let Some(state) = render_state_store_move.get_cloned() {
                                 let width = state.canvas_width_px.max(1) as f32;
-                                let normalized = (event.x() as f32 / width).clamp(0.0, 1.0);
+                                let normalized = (event.offset_x() as f32 / width).clamp(0.0, 1.0);
                                 let span = state
                                     .viewport_end
                                     .duration_since(state.viewport_start)
