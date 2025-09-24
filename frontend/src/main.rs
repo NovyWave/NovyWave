@@ -47,26 +47,24 @@ pub fn main_layout(
     };
     use moonzoon_novyui::*;
 
-    El::new()
-        .s(Width::fill())
-        .s(Height::fill())
-        .child_signal(app_config.dock_mode_actor.signal().map({
-        let tracked_files = tracked_files.clone();
-        let selected_variables = selected_variables.clone();
-        let waveform_timeline = waveform_timeline.clone();
-        let app_config = app_config.clone();
-        let dragging_system = dragging_system.clone();
-        let waveform_canvas = waveform_canvas.clone();
-        let file_dialog_visible = file_dialog_visible.clone();
+    El::new().s(Width::fill()).s(Height::fill()).child_signal(
+        app_config.dock_mode_actor.signal().map({
+            let tracked_files = tracked_files.clone();
+            let selected_variables = selected_variables.clone();
+            let waveform_timeline = waveform_timeline.clone();
+            let app_config = app_config.clone();
+            let dragging_system = dragging_system.clone();
+            let waveform_canvas = waveform_canvas.clone();
+            let file_dialog_visible = file_dialog_visible.clone();
 
-        move |dock_mode| {
-            match dock_mode {
-                // Default layout: Files & Variables (top row), Selected Variables (bottom)
-                shared::DockMode::Bottom => {
-                    let top_section_height_signal =
-                        crate::dragging::files_panel_height_signal(app_config.clone());
+            move |dock_mode| {
+                match dock_mode {
+                    // Default layout: Files & Variables (top row), Selected Variables (bottom)
+                    shared::DockMode::Bottom => {
+                        let top_section_height_signal =
+                            crate::dragging::files_panel_height_signal(app_config.clone());
 
-                    El::new().s(Width::fill()).s(Height::fill()).child(
+                        El::new().s(Width::fill()).s(Height::fill()).child(
                         Column::new()
                             .s(Width::fill())
                             .s(Height::fill())
@@ -130,73 +128,80 @@ pub fn main_layout(
                                 ),
                             )),
                     )
-                }
+                    }
 
-                // Right dock layout: Files over Variables (left), Selected Variables (right)
-                shared::DockMode::Right => El::new().s(Width::fill()).s(Height::fill()).child(
-                    Row::new()
-                        .s(Width::fill())
-                        .s(Height::fill())
-                        .item(
-                            El::new()
-                                .s(Height::fill())
-                                .s(Width::exact_signal(
-                                    crate::dragging::files_panel_width_signal(app_config.clone())
-                                        .map(|w| w as u32),
-                                ))
-                                .child(
-                                    Column::new()
-                                        .s(Width::fill())
-                                        .s(Height::fill())
-                                        .item(
-                                            El::new()
-                                                .s(Width::fill())
-                                                .s(Height::exact_signal(
-                                                    crate::dragging::files_panel_height_signal(
-                                                        app_config.clone(),
-                                                    )
-                                                    .map(|h| h as u32),
-                                                ))
-                                                .child(files_panel_with_dialog(
-                                                    tracked_files.clone(),
-                                                    selected_variables.clone(),
-                                                    file_dialog_visible.clone(),
-                                                    app_config.clone(),
-                                                )),
+                    // Right dock layout: Files over Variables (left), Selected Variables (right)
+                    shared::DockMode::Right => El::new().s(Width::fill()).s(Height::fill()).child(
+                        Row::new()
+                            .s(Width::fill())
+                            .s(Height::fill())
+                            .item(
+                                El::new()
+                                    .s(Height::fill())
+                                    .s(Width::exact_signal(
+                                        crate::dragging::files_panel_width_signal(
+                                            app_config.clone(),
                                         )
-                                        .item(crate::panel_layout::files_panel_horizontal_divider(
-                                            &app_config,
-                                            dragging_system.clone(),
-                                        ))
-                                        .item(El::new().s(Width::fill()).s(Height::fill()).child(
-                                            variables_panel_with_fill(
-                                                &tracked_files,
-                                                &selected_variables,
-                                                &waveform_timeline,
-                                                &waveform_canvas,
-                                                &app_config,
+                                        .map(|w| w as u32),
+                                    ))
+                                    .child(
+                                        Column::new()
+                                            .s(Width::fill())
+                                            .s(Height::fill())
+                                            .item(
+                                                El::new()
+                                                    .s(Width::fill())
+                                                    .s(Height::exact_signal(
+                                                        crate::dragging::files_panel_height_signal(
+                                                            app_config.clone(),
+                                                        )
+                                                        .map(|h| h as u32),
+                                                    ))
+                                                    .child(files_panel_with_dialog(
+                                                        tracked_files.clone(),
+                                                        selected_variables.clone(),
+                                                        file_dialog_visible.clone(),
+                                                        app_config.clone(),
+                                                    )),
+                                            )
+                                            .item(
+                                                crate::panel_layout::files_panel_horizontal_divider(
+                                                    &app_config,
+                                                    dragging_system.clone(),
+                                                ),
+                                            )
+                                            .item(
+                                                El::new().s(Width::fill()).s(Height::fill()).child(
+                                                    variables_panel_with_fill(
+                                                        &tracked_files,
+                                                        &selected_variables,
+                                                        &waveform_timeline,
+                                                        &waveform_canvas,
+                                                        &app_config,
+                                                    ),
+                                                ),
                                             ),
-                                        )),
-                                ),
-                        )
-                        .item(crate::panel_layout::files_panel_vertical_divider(
-                            &app_config,
-                            dragging_system.clone(),
-                        ))
-                        .item(El::new().s(Width::fill()).s(Height::fill()).child(
-                            crate::selected_variables_panel::selected_variables_panel(
-                                selected_variables.clone(),
-                                waveform_timeline.clone(),
-                                tracked_files.clone(),
-                                app_config.clone(),
+                                    ),
+                            )
+                            .item(crate::panel_layout::files_panel_vertical_divider(
+                                &app_config,
                                 dragging_system.clone(),
-                                waveform_canvas.clone(),
-                            ),
-                        )),
-                ),
+                            ))
+                            .item(El::new().s(Width::fill()).s(Height::fill()).child(
+                                crate::selected_variables_panel::selected_variables_panel(
+                                    selected_variables.clone(),
+                                    waveform_timeline.clone(),
+                                    tracked_files.clone(),
+                                    app_config.clone(),
+                                    dragging_system.clone(),
+                                    waveform_canvas.clone(),
+                                ),
+                            )),
+                    ),
+                }
             }
-        }
-    }))
+        }),
+    )
 }
 
 pub fn main() {

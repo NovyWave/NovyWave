@@ -23,3 +23,4 @@ Commits are brief sentence-case summaries (`Implement dock-responsive panel layo
 
 ## Agent Notes
 - When the user asks to "create todos", log them in the Codex CLI todo tool instead of modifying repository files (e.g., avoid writing TODOs into `.novywave`).
+- Never fully revert or reset ongoing work unless the user explicitly requests and confirms it; prefer incremental corrections that preserve recent changes.

@@ -494,7 +494,38 @@ impl AppConfig {
             session_state_changed_relay.subscribe();
         let (config_save_requested_relay, mut config_save_requested_stream) = relay();
 
-        let config_loaded_flag = zoon::Mutable::new(false);
+        let config_loaded_flag = Mutable::new(false);
+
+        // Track dock mode and per-mode column widths for Selected Variables panel
+        let dock_mode_state = Mutable::new(config.workspace.dock_mode.clone());
+        let name_column_width_bottom_state = Mutable::new(
+            config
+                .workspace
+                .docked_bottom_dimensions
+                .selected_variables_panel_name_column_width
+                .unwrap_or(DEFAULT_NAME_COLUMN_WIDTH as f64) as f32,
+        );
+        let name_column_width_right_state = Mutable::new(
+            config
+                .workspace
+                .docked_right_dimensions
+                .selected_variables_panel_name_column_width
+                .unwrap_or(DEFAULT_NAME_COLUMN_WIDTH as f64) as f32,
+        );
+        let value_column_width_bottom_state = Mutable::new(
+            config
+                .workspace
+                .docked_bottom_dimensions
+                .selected_variables_panel_value_column_width
+                .unwrap_or(DEFAULT_VALUE_COLUMN_WIDTH as f64) as f32,
+        );
+        let value_column_width_right_state = Mutable::new(
+            config
+                .workspace
+                .docked_right_dimensions
+                .selected_variables_panel_value_column_width
+                .unwrap_or(DEFAULT_VALUE_COLUMN_WIDTH as f64) as f32,
+        );
 
         let (clipboard_copy_requested_relay, mut clipboard_copy_requested_stream) =
             relay::<String>();
@@ -554,6 +585,14 @@ impl AppConfig {
             }
         });
 
+        let dock_mode_state_for_actor = dock_mode_state.clone();
+        let name_bottom_state_for_dock = name_column_width_bottom_state.clone();
+        let name_right_state_for_dock = name_column_width_right_state.clone();
+        let value_bottom_state_for_dock = value_column_width_bottom_state.clone();
+        let value_right_state_for_dock = value_column_width_right_state.clone();
+        let name_width_relay_for_dock = name_column_width_changed_relay.clone();
+        let value_width_relay_for_dock = value_column_width_changed_relay.clone();
+
         let dock_mode_actor = Actor::new(config.workspace.dock_mode.clone(), async move |state| {
             let mut current_dock_mode = config.workspace.dock_mode.clone();
 
@@ -566,13 +605,39 @@ impl AppConfig {
                                 DockMode::Bottom => DockMode::Right,
                             };
                             current_dock_mode = new_mode;
-                            state.set(new_mode);
+                            dock_mode_state_for_actor.set(new_mode.clone());
+                            state.set(new_mode.clone());
+
+                            let target_name = match new_mode {
+                                DockMode::Right => name_right_state_for_dock.get_cloned(),
+                                DockMode::Bottom => name_bottom_state_for_dock.get_cloned(),
+                            };
+                            name_width_relay_for_dock.send(target_name);
+
+                            let target_value = match new_mode {
+                                DockMode::Right => value_right_state_for_dock.get_cloned(),
+                                DockMode::Bottom => value_bottom_state_for_dock.get_cloned(),
+                            };
+                            value_width_relay_for_dock.send(target_value);
                         }
                     }
                     direct_change = dock_mode_changed_stream.next() => {
                         if let Some(new_mode) = direct_change {
                             current_dock_mode = new_mode;
-                            state.set(new_mode);
+                            dock_mode_state_for_actor.set(new_mode.clone());
+                            state.set(new_mode.clone());
+
+                            let target_name = match new_mode {
+                                DockMode::Right => name_right_state_for_dock.get_cloned(),
+                                DockMode::Bottom => name_bottom_state_for_dock.get_cloned(),
+                            };
+                            name_width_relay_for_dock.send(target_name);
+
+                            let target_value = match new_mode {
+                                DockMode::Right => value_right_state_for_dock.get_cloned(),
+                                DockMode::Bottom => value_bottom_state_for_dock.get_cloned(),
+                            };
+                            value_width_relay_for_dock.send(target_value);
                         }
                     }
                     complete => break,
@@ -668,39 +733,53 @@ impl AppConfig {
             }
         });
 
-        let variables_name_column_width_actor = Actor::new(
-            config
-                .workspace
-                .docked_right_dimensions
-                .selected_variables_panel_name_column_width
-                .unwrap_or(DEFAULT_NAME_COLUMN_WIDTH as f64) as f32,
-            async move |state| loop {
-                select! {
-                    new_width = name_column_width_changed_stream.next() => {
-                        if let Some(width) = new_width {
-                            state.set_neq(width);
+        let initial_name_width = match config.workspace.dock_mode {
+            DockMode::Right => name_column_width_right_state.get_cloned(),
+            DockMode::Bottom => name_column_width_bottom_state.get_cloned(),
+        };
+        let dock_mode_state_for_name_actor = dock_mode_state.clone();
+        let name_bottom_state_for_actor = name_column_width_bottom_state.clone();
+        let name_right_state_for_actor = name_column_width_right_state.clone();
+        let variables_name_column_width_actor =
+            Actor::new(initial_name_width, async move |state| {
+                loop {
+                    select! {
+                        new_width = name_column_width_changed_stream.next() => {
+                            if let Some(width) = new_width {
+                                state.set_neq(width);
+                                match dock_mode_state_for_name_actor.get_cloned() {
+                                    DockMode::Right => name_right_state_for_actor.set(width),
+                                    DockMode::Bottom => name_bottom_state_for_actor.set(width),
+                                }
+                            }
                         }
                     }
                 }
-            },
-        );
+            });
 
-        let variables_value_column_width_actor = Actor::new(
-            config
-                .workspace
-                .docked_right_dimensions
-                .selected_variables_panel_value_column_width
-                .unwrap_or(DEFAULT_VALUE_COLUMN_WIDTH as f64) as f32,
-            async move |state| loop {
-                select! {
-                    new_width = value_column_width_changed_stream.next() => {
-                        if let Some(width) = new_width {
-                            state.set_neq(width);
+        let initial_value_width = match config.workspace.dock_mode {
+            DockMode::Right => value_column_width_right_state.get_cloned(),
+            DockMode::Bottom => value_column_width_bottom_state.get_cloned(),
+        };
+        let dock_mode_state_for_value_actor = dock_mode_state.clone();
+        let value_bottom_state_for_actor = value_column_width_bottom_state.clone();
+        let value_right_state_for_actor = value_column_width_right_state.clone();
+        let variables_value_column_width_actor =
+            Actor::new(initial_value_width, async move |state| {
+                loop {
+                    select! {
+                        new_width = value_column_width_changed_stream.next() => {
+                            if let Some(width) = new_width {
+                                state.set_neq(width);
+                                match dock_mode_state_for_value_actor.get_cloned() {
+                                    DockMode::Right => value_right_state_for_actor.set(width),
+                                    DockMode::Bottom => value_bottom_state_for_actor.set(width),
+                                }
+                            }
                         }
                     }
                 }
-            },
-        );
+            });
 
         let session_state_actor = Actor::new(
             SessionState {
@@ -960,6 +1039,14 @@ impl AppConfig {
             let file_picker_domain_clone = file_picker_domain.clone();
             let selected_variables_snapshot_actor_clone = selected_variables_snapshot_actor.clone();
             let config_loaded_flag_for_saver = config_loaded_flag.clone();
+            let files_width_right_actor_clone = files_panel_width_right_actor.clone();
+            let files_height_right_actor_clone = files_panel_height_right_actor.clone();
+            let files_width_bottom_actor_clone = files_panel_width_bottom_actor.clone();
+            let files_height_bottom_actor_clone = files_panel_height_bottom_actor.clone();
+            let name_column_width_bottom_state_clone = name_column_width_bottom_state.clone();
+            let name_column_width_right_state_clone = name_column_width_right_state.clone();
+            let value_column_width_bottom_state_clone = value_column_width_bottom_state.clone();
+            let value_column_width_right_state_clone = value_column_width_right_state.clone();
 
             Actor::new((), async move |_state| {
                 let mut config_save_requested_stream = config_save_requested_stream.fuse();
@@ -1004,21 +1091,62 @@ impl AppConfig {
 
 
 
+                                            let files_width_right = files_width_right_actor_clone
+                                                .signal()
+                                                .to_stream()
+                                                .next()
+                                                .await
+                                                .unwrap_or(DEFAULT_PANEL_WIDTH);
+                                            let files_height_right = files_height_right_actor_clone
+                                                .signal()
+                                                .to_stream()
+                                                .next()
+                                                .await
+                                                .unwrap_or(DEFAULT_PANEL_HEIGHT);
+                                            let files_width_bottom = files_width_bottom_actor_clone
+                                                .signal()
+                                                .to_stream()
+                                                .next()
+                                                .await
+                                                .unwrap_or(DEFAULT_PANEL_WIDTH);
+                                            let files_height_bottom = files_height_bottom_actor_clone
+                                                .signal()
+                                                .to_stream()
+                                                .next()
+                                                .await
+                                                .unwrap_or(DEFAULT_PANEL_HEIGHT);
+                                            let name_column_width_bottom =
+                                                name_column_width_bottom_state_clone.get_cloned();
+                                            let name_column_width_right =
+                                                name_column_width_right_state_clone.get_cloned();
+                                            let value_column_width_bottom =
+                                                value_column_width_bottom_state_clone.get_cloned();
+                                            let value_column_width_right =
+                                                value_column_width_right_state_clone.get_cloned();
+
                                             let shared_config = shared::AppConfig {
                                                 app: shared::AppSection::default(),
                                                 workspace: shared::WorkspaceSection {
                                                     opened_files: session.opened_files,
                                                     docked_bottom_dimensions: shared::DockedBottomDimensions {
-                                                        files_and_scopes_panel_width: 470.0,
-                                                        files_and_scopes_panel_height: 375.0,
-                                                        selected_variables_panel_name_column_width: Some(338.0),
-                                                        selected_variables_panel_value_column_width: Some(247.0),
+                                                        files_and_scopes_panel_width: files_width_bottom as f64,
+                                                        files_and_scopes_panel_height: files_height_bottom as f64,
+                                                        selected_variables_panel_name_column_width: Some(
+                                                            name_column_width_bottom as f64,
+                                                        ),
+                    selected_variables_panel_value_column_width: Some(
+                                                            value_column_width_bottom as f64,
+                                                        ),
                                                     },
                                                     docked_right_dimensions: shared::DockedRightDimensions {
-                                                        files_and_scopes_panel_width: 528.0,
-                                                        files_and_scopes_panel_height: 278.0,
-                                                        selected_variables_panel_name_column_width: Some(177.0),
-                                                        selected_variables_panel_value_column_width: Some(201.0),
+                                                        files_and_scopes_panel_width: files_width_right as f64,
+                                                        files_and_scopes_panel_height: files_height_right as f64,
+                                                        selected_variables_panel_name_column_width: Some(
+                                                            name_column_width_right as f64,
+                                                        ),
+                                                        selected_variables_panel_value_column_width: Some(
+                                                            value_column_width_right as f64,
+                                                        ),
                                                     },
                                                     dock_mode,
                                                     expanded_scopes: session.expanded_scopes,
@@ -1197,11 +1325,92 @@ impl AppConfig {
             let selected_variables_for_config = selected_variables.clone();
             let session_state_relay_for_config = session_state_changed_relay.clone();
             let config_loaded_flag_for_actor = config_loaded_flag.clone();
+            let dock_mode_state_for_config = dock_mode_state.clone();
+            let name_column_width_bottom_state_clone = name_column_width_bottom_state.clone();
+            let name_column_width_right_state_clone = name_column_width_right_state.clone();
+            let value_column_width_bottom_state_clone = value_column_width_bottom_state.clone();
+            let value_column_width_right_state_clone = value_column_width_right_state.clone();
+            let files_width_right_relay = files_width_right_changed_relay.clone();
+            let files_height_right_relay = files_height_right_changed_relay.clone();
+            let files_width_bottom_relay = files_width_bottom_changed_relay.clone();
+            let files_height_bottom_relay = files_height_bottom_changed_relay.clone();
+            let name_column_width_relay = name_column_width_changed_relay.clone();
+            let value_column_width_relay = value_column_width_changed_relay.clone();
 
             Actor::new((), async move |_state| {
                 let mut config_stream = config_loaded_stream;
 
                 while let Some(loaded_config) = config_stream.next().await {
+                    dock_mode_state_for_config.set(loaded_config.workspace.dock_mode.clone());
+
+                    let loaded_files_width_right = loaded_config
+                        .workspace
+                        .docked_right_dimensions
+                        .files_and_scopes_panel_width
+                        as f32;
+                    let loaded_files_height_right = loaded_config
+                        .workspace
+                        .docked_right_dimensions
+                        .files_and_scopes_panel_height
+                        as f32;
+                    let loaded_files_width_bottom = loaded_config
+                        .workspace
+                        .docked_bottom_dimensions
+                        .files_and_scopes_panel_width
+                        as f32;
+                    let loaded_files_height_bottom = loaded_config
+                        .workspace
+                        .docked_bottom_dimensions
+                        .files_and_scopes_panel_height
+                        as f32;
+
+                    files_width_right_relay.send(loaded_files_width_right);
+                    files_height_right_relay.send(loaded_files_height_right);
+                    files_width_bottom_relay.send(loaded_files_width_bottom);
+                    files_height_bottom_relay.send(loaded_files_height_bottom);
+
+                    let loaded_name_bottom = loaded_config
+                        .workspace
+                        .docked_bottom_dimensions
+                        .selected_variables_panel_name_column_width
+                        .unwrap_or(DEFAULT_NAME_COLUMN_WIDTH as f64)
+                        as f32;
+                    let loaded_name_right = loaded_config
+                        .workspace
+                        .docked_right_dimensions
+                        .selected_variables_panel_name_column_width
+                        .unwrap_or(DEFAULT_NAME_COLUMN_WIDTH as f64)
+                        as f32;
+                    name_column_width_bottom_state_clone.set(loaded_name_bottom);
+                    name_column_width_right_state_clone.set(loaded_name_right);
+
+                    let loaded_value_bottom = loaded_config
+                        .workspace
+                        .docked_bottom_dimensions
+                        .selected_variables_panel_value_column_width
+                        .unwrap_or(DEFAULT_VALUE_COLUMN_WIDTH as f64)
+                        as f32;
+                    let loaded_value_right = loaded_config
+                        .workspace
+                        .docked_right_dimensions
+                        .selected_variables_panel_value_column_width
+                        .unwrap_or(DEFAULT_VALUE_COLUMN_WIDTH as f64)
+                        as f32;
+                    value_column_width_bottom_state_clone.set(loaded_value_bottom);
+                    value_column_width_right_state_clone.set(loaded_value_right);
+
+                    let current_name_width = match loaded_config.workspace.dock_mode {
+                        DockMode::Right => loaded_name_right,
+                        DockMode::Bottom => loaded_name_bottom,
+                    };
+                    name_column_width_relay.send(current_name_width);
+
+                    let current_value_width = match loaded_config.workspace.dock_mode {
+                        DockMode::Right => loaded_value_right,
+                        DockMode::Bottom => loaded_value_bottom,
+                    };
+                    value_column_width_relay.send(current_value_width);
+
                     // Update theme using proper relay
                     theme_relay.send(loaded_config.ui.theme);
 

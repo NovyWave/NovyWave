@@ -6,7 +6,6 @@ use indexmap::IndexSet;
 use zoon::events::{KeyDown, KeyUp};
 use zoon::events_extra;
 use zoon::*;
-use zoon::{PointerEvent, RawPointerEvent};
 
 use crate::config::AppConfig;
 use crate::dataflow::atom::Atom;
@@ -560,49 +559,38 @@ impl NovyWaveApp {
                     });
 
                     let dragging_system_for_move = dragging_system_for_events.clone();
-                    let raw_el = raw_el.global_event_handler_with_options(
-                        EventOptions::new().preventable(),
-                        move |event: events_extra::PointerMove| {
+                    let raw_el =
+                        raw_el.global_event_handler(move |event: events_extra::PointerMove| {
                             crate::dragging::process_drag_movement(
                                 &dragging_system_for_move,
                                 (event.x() as f32, event.y() as f32),
                             );
-                        },
-                    );
+                        });
 
                     let dragging_system_for_up = dragging_system_for_events.clone();
-                    let raw_el = raw_el.global_event_handler_with_options(
-                        EventOptions::new().preventable(),
-                        move |_: events_extra::PointerUp| {
-                            crate::dragging::end_drag(&dragging_system_for_up);
-                        },
-                    );
+                    let raw_el = raw_el.global_event_handler(move |_: events_extra::PointerUp| {
+                        crate::dragging::end_drag(&dragging_system_for_up);
+                    });
 
                     let dragging_system_for_cancel = dragging_system_for_events;
-                    raw_el.global_event_handler_with_options(
-                        EventOptions::new().preventable(),
-                        move |_: events_extra::PointerCancel| {
-                            crate::dragging::end_drag(&dragging_system_for_cancel);
-                        },
-                    )
+                    raw_el.global_event_handler(move |_: events_extra::PointerCancel| {
+                        crate::dragging::end_drag(&dragging_system_for_cancel);
+                    })
                 }
             })
             .layer(self.main_layout())
-            .layer_signal({
-                let overlay_dragging_system = dragging_system_for_overlay.clone();
-                map_ref! {
-                    let is_dragging = dragging_system_for_overlay.is_any_divider_dragging(),
-                    let active_divider = dragging_system_for_overlay.active_divider_type_signal() => {
-                        if *is_dragging {
-                            active_divider.clone().map(|divider| {
-                                dragging_overlay_element(overlay_dragging_system.clone(), divider).unify()
+            .layer_signal(
+                dragging_system_for_overlay
+                    .active_overlay_divider_signal()
+                    .map({
+                        let dragging_system = dragging_system_for_overlay.clone();
+                        move |maybe_divider| {
+                            maybe_divider.map(|divider| {
+                                dragging_overlay_element(dragging_system.clone(), divider).unify()
                             })
-                        } else {
-                            None
                         }
-                    }
-                }
-            })
+                    }),
+            )
             .layer_signal(self.file_dialog_visible.signal().map_true({
                 let tracked_files = self.tracked_files.clone();
                 let selected_variables = self.selected_variables.clone();
@@ -669,23 +657,16 @@ fn dragging_overlay_element(
                 .style("touch-action", "none")
         })
         .on_pointer_move_event(move |event: PointerEvent| {
-            if let RawPointerEvent::PointerMove(raw_event) = &event.raw_event {
-                raw_event.prevent_default();
-            }
             crate::dragging::process_drag_movement(
                 &system_for_move,
                 (event.x() as f32, event.y() as f32),
             );
         })
-        .on_pointer_up_event(move |event: PointerEvent| {
-            if let RawPointerEvent::PointerUp(raw_event) = &event.raw_event {
-                raw_event.prevent_default();
-            }
+        .on_pointer_up(move || {
             crate::dragging::end_drag(&system_for_up);
         })
         .update_raw_el(move |raw_el| {
-            raw_el.event_handler(move |event: zoon::events_extra::PointerCancel| {
-                event.prevent_default();
+            raw_el.event_handler(move |_: events_extra::PointerCancel| {
                 crate::dragging::end_drag(&system_for_cancel);
             })
         })

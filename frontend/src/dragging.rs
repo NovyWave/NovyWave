@@ -42,6 +42,7 @@ struct DragState {
     active_divider: Option<DividerType>,
     drag_start_position: (f32, f32),
     initial_value: f32,
+    has_moved: bool,
 }
 
 impl DraggingSystem {
@@ -156,6 +157,7 @@ impl DraggingSystem {
                             active_divider: Some(divider_type),
                             drag_start_position: start_pos,
                             initial_value,
+                            has_moved: false,
                         });
                             }
                             None => break, // Stream closed
@@ -168,7 +170,7 @@ impl DraggingSystem {
                         // Use Actor's own cached state - no external state queries
                         let mut current_drag_state = state_handle.lock_mut();
 
-                        if let Some(ref divider_type) = current_drag_state.active_divider {
+                        if let Some(divider_type) = current_drag_state.active_divider {
                             let (delta, new_value) = match divider_type {
                                 DividerType::FilesPanelMain => {
                                     let delta_x =
@@ -211,6 +213,7 @@ impl DraggingSystem {
                             };
 
                             if delta.abs() > 1.0 {
+                                current_drag_state.has_moved = true;
                                 // Emit config updates via relays
                                 match (divider_type, cached_dock_mode) {
                                     (DividerType::FilesPanelMain, DockMode::Right) => {
@@ -232,6 +235,8 @@ impl DraggingSystem {
                                         app_config.value_column_width_changed_relay.send(new_value);
                                     }
                                 }
+
+                                app_config.config_save_requested_relay.send(());
                             }
                         }
                             }
@@ -281,6 +286,18 @@ impl DraggingSystem {
         self.drag_state_actor
             .signal()
             .map(|state| state.active_divider)
+    }
+
+    pub fn active_overlay_divider_signal(
+        &self,
+    ) -> impl Signal<Item = Option<DividerType>> + 'static {
+        self.drag_state_actor.signal().map(|state| {
+            if state.has_moved {
+                state.active_divider
+            } else {
+                None
+            }
+        })
     }
 }
 
