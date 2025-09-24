@@ -32,14 +32,14 @@ timeline_cursor_position_ns = 0
 timeline_zoom_level = 1.0
 
 [workspace.docked_bottom_dimensions]
-files_and_scopes_panel_width = 481.0
-files_and_scopes_panel_height = 418.0
+files_and_scopes_panel_width = 423.0
+files_and_scopes_panel_height = 365.0
 selected_variables_panel_name_column_width = 338.0
-selected_variables_panel_value_column_width = 247.0
+selected_variables_panel_value_column_width = 297.0
 
 [workspace.docked_right_dimensions]
-files_and_scopes_panel_width = 528.0
-files_and_scopes_panel_height = 278.0
+files_and_scopes_panel_width = 825.0
+files_and_scopes_panel_height = 409.0
 selected_variables_panel_name_column_width = 177.0
 selected_variables_panel_value_column_width = 201.0
 

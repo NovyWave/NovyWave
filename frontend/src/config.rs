@@ -16,6 +16,93 @@ pub struct TimeRange {
     pub end: TimeNs,
 }
 
+async fn compose_shared_app_config(
+    theme_actor: &Actor<SharedTheme>,
+    dock_mode_actor: &Actor<DockMode>,
+    session_actor: &Actor<SessionState>,
+    toast_actor: &Actor<u32>,
+    file_picker_domain: &FilePickerDomain,
+    selected_variables_snapshot_actor: &Actor<Vec<shared::SelectedVariable>>,
+    files_width_right_actor: &Actor<f32>,
+    files_height_right_actor: &Actor<f32>,
+    files_width_bottom_actor: &Actor<f32>,
+    files_height_bottom_actor: &Actor<f32>,
+    name_column_width_bottom_state: &Mutable<f32>,
+    name_column_width_right_state: &Mutable<f32>,
+    value_column_width_bottom_state: &Mutable<f32>,
+    value_column_width_right_state: &Mutable<f32>,
+) -> Option<shared::AppConfig> {
+    let theme = theme_actor.signal().to_stream().next().await?;
+    let dock_mode = dock_mode_actor.signal().to_stream().next().await?;
+    let session = session_actor.signal().to_stream().next().await?;
+    let toast_dismiss_ms = toast_actor.signal().to_stream().next().await?;
+
+    let expanded_directories_set = file_picker_domain
+        .expanded_directories_signal()
+        .to_stream()
+        .next()
+        .await?;
+    let expanded_directories: Vec<String> = expanded_directories_set.into_iter().collect();
+    let scroll_position = file_picker_domain
+        .scroll_position_signal()
+        .to_stream()
+        .next()
+        .await?;
+    let selected_variables_snapshot = selected_variables_snapshot_actor
+        .signal()
+        .to_stream()
+        .next()
+        .await?;
+
+    let files_width_right = files_width_right_actor.signal().to_stream().next().await?;
+    let files_height_right = files_height_right_actor.signal().to_stream().next().await?;
+    let files_width_bottom = files_width_bottom_actor.signal().to_stream().next().await?;
+    let files_height_bottom = files_height_bottom_actor
+        .signal()
+        .to_stream()
+        .next()
+        .await?;
+
+    let name_column_width_bottom = name_column_width_bottom_state.get_cloned();
+    let name_column_width_right = name_column_width_right_state.get_cloned();
+    let value_column_width_bottom = value_column_width_bottom_state.get_cloned();
+    let value_column_width_right = value_column_width_right_state.get_cloned();
+
+    Some(shared::AppConfig {
+        app: shared::AppSection::default(),
+        workspace: shared::WorkspaceSection {
+            opened_files: session.opened_files.clone(),
+            docked_bottom_dimensions: shared::DockedBottomDimensions {
+                files_and_scopes_panel_width: files_width_bottom as f64,
+                files_and_scopes_panel_height: files_height_bottom as f64,
+                selected_variables_panel_name_column_width: Some(name_column_width_bottom as f64),
+                selected_variables_panel_value_column_width: Some(value_column_width_bottom as f64),
+            },
+            docked_right_dimensions: shared::DockedRightDimensions {
+                files_and_scopes_panel_width: files_width_right as f64,
+                files_and_scopes_panel_height: files_height_right as f64,
+                selected_variables_panel_name_column_width: Some(name_column_width_right as f64),
+                selected_variables_panel_value_column_width: Some(value_column_width_right as f64),
+            },
+            dock_mode,
+            expanded_scopes: session.expanded_scopes.clone(),
+            load_files_expanded_directories: expanded_directories,
+            selected_scope_id: session.selected_scope_id.clone(),
+            load_files_scroll_position: scroll_position,
+            variables_search_filter: session.variables_search_filter.clone(),
+            selected_variables: selected_variables_snapshot,
+            timeline_cursor_position_ns: 0,
+            timeline_visible_range_start_ns: None,
+            timeline_visible_range_end_ns: None,
+            timeline_zoom_level: 1.0,
+        },
+        ui: shared::UiSection {
+            theme,
+            toast_dismiss_ms: toast_dismiss_ms as u64,
+        },
+    })
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SessionState {
     pub opened_files: Vec<String>,
@@ -1079,95 +1166,27 @@ impl AppConfig {
                                         }
                                         // Timer completes - do the save
                                         _ = zoon::Timer::sleep(300).fuse() => {
-                                            let theme = theme_actor_clone.signal().to_stream().next().await.unwrap_or_default();
-                                            let dock_mode = dock_mode_actor_clone.signal().to_stream().next().await.unwrap_or_default();
-                                            let session = session_actor_clone.signal().to_stream().next().await.unwrap_or_default();
-                                            let toast_dismiss_ms = toast_actor_clone.signal().to_stream().next().await.unwrap_or_default();
-
-                                            // Get file picker data from domain instead of session
-                                            let expanded_directories: Vec<String> = file_picker_domain_clone.expanded_directories_signal().to_stream().next().await.unwrap_or_default().into_iter().collect();
-                                            let scroll_position = file_picker_domain_clone.scroll_position_signal().to_stream().next().await.unwrap_or_default();
-                                            let selected_variables_snapshot = selected_variables_snapshot_actor_clone.signal().to_stream().next().await.unwrap_or_default();
-
-
-
-                                            let files_width_right = files_width_right_actor_clone
-                                                .signal()
-                                                .to_stream()
-                                                .next()
-                                                .await
-                                                .unwrap_or(DEFAULT_PANEL_WIDTH);
-                                            let files_height_right = files_height_right_actor_clone
-                                                .signal()
-                                                .to_stream()
-                                                .next()
-                                                .await
-                                                .unwrap_or(DEFAULT_PANEL_HEIGHT);
-                                            let files_width_bottom = files_width_bottom_actor_clone
-                                                .signal()
-                                                .to_stream()
-                                                .next()
-                                                .await
-                                                .unwrap_or(DEFAULT_PANEL_WIDTH);
-                                            let files_height_bottom = files_height_bottom_actor_clone
-                                                .signal()
-                                                .to_stream()
-                                                .next()
-                                                .await
-                                                .unwrap_or(DEFAULT_PANEL_HEIGHT);
-                                            let name_column_width_bottom =
-                                                name_column_width_bottom_state_clone.get_cloned();
-                                            let name_column_width_right =
-                                                name_column_width_right_state_clone.get_cloned();
-                                            let value_column_width_bottom =
-                                                value_column_width_bottom_state_clone.get_cloned();
-                                            let value_column_width_right =
-                                                value_column_width_right_state_clone.get_cloned();
-
-                                            let shared_config = shared::AppConfig {
-                                                app: shared::AppSection::default(),
-                                                workspace: shared::WorkspaceSection {
-                                                    opened_files: session.opened_files,
-                                                    docked_bottom_dimensions: shared::DockedBottomDimensions {
-                                                        files_and_scopes_panel_width: files_width_bottom as f64,
-                                                        files_and_scopes_panel_height: files_height_bottom as f64,
-                                                        selected_variables_panel_name_column_width: Some(
-                                                            name_column_width_bottom as f64,
-                                                        ),
-                    selected_variables_panel_value_column_width: Some(
-                                                            value_column_width_bottom as f64,
-                                                        ),
-                                                    },
-                                                    docked_right_dimensions: shared::DockedRightDimensions {
-                                                        files_and_scopes_panel_width: files_width_right as f64,
-                                                        files_and_scopes_panel_height: files_height_right as f64,
-                                                        selected_variables_panel_name_column_width: Some(
-                                                            name_column_width_right as f64,
-                                                        ),
-                                                        selected_variables_panel_value_column_width: Some(
-                                                            value_column_width_right as f64,
-                                                        ),
-                                                    },
-                                                    dock_mode,
-                                                    expanded_scopes: session.expanded_scopes,
-                                                    load_files_expanded_directories: expanded_directories,
-                                                    selected_scope_id: session.selected_scope_id,
-                                                    load_files_scroll_position: scroll_position,
-                                                    variables_search_filter: session.variables_search_filter,
-                                                    selected_variables: selected_variables_snapshot,
-                                                    timeline_cursor_position_ns: 0,
-                                                    timeline_visible_range_start_ns: None,
-                                                    timeline_visible_range_end_ns: None,
-                                                    timeline_zoom_level: 1.0,
-                                                },
-                                                ui: shared::UiSection {
-                                                    theme,
-                                                    toast_dismiss_ms: toast_dismiss_ms as u64,
-                                                },
-                                            };
-
-                                            if let Err(e) = CurrentPlatform::send_message(UpMsg::SaveConfig(shared_config)).await {
-                                                zoon::eprintln!("❌ CONFIG: Failed to save config: {}", e);
+                                            if let Some(shared_config) = compose_shared_app_config(
+                                                &theme_actor_clone,
+                                                &dock_mode_actor_clone,
+                                                &session_actor_clone,
+                                                &toast_actor_clone,
+                                                &file_picker_domain_clone,
+                                                &selected_variables_snapshot_actor_clone,
+                                                &files_width_right_actor_clone,
+                                                &files_height_right_actor_clone,
+                                                &files_width_bottom_actor_clone,
+                                                &files_height_bottom_actor_clone,
+                                                &name_column_width_bottom_state_clone,
+                                                &name_column_width_right_state_clone,
+                                                &value_column_width_bottom_state_clone,
+                                                &value_column_width_right_state_clone,
+                                            )
+                                            .await
+                                            {
+                                                if let Err(e) = CurrentPlatform::send_message(UpMsg::SaveConfig(shared_config)).await {
+                                                    zoon::eprintln!("❌ CONFIG: Failed to save config: {}", e);
+                                                }
                                             }
                                             break; // Back to outer loop
                                     }
@@ -1190,52 +1209,27 @@ impl AppConfig {
                                         }
                                         // Timer completes - do the save
                                         _ = zoon::Timer::sleep(300).fuse() => {
-                                            let theme = theme_actor_clone.signal().to_stream().next().await.unwrap_or_default();
-                                            let dock_mode = dock_mode_actor_clone.signal().to_stream().next().await.unwrap_or_default();
-                                            let session = session_actor_clone.signal().to_stream().next().await.unwrap_or_default();
-                                            let toast_dismiss_ms = toast_actor_clone.signal().to_stream().next().await.unwrap_or_default();
-
-                                            // Get file picker data from domain instead of session
-                                            let expanded_directories: Vec<String> = file_picker_domain_clone.expanded_directories_signal().to_stream().next().await.unwrap_or_default().into_iter().collect();
-                                            let scroll_position = file_picker_domain_clone.scroll_position_signal().to_stream().next().await.unwrap_or_default();
-                                            let selected_variables_snapshot = selected_variables_snapshot_actor_clone.signal().to_stream().next().await.unwrap_or_default();
-
-                                            let shared_config = shared::AppConfig {
-                                                app: shared::AppSection::default(),
-                                                workspace: shared::WorkspaceSection {
-                                                    opened_files: session.opened_files,
-                                                    docked_bottom_dimensions: shared::DockedBottomDimensions {
-                                                        files_and_scopes_panel_width: 470.0,
-                                                        files_and_scopes_panel_height: 375.0,
-                                                        selected_variables_panel_name_column_width: Some(338.0),
-                                                        selected_variables_panel_value_column_width: Some(247.0),
-                                                    },
-                                                    docked_right_dimensions: shared::DockedRightDimensions {
-                                                        files_and_scopes_panel_width: 528.0,
-                                                        files_and_scopes_panel_height: 278.0,
-                                                        selected_variables_panel_name_column_width: Some(177.0),
-                                                        selected_variables_panel_value_column_width: Some(201.0),
-                                                    },
-                                                    dock_mode,
-                                                    expanded_scopes: session.expanded_scopes,
-                                                    load_files_expanded_directories: expanded_directories,
-                                                    selected_scope_id: session.selected_scope_id,
-                                                    load_files_scroll_position: scroll_position,
-                                                    variables_search_filter: session.variables_search_filter,
-                                                    selected_variables: selected_variables_snapshot,
-                                                    timeline_cursor_position_ns: 0,
-                                                    timeline_visible_range_start_ns: None,
-                                                    timeline_visible_range_end_ns: None,
-                                                    timeline_zoom_level: 1.0,
-                                                },
-                                                ui: shared::UiSection {
-                                                    theme,
-                                                    toast_dismiss_ms: toast_dismiss_ms as u64,
-                                                },
-                                            };
-
-                                            if let Err(e) = CurrentPlatform::send_message(UpMsg::SaveConfig(shared_config)).await {
-                                                zoon::eprintln!("❌ CONFIG: Failed to save config: {}", e);
+                                            if let Some(shared_config) = compose_shared_app_config(
+                                                &theme_actor_clone,
+                                                &dock_mode_actor_clone,
+                                                &session_actor_clone,
+                                                &toast_actor_clone,
+                                                &file_picker_domain_clone,
+                                                &selected_variables_snapshot_actor_clone,
+                                                &files_width_right_actor_clone,
+                                                &files_height_right_actor_clone,
+                                                &files_width_bottom_actor_clone,
+                                                &files_height_bottom_actor_clone,
+                                                &name_column_width_bottom_state_clone,
+                                                &name_column_width_right_state_clone,
+                                                &value_column_width_bottom_state_clone,
+                                                &value_column_width_right_state_clone,
+                                            )
+                                            .await
+                                            {
+                                                if let Err(e) = CurrentPlatform::send_message(UpMsg::SaveConfig(shared_config)).await {
+                                                    zoon::eprintln!("❌ CONFIG: Failed to save config: {}", e);
+                                                }
                                             }
                                             break; // Back to outer loop
                                         }
