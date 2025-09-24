@@ -654,6 +654,7 @@ fn dragging_overlay_element(
                 .style("position", "fixed")
                 .style("inset", "0")
                 .style("z-index", "9998")
+                .style("user-select", "none")
                 .style("touch-action", "none")
         })
         .on_pointer_move_event(move |event: PointerEvent| {

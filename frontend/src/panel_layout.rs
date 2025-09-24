@@ -88,6 +88,8 @@ pub fn variables_name_vertical_divider(
                     return;
                 }
 
+                raw_pointer_down.prevent_default();
+
                 start_drag(
                     &dragging_system,
                     DividerType::VariablesNameColumn,
@@ -125,6 +127,8 @@ pub fn variables_value_vertical_divider(
                 if raw_pointer_down.button() != events::MouseButton::Left {
                     return;
                 }
+
+                raw_pointer_down.prevent_default();
 
                 start_drag(
                     &dragging_system,
@@ -164,6 +168,8 @@ pub fn files_panel_vertical_divider(
                     return;
                 }
 
+                raw_pointer_down.prevent_default();
+
                 start_drag(
                     &dragging_system,
                     DividerType::FilesPanelMain,
@@ -200,6 +206,8 @@ pub fn files_panel_horizontal_divider(
                 if raw_pointer_down.button() != events::MouseButton::Left {
                     return;
                 }
+
+                raw_pointer_down.prevent_default();
 
                 start_drag(
                     &dragging_system,

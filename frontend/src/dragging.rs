@@ -42,7 +42,6 @@ struct DragState {
     active_divider: Option<DividerType>,
     drag_start_position: (f32, f32),
     initial_value: f32,
-    has_moved: bool,
 }
 
 impl DraggingSystem {
@@ -157,7 +156,6 @@ impl DraggingSystem {
                             active_divider: Some(divider_type),
                             drag_start_position: start_pos,
                             initial_value,
-                            has_moved: false,
                         });
                             }
                             None => break, // Stream closed
@@ -213,7 +211,6 @@ impl DraggingSystem {
                             };
 
                             if delta.abs() > 1.0 {
-                                current_drag_state.has_moved = true;
                                 // Emit config updates via relays
                                 match (divider_type, cached_dock_mode) {
                                     (DividerType::FilesPanelMain, DockMode::Right) => {
@@ -291,13 +288,9 @@ impl DraggingSystem {
     pub fn active_overlay_divider_signal(
         &self,
     ) -> impl Signal<Item = Option<DividerType>> + 'static {
-        self.drag_state_actor.signal().map(|state| {
-            if state.has_moved {
-                state.active_divider
-            } else {
-                None
-            }
-        })
+        self.drag_state_actor
+            .signal()
+            .map(|state| state.active_divider)
     }
 }
 
