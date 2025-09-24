@@ -14,10 +14,7 @@ opened_files = [
     "/home/martinkavik/repos/NovyWave/test_files/simple.vcd",
 ]
 dock_mode = "bottom"
-expanded_scopes = [
-    "/home/martinkavik/repos/NovyWave/test_files/simple.vcd",
-    "scope_/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb",
-]
+expanded_scopes = []
 load_files_expanded_directories = [
     "/home",
     "/home/martinkavik",
@@ -26,16 +23,17 @@ load_files_expanded_directories = [
     "/home/martinkavik/repos/NovyWave/test_files",
     "/home/martinkavik/repos/NovyWave/test_files/nested_dir",
 ]
-selected_scope_id = "scope_/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s"
 load_files_scroll_position = 973
-timeline_cursor_position_ns = 0
-timeline_zoom_level = 1.0
+timeline_cursor_position_ns = 41479677184
+timeline_zoom_level = 2635531.0
+timeline_visible_range_start_ns = 40925073541
+timeline_visible_range_end_ns = 43109928827
 
 [workspace.docked_bottom_dimensions]
-files_and_scopes_panel_width = 423.0
+files_and_scopes_panel_width = 393.0
 files_and_scopes_panel_height = 365.0
-selected_variables_panel_name_column_width = 338.0
-selected_variables_panel_value_column_width = 297.0
+selected_variables_panel_name_column_width = 222.0
+selected_variables_panel_value_column_width = 272.0
 
 [workspace.docked_right_dimensions]
 files_and_scopes_panel_width = 825.0

@@ -9,6 +9,7 @@
  */
 
 use crate::dragging::{variables_name_column_width_signal, variables_value_column_width_signal};
+use crate::visualizer::timeline::NsPerPixel;
 use moonzoon_novyui::components::{KbdSize, KbdVariant, kbd};
 use moonzoon_novyui::tokens::color::{neutral_8, neutral_11, primary_6};
 use moonzoon_novyui::*;
@@ -286,6 +287,20 @@ fn name_column_variable_row(
 fn name_column_footer(
     waveform_timeline: crate::visualizer::timeline::timeline_actor::WaveformTimeline,
 ) -> impl Element {
+    let zoom_signal = {
+        let viewport_actor = waveform_timeline.viewport_actor();
+        let width_actor = waveform_timeline.canvas_width_actor();
+        map_ref! {
+            let viewport = viewport_actor.signal(),
+            let width = width_actor.signal() => {
+                let range = viewport.duration().nanos();
+                let width_px = width.max(1.0) as u64;
+                let ns_per_pixel = if width_px == 0 { 1 } else { (range / width_px.max(1)).max(1) };
+                NsPerPixel(ns_per_pixel).to_string()
+            }
+        }
+    };
+
     El::new()
         .s(Height::exact(SELECTED_VARIABLES_ROW_HEIGHT))
         .s(Width::fill())
@@ -318,7 +333,6 @@ fn name_column_footer(
                                 .build()
                         )
                         .item(
-                            // Dynamic zoom level display (ns/px)
                             El::new()
                                 .update_raw_el(|raw_el| {
                                     raw_el
@@ -327,10 +341,7 @@ fn name_column_footer(
                                         .style("max-width", "80px")
                                 })
                                 .s(Font::new().color_signal(neutral_11()).center())
-                                .child(
-                                    // TODO: Connect to actual zoom level signal
-                                    Text::new("15ns/px")
-                                )
+                                .child_signal(zoom_signal.map(Text::new))
                         )
                         .item(
                             // S key - Zoom out
@@ -380,6 +391,7 @@ fn selected_variables_value_column(
         .s(Scrollbars::x_and_clip_y())
         .update_raw_el(|raw_el| raw_el.style("scrollbar-width", "thin"))
         .items_signal_vec({
+            let timeline_for_rows = waveform_timeline_for_values.clone();
             selected_variables
                 .variables
                 .signal_vec()
@@ -387,15 +399,12 @@ fn selected_variables_value_column(
                     value_column_variable_row(
                         selected_var,
                         selected_variables_for_values.clone(),
-                        waveform_timeline_for_values.clone(),
+                        timeline_for_rows.clone(),
                         app_config_for_values.clone(),
                     )
                 })
         })
-        .item(
-            // Value Column Footer with timeline boundaries
-            value_column_footer(),
-        )
+        .item(value_column_footer(waveform_timeline_for_values))
 }
 
 /// Individual variable row in Value Column with format dropdown
@@ -418,7 +427,38 @@ fn value_column_variable_row(
 }
 
 /// Value Column Footer with timeline boundaries and cursor controls
-fn value_column_footer() -> impl Element {
+fn value_column_footer(
+    waveform_timeline: crate::visualizer::timeline::timeline_actor::WaveformTimeline,
+) -> impl Element {
+    let viewport_actor = waveform_timeline.viewport_actor();
+    let start_signal = viewport_actor
+        .clone()
+        .signal()
+        .map(|viewport| format_time_ns(viewport.start.nanos()));
+
+    let end_signal = viewport_actor
+        .signal()
+        .map(|viewport| format_time_ns(viewport.end.nanos()));
+
+    let cursor_signal = waveform_timeline
+        .cursor_actor()
+        .signal()
+        .map(|cursor| format_time_ns(cursor.nanos()));
+
+    let zoom_signal = {
+        let viewport_actor = waveform_timeline.viewport_actor();
+        let width_actor = waveform_timeline.canvas_width_actor();
+        map_ref! {
+            let viewport = viewport_actor.signal(),
+            let width = width_actor.signal() => {
+                let range = viewport.duration().nanos();
+                let width_px = width.max(1.0) as u64;
+                let ns_per_pixel = if width_px == 0 { 1 } else { (range / width_px.max(1)).max(1) };
+                NsPerPixel(ns_per_pixel).to_string()
+            }
+        }
+    };
+
     El::new()
         .s(Height::exact(SELECTED_VARIABLES_ROW_HEIGHT))
         .s(Width::fill())
@@ -439,10 +479,7 @@ fn value_column_footer() -> impl Element {
                                 .update_raw_el(|raw_el| {
                                     raw_el.style("width", "max-content")
                                 })
-                                .child(
-                                    // TODO: Connect to actual timeline start signal
-                                    Text::new("0s")
-                                )
+                                .child_signal(start_signal.map(Text::new))
                         )
                         .item(
                             // A key - Pan left
@@ -467,7 +504,6 @@ fn value_column_footer() -> impl Element {
                                 .build()
                         )
                         .item(
-                            // Dynamic cursor position display
                             El::new()
                                 .update_raw_el(|raw_el| {
                                     raw_el
@@ -476,10 +512,7 @@ fn value_column_footer() -> impl Element {
                                         .style("max-width", "90px")
                                 })
                                 .s(Font::new().color_signal(neutral_11()).center())
-                                .child(
-                                    // TODO: Connect to actual cursor position signal
-                                    Text::new("125s")
-                                )
+                                .child_signal(cursor_signal.map(Text::new))
                         )
                         .item(
                             // E key - Move cursor right
@@ -504,16 +537,12 @@ fn value_column_footer() -> impl Element {
                                 .build()
                         )
                         .item(
-                            // Timeline end boundary (250s)
                             El::new()
                                 .s(Font::new().color_signal(neutral_11()).center().size(11))
                                 .update_raw_el(|raw_el| {
                                     raw_el.style("width", "max-content")
                                 })
-                                .child(
-                                    // TODO: Connect to actual timeline end signal
-                                    Text::new("250s")
-                                )
+                                .child_signal(end_signal.map(Text::new))
                         )
                 )
         )
@@ -532,8 +561,18 @@ fn selected_variables_wave_column(
         .s(Background::new().color_signal(moonzoon_novyui::tokens::color::neutral_2()))
         .child(crate::visualizer::canvas::waveform_canvas::waveform_canvas(
             waveform_canvas,
-            selected_variables,
             waveform_timeline,
-            app_config,
         ))
+}
+
+fn format_time_ns(ns: u64) -> String {
+    if ns >= 1_000_000_000 {
+        format!("{:.1}s", ns as f64 / 1_000_000_000.0)
+    } else if ns >= 1_000_000 {
+        format!("{:.1}ms", ns as f64 / 1_000_000.0)
+    } else if ns >= 1_000 {
+        format!("{:.1}us", ns as f64 / 1_000.0)
+    } else {
+        format!("{}ns", ns)
+    }
 }

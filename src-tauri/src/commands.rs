@@ -4,7 +4,7 @@
 //! without needing HTTP/SSE communication.
 
 use serde_json;
-use shared::{AppConfig, SignalValueQuery};
+use shared::{AppConfig, SignalTransitionQuery, SignalValueQuery};
 use std::path::PathBuf;
 use tauri::Emitter;
 
@@ -127,8 +127,8 @@ pub async fn load_waveform_file(path: String, window: tauri::Window) -> Result<(
                 variables: vec![],
                 children: vec![],
             }],
-            min_time: Some(0.0),
-            max_time: Some(1000.0),
+            min_time_ns: Some(0),
+            max_time_ns: Some(1_000_000_000),
         }],
     };
 

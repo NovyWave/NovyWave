@@ -6,13 +6,14 @@
 use super::time_domain::TimeNs;
 use crate::dataflow::Actor;
 use futures::{StreamExt, select};
-use shared::{FileState, TrackedFile, WaveformFile};
-use zoon::{Signal, SignalExt, SignalVecExt};
+use shared::{FileState, SelectedVariable, TrackedFile};
+use std::collections::HashSet;
+use zoon::{SignalExt, SignalVecExt};
 
 /// Maximum Timeline Range actor - stores computed timeline range for efficient access
 #[derive(Clone, Debug)]
 pub struct MaximumTimelineRange {
-    pub range: Actor<Option<(f64, f64)>>,
+    pub range: Actor<Option<(TimeNs, TimeNs)>>,
 }
 
 impl MaximumTimelineRange {
@@ -20,17 +21,48 @@ impl MaximumTimelineRange {
         tracked_files: crate::tracked_files::TrackedFiles,
         selected_variables: crate::selected_variables::SelectedVariables,
     ) -> Self {
+        let tracked_files_clone = tracked_files.clone();
+        let selected_variables_clone = selected_variables.clone();
+
         let range = Actor::new(None, async move |state| {
-            let mut files_stream = tracked_files
+            let mut files_stream = tracked_files_clone
                 .files
                 .signal_vec()
                 .to_signal_cloned()
-                .to_stream();
+                .to_stream()
+                .fuse();
+            let mut selection_stream = selected_variables_clone
+                .variables_vec_actor
+                .signal()
+                .to_stream()
+                .fuse();
 
-            // Wait for files and compute range reactively
-            while let Some(files) = files_stream.next().await {
-                let range = Self::compute_range_from_files(&files);
-                state.set(range);
+            let mut latest_files: Vec<TrackedFile> = Vec::new();
+            let mut latest_selection: Vec<SelectedVariable> = Vec::new();
+
+            loop {
+                select! {
+                    files = files_stream.next() => {
+                        match files {
+                            Some(files) => {
+                                latest_files = files;
+                                let range = Self::compute_range(&latest_files, &latest_selection);
+                                state.set(range);
+                            }
+                            None => break,
+                        }
+                    }
+                    selection = selection_stream.next() => {
+                        match selection {
+                            Some(selection) => {
+                                latest_selection = selection;
+                                let range = Self::compute_range(&latest_files, &latest_selection);
+                                state.set(range);
+                            }
+                            None => break,
+                        }
+                    }
+                }
             }
         });
 
@@ -38,38 +70,48 @@ impl MaximumTimelineRange {
     }
 
     /// Pure function to compute maximum range from file vector
-    fn compute_range_from_files(tracked_files: &[TrackedFile]) -> Option<(f64, f64)> {
-        let loaded_files: Vec<WaveformFile> = tracked_files
+    fn compute_range(
+        tracked_files: &[TrackedFile],
+        selected_variables: &[SelectedVariable],
+    ) -> Option<(TimeNs, TimeNs)> {
+        let file_filter: HashSet<String> = selected_variables
             .iter()
-            .filter_map(|tracked_file| match &tracked_file.state {
-                FileState::Loaded(waveform_file) => Some(waveform_file.clone()),
-                _ => None,
-            })
+            .filter_map(|var| var.file_path())
             .collect();
 
-        if loaded_files.is_empty() {
+        if file_filter.is_empty() {
             return None;
         }
 
-        let mut min_time: f64 = f64::MAX;
-        let mut max_time: f64 = f64::MIN;
+        let mut min_time: Option<TimeNs> = None;
+        let mut max_time: Option<TimeNs> = None;
 
-        // Get min/max time from all loaded files
-        for waveform_file in &loaded_files {
-            if let Some(start_time_ns) = waveform_file.min_time_ns {
-                let start_time_seconds = start_time_ns as f64 / 1_000_000_000.0;
-                min_time = min_time.min(start_time_seconds);
+        for tracked_file in tracked_files {
+            if !file_filter.contains(&tracked_file.path) {
+                continue;
             }
-            if let Some(end_time_ns) = waveform_file.max_time_ns {
-                let end_time_seconds = end_time_ns as f64 / 1_000_000_000.0;
-                max_time = max_time.max(end_time_seconds);
+
+            if let FileState::Loaded(waveform_file) = &tracked_file.state {
+                if let Some(start_ns) = waveform_file.min_time_ns {
+                    let start = TimeNs::from_nanos(start_ns);
+                    min_time = Some(match min_time {
+                        Some(current) => current.min(start),
+                        None => start,
+                    });
+                }
+                if let Some(end_ns) = waveform_file.max_time_ns {
+                    let end = TimeNs::from_nanos(end_ns);
+                    max_time = Some(match max_time {
+                        Some(current) => current.max(end),
+                        None => end,
+                    });
+                }
             }
         }
 
-        if min_time != f64::MAX && max_time != f64::MIN && min_time < max_time {
-            Some((min_time, max_time))
-        } else {
-            None
+        match (min_time, max_time) {
+            (Some(start), Some(end)) if end > start => Some((start, end)),
+            _ => None,
         }
     }
 }

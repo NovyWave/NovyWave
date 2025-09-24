@@ -1,12 +1,11 @@
 use crate::dataflow::{Actor, Relay, relay};
 use crate::platform::{CurrentPlatform, Platform};
 use crate::visualizer::timeline::TimeNs;
-use futures::{FutureExt, StreamExt, select, stream::FusedStream};
+use futures::{FutureExt, StreamExt, select};
 use moonzoon_novyui::tokens::theme;
 use serde::{Deserialize, Serialize};
+use shared::UpMsg;
 use shared::{self, AppConfig as SharedAppConfig, DockMode, Theme as SharedTheme};
-use shared::{DownMsg, UpMsg};
-use std::sync::Arc;
 use wasm_bindgen_futures::{JsFuture, spawn_local};
 use zoon::*;
 
@@ -31,6 +30,7 @@ async fn compose_shared_app_config(
     name_column_width_right_state: &Mutable<f32>,
     value_column_width_bottom_state: &Mutable<f32>,
     value_column_width_right_state: &Mutable<f32>,
+    timeline_state_actor: &Actor<TimelineState>,
 ) -> Option<shared::AppConfig> {
     let theme = theme_actor.signal().to_stream().next().await?;
     let dock_mode = dock_mode_actor.signal().to_stream().next().await?;
@@ -67,6 +67,17 @@ async fn compose_shared_app_config(
     let name_column_width_right = name_column_width_right_state.get_cloned();
     let value_column_width_bottom = value_column_width_bottom_state.get_cloned();
     let value_column_width_right = value_column_width_right_state.get_cloned();
+    let timeline_state = timeline_state_actor.signal().to_stream().next().await?;
+
+    let cursor_position_ns = timeline_state
+        .cursor_position
+        .map(|time| time.nanos())
+        .unwrap_or_default();
+    let (visible_start_ns, visible_end_ns) = match timeline_state.visible_range {
+        Some(range) => (Some(range.start.nanos()), Some(range.end.nanos())),
+        None => (None, None),
+    };
+    let zoom_level = timeline_state.zoom_level.unwrap_or(1.0_f64) as f32;
 
     Some(shared::AppConfig {
         app: shared::AppSection::default(),
@@ -91,10 +102,10 @@ async fn compose_shared_app_config(
             load_files_scroll_position: scroll_position,
             variables_search_filter: session.variables_search_filter.clone(),
             selected_variables: selected_variables_snapshot,
-            timeline_cursor_position_ns: 0,
-            timeline_visible_range_start_ns: None,
-            timeline_visible_range_end_ns: None,
-            timeline_zoom_level: 1.0,
+            timeline_cursor_position_ns: cursor_position_ns,
+            timeline_visible_range_start_ns: visible_start_ns,
+            timeline_visible_range_end_ns: visible_end_ns,
+            timeline_zoom_level: zoom_level,
         },
         ui: shared::UiSection {
             theme,
@@ -126,22 +137,19 @@ impl Default for SessionState {
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct TimelineState {
-    pub cursor_position: TimeNs,
-    pub visible_range: TimeRange,
-    pub zoom_level: f64,
+    pub cursor_position: Option<TimeNs>,
+    pub visible_range: Option<TimeRange>,
+    pub zoom_level: Option<f64>,
 }
 
 impl Default for TimelineState {
     fn default() -> Self {
         Self {
-            cursor_position: TimeNs::ZERO,
-            visible_range: TimeRange {
-                start: TimeNs::ZERO,
-                end: TimeNs::from_nanos(10_000_000_000),
-            },
-            zoom_level: 1.0,
+            cursor_position: None,
+            visible_range: None,
+            zoom_level: None,
         }
     }
 }
@@ -531,6 +539,8 @@ pub struct AppConfig {
     pub files_height_bottom_changed_relay: Relay<f32>,
     pub variables_width_changed_relay: Relay<f32>,
     pub timeline_height_changed_relay: Relay<f32>,
+    pub timeline_state_changed_relay: Relay<TimelineState>,
+    pub timeline_state_actor: Actor<TimelineState>,
     pub name_column_width_changed_relay: Relay<f32>,
     pub value_column_width_changed_relay: Relay<f32>,
     pub session_state_changed_relay: Relay<SessionState>,
@@ -580,8 +590,15 @@ impl AppConfig {
         let session_state_changed_stream_for_session_actor =
             session_state_changed_relay.subscribe();
         let (config_save_requested_relay, mut config_save_requested_stream) = relay();
+        let (timeline_state_changed_relay, mut timeline_state_stream) = relay::<TimelineState>();
 
         let config_loaded_flag = Mutable::new(false);
+
+        let timeline_state_actor = Actor::new(TimelineState::default(), async move |state| {
+            while let Some(new_state) = timeline_state_stream.next().await {
+                state.set(new_state);
+            }
+        });
 
         // Track dock mode and per-mode column widths for Selected Variables panel
         let dock_mode_state = Mutable::new(config.workspace.dock_mode.clone());
@@ -916,6 +933,7 @@ impl AppConfig {
         let dock_mode_actor_clone = dock_mode_actor.clone();
         let session_actor_clone = session_state_actor.clone();
         let toast_actor_clone = toast_dismiss_ms_actor.clone();
+        let timeline_state_actor_clone = timeline_state_actor.clone();
 
         // FIX: Connect ConfigSaver to button click relays for immediate save trigger
 
@@ -1181,6 +1199,7 @@ impl AppConfig {
                                                 &name_column_width_right_state_clone,
                                                 &value_column_width_bottom_state_clone,
                                                 &value_column_width_right_state_clone,
+                                                &timeline_state_actor_clone,
                                             )
                                             .await
                                             {
@@ -1224,6 +1243,7 @@ impl AppConfig {
                                                 &name_column_width_right_state_clone,
                                                 &value_column_width_bottom_state_clone,
                                                 &value_column_width_right_state_clone,
+                                                &timeline_state_actor_clone,
                                             )
                                             .await
                                             {
@@ -1330,6 +1350,7 @@ impl AppConfig {
             let files_height_bottom_relay = files_height_bottom_changed_relay.clone();
             let name_column_width_relay = name_column_width_changed_relay.clone();
             let value_column_width_relay = value_column_width_changed_relay.clone();
+            let timeline_state_relay = timeline_state_changed_relay.clone();
 
             Actor::new((), async move |_state| {
                 let mut config_stream = config_loaded_stream;
@@ -1404,6 +1425,33 @@ impl AppConfig {
                         DockMode::Bottom => loaded_value_bottom,
                     };
                     value_column_width_relay.send(current_value_width);
+
+                    let visible_range = loaded_config
+                        .workspace
+                        .timeline_visible_range_start_ns
+                        .zip(loaded_config.workspace.timeline_visible_range_end_ns)
+                        .and_then(|(start_ns, end_ns)| {
+                            if end_ns > start_ns {
+                                Some(TimeRange {
+                                    start: TimeNs::from_nanos(start_ns),
+                                    end: TimeNs::from_nanos(end_ns),
+                                })
+                            } else {
+                                None
+                            }
+                        });
+
+                    let cursor_position = visible_range.as_ref().map(|_| {
+                        TimeNs::from_nanos(loaded_config.workspace.timeline_cursor_position_ns)
+                    });
+
+                    let timeline_state = TimelineState {
+                        cursor_position,
+                        visible_range,
+                        zoom_level: Some(loaded_config.workspace.timeline_zoom_level as f64),
+                    };
+
+                    timeline_state_relay.send(timeline_state);
 
                     // Update theme using proper relay
                     theme_relay.send(loaded_config.ui.theme);
@@ -1513,6 +1561,8 @@ impl AppConfig {
             files_height_bottom_changed_relay,
             variables_width_changed_relay,
             timeline_height_changed_relay,
+            timeline_state_changed_relay,
+            timeline_state_actor,
             name_column_width_changed_relay,
             value_column_width_changed_relay,
             session_state_changed_relay,

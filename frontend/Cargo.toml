@@ -28,6 +28,7 @@ shared = { path = "../shared" }
 palette = { version = "0.7", default-features = false, features = ["std"] }
 tauri-wasm = { git = "https://github.com/nanoqsh/tauri-wasm", optional = true }
 serde_json = "1.0"
+gloo-timers = { version = "0.2", features = ["futures"] }
 
 [features]
 default = []

@@ -134,9 +134,16 @@ pub fn create_format_dropdown(
         }
     };
 
+    let cursor_values_actor_for_dropdown = waveform_timeline.cursor_values_actor();
+    let unique_id_for_dropdown = unique_id.clone();
+    let value_signal_for_dropdown = cursor_values_actor_for_dropdown
+        .state
+        .signal_cloned()
+        .map(move |map| map.get(&unique_id_for_dropdown).cloned());
+
     let dropdown_options_signal = map_ref! {
         let open = is_open.signal(),
-        let value = waveform_timeline.signal_value_signal(&unique_id) => {
+        let value = value_signal_for_dropdown => {
             if !*open {
                 None
             } else {
@@ -144,6 +151,13 @@ pub fn create_format_dropdown(
             }
         }
     };
+
+    let cursor_values_actor_for_display = waveform_timeline.cursor_values_actor();
+    let unique_id_for_display = unique_id.clone();
+    let value_signal_for_display = cursor_values_actor_for_display
+        .state
+        .signal_cloned()
+        .map(move |map| map.get(&unique_id_for_display).cloned());
 
     let selected_variables_shared = selected_variables.clone();
     let waveform_timeline_shared = waveform_timeline.clone();
@@ -221,7 +235,7 @@ pub fn create_format_dropdown(
                         .s(Padding::new().x(SPACING_8))
                         .s(Gap::new().x(SPACING_8))
                         .item(El::new().s(Width::growable()).child_signal(
-                            waveform_timeline.signal_value_signal(&unique_id).map({
+                            value_signal_for_display.map({
                                 let latest_value = latest_value.clone();
                                 move |maybe_value| {
                                     let signal_value = maybe_value.unwrap_or(SignalValue::Loading);

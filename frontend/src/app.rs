@@ -1,6 +1,6 @@
 //! NovyWaveApp - Self-contained Actor+Relay Architecture
 
-use futures::StreamExt;
+use futures::{StreamExt, select};
 use futures_signals::signal_vec::SignalVecExt;
 use indexmap::IndexSet;
 use zoon::events::{KeyDown, KeyUp};
@@ -13,7 +13,18 @@ use crate::dataflow::{Actor, Relay, relay};
 use crate::selected_variables::SelectedVariables;
 use crate::tracked_files::TrackedFiles;
 use crate::visualizer::timeline::WaveformTimeline;
-use shared::{DownMsg, UpMsg};
+use shared::{DownMsg, SignalStatistics, SignalValue, UnifiedSignalData, UpMsg};
+use std::collections::BTreeMap;
+
+/// Event payload emitted for each `UnifiedSignalResponse` down message.
+#[derive(Clone, Debug)]
+pub struct UnifiedSignalResponseEvent {
+    pub request_id: String,
+    pub signal_data: Vec<UnifiedSignalData>,
+    pub cursor_values: BTreeMap<String, SignalValue>,
+    pub cached_time_range_ns: Option<(u64, u64)>,
+    pub statistics: Option<SignalStatistics>,
+}
 
 /// Actor+Relay replacement for global message routing
 /// Transforms DownMsg stream into domain-specific relay streams
@@ -26,6 +37,9 @@ pub struct ConnectionMessageActor {
     pub directory_error_relay: Relay<(String, String)>,
     pub file_loaded_relay: Relay<(String, shared::FileState)>,
     pub parsing_started_relay: Relay<(String, String)>,
+    pub batch_signal_values_relay: Relay<Vec<(String, SignalValue)>>,
+    pub unified_signal_response_relay: Relay<UnifiedSignalResponseEvent>,
+    pub unified_signal_error_relay: Relay<(String, String)>,
 
     // Actor handles message processing
     _message_actor: Actor<()>,
@@ -43,6 +57,9 @@ impl ConnectionMessageActor {
         let (directory_error_relay, _) = relay();
         let (file_loaded_relay, _) = relay();
         let (parsing_started_relay, _) = relay();
+        let (batch_signal_values_relay, _) = relay::<Vec<(String, SignalValue)>>();
+        let (unified_signal_response_relay, _) = relay::<UnifiedSignalResponseEvent>();
+        let (unified_signal_error_relay, _) = relay::<(String, String)>();
 
         // Clone relays for use in Actor closure
         let config_loaded_relay_clone = config_loaded_relay.clone();
@@ -51,6 +68,9 @@ impl ConnectionMessageActor {
         let directory_error_relay_clone = directory_error_relay.clone();
         let file_loaded_relay_clone = file_loaded_relay.clone();
         let parsing_started_relay_clone = parsing_started_relay.clone();
+        let batch_signal_values_relay_clone = batch_signal_values_relay.clone();
+        let unified_signal_response_relay_clone = unified_signal_response_relay.clone();
+        let unified_signal_error_relay_clone = unified_signal_error_relay.clone();
 
         // Actor processes DownMsg stream and routes to appropriate relays
 
@@ -89,6 +109,54 @@ impl ConnectionMessageActor {
                             DownMsg::ParsingStarted { file_id, filename } => {
                                 parsing_started_relay_clone.send((file_id, filename));
                             }
+                            DownMsg::BatchSignalValues { file_results, .. } => {
+                                let mut values = Vec::new();
+
+                                for file_result in file_results {
+                                    for result in file_result.results {
+                                        let unique_id = format!(
+                                            "{}|{}|{}",
+                                            file_result.file_path,
+                                            result.scope_path,
+                                            result.variable_name,
+                                        );
+
+                                        let value = match result.formatted_value {
+                                            Some(formatted) => SignalValue::Present(formatted),
+                                            None => match result.raw_value {
+                                                Some(raw) => SignalValue::from_data(raw),
+                                                None => SignalValue::missing(),
+                                            },
+                                        };
+
+                                        values.push((unique_id, value));
+                                    }
+                                }
+
+                                if !values.is_empty() {
+                                    batch_signal_values_relay_clone.send(values);
+                                }
+                            }
+                            DownMsg::UnifiedSignalResponse {
+                                request_id,
+                                signal_data,
+                                cursor_values,
+                                cached_time_range_ns,
+                                statistics,
+                            } => {
+                                unified_signal_response_relay_clone.send(
+                                    UnifiedSignalResponseEvent {
+                                        request_id,
+                                        signal_data,
+                                        cursor_values,
+                                        cached_time_range_ns,
+                                        statistics,
+                                    },
+                                );
+                            }
+                            DownMsg::UnifiedSignalError { request_id, error } => {
+                                unified_signal_error_relay_clone.send((request_id, error));
+                            }
                             _ => {
                                 // Other message types can be added as needed
                             }
@@ -108,6 +176,9 @@ impl ConnectionMessageActor {
             directory_error_relay,
             file_loaded_relay,
             parsing_started_relay,
+            batch_signal_values_relay,
+            unified_signal_response_relay,
+            unified_signal_error_relay,
             _message_actor: message_actor,
         }
     }
@@ -146,6 +217,9 @@ pub struct NovyWaveApp {
 
     /// Synchronizes Files panel scope selection into SelectedVariables domain
     scope_selection_sync_actor: Actor<()>,
+
+    /// Bridges connection message relays into the timeline domain
+    _timeline_message_bridge_actor: Actor<()>,
 
     // === UI STATE (Atom pattern for local UI concerns) ===
     /// File picker dialog visibility
@@ -224,19 +298,6 @@ impl NovyWaveApp {
         let tracked_files = TrackedFiles::new().await;
         let selected_variables = SelectedVariables::new().await;
 
-        // Create MaximumTimelineRange standalone actor for centralized range computation
-        let maximum_timeline_range = crate::visualizer::timeline::MaximumTimelineRange::new(
-            tracked_files.clone(),
-            selected_variables.clone(),
-        )
-        .await;
-
-        let waveform_timeline = WaveformTimeline::new(maximum_timeline_range).await;
-
-        // Initialize waveform canvas rendering domain
-        let waveform_canvas =
-            crate::visualizer::canvas::waveform_canvas::WaveformCanvas::new().await;
-
         // ✅ ACTOR+RELAY: Use working connection with message actor integration
         let (connection, connection_message_actor) = Self::create_connection_with_message_actor(
             tracked_files.clone(),
@@ -254,6 +315,31 @@ impl NovyWaveApp {
             connection_message_actor.clone(),
             tracked_files.clone(),
             selected_variables.clone(),
+        )
+        .await;
+
+        // Create MaximumTimelineRange standalone actor for centralized range computation
+        let maximum_timeline_range = crate::visualizer::timeline::MaximumTimelineRange::new(
+            tracked_files.clone(),
+            selected_variables.clone(),
+        )
+        .await;
+
+        let connection_adapter =
+            crate::connection::ConnectionAdapter::from_arc(connection_arc.clone());
+
+        let waveform_timeline = WaveformTimeline::new(
+            selected_variables.clone(),
+            maximum_timeline_range.clone(),
+            connection_adapter,
+            config.clone(),
+        )
+        .await;
+
+        // Initialize waveform canvas rendering domain
+        let waveform_canvas = crate::visualizer::canvas::waveform_canvas::WaveformCanvas::new(
+            waveform_timeline.clone(),
+            config.clone(),
         )
         .await;
 
@@ -281,6 +367,62 @@ impl NovyWaveApp {
                         current_selection,
                         &selected_variables_for_scope,
                     );
+                }
+            })
+        };
+
+        let timeline_message_bridge_actor = {
+            let mut unified_signal_response_stream = connection_message_actor
+                .unified_signal_response_relay
+                .subscribe()
+                .fuse();
+            let mut unified_signal_error_stream = connection_message_actor
+                .unified_signal_error_relay
+                .subscribe()
+                .fuse();
+            let mut batch_signal_values_stream = connection_message_actor
+                .batch_signal_values_relay
+                .subscribe()
+                .fuse();
+
+            let timeline_for_responses = waveform_timeline.clone();
+            let timeline_for_errors = waveform_timeline.clone();
+            let timeline_for_values = waveform_timeline.clone();
+
+            Actor::new((), async move |_state| {
+                loop {
+                    select! {
+                        response = unified_signal_response_stream.next() => {
+                            match response {
+                                Some(event) => {
+                                    timeline_for_responses.apply_unified_signal_response(
+                                        &event.request_id,
+                                        event.signal_data,
+                                        event.cursor_values,
+                                    );
+                                    // TODO: incorporate cached_time_range_ns & statistics into cache controller.
+                                }
+                                None => break,
+                            }
+                        }
+                        error = unified_signal_error_stream.next() => {
+                            match error {
+                                Some((request_id, error)) => {
+                                    timeline_for_errors
+                                        .handle_unified_signal_error(&request_id, &error);
+                                }
+                                None => break,
+                            }
+                        }
+                        cursor_values = batch_signal_values_stream.next() => {
+                            match cursor_values {
+                                Some(values) => {
+                                    timeline_for_values.apply_cursor_values(values);
+                                }
+                                None => break,
+                            }
+                        }
+                    }
                 }
             })
         };
@@ -315,6 +457,7 @@ impl NovyWaveApp {
             connection: connection_arc,
             connection_message_actor,
             scope_selection_sync_actor,
+            _timeline_message_bridge_actor: timeline_message_bridge_actor,
             file_dialog_visible,
             search_filter,
             app_loading,

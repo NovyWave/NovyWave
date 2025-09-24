@@ -6,6 +6,7 @@ use crate::selected_variables::{
     VariableWithContext, filter_variables_with_context, get_variables_from_tracked_files,
 };
 use crate::virtual_list::virtual_variables_list_pre_filtered;
+use crate::visualizer::timeline::NsPerPixel;
 use moonzoon_novyui::components::{KbdSize, KbdVariant, kbd};
 use moonzoon_novyui::tokens::color::{neutral_8, neutral_11, primary_6};
 use moonzoon_novyui::*;
@@ -116,7 +117,6 @@ pub fn selected_variables_with_waveform_panel(
         .signal_vec()
         .to_signal_cloned()
         .broadcast();
-    let waveform_timeline_clone = waveform_timeline.clone();
 
     let name_column_width_signal = variables_name_column_width_signal(app_config.clone());
     let value_column_width_signal = variables_value_column_width_signal(app_config.clone());
@@ -328,70 +328,7 @@ pub fn selected_variables_with_waveform_panel(
                                                         )
                                                 })
                                             })
-                                            .item(
-                                                El::new()
-                                                    .s(Height::exact(SELECTED_VARIABLES_ROW_HEIGHT))
-                                                    .s(Width::fill())
-                                                    .s(Padding::all(8))
-                                                    .s(Transform::new().move_up(4))
-                                                    .child(
-                                                        Row::new()
-                                                            .s(Align::new().center_y())
-                                                            .s(Font::new().color_signal(neutral_8()).size(12))
-                                                            .item(
-                                                                Row::new()
-                                                                    .s(Gap::new().x(SPACING_6))
-                                                                    .item(
-                                                                        El::new()
-                                                                            .s(Font::new().color_signal(neutral_11()).center().size(11))
-                                                                            .update_raw_el(|raw_el| {
-                                                                                raw_el.style("width", "max-content")
-                                                                            })
-                                                                            .child(
-                                                                                Text::new("0s")
-                                                                            )
-                                                                    )
-                                                                    .item(kbd("A").size(KbdSize::Small).variant(KbdVariant::Outlined).title("Pan left • Shift+A: Pan left faster").build())
-                                                            )
-                                                            .item(El::new().s(Width::fill()))
-                                                            .item(
-                                                                Row::new()
-                                                                    .s(Gap::new().x(SPACING_2))
-                                                                    .item(kbd("Q").size(KbdSize::Small).variant(KbdVariant::Outlined).title("Move cursor left • Shift+Q: Jump to previous transition").build())
-                                                                    .item(
-                                                                        El::new()
-                                                                            .update_raw_el(|raw_el| {
-                                                                                raw_el
-                                                                                    .style("min-width", "45px")
-                                                                                    .style("width", "fit-content")
-                                                                                    .style("max-width", "90px")
-                                                                            })
-                                                                            .s(Font::new().color_signal(neutral_11()).center())
-                                                                            .child(
-                                                                                // Connected to cursor position - displays dynamic time
-                                                                                Text::new("Dynamic time")
-                                                                            )
-                                                                    )
-                                                                    .item(kbd("E").size(KbdSize::Small).variant(KbdVariant::Outlined).title("Move cursor right • Shift+E: Jump to next transition").build())
-                                                            )
-                                                            .item(El::new().s(Width::fill()))
-                                                            .item(
-                                                                Row::new()
-                                                                    .s(Gap::new().x(SPACING_6))
-                                                                    .item(kbd("D").size(KbdSize::Small).variant(KbdVariant::Outlined).title("Pan right • Shift+D: Pan right faster").build())
-                                                                    .item(
-                                                                        El::new()
-                                                                            .s(Font::new().color_signal(neutral_11()).center().size(11))
-                                                                            .update_raw_el(|raw_el| {
-                                                                                raw_el.style("width", "max-content")
-                                                                            })
-                                                                            .child(
-                                                                                Text::new("1s")
-                                                                            )
-                                                                    )
-                                                            )
-                                                    )
-                                            )
+                                            .item(timeline_footer(waveform_timeline.clone()))
                                     )
                                     .item(crate::panel_layout::variables_value_vertical_divider(&app_config, dragging_system.clone()))
                                     .item(
@@ -399,7 +336,7 @@ pub fn selected_variables_with_waveform_panel(
                                             .s(Width::fill())
                                             .s(Height::fill())
                                             .s(Background::new().color_signal(moonzoon_novyui::tokens::color::neutral_2()))
-                                            .child(crate::visualizer::canvas::waveform_canvas::waveform_canvas(&waveform_canvas, &selected_variables, &waveform_timeline, &app_config))
+                                            .child(crate::visualizer::canvas::waveform_canvas::waveform_canvas(&waveform_canvas, &waveform_timeline))
                                     )
                             )
                     )
@@ -530,6 +467,138 @@ pub fn simple_variables_content(
                 }),
             ),
         )
+}
+
+fn timeline_footer(
+    waveform_timeline: crate::visualizer::timeline::timeline_actor::WaveformTimeline,
+) -> impl Element {
+    let viewport_actor = waveform_timeline.viewport_actor();
+    let start_signal = viewport_actor
+        .clone()
+        .signal()
+        .map(|viewport| format_time_ns(viewport.start.nanos()));
+
+    let end_signal = viewport_actor
+        .signal()
+        .map(|viewport| format_time_ns(viewport.end.nanos()));
+
+    let cursor_signal = waveform_timeline
+        .cursor_actor()
+        .signal()
+        .map(|cursor| format_time_ns(cursor.nanos()));
+
+    let zoom_signal = {
+        let viewport_actor = waveform_timeline.viewport_actor();
+        let width_actor = waveform_timeline.canvas_width_actor();
+        map_ref! {
+            let viewport = viewport_actor.signal(),
+            let width = width_actor.signal() => {
+                let range = viewport.duration().nanos();
+                let width_px = width.max(1.0) as u64;
+                let ns_per_pixel = if width_px == 0 { 1 } else { (range / width_px.max(1)).max(1) };
+                NsPerPixel(ns_per_pixel).to_string()
+            }
+        }
+    };
+
+    El::new()
+        .s(Height::exact(SELECTED_VARIABLES_ROW_HEIGHT))
+        .s(Width::fill())
+        .s(Padding::all(8))
+        .s(Transform::new().move_up(4))
+        .child(
+            Row::new()
+                .s(Align::new().center_y())
+                .s(Font::new().color_signal(neutral_8()).size(12))
+                .item(
+                    Row::new()
+                        .s(Gap::new().x(SPACING_6))
+                        .item(
+                            El::new()
+                                .s(Font::new().color_signal(neutral_11()).center().size(11))
+                                .update_raw_el(|raw_el| raw_el.style("width", "max-content"))
+                                .child_signal(start_signal.map(Text::new)),
+                        )
+                        .item(
+                            kbd("A")
+                                .size(KbdSize::Small)
+                                .variant(KbdVariant::Outlined)
+                                .title("Pan left • Shift+A: Pan left faster")
+                                .build(),
+                        ),
+                )
+                .item(El::new().s(Width::fill()))
+                .item(
+                    Row::new()
+                        .s(Gap::new().x(SPACING_2))
+                        .item(
+                            kbd("Q")
+                                .size(KbdSize::Small)
+                                .variant(KbdVariant::Outlined)
+                                .title("Move cursor left • Shift+Q: Jump to previous transition")
+                                .build(),
+                        )
+                        .item(
+                            El::new()
+                                .update_raw_el(|raw_el| {
+                                    raw_el
+                                        .style("min-width", "45px")
+                                        .style("width", "fit-content")
+                                        .style("max-width", "90px")
+                                })
+                                .s(Font::new().color_signal(neutral_11()).center())
+                                .child_signal(cursor_signal.map(Text::new)),
+                        )
+                        .item(
+                            kbd("E")
+                                .size(KbdSize::Small)
+                                .variant(KbdVariant::Outlined)
+                                .title("Move cursor right • Shift+E: Jump to next transition")
+                                .build(),
+                        ),
+                )
+                .item(
+                    El::new()
+                        .update_raw_el(|raw_el| {
+                            raw_el
+                                .style("min-width", "45px")
+                                .style("width", "fit-content")
+                                .style("max-width", "90px")
+                        })
+                        .s(Font::new().color_signal(neutral_11()).center())
+                        .child_signal(zoom_signal.map(Text::new)),
+                )
+                .item(El::new().s(Width::fill()))
+                .item(
+                    Row::new()
+                        .s(Gap::new().x(SPACING_6))
+                        .item(
+                            kbd("D")
+                                .size(KbdSize::Small)
+                                .variant(KbdVariant::Outlined)
+                                .title("Pan right • Shift+D: Pan right faster")
+                                .build(),
+                        )
+                        .item(
+                            El::new()
+                                .s(Font::new().color_signal(neutral_11()).center().size(11))
+                                .update_raw_el(|raw_el| raw_el.style("width", "max-content"))
+                                .child_signal(end_signal.map(Text::new)),
+                        ),
+                ),
+        )
+}
+
+fn format_time_ns(ns: u64) -> String {
+    if ns >= 1_000_000_000 {
+        format!("{:.1}s", ns as f64 / 1_000_000_000.0)
+    } else if ns >= 1_000_000 {
+        format!("{:.1}ms", ns as f64 / 1_000_000.0)
+    } else if ns >= 1_000 {
+        format!("{:.1}us", ns as f64 / 1_000.0)
+    } else {
+        format!("{}ns", ns)
+    }
 }
 
 /// Signal for loading variables from tracked files
