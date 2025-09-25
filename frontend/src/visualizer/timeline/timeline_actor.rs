@@ -23,6 +23,8 @@ const REQUEST_DEBOUNCE_MS: u32 = 75;
 const CONFIG_SAVE_DEBOUNCE_MS: u32 = 1_000;
 const ZOOM_CENTER_MIN_INTERVAL_MS: f64 = 16.0;
 const MIN_DURATION_NS: u64 = 1;
+const CURSOR_STEP_RATIO: f64 = 0.04;
+const CURSOR_FAST_MULTIPLIER: u64 = 4;
 
 #[derive(Clone, Debug)]
 pub struct TimelineVariableSeries {
@@ -327,10 +329,10 @@ impl WaveformTimeline {
 
     fn cursor_step_ns(&self, faster: bool) -> u64 {
         let duration = self.viewport_duration_ns();
-        let width = self.canvas_width.state.get_cloned().max(1.0) as u64;
-        let mut step = (duration / width.max(1)).max(1_000);
+        let base_step = ((duration as f64) * CURSOR_STEP_RATIO).round() as u64;
+        let mut step = base_step.max(1);
         if faster {
-            step = step.saturating_mul(10);
+            step = step.saturating_mul(CURSOR_FAST_MULTIPLIER);
         }
         step
     }
