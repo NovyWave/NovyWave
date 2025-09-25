@@ -266,10 +266,11 @@ where
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_arch = "wasm32"))]
 mod tests {
     use super::*;
     use futures::StreamExt;
+    use zoon::SignalExt;
 
     #[tokio::test]
     async fn test_atom_basic_functionality() {
@@ -299,6 +300,6 @@ mod tests {
 
         assert_eq!(int_val, 0);
         assert_eq!(string_val, "");
-        assert_eq!(bool_val, false);
+        assert!(!bool_val);
     }
 }

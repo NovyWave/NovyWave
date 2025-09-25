@@ -683,6 +683,10 @@ impl VarFormat {
                     ascii_bytes.pop();
                 }
 
+                if ascii_bytes.is_empty() {
+                    return "?".to_string();
+                }
+
                 // Now replace any remaining NULL bytes with '?' (embedded nulls)
                 for byte in ascii_bytes.iter_mut() {
                     if *byte == 0x00 {

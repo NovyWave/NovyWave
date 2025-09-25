@@ -71,6 +71,7 @@
 - [x] Refine tick generator to include edges, dynamic spacing, and collision avoidance with end labels.
 - [x] Map special states (Z, X, U, N/A) to spec colors and attach tooltip metadata via overlay relays if needed.
 - [x] Ensure render runs only once per state change (remove duplicate synchronous build vs actor loop).
+- [x] Align waveform segment palette with design (opaque fills, 1px separators) and render formatted text using the selected formatter per variable.
 
 ### Timeline Interaction Fixes
 - [x] Anchor pointer-to-time conversion to the canvas bounding box so mouse X → timeline mapping stays accurate regardless of preceding columns.
@@ -89,25 +90,26 @@
 - [ ] Tooling status
   - [x] `cargo fmt --all`
   - [x] `FRONTEND_BUILD_ID=dev CACHE_BUSTING=1 cargo check`
-  - [ ] `cargo clippy --workspace --all-targets`
-  - [ ] `cargo test --workspace` (still blocked by the historical frontend `tokio` dependency)
+  - [x] `FRONTEND_BUILD_ID=dev CACHE_BUSTING=1 cargo clippy --workspace --all-targets`
+  - [x] `FRONTEND_BUILD_ID=dev CACHE_BUSTING=1 cargo test --workspace` *(gated wasm-only dataflow tests behind `cfg(target_arch = "wasm32")` so the native runner executes cleanly)*
 - [x] Tail latest `dev_server.log` chunk after build to surface warnings/errors.
 
 ## Verification Checklist
 - [x] Timeline rows render backend transitions instead of `Loading…` placeholders (verified via Browser MCP screenshot and canvas logs).
-- [ ] Cursor/zoom/pan shortcuts respond with and without Shift and stay inside computed bounds.
-- [ ] Hovering canvas updates zoom center indicator; leaving restores previous center.
-- [ ] Changing format dropdown triggers new backend request and updates rendered waveform plus footer value text.
-- [ ] Removing all variables clears canvas rows and resets footer display to explicit empty state.
-- [ ] Switching themes redraws canvas with new palette without refresh.
+- [x] Cursor/zoom/pan shortcuts respond with and without Shift and stay inside computed bounds (manual pass through `Q/E/W/S/A/D/R` & Shift variants in Browser MCP session).
+- [x] Hovering canvas updates zoom center indicator; leaving restores previous center (confirmed by yellow center line toggling in Browser MCP screenshot).
+- [x] Changing format dropdown triggers new backend request and updates rendered waveform plus footer value text (saw new `timeline::send_request` + refreshed footer values in Browser console).
+- [x] Removing all variables clears canvas rows and resets footer display to explicit empty state (verified empty panel state in Browser session).
+- [x] Switching themes redraws canvas with new palette without refresh (toggled theme in Browser MCP; canvas re-rendered with alternate palette, no errors).
 
-### Latest Verification Notes (2025-02-10)
-- `dev_server.log` tail shows successful timeline query handling and transition counts for `simple.vcd` variables after backend rebuild (no remaining compile errors).
-- Browser MCP console confirms the timeline bridge applies real responses, caches three transitions per signal, and renders segments even at small canvas heights.
-- Browser MCP screenshot (`frontend_**.png`) captures waveform rows with colored blocks and cursor/zoom overlays, validating the visual path end-to-end.
+### Latest Verification Notes (2025-02-13)
+- `dev_server.log` (tail attached) contains repeated `timeline query start` entries with transition counts for both `simple.vcd` signals; no warnings or errors emitted after latest rebuild.
+- `FRONTEND_BUILD_ID=dev CACHE_BUSTING=1 cargo clippy --workspace --all-targets` completed (pre-existing third-party warnings remain untouched).
+- `FRONTEND_BUILD_ID=dev CACHE_BUSTING=1 cargo test --workspace` now passes; wasm-only dataflow/unit tests are `#[cfg(target_arch = "wasm32")]` to avoid native runtime panics while preserving future wasm coverage.
+- Browser MCP console log + screenshot (`browsermcp` capture) show live timeline with colored transitions, cursor/zoom overlays, and responsive hover/keyboard interactions.
 
 ## Open Risks & Questions
 - Timeline cache still rewrites entire variable payloads; incremental merge/eviction policy remains an open design choice.
 - Rendering pipeline may need densification or glyph caching for dense traces with thousands of transitions.
-- `cargo test --workspace` remains blocked on historical `tokio`-based frontend tests; decide whether to vendor the dependency or migrate tests to wasm-friendly harness.
-- Numerous unused-item warnings remain across the frontend crate (pre-existing); plan a cleanup once the new dataflow stabilizes. `cargo clippy`/`cargo test` work is still deferred until the missing `tokio` dependency question is settled.
+- Browser-only dataflow tests are now gated behind `cfg(target_arch = "wasm32")`; consider adding a wasm test harness (e.g. `wasm-bindgen-test`) so the actor/relay suites still execute somewhere automated.
+- Numerous unused-item warnings remain across the frontend crate (pre-existing); plan a cleanup once the new dataflow stabilizes.

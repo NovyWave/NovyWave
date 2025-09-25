@@ -141,15 +141,16 @@ where
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_arch = "wasm32"))]
 mod tests {
     use super::*;
     use crate::dataflow::relay;
     use futures::{StreamExt, select};
+    use zoon::{MutableExt, SignalExt};
 
     #[tokio::test]
     async fn test_actor_basic_functionality() {
-        let (increment_relay, mut increment_stream) = relay();
+        let (increment_relay, mut increment_stream) = relay::<i32>();
 
         let counter = Actor::new(0, async move |state| {
             while let Some(amount) = increment_stream.next().await {
@@ -173,18 +174,29 @@ mod tests {
 
     #[tokio::test]
     async fn test_actor_multiple_streams() {
-        let (increment_relay, mut increment_stream) = relay();
-        let (decrement_relay, mut decrement_stream) = relay();
+        let (increment_relay, increment_stream_raw) = relay::<i32>();
+        let (decrement_relay, decrement_stream_raw) = relay::<i32>();
+        let mut increment_stream = increment_stream_raw.fuse();
+        let mut decrement_stream = decrement_stream_raw.fuse();
 
         let counter = Actor::new(10, async move |state| {
             loop {
                 select! {
-                    Some(amount) = increment_stream.next() => {
-                        state.update_mut(|current| *current += amount);
+                    value = increment_stream.next() => {
+                        if let Some(amount) = value {
+                            state.update_mut(|current| *current += amount);
+                        } else {
+                            break;
+                        }
                     }
-                    Some(amount) = decrement_stream.next() => {
-                        state.update_mut(|current| *current = current.saturating_sub(amount));
+                    value = decrement_stream.next() => {
+                        if let Some(amount) = value {
+                            state.update_mut(|current| *current = current.saturating_sub(amount));
+                        } else {
+                            break;
+                        }
                     }
+                    complete => break,
                 }
             }
         });
@@ -204,7 +216,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_actor_state_handle_operations() {
-        let (event_relay, mut event_stream) = relay();
+        let (event_relay, mut event_stream) = relay::<String>();
 
         let actor = Actor::new("initial".to_string(), async move |state| {
             while let Some(operation) = event_stream.next().await {

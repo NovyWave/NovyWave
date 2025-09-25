@@ -27,7 +27,8 @@
 //! fn my_component() -> impl Element {
 //!     Column::new()
 //!         .item(
-//!             button("Click me!")
+//!             button()
+//!                 .label("Click me!")
 //!                 .variant(ButtonVariant::Primary)
 //!                 .size(ButtonSize::Medium)
 //!                 .on_press(|| {

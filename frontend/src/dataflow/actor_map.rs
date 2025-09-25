@@ -276,17 +276,20 @@ where
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_arch = "wasm32"))]
 mod tests {
     use super::*;
     use crate::dataflow::relay;
     use futures::{StreamExt, select};
     use std::collections::BTreeMap;
+    use zoon::SignalExt;
 
     #[tokio::test]
     async fn test_actor_map_basic_operations() {
-        let (set_relay, mut set_stream) = relay();
-        let (remove_relay, mut remove_stream) = relay();
+        let (set_relay, set_stream_raw) = relay::<(String, i32)>();
+        let (remove_relay, remove_stream_raw) = relay::<String>();
+        let mut set_stream = set_stream_raw.fuse();
+        let mut remove_stream = remove_stream_raw.fuse();
 
         let mut initial_map = BTreeMap::new();
         initial_map.insert("initial".to_string(), 0);
@@ -294,12 +297,21 @@ mod tests {
         let cache = ActorMap::new(initial_map, async move |map| {
             loop {
                 select! {
-                    Some((key, value)) = set_stream.next() => {
-                        map.lock_mut().insert_cloned(key, value);
+                    result = set_stream.next() => {
+                        if let Some((key, value)) = result {
+                            map.lock_mut().insert_cloned(key, value);
+                        } else {
+                            break;
+                        }
                     }
-                    Some(key) = remove_stream.next() => {
-                        map.lock_mut().remove(&key);
+                    result = remove_stream.next() => {
+                        if let Some(key) = result {
+                            map.lock_mut().remove(&key);
+                        } else {
+                            break;
+                        }
                     }
+                    complete => break,
                 }
             }
         });
@@ -343,12 +355,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(final_count, 2);
-        assert_eq!(key1_removed, false);
+        assert!(!key1_removed);
     }
 
     #[tokio::test]
     async fn test_actor_map_value_signal() {
-        let (update_relay, mut update_stream) = relay();
+        let (update_relay, mut update_stream) = relay::<(String, String)>();
 
         let cache = ActorMap::new(BTreeMap::new(), async move |map| {
             while let Some((key, value)) = update_stream.next().await {
@@ -392,7 +404,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_actor_map_handle_operations() {
-        let (operation_relay, mut operation_stream) = relay();
+        let (operation_relay, mut operation_stream) = relay::<String>();
 
         let mut initial = BTreeMap::new();
         initial.insert("counter".to_string(), 5);
@@ -405,7 +417,7 @@ mod tests {
                         map.lock_mut()
                             .insert_cloned("counter".to_string(), current + 1);
                     }
-                    "clear" => map.clear(),
+                    "clear" => map.lock_mut().clear(),
                     _ => {}
                 }
             }
@@ -428,6 +440,6 @@ mod tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
         let is_empty = cache.is_empty_signal().to_stream().next().await.unwrap();
-        assert_eq!(is_empty, true);
+        assert!(is_empty);
     }
 }

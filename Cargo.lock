@@ -1634,6 +1634,7 @@ dependencies = [
  "serde_json",
  "shared",
  "tauri-wasm",
+ "tokio",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",

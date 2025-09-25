@@ -33,3 +33,6 @@ gloo-timers = { version = "0.2", features = ["futures"] }
 [features]
 default = []
 tauri = ["dep:tauri-wasm"]
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }

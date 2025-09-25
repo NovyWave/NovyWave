@@ -24,18 +24,21 @@ impl TimeUnit {
 
 #[derive(Clone, Debug)]
 struct ThemeColors {
-    neutral_2: (u8, u8, u8, f32),
-    neutral_3: (u8, u8, u8, f32),
+    row_even_bg: (u8, u8, u8, f32),
+    row_odd_bg: (u8, u8, u8, f32),
+    timeline_row_bg: (u8, u8, u8, f32),
     neutral_12: (u8, u8, u8, f32),
     grid_color: (u8, u8, u8, f32),
     separator_color: (u8, u8, u8, f32),
     cursor_color: (u8, u8, u8, f32),
+    segment_divider_color: (u8, u8, u8, f32),
     value_low_color: (u8, u8, u8, f32),
     value_high_color: (u8, u8, u8, f32),
     value_bus_color: (u8, u8, u8, f32),
     state_high_impedance: (u8, u8, u8, f32),
     state_unknown: (u8, u8, u8, f32),
     state_uninitialized: (u8, u8, u8, f32),
+    segment_alt_multiplier: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -163,8 +166,8 @@ impl WaveformRenderer {
         let mut objects = Vec::new();
 
         Self::add_waveforms(&mut objects, params, &theme_colors);
-        Self::add_cursor_lines(&mut objects, params, &theme_colors);
         Self::add_timeline_row(&mut objects, params, &theme_colors);
+        Self::add_cursor_lines(&mut objects, params, &theme_colors);
 
         objects
     }
@@ -185,9 +188,9 @@ impl WaveformRenderer {
         for (index, variable) in params.variables.iter().enumerate() {
             let row_top = index as f32 * row_height;
             let row_color = if index % 2 == 0 {
-                theme_colors.neutral_2
+                theme_colors.row_even_bg
             } else {
-                theme_colors.neutral_3
+                theme_colors.row_odd_bg
             };
 
             objects.push(
@@ -271,7 +274,10 @@ impl WaveformRenderer {
                 continue;
             }
 
-            let (rect_top, rect_height, color) = match state {
+            let formatted_value =
+                SignalValue::Present(transition.value.clone()).get_formatted(&variable.formatter);
+
+            let (rect_top, rect_height, base_color) = match state {
                 SignalState::HighImpedance => {
                     let height = (row_height - 4.0).max(2.0) * 0.55;
                     let top = row_top + (row_height - height) / 2.0;
@@ -288,9 +294,15 @@ impl WaveformRenderer {
                 SignalState::Regular => (
                     row_top + 2.0,
                     row_height - 4.0,
-                    Self::regular_value_color(&transition.value, theme_colors),
+                    Self::regular_value_color(&transition.value, variable.formatter, theme_colors),
                 ),
                 SignalState::Missing => unreachable!(),
+            };
+
+            let color = if index % 2 == 0 {
+                base_color
+            } else {
+                Self::tint_color(base_color, theme_colors.segment_alt_multiplier)
             };
 
             objects.push(
@@ -301,9 +313,24 @@ impl WaveformRenderer {
                     .into(),
             );
 
+            if rect_start_x > 0.5 {
+                objects.push(
+                    Rectangle::new()
+                        .position(rect_start_x as f32, rect_top)
+                        .size(1.0, rect_height.max(1.5))
+                        .color(
+                            theme_colors.segment_divider_color.0,
+                            theme_colors.segment_divider_color.1,
+                            theme_colors.segment_divider_color.2,
+                            theme_colors.segment_divider_color.3,
+                        )
+                        .into(),
+                );
+            }
+
             if rect_width as f32 > 18.0 && row_height > 14.0 {
                 let text_color = theme_colors.neutral_12;
-                let text = Self::truncate_value_text(&transition.value, rect_width as usize / 7);
+                let text = Self::truncate_value_text(&formatted_value, rect_width as usize / 7);
                 let text_top = rect_top + rect_height / 2.0 - 6.0;
                 objects.push(
                     Text::new()
@@ -311,7 +338,7 @@ impl WaveformRenderer {
                         .position(rect_start_x as f32 + 4.0, text_top.max(row_top + 2.0))
                         .size(rect_width as f32 - 8.0, rect_height.max(12.0))
                         .color(text_color.0, text_color.1, text_color.2, text_color.3)
-                        .font_size(11.0)
+                        .font_size(13.0)
                         .family(Family::name("Fira Code"))
                         .into(),
                 );
@@ -330,23 +357,43 @@ impl WaveformRenderer {
         }
     }
 
-    fn regular_value_color(value: &str, theme_colors: &ThemeColors) -> (u8, u8, u8, f32) {
+    fn tint_color(color: (u8, u8, u8, f32), multiplier: f32) -> (u8, u8, u8, f32) {
+        let (r, g, b, a) = color;
+        let clamp = |component: u8| -> u8 {
+            let scaled = (component as f32) * multiplier;
+            scaled.clamp(0.0, 255.0).round() as u8
+        };
+
+        (clamp(r), clamp(g), clamp(b), a)
+    }
+
+    fn regular_value_color(
+        value: &str,
+        formatter: VarFormat,
+        theme_colors: &ThemeColors,
+    ) -> (u8, u8, u8, f32) {
         let normalized = value.trim();
         if normalized.is_empty() {
             return theme_colors.value_bus_color;
         }
 
-        match normalized.to_ascii_uppercase().as_str() {
-            "0" | "LOW" => theme_colors.value_low_color,
-            "1" | "HIGH" => theme_colors.value_high_color,
-            _ => {
-                // Multi-bit buses or formatted values use a consistent accent
-                if normalized.len() % 2 == 0 {
-                    theme_colors.value_bus_color
+        match formatter {
+            VarFormat::Binary | VarFormat::BinaryWithGroups => {
+                if normalized.len() == 1 && (normalized == "0" || normalized == "1") {
+                    if normalized == "1" {
+                        theme_colors.value_high_color
+                    } else {
+                        theme_colors.value_low_color
+                    }
                 } else {
-                    theme_colors.value_low_color
+                    theme_colors.value_bus_color
                 }
             }
+            VarFormat::Hexadecimal
+            | VarFormat::Octal
+            | VarFormat::Signed
+            | VarFormat::Unsigned
+            | VarFormat::ASCII => theme_colors.value_bus_color,
         }
     }
 
@@ -398,7 +445,7 @@ impl WaveformRenderer {
                 let dash_height = 6.0;
                 let gap_height = 4.0;
                 let mut y = 0.0;
-                let color = (168, 85, 247, 0.9);
+                let color = (67, 217, 115, 0.95);
                 while y < params.canvas_height as f32 {
                     let remaining = params.canvas_height as f32 - y;
                     let segment_height = remaining.min(dash_height);
@@ -435,10 +482,10 @@ impl WaveformRenderer {
                 .position(0.0, timeline_y)
                 .size(params.canvas_width as f32, timeline_height)
                 .color(
-                    theme_colors.neutral_2.0,
-                    theme_colors.neutral_2.1,
-                    theme_colors.neutral_2.2,
-                    1.0,
+                    theme_colors.timeline_row_bg.0,
+                    theme_colors.timeline_row_bg.1,
+                    theme_colors.timeline_row_bg.2,
+                    theme_colors.timeline_row_bg.3,
                 )
                 .into(),
         );
@@ -569,32 +616,38 @@ impl WaveformRenderer {
     fn get_theme_colors(theme: NovyUITheme) -> ThemeColors {
         match theme {
             NovyUITheme::Dark => ThemeColors {
-                neutral_2: (45, 47, 50, 1.0),
-                neutral_3: (52, 54, 58, 1.0),
+                row_even_bg: (6, 9, 14, 1.0),
+                row_odd_bg: (12, 15, 22, 1.0),
+                timeline_row_bg: (5, 11, 22, 1.0),
                 neutral_12: (253, 253, 253, 1.0),
-                grid_color: (64, 64, 64, 0.4),
-                separator_color: (80, 80, 80, 0.6),
+                grid_color: (36, 50, 72, 0.35),
+                separator_color: (42, 48, 58, 0.6),
                 cursor_color: (59, 130, 246, 0.8),
-                value_low_color: (37, 99, 235, 0.75),
-                value_high_color: (34, 197, 94, 0.8),
-                value_bus_color: (139, 92, 246, 0.7),
+                segment_divider_color: (3, 4, 9, 1.0),
+                value_low_color: (18, 50, 140, 1.0),
+                value_high_color: (16, 96, 72, 1.0),
+                value_bus_color: (44, 58, 150, 1.0),
                 state_high_impedance: (234, 179, 8, 0.85),
                 state_unknown: (220, 38, 38, 0.9),
                 state_uninitialized: (220, 38, 38, 0.65),
+                segment_alt_multiplier: 0.45,
             },
             NovyUITheme::Light => ThemeColors {
-                neutral_2: (249, 250, 251, 1.0),
-                neutral_3: (243, 244, 246, 1.0),
+                row_even_bg: (248, 250, 255, 1.0),
+                row_odd_bg: (240, 246, 255, 1.0),
+                timeline_row_bg: (234, 246, 255, 1.0),
                 neutral_12: (17, 24, 39, 1.0),
-                grid_color: (148, 163, 184, 0.4),
-                separator_color: (100, 116, 139, 0.6),
+                grid_color: (158, 173, 194, 0.35),
+                separator_color: (135, 148, 170, 0.6),
                 cursor_color: (37, 99, 235, 0.8),
-                value_low_color: (59, 130, 246, 0.7),
-                value_high_color: (16, 185, 129, 0.75),
-                value_bus_color: (125, 211, 252, 0.7),
+                segment_divider_color: (206, 212, 224, 1.0),
+                value_low_color: (110, 148, 255, 1.0),
+                value_high_color: (54, 200, 160, 1.0),
+                value_bus_color: (152, 176, 255, 1.0),
                 state_high_impedance: (202, 138, 4, 0.9),
                 state_unknown: (220, 38, 38, 0.85),
                 state_uninitialized: (220, 38, 38, 0.6),
+                segment_alt_multiplier: 1.1,
             },
         }
     }

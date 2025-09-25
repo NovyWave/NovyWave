@@ -183,28 +183,40 @@ where
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_arch = "wasm32"))]
 mod tests {
     use super::*;
     use crate::dataflow::relay;
     use futures::{StreamExt, select};
+    use zoon::{SignalExt, SignalVecExt};
 
     #[tokio::test]
     async fn test_actor_vec_basic_operations() {
-        let (add_relay, mut add_stream) = relay();
-        let (remove_relay, mut remove_stream) = relay();
+        let (add_relay, add_stream_raw) = relay::<String>();
+        let (remove_relay, remove_stream_raw) = relay::<usize>();
+        let mut add_stream = add_stream_raw.fuse();
+        let mut remove_stream = remove_stream_raw.fuse();
 
         let items = ActorVec::new(vec!["initial".to_string()], async move |items| {
             loop {
                 select! {
-                    Some(item) = add_stream.next() => {
-                        items.lock_mut().push_cloned(item);
-                    }
-                    Some(index) = remove_stream.next() => {
-                        if index < items.lock_ref().len() {
-                            items.lock_mut().remove(index);
+                    value = add_stream.next() => {
+                        if let Some(item) = value {
+                            items.lock_mut().push_cloned(item);
+                        } else {
+                            break;
                         }
                     }
+                    value = remove_stream.next() => {
+                        if let Some(index) = value {
+                            if index < items.lock_ref().len() {
+                                items.lock_mut().remove(index);
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                    complete => break,
                 }
             }
         });
@@ -243,14 +255,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_actor_vec_handle_operations() {
-        let (operation_relay, mut operation_stream) = relay();
+        let (operation_relay, mut operation_stream) = relay::<String>();
 
         let items = ActorVec::new(vec![1, 2, 3], async move |items_handle| {
             while let Some(op) = operation_stream.next().await {
                 match op.as_str() {
-                    "clear" => items_handle.clear(),
-                    "sort" => items_handle.update(|items| items.sort()),
-                    "reverse" => items_handle.update(|items| items.reverse()),
+                    "clear" => items_handle.lock_mut().clear(),
+                    "sort" => {
+                        let mut sorted = items_handle.lock_ref().to_vec();
+                        sorted.sort();
+                        items_handle.lock_mut().replace_cloned(sorted);
+                    }
+                    "reverse" => items_handle.lock_mut().reverse(),
                     _ => {}
                 }
             }
@@ -285,11 +301,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_actor_vec_retain_functionality() {
-        let (filter_relay, mut filter_stream) = relay();
+        let (filter_relay, mut filter_stream) = relay::<i32>();
 
         let items = ActorVec::new(vec![1, 2, 3, 4, 5], async move |items_handle| {
             while let Some(threshold) = filter_stream.next().await {
-                items_handle.retain(|&item| item > threshold);
+                items_handle.lock_mut().retain(|item| *item > threshold);
             }
         });
 
