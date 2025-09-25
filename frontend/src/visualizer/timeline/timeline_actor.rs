@@ -381,16 +381,19 @@ impl WaveformTimeline {
         }
         let center = self.resolve_zoom_center();
         let (numerator, denominator) = if faster {
-            (2u128, 5u128)
+            (2.0f64, 5.0f64)
         } else {
-            (7u128, 10u128)
+            (7.0f64, 10.0f64)
         };
         let mut new_duration =
-            ((current_duration as u128) * numerator + (denominator / 2)) / denominator;
-        if new_duration < MIN_DURATION_NS as u128 {
-            new_duration = MIN_DURATION_NS as u128;
+            ((current_duration as f64) * (numerator / denominator)).floor() as u64;
+        if new_duration < MIN_DURATION_NS {
+            new_duration = MIN_DURATION_NS;
         }
-        self.set_viewport_with_duration(center, new_duration as u64);
+        if new_duration >= current_duration {
+            new_duration = current_duration.saturating_sub(1).max(MIN_DURATION_NS);
+        }
+        self.set_viewport_with_duration(center, new_duration);
     }
 
     fn zoom_out(&self, faster: bool) {
@@ -398,20 +401,20 @@ impl WaveformTimeline {
         let current_duration = viewport.duration().nanos();
         let center = self.resolve_zoom_center();
         let (numerator, denominator) = if faster {
-            (9u128, 5u128)
+            (9.0f64, 5.0f64)
         } else {
-            (13u128, 10u128)
+            (13.0f64, 10.0f64)
         };
         let mut new_duration =
-            ((current_duration as u128) * numerator + (denominator / 2)) / denominator;
-        if new_duration < MIN_DURATION_NS as u128 {
-            new_duration = MIN_DURATION_NS as u128;
+            ((current_duration as f64) * (numerator / denominator)).ceil() as u64;
+        if new_duration <= current_duration {
+            new_duration = current_duration.saturating_add(1);
         }
         if let Some(bounds) = self.bounds() {
             let max_duration = bounds.end.duration_since(bounds.start).nanos();
-            new_duration = new_duration.min(max_duration as u128);
+            new_duration = new_duration.min(max_duration);
         }
-        self.set_viewport_with_duration(center, new_duration as u64);
+        self.set_viewport_with_duration(center, new_duration);
     }
 
     fn pan_left(&self, faster: bool) {

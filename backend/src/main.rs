@@ -345,7 +345,7 @@ impl SignalCacheManager {
         &self,
         waveform_data: &WaveformData,
         signal_ref: &wellen::SignalRef,
-        requested_format: &shared::VarFormat,
+        _requested_format: &shared::VarFormat,
         signal_key: &str,
     ) -> Result<Vec<SignalTransition>, String> {
         debug_log!(
@@ -386,27 +386,18 @@ impl SignalCacheManager {
                 let value = signal.get_value_at(&offset, 0);
                 let base_value = format_non_binary_signal_value(&value);
 
-                // Respect requested formatting whenever we can obtain a pure binary string
-                let formatted_value = if let Some(bit_string) = value.to_bit_string() {
-                    match requested_format {
-                        shared::VarFormat::Binary => bit_string,
-                        shared::VarFormat::BinaryWithGroups
-                        | shared::VarFormat::Hexadecimal
-                        | shared::VarFormat::Octal
-                        | shared::VarFormat::Signed
-                        | shared::VarFormat::Unsigned
-                        | shared::VarFormat::ASCII => requested_format.format(&bit_string),
-                    }
+                let stored_value = if let Some(bit_string) = value.to_bit_string() {
+                    bit_string
                 } else {
                     base_value.clone()
                 };
 
-                if last_value.as_ref() != Some(&formatted_value) {
+                if last_value.as_ref() != Some(&stored_value) {
                     transitions.push(SignalTransition {
                         time_ns,
-                        value: formatted_value.clone(),
+                        value: stored_value.clone(),
                     });
-                    last_value = Some(formatted_value);
+                    last_value = Some(stored_value);
                 }
             }
         }

@@ -432,19 +432,23 @@ fn value_column_footer(
     waveform_timeline: crate::visualizer::timeline::timeline_actor::WaveformTimeline,
 ) -> impl Element {
     let viewport_actor = waveform_timeline.viewport_actor();
-    let start_signal = viewport_actor
-        .clone()
-        .signal()
-        .map(|viewport| format_time_ns(viewport.start.nanos()));
+    let start_signal = viewport_actor.clone().signal().map(|viewport| {
+        format_time_with_range(viewport.start.nanos(), viewport.duration().nanos())
+    });
 
     let end_signal = viewport_actor
         .signal()
-        .map(|viewport| format_time_ns(viewport.end.nanos()));
+        .map(|viewport| format_time_with_range(viewport.end.nanos(), viewport.duration().nanos()));
 
-    let cursor_signal = waveform_timeline
-        .cursor_actor()
-        .signal()
-        .map(|cursor| format_time_ns(cursor.nanos()));
+    let cursor_signal = {
+        let viewport_actor = viewport_actor.clone();
+        map_ref! {
+            let cursor = waveform_timeline.cursor_actor().signal(),
+            let viewport = viewport_actor.signal() => {
+                format_time_with_range(cursor.nanos(), viewport.duration().nanos())
+            }
+        }
+    };
 
     let zoom_signal = {
         let viewport_actor = waveform_timeline.viewport_actor();
@@ -567,14 +571,73 @@ fn selected_variables_wave_column(
         ))
 }
 
-fn format_time_ns(ns: u64) -> String {
-    if ns >= 1_000_000_000 {
-        format!("{:.1}s", ns as f64 / 1_000_000_000.0)
-    } else if ns >= 1_000_000 {
-        format!("{:.1}ms", ns as f64 / 1_000_000.0)
-    } else if ns >= 1_000 {
-        format!("{:.1}us", ns as f64 / 1_000.0)
+fn format_time_with_range(ns: u64, range_ns: u64) -> String {
+    let unit = TimeDisplayUnit::from_range(range_ns);
+    let value = ns as f64 / unit.base_ns();
+    let mut formatted = format_axis_number(value);
+    formatted.push_str(unit.suffix());
+    formatted
+}
+
+fn format_axis_number(value: f64) -> String {
+    let mut s = if value.abs() >= 100.0 {
+        format!("{:.0}", value.round())
+    } else if value.abs() >= 10.0 {
+        format!("{:.1}", value)
+    } else if value.abs() >= 1.0 {
+        format!("{:.2}", value)
     } else {
-        format!("{}ns", ns)
+        format!("{:.3}", value)
+    };
+
+    if let Some(pos) = s.find('.') {
+        while s.ends_with('0') {
+            s.pop();
+        }
+        if s.len() > pos && s.ends_with('.') {
+            s.pop();
+        }
+    }
+
+    if s.is_empty() { "0".to_string() } else { s }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum TimeDisplayUnit {
+    Seconds,
+    Milliseconds,
+    Microseconds,
+    Nanoseconds,
+}
+
+impl TimeDisplayUnit {
+    fn from_range(range_ns: u64) -> Self {
+        if range_ns >= 1_000_000_000 {
+            TimeDisplayUnit::Seconds
+        } else if range_ns >= 1_000_000 {
+            TimeDisplayUnit::Milliseconds
+        } else if range_ns >= 1_000 {
+            TimeDisplayUnit::Microseconds
+        } else {
+            TimeDisplayUnit::Nanoseconds
+        }
+    }
+
+    fn base_ns(self) -> f64 {
+        match self {
+            TimeDisplayUnit::Seconds => 1_000_000_000.0,
+            TimeDisplayUnit::Milliseconds => 1_000_000.0,
+            TimeDisplayUnit::Microseconds => 1_000.0,
+            TimeDisplayUnit::Nanoseconds => 1.0,
+        }
+    }
+
+    fn suffix(self) -> &'static str {
+        match self {
+            TimeDisplayUnit::Seconds => "s",
+            TimeDisplayUnit::Milliseconds => "ms",
+            TimeDisplayUnit::Microseconds => "us",
+            TimeDisplayUnit::Nanoseconds => "ns",
+        }
     }
 }

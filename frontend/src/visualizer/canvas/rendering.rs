@@ -107,7 +107,10 @@ struct StaticRenderKey {
     viewport_end_ns: u64,
     theme_key: u8,
     variables_signature: u64,
+    revision: u8,
 }
+
+const STATIC_CACHE_REVISION: u8 = 1;
 
 impl StaticRenderKey {
     fn from_params(params: &RenderingParameters) -> Self {
@@ -118,6 +121,7 @@ impl StaticRenderKey {
             viewport_end_ns: params.viewport_end_ns,
             theme_key: Self::theme_key(params.theme),
             variables_signature: Self::variables_signature(&params.variables),
+            revision: STATIC_CACHE_REVISION,
         }
     }
 
@@ -399,7 +403,7 @@ impl WaveformRenderer {
         }
 
         let mut run_start = 0usize;
-        let mut run_index = 0usize;
+        let mut absolute_segment_index = 0usize;
         let mut current_state = if width_px > 0 {
             pixel_states[0].clone()
         } else {
@@ -415,6 +419,9 @@ impl WaveformRenderer {
 
             if !Self::pixel_state_equal(current_state.as_ref(), state.as_ref()) {
                 if let Some(pixel_state) = current_state.clone() {
+                    if !matches!(pixel_state, PixelValue::Mixed) {
+                        absolute_segment_index += 1;
+                    }
                     Self::draw_pixel_run(
                         objects,
                         pixel_state,
@@ -423,10 +430,9 @@ impl WaveformRenderer {
                         row_top,
                         row_height,
                         theme_colors,
-                        run_index,
+                        absolute_segment_index,
                         variable.formatter,
                     );
-                    run_index += 1;
                 }
                 run_start = idx;
                 current_state = state;

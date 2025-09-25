@@ -278,7 +278,7 @@ pub fn create_format_dropdown(
                                         .unwrap_or_else(|| filtered_full.clone());
 
                                     El::new()
-                                        .s(Font::new().no_wrap().color_signal(
+                                        .s(Font::new().size(13).no_wrap().color_signal(
                                             always(is_placeholder)
                                                 .map_bool_signal(|| neutral_8(), || neutral_11()),
                                         ))
