@@ -1,7 +1,7 @@
 //! Time domain for timeline time representations and calculations
 //!
 //! Complete domain containing all time-related types and their operations:
-//! TimeNs, DurationNs, NsPerPixel, Viewport, TimelineCoordinates
+//! TimeNs, DurationNs, TimePerPixel, Viewport, TimelineCoordinates
 
 use std::fmt;
 use std::ops::{Add, Sub};
@@ -12,8 +12,10 @@ pub const NS_PER_MILLISECOND: f64 = 1_000_000.0;
 pub const NS_PER_MICROSECOND: f64 = 1_000.0;
 
 pub const DEFAULT_TIMELINE_RANGE_NS: u64 = 1_000_000_000;
-pub const MAX_ZOOM_NS_PER_PIXEL: u64 = 10_000_000_000;
-pub const MIN_ZOOM_NS_PER_PIXEL: u64 = 1_000;
+pub const PS_PER_NS: u64 = 1_000;
+pub const PS_PER_US: u64 = 1_000_000;
+pub const PS_PER_MS: u64 = 1_000_000_000;
+pub const PS_PER_SECOND: u64 = 1_000_000_000_000;
 pub const MIN_CURSOR_STEP_NS: u64 = 1_000_000;
 pub const MAX_CURSOR_STEP_NS: u64 = 1_000_000_000;
 pub const MS_DISPLAY_THRESHOLD_NS: u64 = 100_000;
@@ -135,64 +137,122 @@ impl Sub for DurationNs {
 
 /// Represents timeline resolution as nanoseconds per pixel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct NsPerPixel(pub u64);
+pub struct TimePerPixel {
+    picoseconds: u64,
+}
 
-impl NsPerPixel {
-    pub const MAX_ZOOM_IN: NsPerPixel = NsPerPixel(1);
-    pub const MEDIUM_ZOOM: NsPerPixel = NsPerPixel(MIN_CURSOR_STEP_NS);
+impl TimePerPixel {
+    pub const MAX_ZOOM_IN: TimePerPixel = TimePerPixel { picoseconds: 1 };
+    pub const MEDIUM_ZOOM: TimePerPixel = TimePerPixel {
+        picoseconds: MIN_CURSOR_STEP_NS * PS_PER_NS,
+    };
 
-    pub fn nanos(self) -> u64 {
-        self.0
+    pub fn picoseconds(self) -> u64 {
+        self.picoseconds
     }
 
-    pub fn zoom_in_smooth(self, factor: f64) -> Self {
-        let new_ns_per_pixel = ((self.0 as f64) * (1.0 - factor.clamp(0.0, 0.9))).max(1.0) as u64;
-        NsPerPixel(new_ns_per_pixel.max(1))
+    pub fn from_picoseconds(ps: u64) -> Self {
+        Self {
+            picoseconds: ps.max(1),
+        }
     }
 
-    pub fn zoom_out_smooth(self, factor: f64) -> Self {
-        let new_ns_per_pixel = ((self.0 as f64) * (1.0 + factor.clamp(0.0, 10.0))) as u64;
-        NsPerPixel(new_ns_per_pixel)
+    pub fn from_duration_and_width(duration_ns: u64, width_px: u32) -> Self {
+        let duration_ps = (duration_ns as u128) * (PS_PER_NS as u128);
+        let width = width_px.max(1) as u128;
+        let ps_per_pixel = (duration_ps / width).max(1) as u64;
+        Self::from_picoseconds(ps_per_pixel)
     }
 }
 
-impl fmt::Display for NsPerPixel {
+impl fmt::Display for TimePerPixel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.0 >= DEFAULT_TIMELINE_RANGE_NS {
-            write!(f, "{:.1}s/px", self.0 as f64 / NS_PER_SECOND)
-        } else if self.0 >= MS_DISPLAY_THRESHOLD_NS {
-            write!(f, "{:.1}ms/px", self.0 as f64 / NS_PER_MILLISECOND)
-        } else if self.0 >= US_DISPLAY_THRESHOLD_NS {
-            write!(f, "{:.1}μs/px", self.0 as f64 / NS_PER_MICROSECOND)
+        let ps = self.picoseconds;
+        if ps >= PS_PER_SECOND {
+            if ps % PS_PER_SECOND == 0 {
+                write!(f, "{}s/px", ps / PS_PER_SECOND)
+            } else {
+                let integer = ps / PS_PER_SECOND;
+                let fractional = ps % PS_PER_SECOND;
+                write!(
+                    f,
+                    "{}.{:03}s/px",
+                    integer,
+                    fractional / (PS_PER_SECOND / 1_000)
+                )
+            }
+        } else if ps >= PS_PER_MS {
+            if ps % PS_PER_MS == 0 {
+                write!(f, "{}ms/px", ps / PS_PER_MS)
+            } else {
+                let integer = ps / PS_PER_MS;
+                let fractional = ps % PS_PER_MS;
+                write!(
+                    f,
+                    "{}.{:03}ms/px",
+                    integer,
+                    fractional / (PS_PER_MS / 1_000)
+                )
+            }
+        } else if ps >= PS_PER_US {
+            if ps % PS_PER_US == 0 {
+                write!(f, "{}μs/px", ps / PS_PER_US)
+            } else {
+                let integer = ps / PS_PER_US;
+                let fractional = ps % PS_PER_US;
+                write!(
+                    f,
+                    "{}.{:03}μs/px",
+                    integer,
+                    fractional / (PS_PER_US / 1_000)
+                )
+            }
+        } else if ps >= PS_PER_NS {
+            if ps % PS_PER_NS == 0 {
+                write!(f, "{}ns/px", ps / PS_PER_NS)
+            } else {
+                let integer = ps / PS_PER_NS;
+                let fractional = ps % PS_PER_NS;
+                write!(f, "{}.{:03}ns/px", integer, fractional)
+            }
         } else {
-            write!(f, "{}ns/px", self.0)
+            write!(f, "{}ps/px", ps)
         }
     }
 }
 
-impl Default for NsPerPixel {
+impl Default for TimePerPixel {
     fn default() -> Self {
-        NsPerPixel::MEDIUM_ZOOM
+        TimePerPixel::MEDIUM_ZOOM
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::NsPerPixel;
+    use super::{PS_PER_NS, TimePerPixel};
 
     #[test]
     fn displays_nanoseconds_per_pixel() {
-        assert_eq!(NsPerPixel(1).to_string(), "1ns/px");
+        assert_eq!(
+            TimePerPixel::from_picoseconds(PS_PER_NS).to_string(),
+            "1ns/px"
+        );
     }
 
     #[test]
     fn displays_microseconds_per_pixel() {
-        assert_eq!(NsPerPixel(50_000).to_string(), "50.0μs/px");
+        assert_eq!(
+            TimePerPixel::from_picoseconds(50_000 * PS_PER_NS).to_string(),
+            "50.000μs/px"
+        );
     }
 
     #[test]
     fn displays_seconds_per_pixel() {
-        assert_eq!(NsPerPixel(2_000_000_000).to_string(), "2.0s/px");
+        assert_eq!(
+            TimePerPixel::from_picoseconds(2_000_000_000 * PS_PER_NS).to_string(),
+            "2.000s/px"
+        );
     }
 }
 
@@ -245,7 +305,7 @@ impl fmt::Display for Viewport {
 pub struct TimelineCoordinates {
     pub cursor_ns: TimeNs,
     pub viewport_start_ns: TimeNs,
-    pub ns_per_pixel: NsPerPixel,
+    pub time_per_pixel: TimePerPixel,
     pub canvas_width_pixels: u32,
 }
 
@@ -253,13 +313,13 @@ impl TimelineCoordinates {
     pub fn new(
         cursor_ns: TimeNs,
         viewport_start_ns: TimeNs,
-        ns_per_pixel: NsPerPixel,
+        time_per_pixel: TimePerPixel,
         canvas_width_pixels: u32,
     ) -> Self {
         TimelineCoordinates {
             cursor_ns,
             viewport_start_ns,
-            ns_per_pixel,
+            time_per_pixel,
             canvas_width_pixels,
         }
     }
@@ -270,7 +330,7 @@ impl Default for TimelineCoordinates {
         Self {
             cursor_ns: TimeNs::ZERO,
             viewport_start_ns: TimeNs::ZERO,
-            ns_per_pixel: NsPerPixel::default(),
+            time_per_pixel: TimePerPixel::default(),
             canvas_width_pixels: 640,
         }
     }

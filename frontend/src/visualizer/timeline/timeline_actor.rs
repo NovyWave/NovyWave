@@ -3,7 +3,9 @@ use crate::connection::ConnectionAdapter;
 use crate::dataflow::{Actor, Relay, relay};
 use crate::selected_variables::SelectedVariables;
 use crate::visualizer::timeline::maximum_timeline_range::MaximumTimelineRange;
-use crate::visualizer::timeline::time_domain::{NsPerPixel, TimeNs, Viewport};
+use crate::visualizer::timeline::time_domain::{
+    MIN_CURSOR_STEP_NS, PS_PER_NS, TimeNs, TimePerPixel, Viewport,
+};
 use futures::{FutureExt, StreamExt, select};
 use gloo_timers::callback::Timeout;
 use shared::{
@@ -15,6 +17,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use zoon::*;
+
+const MIN_DURATION_NS: u64 = 1;
 
 #[derive(Clone, Debug)]
 pub struct TimelineVariableSeries {
@@ -45,7 +49,7 @@ pub struct TimelineRenderState {
     pub zoom_center: TimeNs,
     pub canvas_width_px: u32,
     pub canvas_height_px: u32,
-    pub ns_per_pixel: NsPerPixel,
+    pub time_per_pixel: TimePerPixel,
     pub variables: Vec<TimelineVariableSeries>,
 }
 
@@ -58,7 +62,7 @@ impl Default for TimelineRenderState {
             zoom_center: TimeNs::ZERO,
             canvas_width_px: 1,
             canvas_height_px: 1,
-            ns_per_pixel: NsPerPixel(1_000_000),
+            time_per_pixel: TimePerPixel::from_picoseconds(MIN_CURSOR_STEP_NS * PS_PER_NS),
             variables: Vec::new(),
         }
     }
@@ -355,33 +359,42 @@ impl WaveformTimeline {
     }
 
     fn zoom_in(&self, faster: bool) {
-        let width = self.canvas_width.state.get_cloned().max(1.0) as u64;
-        if width == 0 {
-            return;
-        }
         let viewport = self.viewport.state.get_cloned();
         let current_duration = viewport.duration().nanos();
-        if current_duration <= width {
+        if current_duration <= MIN_DURATION_NS {
             return;
         }
-        let factor = if faster { 0.4 } else { 0.7 };
-        let mut new_duration = ((current_duration as f64) * factor).round() as u64;
-        new_duration = new_duration.max(width);
-        self.set_viewport_with_duration(self.zoom_center.state.get_cloned(), new_duration);
+        let (numerator, denominator) = if faster {
+            (2u128, 5u128)
+        } else {
+            (7u128, 10u128)
+        };
+        let mut new_duration =
+            ((current_duration as u128) * numerator + (denominator / 2)) / denominator;
+        if new_duration < MIN_DURATION_NS as u128 {
+            new_duration = MIN_DURATION_NS as u128;
+        }
+        self.set_viewport_with_duration(self.zoom_center.state.get_cloned(), new_duration as u64);
     }
 
     fn zoom_out(&self, faster: bool) {
-        let width = self.canvas_width.state.get_cloned().max(1.0) as u64;
         let viewport = self.viewport.state.get_cloned();
         let current_duration = viewport.duration().nanos();
-        let factor = if faster { 1.8 } else { 1.3 };
-        let mut new_duration = ((current_duration as f64) * factor).round() as u64;
-        new_duration = new_duration.max(width);
+        let (numerator, denominator) = if faster {
+            (9u128, 5u128)
+        } else {
+            (13u128, 10u128)
+        };
+        let mut new_duration =
+            ((current_duration as u128) * numerator + (denominator / 2)) / denominator;
+        if new_duration < MIN_DURATION_NS as u128 {
+            new_duration = MIN_DURATION_NS as u128;
+        }
         if let Some(bounds) = self.bounds() {
             let max_duration = bounds.end.duration_since(bounds.start).nanos();
-            new_duration = new_duration.min(max_duration.max(width));
+            new_duration = new_duration.min(max_duration as u128);
         }
-        self.set_viewport_with_duration(self.zoom_center.state.get_cloned(), new_duration);
+        self.set_viewport_with_duration(self.zoom_center.state.get_cloned(), new_duration as u64);
     }
 
     fn pan_left(&self, faster: bool) {
@@ -727,7 +740,7 @@ impl WaveformTimeline {
     fn sync_state_to_config(&self) {
         let viewport = self.viewport.state.get_cloned();
         let cursor = self.cursor.state.get_cloned();
-        let ns_per_pixel = self.render_state.state.get_cloned().ns_per_pixel;
+        let time_per_pixel = self.render_state.state.get_cloned().time_per_pixel;
 
         if viewport.end <= viewport.start {
             return;
@@ -739,7 +752,7 @@ impl WaveformTimeline {
                 start: viewport.start,
                 end: viewport.end,
             }),
-            zoom_level: Some(ns_per_pixel.nanos() as f64),
+            zoom_level: Some(time_per_pixel.picoseconds() as f64 / PS_PER_NS as f64),
         };
 
         self.app_config
@@ -766,11 +779,7 @@ impl WaveformTimeline {
         let width = self.canvas_width.state.get_cloned().max(1.0) as u32;
         let height = self.canvas_height.state.get_cloned().max(1.0) as u32;
         let duration = viewport.duration().nanos();
-        let ns_per_pixel = if width == 0 {
-            NsPerPixel(1)
-        } else {
-            NsPerPixel((duration / width.max(1) as u64).max(1))
-        };
+        let time_per_pixel = TimePerPixel::from_duration_and_width(duration, width);
 
         let variables_snapshot = self
             .selected_variables
@@ -813,7 +822,7 @@ impl WaveformTimeline {
             zoom_center,
             canvas_width_px: width,
             canvas_height_px: height,
-            ns_per_pixel,
+            time_per_pixel,
             variables,
         });
     }

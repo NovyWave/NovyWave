@@ -9,7 +9,7 @@
  */
 
 use crate::dragging::{variables_name_column_width_signal, variables_value_column_width_signal};
-use crate::visualizer::timeline::NsPerPixel;
+use crate::visualizer::timeline::TimePerPixel;
 use moonzoon_novyui::components::{KbdSize, KbdVariant, kbd};
 use moonzoon_novyui::tokens::color::{neutral_8, neutral_11, primary_6};
 use moonzoon_novyui::*;
@@ -295,8 +295,9 @@ fn name_column_footer(
             let width = width_actor.signal() => {
                 let range = viewport.duration().nanos();
                 let width_px = width.max(1.0) as u64;
-                let ns_per_pixel = if width_px == 0 { 1 } else { (range / width_px.max(1)).max(1) };
-                NsPerPixel(ns_per_pixel).to_string()
+                let time_per_pixel =
+                    TimePerPixel::from_duration_and_width(range, width_px.max(1) as u32);
+                time_per_pixel.to_string()
             }
         }
     };
@@ -453,8 +454,9 @@ fn value_column_footer(
             let width = width_actor.signal() => {
                 let range = viewport.duration().nanos();
                 let width_px = width.max(1.0) as u64;
-                let ns_per_pixel = if width_px == 0 { 1 } else { (range / width_px.max(1)).max(1) };
-                NsPerPixel(ns_per_pixel).to_string()
+                let time_per_pixel =
+                    TimePerPixel::from_duration_and_width(range, width_px.max(1) as u32);
+                time_per_pixel.to_string()
             }
         }
     };
