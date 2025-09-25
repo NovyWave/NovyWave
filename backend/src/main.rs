@@ -519,17 +519,80 @@ impl SignalCacheManager {
         transitions: Vec<SignalTransition>,
         max_count: usize,
     ) -> Vec<SignalTransition> {
-        if transitions.len() <= max_count {
+        if transitions.len() <= max_count || max_count <= 2 {
             return transitions;
         }
 
-        // Simple decimation - take every nth transition
-        let step = transitions.len() / max_count;
-        transitions
-            .into_iter()
-            .enumerate()
-            .filter_map(|(i, t)| if i % step == 0 { Some(t) } else { None })
-            .collect()
+        let bucket_size = ((transitions.len() as f64 / max_count as f64).ceil() as usize).max(2);
+        let mut result: Vec<SignalTransition> = Vec::with_capacity(max_count * 4);
+        let mut index = 0;
+
+        while index < transitions.len() {
+            let bucket_end = (index + bucket_size).min(transitions.len());
+            let bucket = &transitions[index..bucket_end];
+
+            if bucket.is_empty() {
+                break;
+            }
+
+            let mut push_unique = |transition: &SignalTransition| {
+                if result
+                    .last()
+                    .map(|prev| prev.time_ns != transition.time_ns)
+                    .unwrap_or(true)
+                {
+                    result.push(transition.clone());
+                }
+            };
+
+            let first = bucket.first().unwrap();
+            let first_value = first.value.clone();
+            push_unique(first);
+
+            if bucket.len() > 1 {
+                if bucket.len() <= 4 {
+                    for transition in bucket.iter().skip(1) {
+                        push_unique(transition);
+                    }
+                } else {
+                    let last = bucket.last().unwrap();
+                    let last_value = last.value.clone();
+
+                    if let Some(diff_after_first) = bucket
+                        .iter()
+                        .skip(1)
+                        .find(|transition| transition.value != first_value)
+                    {
+                        push_unique(diff_after_first);
+                    }
+
+                    if let Some(diff_before_last) = bucket
+                        .iter()
+                        .rev()
+                        .skip(1)
+                        .find(|transition| transition.value != last_value)
+                    {
+                        push_unique(diff_before_last);
+                    }
+
+                    push_unique(last);
+                }
+            }
+
+            index = bucket_end;
+        }
+
+        if let Some(last) = transitions.last() {
+            if result
+                .last()
+                .map(|prev| prev.time_ns != last.time_ns)
+                .unwrap_or(true)
+            {
+                result.push(last.clone());
+            }
+        }
+
+        result
     }
 
     /// Compute time range from transitions

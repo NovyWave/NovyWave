@@ -36,7 +36,7 @@ timeline_visible_range_end_ns = 1807741
 
 [workspace.docked_bottom_dimensions]
 files_and_scopes_panel_width = 393.0
-files_and_scopes_panel_height = 365.0
+files_and_scopes_panel_height = 375.0
 selected_variables_panel_name_column_width = 254.0
 selected_variables_panel_value_column_width = 261.0
 

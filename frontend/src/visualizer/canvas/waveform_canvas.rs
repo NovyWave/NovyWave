@@ -5,6 +5,7 @@ use crate::visualizer::timeline::timeline_actor::{TimelineRenderState, WaveformT
 use futures::{select, stream::StreamExt};
 use moonzoon_novyui::tokens::theme::Theme as NovyUITheme;
 use shared::{SignalValue, Theme};
+use std::sync::Arc;
 use web_sys::HtmlCanvasElement;
 use zoon::events::{PointerDown, PointerLeave, PointerMove};
 use zoon::*;
@@ -228,7 +229,7 @@ impl WaveformCanvas {
                 .map(|series| VariableRenderSnapshot {
                     unique_id: series.unique_id.clone(),
                     formatter: series.formatter,
-                    transitions: series.transitions.clone(),
+                    transitions: Arc::clone(&series.transitions),
                     cursor_value: series.cursor_value.clone(),
                 })
                 .collect(),
@@ -334,7 +335,7 @@ pub fn waveform_canvas(
                                     if pointer_row < state.variables.len() {
                                         let variable = &state.variables[pointer_row];
                                         let mut current_value: Option<&str> = None;
-                                        for transition in &variable.transitions {
+                                        for transition in variable.transitions.iter() {
                                             if transition.time_ns > time_ns {
                                                 break;
                                             }

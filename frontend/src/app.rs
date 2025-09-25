@@ -2,10 +2,11 @@
 
 use futures::{StreamExt, select};
 use futures_signals::signal_vec::SignalVecExt;
+use gloo_timers::callback::Interval;
 use indexmap::IndexSet;
 use zoon::events::{KeyDown, KeyUp};
 use zoon::events_extra;
-use zoon::*;
+use zoon::{EventOptions, *};
 
 use crate::config::AppConfig;
 use crate::dataflow::atom::Atom;
@@ -14,7 +15,9 @@ use crate::selected_variables::SelectedVariables;
 use crate::tracked_files::TrackedFiles;
 use crate::visualizer::timeline::WaveformTimeline;
 use shared::{DownMsg, SignalStatistics, SignalValue, UnifiedSignalData, UpMsg};
-use std::collections::BTreeMap;
+use std::cell::RefCell;
+use std::collections::{BTreeMap, HashMap};
+use std::rc::Rc;
 
 /// Event payload emitted for each `UnifiedSignalResponse` down message.
 #[derive(Clone, Debug)]
@@ -24,6 +27,18 @@ pub struct UnifiedSignalResponseEvent {
     pub cursor_values: BTreeMap<String, SignalValue>,
     pub cached_time_range_ns: Option<(u64, u64)>,
     pub statistics: Option<SignalStatistics>,
+}
+
+const KEY_REPEAT_INTERVAL_MS: u32 = 55;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum KeyAction {
+    CursorLeft,
+    CursorRight,
+    PanLeft,
+    PanRight,
+    ZoomIn,
+    ZoomOut,
 }
 
 /// Actor+Relay replacement for global message routing
@@ -43,6 +58,30 @@ pub struct ConnectionMessageActor {
 
     // Actor handles message processing
     _message_actor: Actor<()>,
+}
+
+fn start_key_repeat<F>(
+    handles: &Rc<RefCell<HashMap<KeyAction, Interval>>>,
+    action: KeyAction,
+    period_ms: u32,
+    callback: F,
+) where
+    F: FnMut() + 'static,
+{
+    let mut map = handles.borrow_mut();
+    if map.contains_key(&action) {
+        return;
+    }
+
+    let mut callback = callback;
+    let interval = Interval::new(period_ms, move || {
+        callback();
+    });
+    map.insert(action, interval);
+}
+
+fn stop_key_repeat(handles: &Rc<RefCell<HashMap<KeyAction, Interval>>>, action: KeyAction) {
+    handles.borrow_mut().remove(&action);
 }
 
 impl ConnectionMessageActor {
@@ -244,6 +283,8 @@ pub struct NovyWaveApp {
 
     /// App shutdown requested
     pub shutdown_requested_relay: Relay<()>,
+
+    key_repeat_handles: Rc<RefCell<HashMap<KeyAction, Interval>>>,
 }
 
 // Remove Default implementation - use new() method instead
@@ -440,6 +481,7 @@ impl NovyWaveApp {
         let search_filter = Atom::new(String::new());
         let app_loading = Atom::new(false); // Initialization complete
         let error_message = Atom::new(None);
+        let key_repeat_handles = Rc::new(RefCell::new(HashMap::new()));
 
         Self::setup_app_coordination(&selected_variables, &config).await;
 
@@ -462,6 +504,7 @@ impl NovyWaveApp {
             file_dialog_toggle_requested_relay,
             error_occurred_relay,
             shutdown_requested_relay,
+            key_repeat_handles,
         }
     }
 
@@ -588,110 +631,200 @@ impl NovyWaveApp {
                 let shift_key_pressed = timeline.shift_key_pressed_relay.clone();
                 let shift_key_released = timeline.shift_key_released_relay.clone();
                 let dragging_system_for_events = dragging_system.clone();
+                let key_repeat_handles = self.key_repeat_handles.clone();
 
                 move |raw_el| {
-                    let raw_el = raw_el.global_event_handler(move |event: KeyDown| {
-                        // Check if the active element is an input/textarea to disable shortcuts
-                        // This prevents conflicts when user is typing in input fields
-                        let should_handle_shortcuts = if let Some(window) = web_sys::window() {
-                            if let Some(document) = window.document() {
-                                if let Some(active_element) = document.active_element() {
-                                    let tag_name = active_element.tag_name().to_lowercase();
-                                    // Disable shortcuts when input fields are focused
-                                    !matches!(tag_name.as_str(), "input" | "textarea")
+                    let repeat_handles_for_down = key_repeat_handles.clone();
+                    let repeat_handles_for_up = key_repeat_handles.clone();
+                    let raw_el = raw_el.global_event_handler_with_options(
+                        EventOptions::new().preventable(),
+                        move |event: KeyDown| {
+                            // Check if the active element is an input/textarea to disable shortcuts
+                            // This prevents conflicts when user is typing in input fields
+                            let should_handle_shortcuts = if let Some(window) = web_sys::window() {
+                                if let Some(document) = window.document() {
+                                    if let Some(active_element) = document.active_element() {
+                                        let tag_name = active_element.tag_name().to_lowercase();
+                                        // Disable shortcuts when input fields are focused
+                                        !matches!(tag_name.as_str(), "input" | "textarea")
+                                    } else {
+                                        true // No active element, allow shortcuts
+                                    }
                                 } else {
-                                    true // No active element, allow shortcuts
+                                    true // No document, allow shortcuts
                                 }
                             } else {
-                                true // No document, allow shortcuts
+                                true // No window, allow shortcuts
+                            };
+
+                            if !should_handle_shortcuts {
+                                return;
                             }
-                        } else {
-                            true // No window, allow shortcuts
-                        };
 
-                        if !should_handle_shortcuts {
-                            return;
-                        }
-
-                        // Handle Shift key tracking
-                        if event.shift_key() {
-                            shift_key_pressed.send(());
-                        }
-
-                        // Handle keyboard shortcuts
-                        if event.ctrl_key() {
-                            match event.key().as_str() {
-                                "t" | "T" => {
-                                    event.prevent_default();
-                                    theme_relay.send(());
-                                }
-                                "d" | "D" => {
-                                    event.prevent_default();
-                                    dock_relay.send(());
-                                }
-                                _ => {}
+                            // Handle Shift key tracking
+                            if event.shift_key() {
+                                shift_key_pressed.send(());
                             }
-                        } else {
-                            // Timeline navigation shortcuts (without Ctrl)
-                            match event.key().as_str() {
-                                // Cursor Movement
-                                "q" | "Q" => {
-                                    event.prevent_default();
-                                    if event.shift_key() {
-                                        jump_to_previous.send(());
-                                    } else {
-                                        left_key_pressed.send(());
+
+                            // Handle keyboard shortcuts
+                            if event.ctrl_key() {
+                                match event.key().as_str() {
+                                    "t" | "T" => {
+                                        event.prevent_default();
+                                        theme_relay.send(());
                                     }
-                                }
-                                "e" | "E" => {
-                                    event.prevent_default();
-                                    if event.shift_key() {
-                                        jump_to_next.send(());
-                                    } else {
-                                        right_key_pressed.send(());
+                                    "d" | "D" => {
+                                        event.prevent_default();
+                                        dock_relay.send(());
                                     }
+                                    _ => {}
                                 }
+                            } else {
+                                // Timeline navigation shortcuts (without Ctrl)
+                                match event.key().as_str() {
+                                    // Cursor Movement
+                                    "q" | "Q" => {
+                                        event.prevent_default();
+                                        if event.shift_key() {
+                                            stop_key_repeat(
+                                                &repeat_handles_for_down,
+                                                KeyAction::CursorLeft,
+                                            );
+                                            jump_to_previous.send(());
+                                        } else {
+                                            left_key_pressed.send(());
+                                            if !event.repeat() {
+                                                let relay = left_key_pressed.clone();
+                                                start_key_repeat(
+                                                    &repeat_handles_for_down,
+                                                    KeyAction::CursorLeft,
+                                                    KEY_REPEAT_INTERVAL_MS,
+                                                    move || relay.send(()),
+                                                );
+                                            }
+                                        }
+                                    }
+                                    "e" | "E" => {
+                                        event.prevent_default();
+                                        if event.shift_key() {
+                                            stop_key_repeat(
+                                                &repeat_handles_for_down,
+                                                KeyAction::CursorRight,
+                                            );
+                                            jump_to_next.send(());
+                                        } else {
+                                            right_key_pressed.send(());
+                                            if !event.repeat() {
+                                                let relay = right_key_pressed.clone();
+                                                start_key_repeat(
+                                                    &repeat_handles_for_down,
+                                                    KeyAction::CursorRight,
+                                                    KEY_REPEAT_INTERVAL_MS,
+                                                    move || relay.send(()),
+                                                );
+                                            }
+                                        }
+                                    }
 
-                                // Viewport Panning
-                                "a" | "A" => {
-                                    event.prevent_default();
-                                    pan_left_pressed.send(());
-                                }
-                                "d" | "D" => {
-                                    event.prevent_default();
-                                    pan_right_pressed.send(());
-                                }
+                                    // Viewport Panning
+                                    "a" | "A" => {
+                                        event.prevent_default();
+                                        pan_left_pressed.send(());
+                                        if !event.repeat() {
+                                            let relay = pan_left_pressed.clone();
+                                            start_key_repeat(
+                                                &repeat_handles_for_down,
+                                                KeyAction::PanLeft,
+                                                KEY_REPEAT_INTERVAL_MS,
+                                                move || relay.send(()),
+                                            );
+                                        }
+                                    }
+                                    "d" | "D" => {
+                                        event.prevent_default();
+                                        pan_right_pressed.send(());
+                                        if !event.repeat() {
+                                            let relay = pan_right_pressed.clone();
+                                            start_key_repeat(
+                                                &repeat_handles_for_down,
+                                                KeyAction::PanRight,
+                                                KEY_REPEAT_INTERVAL_MS,
+                                                move || relay.send(()),
+                                            );
+                                        }
+                                    }
 
-                                // Zoom Controls
-                                "w" | "W" => {
-                                    event.prevent_default();
-                                    zoom_in_pressed.send(());
-                                }
-                                "s" | "S" => {
-                                    event.prevent_default();
-                                    zoom_out_pressed.send(());
-                                }
+                                    // Zoom Controls
+                                    "w" | "W" => {
+                                        event.prevent_default();
+                                        zoom_in_pressed.send(());
+                                        if !event.repeat() {
+                                            let relay = zoom_in_pressed.clone();
+                                            start_key_repeat(
+                                                &repeat_handles_for_down,
+                                                KeyAction::ZoomIn,
+                                                KEY_REPEAT_INTERVAL_MS,
+                                                move || relay.send(()),
+                                            );
+                                        }
+                                    }
+                                    "s" | "S" => {
+                                        event.prevent_default();
+                                        zoom_out_pressed.send(());
+                                        if !event.repeat() {
+                                            let relay = zoom_out_pressed.clone();
+                                            start_key_repeat(
+                                                &repeat_handles_for_down,
+                                                KeyAction::ZoomOut,
+                                                KEY_REPEAT_INTERVAL_MS,
+                                                move || relay.send(()),
+                                            );
+                                        }
+                                    }
 
-                                // Reset Controls
-                                "z" | "Z" => {
-                                    event.prevent_default();
-                                    reset_zoom_center.send(());
-                                }
-                                "r" | "R" => {
-                                    event.prevent_default();
-                                    reset_zoom.send(());
-                                }
+                                    // Reset Controls
+                                    "z" | "Z" => {
+                                        event.prevent_default();
+                                        reset_zoom_center.send(());
+                                    }
+                                    "r" | "R" => {
+                                        event.prevent_default();
+                                        reset_zoom.send(());
+                                    }
 
-                                _ => {}
+                                    _ => {}
+                                }
                             }
-                        }
-                    });
+                        },
+                    );
 
-                    let raw_el = raw_el.global_event_handler(move |event: KeyUp| {
-                        if matches!(event.key().as_str(), "Shift" | "ShiftLeft" | "ShiftRight") {
-                            shift_key_released.send(());
-                        }
-                    });
+                    let raw_el = raw_el.global_event_handler_with_options(
+                        EventOptions::new().preventable(),
+                        move |event: KeyUp| match event.key().as_str() {
+                            "Shift" | "ShiftLeft" | "ShiftRight" => {
+                                shift_key_released.send(());
+                            }
+                            "q" | "Q" => {
+                                stop_key_repeat(&repeat_handles_for_up, KeyAction::CursorLeft);
+                            }
+                            "e" | "E" => {
+                                stop_key_repeat(&repeat_handles_for_up, KeyAction::CursorRight);
+                            }
+                            "a" | "A" => {
+                                stop_key_repeat(&repeat_handles_for_up, KeyAction::PanLeft);
+                            }
+                            "d" | "D" => {
+                                stop_key_repeat(&repeat_handles_for_up, KeyAction::PanRight);
+                            }
+                            "w" | "W" => {
+                                stop_key_repeat(&repeat_handles_for_up, KeyAction::ZoomIn);
+                            }
+                            "s" | "S" => {
+                                stop_key_repeat(&repeat_handles_for_up, KeyAction::ZoomOut);
+                            }
+                            _ => {}
+                        },
+                    );
 
                     let dragging_system_for_move = dragging_system_for_events.clone();
                     let raw_el =

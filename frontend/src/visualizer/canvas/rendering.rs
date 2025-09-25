@@ -2,24 +2,23 @@ use crate::dataflow::Actor;
 use fast2d::{CanvasWrapper as Fast2DCanvas, Family, Object2d, Rectangle, Text};
 use moonzoon_novyui::tokens::theme::Theme as NovyUITheme;
 use shared::{SignalTransition, SignalValue, VarFormat};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::rc::Rc;
+use std::sync::Arc;
 
-#[derive(Debug, Clone, Copy)]
-enum TimeUnit {
-    Nanosecond,
-    Microsecond,
-    Millisecond,
-    Second,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TimeLabelUnit {
+    Seconds,
+    Milliseconds,
+    Microseconds,
+    Nanoseconds,
 }
 
-impl TimeUnit {
-    fn suffix(self) -> &'static str {
-        match self {
-            TimeUnit::Nanosecond => "ns",
-            TimeUnit::Microsecond => "us",
-            TimeUnit::Millisecond => "ms",
-            TimeUnit::Second => "s",
-        }
-    }
+#[derive(Clone, Debug, PartialEq)]
+enum PixelValue {
+    Single(Rc<String>),
+    Mixed,
 }
 
 #[derive(Clone, Debug)]
@@ -54,7 +53,7 @@ enum SignalState {
 pub struct VariableRenderSnapshot {
     pub unique_id: String,
     pub formatter: VarFormat,
-    pub transitions: Vec<SignalTransition>,
+    pub transitions: Arc<Vec<SignalTransition>>,
     pub cursor_value: Option<SignalValue>,
 }
 
@@ -80,6 +79,7 @@ struct RenderingState {
     pub last_render_params: Option<RenderingParameters>,
     pub render_count: u32,
     pub last_result: Option<RenderResult>,
+    pub static_cache: Option<StaticCacheInfo>,
 }
 
 impl Default for RenderingState {
@@ -88,6 +88,55 @@ impl Default for RenderingState {
             last_render_params: None,
             render_count: 0,
             last_result: None,
+            static_cache: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct StaticCacheInfo {
+    key: StaticRenderKey,
+    static_count: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct StaticRenderKey {
+    canvas_width: u32,
+    canvas_height: u32,
+    viewport_start_ns: u64,
+    viewport_end_ns: u64,
+    theme_key: u8,
+    variables_signature: u64,
+}
+
+impl StaticRenderKey {
+    fn from_params(params: &RenderingParameters) -> Self {
+        Self {
+            canvas_width: params.canvas_width,
+            canvas_height: params.canvas_height,
+            viewport_start_ns: params.viewport_start_ns,
+            viewport_end_ns: params.viewport_end_ns,
+            theme_key: Self::theme_key(params.theme),
+            variables_signature: Self::variables_signature(&params.variables),
+        }
+    }
+
+    fn variables_signature(variables: &[VariableRenderSnapshot]) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        variables.len().hash(&mut hasher);
+        for variable in variables {
+            variable.unique_id.hash(&mut hasher);
+            variable.formatter.hash(&mut hasher);
+            let ptr = Arc::as_ptr(&variable.transitions) as usize;
+            ptr.hash(&mut hasher);
+        }
+        hasher.finish()
+    }
+
+    fn theme_key(theme: NovyUITheme) -> u8 {
+        match theme {
+            NovyUITheme::Dark => 0,
+            NovyUITheme::Light => 1,
         }
     }
 }
@@ -130,19 +179,52 @@ impl WaveformRenderer {
     pub fn render_frame(&mut self, params: RenderingParameters) -> bool {
         if let Some(canvas) = &mut self.canvas {
             let start_time = Self::get_current_time_ms();
-            let objects = Self::build_render_objects(&params);
-            let objects_rendered = objects.len();
+            let theme_colors = Self::get_theme_colors(params.theme);
+            let overlay_objects = Self::build_overlay_objects(&params, &theme_colors);
 
-            canvas.update_objects(|canvas_objects| {
-                canvas_objects.clear();
-                canvas_objects.extend(objects);
+            let mut state = self.rendering_state.state.lock_mut();
+            let static_key = StaticRenderKey::from_params(&params);
+            let mut static_count = state
+                .static_cache
+                .as_ref()
+                .map(|cache| cache.static_count)
+                .unwrap_or(0);
+            let static_changed = state
+                .static_cache
+                .as_ref()
+                .map(|cache| cache.key != static_key)
+                .unwrap_or(true);
+
+            let mut static_objects = if static_changed {
+                let objects = Self::build_static_objects(&params, &theme_colors);
+                static_count = objects.len();
+                Some(objects)
+            } else {
+                None
+            };
+
+            let static_count_local = static_count;
+            let overlay_for_update = overlay_objects.clone();
+            canvas.update_objects(move |canvas_objects| {
+                if let Some(mut new_static) = static_objects.take() {
+                    canvas_objects.clear();
+                    canvas_objects.append(&mut new_static);
+                } else {
+                    canvas_objects.truncate(static_count_local);
+                }
+                canvas_objects.extend(overlay_for_update.iter().cloned());
             });
 
-            let render_time = Self::get_current_time_ms() - start_time;
-            let mut state = self.rendering_state.state.lock_mut();
+            state.static_cache = Some(StaticCacheInfo {
+                key: static_key,
+                static_count,
+            });
+
             state.render_count = state.render_count.saturating_add(1);
             let render_count = state.render_count;
             state.last_render_params = Some(params.clone());
+            let render_time = Self::get_current_time_ms() - start_time;
+            let objects_rendered = static_count + overlay_objects.len();
             state.last_result = Some(RenderResult {
                 render_count,
                 objects_rendered,
@@ -154,7 +236,10 @@ impl WaveformRenderer {
         }
     }
 
-    fn build_render_objects(params: &RenderingParameters) -> Vec<Object2d> {
+    fn build_static_objects(
+        params: &RenderingParameters,
+        theme_colors: &ThemeColors,
+    ) -> Vec<Object2d> {
         if params.canvas_width == 0 || params.canvas_height == 0 {
             return Vec::new();
         }
@@ -162,13 +247,24 @@ impl WaveformRenderer {
             return Vec::new();
         }
 
-        let theme_colors = Self::get_theme_colors(params.theme);
         let mut objects = Vec::new();
+        Self::add_waveforms(&mut objects, params, theme_colors);
+        Self::add_timeline_row(&mut objects, params, theme_colors);
+        objects
+    }
 
-        Self::add_waveforms(&mut objects, params, &theme_colors);
-        Self::add_timeline_row(&mut objects, params, &theme_colors);
-        Self::add_cursor_lines(&mut objects, params, &theme_colors);
-
+    fn build_overlay_objects(
+        params: &RenderingParameters,
+        theme_colors: &ThemeColors,
+    ) -> Vec<Object2d> {
+        let mut objects = Vec::new();
+        if params.canvas_width == 0 || params.canvas_height == 0 {
+            return objects;
+        }
+        if params.viewport_end_ns <= params.viewport_start_ns {
+            return objects;
+        }
+        Self::add_cursor_lines(&mut objects, params, theme_colors);
         objects
     }
 
@@ -235,9 +331,25 @@ impl WaveformRenderer {
         }
 
         let range_ns = params.viewport_end_ns - params.viewport_start_ns;
-        let width = params.canvas_width as f64;
+        if range_ns == 0 {
+            return;
+        }
+
+        let width_px = params.canvas_width as usize;
+        if width_px == 0 {
+            return;
+        }
+
         let start_ns = params.viewport_start_ns;
         let end_ns = params.viewport_end_ns;
+        let ns_per_pixel = range_ns as f64 / params.canvas_width.max(1) as f64;
+        let mut pixel_states: Vec<Option<PixelValue>> = vec![None; width_px];
+        let transition_values: Vec<Rc<String>> = variable
+            .transitions
+            .iter()
+            .map(|t| Rc::new(t.value.clone()))
+            .collect();
+
         for (index, transition) in variable.transitions.iter().enumerate() {
             let mut segment_start = transition.time_ns;
             if segment_start >= end_ns {
@@ -263,85 +375,215 @@ impl WaveformRenderer {
                 continue;
             }
 
-            let start_ratio = (segment_start - start_ns) as f64 / range_ns as f64;
-            let end_ratio = (segment_end - start_ns) as f64 / range_ns as f64;
-            let rect_start_x = (start_ratio * width).max(0.0);
-            let rect_end_x = (end_ratio * width).max(rect_start_x + 1.0);
-            let rect_width = (rect_end_x - rect_start_x).max(1.0);
+            let start_px = ((segment_start - start_ns) as f64 / ns_per_pixel).floor() as isize;
+            let end_px = ((segment_end - start_ns) as f64 / ns_per_pixel).ceil() as isize;
+            let value_rc = transition_values[index].clone();
 
-            let state = Self::classify_signal_state(&transition.value);
-            if state == SignalState::Missing {
-                continue;
+            for px in start_px..end_px {
+                if px < 0 || px as usize >= width_px {
+                    continue;
+                }
+                let entry = &mut pixel_states[px as usize];
+                match entry {
+                    None => {
+                        *entry = Some(PixelValue::Single(value_rc.clone()));
+                    }
+                    Some(PixelValue::Single(existing)) => {
+                        if existing.as_ref() != value_rc.as_ref() {
+                            *entry = Some(PixelValue::Mixed);
+                        }
+                    }
+                    Some(PixelValue::Mixed) => {}
+                }
             }
+        }
 
-            let formatted_value =
-                SignalValue::Present(transition.value.clone()).get_formatted(&variable.formatter);
+        let mut run_start = 0usize;
+        let mut run_index = 0usize;
+        let mut current_state = if width_px > 0 {
+            pixel_states[0].clone()
+        } else {
+            None
+        };
 
-            let (rect_top, rect_height, base_color) = match state {
-                SignalState::HighImpedance => {
-                    let height = (row_height - 4.0).max(2.0) * 0.55;
-                    let top = row_top + (row_height - height) / 2.0;
-                    (top, height, theme_colors.state_high_impedance)
-                }
-                SignalState::Unknown => {
-                    (row_top + 2.0, row_height - 4.0, theme_colors.state_unknown)
-                }
-                SignalState::Uninitialized => (
-                    row_top + 2.0,
-                    row_height - 4.0,
-                    theme_colors.state_uninitialized,
-                ),
-                SignalState::Regular => (
-                    row_top + 2.0,
-                    row_height - 4.0,
-                    Self::regular_value_color(&transition.value, variable.formatter, theme_colors),
-                ),
-                SignalState::Missing => unreachable!(),
-            };
-
-            let color = if index % 2 == 0 {
-                base_color
+        for idx in 1..=width_px {
+            let state = if idx < width_px {
+                pixel_states[idx].clone()
             } else {
-                Self::tint_color(base_color, theme_colors.segment_alt_multiplier)
+                None
             };
 
-            objects.push(
-                Rectangle::new()
-                    .position(rect_start_x as f32, rect_top)
-                    .size(rect_width as f32, rect_height.max(1.5))
-                    .color(color.0, color.1, color.2, color.3)
-                    .into(),
-            );
+            if !Self::pixel_state_equal(current_state.as_ref(), state.as_ref()) {
+                if let Some(pixel_state) = current_state.clone() {
+                    Self::draw_pixel_run(
+                        objects,
+                        pixel_state,
+                        run_start,
+                        idx,
+                        row_top,
+                        row_height,
+                        theme_colors,
+                        run_index,
+                        variable.formatter,
+                    );
+                    run_index += 1;
+                }
+                run_start = idx;
+                current_state = state;
+            }
+        }
+    }
 
-            if rect_start_x > 0.5 {
+    fn pixel_state_equal(a: Option<&PixelValue>, b: Option<&PixelValue>) -> bool {
+        match (a, b) {
+            (None, None) => true,
+            (Some(PixelValue::Mixed), Some(PixelValue::Mixed)) => true,
+            (Some(PixelValue::Single(av)), Some(PixelValue::Single(bv))) => {
+                Rc::ptr_eq(av, bv) || av.as_ref() == bv.as_ref()
+            }
+            _ => false,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn draw_pixel_run(
+        objects: &mut Vec<Object2d>,
+        pixel_state: PixelValue,
+        start_px: usize,
+        end_px: usize,
+        row_top: f32,
+        row_height: f32,
+        theme_colors: &ThemeColors,
+        run_index: usize,
+        formatter: VarFormat,
+    ) {
+        if end_px <= start_px {
+            return;
+        }
+
+        let rect_start_x = start_px as f32;
+        let rect_width = (end_px - start_px) as f32;
+        if rect_width <= 0.0 {
+            return;
+        }
+
+        match pixel_state {
+            PixelValue::Mixed => {
+                let rect_top = row_top + 2.0;
+                let rect_height = row_height - 4.0;
+                let mix_component =
+                    |bg: u8, fg: u8| -> u8 { (fg as f32 * 0.65 + bg as f32 * 0.35).round() as u8 };
+                let bg = theme_colors.timeline_row_bg;
+                let bus = theme_colors.value_bus_color;
+                let blended_color = (
+                    mix_component(bg.0, bus.0),
+                    mix_component(bg.1, bus.1),
+                    mix_component(bg.2, bus.2),
+                    (bus.3 * 0.5).clamp(0.32, 0.65),
+                );
                 objects.push(
                     Rectangle::new()
-                        .position(rect_start_x as f32, rect_top)
-                        .size(1.0, rect_height.max(1.5))
+                        .position(rect_start_x, rect_top)
+                        .size(rect_width, rect_height.max(1.5))
                         .color(
-                            theme_colors.segment_divider_color.0,
-                            theme_colors.segment_divider_color.1,
-                            theme_colors.segment_divider_color.2,
-                            theme_colors.segment_divider_color.3,
+                            blended_color.0,
+                            blended_color.1,
+                            blended_color.2,
+                            blended_color.3,
                         )
                         .into(),
                 );
-            }
 
-            if rect_width as f32 > 18.0 && row_height > 14.0 {
-                let text_color = theme_colors.neutral_12;
-                let text = Self::truncate_value_text(&formatted_value, rect_width as usize / 7);
-                let text_top = rect_top + rect_height / 2.0 - 6.0;
+                if rect_start_x > 0.5 {
+                    objects.push(
+                        Rectangle::new()
+                            .position(rect_start_x, rect_top)
+                            .size(1.0, rect_height.max(1.5))
+                            .color(
+                                theme_colors.segment_divider_color.0,
+                                theme_colors.segment_divider_color.1,
+                                theme_colors.segment_divider_color.2,
+                                theme_colors.segment_divider_color.3,
+                            )
+                            .into(),
+                    );
+                }
+            }
+            PixelValue::Single(value) => {
+                let value_str = value.as_ref();
+                let state = Self::classify_signal_state(value_str);
+                if state == SignalState::Missing {
+                    return;
+                }
+
+                let (rect_top, rect_height, base_color) = match state {
+                    SignalState::HighImpedance => {
+                        let height = (row_height - 4.0).max(2.0) * 0.55;
+                        let top = row_top + (row_height - height) / 2.0;
+                        (top, height, theme_colors.state_high_impedance)
+                    }
+                    SignalState::Unknown => {
+                        (row_top + 2.0, row_height - 4.0, theme_colors.state_unknown)
+                    }
+                    SignalState::Uninitialized => (
+                        row_top + 2.0,
+                        row_height - 4.0,
+                        theme_colors.state_uninitialized,
+                    ),
+                    SignalState::Regular => (
+                        row_top + 2.0,
+                        row_height - 4.0,
+                        Self::regular_value_color(value_str, formatter, theme_colors),
+                    ),
+                    SignalState::Missing => unreachable!(),
+                };
+
+                let color = if run_index % 2 == 0 {
+                    base_color
+                } else {
+                    Self::tint_color(base_color, theme_colors.segment_alt_multiplier)
+                };
+
                 objects.push(
-                    Text::new()
-                        .text(text)
-                        .position(rect_start_x as f32 + 4.0, text_top.max(row_top + 2.0))
-                        .size(rect_width as f32 - 8.0, rect_height.max(12.0))
-                        .color(text_color.0, text_color.1, text_color.2, text_color.3)
-                        .font_size(13.0)
-                        .family(Family::name("Fira Code"))
+                    Rectangle::new()
+                        .position(rect_start_x, rect_top)
+                        .size(rect_width, rect_height.max(1.5))
+                        .color(color.0, color.1, color.2, color.3)
                         .into(),
                 );
+
+                if rect_start_x > 0.5 {
+                    objects.push(
+                        Rectangle::new()
+                            .position(rect_start_x, rect_top)
+                            .size(1.0, rect_height.max(1.5))
+                            .color(
+                                theme_colors.segment_divider_color.0,
+                                theme_colors.segment_divider_color.1,
+                                theme_colors.segment_divider_color.2,
+                                theme_colors.segment_divider_color.3,
+                            )
+                            .into(),
+                    );
+                }
+
+                if rect_width > 18.0 && row_height > 14.0 {
+                    let text_color = theme_colors.neutral_12;
+                    let formatted_value =
+                        SignalValue::Present(value_str.clone()).get_formatted(&formatter);
+                    let text = Self::truncate_value_text(&formatted_value, rect_width as usize / 7);
+                    let text_top = rect_top + rect_height / 2.0 - 6.0;
+                    objects.push(
+                        Text::new()
+                            .text(text)
+                            .position(rect_start_x + 4.0, text_top.max(row_top + 2.0))
+                            .size(rect_width - 8.0, rect_height.max(12.0))
+                            .color(text_color.0, text_color.1, text_color.2, text_color.3)
+                            .font_size(13.0)
+                            .family(Family::name("Fira Code"))
+                            .into(),
+                    );
+                }
             }
         }
     }
@@ -509,10 +751,18 @@ impl WaveformRenderer {
             (params.canvas_width as f64 / target_tick_spacing).clamp(2.0, 12.0);
         let raw_step_s = time_range_s / desired_tick_count.max(1.0);
         let step_s = Self::round_to_nice_number(raw_step_s);
+        let step_ns = step_s * 1_000_000_000.0;
+        let label_unit = Self::select_time_unit(step_ns, time_range_ns);
 
         let mut ticks: Vec<(f32, Option<String>)> = Vec::new();
 
-        ticks.push((0.0, Some(Self::format_time_ns(params.viewport_start_ns))));
+        ticks.push((
+            0.0,
+            Some(Self::format_time_label(
+                params.viewport_start_ns,
+                label_unit,
+            )),
+        ));
 
         let first_tick_s = (start_s / step_s).ceil() * step_s;
         let mut tick_s = first_tick_s;
@@ -522,7 +772,7 @@ impl WaveformRenderer {
             let x = (ratio * params.canvas_width as f64) as f32;
 
             if x > 0.0 && x < params.canvas_width as f32 {
-                ticks.push((x, Some(Self::format_time_ns(tick_ns))));
+                ticks.push((x, Some(Self::format_time_label(tick_ns, label_unit))));
             }
 
             tick_s += step_s;
@@ -530,7 +780,7 @@ impl WaveformRenderer {
 
         ticks.push((
             params.canvas_width as f32,
-            Some(Self::format_time_ns(params.viewport_end_ns)),
+            Some(Self::format_time_label(params.viewport_end_ns, label_unit)),
         ));
 
         let mut last_label_right = -f32::INFINITY;
@@ -589,16 +839,54 @@ impl WaveformRenderer {
         }
     }
 
-    fn format_time_ns(ns: u64) -> String {
-        if ns >= 1_000_000_000 {
-            format!("{:.1}s", ns as f64 / 1_000_000_000.0)
-        } else if ns >= 1_000_000 {
-            format!("{:.1}ms", ns as f64 / 1_000_000.0)
-        } else if ns >= 1_000 {
-            format!("{:.1}us", ns as f64 / 1_000.0)
-        } else {
-            format!("{}ns", ns)
+    fn select_time_unit(step_ns: f64, range_ns: f64) -> TimeLabelUnit {
+        let candidates = [
+            TimeLabelUnit::Seconds,
+            TimeLabelUnit::Milliseconds,
+            TimeLabelUnit::Microseconds,
+            TimeLabelUnit::Nanoseconds,
+        ];
+
+        for unit in candidates {
+            let unit_scale = unit.base_ns();
+            let range_value = range_ns / unit_scale;
+            let step_value = step_ns / unit_scale;
+            if range_value >= 1.0 && step_value >= 0.1 {
+                return unit;
+            }
         }
+
+        TimeLabelUnit::Nanoseconds
+    }
+
+    fn format_time_label(ns: u64, unit: TimeLabelUnit) -> String {
+        let value = ns as f64 / unit.base_ns();
+        let mut formatted = Self::format_axis_number(value);
+        formatted.push_str(unit.suffix());
+        formatted
+    }
+
+    fn format_axis_number(value: f64) -> String {
+        let mut s = if value.abs() >= 100.0 {
+            format!("{:.0}", value.round())
+        } else if value.abs() >= 10.0 {
+            format!("{:.1}", value)
+        } else if value.abs() >= 1.0 {
+            format!("{:.2}", value)
+        } else {
+            format!("{:.3}", value)
+        };
+
+        if let Some(pos) = s.find('.') {
+            while s.ends_with('0') {
+                s.pop();
+            }
+            if s.len() > pos && s.ends_with('.') {
+                s.pop();
+            }
+        }
+
+        s
     }
 
     fn round_to_nice_number(value: f64) -> f64 {
@@ -663,6 +951,26 @@ impl WaveformRenderer {
 
     fn get_current_time_ms() -> f32 {
         (js_sys::Date::now()) as f32
+    }
+}
+
+impl TimeLabelUnit {
+    fn base_ns(self) -> f64 {
+        match self {
+            TimeLabelUnit::Seconds => 1_000_000_000.0,
+            TimeLabelUnit::Milliseconds => 1_000_000.0,
+            TimeLabelUnit::Microseconds => 1_000.0,
+            TimeLabelUnit::Nanoseconds => 1.0,
+        }
+    }
+
+    fn suffix(self) -> &'static str {
+        match self {
+            TimeLabelUnit::Seconds => "s",
+            TimeLabelUnit::Milliseconds => "ms",
+            TimeLabelUnit::Microseconds => "us",
+            TimeLabelUnit::Nanoseconds => "ns",
+        }
     }
 }
 

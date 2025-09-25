@@ -18,8 +18,6 @@ pub const PS_PER_MS: u64 = 1_000_000_000;
 pub const PS_PER_SECOND: u64 = 1_000_000_000_000;
 pub const MIN_CURSOR_STEP_NS: u64 = 1_000_000;
 pub const MAX_CURSOR_STEP_NS: u64 = 1_000_000_000;
-pub const MS_DISPLAY_THRESHOLD_NS: u64 = 100_000;
-pub const US_DISPLAY_THRESHOLD_NS: u64 = 1_000;
 
 /// Represents a point in time as nanoseconds since the start of a waveform file.
 #[derive(
@@ -163,6 +161,29 @@ impl TimePerPixel {
         let ps_per_pixel = (duration_ps / width).max(1) as u64;
         Self::from_picoseconds(ps_per_pixel)
     }
+
+    fn format_axis_value(value: f64) -> String {
+        let mut formatted = if value.abs() >= 100.0 {
+            format!("{:.0}", value.round())
+        } else if value.abs() >= 10.0 {
+            format!("{:.1}", value)
+        } else if value.abs() >= 1.0 {
+            format!("{:.2}", value)
+        } else {
+            format!("{:.3}", value)
+        };
+
+        if let Some(pos) = formatted.find('.') {
+            while formatted.ends_with('0') {
+                formatted.pop();
+            }
+            if formatted.len() > pos && formatted.ends_with('.') {
+                formatted.pop();
+            }
+        }
+
+        formatted
+    }
 }
 
 impl fmt::Display for TimePerPixel {
@@ -172,48 +193,29 @@ impl fmt::Display for TimePerPixel {
             if ps % PS_PER_SECOND == 0 {
                 write!(f, "{}s/px", ps / PS_PER_SECOND)
             } else {
-                let integer = ps / PS_PER_SECOND;
-                let fractional = ps % PS_PER_SECOND;
-                write!(
-                    f,
-                    "{}.{:03}s/px",
-                    integer,
-                    fractional / (PS_PER_SECOND / 1_000)
-                )
+                let value = ps as f64 / PS_PER_SECOND as f64;
+                write!(f, "{}s/px", Self::format_axis_value(value))
             }
         } else if ps >= PS_PER_MS {
             if ps % PS_PER_MS == 0 {
                 write!(f, "{}ms/px", ps / PS_PER_MS)
             } else {
-                let integer = ps / PS_PER_MS;
-                let fractional = ps % PS_PER_MS;
-                write!(
-                    f,
-                    "{}.{:03}ms/px",
-                    integer,
-                    fractional / (PS_PER_MS / 1_000)
-                )
+                let value = ps as f64 / PS_PER_MS as f64;
+                write!(f, "{}ms/px", Self::format_axis_value(value))
             }
         } else if ps >= PS_PER_US {
             if ps % PS_PER_US == 0 {
-                write!(f, "{}μs/px", ps / PS_PER_US)
+                write!(f, "{}us/px", ps / PS_PER_US)
             } else {
-                let integer = ps / PS_PER_US;
-                let fractional = ps % PS_PER_US;
-                write!(
-                    f,
-                    "{}.{:03}μs/px",
-                    integer,
-                    fractional / (PS_PER_US / 1_000)
-                )
+                let value = ps as f64 / PS_PER_US as f64;
+                write!(f, "{}us/px", Self::format_axis_value(value))
             }
         } else if ps >= PS_PER_NS {
             if ps % PS_PER_NS == 0 {
                 write!(f, "{}ns/px", ps / PS_PER_NS)
             } else {
-                let integer = ps / PS_PER_NS;
-                let fractional = ps % PS_PER_NS;
-                write!(f, "{}.{:03}ns/px", integer, fractional)
+                let value = ps as f64 / PS_PER_NS as f64;
+                write!(f, "{}ns/px", Self::format_axis_value(value))
             }
         } else {
             write!(f, "{}ps/px", ps)
@@ -243,7 +245,7 @@ mod tests {
     fn displays_microseconds_per_pixel() {
         assert_eq!(
             TimePerPixel::from_picoseconds(50_000 * PS_PER_NS).to_string(),
-            "50.000μs/px"
+            "50us/px"
         );
     }
 
@@ -251,7 +253,7 @@ mod tests {
     fn displays_seconds_per_pixel() {
         assert_eq!(
             TimePerPixel::from_picoseconds(2_000_000_000 * PS_PER_NS).to_string(),
-            "2.000s/px"
+            "2s/px"
         );
     }
 }

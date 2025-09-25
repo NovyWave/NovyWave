@@ -6,8 +6,9 @@ use crate::visualizer::timeline::maximum_timeline_range::MaximumTimelineRange;
 use crate::visualizer::timeline::time_domain::{
     MIN_CURSOR_STEP_NS, PS_PER_NS, TimeNs, TimePerPixel, Viewport,
 };
-use futures::{FutureExt, StreamExt, select};
+use futures::{StreamExt, select};
 use gloo_timers::callback::Timeout;
+use js_sys::Date;
 use shared::{
     SignalTransition, SignalValue, UnifiedSignalData, UnifiedSignalRequest, UpMsg, VarFormat,
 };
@@ -18,13 +19,16 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use zoon::*;
 
+const REQUEST_DEBOUNCE_MS: u32 = 75;
+const CONFIG_SAVE_DEBOUNCE_MS: u32 = 1_000;
+const ZOOM_CENTER_MIN_INTERVAL_MS: f64 = 16.0;
 const MIN_DURATION_NS: u64 = 1;
 
 #[derive(Clone, Debug)]
 pub struct TimelineVariableSeries {
     pub unique_id: String,
     pub formatter: VarFormat,
-    pub transitions: Vec<SignalTransition>,
+    pub transitions: Arc<Vec<SignalTransition>>,
     pub total_transitions: usize,
     pub cursor_value: Option<SignalValue>,
 }
@@ -34,7 +38,7 @@ impl TimelineVariableSeries {
         Self {
             unique_id,
             formatter,
-            transitions: Vec::new(),
+            transitions: Arc::new(Vec::new()),
             total_transitions: 0,
             cursor_value: None,
         }
@@ -90,7 +94,7 @@ struct RequestContext {
 
 #[derive(Clone, Debug, Default)]
 struct VariableSeriesData {
-    transitions: Vec<SignalTransition>,
+    transitions: Arc<Vec<SignalTransition>>,
     total_transitions: usize,
 }
 
@@ -117,6 +121,9 @@ pub struct WaveformTimeline {
     request_debounce: Rc<RefCell<Option<Timeout>>>,
     config_debounce: Rc<RefCell<Option<Timeout>>>,
     viewport_initialized: Mutable<bool>,
+    zoom_center_pending: Rc<RefCell<Option<TimeNs>>>,
+    zoom_center_timer: Rc<RefCell<Option<Timeout>>>,
+    zoom_center_last_update_ms: Rc<RefCell<f64>>,
 
     pub left_key_pressed_relay: Relay<()>,
     pub right_key_pressed_relay: Relay<()>,
@@ -173,6 +180,9 @@ impl WaveformTimeline {
         let (cursor_clicked_relay, cursor_clicked_stream) = relay::<TimeNs>();
         let (zoom_center_follow_mouse_relay, zoom_center_follow_stream) = relay::<Option<TimeNs>>();
         let (variable_format_updated_relay, format_updated_stream) = relay::<(String, VarFormat)>();
+        let zoom_center_pending = Rc::new(RefCell::new(None));
+        let zoom_center_timer = Rc::new(RefCell::new(None));
+        let zoom_center_last_update_ms = Rc::new(RefCell::new(Date::now()));
 
         let bounds_state = Mutable::new(None);
         let request_debounce = Rc::new(RefCell::new(None));
@@ -215,6 +225,9 @@ impl WaveformTimeline {
             cursor_clicked_relay,
             zoom_center_follow_mouse_relay,
             variable_format_updated_relay,
+            zoom_center_pending: zoom_center_pending.clone(),
+            zoom_center_timer: zoom_center_timer.clone(),
+            zoom_center_last_update_ms: zoom_center_last_update_ms.clone(),
         };
 
         timeline.initialize_from_config().await;
@@ -348,7 +361,7 @@ impl WaveformTimeline {
         let map = self.series_map.state.lock_ref();
         let mut times = Vec::new();
         for series in map.values() {
-            for transition in &series.transitions {
+            for transition in series.transitions.iter() {
                 times.push(transition.time_ns);
             }
         }
@@ -457,8 +470,17 @@ impl WaveformTimeline {
 
     fn set_zoom_center(&self, time: TimeNs) {
         let clamped = self.clamp_to_bounds(time);
+        if let Some(timer) = self.zoom_center_timer.borrow_mut().take() {
+            timer.cancel();
+        }
+        self.zoom_center_pending.borrow_mut().take();
+        if self.zoom_center.state.get_cloned() == clamped {
+            *self.zoom_center_last_update_ms.borrow_mut() = Date::now();
+            return;
+        }
         self.zoom_center.state.set_neq(clamped);
-        self.update_render_state();
+        *self.zoom_center_last_update_ms.borrow_mut() = Date::now();
+        self.update_zoom_center_only(clamped);
     }
 
     fn set_viewport_with_duration(&self, center: TimeNs, duration_ns: u64) {
@@ -594,13 +616,13 @@ impl WaveformTimeline {
     }
 
     fn schedule_request(&self) {
-        if let Some(mut timer) = self.request_debounce.borrow_mut().take() {
+        if let Some(timer) = self.request_debounce.borrow_mut().take() {
             timer.cancel();
         }
 
         let debounce_slot = self.request_debounce.clone();
         let timeline = self.clone();
-        let timeout = Timeout::new(1_000, move || {
+        let timeout = Timeout::new(REQUEST_DEBOUNCE_MS, move || {
             *debounce_slot.borrow_mut() = None;
             timeline.send_request();
         });
@@ -608,17 +630,40 @@ impl WaveformTimeline {
     }
 
     fn schedule_config_save(&self) {
-        if let Some(mut timer) = self.config_debounce.borrow_mut().take() {
+        if let Some(timer) = self.config_debounce.borrow_mut().take() {
             timer.cancel();
         }
 
         let debounce_slot = self.config_debounce.clone();
         let timeline = self.clone();
-        let timeout = Timeout::new(1_000, move || {
+        let timeout = Timeout::new(CONFIG_SAVE_DEBOUNCE_MS, move || {
             *debounce_slot.borrow_mut() = None;
             timeline.sync_state_to_config();
         });
         *self.config_debounce.borrow_mut() = Some(timeout);
+    }
+
+    fn schedule_zoom_center_update(&self, delay_ms: u32) {
+        if self.zoom_center_timer.borrow().is_some() {
+            return;
+        }
+
+        let timeline = self.clone();
+        let pending = self.zoom_center_pending.clone();
+        let timer_slot = self.zoom_center_timer.clone();
+
+        let timeout = Timeout::new(delay_ms.max(1), move || {
+            *timer_slot.borrow_mut() = None;
+            let maybe_time = {
+                let mut pending_ref = pending.borrow_mut();
+                pending_ref.take()
+            };
+            if let Some(time) = maybe_time {
+                timeline.set_zoom_center(time);
+            }
+        });
+
+        *self.zoom_center_timer.borrow_mut() = Some(timeout);
     }
 
     fn send_request(&self) {
@@ -717,10 +762,11 @@ impl WaveformTimeline {
         {
             let mut map = self.series_map.state.lock_mut();
             for data in signal_data {
+                let transitions = Arc::new(data.transitions);
                 map.insert(
                     data.unique_id.clone(),
                     VariableSeriesData {
-                        transitions: data.transitions,
+                        transitions,
                         total_transitions: data.total_transitions,
                     },
                 );
@@ -799,7 +845,7 @@ impl WaveformTimeline {
                     variables.push(TimelineVariableSeries {
                         unique_id: variable.unique_id.clone(),
                         formatter,
-                        transitions: series.transitions.clone(),
+                        transitions: Arc::clone(&series.transitions),
                         total_transitions: series.total_transitions,
                         cursor_value,
                     });
@@ -824,6 +870,14 @@ impl WaveformTimeline {
             canvas_height_px: height,
             time_per_pixel,
             variables,
+        });
+    }
+
+    fn update_zoom_center_only(&self, zoom_center: TimeNs) {
+        self.render_state.state.update_mut(|state| {
+            if state.zoom_center != zoom_center {
+                state.zoom_center = zoom_center;
+            }
         });
     }
 
@@ -991,62 +1045,79 @@ impl WaveformTimeline {
 
             loop {
                 select! {
-                    event = zoom_in.next() => {
-                        match event {
-                            Some(()) => {
-                                let faster = timeline.shift_active.state.get_cloned();
-                                timeline.zoom_in(faster);
+                            event = zoom_in.next() => {
+                                match event {
+                                    Some(()) => {
+                                        let faster = timeline.shift_active.state.get_cloned();
+                                        timeline.zoom_in(faster);
+                                    }
+                                    None => break,
+                                }
                             }
-                            None => break,
-                        }
-                    }
-                    event = zoom_out.next() => {
-                        match event {
-                            Some(()) => {
-                                let faster = timeline.shift_active.state.get_cloned();
-                                timeline.zoom_out(faster);
+                            event = zoom_out.next() => {
+                                match event {
+                                    Some(()) => {
+                                        let faster = timeline.shift_active.state.get_cloned();
+                                        timeline.zoom_out(faster);
+                                    }
+                                    None => break,
+                                }
                             }
-                            None => break,
-                        }
-                    }
-                    event = pan_left.next() => {
-                        match event {
-                            Some(()) => {
-                                let faster = timeline.shift_active.state.get_cloned();
-                                timeline.pan_left(faster);
+                            event = pan_left.next() => {
+                                match event {
+                                    Some(()) => {
+                                        let faster = timeline.shift_active.state.get_cloned();
+                                        timeline.pan_left(faster);
+                                    }
+                                    None => break,
+                                }
                             }
-                            None => break,
-                        }
-                    }
-                    event = pan_right.next() => {
-                        match event {
-                            Some(()) => {
-                                let faster = timeline.shift_active.state.get_cloned();
-                                timeline.pan_right(faster);
+                            event = pan_right.next() => {
+                                match event {
+                                    Some(()) => {
+                                        let faster = timeline.shift_active.state.get_cloned();
+                                        timeline.pan_right(faster);
+                                    }
+                                    None => break,
+                                }
                             }
-                            None => break,
-                        }
-                    }
-                    event = reset_zoom.next() => {
-                        match event {
-                            Some(()) => timeline.reset_zoom(),
-                            None => break,
-                        }
-                    }
-                    event = reset_center.next() => {
-                        match event {
-                            Some(()) => timeline.reset_zoom_center(),
-                            None => break,
-                        }
-                    }
-                    event = follow.next() => {
-                        match event {
-                            Some(Some(time)) => timeline.set_zoom_center(time),
-                            Some(None) => {},
-                            None => break,
-                        }
-                    }
+                            event = reset_zoom.next() => {
+                                match event {
+                                    Some(()) => timeline.reset_zoom(),
+                                    None => break,
+                                }
+                            }
+                            event = reset_center.next() => {
+                                match event {
+                                    Some(()) => timeline.reset_zoom_center(),
+                                    None => break,
+                                }
+                            }
+                            event = follow.next() => {
+                                match event {
+                                    Some(Some(time)) => {
+                                        *timeline.zoom_center_pending.borrow_mut() = Some(time);
+                                        let last_update = *timeline.zoom_center_last_update_ms.borrow();
+                                        let now = Date::now();
+                                        let elapsed = now - last_update;
+                                        if elapsed >= ZOOM_CENTER_MIN_INTERVAL_MS {
+                                            timeline.zoom_center_pending.borrow_mut().take();
+                                            timeline.set_zoom_center(time);
+                                        } else {
+                                            let delay = (ZOOM_CENTER_MIN_INTERVAL_MS - elapsed).ceil() as u32;
+                                            timeline.schedule_zoom_center_update(delay);
+                                        }
+                                    }
+                                    Some(None) => {
+                                        timeline.zoom_center_pending.borrow_mut().take();
+                if let Some(timer) = timeline.zoom_center_timer.borrow_mut().take() {
+                    timer.cancel();
                 }
+                                    }
+                                    None => break,
+                                }
+                            }
+                        }
             }
         });
     }
