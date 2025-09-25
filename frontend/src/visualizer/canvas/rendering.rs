@@ -419,12 +419,9 @@ impl WaveformRenderer {
 
             if !Self::pixel_state_equal(current_state.as_ref(), state.as_ref()) {
                 if let Some(pixel_state) = current_state.clone() {
-                    if !matches!(pixel_state, PixelValue::Mixed) {
-                        absolute_segment_index += 1;
-                    }
                     Self::draw_pixel_run(
                         objects,
-                        pixel_state,
+                        pixel_state.clone(),
                         run_start,
                         idx,
                         row_top,
@@ -433,6 +430,9 @@ impl WaveformRenderer {
                         absolute_segment_index,
                         variable.formatter,
                     );
+                    if !matches!(pixel_state, PixelValue::Mixed) {
+                        absolute_segment_index += 1;
+                    }
                 }
                 run_start = idx;
                 current_state = state;
@@ -460,7 +460,7 @@ impl WaveformRenderer {
         row_top: f32,
         row_height: f32,
         theme_colors: &ThemeColors,
-        run_index: usize,
+        segment_index: usize,
         formatter: VarFormat,
     ) {
         if end_px <= start_px {
@@ -477,26 +477,12 @@ impl WaveformRenderer {
             PixelValue::Mixed => {
                 let rect_top = row_top + 2.0;
                 let rect_height = row_height - 4.0;
-                let mix_component =
-                    |bg: u8, fg: u8| -> u8 { (fg as f32 * 0.65 + bg as f32 * 0.35).round() as u8 };
-                let bg = theme_colors.timeline_row_bg;
-                let bus = theme_colors.value_bus_color;
-                let blended_color = (
-                    mix_component(bg.0, bus.0),
-                    mix_component(bg.1, bus.1),
-                    mix_component(bg.2, bus.2),
-                    (bus.3 * 0.5).clamp(0.32, 0.65),
-                );
+                let highlight = (226, 119, 40, 0.58);
                 objects.push(
                     Rectangle::new()
                         .position(rect_start_x, rect_top)
                         .size(rect_width, rect_height.max(1.5))
-                        .color(
-                            blended_color.0,
-                            blended_color.1,
-                            blended_color.2,
-                            blended_color.3,
-                        )
+                        .color(highlight.0, highlight.1, highlight.2, highlight.3)
                         .into(),
                 );
 
@@ -544,7 +530,7 @@ impl WaveformRenderer {
                     SignalState::Missing => unreachable!(),
                 };
 
-                let color = if run_index % 2 == 0 {
+                let color = if segment_index % 2 == 0 {
                     base_color
                 } else {
                     Self::tint_color(base_color, theme_colors.segment_alt_multiplier)

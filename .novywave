@@ -28,8 +28,9 @@ load_files_expanded_directories = [
     "/home/martinkavik/repos/NovyWave/test_files",
     "/home/martinkavik/repos/NovyWave/test_files/nested_dir",
 ]
+selected_scope_id = "scope_/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s"
 load_files_scroll_position = 973
-timeline_cursor_position_ns = 125000000000
+timeline_cursor_position_ns = 98859992877
 timeline_zoom_level = 314861472.0
 timeline_visible_range_start_ns = 0
 timeline_visible_range_end_ns = 250000000000
