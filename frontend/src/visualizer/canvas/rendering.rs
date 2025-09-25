@@ -377,6 +377,15 @@ impl WaveformRenderer {
             return theme_colors.value_bus_color;
         }
 
+        if normalized.len() == 1 {
+            if normalized == "1" {
+                return theme_colors.value_high_color;
+            }
+            if normalized == "0" {
+                return theme_colors.value_low_color;
+            }
+        }
+
         match formatter {
             VarFormat::Binary | VarFormat::BinaryWithGroups => {
                 if normalized.len() == 1 && (normalized == "0" || normalized == "1") {

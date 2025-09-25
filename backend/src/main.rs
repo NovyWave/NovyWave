@@ -341,81 +341,82 @@ impl SignalCacheManager {
     }
 
     /// Extract transitions from wellen signal data
-    /// TEMPORARY IMPLEMENTATION: Return hardcoded simple.vcd data for testing
     fn extract_transitions_from_wellen(
         &self,
-        _waveform_data: &WaveformData,
-        _signal_ref: &wellen::SignalRef,
-        _format: &shared::VarFormat,
+        waveform_data: &WaveformData,
+        signal_ref: &wellen::SignalRef,
+        requested_format: &shared::VarFormat,
         signal_key: &str,
     ) -> Result<Vec<SignalTransition>, String> {
-        // Use signal_key to differentiate between A and B
         debug_log!(
             DEBUG_EXTRACT,
-            "🔍 EXTRACT_TRANSITIONS: TEMPORARY - Processing signal_key: {}",
+            "🔍 EXTRACT_TRANSITIONS: Loading real waveform data for {}",
             signal_key
         );
 
-        // Based on simple.vcd analysis:
-        // #0: A=b1010, B=b11
-        // #50: A=b1100, B=b101
-        // #150: A=b0, B=b0
-        // Timescale: 1s -> cursor at 2000ns should see values from time #0
+        if waveform_data.time_table.is_empty() {
+            return Ok(Vec::new());
+        }
 
-        // TEMPORARY: Return different data for A vs B based on actual VCD content
-        let transitions = if signal_key.contains("|A") {
-            // Signal A data from simple.vcd
-            vec![
-                SignalTransition {
-                    time_ns: 0,                // VCD time #0
-                    value: "1010".to_string(), // ✅ FIXED: Raw binary instead of formatted hex "a"
-                },
-                SignalTransition {
-                    time_ns: 50_000_000_000,   // VCD time #50 in nanoseconds (50 * 1e9)
-                    value: "1100".to_string(), // Binary 1100 at time #50
-                },
-                SignalTransition {
-                    time_ns: 150_000_000_000, // VCD time #150 in nanoseconds (150 * 1e9)
-                    value: "0".to_string(),   // Binary 0 at time #150
-                },
-            ]
-        } else if signal_key.contains("|B") {
-            // Signal B data from simple.vcd
-            vec![
-                SignalTransition {
-                    time_ns: 0,              // VCD time #0
-                    value: "11".to_string(), // ✅ FIXED: Raw binary instead of formatted decimal "3"
-                },
-                SignalTransition {
-                    time_ns: 50_000_000_000,  // VCD time #50 in nanoseconds (50 * 1e9)
-                    value: "101".to_string(), // Binary 101 at time #50
-                },
-                SignalTransition {
-                    time_ns: 150_000_000_000, // VCD time #150 in nanoseconds (150 * 1e9)
-                    value: "0".to_string(),   // Binary 0 at time #150
-                },
-            ]
-        } else {
-            // Default for unknown signals (like clk)
-            vec![SignalTransition {
-                time_ns: 0,
-                value: "1100".to_string(), // ✅ FIXED: Raw binary instead of formatted hex "c"
-            }]
+        // Load the signal once outside of the mutex guard for iteration performance
+        let loaded_signals = {
+            let mut source = waveform_data
+                .signal_source
+                .lock()
+                .map_err(|_| "Signal source unavailable".to_string())?;
+            source.load_signals(&[*signal_ref], &waveform_data.hierarchy, true)
         };
+
+        let Some((_, signal)) = loaded_signals.into_iter().next() else {
+            return Err(format!(
+                "Failed to load signal '{}' from waveform data",
+                signal_key
+            ));
+        };
+
+        let mut transitions = Vec::new();
+        let mut last_value: Option<String> = None;
+
+        for (index, &time_native) in waveform_data.time_table.iter().enumerate() {
+            // Convert native units to nanoseconds using the stored timescale factor
+            let time_seconds = time_native as f64 * waveform_data.timescale_factor;
+            let time_ns = (time_seconds * 1_000_000_000.0).round() as u64;
+
+            if let Some(offset) = signal.get_offset(index as u32) {
+                let value = signal.get_value_at(&offset, 0);
+                let base_value = format_non_binary_signal_value(&value);
+
+                // Respect requested formatting whenever we can obtain a pure binary string
+                let formatted_value = if let Some(bit_string) = value.to_bit_string() {
+                    match requested_format {
+                        shared::VarFormat::Binary => bit_string,
+                        shared::VarFormat::BinaryWithGroups
+                        | shared::VarFormat::Hexadecimal
+                        | shared::VarFormat::Octal
+                        | shared::VarFormat::Signed
+                        | shared::VarFormat::Unsigned
+                        | shared::VarFormat::ASCII => requested_format.format(&bit_string),
+                    }
+                } else {
+                    base_value.clone()
+                };
+
+                if last_value.as_ref() != Some(&formatted_value) {
+                    transitions.push(SignalTransition {
+                        time_ns,
+                        value: formatted_value.clone(),
+                    });
+                    last_value = Some(formatted_value);
+                }
+            }
+        }
 
         debug_log!(
             DEBUG_EXTRACT,
-            "🔍 EXTRACT_TRANSITIONS: Returning {} transitions for signal",
-            transitions.len()
+            "🔍 EXTRACT_TRANSITIONS: Collected {} transitions for {}",
+            transitions.len(),
+            signal_key
         );
-        for t in &transitions {
-            debug_log!(
-                DEBUG_EXTRACT,
-                "🔍 EXTRACT_TRANSITIONS: Transition at {}ns = {}",
-                t.time_ns,
-                t.value
-            );
-        }
 
         Ok(transitions)
     }

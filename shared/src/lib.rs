@@ -486,11 +486,17 @@ pub struct SelectedVariable {
 
 impl SelectedVariable {
     pub fn new(variable: Signal, file_path: String, scope_full_name: String) -> Self {
-        let unique_id = format!("{}|{}|{}", file_path, scope_full_name, variable.name);
+        let Signal { name, width, .. } = variable;
+        let unique_id = format!("{}|{}|{}", file_path, scope_full_name, name);
+        let formatter = if width <= 1 {
+            Some(VarFormat::Binary)
+        } else {
+            None // Multi-bit defaults to Hexadecimal for compactness
+        };
 
         Self {
             unique_id,
-            formatter: None, // Use default (Hexadecimal)
+            formatter,
         }
     }
 
