@@ -223,7 +223,11 @@ impl SignalValue {
                 if raw_value.is_empty() {
                     "(empty)".to_string()
                 } else {
-                    format.format(raw_value)
+                    if let Some(special) = Self::format_special_state(raw_value, format) {
+                        special
+                    } else {
+                        format.format(raw_value)
+                    }
                 }
             }
             Self::Missing => "N/A".to_string(),
@@ -270,6 +274,32 @@ impl SignalValue {
     /// Check if this represents real data (not missing/loading)  
     pub fn is_data(&self) -> bool {
         matches!(self, Self::Present(_))
+    }
+
+    fn format_special_state(raw_value: &str, format: &VarFormat) -> Option<String> {
+        let normalized = raw_value.trim().to_ascii_uppercase();
+        match normalized.as_str() {
+            "Z" => Some(match format {
+                VarFormat::ASCII => ".".to_string(),
+                VarFormat::Binary | VarFormat::BinaryWithGroups => "Z".to_string(),
+                VarFormat::Hexadecimal | VarFormat::Octal => "Z".to_string(),
+                VarFormat::Signed | VarFormat::Unsigned => "-".to_string(),
+            }),
+            "X" => Some(match format {
+                VarFormat::ASCII => ".".to_string(),
+                VarFormat::Binary | VarFormat::BinaryWithGroups => "X".to_string(),
+                VarFormat::Hexadecimal | VarFormat::Octal => "X".to_string(),
+                VarFormat::Signed | VarFormat::Unsigned => "-".to_string(),
+            }),
+            "U" => Some(match format {
+                VarFormat::ASCII => ".".to_string(),
+                VarFormat::Binary | VarFormat::BinaryWithGroups => "U".to_string(),
+                VarFormat::Hexadecimal | VarFormat::Octal => "?".to_string(),
+                VarFormat::Signed | VarFormat::Unsigned => "-".to_string(),
+            }),
+            "N/A" | "NA" => Some("N/A".to_string()),
+            _ => None,
+        }
     }
 }
 

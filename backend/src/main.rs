@@ -104,7 +104,34 @@ impl SignalCacheManager {
         ),
         String,
     > {
+        use std::collections::HashSet;
+
         let start_time = std::time::Instant::now();
+
+        println!(
+            "🔧 BACKEND: timeline query start (requests={}, cursor_time={:?})",
+            signal_requests.len(),
+            cursor_time
+        );
+
+        // Ensure all referenced waveform bodies are loaded before processing requests
+        let mut ensured_files = HashSet::new();
+        for request in &signal_requests {
+            if ensured_files.insert(request.file_path.clone()) {
+                match ensure_waveform_body_loaded(&request.file_path).await {
+                    Ok(()) => {
+                        println!("🔧 BACKEND: waveform body ready for {}", request.file_path);
+                    }
+                    Err(error) => {
+                        println!(
+                            "❌ BACKEND: ensure_waveform_body_loaded failed for {}: {}",
+                            request.file_path, error
+                        );
+                        return Err(error);
+                    }
+                }
+            }
+        }
 
         // Process requests in parallel using rayon
         let signal_data: Vec<UnifiedSignalData> = signal_requests
@@ -112,12 +139,30 @@ impl SignalCacheManager {
             .filter_map(|request| self.get_or_load_signal_data(request).ok())
             .collect();
 
+        println!(
+            "🔧 BACKEND: timeline query collected {} signal payloads",
+            signal_data.len()
+        );
+        for data in &signal_data {
+            println!(
+                "   • {} transitions={} range={:?}",
+                data.unique_id,
+                data.transitions.len(),
+                data.actual_time_range_ns
+            );
+        }
+
         // Compute cursor values if requested
         let cursor_values = if let Some(time) = cursor_time {
             self.compute_cursor_values(&signal_data, time)
         } else {
             BTreeMap::new()
         };
+
+        println!(
+            "🔧 BACKEND: cursor values resolved for {} variables",
+            cursor_values.len()
+        );
 
         // Update cache statistics
         let mut stats = self.cache_stats.write().unwrap();
@@ -172,15 +217,8 @@ impl SignalCacheManager {
                 stats.cache_hits += 1;
 
                 // Filter by time range if specified
-                let filtered_transitions = if let Some((start, end)) = request.time_range_ns {
-                    transitions
-                        .iter()
-                        .filter(|t| t.time_ns >= start && t.time_ns <= end)
-                        .cloned()
-                        .collect()
-                } else {
-                    transitions.clone()
-                };
+                let filtered_transitions =
+                    self.filter_transitions_for_range(transitions, request.time_range_ns);
 
                 // Downsample if requested
                 let final_transitions = if let Some(max_transitions) = request.max_transitions {
@@ -266,15 +304,8 @@ impl SignalCacheManager {
                 }
 
                 // Filter by time range and downsample
-                let filtered_transitions = if let Some((start, end)) = request.time_range_ns {
-                    transitions
-                        .iter()
-                        .filter(|t| t.time_ns >= start && t.time_ns <= end)
-                        .cloned()
-                        .collect()
-                } else {
-                    transitions.clone()
-                };
+                let filtered_transitions =
+                    self.filter_transitions_for_range(&transitions, request.time_range_ns);
 
                 let final_transitions = if let Some(max_transitions) = request.max_transitions {
                     self.downsample_transitions(filtered_transitions, max_transitions)
@@ -438,6 +469,47 @@ impl SignalCacheManager {
         }
 
         cursor_values
+    }
+
+    fn filter_transitions_for_range(
+        &self,
+        transitions: &[SignalTransition],
+        range: Option<(u64, u64)>,
+    ) -> Vec<SignalTransition> {
+        if let Some((start, end)) = range {
+            let mut filtered = Vec::new();
+            let mut last_before_start: Option<SignalTransition> = None;
+            for transition in transitions {
+                if transition.time_ns < start {
+                    last_before_start = Some(transition.clone());
+                    continue;
+                }
+                if transition.time_ns > end {
+                    break;
+                }
+                filtered.push(transition.clone());
+            }
+
+            if let Some(prev) = last_before_start {
+                let needs_synthetic = filtered
+                    .first()
+                    .map(|existing| existing.time_ns != start)
+                    .unwrap_or(true);
+                if needs_synthetic {
+                    filtered.insert(
+                        0,
+                        SignalTransition {
+                            time_ns: start,
+                            value: prev.value.clone(),
+                        },
+                    );
+                }
+            }
+
+            filtered
+        } else {
+            transitions.to_owned()
+        }
     }
 
     /// Downsample transitions for performance

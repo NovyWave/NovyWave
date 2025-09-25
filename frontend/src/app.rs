@@ -390,40 +390,36 @@ impl NovyWaveApp {
             let timeline_for_values = waveform_timeline.clone();
 
             Actor::new((), async move |_state| {
-                loop {
-                    select! {
-                        response = unified_signal_response_stream.next() => {
-                            match response {
-                                Some(event) => {
-                                    timeline_for_responses.apply_unified_signal_response(
-                                        &event.request_id,
-                                        event.signal_data,
-                                        event.cursor_values,
-                                    );
-                                    // TODO: incorporate cached_time_range_ns & statistics into cache controller.
-                                }
-                                None => break,
-                            }
-                        }
-                        error = unified_signal_error_stream.next() => {
-                            match error {
-                                Some((request_id, error)) => {
-                                    timeline_for_errors
-                                        .handle_unified_signal_error(&request_id, &error);
-                                }
-                                None => break,
-                            }
-                        }
-                        cursor_values = batch_signal_values_stream.next() => {
-                            match cursor_values {
-                                Some(values) => {
-                                    timeline_for_values.apply_cursor_values(values);
-                                }
-                                None => break,
-                            }
-                        }
+                let mut response_stream = unified_signal_response_stream;
+                let response_timeline = timeline_for_responses.clone();
+                Task::start(async move {
+                    while let Some(event) = response_stream.next().await {
+                        response_timeline.apply_unified_signal_response(
+                            &event.request_id,
+                            event.signal_data,
+                            event.cursor_values,
+                        );
+                        // TODO: incorporate cached_time_range_ns & statistics into cache controller.
                     }
-                }
+                });
+
+                let mut error_stream = unified_signal_error_stream;
+                let error_timeline = timeline_for_errors.clone();
+                Task::start(async move {
+                    while let Some((request_id, error)) = error_stream.next().await {
+                        error_timeline.handle_unified_signal_error(&request_id, &error);
+                    }
+                });
+
+                let mut cursor_values_stream = batch_signal_values_stream;
+                let cursor_timeline = timeline_for_values.clone();
+                Task::start(async move {
+                    while let Some(values) = cursor_values_stream.next().await {
+                        cursor_timeline.apply_cursor_values(values);
+                    }
+                });
+
+                futures::future::pending::<()>().await;
             })
         };
 
@@ -660,24 +656,20 @@ impl NovyWaveApp {
                                 "a" | "A" => {
                                     event.prevent_default();
                                     pan_left_pressed.send(());
-                                    // TODO: Add Shift+A support for faster panning when shift handling is implemented
                                 }
                                 "d" | "D" => {
                                     event.prevent_default();
                                     pan_right_pressed.send(());
-                                    // TODO: Add Shift+D support for faster panning when shift handling is implemented
                                 }
 
                                 // Zoom Controls
                                 "w" | "W" => {
                                     event.prevent_default();
                                     zoom_in_pressed.send(());
-                                    // TODO: Add Shift+W support for faster zoom when shift handling is implemented
                                 }
                                 "s" | "S" => {
                                     event.prevent_default();
                                     zoom_out_pressed.send(());
-                                    // TODO: Add Shift+S support for faster zoom when shift handling is implemented
                                 }
 
                                 // Reset Controls

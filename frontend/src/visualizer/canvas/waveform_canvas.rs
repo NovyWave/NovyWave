@@ -4,10 +4,25 @@ use crate::dataflow::*;
 use crate::visualizer::timeline::timeline_actor::{TimelineRenderState, WaveformTimeline};
 use futures::{select, stream::StreamExt};
 use moonzoon_novyui::tokens::theme::Theme as NovyUITheme;
-use shared::Theme;
+use shared::{SignalValue, Theme};
 use web_sys::HtmlCanvasElement;
 use zoon::events::{PointerDown, PointerLeave, PointerMove};
 use zoon::*;
+
+fn special_state_tooltip(value: &str) -> Option<&'static str> {
+    match value.trim().to_ascii_uppercase().as_str() {
+        "Z" => Some(
+            "High-Impedance (Z)\nSignal is disconnected or floating.\nCommon in tri-state buses and disabled outputs.",
+        ),
+        "X" => Some(
+            "Unknown (X)\nSignal value cannot be determined.\nOften caused by timing violations or uninitialized logic.",
+        ),
+        "U" => Some(
+            "Uninitialized (U)\nSignal has not been assigned a value.\nTypically seen during power-up or before reset.",
+        ),
+        _ => None,
+    }
+}
 
 #[derive(Clone)]
 pub struct WaveformCanvas {
@@ -241,6 +256,7 @@ pub fn waveform_canvas(
     let timeline_for_click = waveform_timeline.clone();
     let timeline_for_hover = waveform_timeline.clone();
     let canvas_element_store = waveform_canvas.canvas_element_store.clone();
+    let canvas_element_store_for_handlers = canvas_element_store.clone();
 
     let initial_theme = waveform_canvas.current_theme.get_cloned();
     theme_relay.send(initial_theme);
@@ -256,6 +272,7 @@ pub fn waveform_canvas(
             let render_state_store_move = render_state_store_move.clone();
             let timeline_for_click = timeline_for_click.clone();
             let timeline_for_hover = timeline_for_hover.clone();
+            let canvas_element_store_for_handlers = canvas_element_store_for_handlers.clone();
             move |raw_el| {
                 let raw_el = raw_el
                     .on_resize(move |width, height| {
@@ -286,6 +303,7 @@ pub fn waveform_canvas(
                     .event_handler({
                         let render_state_store_move = render_state_store_move.clone();
                         let timeline_for_hover = timeline_for_hover.clone();
+                        let canvas_element_store_move = canvas_element_store_for_handlers.clone();
                         move |event: PointerMove| {
                             if let Some(state) = render_state_store_move.get_cloned() {
                                 let width = state.canvas_width_px.max(1) as f32;
@@ -295,20 +313,66 @@ pub fn waveform_canvas(
                                     .duration_since(state.viewport_start)
                                     .nanos();
                                 let offset = (span as f32 * normalized).round() as u64;
+                                let time_ns = state.viewport_start.nanos().saturating_add(offset);
                                 let time =
                                     crate::visualizer::timeline::time_domain::TimeNs::from_nanos(
-                                        state.viewport_start.nanos().saturating_add(offset),
+                                        time_ns,
                                     );
+
                                 timeline_for_hover
                                     .zoom_center_follow_mouse_relay
                                     .send(Some(time));
+
+                                if let Some(canvas_el) = canvas_element_store_move.get_cloned() {
+                                    let total_rows = (state.variables.len() + 1).max(1) as f32;
+                                    let row_height =
+                                        (state.canvas_height_px.max(1) as f32) / total_rows;
+                                    let pointer_row =
+                                        (event.offset_y() as f32 / row_height).floor().max(0.0)
+                                            as usize;
+
+                                    if pointer_row < state.variables.len() {
+                                        let variable = &state.variables[pointer_row];
+                                        let mut current_value: Option<&str> = None;
+                                        for transition in &variable.transitions {
+                                            if transition.time_ns > time_ns {
+                                                break;
+                                            }
+                                            current_value = Some(transition.value.as_str());
+                                        }
+
+                                        if current_value.is_none() {
+                                            if let Some(SignalValue::Present(raw)) =
+                                                variable.cursor_value.as_ref()
+                                            {
+                                                current_value = Some(raw.as_str());
+                                            }
+                                        }
+
+                                        if let Some(value) = current_value {
+                                            if let Some(tooltip) = special_state_tooltip(value) {
+                                                let _ = canvas_el.set_attribute("title", tooltip);
+                                            } else {
+                                                let _ = canvas_el.remove_attribute("title");
+                                            }
+                                        } else {
+                                            let _ = canvas_el.remove_attribute("title");
+                                        }
+                                    } else {
+                                        let _ = canvas_el.remove_attribute("title");
+                                    }
+                                }
                             }
                         }
                     })
                     .event_handler({
                         let timeline_for_hover = timeline_for_hover.clone();
+                        let canvas_element_store_leave = canvas_element_store_for_handlers.clone();
                         move |_: PointerLeave| {
                             timeline_for_hover.zoom_center_follow_mouse_relay.send(None);
+                            if let Some(canvas_el) = canvas_element_store_leave.get_cloned() {
+                                let _ = canvas_el.remove_attribute("title");
+                            }
                         }
                     });
                 raw_el

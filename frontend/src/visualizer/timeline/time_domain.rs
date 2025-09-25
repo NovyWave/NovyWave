@@ -176,6 +176,26 @@ impl Default for NsPerPixel {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::NsPerPixel;
+
+    #[test]
+    fn displays_nanoseconds_per_pixel() {
+        assert_eq!(NsPerPixel(1).to_string(), "1ns/px");
+    }
+
+    #[test]
+    fn displays_microseconds_per_pixel() {
+        assert_eq!(NsPerPixel(50_000).to_string(), "50.0μs/px");
+    }
+
+    #[test]
+    fn displays_seconds_per_pixel() {
+        assert_eq!(NsPerPixel(2_000_000_000).to_string(), "2.0s/px");
+    }
+}
+
 /// Represents a viewport (visible time range) in the timeline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Viewport {

@@ -1,9 +1,7 @@
-use crate::dataflow::*;
+use crate::dataflow::Actor;
 use fast2d::{CanvasWrapper as Fast2DCanvas, Family, Object2d, Rectangle, Text};
-use futures::{select, stream::StreamExt};
 use moonzoon_novyui::tokens::theme::Theme as NovyUITheme;
 use shared::{SignalTransition, SignalValue, VarFormat};
-use zoon::*;
 
 #[derive(Debug, Clone, Copy)]
 enum TimeUnit {
@@ -32,8 +30,21 @@ struct ThemeColors {
     grid_color: (u8, u8, u8, f32),
     separator_color: (u8, u8, u8, f32),
     cursor_color: (u8, u8, u8, f32),
-    value_color_1: (u8, u8, u8, f32),
-    value_color_2: (u8, u8, u8, f32),
+    value_low_color: (u8, u8, u8, f32),
+    value_high_color: (u8, u8, u8, f32),
+    value_bus_color: (u8, u8, u8, f32),
+    state_high_impedance: (u8, u8, u8, f32),
+    state_unknown: (u8, u8, u8, f32),
+    state_uninitialized: (u8, u8, u8, f32),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SignalState {
+    Regular,
+    HighImpedance,
+    Unknown,
+    Uninitialized,
+    Missing,
 }
 
 #[derive(Clone, Debug)]
@@ -57,31 +68,15 @@ pub struct RenderingParameters {
 }
 
 pub struct WaveformRenderer {
-    pub rendering_state: Actor<RenderingState>,
-    pub render_requested_relay: Relay<RenderingParameters>,
-    pub render_completed_relay: Relay<RenderResult>,
-
+    rendering_state: Actor<RenderingState>,
     canvas: Option<Fast2DCanvas>,
 }
-
-impl Clone for WaveformRenderer {
-    fn clone(&self) -> Self {
-        Self {
-            rendering_state: self.rendering_state.clone(),
-            render_requested_relay: self.render_requested_relay.clone(),
-            render_completed_relay: self.render_completed_relay.clone(),
-            canvas: None,
-        }
-    }
-}
-
-unsafe impl Send for WaveformRenderer {}
-unsafe impl Sync for WaveformRenderer {}
 
 #[derive(Clone, Debug)]
 struct RenderingState {
     pub last_render_params: Option<RenderingParameters>,
     pub render_count: u32,
+    pub last_result: Option<RenderResult>,
 }
 
 impl Default for RenderingState {
@@ -89,6 +84,7 @@ impl Default for RenderingState {
         Self {
             last_render_params: None,
             render_count: 0,
+            last_result: None,
         }
     }
 }
@@ -102,40 +98,10 @@ pub struct RenderResult {
 
 impl WaveformRenderer {
     pub async fn new() -> Self {
-        let (render_requested_relay, mut render_requested_stream) = relay();
-        let (render_completed_relay, _render_completed_stream) = relay();
-
-        let render_completed_relay_for_actor = render_completed_relay.clone();
-        let rendering_state = Actor::new(RenderingState::default(), async move |state| {
-            loop {
-                select! {
-                    params_result = render_requested_stream.next() => {
-                        if let Some(params) = params_result {
-                            let start_time = Self::get_current_time_ms();
-                            let objects = Self::build_render_objects(&params);
-                            let render_time = Self::get_current_time_ms() - start_time;
-
-                            let mut current_state = state.lock_mut();
-                            current_state.render_count += 1;
-                            current_state.last_render_params = Some(params);
-                            let render_count = current_state.render_count;
-                            drop(current_state);
-
-                            render_completed_relay_for_actor.send(RenderResult {
-                                render_count,
-                                objects_rendered: objects.len(),
-                                rendering_time_ms: render_time,
-                            });
-                        }
-                    }
-                }
-            }
-        });
+        let rendering_state = Actor::new(RenderingState::default(), async move |_state| {});
 
         Self {
             rendering_state,
-            render_requested_relay,
-            render_completed_relay,
             canvas: None,
         }
     }
@@ -160,14 +126,25 @@ impl WaveformRenderer {
 
     pub fn render_frame(&mut self, params: RenderingParameters) -> bool {
         if let Some(canvas) = &mut self.canvas {
+            let start_time = Self::get_current_time_ms();
             let objects = Self::build_render_objects(&params);
+            let objects_rendered = objects.len();
 
             canvas.update_objects(|canvas_objects| {
                 canvas_objects.clear();
                 canvas_objects.extend(objects);
             });
 
-            self.render_requested_relay.send(params);
+            let render_time = Self::get_current_time_ms() - start_time;
+            let mut state = self.rendering_state.state.lock_mut();
+            state.render_count = state.render_count.saturating_add(1);
+            let render_count = state.render_count;
+            state.last_render_params = Some(params.clone());
+            state.last_result = Some(RenderResult {
+                render_count,
+                objects_rendered,
+                rendering_time_ms: render_time,
+            });
             true
         } else {
             false
@@ -258,7 +235,6 @@ impl WaveformRenderer {
         let width = params.canvas_width as f64;
         let start_ns = params.viewport_start_ns;
         let end_ns = params.viewport_end_ns;
-
         for (index, transition) in variable.transitions.iter().enumerate() {
             let mut segment_start = transition.time_ns;
             if segment_start >= end_ns {
@@ -290,11 +266,37 @@ impl WaveformRenderer {
             let rect_end_x = (end_ratio * width).max(rect_start_x + 1.0);
             let rect_width = (rect_end_x - rect_start_x).max(1.0);
 
-            let color = Self::color_for_value(&transition.value, index, theme_colors);
+            let state = Self::classify_signal_state(&transition.value);
+            if state == SignalState::Missing {
+                continue;
+            }
+
+            let (rect_top, rect_height, color) = match state {
+                SignalState::HighImpedance => {
+                    let height = (row_height - 4.0).max(2.0) * 0.55;
+                    let top = row_top + (row_height - height) / 2.0;
+                    (top, height, theme_colors.state_high_impedance)
+                }
+                SignalState::Unknown => {
+                    (row_top + 2.0, row_height - 4.0, theme_colors.state_unknown)
+                }
+                SignalState::Uninitialized => (
+                    row_top + 2.0,
+                    row_height - 4.0,
+                    theme_colors.state_uninitialized,
+                ),
+                SignalState::Regular => (
+                    row_top + 2.0,
+                    row_height - 4.0,
+                    Self::regular_value_color(&transition.value, theme_colors),
+                ),
+                SignalState::Missing => unreachable!(),
+            };
+
             objects.push(
                 Rectangle::new()
-                    .position(rect_start_x as f32, row_top + 2.0)
-                    .size(rect_width as f32, row_height - 4.0)
+                    .position(rect_start_x as f32, rect_top)
+                    .size(rect_width as f32, rect_height.max(1.5))
                     .color(color.0, color.1, color.2, color.3)
                     .into(),
             );
@@ -302,11 +304,12 @@ impl WaveformRenderer {
             if rect_width as f32 > 18.0 && row_height > 14.0 {
                 let text_color = theme_colors.neutral_12;
                 let text = Self::truncate_value_text(&transition.value, rect_width as usize / 7);
+                let text_top = rect_top + rect_height / 2.0 - 6.0;
                 objects.push(
                     Text::new()
                         .text(text)
-                        .position(rect_start_x as f32 + 4.0, row_top + row_height / 3.0)
-                        .size(rect_width as f32 - 8.0, row_height / 2.0)
+                        .position(rect_start_x as f32 + 4.0, text_top.max(row_top + 2.0))
+                        .size(rect_width as f32 - 8.0, rect_height.max(12.0))
                         .color(text_color.0, text_color.1, text_color.2, text_color.3)
                         .font_size(11.0)
                         .family(Family::name("Fira Code"))
@@ -316,17 +319,32 @@ impl WaveformRenderer {
         }
     }
 
-    fn color_for_value(value: &str, index: usize, theme_colors: &ThemeColors) -> (u8, u8, u8, f32) {
+    fn classify_signal_state(value: &str) -> SignalState {
         let normalized = value.trim().to_ascii_uppercase();
         match normalized.as_str() {
-            "Z" => theme_colors.cursor_color,
-            "X" | "U" => (220, 80, 80, 0.9),
-            "N/A" => theme_colors.neutral_3,
+            "Z" => SignalState::HighImpedance,
+            "X" => SignalState::Unknown,
+            "U" => SignalState::Uninitialized,
+            "N/A" | "NA" => SignalState::Missing,
+            _ => SignalState::Regular,
+        }
+    }
+
+    fn regular_value_color(value: &str, theme_colors: &ThemeColors) -> (u8, u8, u8, f32) {
+        let normalized = value.trim();
+        if normalized.is_empty() {
+            return theme_colors.value_bus_color;
+        }
+
+        match normalized.to_ascii_uppercase().as_str() {
+            "0" | "LOW" => theme_colors.value_low_color,
+            "1" | "HIGH" => theme_colors.value_high_color,
             _ => {
-                if index % 2 == 0 {
-                    theme_colors.value_color_1
+                // Multi-bit buses or formatted values use a consistent accent
+                if normalized.len() % 2 == 0 {
+                    theme_colors.value_bus_color
                 } else {
-                    theme_colors.value_color_2
+                    theme_colors.value_low_color
                 }
             }
         }
@@ -377,14 +395,22 @@ impl WaveformRenderer {
             if (params.viewport_start_ns..=params.viewport_end_ns).contains(&center_ns) {
                 let ratio = (center_ns - params.viewport_start_ns) as f64 / range_ns;
                 let x = (ratio * params.canvas_width as f64) as f32;
-                let color = theme_colors.cursor_color;
-                objects.push(
-                    Rectangle::new()
-                        .position(x - 1.0, 0.0)
-                        .size(3.0, params.canvas_height as f32)
-                        .color(color.0, color.1, color.2, color.3)
-                        .into(),
-                );
+                let dash_height = 6.0;
+                let gap_height = 4.0;
+                let mut y = 0.0;
+                let color = (168, 85, 247, 0.9);
+                while y < params.canvas_height as f32 {
+                    let remaining = params.canvas_height as f32 - y;
+                    let segment_height = remaining.min(dash_height);
+                    objects.push(
+                        Rectangle::new()
+                            .position(x - 1.0, y)
+                            .size(2.0, segment_height)
+                            .color(color.0, color.1, color.2, color.3)
+                            .into(),
+                    );
+                    y += dash_height + gap_height;
+                }
             }
         }
     }
@@ -428,6 +454,10 @@ impl WaveformRenderer {
         let raw_step_s = time_range_s / desired_tick_count.max(1.0);
         let step_s = Self::round_to_nice_number(raw_step_s);
 
+        let mut ticks: Vec<(f32, Option<String>)> = Vec::new();
+
+        ticks.push((0.0, Some(Self::format_time_ns(params.viewport_start_ns))));
+
         let first_tick_s = (start_s / step_s).ceil() * step_s;
         let mut tick_s = first_tick_s;
         while tick_s < end_s {
@@ -435,9 +465,25 @@ impl WaveformRenderer {
             let ratio = (tick_ns - params.viewport_start_ns) as f64 / time_range_ns;
             let x = (ratio * params.canvas_width as f64) as f32;
 
+            if x > 0.0 && x < params.canvas_width as f32 {
+                ticks.push((x, Some(Self::format_time_ns(tick_ns))));
+            }
+
+            tick_s += step_s;
+        }
+
+        ticks.push((
+            params.canvas_width as f32,
+            Some(Self::format_time_ns(params.viewport_end_ns)),
+        ));
+
+        let mut last_label_right = -f32::INFINITY;
+        let minimum_label_gap = 56.0;
+
+        for (x, label) in &ticks {
             objects.push(
                 Rectangle::new()
-                    .position(x, timeline_y)
+                    .position(*x, timeline_y)
                     .size(1.0, 8.0)
                     .color(
                         theme_colors.neutral_12.0,
@@ -447,82 +493,44 @@ impl WaveformRenderer {
                     )
                     .into(),
             );
-
-            objects.push(
-                Rectangle::new()
-                    .position(x, 0.0)
-                    .size(1.0, timeline_y)
-                    .color(
-                        theme_colors.grid_color.0,
-                        theme_colors.grid_color.1,
-                        theme_colors.grid_color.2,
-                        theme_colors.grid_color.3,
-                    )
-                    .into(),
-            );
-
-            let label_margin = 35.0;
-            if (x as f64) >= label_margin
-                && (x as f64) <= (params.canvas_width as f64 - label_margin)
-            {
-                let label = Self::format_time_ns(tick_ns);
+            if timeline_y > 0.0 {
                 objects.push(
-                    Text::new()
-                        .text(label)
-                        .position(x - 10.0, timeline_y + 15.0)
-                        .size(50.0, timeline_height - 15.0)
+                    Rectangle::new()
+                        .position(*x, 0.0)
+                        .size(1.0, timeline_y)
                         .color(
-                            theme_colors.neutral_12.0,
-                            theme_colors.neutral_12.1,
-                            theme_colors.neutral_12.2,
-                            theme_colors.neutral_12.3,
+                            theme_colors.grid_color.0,
+                            theme_colors.grid_color.1,
+                            theme_colors.grid_color.2,
+                            theme_colors.grid_color.3,
                         )
-                        .font_size(11.0)
-                        .family(Family::name("Inter"))
                         .into(),
                 );
             }
 
-            tick_s += step_s;
+            if let Some(text) = label {
+                let approx_width = (text.len() as f32 * 6.5).max(35.0);
+                let left_edge = x - approx_width / 2.0;
+                if left_edge > last_label_right + minimum_label_gap {
+                    objects.push(
+                        Text::new()
+                            .text(text.clone())
+                            .position(left_edge, timeline_y + 15.0)
+                            .size(approx_width, timeline_height - 15.0)
+                            .color(
+                                theme_colors.neutral_12.0,
+                                theme_colors.neutral_12.1,
+                                theme_colors.neutral_12.2,
+                                theme_colors.neutral_12.3,
+                            )
+                            .font_size(11.0)
+                            .family(Family::name("Inter"))
+                            .into(),
+                    );
+                    last_label_right = left_edge + approx_width;
+                }
+            }
         }
-
-        let start_label = Self::format_time_ns(params.viewport_start_ns);
-        objects.push(
-            Text::new()
-                .text(start_label)
-                .position(5.0, timeline_y + 15.0)
-                .size(60.0, row_height - 15.0)
-                .color(
-                    theme_colors.neutral_12.0,
-                    theme_colors.neutral_12.1,
-                    theme_colors.neutral_12.2,
-                    theme_colors.neutral_12.3,
-                )
-                .font_size(11.0)
-                .family(Family::name("Inter"))
-                .into(),
-        );
-
-        let end_label = Self::format_time_ns(params.viewport_end_ns);
-        let label_width = (end_label.len() as f32 * 7.0).max(40.0);
-        objects.push(
-            Text::new()
-                .text(end_label)
-                .position(
-                    params.canvas_width as f32 - label_width - 5.0,
-                    timeline_y + 15.0,
-                )
-                .size(label_width, timeline_height - 15.0)
-                .color(
-                    theme_colors.neutral_12.0,
-                    theme_colors.neutral_12.1,
-                    theme_colors.neutral_12.2,
-                    theme_colors.neutral_12.3,
-                )
-                .font_size(11.0)
-                .family(Family::name("Inter"))
-                .into(),
-        );
     }
 
     fn format_time_ns(ns: u64) -> String {
@@ -567,8 +575,12 @@ impl WaveformRenderer {
                 grid_color: (64, 64, 64, 0.4),
                 separator_color: (80, 80, 80, 0.6),
                 cursor_color: (59, 130, 246, 0.8),
-                value_color_1: (65, 69, 75, 1.0),
-                value_color_2: (75, 79, 86, 1.0),
+                value_low_color: (37, 99, 235, 0.75),
+                value_high_color: (34, 197, 94, 0.8),
+                value_bus_color: (139, 92, 246, 0.7),
+                state_high_impedance: (234, 179, 8, 0.85),
+                state_unknown: (220, 38, 38, 0.9),
+                state_uninitialized: (220, 38, 38, 0.65),
             },
             NovyUITheme::Light => ThemeColors {
                 neutral_2: (249, 250, 251, 1.0),
@@ -577,13 +589,37 @@ impl WaveformRenderer {
                 grid_color: (148, 163, 184, 0.4),
                 separator_color: (100, 116, 139, 0.6),
                 cursor_color: (37, 99, 235, 0.8),
-                value_color_1: (229, 231, 235, 1.0),
-                value_color_2: (209, 213, 219, 1.0),
+                value_low_color: (59, 130, 246, 0.7),
+                value_high_color: (16, 185, 129, 0.75),
+                value_bus_color: (125, 211, 252, 0.7),
+                state_high_impedance: (202, 138, 4, 0.9),
+                state_unknown: (220, 38, 38, 0.85),
+                state_uninitialized: (220, 38, 38, 0.6),
             },
         }
     }
 
     fn get_current_time_ms() -> f32 {
         (js_sys::Date::now()) as f32
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WaveformRenderer;
+
+    #[test]
+    fn rounds_small_values_to_friendly_steps() {
+        assert!((WaveformRenderer::round_to_nice_number(0.12) - 0.2).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn rounds_medium_values_to_two() {
+        assert!((WaveformRenderer::round_to_nice_number(1.1) - 2.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn rounds_large_values_to_ten() {
+        assert!((WaveformRenderer::round_to_nice_number(6.5) - 10.0).abs() < f64::EPSILON);
     }
 }

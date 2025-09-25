@@ -45,6 +45,24 @@ fn sanitize_tooltip_text(value: &str) -> String {
     }
 }
 
+fn special_state_tooltip(value: &SignalValue) -> Option<&'static str> {
+    match value {
+        SignalValue::Present(raw) => match raw.trim().to_ascii_uppercase().as_str() {
+            "Z" => Some(
+                "High-Impedance (Z)\nSignal is disconnected or floating.\nCommon in tri-state buses and disabled outputs.",
+            ),
+            "X" => Some(
+                "Unknown (X)\nSignal value cannot be determined.\nOften caused by timing violations or uninitialized logic.",
+            ),
+            "U" => Some(
+                "Uninitialized (U)\nSignal has not been assigned a value.\nTypically seen during power-up or before reset.",
+            ),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// Format options for dropdown - contains value and disabled state
 #[derive(Debug, Clone)]
 pub struct DropdownFormatOption {
@@ -255,14 +273,18 @@ pub fn create_format_dropdown(
                                         SignalValue::Loading | SignalValue::Missing,
                                     ) || display.trim() == "-";
 
+                                    let tooltip_string = special_state_tooltip(&signal_value)
+                                        .map(|text| text.to_string())
+                                        .unwrap_or_else(|| filtered_full.clone());
+
                                     El::new()
                                         .s(Font::new().no_wrap().color_signal(
                                             always(is_placeholder)
                                                 .map_bool_signal(|| neutral_8(), || neutral_11()),
                                         ))
                                         .update_raw_el(move |raw_el| {
-                                            if !filtered_full.is_empty() {
-                                                raw_el.attr("title", &filtered_full)
+                                            if !tooltip_string.is_empty() {
+                                                raw_el.attr("title", &tooltip_string)
                                             } else {
                                                 raw_el
                                             }
