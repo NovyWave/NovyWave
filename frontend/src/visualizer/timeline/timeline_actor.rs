@@ -377,6 +377,7 @@ impl WaveformTimeline {
         if current_duration <= MIN_DURATION_NS {
             return;
         }
+        let center = self.resolve_zoom_center();
         let (numerator, denominator) = if faster {
             (2u128, 5u128)
         } else {
@@ -387,12 +388,13 @@ impl WaveformTimeline {
         if new_duration < MIN_DURATION_NS as u128 {
             new_duration = MIN_DURATION_NS as u128;
         }
-        self.set_viewport_with_duration(self.zoom_center.state.get_cloned(), new_duration as u64);
+        self.set_viewport_with_duration(center, new_duration as u64);
     }
 
     fn zoom_out(&self, faster: bool) {
         let viewport = self.viewport.state.get_cloned();
         let current_duration = viewport.duration().nanos();
+        let center = self.resolve_zoom_center();
         let (numerator, denominator) = if faster {
             (9u128, 5u128)
         } else {
@@ -407,7 +409,7 @@ impl WaveformTimeline {
             let max_duration = bounds.end.duration_since(bounds.start).nanos();
             new_duration = new_duration.min(max_duration as u128);
         }
-        self.set_viewport_with_duration(self.zoom_center.state.get_cloned(), new_duration as u64);
+        self.set_viewport_with_duration(center, new_duration as u64);
     }
 
     fn pan_left(&self, faster: bool) {
@@ -483,28 +485,69 @@ impl WaveformTimeline {
         self.update_zoom_center_only(clamped);
     }
 
+    fn resolve_zoom_center(&self) -> TimeNs {
+        let pending_time = {
+            let mut pending = self.zoom_center_pending.borrow_mut();
+            pending.take()
+        };
+        if let Some(time) = pending_time {
+            if let Some(timer) = self.zoom_center_timer.borrow_mut().take() {
+                timer.cancel();
+            }
+            self.set_zoom_center(time);
+        }
+        self.zoom_center.state.get_cloned()
+    }
+
     fn set_viewport_with_duration(&self, center: TimeNs, duration_ns: u64) {
-        let half = duration_ns / 2;
-        let mut start_ns = center.nanos().saturating_sub(half);
-        let mut end_ns = start_ns.saturating_add(duration_ns);
+        let target_duration = duration_ns.max(1);
+        let center_ns = center.nanos();
+
+        let viewport = self.viewport.state.get_cloned();
+        let current_start = viewport.start.nanos();
+        let current_end = viewport.end.nanos();
+        let current_duration = viewport.duration().nanos().max(1);
+
+        let offset_from_start = if center_ns <= current_start {
+            0
+        } else if center_ns >= current_end {
+            current_duration
+        } else {
+            center_ns - current_start
+        };
+        let mut ratio = offset_from_start as f64 / current_duration as f64;
+        if ratio.is_nan() {
+            ratio = 0.5;
+        }
+        ratio = ratio.clamp(0.0, 1.0);
+
+        let offset_in_new = (ratio * target_duration as f64)
+            .round()
+            .clamp(0.0, target_duration as f64) as u64;
+
+        let mut start_ns = center_ns.saturating_sub(offset_in_new);
+        let mut end_ns = start_ns.saturating_add(target_duration);
 
         if let Some(bounds) = self.bounds() {
-            if end_ns > bounds.end.nanos() {
-                let diff = end_ns - bounds.end.nanos();
-                start_ns = start_ns.saturating_sub(diff);
-                end_ns = bounds.end.nanos();
+            let bounds_start = bounds.start.nanos();
+            let bounds_end = bounds.end.nanos();
+            if start_ns < bounds_start {
+                let diff = bounds_start - start_ns;
+                start_ns = bounds_start;
+                end_ns = end_ns.saturating_add(diff);
             }
-            if start_ns < bounds.start.nanos() {
-                let diff = bounds.start.nanos() - start_ns;
-                start_ns = bounds.start.nanos();
-                end_ns = start_ns.saturating_add(duration_ns).min(bounds.end.nanos());
+            if end_ns > bounds_end {
+                let diff = end_ns - bounds_end;
+                end_ns = bounds_end;
+                start_ns = start_ns.saturating_sub(diff);
             }
         }
 
-        self.set_viewport_clamped(
-            TimeNs::from_nanos(start_ns),
-            TimeNs::from_nanos(end_ns.max(start_ns + 1)),
-        );
+        if end_ns <= start_ns {
+            end_ns = start_ns.saturating_add(1);
+        }
+
+        self.set_viewport_clamped(TimeNs::from_nanos(start_ns), TimeNs::from_nanos(end_ns));
     }
 
     fn set_viewport_clamped(&self, start: TimeNs, end: TimeNs) {
