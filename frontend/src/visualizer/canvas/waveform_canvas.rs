@@ -231,10 +231,10 @@ impl WaveformCanvas {
         RenderingParameters {
             canvas_width: state.canvas_width_px,
             canvas_height: state.canvas_height_px,
-            viewport_start_ns: state.viewport_start.nanos(),
-            viewport_end_ns: state.viewport_end.nanos(),
-            cursor_position_ns: Some(state.cursor.nanos()),
-            zoom_center_ns: Some(state.zoom_center.nanos()),
+            viewport_start_ps: state.viewport_start.picoseconds(),
+            viewport_end_ps: state.viewport_end.picoseconds(),
+            cursor_position_ps: Some(state.cursor.picoseconds()),
+            zoom_center_ps: Some(state.zoom_center.picoseconds()),
             theme: Self::map_theme(theme),
             variables: state
                 .variables

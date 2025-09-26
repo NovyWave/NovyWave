@@ -532,8 +532,13 @@ impl WaveformTimeline {
         self.bounds_state.get_cloned()
     }
 
-    fn viewport_duration_ns(&self) -> u64 {
-        self.viewport.state.get_cloned().duration().nanos().max(1)
+    fn viewport_duration_ps(&self) -> u64 {
+        self.viewport
+            .state
+            .get_cloned()
+            .duration()
+            .picoseconds()
+            .max(1)
     }
 
     fn clamp_to_bounds(&self, time: TimePs) -> TimePs {
@@ -619,24 +624,22 @@ impl WaveformTimeline {
 
     fn move_cursor_left(&self) {
         let faster = self.shift_active.state.get_cloned();
-        let step = self.cursor_step_ns(faster);
-        let step_ps = step.saturating_mul(PS_PER_NS);
+        let step = self.cursor_step_ps(faster);
         let current = self.cursor.state.get_cloned().picoseconds();
-        let new_time = current.saturating_sub(step_ps);
+        let new_time = current.saturating_sub(step);
         self.set_cursor_clamped(TimePs::from_picoseconds(new_time));
     }
 
     fn move_cursor_right(&self) {
         let faster = self.shift_active.state.get_cloned();
-        let step = self.cursor_step_ns(faster);
-        let step_ps = step.saturating_mul(PS_PER_NS);
+        let step = self.cursor_step_ps(faster);
         let current = self.cursor.state.get_cloned().picoseconds();
-        let new_time = current.saturating_add(step_ps);
+        let new_time = current.saturating_add(step);
         self.set_cursor_clamped(TimePs::from_picoseconds(new_time));
     }
 
-    fn cursor_step_ns(&self, faster: bool) -> u64 {
-        let duration = self.viewport_duration_ns();
+    fn cursor_step_ps(&self, faster: bool) -> u64 {
+        let duration = self.viewport_duration_ps();
         let base_step = ((duration as f64) * CURSOR_STEP_RATIO).round() as u64;
         let mut step = base_step.max(1);
         if faster {

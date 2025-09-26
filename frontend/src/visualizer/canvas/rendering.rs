@@ -1,4 +1,5 @@
 use crate::dataflow::Actor;
+use crate::visualizer::timeline::time_domain::{PS_PER_MS, PS_PER_NS, PS_PER_SECOND, PS_PER_US};
 use fast2d::{CanvasWrapper as Fast2DCanvas, Family, Object2d, Rectangle, Text};
 use moonzoon_novyui::tokens::theme::Theme as NovyUITheme;
 use shared::{SignalTransition, SignalValue, VarFormat};
@@ -13,6 +14,7 @@ enum TimeLabelUnit {
     Milliseconds,
     Microseconds,
     Nanoseconds,
+    Picoseconds,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -61,10 +63,10 @@ pub struct VariableRenderSnapshot {
 pub struct RenderingParameters {
     pub canvas_width: u32,
     pub canvas_height: u32,
-    pub viewport_start_ns: u64,
-    pub viewport_end_ns: u64,
-    pub cursor_position_ns: Option<u64>,
-    pub zoom_center_ns: Option<u64>,
+    pub viewport_start_ps: u64,
+    pub viewport_end_ps: u64,
+    pub cursor_position_ps: Option<u64>,
+    pub zoom_center_ps: Option<u64>,
     pub theme: NovyUITheme,
     pub variables: Vec<VariableRenderSnapshot>,
 }
@@ -103,8 +105,8 @@ struct StaticCacheInfo {
 struct StaticRenderKey {
     canvas_width: u32,
     canvas_height: u32,
-    viewport_start_ns: u64,
-    viewport_end_ns: u64,
+    viewport_start_ps: u64,
+    viewport_end_ps: u64,
     theme_key: u8,
     variables_signature: u64,
     revision: u8,
@@ -117,8 +119,8 @@ impl StaticRenderKey {
         Self {
             canvas_width: params.canvas_width,
             canvas_height: params.canvas_height,
-            viewport_start_ns: params.viewport_start_ns,
-            viewport_end_ns: params.viewport_end_ns,
+            viewport_start_ps: params.viewport_start_ps,
+            viewport_end_ps: params.viewport_end_ps,
             theme_key: Self::theme_key(params.theme),
             variables_signature: Self::variables_signature(&params.variables),
             revision: STATIC_CACHE_REVISION,
@@ -253,7 +255,7 @@ impl WaveformRenderer {
         if params.canvas_width == 0 || params.canvas_height == 0 {
             return Vec::new();
         }
-        if params.viewport_end_ns <= params.viewport_start_ns {
+        if params.viewport_end_ps <= params.viewport_start_ps {
             return Vec::new();
         }
 
@@ -271,7 +273,7 @@ impl WaveformRenderer {
         if params.canvas_width == 0 || params.canvas_height == 0 {
             return objects;
         }
-        if params.viewport_end_ns <= params.viewport_start_ns {
+        if params.viewport_end_ps <= params.viewport_start_ps {
             return objects;
         }
         Self::add_cursor_lines(&mut objects, params, theme_colors);
@@ -336,12 +338,12 @@ impl WaveformRenderer {
         params: &RenderingParameters,
         theme_colors: &ThemeColors,
     ) {
-        if params.viewport_end_ns <= params.viewport_start_ns {
+        if params.viewport_end_ps <= params.viewport_start_ps {
             return;
         }
 
-        let range_ns = params.viewport_end_ns - params.viewport_start_ns;
-        if range_ns == 0 {
+        let range_ps = params.viewport_end_ps - params.viewport_start_ps;
+        if range_ps == 0 {
             return;
         }
 
@@ -350,9 +352,9 @@ impl WaveformRenderer {
             return;
         }
 
-        let start_ns = params.viewport_start_ns;
-        let end_ns = params.viewport_end_ns;
-        let ns_per_pixel = range_ns as f64 / params.canvas_width.max(1) as f64;
+        let start_ps = params.viewport_start_ps;
+        let end_ps = params.viewport_end_ps;
+        let ps_per_pixel = range_ps as f64 / params.canvas_width.max(1) as f64;
         let mut pixel_states: Vec<Option<PixelValue>> = vec![None; width_px];
         let transition_values: Vec<Rc<String>> = variable
             .transitions
@@ -361,32 +363,34 @@ impl WaveformRenderer {
             .collect();
 
         for (index, transition) in variable.transitions.iter().enumerate() {
-            let mut segment_start = transition.time_ns;
-            if segment_start >= end_ns {
+            let mut segment_start = transition.time_ns.saturating_mul(PS_PER_NS);
+            if segment_start >= end_ps {
                 break;
             }
             let next_time = if index + 1 < variable.transitions.len() {
-                variable.transitions[index + 1].time_ns
+                variable.transitions[index + 1]
+                    .time_ns
+                    .saturating_mul(PS_PER_NS)
             } else {
-                end_ns
+                end_ps
             };
             let mut segment_end = next_time;
 
-            if segment_end <= start_ns {
+            if segment_end <= start_ps {
                 continue;
             }
-            if segment_start < start_ns {
-                segment_start = start_ns;
+            if segment_start < start_ps {
+                segment_start = start_ps;
             }
-            if segment_end > end_ns {
-                segment_end = end_ns;
+            if segment_end > end_ps {
+                segment_end = end_ps;
             }
             if segment_end <= segment_start {
                 continue;
             }
 
-            let start_px = ((segment_start - start_ns) as f64 / ns_per_pixel).floor() as isize;
-            let end_px = ((segment_end - start_ns) as f64 / ns_per_pixel).ceil() as isize;
+            let start_px = ((segment_start - start_ps) as f64 / ps_per_pixel).floor() as isize;
+            let end_px = ((segment_end - start_ps) as f64 / ps_per_pixel).ceil() as isize;
             let value_rc = transition_values[index].clone();
 
             for px in start_px..end_px {
@@ -668,14 +672,14 @@ impl WaveformRenderer {
         params: &RenderingParameters,
         theme_colors: &ThemeColors,
     ) {
-        if params.viewport_end_ns <= params.viewport_start_ns {
+        if params.viewport_end_ps <= params.viewport_start_ps {
             return;
         }
-        let range_ns = (params.viewport_end_ns - params.viewport_start_ns) as f64;
+        let range_ps = (params.viewport_end_ps - params.viewport_start_ps) as f64;
 
-        if let Some(cursor_ns) = params.cursor_position_ns {
-            if (params.viewport_start_ns..=params.viewport_end_ns).contains(&cursor_ns) {
-                let ratio = (cursor_ns - params.viewport_start_ns) as f64 / range_ns;
+        if let Some(cursor_ps) = params.cursor_position_ps {
+            if (params.viewport_start_ps..=params.viewport_end_ps).contains(&cursor_ps) {
+                let ratio = (cursor_ps - params.viewport_start_ps) as f64 / range_ps;
                 let x = (ratio * params.canvas_width as f64) as f32;
                 objects.push(
                     Rectangle::new()
@@ -687,9 +691,9 @@ impl WaveformRenderer {
             }
         }
 
-        if let Some(center_ns) = params.zoom_center_ns {
-            if (params.viewport_start_ns..=params.viewport_end_ns).contains(&center_ns) {
-                let ratio = (center_ns - params.viewport_start_ns) as f64 / range_ns;
+        if let Some(center_ps) = params.zoom_center_ps {
+            if (params.viewport_start_ps..=params.viewport_end_ps).contains(&center_ps) {
+                let ratio = (center_ps - params.viewport_start_ps) as f64 / range_ps;
                 let x = (ratio * params.canvas_width as f64) as f32;
                 let dash_height = 6.0;
                 let gap_height = 4.0;
@@ -716,7 +720,7 @@ impl WaveformRenderer {
         params: &RenderingParameters,
         theme_colors: &ThemeColors,
     ) {
-        if params.viewport_end_ns <= params.viewport_start_ns {
+        if params.viewport_end_ps <= params.viewport_start_ps {
             return;
         }
 
@@ -739,25 +743,25 @@ impl WaveformRenderer {
                 .into(),
         );
 
-        let start_s = params.viewport_start_ns as f64 / 1_000_000_000.0;
-        let end_s = params.viewport_end_ns as f64 / 1_000_000_000.0;
-        let time_range_s = (end_s - start_s).max(1e-9);
-        let time_range_ns = (params.viewport_end_ns - params.viewport_start_ns) as f64;
+        let start_s = params.viewport_start_ps as f64 / PS_PER_SECOND as f64;
+        let end_s = params.viewport_end_ps as f64 / PS_PER_SECOND as f64;
+        let time_range_s = (end_s - start_s).max(1e-12);
+        let time_range_ps = (params.viewport_end_ps - params.viewport_start_ps) as f64;
 
         let target_tick_spacing = 80.0;
         let desired_tick_count =
             (params.canvas_width as f64 / target_tick_spacing).clamp(2.0, 12.0);
         let raw_step_s = time_range_s / desired_tick_count.max(1.0);
         let step_s = Self::round_to_nice_number(raw_step_s);
-        let step_ns = step_s * 1_000_000_000.0;
-        let label_unit = Self::select_time_unit(step_ns, time_range_ns);
+        let step_ps = step_s * PS_PER_SECOND as f64;
+        let label_unit = Self::select_time_unit(step_ps, time_range_ps);
 
         let mut ticks: Vec<(f32, Option<String>)> = Vec::new();
 
         ticks.push((
             0.0,
             Some(Self::format_time_label(
-                params.viewport_start_ns,
+                params.viewport_start_ps,
                 label_unit,
             )),
         ));
@@ -765,12 +769,12 @@ impl WaveformRenderer {
         let first_tick_s = (start_s / step_s).ceil() * step_s;
         let mut tick_s = first_tick_s;
         while tick_s < end_s {
-            let tick_ns = (tick_s * 1_000_000_000.0).round() as u64;
-            let ratio = (tick_ns - params.viewport_start_ns) as f64 / time_range_ns;
+            let tick_ps = (tick_s * PS_PER_SECOND as f64).round() as u64;
+            let ratio = (tick_ps - params.viewport_start_ps) as f64 / time_range_ps;
             let x = (ratio * params.canvas_width as f64) as f32;
 
             if x > 0.0 && x < params.canvas_width as f32 {
-                ticks.push((x, Some(Self::format_time_label(tick_ns, label_unit))));
+                ticks.push((x, Some(Self::format_time_label(tick_ps, label_unit))));
             }
 
             tick_s += step_s;
@@ -778,7 +782,7 @@ impl WaveformRenderer {
 
         ticks.push((
             params.canvas_width as f32,
-            Some(Self::format_time_label(params.viewport_end_ns, label_unit)),
+            Some(Self::format_time_label(params.viewport_end_ps, label_unit)),
         ));
 
         let mut last_label_right = -f32::INFINITY;
@@ -837,28 +841,29 @@ impl WaveformRenderer {
         }
     }
 
-    fn select_time_unit(step_ns: f64, range_ns: f64) -> TimeLabelUnit {
+    fn select_time_unit(step_ps: f64, range_ps: f64) -> TimeLabelUnit {
         let candidates = [
             TimeLabelUnit::Seconds,
             TimeLabelUnit::Milliseconds,
             TimeLabelUnit::Microseconds,
             TimeLabelUnit::Nanoseconds,
+            TimeLabelUnit::Picoseconds,
         ];
 
         for unit in candidates {
-            let unit_scale = unit.base_ns();
-            let range_value = range_ns / unit_scale;
-            let step_value = step_ns / unit_scale;
+            let unit_scale = unit.base_ps();
+            let range_value = range_ps / unit_scale;
+            let step_value = step_ps / unit_scale;
             if range_value >= 1.0 && step_value >= 0.1 {
                 return unit;
             }
         }
 
-        TimeLabelUnit::Nanoseconds
+        TimeLabelUnit::Picoseconds
     }
 
-    fn format_time_label(ns: u64, unit: TimeLabelUnit) -> String {
-        let value = ns as f64 / unit.base_ns();
+    fn format_time_label(ps: u64, unit: TimeLabelUnit) -> String {
+        let value = ps as f64 / unit.base_ps();
         let mut formatted = Self::format_axis_number(value);
         formatted.push_str(unit.suffix());
         formatted
@@ -953,12 +958,13 @@ impl WaveformRenderer {
 }
 
 impl TimeLabelUnit {
-    fn base_ns(self) -> f64 {
+    fn base_ps(self) -> f64 {
         match self {
-            TimeLabelUnit::Seconds => 1_000_000_000.0,
-            TimeLabelUnit::Milliseconds => 1_000_000.0,
-            TimeLabelUnit::Microseconds => 1_000.0,
-            TimeLabelUnit::Nanoseconds => 1.0,
+            TimeLabelUnit::Seconds => PS_PER_SECOND as f64,
+            TimeLabelUnit::Milliseconds => PS_PER_MS as f64,
+            TimeLabelUnit::Microseconds => PS_PER_US as f64,
+            TimeLabelUnit::Nanoseconds => PS_PER_NS as f64,
+            TimeLabelUnit::Picoseconds => 1.0,
         }
     }
 
@@ -968,6 +974,7 @@ impl TimeLabelUnit {
             TimeLabelUnit::Milliseconds => "ms",
             TimeLabelUnit::Microseconds => "us",
             TimeLabelUnit::Nanoseconds => "ns",
+            TimeLabelUnit::Picoseconds => "ps",
         }
     }
 }
