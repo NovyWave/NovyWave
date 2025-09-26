@@ -3,7 +3,7 @@
 //! Centralized computation of timeline range from multiple files to eliminate
 //! scattered computation and provide single source of truth for timeline bounds.
 
-use super::time_domain::TimeNs;
+use super::time_domain::TimePs;
 use crate::dataflow::Actor;
 use futures::{StreamExt, select};
 use shared::{FileFormat, FileState, SelectedVariable, TrackedFile};
@@ -13,7 +13,7 @@ use zoon::{SignalExt, SignalVecExt};
 /// Maximum Timeline Range actor - stores computed timeline range for efficient access
 #[derive(Clone, Debug)]
 pub struct MaximumTimelineRange {
-    pub range: Actor<Option<(TimeNs, TimeNs)>>,
+    pub range: Actor<Option<(TimePs, TimePs)>>,
 }
 
 impl MaximumTimelineRange {
@@ -73,7 +73,7 @@ impl MaximumTimelineRange {
     fn compute_range(
         tracked_files: &[TrackedFile],
         selected_variables: &[SelectedVariable],
-    ) -> Option<(TimeNs, TimeNs)> {
+    ) -> Option<(TimePs, TimePs)> {
         let file_filter: HashSet<String> = selected_variables
             .iter()
             .filter_map(|var| var.file_path())
@@ -83,8 +83,8 @@ impl MaximumTimelineRange {
             return None;
         }
 
-        let mut min_time: Option<TimeNs> = None;
-        let mut max_time: Option<TimeNs> = None;
+        let mut min_time: Option<TimePs> = None;
+        let mut max_time: Option<TimePs> = None;
 
         for tracked_file in tracked_files {
             if !file_filter.contains(&tracked_file.path) {
@@ -121,14 +121,14 @@ impl MaximumTimelineRange {
                 }
 
                 if let Some(start_ns) = waveform_file.min_time_ns {
-                    let start = TimeNs::from_nanos(start_ns);
+                    let start = TimePs::from_nanos(start_ns);
                     min_time = Some(match min_time {
                         Some(current) => current.min(start),
                         None => start,
                     });
                 }
                 if let Some(end_ns) = waveform_file.max_time_ns {
-                    let end = TimeNs::from_nanos(end_ns);
+                    let end = TimePs::from_nanos(end_ns);
                     max_time = Some(match max_time {
                         Some(current) => current.max(end),
                         None => end,

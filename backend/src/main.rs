@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock};
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 
 // ===== CENTRALIZED DEBUG FLAGS =====
 const DEBUG_BACKEND: bool = false; // Backend request/response debugging
@@ -446,13 +446,12 @@ impl SignalCacheManager {
         );
 
         for signal in signal_data {
-            let transitions: &[SignalTransition] = if let Some(transitions_arc) =
-                cache_guard.get(&signal.unique_id)
-            {
-                &**transitions_arc
-            } else {
-                &signal.transitions
-            };
+            let transitions: &[SignalTransition] =
+                if let Some(transitions_arc) = cache_guard.get(&signal.unique_id) {
+                    &**transitions_arc
+                } else {
+                    &signal.transitions
+                };
             if transitions.is_empty() {
                 cursor_values.insert(signal.unique_id.clone(), SignalValue::Missing);
                 continue;

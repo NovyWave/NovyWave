@@ -4,7 +4,7 @@ use crate::dataflow::{Actor, Atom, Relay, relay};
 use crate::selected_variables::SelectedVariables;
 use crate::visualizer::timeline::maximum_timeline_range::MaximumTimelineRange;
 use crate::visualizer::timeline::time_domain::{
-    MIN_CURSOR_STEP_NS, PS_PER_NS, TimeNs, TimePerPixel, Viewport,
+    MIN_CURSOR_STEP_NS, PS_PER_NS, TimePerPixel, TimePs, Viewport,
 };
 use futures::{StreamExt, select};
 use gloo_timers::callback::Timeout;
@@ -22,7 +22,7 @@ use zoon::*;
 const REQUEST_DEBOUNCE_MS: u32 = 75;
 const CONFIG_SAVE_DEBOUNCE_MS: u32 = 1_000;
 const ZOOM_CENTER_MIN_INTERVAL_MS: f64 = 16.0;
-const MIN_DURATION_NS: u64 = 1;
+const MIN_DURATION_PS: u64 = 1;
 const CURSOR_STEP_RATIO: f64 = 0.04;
 const CURSOR_FAST_MULTIPLIER: u64 = 4;
 const CACHE_HIT_THRESHOLD: f64 = 0.8;
@@ -51,10 +51,10 @@ impl TimelineVariableSeries {
 
 #[derive(Clone, Debug)]
 pub struct TimelineRenderState {
-    pub viewport_start: TimeNs,
-    pub viewport_end: TimeNs,
-    pub cursor: TimeNs,
-    pub zoom_center: TimeNs,
+    pub viewport_start: TimePs,
+    pub viewport_end: TimePs,
+    pub cursor: TimePs,
+    pub zoom_center: TimePs,
     pub canvas_width_px: u32,
     pub canvas_height_px: u32,
     pub time_per_pixel: TimePerPixel,
@@ -64,10 +64,10 @@ pub struct TimelineRenderState {
 impl Default for TimelineRenderState {
     fn default() -> Self {
         Self {
-            viewport_start: TimeNs::ZERO,
-            viewport_end: TimeNs::from_nanos(1_000_000_000),
-            cursor: TimeNs::ZERO,
-            zoom_center: TimeNs::ZERO,
+            viewport_start: TimePs::ZERO,
+            viewport_end: TimePs::from_nanos(1_000_000_000),
+            cursor: TimePs::ZERO,
+            zoom_center: TimePs::ZERO,
             canvas_width_px: 1,
             canvas_height_px: 1,
             time_per_pixel: TimePerPixel::from_picoseconds(MIN_CURSOR_STEP_NS * PS_PER_NS),
@@ -78,15 +78,15 @@ impl Default for TimelineRenderState {
 
 #[derive(Clone, Debug)]
 struct TimelineBounds {
-    start: TimeNs,
-    end: TimeNs,
+    start: TimePs,
+    end: TimePs,
 }
 
 impl Default for TimelineBounds {
     fn default() -> Self {
         Self {
-            start: TimeNs::ZERO,
-            end: TimeNs::ZERO,
+            start: TimePs::ZERO,
+            end: TimePs::ZERO,
         }
     }
 }
@@ -235,9 +235,9 @@ fn push_transition(target: &mut Vec<SignalTransition>, transition: &SignalTransi
 /// Primary timeline actor coordinating cursor, viewport, zoom and data requests.
 #[derive(Clone)]
 pub struct WaveformTimeline {
-    cursor: Actor<TimeNs>,
+    cursor: Actor<TimePs>,
     viewport: Actor<Viewport>,
-    zoom_center: Actor<TimeNs>,
+    zoom_center: Actor<TimePs>,
     canvas_width: Actor<f32>,
     canvas_height: Actor<f32>,
     shift_active: Actor<bool>,
@@ -258,7 +258,7 @@ pub struct WaveformTimeline {
     request_debounce: Rc<RefCell<Option<Timeout>>>,
     config_debounce: Rc<RefCell<Option<Timeout>>>,
     viewport_initialized: Mutable<bool>,
-    zoom_center_pending: Rc<RefCell<Option<TimeNs>>>,
+    zoom_center_pending: Rc<RefCell<Option<TimePs>>>,
     zoom_center_timer: Rc<RefCell<Option<Timeout>>>,
     zoom_center_last_update_ms: Rc<RefCell<f64>>,
 
@@ -275,8 +275,8 @@ pub struct WaveformTimeline {
     pub shift_key_pressed_relay: Relay<()>,
     pub shift_key_released_relay: Relay<()>,
     pub canvas_resized_relay: Relay<(f32, f32)>,
-    pub cursor_clicked_relay: Relay<TimeNs>,
-    pub zoom_center_follow_mouse_relay: Relay<Option<TimeNs>>,
+    pub cursor_clicked_relay: Relay<TimePs>,
+    pub zoom_center_follow_mouse_relay: Relay<Option<TimePs>>,
     pub variable_format_updated_relay: Relay<(String, VarFormat)>,
 }
 
@@ -329,12 +329,12 @@ impl WaveformTimeline {
         connection: ConnectionAdapter,
         app_config: AppConfig,
     ) -> Self {
-        let cursor = Actor::new(TimeNs::ZERO, |_state| async move {});
+        let cursor = Actor::new(TimePs::ZERO, |_state| async move {});
         let viewport = Actor::new(
-            Viewport::new(TimeNs::ZERO, TimeNs::from_nanos(1_000_000_000)),
+            Viewport::new(TimePs::ZERO, TimePs::from_nanos(1_000_000_000)),
             |_state| async move {},
         );
-        let zoom_center = Actor::new(TimeNs::ZERO, |_state| async move {});
+        let zoom_center = Actor::new(TimePs::ZERO, |_state| async move {});
         let canvas_width = Actor::new(800.0, |_state| async move {});
         let canvas_height = Actor::new(400.0, |_state| async move {});
         let shift_active = Actor::new(false, |_state| async move {});
@@ -359,8 +359,8 @@ impl WaveformTimeline {
         let (shift_key_pressed_relay, shift_pressed_stream) = relay::<()>();
         let (shift_key_released_relay, shift_released_stream) = relay::<()>();
         let (canvas_resized_relay, canvas_resized_stream) = relay::<(f32, f32)>();
-        let (cursor_clicked_relay, cursor_clicked_stream) = relay::<TimeNs>();
-        let (zoom_center_follow_mouse_relay, zoom_center_follow_stream) = relay::<Option<TimeNs>>();
+        let (cursor_clicked_relay, cursor_clicked_stream) = relay::<TimePs>();
+        let (zoom_center_follow_mouse_relay, zoom_center_follow_stream) = relay::<Option<TimePs>>();
         let (variable_format_updated_relay, format_updated_stream) = relay::<(String, VarFormat)>();
         let zoom_center_pending = Rc::new(RefCell::new(None));
         let zoom_center_timer = Rc::new(RefCell::new(None));
@@ -448,7 +448,7 @@ impl WaveformTimeline {
         self.render_state.clone()
     }
 
-    pub fn cursor_actor(&self) -> Actor<TimeNs> {
+    pub fn cursor_actor(&self) -> Actor<TimePs> {
         self.cursor.clone()
     }
 
@@ -456,7 +456,7 @@ impl WaveformTimeline {
         self.viewport.clone()
     }
 
-    pub fn zoom_center_actor(&self) -> Actor<TimeNs> {
+    pub fn zoom_center_actor(&self) -> Actor<TimePs> {
         self.zoom_center.clone()
     }
 
@@ -536,10 +536,12 @@ impl WaveformTimeline {
         self.viewport.state.get_cloned().duration().nanos().max(1)
     }
 
-    fn clamp_to_bounds(&self, time: TimeNs) -> TimeNs {
+    fn clamp_to_bounds(&self, time: TimePs) -> TimePs {
         if let Some(bounds) = self.bounds() {
-            let clamped = time.nanos().clamp(bounds.start.nanos(), bounds.end.nanos());
-            TimeNs::from_nanos(clamped)
+            let clamped = time
+                .picoseconds()
+                .clamp(bounds.start.picoseconds(), bounds.end.picoseconds());
+            TimePs::from_picoseconds(clamped)
         } else {
             time
         }
@@ -605,7 +607,7 @@ impl WaveformTimeline {
         }
     }
 
-    fn set_cursor_clamped(&self, time: TimeNs) {
+    fn set_cursor_clamped(&self, time: TimePs) {
         let clamped = self.clamp_to_bounds(time);
         self.cursor.state.set_neq(clamped);
         self.ensure_cursor_within_viewport();
@@ -618,17 +620,19 @@ impl WaveformTimeline {
     fn move_cursor_left(&self) {
         let faster = self.shift_active.state.get_cloned();
         let step = self.cursor_step_ns(faster);
-        let current = self.cursor.state.get_cloned().nanos();
-        let new_time = current.saturating_sub(step);
-        self.set_cursor_clamped(TimeNs::from_nanos(new_time));
+        let step_ps = step.saturating_mul(PS_PER_NS);
+        let current = self.cursor.state.get_cloned().picoseconds();
+        let new_time = current.saturating_sub(step_ps);
+        self.set_cursor_clamped(TimePs::from_picoseconds(new_time));
     }
 
     fn move_cursor_right(&self) {
         let faster = self.shift_active.state.get_cloned();
         let step = self.cursor_step_ns(faster);
-        let current = self.cursor.state.get_cloned().nanos();
-        let new_time = current.saturating_add(step);
-        self.set_cursor_clamped(TimeNs::from_nanos(new_time));
+        let step_ps = step.saturating_mul(PS_PER_NS);
+        let current = self.cursor.state.get_cloned().picoseconds();
+        let new_time = current.saturating_add(step_ps);
+        self.set_cursor_clamped(TimePs::from_picoseconds(new_time));
     }
 
     fn cursor_step_ns(&self, faster: bool) -> u64 {
@@ -648,7 +652,7 @@ impl WaveformTimeline {
         }
         let cursor_ns = self.cursor.state.get_cloned().nanos();
         if let Some(prev) = times.iter().rev().find(|&&t| t < cursor_ns).copied() {
-            self.set_cursor_clamped(TimeNs::from_nanos(prev));
+            self.set_cursor_clamped(TimePs::from_nanos(prev));
         }
     }
 
@@ -659,7 +663,7 @@ impl WaveformTimeline {
         }
         let cursor_ns = self.cursor.state.get_cloned().nanos();
         if let Some(next) = times.iter().find(|&&t| t > cursor_ns).copied() {
-            self.set_cursor_clamped(TimeNs::from_nanos(next));
+            self.set_cursor_clamped(TimePs::from_nanos(next));
         }
     }
 
@@ -679,8 +683,8 @@ impl WaveformTimeline {
 
     fn zoom_in(&self, faster: bool) {
         let viewport = self.viewport.state.get_cloned();
-        let current_duration = viewport.duration().nanos();
-        if current_duration <= MIN_DURATION_NS {
+        let current_duration = viewport.duration().picoseconds();
+        if current_duration <= MIN_DURATION_PS {
             return;
         }
         let center = self.resolve_zoom_center();
@@ -691,18 +695,18 @@ impl WaveformTimeline {
         };
         let mut new_duration =
             ((current_duration as f64) * (numerator / denominator)).floor() as u64;
-        if new_duration < MIN_DURATION_NS {
-            new_duration = MIN_DURATION_NS;
+        if new_duration < MIN_DURATION_PS {
+            new_duration = MIN_DURATION_PS;
         }
         if new_duration >= current_duration {
-            new_duration = current_duration.saturating_sub(1).max(MIN_DURATION_NS);
+            new_duration = current_duration.saturating_sub(1).max(MIN_DURATION_PS);
         }
         self.set_viewport_with_duration(center, new_duration);
     }
 
     fn zoom_out(&self, faster: bool) {
         let viewport = self.viewport.state.get_cloned();
-        let current_duration = viewport.duration().nanos();
+        let current_duration = viewport.duration().picoseconds();
         let center = self.resolve_zoom_center();
         let (numerator, denominator) = if faster {
             (9.0f64, 5.0f64)
@@ -715,7 +719,7 @@ impl WaveformTimeline {
             new_duration = current_duration.saturating_add(1);
         }
         if let Some(bounds) = self.bounds() {
-            let max_duration = bounds.end.duration_since(bounds.start).nanos();
+            let max_duration = bounds.end.duration_since(bounds.start).picoseconds();
             new_duration = new_duration.min(max_duration);
         }
         self.set_viewport_with_duration(center, new_duration);
@@ -723,63 +727,65 @@ impl WaveformTimeline {
 
     fn pan_left(&self, faster: bool) {
         let viewport = self.viewport.state.get_cloned();
-        let duration = viewport.duration().nanos();
+        let duration = viewport.duration().picoseconds();
         let mut step = (duration / 5).max(1);
         if faster {
             step = step.saturating_mul(3);
         }
-        let new_start = viewport.start.nanos().saturating_sub(step);
-        let new_end = viewport.end.nanos().saturating_sub(step);
+        let new_start = viewport.start.picoseconds().saturating_sub(step);
+        let new_end = viewport.end.picoseconds().saturating_sub(step);
         self.set_viewport_clamped(
-            TimeNs::from_nanos(new_start),
-            TimeNs::from_nanos(new_end.max(new_start + 1)),
+            TimePs::from_picoseconds(new_start),
+            TimePs::from_picoseconds(new_end.max(new_start + 1)),
         );
     }
 
     fn pan_right(&self, faster: bool) {
         let viewport = self.viewport.state.get_cloned();
-        let duration = viewport.duration().nanos();
+        let duration = viewport.duration().picoseconds();
         let mut step = (duration / 5).max(1);
         if faster {
             step = step.saturating_mul(3);
         }
-        let new_start = viewport.start.nanos().saturating_add(step);
-        let new_end = viewport.end.nanos().saturating_add(step);
+        let new_start = viewport.start.picoseconds().saturating_add(step);
+        let new_end = viewport.end.picoseconds().saturating_add(step);
         self.set_viewport_clamped(
-            TimeNs::from_nanos(new_start),
-            TimeNs::from_nanos(new_end.max(new_start + 1)),
+            TimePs::from_picoseconds(new_start),
+            TimePs::from_picoseconds(new_end.max(new_start + 1)),
         );
     }
 
     fn reset_zoom(&self) {
         if let Some(bounds) = self.bounds() {
             self.set_viewport_clamped(bounds.start, bounds.end);
-            let start = bounds.start.nanos();
-            let end = bounds.end.nanos();
+            let start = bounds.start.picoseconds();
+            let end = bounds.end.picoseconds();
             if end > start {
                 let midpoint = start.saturating_add((end - start) / 2);
-                self.cursor.state.set_neq(TimeNs::from_nanos(midpoint));
+                self.cursor
+                    .state
+                    .set_neq(TimePs::from_picoseconds(midpoint));
             } else {
                 self.cursor.state.set_neq(bounds.start);
             }
         } else {
             self.viewport.state.set(Viewport::new(
-                TimeNs::ZERO,
-                TimeNs::from_nanos(1_000_000_000),
+                TimePs::ZERO,
+                TimePs::from_nanos(1_000_000_000),
             ));
-            self.cursor.state.set_neq(TimeNs::from_nanos(500_000_000));
+            self.cursor.state.set_neq(TimePs::from_nanos(500_000_000));
         }
-        self.set_zoom_center(TimeNs::ZERO);
+        self.set_zoom_center(TimePs::ZERO);
         self.update_render_state();
         self.schedule_request();
         self.schedule_config_save();
     }
 
     fn reset_zoom_center(&self) {
-        self.set_zoom_center(TimeNs::ZERO);
+        self.set_zoom_center(TimePs::ZERO);
     }
 
-    fn set_zoom_center(&self, time: TimeNs) {
+    fn set_zoom_center(&self, time: TimePs) {
         let clamped = self.clamp_to_bounds(time);
         if let Some(timer) = self.zoom_center_timer.borrow_mut().take() {
             timer.cancel();
@@ -794,7 +800,7 @@ impl WaveformTimeline {
         self.update_zoom_center_only(clamped);
     }
 
-    fn resolve_zoom_center(&self) -> TimeNs {
+    fn resolve_zoom_center(&self) -> TimePs {
         let pending_time = {
             let mut pending = self.zoom_center_pending.borrow_mut();
             pending.take()
@@ -808,38 +814,37 @@ impl WaveformTimeline {
         self.zoom_center.state.get_cloned()
     }
 
-    fn set_viewport_with_duration(&self, center: TimeNs, duration_ns: u64) {
-        let target_duration = duration_ns.max(1);
-        let center_ns = center.nanos();
+    fn set_viewport_with_duration(&self, center: TimePs, duration_ps: u64) {
+        let target_duration = duration_ps.max(1);
+        let center_ps = center.picoseconds();
 
         let viewport = self.viewport.state.get_cloned();
-        let current_start = viewport.start.nanos();
-        let current_end = viewport.end.nanos();
-        let current_duration = viewport.duration().nanos().max(1);
+        let current_start = viewport.start.picoseconds();
+        let current_end = viewport.end.picoseconds();
+        let current_duration = viewport.duration().picoseconds().max(1);
 
-        let offset_from_start = if center_ns <= current_start {
+        let offset_from_start = if center_ps <= current_start {
             0
-        } else if center_ns >= current_end {
+        } else if center_ps >= current_end {
             current_duration
         } else {
-            center_ns - current_start
+            center_ps - current_start
         };
-        let mut ratio = offset_from_start as f64 / current_duration as f64;
-        if ratio.is_nan() {
-            ratio = 0.5;
-        }
-        ratio = ratio.clamp(0.0, 1.0);
+        let offset_in_new = if current_duration == 0 {
+            target_duration.saturating_div(2)
+        } else {
+            let numerator = (offset_from_start as u128) * (target_duration as u128);
+            let denominator = current_duration as u128;
+            let rounded = (numerator + (denominator / 2)) / denominator;
+            rounded.min(target_duration as u128) as u64
+        };
 
-        let offset_in_new = (ratio * target_duration as f64)
-            .round()
-            .clamp(0.0, target_duration as f64) as u64;
-
-        let mut start_ns = center_ns.saturating_sub(offset_in_new);
+        let mut start_ns = center_ps.saturating_sub(offset_in_new);
         let mut end_ns = start_ns.saturating_add(target_duration);
 
         if let Some(bounds) = self.bounds() {
-            let bounds_start = bounds.start.nanos();
-            let bounds_end = bounds.end.nanos();
+            let bounds_start = bounds.start.picoseconds();
+            let bounds_end = bounds.end.picoseconds();
             if start_ns < bounds_start {
                 let diff = bounds_start - start_ns;
                 start_ns = bounds_start;
@@ -856,27 +861,32 @@ impl WaveformTimeline {
             end_ns = start_ns.saturating_add(1);
         }
 
-        self.set_viewport_clamped(TimeNs::from_nanos(start_ns), TimeNs::from_nanos(end_ns));
+        self.set_viewport_clamped(
+            TimePs::from_picoseconds(start_ns),
+            TimePs::from_picoseconds(end_ns),
+        );
     }
 
-    fn set_viewport_clamped(&self, start: TimeNs, end: TimeNs) {
+    fn set_viewport_clamped(&self, start: TimePs, end: TimePs) {
         let mut clamped_start = start;
         let mut clamped_end = end;
         if let Some(bounds) = self.bounds() {
             if clamped_start < bounds.start {
-                let shift = bounds.start.nanos() - clamped_start.nanos();
+                let shift = bounds.start.picoseconds() - clamped_start.picoseconds();
                 clamped_start = bounds.start;
-                clamped_end = TimeNs::from_nanos(clamped_end.nanos().saturating_add(shift));
+                clamped_end =
+                    TimePs::from_picoseconds(clamped_end.picoseconds().saturating_add(shift));
             }
             if clamped_end > bounds.end {
-                let shift = clamped_end.nanos() - bounds.end.nanos();
+                let shift = clamped_end.picoseconds() - bounds.end.picoseconds();
                 clamped_end = bounds.end;
-                clamped_start = TimeNs::from_nanos(clamped_start.nanos().saturating_sub(shift));
+                clamped_start =
+                    TimePs::from_picoseconds(clamped_start.picoseconds().saturating_sub(shift));
             }
         }
 
         if clamped_end <= clamped_start {
-            clamped_end = TimeNs::from_nanos(clamped_start.nanos() + 1);
+            clamped_end = TimePs::from_picoseconds(clamped_start.picoseconds() + 1);
         }
 
         self.viewport
@@ -892,10 +902,10 @@ impl WaveformTimeline {
     fn ensure_viewport_within_bounds(&self) {
         if let Some(bounds) = self.bounds() {
             let viewport = self.viewport.state.get_cloned();
-            let start = viewport.start.nanos();
-            let end = viewport.end.nanos();
-            let bounds_start = bounds.start.nanos();
-            let bounds_end = bounds.end.nanos();
+            let start = viewport.start.picoseconds();
+            let end = viewport.end.picoseconds();
+            let bounds_start = bounds.start.picoseconds();
+            let bounds_end = bounds.end.picoseconds();
 
             if start < bounds_start || end > bounds_end {
                 let mut clamped_start = start.clamp(bounds_start, bounds_end);
@@ -908,8 +918,8 @@ impl WaveformTimeline {
                 }
 
                 self.viewport.state.set(Viewport::new(
-                    TimeNs::from_nanos(clamped_start),
-                    TimeNs::from_nanos(clamped_end),
+                    TimePs::from_picoseconds(clamped_start),
+                    TimePs::from_picoseconds(clamped_end),
                 ));
             }
         }
@@ -1071,10 +1081,20 @@ impl WaveformTimeline {
         }
 
         let viewport = self.viewport.state.get_cloned();
-        let start_ns = viewport.start.nanos();
-        let end_ns = viewport.end.nanos();
-        if end_ns <= start_ns {
+        let start_ps = viewport.start.picoseconds();
+        let end_ps = viewport.end.picoseconds();
+        if end_ps <= start_ps {
             return;
+        }
+
+        let mut start_ns = start_ps / PS_PER_NS;
+        let mut end_ns = if end_ps == 0 {
+            0
+        } else {
+            (end_ps + PS_PER_NS - 1) / PS_PER_NS
+        };
+        if end_ns <= start_ns {
+            end_ns = start_ns.saturating_add(1);
         }
 
         let width_px = self.canvas_width.state.get_cloned().max(1.0) as u32;
@@ -1086,7 +1106,8 @@ impl WaveformTimeline {
         let request_range = (start_ns, end_ns);
         let margin = (end_ns - start_ns).saturating_div(4).max(1);
         let expanded_range = self.expand_range_with_margin(request_range, margin);
-        let time_per_pixel = TimePerPixel::from_duration_and_width(end_ns - start_ns, width_px);
+        let duration_ps = end_ps.saturating_sub(start_ps).max(1);
+        let time_per_pixel = TimePerPixel::from_duration_and_width(duration_ps, width_px);
         let lod_bucket = Self::lod_bucket_for(time_per_pixel);
 
         struct VariablePlan {
@@ -1396,8 +1417,8 @@ impl WaveformTimeline {
         let zoom_center = self.zoom_center.state.get_cloned();
         let width = self.canvas_width.state.get_cloned().max(1.0) as u32;
         let height = self.canvas_height.state.get_cloned().max(1.0) as u32;
-        let duration = viewport.duration().nanos();
-        let time_per_pixel = TimePerPixel::from_duration_and_width(duration, width);
+        let duration_ps = viewport.duration().picoseconds();
+        let time_per_pixel = TimePerPixel::from_duration_and_width(duration_ps, width);
 
         let variables_snapshot = self
             .selected_variables
@@ -1445,7 +1466,7 @@ impl WaveformTimeline {
         });
     }
 
-    fn update_zoom_center_only(&self, zoom_center: TimeNs) {
+    fn update_zoom_center_only(&self, zoom_center: TimePs) {
         self.render_state.state.update_mut(|state| {
             if state.zoom_center != zoom_center {
                 state.zoom_center = zoom_center;
@@ -1546,7 +1567,7 @@ impl WaveformTimeline {
         &self,
         left_stream: impl futures::Stream<Item = ()> + Unpin + 'static,
         right_stream: impl futures::Stream<Item = ()> + Unpin + 'static,
-        cursor_clicked_stream: impl futures::Stream<Item = TimeNs> + Unpin + 'static,
+        cursor_clicked_stream: impl futures::Stream<Item = TimePs> + Unpin + 'static,
         jump_prev_stream: impl futures::Stream<Item = ()> + Unpin + 'static,
         jump_next_stream: impl futures::Stream<Item = ()> + Unpin + 'static,
     ) {
@@ -1603,7 +1624,7 @@ impl WaveformTimeline {
         pan_right_stream: impl futures::Stream<Item = ()> + Unpin + 'static,
         reset_zoom_stream: impl futures::Stream<Item = ()> + Unpin + 'static,
         reset_center_stream: impl futures::Stream<Item = ()> + Unpin + 'static,
-        zoom_center_follow_stream: impl futures::Stream<Item = Option<TimeNs>> + Unpin + 'static,
+        zoom_center_follow_stream: impl futures::Stream<Item = Option<TimePs>> + Unpin + 'static,
     ) {
         let timeline = self.clone();
         Task::start(async move {
@@ -1739,15 +1760,18 @@ impl WaveformTimeline {
                             .state
                             .set(Viewport::new(bounds.start, bounds.end));
 
-                        let start_ns = bounds.start.nanos();
-                        let end_ns = bounds.end.nanos();
-                        let midpoint = if end_ns > start_ns {
-                            start_ns.saturating_add((end_ns - start_ns) / 2)
+                        let start_ps = bounds.start.picoseconds();
+                        let end_ps = bounds.end.picoseconds();
+                        let midpoint_ps = if end_ps > start_ps {
+                            start_ps.saturating_add((end_ps - start_ps) / 2)
                         } else {
-                            start_ns
+                            start_ps
                         };
 
-                        timeline.cursor.state.set_neq(TimeNs::from_nanos(midpoint));
+                        timeline
+                            .cursor
+                            .state
+                            .set_neq(TimePs::from_picoseconds(midpoint_ps));
                         timeline.zoom_center.state.set_neq(bounds.start);
                         timeline.viewport_initialized.set(true);
                         timeline.update_render_state();
@@ -1759,8 +1783,8 @@ impl WaveformTimeline {
                 } else {
                     timeline.bounds_state.set(None);
                     timeline.viewport.state.set(Viewport::new(
-                        TimeNs::ZERO,
-                        TimeNs::from_nanos(1_000_000_000),
+                        TimePs::ZERO,
+                        TimePs::from_nanos(1_000_000_000),
                     ));
                     timeline.update_render_state();
                     timeline.schedule_request();

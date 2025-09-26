@@ -299,17 +299,20 @@ pub fn waveform_canvas(
                         let timeline_for_click = timeline_for_click.clone();
                         move |event: PointerDown| {
                             if let Some(state) = render_state_store_click.get_cloned() {
-                                let width = state.canvas_width_px.max(1) as f32;
-                                let normalized = (event.offset_x() as f32 / width).clamp(0.0, 1.0);
-                                let span = state
+                                let width = state.canvas_width_px.max(1) as f64;
+                                let normalized = (event.offset_x() as f64 / width).clamp(0.0, 1.0);
+                                let span_ps = state
                                     .viewport_end
                                     .duration_since(state.viewport_start)
-                                    .nanos();
-                                let offset = (span as f32 * normalized).round() as u64;
-                                let time =
-                                    crate::visualizer::timeline::time_domain::TimeNs::from_nanos(
-                                        state.viewport_start.nanos().saturating_add(offset),
-                                    );
+                                    .picoseconds();
+                                let offset_ps = (span_ps as f64 * normalized).round() as u64;
+                                let time_ps = state
+                                    .viewport_start
+                                    .picoseconds()
+                                    .saturating_add(offset_ps);
+                                let time = crate::visualizer::timeline::time_domain::TimePs::from_picoseconds(
+                                    time_ps,
+                                );
                                 timeline_for_click.cursor_clicked_relay.send(time);
                             }
                         }
@@ -320,18 +323,21 @@ pub fn waveform_canvas(
                         let canvas_element_store_move = canvas_element_store_for_handlers.clone();
                         move |event: PointerMove| {
                             if let Some(state) = render_state_store_move.get_cloned() {
-                                let width = state.canvas_width_px.max(1) as f32;
-                                let normalized = (event.offset_x() as f32 / width).clamp(0.0, 1.0);
-                                let span = state
+                                let width = state.canvas_width_px.max(1) as f64;
+                                let normalized = (event.offset_x() as f64 / width).clamp(0.0, 1.0);
+                                let span_ps = state
                                     .viewport_end
                                     .duration_since(state.viewport_start)
-                                    .nanos();
-                                let offset = (span as f32 * normalized).round() as u64;
-                                let time_ns = state.viewport_start.nanos().saturating_add(offset);
-                                let time =
-                                    crate::visualizer::timeline::time_domain::TimeNs::from_nanos(
-                                        time_ns,
-                                    );
+                                    .picoseconds();
+                                let offset_ps = (span_ps as f64 * normalized).round() as u64;
+                                let time_ps = state
+                                    .viewport_start
+                                    .picoseconds()
+                                    .saturating_add(offset_ps);
+                                let time = crate::visualizer::timeline::time_domain::TimePs::from_picoseconds(
+                                    time_ps,
+                                );
+                                let time_ns = time.picoseconds() / crate::visualizer::timeline::time_domain::PS_PER_NS;
 
                                 timeline_for_hover
                                     .zoom_center_follow_mouse_relay

@@ -1,6 +1,6 @@
 use crate::dataflow::{Actor, Relay, relay};
 use crate::platform::{CurrentPlatform, Platform};
-use crate::visualizer::timeline::TimeNs;
+use crate::visualizer::timeline::TimePs;
 use futures::{FutureExt, StreamExt, select};
 use moonzoon_novyui::tokens::theme;
 use serde::{Deserialize, Serialize};
@@ -11,8 +11,8 @@ use zoon::*;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
 pub struct TimeRange {
-    pub start: TimeNs,
-    pub end: TimeNs,
+    pub start: TimePs,
+    pub end: TimePs,
 }
 
 async fn compose_shared_app_config(
@@ -139,7 +139,7 @@ impl Default for SessionState {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct TimelineState {
-    pub cursor_position: Option<TimeNs>,
+    pub cursor_position: Option<TimePs>,
     pub visible_range: Option<TimeRange>,
     pub zoom_level: Option<f64>,
 }
@@ -1433,8 +1433,8 @@ impl AppConfig {
                         .and_then(|(start_ns, end_ns)| {
                             if end_ns > start_ns {
                                 Some(TimeRange {
-                                    start: TimeNs::from_nanos(start_ns),
-                                    end: TimeNs::from_nanos(end_ns),
+                                    start: TimePs::from_nanos(start_ns),
+                                    end: TimePs::from_nanos(end_ns),
                                 })
                             } else {
                                 None
@@ -1442,7 +1442,7 @@ impl AppConfig {
                         });
 
                     let cursor_position = visible_range.as_ref().map(|_| {
-                        TimeNs::from_nanos(loaded_config.workspace.timeline_cursor_position_ns)
+                        TimePs::from_nanos(loaded_config.workspace.timeline_cursor_position_ns)
                     });
 
                     let timeline_state = TimelineState {

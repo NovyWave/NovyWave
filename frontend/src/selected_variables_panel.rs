@@ -293,10 +293,10 @@ fn name_column_footer(
         map_ref! {
             let viewport = viewport_actor.signal(),
             let width = width_actor.signal() => {
-                let range = viewport.duration().nanos();
+                let range_ps = viewport.duration().picoseconds();
                 let width_px = width.max(1.0) as u64;
                 let time_per_pixel =
-                    TimePerPixel::from_duration_and_width(range, width_px.max(1) as u32);
+                    TimePerPixel::from_duration_and_width(range_ps, width_px.max(1) as u32);
                 time_per_pixel.to_string()
             }
         }
@@ -456,10 +456,10 @@ fn value_column_footer(
         map_ref! {
             let viewport = viewport_actor.signal(),
             let width = width_actor.signal() => {
-                let range = viewport.duration().nanos();
+                let range_ps = viewport.duration().picoseconds();
                 let width_px = width.max(1.0) as u64;
                 let time_per_pixel =
-                    TimePerPixel::from_duration_and_width(range, width_px.max(1) as u32);
+                    TimePerPixel::from_duration_and_width(range_ps, width_px.max(1) as u32);
                 time_per_pixel.to_string()
             }
         }

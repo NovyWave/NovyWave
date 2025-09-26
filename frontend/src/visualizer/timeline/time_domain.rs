@@ -1,71 +1,94 @@
 //! Time domain for timeline time representations and calculations
 //!
 //! Complete domain containing all time-related types and their operations:
-//! TimeNs, DurationNs, TimePerPixel, Viewport, TimelineCoordinates
+//! TimePs, DurationPs, TimePerPixel, Viewport, TimelineCoordinates
 
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::ops::{Add, Sub};
 
-// Time conversion constants
-pub const NS_PER_SECOND: f64 = 1_000_000_000.0;
-pub const NS_PER_MILLISECOND: f64 = 1_000_000.0;
-pub const NS_PER_MICROSECOND: f64 = 1_000.0;
-
-pub const DEFAULT_TIMELINE_RANGE_NS: u64 = 1_000_000_000;
+// Time conversion constants expressed in picoseconds
 pub const PS_PER_NS: u64 = 1_000;
 pub const PS_PER_US: u64 = 1_000_000;
 pub const PS_PER_MS: u64 = 1_000_000_000;
 pub const PS_PER_SECOND: u64 = 1_000_000_000_000;
+
 pub const MIN_CURSOR_STEP_NS: u64 = 1_000_000;
 pub const MAX_CURSOR_STEP_NS: u64 = 1_000_000_000;
 
-/// Represents a point in time as nanoseconds since the start of a waveform file.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
-)]
-pub struct TimeNs(pub u64);
+pub const DEFAULT_TIMELINE_RANGE_NS: u64 = 1_000_000_000;
+pub const DEFAULT_TIMELINE_RANGE_PS: u64 = DEFAULT_TIMELINE_RANGE_NS * PS_PER_NS;
 
-impl TimeNs {
-    pub const ZERO: TimeNs = TimeNs(0);
+const PS_PER_SECOND_F64: f64 = PS_PER_SECOND as f64;
+const PS_PER_MS_F64: f64 = PS_PER_MS as f64;
+const PS_PER_US_F64: f64 = PS_PER_US as f64;
+const PS_PER_NS_F64: f64 = PS_PER_NS as f64;
+
+/// Represents a point in time as picoseconds since the start of a waveform file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TimePs(pub u64);
+
+impl TimePs {
+    pub const ZERO: TimePs = TimePs(0);
 
     pub fn from_nanos(nanos: u64) -> Self {
-        TimeNs(nanos)
+        TimePs(nanos.saturating_mul(PS_PER_NS))
+    }
+
+    pub fn from_picoseconds(picoseconds: u64) -> Self {
+        TimePs(picoseconds)
     }
 
     pub fn from_external_seconds(seconds: f64) -> Self {
-        TimeNs((seconds * NS_PER_SECOND) as u64)
+        if !seconds.is_finite() {
+            return TimePs(u64::MAX);
+        }
+        let ps = (seconds * PS_PER_SECOND_F64).round();
+        if ps.is_nan() {
+            return TimePs(0);
+        }
+        let clamped = ps.max(0.0).min(u64::MAX as f64);
+        TimePs(clamped as u64)
     }
 
     pub fn nanos(self) -> u64 {
+        self.0 / PS_PER_NS
+    }
+
+    pub fn picoseconds(self) -> u64 {
         self.0
     }
 
     pub fn display_seconds(self) -> f64 {
-        self.0 as f64 / NS_PER_SECOND
+        self.0 as f64 / PS_PER_SECOND_F64
     }
 
     pub fn display_millis(self) -> f64 {
-        self.0 as f64 / NS_PER_MILLISECOND
+        self.0 as f64 / PS_PER_MS_F64
     }
 
     pub fn display_micros(self) -> f64 {
-        self.0 as f64 / NS_PER_MICROSECOND
+        self.0 as f64 / PS_PER_US_F64
     }
 
-    pub fn duration_since(self, earlier: TimeNs) -> DurationNs {
-        DurationNs(self.0.saturating_sub(earlier.0))
+    pub fn display_nanos(self) -> f64 {
+        self.0 as f64 / PS_PER_NS_F64
     }
 
-    pub fn add_duration(self, duration: DurationNs) -> TimeNs {
-        TimeNs(self.0.saturating_add(duration.0))
+    pub fn duration_since(self, earlier: TimePs) -> DurationPs {
+        DurationPs(self.0.saturating_sub(earlier.0))
     }
 
-    pub fn sub_duration(self, duration: DurationNs) -> TimeNs {
-        TimeNs(self.0.saturating_sub(duration.0))
+    pub fn add_duration(self, duration: DurationPs) -> TimePs {
+        TimePs(self.0.saturating_add(duration.0))
+    }
+
+    pub fn sub_duration(self, duration: DurationPs) -> TimePs {
+        TimePs(self.0.saturating_sub(duration.0))
     }
 }
 
-impl fmt::Display for TimeNs {
+impl fmt::Display for TimePs {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let seconds = self.display_seconds();
         if seconds >= 1.0 {
@@ -74,66 +97,105 @@ impl fmt::Display for TimeNs {
             write!(f, "{:.3}ms", self.display_millis())
         } else if seconds >= 0.000001 {
             write!(f, "{:.3}μs", self.display_micros())
+        } else if seconds >= 0.000000001 {
+            write!(f, "{:.3}ns", self.display_nanos())
         } else {
-            write!(f, "{}ns", self.0)
+            write!(f, "{}ps", self.0)
         }
     }
 }
 
-/// Represents a duration in nanoseconds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct DurationNs(pub u64);
+impl Serialize for TimePs {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_u64(self.nanos())
+    }
+}
 
-impl DurationNs {
+impl<'de> Deserialize<'de> for TimePs {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let nanos = u64::deserialize(deserializer)?;
+        Ok(TimePs::from_nanos(nanos))
+    }
+}
+
+/// Represents a duration in picoseconds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct DurationPs(pub u64);
+
+impl DurationPs {
     pub fn from_nanos(nanos: u64) -> Self {
-        DurationNs(nanos)
+        DurationPs(nanos.saturating_mul(PS_PER_NS))
+    }
+
+    pub fn from_picoseconds(picoseconds: u64) -> Self {
+        DurationPs(picoseconds)
     }
 
     pub fn from_external_seconds(seconds: f64) -> Self {
-        DurationNs((seconds * NS_PER_SECOND) as u64)
+        if !seconds.is_finite() {
+            return DurationPs(u64::MAX);
+        }
+        let ps = (seconds * PS_PER_SECOND_F64).round();
+        if ps.is_nan() {
+            return DurationPs(0);
+        }
+        let clamped = ps.max(0.0).min(u64::MAX as f64);
+        DurationPs(clamped as u64)
     }
 
     pub fn nanos(self) -> u64 {
+        self.0 / PS_PER_NS
+    }
+
+    pub fn picoseconds(self) -> u64 {
         self.0
     }
 
     pub fn display_seconds(self) -> f64 {
-        self.0 as f64 / NS_PER_SECOND
+        self.0 as f64 / PS_PER_SECOND_F64
     }
 }
 
-impl fmt::Display for DurationNs {
+impl fmt::Display for DurationPs {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let seconds = self.display_seconds();
         if seconds >= 1.0 {
             write!(f, "{:.3}s", seconds)
         } else if seconds >= 0.001 {
-            write!(f, "{:.3}ms", self.0 as f64 / NS_PER_MILLISECOND)
+            write!(f, "{:.3}ms", self.0 as f64 / PS_PER_MS_F64)
         } else if seconds >= 0.000001 {
-            write!(f, "{:.3}μs", self.0 as f64 / NS_PER_MICROSECOND)
+            write!(f, "{:.3}μs", self.0 as f64 / PS_PER_US_F64)
+        } else if seconds >= 0.000000001 {
+            write!(f, "{:.3}ns", self.0 as f64 / PS_PER_NS_F64)
         } else {
-            write!(f, "{}ns", self.0)
+            write!(f, "{}ps", self.0)
         }
     }
 }
 
-impl Add for DurationNs {
-    type Output = DurationNs;
+impl Add for DurationPs {
+    type Output = DurationPs;
 
-    fn add(self, rhs: DurationNs) -> DurationNs {
-        DurationNs(self.0.saturating_add(rhs.0))
+    fn add(self, rhs: DurationPs) -> DurationPs {
+        DurationPs(self.0.saturating_add(rhs.0))
     }
 }
 
-impl Sub for DurationNs {
-    type Output = DurationNs;
+impl Sub for DurationPs {
+    type Output = DurationPs;
 
-    fn sub(self, rhs: DurationNs) -> DurationNs {
-        DurationNs(self.0.saturating_sub(rhs.0))
+    fn sub(self, rhs: DurationPs) -> DurationPs {
+        DurationPs(self.0.saturating_sub(rhs.0))
     }
 }
 
-/// Represents timeline resolution as nanoseconds per pixel.
+/// Represents timeline resolution as picoseconds per pixel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TimePerPixel {
     picoseconds: u64,
@@ -155,10 +217,10 @@ impl TimePerPixel {
         }
     }
 
-    pub fn from_duration_and_width(duration_ns: u64, width_px: u32) -> Self {
-        let duration_ps = (duration_ns as u128) * (PS_PER_NS as u128);
+    pub fn from_duration_and_width(duration_ps: u64, width_px: u32) -> Self {
+        let duration = duration_ps.max(1) as u128;
         let width = width_px.max(1) as u128;
-        let ps_per_pixel = (duration_ps / width).max(1) as u64;
+        let ps_per_pixel = (duration / width).max(1) as u64;
         Self::from_picoseconds(ps_per_pixel)
     }
 
@@ -193,28 +255,28 @@ impl fmt::Display for TimePerPixel {
             if ps % PS_PER_SECOND == 0 {
                 write!(f, "{}s/px", ps / PS_PER_SECOND)
             } else {
-                let value = ps as f64 / PS_PER_SECOND as f64;
+                let value = ps as f64 / PS_PER_SECOND_F64;
                 write!(f, "{}s/px", Self::format_axis_value(value))
             }
         } else if ps >= PS_PER_MS {
             if ps % PS_PER_MS == 0 {
                 write!(f, "{}ms/px", ps / PS_PER_MS)
             } else {
-                let value = ps as f64 / PS_PER_MS as f64;
+                let value = ps as f64 / PS_PER_MS_F64;
                 write!(f, "{}ms/px", Self::format_axis_value(value))
             }
         } else if ps >= PS_PER_US {
             if ps % PS_PER_US == 0 {
                 write!(f, "{}us/px", ps / PS_PER_US)
             } else {
-                let value = ps as f64 / PS_PER_US as f64;
+                let value = ps as f64 / PS_PER_US_F64;
                 write!(f, "{}us/px", Self::format_axis_value(value))
             }
         } else if ps >= PS_PER_NS {
             if ps % PS_PER_NS == 0 {
                 write!(f, "{}ns/px", ps / PS_PER_NS)
             } else {
-                let value = ps as f64 / PS_PER_NS as f64;
+                let value = ps as f64 / PS_PER_NS_F64;
                 write!(f, "{}ns/px", Self::format_axis_value(value))
             }
         } else {
@@ -261,38 +323,39 @@ mod tests {
 /// Represents a viewport (visible time range) in the timeline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Viewport {
-    pub start: TimeNs,
-    pub end: TimeNs,
+    pub start: TimePs,
+    pub end: TimePs,
 }
 
 impl Default for Viewport {
     fn default() -> Self {
         Viewport {
-            start: TimeNs::ZERO,
-            end: TimeNs::ZERO,
+            start: TimePs::ZERO,
+            end: TimePs::ZERO,
         }
     }
 }
 
 impl Viewport {
-    pub fn new(start: TimeNs, end: TimeNs) -> Self {
+    pub fn new(start: TimePs, end: TimePs) -> Self {
         Viewport {
             start: start.min(end),
             end: start.max(end),
         }
     }
 
-    pub fn duration(self) -> DurationNs {
+    pub fn duration(self) -> DurationPs {
         self.end.duration_since(self.start)
     }
 
-    pub fn contains(self, time: TimeNs) -> bool {
+    pub fn contains(self, time: TimePs) -> bool {
         time >= self.start && time <= self.end
     }
 
-    pub fn center(self) -> TimeNs {
+    pub fn center(self) -> TimePs {
         let duration = self.duration();
-        self.start.add_duration(DurationNs(duration.0 / 2))
+        self.start
+            .add_duration(DurationPs::from_picoseconds(duration.picoseconds() / 2))
     }
 }
 
@@ -305,16 +368,16 @@ impl fmt::Display for Viewport {
 /// Timeline coordinate system for all timeline operations
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TimelineCoordinates {
-    pub cursor_ns: TimeNs,
-    pub viewport_start_ns: TimeNs,
+    pub cursor_ns: TimePs,
+    pub viewport_start_ns: TimePs,
     pub time_per_pixel: TimePerPixel,
     pub canvas_width_pixels: u32,
 }
 
 impl TimelineCoordinates {
     pub fn new(
-        cursor_ns: TimeNs,
-        viewport_start_ns: TimeNs,
+        cursor_ns: TimePs,
+        viewport_start_ns: TimePs,
         time_per_pixel: TimePerPixel,
         canvas_width_pixels: u32,
     ) -> Self {
@@ -330,8 +393,8 @@ impl TimelineCoordinates {
 impl Default for TimelineCoordinates {
     fn default() -> Self {
         Self {
-            cursor_ns: TimeNs::ZERO,
-            viewport_start_ns: TimeNs::ZERO,
+            cursor_ns: TimePs::ZERO,
+            viewport_start_ns: TimePs::ZERO,
             time_per_pixel: TimePerPixel::default(),
             canvas_width_pixels: 640,
         }
