@@ -24,7 +24,7 @@ load_files_expanded_directories = [
     "/home/martinkavik/repos/NovyWave/test_files/nested_dir",
 ]
 load_files_scroll_position = 973
-timeline_cursor_position_ns = 125000000000
+timeline_cursor_position_ns = 91866184442
 timeline_zoom_level = 314861472.0
 timeline_visible_range_start_ns = 0
 timeline_visible_range_end_ns = 250000000000
@@ -33,7 +33,7 @@ timeline_visible_range_end_ns = 250000000000
 files_and_scopes_panel_width = 393.0
 files_and_scopes_panel_height = 375.0
 selected_variables_panel_name_column_width = 254.0
-selected_variables_panel_value_column_width = 234.0
+selected_variables_panel_value_column_width = 266.0
 
 [workspace.docked_right_dimensions]
 files_and_scopes_panel_width = 381.0

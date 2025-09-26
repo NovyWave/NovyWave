@@ -545,10 +545,71 @@ impl WaveformTimeline {
         }
     }
 
+    fn refresh_cursor_values_from_series(&self) -> bool {
+        let cursor_ns = self.cursor.state.get_cloned().nanos();
+
+        let snapshot: Vec<(String, Arc<Vec<SignalTransition>>)> = {
+            let map_ref = self.series_map.state.lock_ref();
+            map_ref
+                .iter()
+                .map(|(unique_id, data)| (unique_id.clone(), Arc::clone(&data.transitions)))
+                .collect()
+        };
+
+        if snapshot.is_empty() {
+            return false;
+        }
+
+        let updates: Vec<(String, SignalValue)> = snapshot
+            .into_iter()
+            .map(|(unique_id, transitions_arc)| {
+                let value =
+                    Self::cursor_value_from_transitions(transitions_arc.as_slice(), cursor_ns);
+                (unique_id, value)
+            })
+            .collect();
+
+        let mut changed = false;
+        {
+            let mut values_map = self.cursor_values.state.lock_mut();
+            for (unique_id, value) in updates {
+                let needs_update = match values_map.get(&unique_id) {
+                    Some(existing) if *existing == value => false,
+                    _ => true,
+                };
+                if needs_update {
+                    values_map.insert(unique_id, value);
+                    changed = true;
+                }
+            }
+        }
+
+        changed
+    }
+
+    fn cursor_value_from_transitions(
+        transitions: &[SignalTransition],
+        cursor_ns: u64,
+    ) -> SignalValue {
+        if transitions.is_empty() {
+            return SignalValue::Missing;
+        }
+
+        match transitions.binary_search_by(|transition| transition.time_ns.cmp(&cursor_ns)) {
+            Ok(idx) => SignalValue::present(transitions[idx].value.clone()),
+            Err(0) => SignalValue::Missing,
+            Err(idx) => {
+                let prev = &transitions[idx - 1];
+                SignalValue::present(prev.value.clone())
+            }
+        }
+    }
+
     fn set_cursor_clamped(&self, time: TimeNs) {
         let clamped = self.clamp_to_bounds(time);
         self.cursor.state.set_neq(clamped);
         self.ensure_cursor_within_viewport();
+        self.refresh_cursor_values_from_series();
         self.update_render_state();
         self.schedule_request();
         self.schedule_config_save();
@@ -822,6 +883,7 @@ impl WaveformTimeline {
             .state
             .set(Viewport::new(clamped_start, clamped_end));
         self.ensure_cursor_within_viewport();
+        self.refresh_cursor_values_from_series();
         self.update_render_state();
         self.schedule_request();
         self.schedule_config_save();
@@ -845,15 +907,14 @@ impl WaveformTimeline {
                     clamped_end = bounds_start.saturating_add(bounds_span);
                 }
 
-                self.viewport
-                    .state
-                    .set(Viewport::new(
-                        TimeNs::from_nanos(clamped_start),
-                        TimeNs::from_nanos(clamped_end),
-                    ));
+                self.viewport.state.set(Viewport::new(
+                    TimeNs::from_nanos(clamped_start),
+                    TimeNs::from_nanos(clamped_end),
+                ));
             }
         }
         self.ensure_cursor_within_viewport();
+        self.refresh_cursor_values_from_series();
         self.update_render_state();
         self.schedule_config_save();
     }
@@ -1122,9 +1183,7 @@ impl WaveformTimeline {
         let mut request_windows = BTreeMap::new();
         for plan in &plans {
             if plan.needs_request {
-                let range_to_request = plan
-                    .request_range_override
-                    .unwrap_or(expanded_range);
+                let range_to_request = plan.request_range_override.unwrap_or(expanded_range);
                 if let Some((file_path, scope_path, variable_name)) = &plan.request_parts {
                     request_windows.insert(
                         plan.unique_id.clone(),
