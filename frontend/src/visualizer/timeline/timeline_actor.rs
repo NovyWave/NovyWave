@@ -4,7 +4,7 @@ use crate::dataflow::{Actor, Atom, Relay, relay};
 use crate::selected_variables::SelectedVariables;
 use crate::visualizer::timeline::maximum_timeline_range::MaximumTimelineRange;
 use crate::visualizer::timeline::time_domain::{
-    MIN_CURSOR_STEP_NS, PS_PER_NS, TimePerPixel, TimePs, Viewport,
+    FS_PER_PS, MIN_CURSOR_STEP_NS, PS_PER_NS, TimePerPixel, TimePs, Viewport,
 };
 use futures::{StreamExt, select};
 use gloo_timers::callback::Timeout;
@@ -23,6 +23,7 @@ const REQUEST_DEBOUNCE_MS: u32 = 75;
 const CONFIG_SAVE_DEBOUNCE_MS: u32 = 1_000;
 const ZOOM_CENTER_MIN_INTERVAL_MS: f64 = 16.0;
 const MIN_DURATION_PS: u64 = 1;
+const MIN_TIME_PER_PIXEL_FS: u64 = 200;
 const CURSOR_STEP_RATIO: f64 = 0.04;
 const CURSOR_FAST_MULTIPLIER: u64 = 4;
 const CACHE_HIT_THRESHOLD: f64 = 0.8;
@@ -687,7 +688,8 @@ impl WaveformTimeline {
     fn zoom_in(&self, faster: bool) {
         let viewport = self.viewport.state.get_cloned();
         let current_duration = viewport.duration().picoseconds();
-        if current_duration <= MIN_DURATION_PS {
+        let min_duration = self.min_duration_ps();
+        if current_duration <= min_duration {
             return;
         }
         let center = self.resolve_zoom_center();
@@ -698,11 +700,11 @@ impl WaveformTimeline {
         };
         let mut new_duration =
             ((current_duration as f64) * (numerator / denominator)).floor() as u64;
-        if new_duration < MIN_DURATION_PS {
-            new_duration = MIN_DURATION_PS;
+        if new_duration < min_duration {
+            new_duration = min_duration;
         }
         if new_duration >= current_duration {
-            new_duration = current_duration.saturating_sub(1).max(MIN_DURATION_PS);
+            new_duration = current_duration.saturating_sub(1).max(min_duration);
         }
         self.set_viewport_with_duration(center, new_duration);
     }
@@ -718,8 +720,9 @@ impl WaveformTimeline {
         };
         let mut new_duration =
             ((current_duration as f64) * (numerator / denominator)).ceil() as u64;
+        let min_duration = self.min_duration_ps();
         if new_duration <= current_duration {
-            new_duration = current_duration.saturating_add(1);
+            new_duration = current_duration.saturating_add(1).max(min_duration);
         }
         if let Some(bounds) = self.bounds() {
             let max_duration = bounds.end.duration_since(bounds.start).picoseconds();
@@ -818,7 +821,8 @@ impl WaveformTimeline {
     }
 
     fn set_viewport_with_duration(&self, center: TimePs, duration_ps: u64) {
-        let target_duration = duration_ps.max(1);
+        let min_duration = self.min_duration_ps();
+        let target_duration = duration_ps.max(min_duration);
         let center_ps = center.picoseconds();
 
         let viewport = self.viewport.state.get_cloned();
@@ -868,6 +872,19 @@ impl WaveformTimeline {
             TimePs::from_picoseconds(start_ns),
             TimePs::from_picoseconds(end_ns),
         );
+    }
+
+    fn min_duration_ps(&self) -> u64 {
+        let width = self.canvas_width.state.get_cloned().max(1.0) as u32;
+        Self::min_duration_ps_for_width(width).max(MIN_DURATION_PS)
+    }
+
+    fn min_duration_ps_for_width(width_px: u32) -> u64 {
+        let width = width_px.max(1) as u128;
+        let min_duration_fs = width * MIN_TIME_PER_PIXEL_FS as u128;
+        let divisor = FS_PER_PS as u128;
+        let min_duration_ps = (min_duration_fs + (divisor - 1)) / divisor;
+        min_duration_ps.max(1) as u64
     }
 
     fn set_viewport_clamped(&self, start: TimePs, end: TimePs) {

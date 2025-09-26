@@ -294,10 +294,8 @@ fn name_column_footer(
             let viewport = viewport_actor.signal(),
             let width = width_actor.signal() => {
                 let range_ps = viewport.duration().picoseconds();
-                let width_px = width.max(1.0) as u64;
-                let time_per_pixel =
-                    TimePerPixel::from_duration_and_width(range_ps, width_px.max(1) as u32);
-                time_per_pixel.to_string()
+                let width_px = width.max(1.0).round().max(1.0) as u32;
+                TimePerPixel::formatted_from_duration_and_width(range_ps, width_px)
             }
         }
     };
@@ -457,10 +455,8 @@ fn value_column_footer(
             let viewport = viewport_actor.signal(),
             let width = width_actor.signal() => {
                 let range_ps = viewport.duration().picoseconds();
-                let width_px = width.max(1.0) as u64;
-                let time_per_pixel =
-                    TimePerPixel::from_duration_and_width(range_ps, width_px.max(1) as u32);
-                time_per_pixel.to_string()
+                let width_px = width.max(1.0).round().max(1.0) as u32;
+                TimePerPixel::formatted_from_duration_and_width(range_ps, width_px)
             }
         }
     };

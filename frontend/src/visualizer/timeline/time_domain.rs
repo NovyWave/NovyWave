@@ -12,6 +12,8 @@ pub const PS_PER_NS: u64 = 1_000;
 pub const PS_PER_US: u64 = 1_000_000;
 pub const PS_PER_MS: u64 = 1_000_000_000;
 pub const PS_PER_SECOND: u64 = 1_000_000_000_000;
+pub const FS_PER_PS: u64 = 1_000;
+pub const AS_PER_PS: u64 = 1_000_000;
 
 pub const MIN_CURSOR_STEP_NS: u64 = 1_000_000;
 pub const MAX_CURSOR_STEP_NS: u64 = 1_000_000_000;
@@ -23,6 +25,8 @@ const PS_PER_SECOND_F64: f64 = PS_PER_SECOND as f64;
 const PS_PER_MS_F64: f64 = PS_PER_MS as f64;
 const PS_PER_US_F64: f64 = PS_PER_US as f64;
 const PS_PER_NS_F64: f64 = PS_PER_NS as f64;
+const FS_PER_PS_F64: f64 = FS_PER_PS as f64;
+const AS_PER_PS_F64: f64 = AS_PER_PS as f64;
 
 /// Represents a point in time as picoseconds since the start of a waveform file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -225,14 +229,23 @@ impl TimePerPixel {
     }
 
     fn format_axis_value(value: f64) -> String {
-        let mut formatted = if value.abs() >= 100.0 {
+        let abs = value.abs();
+        let mut formatted = if abs >= 100.0 {
             format!("{:.0}", value.round())
-        } else if value.abs() >= 10.0 {
+        } else if abs >= 10.0 {
             format!("{:.1}", value)
-        } else if value.abs() >= 1.0 {
+        } else if abs >= 1.0 {
             format!("{:.2}", value)
-        } else {
+        } else if abs >= 0.1 {
             format!("{:.3}", value)
+        } else if abs >= 0.01 {
+            format!("{:.4}", value)
+        } else if abs >= 0.001 {
+            format!("{:.5}", value)
+        } else if abs >= 0.0001 {
+            format!("{:.6}", value)
+        } else {
+            return format!("{:.2e}", value);
         };
 
         if let Some(pos) = formatted.find('.') {
@@ -245,6 +258,48 @@ impl TimePerPixel {
         }
 
         formatted
+    }
+
+    pub fn formatted_from_duration_and_width(duration_ps: u64, width_px: u32) -> String {
+        if width_px == 0 {
+            return "0ps/px".to_string();
+        }
+        let ps_per_pixel = duration_ps as f64 / width_px.max(1) as f64;
+        Self::formatted_from_ps_per_pixel(ps_per_pixel)
+    }
+
+    fn formatted_from_ps_per_pixel(ps_per_pixel: f64) -> String {
+        if !ps_per_pixel.is_finite() || ps_per_pixel <= 0.0 {
+            return "0ps/px".to_string();
+        }
+
+        if ps_per_pixel >= PS_PER_SECOND_F64 {
+            let value = ps_per_pixel / PS_PER_SECOND_F64;
+            return format!("{}s/px", Self::format_axis_value(value));
+        }
+        if ps_per_pixel >= PS_PER_MS_F64 {
+            let value = ps_per_pixel / PS_PER_MS_F64;
+            return format!("{}ms/px", Self::format_axis_value(value));
+        }
+        if ps_per_pixel >= PS_PER_US_F64 {
+            let value = ps_per_pixel / PS_PER_US_F64;
+            return format!("{}us/px", Self::format_axis_value(value));
+        }
+        if ps_per_pixel >= PS_PER_NS_F64 {
+            let value = ps_per_pixel / PS_PER_NS_F64;
+            return format!("{}ns/px", Self::format_axis_value(value));
+        }
+        if ps_per_pixel >= 1.0 {
+            return format!("{}ps/px", Self::format_axis_value(ps_per_pixel));
+        }
+
+        let fs_per_pixel = ps_per_pixel * FS_PER_PS_F64;
+        if fs_per_pixel >= 1.0 {
+            return format!("{}fs/px", Self::format_axis_value(fs_per_pixel));
+        }
+
+        let as_per_pixel = ps_per_pixel * AS_PER_PS_F64;
+        format!("{}as/px", Self::format_axis_value(as_per_pixel))
     }
 }
 
