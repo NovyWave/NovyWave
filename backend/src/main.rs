@@ -11,6 +11,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock};
+use tokio::time::{sleep, Duration};
 
 // ===== CENTRALIZED DEBUG FLAGS =====
 const DEBUG_BACKEND: bool = false; // Backend request/response debugging
@@ -71,7 +72,7 @@ static VCD_LOADING_IN_PROGRESS: Lazy<Arc<Mutex<std::collections::HashSet<String>
 /// Uses Arc<RwLock<BTreeMap>> for efficient concurrent access
 struct SignalCacheManager {
     /// Complete signal transition data indexed by unique signal ID
-    transition_cache: Arc<RwLock<BTreeMap<String, Vec<SignalTransition>>>>,
+    transition_cache: Arc<RwLock<BTreeMap<String, Arc<[SignalTransition]>>>>,
     /// Cache statistics for performance monitoring
     cache_stats: Arc<RwLock<CacheStats>>,
 }
@@ -165,21 +166,36 @@ impl SignalCacheManager {
         );
 
         // Update cache statistics
-        let mut stats = self.cache_stats.write().unwrap();
-        stats.total_queries += 1;
         let query_time = start_time.elapsed().as_millis() as u64;
-        let cache_hit_ratio = if stats.total_queries > 0 {
-            stats.cache_hits as f64 / stats.total_queries as f64
+        let (total_queries, cache_hits) = {
+            let mut stats = self.cache_stats.write().unwrap();
+            stats.total_queries += 1;
+            (stats.total_queries, stats.cache_hits)
+        };
+        let cache_hit_ratio = if total_queries > 0 {
+            cache_hits as f64 / total_queries as f64
         } else {
             0.0
         };
 
         let statistics = SignalStatistics {
             total_signals: signal_data.len(),
-            cached_signals: stats.cache_hits,
+            cached_signals: cache_hits,
             query_time_ms: query_time,
             cache_hit_ratio,
         };
+
+        let sample_counts: Vec<_> = signal_data
+            .iter()
+            .map(|data| (data.unique_id.as_str(), data.transitions.len()))
+            .collect();
+        debug_log!(
+            DEBUG_BACKEND,
+            "🔧 BACKEND: timeline query finished in {}ms | cache_hit_ratio {:.2} | signals {:?}",
+            query_time,
+            cache_hit_ratio,
+            sample_counts
+        );
 
         Ok((signal_data, cursor_values, statistics))
     }
@@ -216,25 +232,24 @@ impl SignalCacheManager {
                 let mut stats = self.cache_stats.write().unwrap();
                 stats.cache_hits += 1;
 
-                // Filter by time range if specified
-                let filtered_transitions =
-                    self.filter_transitions_for_range(transitions, request.time_range_ns);
+                let range_vec = self.collect_range(transitions, request.time_range_ns);
 
                 // Downsample if requested
                 let final_transitions = if let Some(max_transitions) = request.max_transitions {
-                    self.downsample_transitions(filtered_transitions, max_transitions)
+                    self.downsample_transitions(range_vec, max_transitions)
                 } else {
-                    filtered_transitions
+                    range_vec
                 };
 
+                let total_transitions = transitions.len();
                 return Ok(UnifiedSignalData {
                     file_path: request.file_path.clone(),
                     scope_path: request.scope_path.clone(),
                     variable_name: request.variable_name.clone(),
                     unique_id: unique_id.clone(),
                     transitions: final_transitions,
-                    total_transitions: transitions.len(),
-                    actual_time_range_ns: self.compute_time_range(transitions),
+                    total_transitions,
+                    actual_time_range_ns: self.compute_time_range(&transitions[..]),
                 });
             }
         }
@@ -290,22 +305,24 @@ impl SignalCacheManager {
                     "🔍 WAVEFORM_STORE: Found signal '{}' - extracting transitions",
                     signal_key
                 );
-                let transitions = self.extract_transitions_from_wellen(
+                let transitions_vec = self.extract_transitions_from_wellen(
                     waveform_data,
                     signal_ref,
                     &request.format,
                     &signal_key,
                 )?;
 
+                let transitions_arc: Arc<[SignalTransition]> = transitions_vec.into();
+
                 // Cache the loaded data
                 {
                     let mut cache = self.transition_cache.write().unwrap();
-                    cache.insert(unique_id.to_string(), transitions.clone());
+                    cache.insert(unique_id.to_string(), Arc::clone(&transitions_arc));
                 }
 
                 // Filter by time range and downsample
                 let filtered_transitions =
-                    self.filter_transitions_for_range(&transitions, request.time_range_ns);
+                    self.collect_range(&transitions_arc, request.time_range_ns);
 
                 let final_transitions = if let Some(max_transitions) = request.max_transitions {
                     self.downsample_transitions(filtered_transitions, max_transitions)
@@ -319,8 +336,8 @@ impl SignalCacheManager {
                     variable_name: request.variable_name.clone(),
                     unique_id: unique_id.to_string(),
                     transitions: final_transitions,
-                    total_transitions: transitions.len(),
-                    actual_time_range_ns: self.compute_time_range(&transitions),
+                    total_transitions: transitions_arc.len(),
+                    actual_time_range_ns: self.compute_time_range(&transitions_arc[..]),
                 });
             } else {
                 debug_log!(
@@ -419,6 +436,7 @@ impl SignalCacheManager {
         cursor_time: u64,
     ) -> BTreeMap<String, SignalValue> {
         let mut cursor_values = BTreeMap::new();
+        let cache_guard = self.transition_cache.read().unwrap();
 
         debug_log!(
             DEBUG_CURSOR,
@@ -428,34 +446,45 @@ impl SignalCacheManager {
         );
 
         for signal in signal_data {
-            // Find the most recent transition at or before cursor time
-            let matching_transitions: Vec<_> = signal
-                .transitions
-                .iter()
-                .filter(|t| t.time_ns <= cursor_time)
-                .collect();
-
-            debug_log!(
-                DEBUG_CURSOR,
-                "🔍 CURSOR: Signal '{}' has {} transitions <= {}ns",
-                signal.unique_id,
-                matching_transitions.len(),
-                cursor_time
-            );
-
-            if let Some(latest_transition) = matching_transitions.last() {
-                debug_log!(
-                    DEBUG_CURSOR,
-                    "🔍 CURSOR: Latest transition at {}ns = '{}'",
-                    latest_transition.time_ns,
-                    latest_transition.value
-                );
+            let transitions: &[SignalTransition] = if let Some(transitions_arc) =
+                cache_guard.get(&signal.unique_id)
+            {
+                &**transitions_arc
+            } else {
+                &signal.transitions
+            };
+            if transitions.is_empty() {
+                cursor_values.insert(signal.unique_id.clone(), SignalValue::Missing);
+                continue;
             }
 
-            let value = matching_transitions
-                .last()
-                .map(|t| SignalValue::Present(t.value.clone()))
-                .unwrap_or(SignalValue::Missing);
+            let value = match transitions.binary_search_by(|t| t.time_ns.cmp(&cursor_time)) {
+                Ok(idx) => SignalValue::Present(transitions[idx].value.clone()),
+                Err(0) => SignalValue::Missing,
+                Err(idx) => {
+                    let prev = &transitions[idx - 1];
+                    SignalValue::Present(prev.value.clone())
+                }
+            };
+
+            if signal.unique_id.contains("wave_27.fst|TOP|clk") {
+                let idx = transitions
+                    .binary_search_by(|t| t.time_ns.cmp(&cursor_time))
+                    .unwrap_or_else(|i| i);
+                let range_start = idx.saturating_sub(2);
+                let range_end = (idx + 2).min(transitions.len());
+                let window: Vec<String> = transitions[range_start..range_end]
+                    .iter()
+                    .map(|t| format!("{}:{}", t.time_ns, t.value))
+                    .collect();
+                println!(
+                    "🔍 CURSOR TRACE clk at {} -> {:?} window=[{}] total={}",
+                    cursor_time,
+                    value,
+                    window.join(", "),
+                    transitions.len()
+                );
+            }
 
             cursor_values.insert(signal.unique_id.clone(), value);
         }
@@ -463,44 +492,66 @@ impl SignalCacheManager {
         cursor_values
     }
 
-    fn filter_transitions_for_range(
+    fn collect_range(
         &self,
-        transitions: &[SignalTransition],
+        transitions: &Arc<[SignalTransition]>,
         range: Option<(u64, u64)>,
     ) -> Vec<SignalTransition> {
+        if transitions.is_empty() {
+            return Vec::new();
+        }
+
         if let Some((start, end)) = range {
-            let mut filtered = Vec::new();
-            let mut last_before_start: Option<SignalTransition> = None;
-            for transition in transitions {
-                if transition.time_ns < start {
-                    last_before_start = Some(transition.clone());
-                    continue;
-                }
-                if transition.time_ns > end {
-                    break;
-                }
-                filtered.push(transition.clone());
+            if start >= end {
+                return Vec::new();
             }
 
-            if let Some(prev) = last_before_start {
-                let needs_synthetic = filtered
-                    .first()
-                    .map(|existing| existing.time_ns != start)
+            let slice = &transitions[..];
+
+            let start_idx = slice
+                .binary_search_by(|transition| transition.time_ns.cmp(&start))
+                .unwrap_or_else(|idx| idx);
+            let end_idx = slice
+                .binary_search_by(|transition| transition.time_ns.cmp(&end))
+                .map(|idx| idx + 1)
+                .unwrap_or_else(|idx| idx)
+                .min(slice.len());
+
+            let mut result = Vec::new();
+
+            if start_idx > 0 {
+                let prev = &slice[start_idx - 1];
+                let needs_synthetic = slice
+                    .get(start_idx)
+                    .map(|transition| transition.time_ns != start)
                     .unwrap_or(true);
                 if needs_synthetic {
-                    filtered.insert(
+                    result.push(SignalTransition {
+                        time_ns: start,
+                        value: prev.value.clone(),
+                    });
+                }
+            }
+
+            if start_idx < end_idx {
+                result.extend(slice[start_idx..end_idx].iter().cloned());
+            }
+
+            if let Some(first) = result.first() {
+                if first.time_ns > start {
+                    result.insert(
                         0,
                         SignalTransition {
                             time_ns: start,
-                            value: prev.value.clone(),
+                            value: first.value.clone(),
                         },
                     );
                 }
             }
 
-            filtered
+            result
         } else {
-            transitions.to_owned()
+            transitions.to_vec()
         }
     }
 
@@ -510,23 +561,25 @@ impl SignalCacheManager {
         transitions: Vec<SignalTransition>,
         max_count: usize,
     ) -> Vec<SignalTransition> {
-        if transitions.len() <= max_count || max_count <= 2 {
+        if transitions.len() <= max_count || max_count == 0 {
             return transitions;
         }
 
-        let bucket_size = ((transitions.len() as f64 / max_count as f64).ceil() as usize).max(2);
-        let mut result: Vec<SignalTransition> = Vec::with_capacity(max_count * 4);
-        let mut index = 0;
+        let mut result = Vec::with_capacity(max_count + 2);
+        let mut last_value = transitions[0].value.clone();
+        result.push(transitions[0].clone());
 
-        while index < transitions.len() {
-            let bucket_end = (index + bucket_size).min(transitions.len());
-            let bucket = &transitions[index..bucket_end];
+        let stride = ((transitions.len() as f64 / max_count as f64).ceil() as usize).max(1);
+        let mut steps = 0usize;
 
-            if bucket.is_empty() {
-                break;
-            }
-
-            let mut push_unique = |transition: &SignalTransition| {
+        for transition in transitions
+            .iter()
+            .skip(1)
+            .take(transitions.len().saturating_sub(1))
+        {
+            steps += 1;
+            let value_changed = transition.value != last_value;
+            if value_changed || steps >= stride {
                 if result
                     .last()
                     .map(|prev| prev.time_ns != transition.time_ns)
@@ -534,43 +587,12 @@ impl SignalCacheManager {
                 {
                     result.push(transition.clone());
                 }
-            };
-
-            let first = bucket.first().unwrap();
-            let first_value = first.value.clone();
-            push_unique(first);
-
-            if bucket.len() > 1 {
-                if bucket.len() <= 4 {
-                    for transition in bucket.iter().skip(1) {
-                        push_unique(transition);
-                    }
-                } else {
-                    let last = bucket.last().unwrap();
-                    let last_value = last.value.clone();
-
-                    if let Some(diff_after_first) = bucket
-                        .iter()
-                        .skip(1)
-                        .find(|transition| transition.value != first_value)
-                    {
-                        push_unique(diff_after_first);
-                    }
-
-                    if let Some(diff_before_last) = bucket
-                        .iter()
-                        .rev()
-                        .skip(1)
-                        .find(|transition| transition.value != last_value)
-                    {
-                        push_unique(diff_before_last);
-                    }
-
-                    push_unique(last);
+                last_value = transition.value.clone();
+                steps = 0;
+                if result.len() >= max_count {
+                    break;
                 }
             }
-
-            index = bucket_end;
         }
 
         if let Some(last) = transitions.last() {
@@ -1056,6 +1078,14 @@ async fn parse_waveform_file(
                             timescale_factor,
                             &file_path,
                         );
+                        println!(
+                            "🔍 FST inference: raw_min={} raw_max={} raw_range={} embedded_factor={} inferred_factor={}",
+                            min_time,
+                            max_time,
+                            (max_time as i128 - min_time as i128),
+                            timescale_factor,
+                            inferred_timescale
+                        );
                         let min_seconds = min_time as f64 * inferred_timescale;
                         let max_seconds = max_time as f64 * inferred_timescale;
 
@@ -1110,8 +1140,11 @@ async fn parse_waveform_file(
 
             debug_log!(
                 DEBUG_PARSE,
-                "🔍 PARSE: Storing minimal metadata for '{}' (deferred body loading)",
-                file_path
+                "🔍 FST metadata stored: {} min_ns={} max_ns={} timescale_factor={}",
+                file_path,
+                min_time_ns.unwrap_or(0),
+                max_time_ns.unwrap_or(0),
+                final_timescale_factor
             );
 
             {
@@ -2350,9 +2383,21 @@ async fn ensure_waveform_body_loaded(file_path: &str) -> Result<(), String> {
         };
 
         if loading_in_progress.contains(file_path) {
-            // Another thread is already loading this file, just return success
-            // The other thread will populate the data store
-            return Ok(());
+            drop(loading_in_progress);
+            for _ in 0..100 {
+                if WAVEFORM_DATA_STORE
+                    .lock()
+                    .map(|store| store.contains_key(file_path))
+                    .unwrap_or(false)
+                {
+                    return Ok(());
+                }
+                sleep(Duration::from_millis(10)).await;
+            }
+            return Err(format!(
+                "Waveform '{}' is still loading and did not finish in time",
+                file_path
+            ));
         }
 
         // Mark this file as being loaded
@@ -2370,11 +2415,20 @@ async fn ensure_waveform_body_loaded(file_path: &str) -> Result<(), String> {
                 return Err("Internal error: Failed to access metadata store".to_string());
             }
         };
-        metadata_store.get(file_path).cloned()
+        let meta = metadata_store.get(file_path).cloned();
+        debug_log!(
+            DEBUG_PARSE,
+            "🔍 ensure_waveform_body_loaded metadata lookup for {} -> {}",
+            file_path,
+            meta.as_ref()
+                .map(|m| format!("factor={} format={:?}", m.timescale_factor, m.file_format))
+                .unwrap_or_else(|| "missing".to_string())
+        );
+        meta
     };
 
     // If we have metadata, we can skip header parsing
-    let (hierarchy, file_format, timescale_factor) = if let Some(metadata) = metadata {
+    let (hierarchy, file_format, mut timescale_factor) = if let Some(metadata) = metadata.as_ref() {
         debug_log!(
             DEBUG_PARSE,
             "🔍 LAZY: Have metadata for '{}', re-parsing header for hierarchy",
@@ -2403,7 +2457,7 @@ async fn ensure_waveform_body_loaded(file_path: &str) -> Result<(), String> {
 
         (
             header_result.hierarchy,
-            metadata.file_format,
+            metadata.file_format.clone(),
             metadata.timescale_factor,
         )
     } else {
@@ -2533,6 +2587,24 @@ async fn ensure_waveform_body_loaded(file_path: &str) -> Result<(), String> {
     let mut signals: HashMap<String, wellen::SignalRef> = HashMap::new();
     build_signal_reference_map(&hierarchy, &mut signals);
 
+    if metadata.is_none() && matches!(file_format, wellen::FileFormat::Fst) {
+        let inferred = infer_reasonable_fst_timescale(&body_result, timescale_factor, file_path);
+        debug_log!(
+            DEBUG_PARSE,
+            "🔍 ensure_waveform_body_loaded FST inference fallback: file={} span={} embedded={} inferred={}",
+            file_path,
+            body_result
+                .time_table
+                .last()
+                .copied()
+                .unwrap_or(0)
+                .saturating_sub(body_result.time_table.first().copied().unwrap_or(0)),
+            timescale_factor,
+            inferred
+        );
+        timescale_factor = inferred;
+    }
+
     // Store waveform data
     let waveform_data = WaveformData {
         hierarchy,
@@ -2542,6 +2614,19 @@ async fn ensure_waveform_body_loaded(file_path: &str) -> Result<(), String> {
         file_format,
         timescale_factor,
     };
+
+    debug_log!(
+        DEBUG_PARSE,
+        "🔍 ensure_waveform_body_loaded: {} timescale_factor={} time_table_span={}",
+        file_path,
+        timescale_factor,
+        waveform_data
+            .time_table
+            .last()
+            .copied()
+            .unwrap_or(0)
+            .saturating_sub(waveform_data.time_table.first().copied().unwrap_or(0))
+    );
 
     {
         match WAVEFORM_DATA_STORE.lock() {

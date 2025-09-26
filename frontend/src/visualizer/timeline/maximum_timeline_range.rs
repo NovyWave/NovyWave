@@ -6,7 +6,7 @@
 use super::time_domain::TimeNs;
 use crate::dataflow::Actor;
 use futures::{StreamExt, select};
-use shared::{FileState, SelectedVariable, TrackedFile};
+use shared::{FileFormat, FileState, SelectedVariable, TrackedFile};
 use std::collections::HashSet;
 use zoon::{SignalExt, SignalVecExt};
 
@@ -92,6 +92,34 @@ impl MaximumTimelineRange {
             }
 
             if let FileState::Loaded(waveform_file) = &tracked_file.state {
+                #[cfg(debug_assertions)]
+                {
+                    if let (Some(start_ns), Some(end_ns)) =
+                        (waveform_file.min_time_ns, waveform_file.max_time_ns)
+                    {
+                        if end_ns <= start_ns {
+                            zoon::println!(
+                                "⚠️ Timeline bounds for '{}' are non-positive ({}..{})",
+                                tracked_file.filename,
+                                start_ns,
+                                end_ns
+                            );
+                        } else {
+                            let span_ns = end_ns - start_ns;
+                            const SUSPECT_SPAN_THRESHOLD_NS: u64 = 1_000_000_000_000; // ~1000 seconds
+                            if span_ns >= SUSPECT_SPAN_THRESHOLD_NS
+                                && matches!(waveform_file.format, FileFormat::FST)
+                            {
+                                zoon::println!(
+                                    "⚠️ FST '{}' spans {:.1}s; check timescale inference",
+                                    tracked_file.filename,
+                                    span_ns as f64 / 1_000_000_000.0
+                                );
+                            }
+                        }
+                    }
+                }
+
                 if let Some(start_ns) = waveform_file.min_time_ns {
                     let start = TimeNs::from_nanos(start_ns);
                     min_time = Some(match min_time {

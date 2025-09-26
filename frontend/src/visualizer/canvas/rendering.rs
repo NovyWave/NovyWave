@@ -180,7 +180,7 @@ impl WaveformRenderer {
         }
     }
 
-    pub fn render_frame(&mut self, params: RenderingParameters) -> bool {
+    pub fn render_frame(&mut self, params: RenderingParameters) -> Option<f32> {
         if let Some(canvas) = &mut self.canvas {
             let start_time = Self::get_current_time_ms();
             let theme_colors = Self::get_theme_colors(params.theme);
@@ -234,9 +234,15 @@ impl WaveformRenderer {
                 objects_rendered,
                 rendering_time_ms: render_time,
             });
-            true
+            if render_time > 80.0 {
+                zoon::println!(
+                    "⚠️ Waveform render took {:.1}ms (threshold 80ms)",
+                    render_time
+                );
+            }
+            Some(render_time)
         } else {
-            false
+            None
         }
     }
 

@@ -94,6 +94,7 @@ impl WaveformCanvas {
             let render_state_store = render_state_store.clone();
             let current_theme = current_theme.clone();
             let canvas_element_store_actor = canvas_element_store.clone();
+            let timeline = waveform_timeline.clone();
             Actor::new((), async move |_state_handle| {
                 let mut renderer: Option<WaveformRenderer> = None;
                 let mut initialized = false;
@@ -114,7 +115,9 @@ impl WaveformCanvas {
                                                 &render_state,
                                                 active_theme,
                                             );
-                                            new_renderer.render_frame(params);
+                                            if let Some(duration_ms) = new_renderer.render_frame(params) {
+                                                timeline.record_render_duration(duration_ms as f64);
+                                            }
                                         }
                                         renderer = Some(new_renderer);
                                         initialized = true;
@@ -128,7 +131,9 @@ impl WaveformCanvas {
                                                 &render_state,
                                                 active_theme,
                                             );
-                                            renderer.render_frame(params);
+                                            if let Some(duration_ms) = renderer.render_frame(params) {
+                                                timeline.record_render_duration(duration_ms as f64);
+                                            }
                                         }
                                     }
                                 }
@@ -143,7 +148,9 @@ impl WaveformCanvas {
                                         &render_state,
                                         active_theme,
                                     );
-                                    renderer.render_frame(params);
+                                    if let Some(duration_ms) = renderer.render_frame(params) {
+                                        timeline.record_render_duration(duration_ms as f64);
+                                    }
                                 }
                             }
                         }
@@ -157,7 +164,9 @@ impl WaveformCanvas {
                                         active_theme,
                                     );
                                     renderer.set_dimensions(width, height);
-                                    renderer.render_frame(params);
+                                    if let Some(duration_ms) = renderer.render_frame(params) {
+                                        timeline.record_render_duration(duration_ms as f64);
+                                    }
                                 }
                             }
                         }
@@ -173,7 +182,9 @@ impl WaveformCanvas {
                                         active_theme,
                                     );
                                     renderer.set_theme(Self::map_theme(theme));
-                                    renderer.render_frame(params);
+                                    if let Some(duration_ms) = renderer.render_frame(params) {
+                                        timeline.record_render_duration(duration_ms as f64);
+                                    }
                                 }
                             }
                         }
@@ -185,7 +196,9 @@ impl WaveformCanvas {
                                         &render_state,
                                         active_theme,
                                     );
-                                    renderer.render_frame(params);
+                                    if let Some(duration_ms) = renderer.render_frame(params) {
+                                        timeline.record_render_duration(duration_ms as f64);
+                                    }
                                 }
                             }
                         }

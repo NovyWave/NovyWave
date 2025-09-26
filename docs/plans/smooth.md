@@ -6,6 +6,7 @@
 - Zooming from *fit-all* down to sub-nanosecond scales causes the center bar and waveform to “lurch” instead of animating smoothly.
 - Large cursor updates trigger full canvas re-renders, which compete with new backend fetches and queue up extra work.
 - Cursor-value dropdowns flash "Loading…" when data is cleared between requests (partially mitigated, but root cause remains a cache miss).
+- FST waveforms (e.g. `wave_27.fst`) still render transitions around ~170 s even though metadata reports a 0–1.8 ms span, so the frontend is still interpreting nanoseconds as seconds somewhere in the viewport/renderer pipeline.
 
 ## 2. Constraints & Acceptance
 
@@ -44,21 +45,30 @@ These reinforce three lightweight principles for NovyWave:
 ### Phase 0 – Instrumentation & Safety Nets (keep existing behaviour observable)
 - Add lightweight timing to `WaveformTimeline::send_request` and the canvas render entry point; log when either exceeds 80 ms.
 - Surface a `timeline_debug_overlay_enabled` atom tied to a panel toggle so we can manually inspect last latency + cache hit status (no auto overlay in release).
+- Track request/render/cache stats inside a `TimelineDebugMetrics` actor (`last_request_duration_ms`, `last_render_duration_ms`, `last_cache_hit`, `last_cache_coverage`).
 - Harden known weak spots (RefCell double borrow around `timeline_actor.rs:476`) while touching the surrounding code.
+- Trace `actual_time_range_ns` → `MaximumTimelineRange` → `WaveformTimeline` conversions for FST files and add asserts/unit helpers so we stop emitting second-based ranges; unblock the 170 s rendering bug before we chase animation polish.
 
 ### Phase 1 – Frontend Window Reuse (core smoothing work)
 - Introduce `TimelineWindowCache` stored inside a new `window_cache_actor: Actor<TimelineWindowCache>` on `WaveformTimeline`.
   - Each entry keyed by `(variable_id, lod_bucket, range_ns)` and stores `Arc<Vec<SignalTransition>>`.
   - Keep at most the current window plus one neighbour per variable (FIFO eviction) to stay memory-light.
-- Add relays to coordinate cache lifecycle:
-  - `timeline_cache_window_requested_relay`: emitted before sending an up_msg.
-  - `timeline_cache_window_hydrated_relay`: emitted when a backend response lands.
+- Update cache entries directly from `send_request`/`apply_unified_signal_response` (relays optional if we need decoupled workers later).
 - Request flow update:
   1. On viewport change, derive `lod_bucket` from `TimePerPixel` (round to the nearest power-of-two bucket).
   2. Check the cache actor; if ≥80 % of the requested window is already cached, reuse those transitions immediately in `series_map` and render.
-  3. Only send `UnifiedSignalQuery` for the missing segments; tag the request with `request_id` as today.
-  4. Merge new segments back through `timeline_cache_window_hydrated_relay` to keep cache + `series_map` aligned.
+  3. Only send `UnifiedSignalQuery` when coverage <100 %; otherwise rely on cache and skip the remote fetch.
+  4. For partial hits, request only the uncovered edge slice (left or right) and merge the returned transitions into the cached Vec so the local `series_map` stays aligned without re-fetching the full window.
 - Cursor dropdowns read from the same cache so we do not wipe values while a refill is in flight.
+- Request a slightly larger window than the on-screen viewport (current viewport ±25 %) so fresh responses arrive before the user pans into them, reducing visible holes.
+- Keep existing cursor values when only an edge extension is loading so the column quits flashing "Loading…" on every zoom tweak.
+- Remove the lingering zoom-out debounce that delays repeated key presses; reuse the existing `zoom_center_pending` timer so zoom-out fires on every repeat without waiting for an outdated timeout guard.
+
+### Backend Hotspots & Optimizations
+- Cache hits still clone and filter the entire transition Vec per request; introduce binary-search slicing and/or store transitions as `Arc<[SignalTransition]>` to serve slices without reallocating.
+- Downsampling (`downsample_transitions`) walks every element to build min/max buckets; replace with precomputed LOD buckets per signal or a lightweight stride sampler once slices are in place.
+- Cursor value resolution allocates a temporary Vec before reading the last entry; switch to binary search for the last transition ≤ cursor time to avoid per-request copies.
+- Emit `query_time_ms`, cache hit ratio, and returned transition counts in the backend logs so we can confirm latency improvements after each optimization.
 
 ### Phase 2 – Render/Interaction Polishing (only if Phase 1 still feels rough)
 - Track a `render_generation` counter inside `WaveformTimeline`; renderer ignores responses that are older than the most recent generation.
@@ -71,9 +81,7 @@ These reinforce three lightweight principles for NovyWave:
 
 - Extend `WaveformTimeline` struct with:
   - `window_cache_actor: Actor<TimelineWindowCache>`
-  - `timeline_cache_window_requested_relay: Relay<CacheRequest>`
-  - `timeline_cache_window_hydrated_relay: Relay<CacheHydration>`
-- `TimelineWindowCache` loop listens to request/hydrate relays, performs eviction, and exposes a signal queried from `WaveformTimeline::send_request`.
+- Cache access happens through direct actor state updates; promote to dedicated relays only if concurrent background work becomes necessary.
 - Renderer subscribes to a new `render_generation_signal` so it can drop stale draw jobs instead of rebuilding unnecessarily.
 
 ## 8. Validation & Manual Acceptance
@@ -95,6 +103,7 @@ These reinforce three lightweight principles for NovyWave:
 - How aggressive can eviction be before users notice cache churn on slow machines?
 - Should the cache bucket rounding follow fixed pixel steps (e.g. 8 px) or a simpler nearest power-of-two scheme?
 - Do we need extra telemetry (e.g. histogram of request spans) to justify LOD work if Phase 1 does not fully solve the gaps?
+- Once the FST units are fixed, do we still need additional guardrails so future backend metadata mistakes surface in the debug overlay instead of silently stretching the viewport?
 
 ---
 

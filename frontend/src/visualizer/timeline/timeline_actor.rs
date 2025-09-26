@@ -1,6 +1,6 @@
 use crate::config::{AppConfig, TimeRange, TimelineState};
 use crate::connection::ConnectionAdapter;
-use crate::dataflow::{Actor, Relay, relay};
+use crate::dataflow::{Actor, Atom, Relay, relay};
 use crate::selected_variables::SelectedVariables;
 use crate::visualizer::timeline::maximum_timeline_range::MaximumTimelineRange;
 use crate::visualizer::timeline::time_domain::{
@@ -13,7 +13,7 @@ use shared::{
     SignalTransition, SignalValue, UnifiedSignalData, UnifiedSignalRequest, UpMsg, VarFormat,
 };
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -25,6 +25,8 @@ const ZOOM_CENTER_MIN_INTERVAL_MS: f64 = 16.0;
 const MIN_DURATION_NS: u64 = 1;
 const CURSOR_STEP_RATIO: f64 = 0.04;
 const CURSOR_FAST_MULTIPLIER: u64 = 4;
+const CACHE_HIT_THRESHOLD: f64 = 0.8;
+const CACHE_MAX_SEGMENTS_PER_VARIABLE: usize = 2;
 
 #[derive(Clone, Debug)]
 pub struct TimelineVariableSeries {
@@ -92,12 +94,142 @@ impl Default for TimelineBounds {
 #[derive(Clone, Debug, Default)]
 struct RequestContext {
     latest_request_id: Option<String>,
+    latest_request_started_ms: Option<f64>,
+    latest_request_windows: BTreeMap<String, RequestedWindow>,
 }
 
 #[derive(Clone, Debug, Default)]
 struct VariableSeriesData {
     transitions: Arc<Vec<SignalTransition>>,
     total_transitions: usize,
+}
+
+#[derive(Clone, Debug)]
+struct RequestedWindow {
+    range_ns: (u64, u64),
+    lod_bucket: u64,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct TimelineDebugMetrics {
+    pub last_request_duration_ms: Option<f64>,
+    pub last_render_duration_ms: Option<f64>,
+    pub last_cache_hit: Option<bool>,
+    pub last_cache_coverage: Option<f64>,
+}
+
+#[derive(Clone, Debug)]
+struct TimelineCacheEntry {
+    lod_bucket: u64,
+    range_ns: (u64, u64),
+    transitions: Arc<Vec<SignalTransition>>,
+    total_transitions: usize,
+}
+
+impl TimelineCacheEntry {
+    fn coverage_ratio(&self, range_ns: (u64, u64)) -> f64 {
+        let requested = range_ns.1.saturating_sub(range_ns.0);
+        if requested == 0 {
+            return 0.0;
+        }
+        let overlap_start = self.range_ns.0.max(range_ns.0);
+        let overlap_end = self.range_ns.1.min(range_ns.1);
+        if overlap_end <= overlap_start {
+            return 0.0;
+        }
+        let overlap = overlap_end - overlap_start;
+        overlap as f64 / requested as f64
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct TimelineWindowCache {
+    entries: BTreeMap<String, VecDeque<TimelineCacheEntry>>,
+}
+
+impl TimelineWindowCache {
+    fn best_entry(
+        &self,
+        unique_id: &str,
+        lod_bucket: u64,
+        range_ns: (u64, u64),
+    ) -> Option<(TimelineCacheEntry, f64)> {
+        let slots = self.entries.get(unique_id)?;
+        let mut best: Option<(TimelineCacheEntry, f64)> = None;
+        for entry in slots {
+            if entry.lod_bucket != lod_bucket {
+                continue;
+            }
+            let coverage = entry.coverage_ratio(range_ns);
+            if coverage >= CACHE_HIT_THRESHOLD {
+                match &mut best {
+                    Some((_, best_cov)) if coverage <= *best_cov => {}
+                    _ => best = Some((entry.clone(), coverage)),
+                }
+            }
+        }
+        best
+    }
+
+    fn retain_variables(&mut self, desired: &HashSet<String>) {
+        self.entries.retain(|key, _| desired.contains(key));
+    }
+
+    fn clear(&mut self) {
+        self.entries.clear();
+    }
+}
+
+fn ranges_overlap(a: (u64, u64), b: (u64, u64)) -> bool {
+    a.0 < b.1 && b.0 < a.1
+}
+
+fn range_contains(container: (u64, u64), inner: (u64, u64)) -> bool {
+    container.0 <= inner.0 && container.1 >= inner.1
+}
+
+fn merge_signal_transitions(
+    existing: &[SignalTransition],
+    new_data: &[SignalTransition],
+) -> Vec<SignalTransition> {
+    let mut merged = Vec::with_capacity(existing.len() + new_data.len());
+    let mut i = 0;
+    let mut j = 0;
+
+    while i < existing.len() && j < new_data.len() {
+        if existing[i].time_ns <= new_data[j].time_ns {
+            push_transition(&mut merged, &existing[i]);
+            i += 1;
+        } else {
+            push_transition(&mut merged, &new_data[j]);
+            j += 1;
+        }
+    }
+
+    while i < existing.len() {
+        push_transition(&mut merged, &existing[i]);
+        i += 1;
+    }
+
+    while j < new_data.len() {
+        push_transition(&mut merged, &new_data[j]);
+        j += 1;
+    }
+
+    merged
+}
+
+fn push_transition(target: &mut Vec<SignalTransition>, transition: &SignalTransition) {
+    if let Some(last) = target.last() {
+        if last.time_ns == transition.time_ns {
+            if last.value == transition.value {
+                return;
+            } else {
+                target.pop();
+            }
+        }
+    }
+    target.push(transition.clone());
 }
 
 /// Primary timeline actor coordinating cursor, viewport, zoom and data requests.
@@ -113,6 +245,9 @@ pub struct WaveformTimeline {
     series_map: Actor<BTreeMap<String, VariableSeriesData>>,
     cursor_values: Actor<BTreeMap<String, SignalValue>>,
     request_state: Actor<RequestContext>,
+    window_cache: Actor<TimelineWindowCache>,
+    debug_metrics: Actor<TimelineDebugMetrics>,
+    debug_overlay_enabled: Atom<bool>,
 
     selected_variables: SelectedVariables,
     maximum_range: MaximumTimelineRange,
@@ -146,6 +281,48 @@ pub struct WaveformTimeline {
 }
 
 impl WaveformTimeline {
+    fn expand_range_with_margin(&self, range: (u64, u64), margin: u64) -> (u64, u64) {
+        let (start, end) = range;
+        let mut expanded_start = start.saturating_sub(margin);
+        let mut expanded_end = end.saturating_add(margin);
+        if let Some(bounds) = self.bounds() {
+            expanded_start = expanded_start.max(bounds.start.nanos());
+            expanded_end = expanded_end.min(bounds.end.nanos());
+        }
+        if expanded_end <= expanded_start {
+            expanded_end = expanded_start.saturating_add(1);
+        }
+        (expanded_start, expanded_end)
+    }
+
+    fn expand_left_range(&self, range: (u64, u64), margin: u64) -> (u64, u64) {
+        let (start, end) = range;
+        let mut expanded_start = start.saturating_sub(margin);
+        let mut expanded_end = end;
+        if let Some(bounds) = self.bounds() {
+            expanded_start = expanded_start.max(bounds.start.nanos());
+            expanded_end = expanded_end.min(bounds.end.nanos());
+        }
+        if expanded_end <= expanded_start {
+            expanded_end = expanded_start.saturating_add(1);
+        }
+        (expanded_start, expanded_end)
+    }
+
+    fn expand_right_range(&self, range: (u64, u64), margin: u64) -> (u64, u64) {
+        let (start, end) = range;
+        let mut expanded_start = start;
+        let mut expanded_end = end.saturating_add(margin);
+        if let Some(bounds) = self.bounds() {
+            expanded_start = expanded_start.max(bounds.start.nanos());
+            expanded_end = expanded_end.min(bounds.end.nanos());
+        }
+        if expanded_end <= expanded_start {
+            expanded_end = expanded_start.saturating_add(1);
+        }
+        (expanded_start, expanded_end)
+    }
+
     pub async fn new(
         selected_variables: SelectedVariables,
         maximum_range: MaximumTimelineRange,
@@ -165,6 +342,9 @@ impl WaveformTimeline {
         let series_map = Actor::new(BTreeMap::new(), |_state| async move {});
         let cursor_values = Actor::new(BTreeMap::new(), |_state| async move {});
         let request_state = Actor::new(RequestContext::default(), |_state| async move {});
+        let window_cache = Actor::new(TimelineWindowCache::default(), |_state| async move {});
+        let debug_metrics = Actor::new(TimelineDebugMetrics::default(), |_state| async move {});
+        let debug_overlay_enabled = Atom::new(false);
 
         let (left_key_pressed_relay, left_key_stream) = relay::<()>();
         let (right_key_pressed_relay, right_key_stream) = relay::<()>();
@@ -202,6 +382,9 @@ impl WaveformTimeline {
             series_map,
             cursor_values,
             request_state,
+            window_cache,
+            debug_metrics,
+            debug_overlay_enabled,
             selected_variables,
             maximum_range,
             connection,
@@ -283,6 +466,66 @@ impl WaveformTimeline {
 
     pub fn cursor_values_actor(&self) -> Actor<BTreeMap<String, SignalValue>> {
         self.cursor_values.clone()
+    }
+
+    pub fn debug_metrics_actor(&self) -> Actor<TimelineDebugMetrics> {
+        self.debug_metrics.clone()
+    }
+
+    pub fn debug_overlay_atom(&self) -> Atom<bool> {
+        self.debug_overlay_enabled.clone()
+    }
+
+    pub fn record_render_duration(&self, duration_ms: f64) {
+        if duration_ms > 80.0 {
+            zoon::println!(
+                "⚠️ Timeline render took {:.1}ms (threshold 80ms)",
+                duration_ms
+            );
+        }
+        self.debug_metrics
+            .state
+            .update_mut(|metrics| metrics.last_render_duration_ms = Some(duration_ms));
+    }
+
+    fn record_request_duration(&self, duration_ms: f64) {
+        if duration_ms > 80.0 {
+            zoon::println!(
+                "⚠️ Timeline request completed in {:.1}ms (threshold 80ms)",
+                duration_ms
+            );
+        }
+        self.debug_metrics
+            .state
+            .update_mut(|metrics| metrics.last_request_duration_ms = Some(duration_ms));
+    }
+
+    fn record_cache_usage(&self, cache_hits: usize, total_variables: usize, best_coverage: f64) {
+        self.debug_metrics.state.update_mut(|metrics| {
+            if total_variables == 0 {
+                metrics.last_cache_hit = None;
+                metrics.last_cache_coverage = None;
+            } else {
+                metrics.last_cache_hit = Some(cache_hits > 0);
+                metrics.last_cache_coverage = if cache_hits > 0 {
+                    Some(best_coverage)
+                } else {
+                    None
+                };
+            }
+        });
+    }
+
+    fn lod_bucket_for(time_per_pixel: TimePerPixel) -> u64 {
+        let mut bucket = 1u64;
+        let target = time_per_pixel.picoseconds().max(1);
+        while bucket < target {
+            match bucket.checked_mul(2) {
+                Some(next) => bucket = next,
+                None => return bucket,
+            }
+        }
+        bucket
     }
 
     fn bounds(&self) -> Option<TimelineBounds> {
@@ -593,14 +836,21 @@ impl WaveformTimeline {
             let bounds_end = bounds.end.nanos();
 
             if start < bounds_start || end > bounds_end {
-                let clamped_start = start.clamp(bounds_start, bounds_end);
-                let clamped_end = end.clamp(bounds_start, bounds_end);
-                if clamped_end > clamped_start {
-                    self.viewport.state.set(Viewport::new(
+                let mut clamped_start = start.clamp(bounds_start, bounds_end);
+                let mut clamped_end = end.clamp(bounds_start, bounds_end);
+
+                if clamped_end <= clamped_start {
+                    let bounds_span = bounds_end.saturating_sub(bounds_start).max(1);
+                    clamped_start = bounds_start;
+                    clamped_end = bounds_start.saturating_add(bounds_span);
+                }
+
+                self.viewport
+                    .state
+                    .set(Viewport::new(
                         TimeNs::from_nanos(clamped_start),
                         TimeNs::from_nanos(clamped_end),
                     ));
-                }
             }
         }
         self.ensure_cursor_within_viewport();
@@ -645,6 +895,11 @@ impl WaveformTimeline {
             }
         }
 
+        {
+            let mut cache = self.window_cache.state.lock_mut();
+            cache.retain_variables(&desired);
+        }
+
         self.update_render_state();
         self.schedule_request();
         self.schedule_config_save();
@@ -664,17 +919,39 @@ impl WaveformTimeline {
     }
 
     fn schedule_request(&self) {
-        if let Some(timer) = self.request_debounce.borrow_mut().take() {
-            timer.cancel();
+        {
+            let mut slot = self.request_debounce.borrow_mut();
+            if let Some(timer) = slot.take() {
+                timer.cancel();
+            }
         }
 
-        let debounce_slot = self.request_debounce.clone();
-        let timeline = self.clone();
-        let timeout = Timeout::new(REQUEST_DEBOUNCE_MS, move || {
-            *debounce_slot.borrow_mut() = None;
-            timeline.send_request();
-        });
-        *self.request_debounce.borrow_mut() = Some(timeout);
+        let last_started = self
+            .request_state
+            .state
+            .get_cloned()
+            .latest_request_started_ms;
+        let now = Date::now();
+        let min_interval_ms = REQUEST_DEBOUNCE_MS as f64;
+
+        if let Some(last_started_ms) = last_started {
+            let elapsed = now - last_started_ms;
+            if elapsed >= min_interval_ms {
+                self.send_request();
+                return;
+            }
+
+            let remaining = (min_interval_ms - elapsed).ceil().max(1.0) as u32;
+            let debounce_slot = self.request_debounce.clone();
+            let timeline = self.clone();
+            let timeout = Timeout::new(remaining, move || {
+                *debounce_slot.borrow_mut() = None;
+                timeline.send_request();
+            });
+            *self.request_debounce.borrow_mut() = Some(timeout);
+        } else {
+            self.send_request();
+        }
     }
 
     fn schedule_config_save(&self) {
@@ -692,8 +969,11 @@ impl WaveformTimeline {
     }
 
     fn schedule_zoom_center_update(&self, delay_ms: u32) {
-        if self.zoom_center_timer.borrow().is_some() {
-            return;
+        {
+            let mut timer_ref = self.zoom_center_timer.borrow_mut();
+            if let Some(existing) = timer_ref.take() {
+                existing.cancel();
+            }
         }
 
         let timeline = self.clone();
@@ -724,6 +1004,7 @@ impl WaveformTimeline {
         if variables.is_empty() {
             self.series_map.state.lock_mut().clear();
             self.cursor_values.state.lock_mut().clear();
+            self.window_cache.state.lock_mut().clear();
             self.update_render_state();
             return;
         }
@@ -741,20 +1022,126 @@ impl WaveformTimeline {
         }
 
         let max_transitions = (width_px as usize).saturating_mul(4).max(1);
+        let request_range = (start_ns, end_ns);
+        let margin = (end_ns - start_ns).saturating_div(4).max(1);
+        let expanded_range = self.expand_range_with_margin(request_range, margin);
+        let time_per_pixel = TimePerPixel::from_duration_and_width(end_ns - start_ns, width_px);
+        let lod_bucket = Self::lod_bucket_for(time_per_pixel);
 
-        let mut requests = Vec::with_capacity(variables.len());
+        struct VariablePlan {
+            unique_id: String,
+            formatter: VarFormat,
+            request_parts: Option<(String, String, String)>,
+            cached_entry: Option<TimelineCacheEntry>,
+            request_range_override: Option<(u64, u64)>,
+            needs_request: bool,
+        }
 
-        for variable in &variables {
-            if let Some((file_path, scope_path, variable_name)) = variable.parse_unique_id() {
+        let mut plans = Vec::with_capacity(variables.len());
+        let mut cache_hits = 0usize;
+        let mut best_coverage = 0.0_f64;
+
+        {
+            let cache_guard = self.window_cache.state.lock_ref();
+            for variable in &variables {
+                let unique_id = variable.unique_id.clone();
                 let formatter = variable.formatter.unwrap_or(VarFormat::Hexadecimal);
-                requests.push(UnifiedSignalRequest {
-                    file_path,
-                    scope_path,
-                    variable_name,
-                    time_range_ns: Some((start_ns, end_ns)),
-                    max_transitions: Some(max_transitions),
-                    format: formatter,
-                });
+                let request_parts = variable.parse_unique_id();
+
+                let mut plan = VariablePlan {
+                    unique_id,
+                    formatter,
+                    request_parts,
+                    cached_entry: None,
+                    request_range_override: None,
+                    needs_request: true,
+                };
+
+                if let Some((entry, coverage)) =
+                    cache_guard.best_entry(&plan.unique_id, lod_bucket, request_range)
+                {
+                    cache_hits += 1;
+                    best_coverage = best_coverage.max(coverage);
+                    let missing_left = request_range.0 < entry.range_ns.0;
+                    let missing_right = request_range.1 > entry.range_ns.1;
+
+                    plan.needs_request = missing_left || missing_right;
+                    if missing_left && !missing_right {
+                        let missing_range = (request_range.0, entry.range_ns.0);
+                        if missing_range.1 > missing_range.0 {
+                            let fetch_range = self.expand_left_range(missing_range, margin);
+                            plan.request_range_override = Some(fetch_range);
+                        } else {
+                            plan.needs_request = false;
+                        }
+                    } else if missing_right && !missing_left {
+                        let missing_range = (entry.range_ns.1, request_range.1);
+                        if missing_range.1 > missing_range.0 {
+                            let fetch_range = self.expand_right_range(missing_range, margin);
+                            plan.request_range_override = Some(fetch_range);
+                        } else {
+                            plan.needs_request = false;
+                        }
+                    }
+                    plan.cached_entry = Some(entry);
+                }
+
+                plans.push(plan);
+            }
+        }
+
+        self.record_cache_usage(cache_hits, plans.len(), best_coverage);
+
+        {
+            let mut map = self.series_map.state.lock_mut();
+            for plan in &plans {
+                if let Some(entry) = &plan.cached_entry {
+                    map.insert(
+                        plan.unique_id.clone(),
+                        VariableSeriesData {
+                            transitions: Arc::clone(&entry.transitions),
+                            total_transitions: entry.total_transitions,
+                        },
+                    );
+                }
+            }
+        }
+
+        {
+            let mut values_map = self.cursor_values.state.lock_mut();
+            for plan in &plans {
+                if plan.needs_request && plan.cached_entry.is_none() {
+                    values_map.insert(plan.unique_id.clone(), SignalValue::Loading);
+                }
+            }
+        }
+
+        self.update_render_state();
+
+        let mut requests = Vec::new();
+        let mut request_windows = BTreeMap::new();
+        for plan in &plans {
+            if plan.needs_request {
+                let range_to_request = plan
+                    .request_range_override
+                    .unwrap_or(expanded_range);
+                if let Some((file_path, scope_path, variable_name)) = &plan.request_parts {
+                    request_windows.insert(
+                        plan.unique_id.clone(),
+                        RequestedWindow {
+                            range_ns: range_to_request,
+                            lod_bucket,
+                        },
+                    );
+                    requests.push(UnifiedSignalRequest {
+                        file_path: file_path.clone(),
+                        scope_path: scope_path.clone(),
+                        variable_name: variable_name.clone(),
+                        time_range_ns: Some(range_to_request),
+                        max_transitions: Some(max_transitions),
+                        format: plan.formatter,
+                    });
+                }
             }
         }
 
@@ -762,22 +1149,17 @@ impl WaveformTimeline {
             return;
         }
 
-        {
-            let mut values_map = self.cursor_values.state.lock_mut();
-            for variable in &variables {
-                values_map.insert(variable.unique_id.clone(), SignalValue::Loading);
-            }
-        }
-        self.update_render_state();
-
         let cursor_ns = self.cursor.state.get_cloned().nanos();
+
         let request_id = format!(
             "timeline-{}",
             self.request_counter.fetch_add(1, Ordering::SeqCst)
         );
-        self.request_state.state.set(RequestContext {
-            latest_request_id: Some(request_id.clone()),
-        });
+        let mut context = self.request_state.state.get_cloned();
+        context.latest_request_id = Some(request_id.clone());
+        context.latest_request_started_ms = Some(Date::now());
+        context.latest_request_windows = request_windows;
+        self.request_state.state.set(context);
 
         let connection = self.connection.clone();
         Task::start(async move {
@@ -797,7 +1179,7 @@ impl WaveformTimeline {
         signal_data: Vec<UnifiedSignalData>,
         cursor_values: BTreeMap<String, SignalValue>,
     ) {
-        let current_request = self.request_state.state.get_cloned();
+        let mut current_request = self.request_state.state.get_cloned();
         if current_request
             .latest_request_id
             .as_deref()
@@ -807,19 +1189,93 @@ impl WaveformTimeline {
             return;
         }
 
-        {
-            let mut map = self.series_map.state.lock_mut();
-            for data in signal_data {
-                let transitions = Arc::new(data.transitions);
-                map.insert(
-                    data.unique_id.clone(),
+        let mut request_windows = std::mem::take(&mut current_request.latest_request_windows);
+
+        if let Some(started_ms) = current_request.latest_request_started_ms.take() {
+            let duration_ms = Date::now() - started_ms;
+            self.record_request_duration(duration_ms);
+        }
+        self.request_state.state.set(current_request.clone());
+
+        let mut cache = self.window_cache.state.lock_mut();
+        let mut series_map = self.series_map.state.lock_mut();
+
+        for mut data in signal_data {
+            let unique_id = data.unique_id.clone();
+            let requested_window = request_windows.remove(&unique_id);
+
+            let mut merged_range = data
+                .actual_time_range_ns
+                .or_else(|| requested_window.as_ref().map(|window| window.range_ns))
+                .or_else(|| {
+                    let start = data.transitions.first()?.time_ns;
+                    let end = data.transitions.last()?.time_ns;
+                    Some((start, end))
+                })
+                .unwrap_or((0, 0));
+
+            let mut transitions_vec = data.transitions;
+            let mut total_transitions = data.total_transitions;
+
+            if let Some(window) = requested_window {
+                let lod_bucket = window.lod_bucket;
+                let slots = cache
+                    .entries
+                    .entry(unique_id.clone())
+                    .or_insert_with(VecDeque::new);
+
+                if let Some(position) = slots.iter().position(|entry| {
+                    entry.lod_bucket == lod_bucket && ranges_overlap(entry.range_ns, merged_range)
+                }) {
+                    let existing_entry = slots.remove(position).unwrap();
+                    transitions_vec = merge_signal_transitions(
+                        existing_entry.transitions.as_ref(),
+                        transitions_vec.as_slice(),
+                    );
+                    merged_range = (
+                        existing_entry.range_ns.0.min(merged_range.0),
+                        existing_entry.range_ns.1.max(merged_range.1),
+                    );
+                    total_transitions = transitions_vec.len();
+
+                    slots.retain(|entry| {
+                        !(entry.lod_bucket == lod_bucket
+                            && range_contains(merged_range, entry.range_ns))
+                    });
+                }
+
+                let transitions_arc = Arc::new(transitions_vec);
+                slots.push_front(TimelineCacheEntry {
+                    lod_bucket,
+                    range_ns: merged_range,
+                    transitions: Arc::clone(&transitions_arc),
+                    total_transitions,
+                });
+                while slots.len() > CACHE_MAX_SEGMENTS_PER_VARIABLE {
+                    slots.pop_back();
+                }
+
+                series_map.insert(
+                    unique_id,
                     VariableSeriesData {
-                        transitions,
-                        total_transitions: data.total_transitions,
+                        transitions: transitions_arc,
+                        total_transitions,
+                    },
+                );
+            } else {
+                let transitions_arc = Arc::new(transitions_vec);
+                series_map.insert(
+                    unique_id,
+                    VariableSeriesData {
+                        transitions: transitions_arc,
+                        total_transitions,
                     },
                 );
             }
         }
+
+        drop(series_map);
+        drop(cache);
 
         {
             let mut values_map = self.cursor_values.state.lock_mut();
@@ -829,6 +1285,9 @@ impl WaveformTimeline {
         }
 
         self.update_render_state();
+
+        current_request.latest_request_windows = request_windows;
+        self.request_state.state.set(current_request);
     }
 
     fn sync_state_to_config(&self) {
@@ -855,7 +1314,7 @@ impl WaveformTimeline {
     }
 
     pub fn handle_unified_signal_error(&self, request_id: &str, error: &str) {
-        let current_request = self.request_state.state.get_cloned();
+        let mut current_request = self.request_state.state.get_cloned();
         if current_request
             .latest_request_id
             .as_deref()
@@ -863,6 +1322,12 @@ impl WaveformTimeline {
             .unwrap_or(false)
         {
             zoon::println!("Unified signal request failed: {}", error);
+            if let Some(started_ms) = current_request.latest_request_started_ms.take() {
+                let duration_ms = Date::now() - started_ms;
+                self.record_request_duration(duration_ms);
+            }
+            current_request.latest_request_windows.clear();
+            self.request_state.state.set(current_request);
         }
     }
 
