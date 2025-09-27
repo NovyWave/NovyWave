@@ -630,6 +630,7 @@ impl NovyWaveApp {
                 let reset_zoom = timeline.reset_zoom_pressed_relay.clone();
                 let shift_key_pressed = timeline.shift_key_pressed_relay.clone();
                 let shift_key_released = timeline.shift_key_released_relay.clone();
+                let tooltip_toggle = timeline.tooltip_toggle_requested_relay.clone();
                 let dragging_system_for_events = dragging_system.clone();
                 let key_repeat_handles = self.key_repeat_handles.clone();
 
@@ -790,6 +791,10 @@ impl NovyWaveApp {
                                     "r" | "R" => {
                                         event.prevent_default();
                                         reset_zoom.send(());
+                                    }
+                                    "t" | "T" => {
+                                        event.prevent_default();
+                                        tooltip_toggle.send(());
                                     }
 
                                     _ => {}

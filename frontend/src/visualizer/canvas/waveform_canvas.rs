@@ -10,7 +10,7 @@ use moonzoon_novyui::tokens::theme::Theme as NovyUITheme;
 use moonzoon_novyui::*;
 use shared::Theme;
 use std::sync::Arc;
-use web_sys::HtmlCanvasElement;
+use web_sys::{HtmlCanvasElement, HtmlElement};
 use zoon::events::{PointerDown, PointerLeave, PointerMove};
 use zoon::*;
 
@@ -267,7 +267,8 @@ pub fn waveform_canvas(
     let initial_theme = waveform_canvas.current_theme.get_cloned();
     theme_relay.send(initial_theme);
 
-    let theme_signal = waveform_canvas.current_theme.signal_cloned();
+    let theme_signal_for_tooltip = waveform_canvas.current_theme.signal_cloned();
+    let theme_signal_for_hint = waveform_canvas.current_theme.signal_cloned();
 
     let canvas_element = Canvas::new()
         .width(1)
@@ -384,6 +385,7 @@ pub fn waveform_canvas(
 
     let tooltip_signal = {
         let tooltip_actor = waveform_timeline.tooltip_actor();
+        let theme_signal = theme_signal_for_tooltip;
         map_ref! {
             let tooltip = tooltip_actor.state.signal_cloned(),
             let theme = theme_signal => {
@@ -391,6 +393,8 @@ pub fn waveform_canvas(
             }
         }
     };
+
+    let tooltip_enabled_signal = waveform_timeline.tooltip_visibility_signal();
 
     let canvas_element_store_for_tooltip = canvas_element_store.clone();
     let tooltip_layer = El::new()
@@ -416,11 +420,61 @@ pub fn waveform_canvas(
             })
         });
 
+    let tooltip_hint_layer = El::new()
+        .update_raw_el(|raw_el| {
+            raw_el
+                .style("position", "absolute")
+                .style("top", "12px")
+                .style("right", "16px")
+                .style("pointer-events", "none")
+        })
+        .child_signal({
+            let theme_signal = theme_signal_for_hint;
+            let tooltip_enabled_signal = tooltip_enabled_signal;
+            map_ref! {
+                let theme = theme_signal,
+                let tooltip_enabled = tooltip_enabled_signal => {
+                    if *tooltip_enabled {
+                        None
+                    } else {
+                        let (background, border, text_color) = match theme {
+                            Theme::Light => (
+                                "rgba(15, 23, 42, 0.08)",
+                                "rgba(148, 163, 184, 0.45)",
+                                "#0f172a",
+                            ),
+                            Theme::Dark => (
+                                "rgba(15, 23, 42, 0.75)",
+                                "rgba(148, 163, 184, 0.35)",
+                                "#f8fafc",
+                            ),
+                        };
+
+                        Some(
+                            El::new()
+                                .s(Padding::new().x(10).y(6))
+                                .s(RoundedCorners::all(6))
+                                .s(Font::new().size(11))
+                                .update_raw_el(|raw_el| {
+                                    raw_el
+                                        .style("background", background)
+                                        .style("border", &format!("1px solid {}", border))
+                                        .style("color", text_color)
+                                })
+                                .child("Tooltips hidden - press T to show")
+                                .unify(),
+                        )
+                    }
+                }
+            }
+        });
+
     Stack::new()
         .s(Width::fill())
         .s(Height::fill())
         .layer(canvas_element)
         .layer(tooltip_layer)
+        .layer(tooltip_hint_layer)
 }
 
 fn tooltip_view(
@@ -441,11 +495,6 @@ fn tooltip_view(
             "#f8fafc",
             "rgba(203, 213, 225, 0.7)",
         ),
-    };
-
-    let transform = match data.vertical_alignment {
-        TooltipVerticalAlignment::Above => "translate(-50%, -110%)",
-        TooltipVerticalAlignment::Below => "translate(-50%, 18px)",
     };
 
     let educational = data.educational_message.clone();
@@ -482,17 +531,25 @@ fn tooltip_view(
         content = content.item(educational_block);
     }
 
+    content = content.item(
+        El::new()
+            .s(Padding::new().top(4))
+            .s(Font::new().size(10))
+            .update_raw_el(|raw_el| raw_el.style("color", secondary_text))
+            .child("Press T to hide tooltip"),
+    );
+
     let (origin_x, origin_y) = canvas_origin.unwrap_or((0.0, 0.0));
-    let absolute_x = origin_x + data.screen_x as f64;
-    let absolute_y = origin_y + data.screen_y as f64;
+    let anchor_x = origin_x + data.screen_x as f64;
+    let anchor_y = origin_y + data.screen_y as f64;
+    let preferred_alignment = data.vertical_alignment;
 
     El::new()
         .update_raw_el(move |raw_el| {
             raw_el
                 .style("position", "fixed")
-                .style("left", &format!("{:.1}px", absolute_x))
-                .style("top", &format!("{:.1}px", absolute_y))
-                .style("transform", transform)
+                .style("left", "0px")
+                .style("top", "0px")
                 .style("min-width", "160px")
                 .style("max-width", "260px")
                 .style("padding", "8px 12px")
@@ -504,6 +561,67 @@ fn tooltip_view(
                 .style("color", primary_text)
                 .style("pointer-events", "none")
                 .style("z-index", "15000")
+        })
+        .after_insert(move |element: HtmlElement| {
+            const POINTER_GAP: f64 = 12.0;
+            const VIEWPORT_MARGIN: f64 = 8.0;
+
+            let window = match web_sys::window() {
+                Some(window) => window,
+                None => return,
+            };
+
+            let viewport_width = window
+                .inner_width()
+                .ok()
+                .and_then(|v| v.as_f64())
+                .unwrap_or(1024.0);
+            let viewport_height = window
+                .inner_height()
+                .ok()
+                .and_then(|v| v.as_f64())
+                .unwrap_or(768.0);
+
+            let rect = element.get_bounding_client_rect();
+            let width = rect.width().max(1.0);
+            let height = rect.height().max(1.0);
+
+            let mut alignment = preferred_alignment;
+            let mut top = match alignment {
+                TooltipVerticalAlignment::Above => anchor_y - height - POINTER_GAP,
+                TooltipVerticalAlignment::Below => anchor_y + POINTER_GAP,
+            };
+
+            if alignment == TooltipVerticalAlignment::Above && top < VIEWPORT_MARGIN {
+                alignment = TooltipVerticalAlignment::Below;
+                top = anchor_y + POINTER_GAP;
+            }
+
+            if alignment == TooltipVerticalAlignment::Below
+                && top + height > viewport_height - VIEWPORT_MARGIN
+            {
+                alignment = TooltipVerticalAlignment::Above;
+                top = anchor_y - height - POINTER_GAP;
+            }
+
+            if top < VIEWPORT_MARGIN {
+                top = VIEWPORT_MARGIN;
+            }
+            if top + height > viewport_height - VIEWPORT_MARGIN {
+                top = (viewport_height - height - VIEWPORT_MARGIN).max(VIEWPORT_MARGIN);
+            }
+
+            let mut left = anchor_x - width / 2.0;
+            if left + width > viewport_width - VIEWPORT_MARGIN {
+                left = (viewport_width - VIEWPORT_MARGIN - width).max(VIEWPORT_MARGIN);
+            }
+            if left < VIEWPORT_MARGIN {
+                left = VIEWPORT_MARGIN;
+            }
+
+            let style = element.style();
+            let _ = style.set_property("top", &format!("{:.1}px", top));
+            let _ = style.set_property("left", &format!("{:.1}px", left));
         })
         .child(content)
 }

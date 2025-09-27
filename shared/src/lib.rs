@@ -1251,6 +1251,8 @@ pub struct TimelineConfig {
     pub visible_range_end_ps: u64,
     #[serde(default = "default_zoom_center_ps")]
     pub zoom_center_ps: u64,
+    #[serde(default = "default_tooltip_enabled")]
+    pub tooltip_enabled: bool,
 }
 
 impl Default for TimelineConfig {
@@ -1260,8 +1262,13 @@ impl Default for TimelineConfig {
             visible_range_start_ps: default_visible_range_start_ps(),
             visible_range_end_ps: default_visible_range_end_ps(),
             zoom_center_ps: default_zoom_center_ps(),
+            tooltip_enabled: default_tooltip_enabled(),
         }
     }
+}
+
+fn default_tooltip_enabled() -> bool {
+    true
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]

@@ -284,6 +284,7 @@ pub struct WaveformTimeline {
     cursor_loading_timers: Rc<RefCell<BTreeMap<String, Timeout>>>,
     debug_metrics: Actor<TimelineDebugMetrics>,
     debug_overlay_enabled: Atom<bool>,
+    tooltip_enabled: Mutable<bool>,
 
     selected_variables: SelectedVariables,
     maximum_range: MaximumTimelineRange,
@@ -319,6 +320,7 @@ pub struct WaveformTimeline {
     pub zoom_center_follow_mouse_relay: Relay<Option<TimePs>>,
     pub variable_format_updated_relay: Relay<(String, VarFormat)>,
     pub pointer_hover_relay: Relay<Option<TimelinePointerHover>>,
+    pub tooltip_toggle_requested_relay: Relay<()>,
 }
 
 impl WaveformTimeline {
@@ -387,6 +389,7 @@ impl WaveformTimeline {
         let window_cache = Actor::new(TimelineWindowCache::default(), |_state| async move {});
         let debug_metrics = Actor::new(TimelineDebugMetrics::default(), |_state| async move {});
         let debug_overlay_enabled = Atom::new(false);
+        let tooltip_enabled = Mutable::new(true);
         let cursor_loading_timers = Rc::new(RefCell::new(BTreeMap::new()));
 
         let (left_key_pressed_relay, left_key_stream) = relay::<()>();
@@ -406,6 +409,7 @@ impl WaveformTimeline {
         let (zoom_center_follow_mouse_relay, zoom_center_follow_stream) = relay::<Option<TimePs>>();
         let (variable_format_updated_relay, format_updated_stream) = relay::<(String, VarFormat)>();
         let (pointer_hover_relay, pointer_hover_stream) = relay::<Option<TimelinePointerHover>>();
+        let (tooltip_toggle_requested_relay, tooltip_toggle_stream) = relay::<()>();
         let zoom_center_pending = Rc::new(RefCell::new(None));
         let zoom_center_timer = Rc::new(RefCell::new(None));
         let zoom_center_last_update_ms = Rc::new(RefCell::new(Date::now()));
@@ -435,6 +439,7 @@ impl WaveformTimeline {
             cursor_loading_timers: cursor_loading_timers.clone(),
             debug_metrics,
             debug_overlay_enabled,
+            tooltip_enabled,
             selected_variables,
             maximum_range,
             connection,
@@ -464,6 +469,7 @@ impl WaveformTimeline {
             zoom_center_follow_mouse_relay,
             variable_format_updated_relay,
             pointer_hover_relay,
+            tooltip_toggle_requested_relay,
             zoom_center_pending: zoom_center_pending.clone(),
             zoom_center_timer: zoom_center_timer.clone(),
             zoom_center_last_update_ms: zoom_center_last_update_ms.clone(),
@@ -494,6 +500,7 @@ impl WaveformTimeline {
         timeline.spawn_selected_variables_listener();
         timeline.spawn_bounds_listener();
         timeline.spawn_pointer_hover_handler(pointer_hover_stream);
+        timeline.spawn_tooltip_toggle_handler(tooltip_toggle_stream);
         timeline.spawn_request_triggers();
 
         timeline.schedule_request();
@@ -527,6 +534,10 @@ impl WaveformTimeline {
 
     pub fn tooltip_actor(&self) -> Actor<Option<TimelineTooltipData>> {
         self.tooltip_state.clone()
+    }
+
+    pub fn tooltip_visibility_signal(&self) -> impl Signal<Item = bool> {
+        self.tooltip_enabled.signal_cloned()
     }
 
     pub fn debug_metrics_actor(&self) -> Actor<TimelineDebugMetrics> {
@@ -1590,6 +1601,7 @@ impl WaveformTimeline {
         let viewport = self.viewport.state.get_cloned();
         let cursor = self.cursor.state.get_cloned();
         let zoom_center = self.zoom_center.state.get_cloned();
+        let tooltip_enabled = self.tooltip_enabled.get_cloned();
 
         if viewport.end <= viewport.start {
             return;
@@ -1602,6 +1614,7 @@ impl WaveformTimeline {
                 end: viewport.end,
             }),
             zoom_center: Some(zoom_center),
+            tooltip_enabled,
         };
 
         self.app_config
@@ -1715,6 +1728,11 @@ impl WaveformTimeline {
     }
 
     fn refresh_tooltip(&self) {
+        if !self.tooltip_enabled.get_cloned() {
+            self.tooltip_state.state.set_neq(None);
+            return;
+        }
+
         let snapshot = match self.pointer_hover_snapshot.get_cloned() {
             Some(snapshot) => snapshot,
             None => {
@@ -1856,6 +1874,8 @@ impl WaveformTimeline {
     fn apply_config_state(&self, state: &TimelineState, is_initial: bool) {
         self.restoring_from_config.set(true);
 
+        let previous_tooltip_enabled = self.tooltip_enabled.get_cloned();
+
         let sanitized_range = state
             .visible_range
             .as_ref()
@@ -1914,6 +1934,10 @@ impl WaveformTimeline {
         *self.zoom_center_last_update_ms.borrow_mut() = Date::now();
         self.update_zoom_center_only(zoom_target);
 
+        if self.tooltip_enabled.get_cloned() != state.tooltip_enabled {
+            self.tooltip_enabled.set_neq(state.tooltip_enabled);
+        }
+
         self.restoring_from_config.set(false);
         if !is_initial {
             self.config_restored.set_neq(true);
@@ -1932,6 +1956,14 @@ impl WaveformTimeline {
             self.schedule_request();
         } else if cursor_changed {
             self.schedule_request();
+        }
+
+        if previous_tooltip_enabled != state.tooltip_enabled {
+            if state.tooltip_enabled {
+                self.refresh_tooltip();
+            } else {
+                self.tooltip_state.state.set_neq(None);
+            }
         }
     }
 
@@ -2306,6 +2338,26 @@ impl WaveformTimeline {
                         timeline.tooltip_state.state.set_neq(None);
                     }
                 }
+            }
+        });
+    }
+
+    fn spawn_tooltip_toggle_handler(
+        &self,
+        toggle_stream: impl futures::Stream<Item = ()> + Unpin + 'static,
+    ) {
+        let timeline = self.clone();
+        Task::start(async move {
+            let mut stream = toggle_stream.fuse();
+            while stream.next().await.is_some() {
+                let new_value = !timeline.tooltip_enabled.get_cloned();
+                timeline.tooltip_enabled.set_neq(new_value);
+                if new_value {
+                    timeline.refresh_tooltip();
+                } else {
+                    timeline.tooltip_state.state.set_neq(None);
+                }
+                timeline.schedule_config_save();
             }
         });
     }

@@ -13,10 +13,12 @@ opened_files = [
     "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst",
     "/home/martinkavik/repos/NovyWave/test_files/simple.vcd",
 ]
-dock_mode = "right"
+dock_mode = "bottom"
 expanded_scopes = [
     "/home/martinkavik/repos/NovyWave/test_files/simple.vcd",
     "scope_/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb",
+    "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst",
+    "scope_/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP",
 ]
 load_files_expanded_directories = [
     "/home",
@@ -26,12 +28,12 @@ load_files_expanded_directories = [
     "/home/martinkavik/repos/NovyWave/test_files",
     "/home/martinkavik/repos/NovyWave/test_files/nested_dir",
 ]
-selected_scope_id = "scope_/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s"
+selected_scope_id = "scope_/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP"
 load_files_scroll_position = 973
 
 [workspace.docked_bottom_dimensions]
 files_and_scopes_panel_width = 393.0
-files_and_scopes_panel_height = 375.0
+files_and_scopes_panel_height = 527.0
 selected_variables_panel_name_column_width = 254.0
 selected_variables_panel_value_column_width = 266.0
 
@@ -45,8 +47,15 @@ selected_variables_panel_value_column_width = 201.0
 unique_id = "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s|A"
 formatter = "Hexadecimal"
 
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s|B"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP|clk"
+
 [workspace.timeline]
-cursor_position_ps = 125000000000000
+cursor_position_ps = 75547246653544
 visible_range_start_ps = 0
 visible_range_end_ps = 250000000000000
-zoom_center_ps = 9633911368015
+zoom_center_ps = 100065616797900
+tooltip_enabled = true

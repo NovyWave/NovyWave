@@ -87,11 +87,14 @@ async fn compose_shared_app_config(
         .map(|time| time.picoseconds())
         .unwrap_or(visible_start_ps);
 
+    let tooltip_enabled = timeline_state.tooltip_enabled;
+
     let timeline_config = shared::TimelineConfig {
         cursor_position_ps,
         visible_range_start_ps: visible_start_ps,
         visible_range_end_ps: visible_end_ps,
         zoom_center_ps,
+        tooltip_enabled,
     };
 
     Some(shared::AppConfig {
@@ -155,6 +158,7 @@ pub struct TimelineState {
     pub cursor_position: Option<TimePs>,
     pub visible_range: Option<TimeRange>,
     pub zoom_center: Option<TimePs>,
+    pub tooltip_enabled: bool,
 }
 
 impl Default for TimelineState {
@@ -163,6 +167,7 @@ impl Default for TimelineState {
             cursor_position: None,
             visible_range: None,
             zoom_center: None,
+            tooltip_enabled: true,
         }
     }
 }
@@ -1474,6 +1479,7 @@ impl AppConfig {
                         cursor_position: Some(TimePs::from_picoseconds(cursor_position_ps)),
                         visible_range: Some(visible_range),
                         zoom_center: Some(TimePs::from_picoseconds(zoom_center_ps)),
+                        tooltip_enabled: timeline_cfg.tooltip_enabled,
                     };
 
                     timeline_state_relay.send(timeline_state.clone());
