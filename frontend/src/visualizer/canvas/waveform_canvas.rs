@@ -269,6 +269,7 @@ pub fn waveform_canvas(
 
     let theme_signal_for_tooltip = waveform_canvas.current_theme.signal_cloned();
     let theme_signal_for_hint = waveform_canvas.current_theme.signal_cloned();
+    let tooltip_visibility_handle = waveform_timeline.tooltip_visibility_handle();
 
     let canvas_element = Canvas::new()
         .width(1)
@@ -394,7 +395,7 @@ pub fn waveform_canvas(
         }
     };
 
-    let tooltip_enabled_signal = waveform_timeline.tooltip_visibility_signal();
+    let tooltip_enabled_signal = tooltip_visibility_handle.signal_cloned();
 
     let canvas_element_store_for_tooltip = canvas_element_store.clone();
     let tooltip_layer = El::new()

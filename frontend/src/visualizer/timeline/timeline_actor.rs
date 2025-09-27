@@ -536,8 +536,8 @@ impl WaveformTimeline {
         self.tooltip_state.clone()
     }
 
-    pub fn tooltip_visibility_signal(&self) -> impl Signal<Item = bool> {
-        self.tooltip_enabled.signal_cloned()
+    pub fn tooltip_visibility_handle(&self) -> Mutable<bool> {
+        self.tooltip_enabled.clone()
     }
 
     pub fn debug_metrics_actor(&self) -> Actor<TimelineDebugMetrics> {
