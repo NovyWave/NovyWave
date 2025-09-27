@@ -262,6 +262,7 @@ pub struct WaveformTimeline {
     zoom_center_pending: Rc<RefCell<Option<TimePs>>>,
     zoom_center_timer: Rc<RefCell<Option<Timeout>>>,
     zoom_center_last_update_ms: Rc<RefCell<f64>>,
+    zoom_center_anchor_ratio: Rc<RefCell<Option<f64>>>,
 
     pub left_key_pressed_relay: Relay<()>,
     pub right_key_pressed_relay: Relay<()>,
@@ -366,6 +367,7 @@ impl WaveformTimeline {
         let zoom_center_pending = Rc::new(RefCell::new(None));
         let zoom_center_timer = Rc::new(RefCell::new(None));
         let zoom_center_last_update_ms = Rc::new(RefCell::new(Date::now()));
+        let zoom_center_anchor_ratio = Rc::new(RefCell::new(None));
 
         let bounds_state = Mutable::new(None);
         let request_debounce = Rc::new(RefCell::new(None));
@@ -414,6 +416,7 @@ impl WaveformTimeline {
             zoom_center_pending: zoom_center_pending.clone(),
             zoom_center_timer: zoom_center_timer.clone(),
             zoom_center_last_update_ms: zoom_center_last_update_ms.clone(),
+            zoom_center_anchor_ratio: zoom_center_anchor_ratio.clone(),
         };
 
         timeline.initialize_from_config().await;
@@ -781,6 +784,7 @@ impl WaveformTimeline {
             ));
             self.cursor.state.set_neq(TimePs::from_nanos(500_000_000));
         }
+        self.clear_zoom_anchor_ratio();
         self.set_zoom_center(TimePs::ZERO);
         self.update_render_state();
         self.schedule_request();
@@ -788,6 +792,7 @@ impl WaveformTimeline {
     }
 
     fn reset_zoom_center(&self) {
+        self.clear_zoom_anchor_ratio();
         self.set_zoom_center(TimePs::ZERO);
     }
 
@@ -804,6 +809,41 @@ impl WaveformTimeline {
         self.zoom_center.state.set_neq(clamped);
         *self.zoom_center_last_update_ms.borrow_mut() = Date::now();
         self.update_zoom_center_only(clamped);
+    }
+
+    fn update_zoom_anchor_ratio(&self, anchor_time: TimePs) {
+        let viewport = self.viewport.state.get_cloned();
+        let duration_ps = viewport.duration().picoseconds();
+        let anchor_ps = anchor_time.picoseconds();
+        let start_ps = viewport.start.picoseconds();
+
+        let ratio = if duration_ps == 0 {
+            0.5
+        } else {
+            let offset = anchor_ps.saturating_sub(start_ps) as f64;
+            let duration = duration_ps as f64;
+            let mut ratio = offset / duration;
+            if !ratio.is_finite() {
+                ratio = 0.5;
+            }
+            if ratio < 0.0 {
+                ratio = 0.0;
+            }
+            if ratio > 1.0 {
+                ratio = 1.0;
+            }
+            ratio
+        };
+
+        *self.zoom_center_anchor_ratio.borrow_mut() = Some(ratio);
+    }
+
+    fn current_zoom_anchor_ratio(&self) -> Option<f64> {
+        self.zoom_center_anchor_ratio.borrow().clone()
+    }
+
+    fn clear_zoom_anchor_ratio(&self) {
+        self.zoom_center_anchor_ratio.borrow_mut().take();
     }
 
     fn resolve_zoom_center(&self) -> TimePs {
@@ -824,6 +864,8 @@ impl WaveformTimeline {
         let min_duration = self.min_duration_ps();
         let target_duration = duration_ps.max(min_duration);
         let center_ps = center.picoseconds();
+
+        let anchor_ratio = self.current_zoom_anchor_ratio();
 
         let viewport = self.viewport.state.get_cloned();
         let current_start = viewport.start.picoseconds();
@@ -872,6 +914,32 @@ impl WaveformTimeline {
             TimePs::from_picoseconds(start_ns),
             TimePs::from_picoseconds(end_ns),
         );
+
+        if let Some(mut ratio) = anchor_ratio {
+            if ratio.is_finite() {
+                if ratio < 0.0 {
+                    ratio = 0.0;
+                }
+                if ratio > 1.0 {
+                    ratio = 1.0;
+                }
+
+                let updated_viewport = self.viewport.state.get_cloned();
+                let updated_duration = updated_viewport.duration().picoseconds();
+
+                if updated_duration > 0 {
+                    // Preserve the visual anchor by re-centering at the stored pixel ratio after any clamping.
+                    let start_ps = updated_viewport.start.picoseconds();
+                    let offset = ((updated_duration as f64) * ratio).round() as u64;
+                    let capped_offset = offset.min(updated_duration);
+                    let new_center_ps = start_ps.saturating_add(capped_offset);
+                    let new_center = TimePs::from_picoseconds(new_center_ps);
+                    if new_center != self.zoom_center.state.get_cloned() {
+                        self.set_zoom_center(new_center);
+                    }
+                }
+            }
+        }
     }
 
     fn min_duration_ps(&self) -> u64 {
@@ -1658,79 +1726,81 @@ impl WaveformTimeline {
 
             loop {
                 select! {
-                            event = zoom_in.next() => {
-                                match event {
-                                    Some(()) => {
-                                        let faster = timeline.shift_active.state.get_cloned();
-                                        timeline.zoom_in(faster);
-                                    }
-                                    None => break,
-                                }
+                    event = zoom_in.next() => {
+                        match event {
+                            Some(()) => {
+                                let faster = timeline.shift_active.state.get_cloned();
+                                timeline.zoom_in(faster);
                             }
-                            event = zoom_out.next() => {
-                                match event {
-                                    Some(()) => {
-                                        let faster = timeline.shift_active.state.get_cloned();
-                                        timeline.zoom_out(faster);
-                                    }
-                                    None => break,
-                                }
-                            }
-                            event = pan_left.next() => {
-                                match event {
-                                    Some(()) => {
-                                        let faster = timeline.shift_active.state.get_cloned();
-                                        timeline.pan_left(faster);
-                                    }
-                                    None => break,
-                                }
-                            }
-                            event = pan_right.next() => {
-                                match event {
-                                    Some(()) => {
-                                        let faster = timeline.shift_active.state.get_cloned();
-                                        timeline.pan_right(faster);
-                                    }
-                                    None => break,
-                                }
-                            }
-                            event = reset_zoom.next() => {
-                                match event {
-                                    Some(()) => timeline.reset_zoom(),
-                                    None => break,
-                                }
-                            }
-                            event = reset_center.next() => {
-                                match event {
-                                    Some(()) => timeline.reset_zoom_center(),
-                                    None => break,
-                                }
-                            }
-                            event = follow.next() => {
-                                match event {
-                                    Some(Some(time)) => {
-                                        *timeline.zoom_center_pending.borrow_mut() = Some(time);
-                                        let last_update = *timeline.zoom_center_last_update_ms.borrow();
-                                        let now = Date::now();
-                                        let elapsed = now - last_update;
-                                        if elapsed >= ZOOM_CENTER_MIN_INTERVAL_MS {
-                                            timeline.zoom_center_pending.borrow_mut().take();
-                                            timeline.set_zoom_center(time);
-                                        } else {
-                                            let delay = (ZOOM_CENTER_MIN_INTERVAL_MS - elapsed).ceil() as u32;
-                                            timeline.schedule_zoom_center_update(delay);
-                                        }
-                                    }
-                                    Some(None) => {
-                                        timeline.zoom_center_pending.borrow_mut().take();
-                if let Some(timer) = timeline.zoom_center_timer.borrow_mut().take() {
-                    timer.cancel();
-                }
-                                    }
-                                    None => break,
-                                }
-                            }
+                            None => break,
                         }
+                    }
+                    event = zoom_out.next() => {
+                        match event {
+                            Some(()) => {
+                                let faster = timeline.shift_active.state.get_cloned();
+                                timeline.zoom_out(faster);
+                            }
+                            None => break,
+                        }
+                    }
+                    event = pan_left.next() => {
+                        match event {
+                            Some(()) => {
+                                let faster = timeline.shift_active.state.get_cloned();
+                                timeline.pan_left(faster);
+                            }
+                            None => break,
+                        }
+                    }
+                    event = pan_right.next() => {
+                        match event {
+                            Some(()) => {
+                                let faster = timeline.shift_active.state.get_cloned();
+                                timeline.pan_right(faster);
+                            }
+                            None => break,
+                        }
+                    }
+                    event = reset_zoom.next() => {
+                        match event {
+                            Some(()) => timeline.reset_zoom(),
+                            None => break,
+                        }
+                    }
+                    event = reset_center.next() => {
+                        match event {
+                            Some(()) => timeline.reset_zoom_center(),
+                            None => break,
+                        }
+                    }
+                    event = follow.next() => {
+                        match event {
+                            Some(Some(time)) => {
+                                timeline.update_zoom_anchor_ratio(time);
+                                *timeline.zoom_center_pending.borrow_mut() = Some(time);
+                                let last_update = *timeline.zoom_center_last_update_ms.borrow();
+                                let now = Date::now();
+                                let elapsed = now - last_update;
+                                if elapsed >= ZOOM_CENTER_MIN_INTERVAL_MS {
+                                    timeline.zoom_center_pending.borrow_mut().take();
+                                    timeline.set_zoom_center(time);
+                                } else {
+                                    let delay = (ZOOM_CENTER_MIN_INTERVAL_MS - elapsed).ceil() as u32;
+                                    timeline.schedule_zoom_center_update(delay);
+                                }
+                            }
+                            Some(None) => {
+                                timeline.clear_zoom_anchor_ratio();
+                                timeline.zoom_center_pending.borrow_mut().take();
+                                if let Some(timer) = timeline.zoom_center_timer.borrow_mut().take() {
+                                    timer.cancel();
+                                }
+                            }
+                            None => break,
+                        }
+                    }
+                }
             }
         });
     }
