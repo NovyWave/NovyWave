@@ -1264,6 +1264,8 @@ pub struct WorkspaceSection {
     pub timeline_visible_range_start_ns: Option<u64>,
     #[serde(default)]
     pub timeline_visible_range_end_ns: Option<u64>,
+    #[serde(default)]
+    pub timeline_zoom_center_ns: Option<u64>,
 }
 
 impl Default for WorkspaceSection {
@@ -1283,6 +1285,7 @@ impl Default for WorkspaceSection {
             timeline_cursor_position_ns: default_timeline_cursor_position_ns(),
             timeline_visible_range_start_ns: None,
             timeline_visible_range_end_ns: None,
+            timeline_zoom_center_ns: None,
 
             timeline_zoom_level: default_timeline_zoom_level(),
         }

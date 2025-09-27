@@ -20,6 +20,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use zoon::*;
 
 const REQUEST_DEBOUNCE_MS: u32 = 75;
+const CURSOR_LOADING_DELAY_MS: u32 = 500;
 const CONFIG_SAVE_DEBOUNCE_MS: u32 = 1_000;
 const ZOOM_CENTER_MIN_INTERVAL_MS: f64 = 16.0;
 const MIN_DURATION_PS: u64 = 1;
@@ -75,6 +76,38 @@ impl Default for TimelineRenderState {
             variables: Vec::new(),
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TimelineTooltipData {
+    pub variable_label: String,
+    pub variable_unique_id: String,
+    pub time: TimePs,
+    pub time_label: String,
+    pub value_label: String,
+    pub raw_value: SignalValue,
+    pub educational_message: Option<String>,
+    pub screen_x: f32,
+    pub screen_y: f32,
+    pub vertical_alignment: TooltipVerticalAlignment,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TooltipVerticalAlignment {
+    Above,
+    Below,
+}
+
+#[derive(Clone, Debug)]
+pub struct TimelinePointerHover {
+    pub normalized_x: f64,
+    pub normalized_y: f64,
+}
+
+#[derive(Clone, Debug)]
+struct PointerHoverSnapshot {
+    normalized_x: f64,
+    normalized_y: f64,
 }
 
 #[derive(Clone, Debug)]
@@ -245,8 +278,10 @@ pub struct WaveformTimeline {
     render_state: Actor<TimelineRenderState>,
     series_map: Actor<BTreeMap<String, VariableSeriesData>>,
     cursor_values: Actor<BTreeMap<String, SignalValue>>,
+    tooltip_state: Actor<Option<TimelineTooltipData>>,
     request_state: Actor<RequestContext>,
     window_cache: Actor<TimelineWindowCache>,
+    cursor_loading_timers: Rc<RefCell<BTreeMap<String, Timeout>>>,
     debug_metrics: Actor<TimelineDebugMetrics>,
     debug_overlay_enabled: Atom<bool>,
 
@@ -259,6 +294,7 @@ pub struct WaveformTimeline {
     request_debounce: Rc<RefCell<Option<Timeout>>>,
     config_debounce: Rc<RefCell<Option<Timeout>>>,
     viewport_initialized: Mutable<bool>,
+    pointer_hover_snapshot: Mutable<Option<PointerHoverSnapshot>>,
     zoom_center_pending: Rc<RefCell<Option<TimePs>>>,
     zoom_center_timer: Rc<RefCell<Option<Timeout>>>,
     zoom_center_last_update_ms: Rc<RefCell<f64>>,
@@ -280,6 +316,7 @@ pub struct WaveformTimeline {
     pub cursor_clicked_relay: Relay<TimePs>,
     pub zoom_center_follow_mouse_relay: Relay<Option<TimePs>>,
     pub variable_format_updated_relay: Relay<(String, VarFormat)>,
+    pub pointer_hover_relay: Relay<Option<TimelinePointerHover>>,
 }
 
 impl WaveformTimeline {
@@ -343,10 +380,12 @@ impl WaveformTimeline {
         let render_state = Actor::new(TimelineRenderState::default(), |_state| async move {});
         let series_map = Actor::new(BTreeMap::new(), |_state| async move {});
         let cursor_values = Actor::new(BTreeMap::new(), |_state| async move {});
+        let tooltip_state = Actor::new(None, |_state| async move {});
         let request_state = Actor::new(RequestContext::default(), |_state| async move {});
         let window_cache = Actor::new(TimelineWindowCache::default(), |_state| async move {});
         let debug_metrics = Actor::new(TimelineDebugMetrics::default(), |_state| async move {});
         let debug_overlay_enabled = Atom::new(false);
+        let cursor_loading_timers = Rc::new(RefCell::new(BTreeMap::new()));
 
         let (left_key_pressed_relay, left_key_stream) = relay::<()>();
         let (right_key_pressed_relay, right_key_stream) = relay::<()>();
@@ -364,6 +403,7 @@ impl WaveformTimeline {
         let (cursor_clicked_relay, cursor_clicked_stream) = relay::<TimePs>();
         let (zoom_center_follow_mouse_relay, zoom_center_follow_stream) = relay::<Option<TimePs>>();
         let (variable_format_updated_relay, format_updated_stream) = relay::<(String, VarFormat)>();
+        let (pointer_hover_relay, pointer_hover_stream) = relay::<Option<TimelinePointerHover>>();
         let zoom_center_pending = Rc::new(RefCell::new(None));
         let zoom_center_timer = Rc::new(RefCell::new(None));
         let zoom_center_last_update_ms = Rc::new(RefCell::new(Date::now()));
@@ -373,6 +413,7 @@ impl WaveformTimeline {
         let request_debounce = Rc::new(RefCell::new(None));
         let config_debounce = Rc::new(RefCell::new(None));
         let viewport_initialized = Mutable::new(false);
+        let pointer_hover_snapshot = Mutable::new(None);
 
         let timeline = Self {
             cursor,
@@ -384,8 +425,10 @@ impl WaveformTimeline {
             render_state,
             series_map,
             cursor_values,
+            tooltip_state: tooltip_state.clone(),
             request_state,
             window_cache,
+            cursor_loading_timers: cursor_loading_timers.clone(),
             debug_metrics,
             debug_overlay_enabled,
             selected_variables,
@@ -397,6 +440,7 @@ impl WaveformTimeline {
             request_debounce,
             config_debounce,
             viewport_initialized,
+            pointer_hover_snapshot: pointer_hover_snapshot.clone(),
             left_key_pressed_relay,
             right_key_pressed_relay,
             zoom_in_pressed_relay,
@@ -413,6 +457,7 @@ impl WaveformTimeline {
             cursor_clicked_relay,
             zoom_center_follow_mouse_relay,
             variable_format_updated_relay,
+            pointer_hover_relay,
             zoom_center_pending: zoom_center_pending.clone(),
             zoom_center_timer: zoom_center_timer.clone(),
             zoom_center_last_update_ms: zoom_center_last_update_ms.clone(),
@@ -441,6 +486,7 @@ impl WaveformTimeline {
         timeline.spawn_variable_format_handler(format_updated_stream);
         timeline.spawn_selected_variables_listener();
         timeline.spawn_bounds_listener();
+        timeline.spawn_pointer_hover_handler(pointer_hover_stream);
         timeline.spawn_request_triggers();
 
         timeline.schedule_request();
@@ -470,6 +516,10 @@ impl WaveformTimeline {
 
     pub fn cursor_values_actor(&self) -> Actor<BTreeMap<String, SignalValue>> {
         self.cursor_values.clone()
+    }
+
+    pub fn tooltip_actor(&self) -> Actor<Option<TimelineTooltipData>> {
+        self.tooltip_state.clone()
     }
 
     pub fn debug_metrics_actor(&self) -> Actor<TimelineDebugMetrics> {
@@ -787,7 +837,6 @@ impl WaveformTimeline {
         self.clear_zoom_anchor_ratio();
         self.set_zoom_center(TimePs::ZERO);
         self.update_render_state();
-        self.schedule_request();
         self.schedule_config_save();
     }
 
@@ -809,6 +858,7 @@ impl WaveformTimeline {
         self.zoom_center.state.set_neq(clamped);
         *self.zoom_center_last_update_ms.borrow_mut() = Date::now();
         self.update_zoom_center_only(clamped);
+        self.schedule_config_save();
     }
 
     fn update_zoom_anchor_ratio(&self, anchor_time: TimePs) {
@@ -983,7 +1033,6 @@ impl WaveformTimeline {
         self.ensure_cursor_within_viewport();
         self.refresh_cursor_values_from_series();
         self.update_render_state();
-        self.schedule_request();
         self.schedule_config_save();
     }
 
@@ -1028,10 +1077,7 @@ impl WaveformTimeline {
     }
 
     fn on_variable_format_updated(&self, unique_id: String, _format: VarFormat) {
-        self.cursor_values
-            .state
-            .lock_mut()
-            .insert(unique_id, SignalValue::Loading);
+        self.cancel_cursor_loading_indicator(&unique_id);
         self.update_render_state();
         self.schedule_request();
     }
@@ -1050,9 +1096,11 @@ impl WaveformTimeline {
             for variable in &variables {
                 values_map
                     .entry(variable.unique_id.clone())
-                    .or_insert(SignalValue::Loading);
+                    .or_insert(SignalValue::Missing);
             }
         }
+
+        self.prune_cursor_loading_timers(&desired);
 
         {
             let mut cache = self.window_cache.state.lock_mut();
@@ -1153,6 +1201,75 @@ impl WaveformTimeline {
         *self.zoom_center_timer.borrow_mut() = Some(timeout);
     }
 
+    fn schedule_cursor_loading_indicator(&self, unique_id: String) {
+        {
+            let mut timers_ref = self.cursor_loading_timers.borrow_mut();
+            if let Some(existing) = timers_ref.remove(&unique_id) {
+                existing.cancel();
+            }
+        }
+
+        let timeline = self.clone();
+        let timers = self.cursor_loading_timers.clone();
+        let unique_id_for_closure = unique_id.clone();
+        let timeout = Timeout::new(CURSOR_LOADING_DELAY_MS, move || {
+            let mut should_update = false;
+            {
+                let mut values_map = timeline.cursor_values.state.lock_mut();
+                let needs_update = match values_map.get(&unique_id_for_closure) {
+                    Some(SignalValue::Loading) => false,
+                    _ => true,
+                };
+                if needs_update {
+                    values_map.insert(unique_id_for_closure.clone(), SignalValue::Loading);
+                    should_update = true;
+                }
+            }
+
+            if should_update {
+                timeline.update_render_state();
+            }
+
+            timers.borrow_mut().remove(&unique_id_for_closure);
+        });
+
+        self.cursor_loading_timers
+            .borrow_mut()
+            .insert(unique_id, timeout);
+    }
+
+    fn cancel_cursor_loading_indicator(&self, unique_id: &str) {
+        if let Some(timer) = self.cursor_loading_timers.borrow_mut().remove(unique_id) {
+            timer.cancel();
+        }
+    }
+
+    fn cancel_all_cursor_loading_indicators(&self) {
+        let keys: Vec<String> = {
+            let timers = self.cursor_loading_timers.borrow();
+            timers.keys().cloned().collect()
+        };
+
+        for key in keys {
+            self.cancel_cursor_loading_indicator(&key);
+        }
+    }
+
+    fn prune_cursor_loading_timers(&self, desired: &HashSet<String>) {
+        let keys_to_remove: Vec<String> = {
+            let timers = self.cursor_loading_timers.borrow();
+            timers
+                .keys()
+                .filter(|key| !desired.contains(*key))
+                .cloned()
+                .collect()
+        };
+
+        for key in keys_to_remove {
+            self.cancel_cursor_loading_indicator(&key);
+        }
+    }
+
     fn send_request(&self) {
         let variables = self
             .selected_variables
@@ -1164,6 +1281,7 @@ impl WaveformTimeline {
             self.series_map.state.lock_mut().clear();
             self.cursor_values.state.lock_mut().clear();
             self.window_cache.state.lock_mut().clear();
+            self.cancel_all_cursor_loading_indicators();
             self.update_render_state();
             return;
         }
@@ -1175,7 +1293,7 @@ impl WaveformTimeline {
             return;
         }
 
-        let mut start_ns = start_ps / PS_PER_NS;
+        let start_ns = start_ps / PS_PER_NS;
         let mut end_ns = if end_ps == 0 {
             0
         } else {
@@ -1277,23 +1395,18 @@ impl WaveformTimeline {
             }
         }
 
-        {
-            let mut values_map = self.cursor_values.state.lock_mut();
-            for plan in &plans {
-                if plan.needs_request && plan.cached_entry.is_none() {
-                    values_map.insert(plan.unique_id.clone(), SignalValue::Loading);
-                }
-            }
-        }
-
         self.update_render_state();
 
         let mut requests = Vec::new();
         let mut request_windows = BTreeMap::new();
+        let mut loading_candidates = Vec::new();
         for plan in &plans {
             if plan.needs_request {
                 let range_to_request = plan.request_range_override.unwrap_or(expanded_range);
                 if let Some((file_path, scope_path, variable_name)) = &plan.request_parts {
+                    if plan.cached_entry.is_none() {
+                        loading_candidates.push(plan.unique_id.clone());
+                    }
                     request_windows.insert(
                         plan.unique_id.clone(),
                         RequestedWindow {
@@ -1315,6 +1428,10 @@ impl WaveformTimeline {
 
         if requests.is_empty() {
             return;
+        }
+
+        for unique_id in loading_candidates {
+            self.schedule_cursor_loading_indicator(unique_id);
         }
 
         let cursor_ns = self.cursor.state.get_cloned().nanos();
@@ -1368,7 +1485,7 @@ impl WaveformTimeline {
         let mut cache = self.window_cache.state.lock_mut();
         let mut series_map = self.series_map.state.lock_mut();
 
-        for mut data in signal_data {
+        for data in signal_data {
             let unique_id = data.unique_id.clone();
             let requested_window = request_windows.remove(&unique_id);
 
@@ -1448,7 +1565,8 @@ impl WaveformTimeline {
         {
             let mut values_map = self.cursor_values.state.lock_mut();
             for (unique_id, value) in cursor_values {
-                values_map.insert(unique_id, value);
+                values_map.insert(unique_id.clone(), value);
+                self.cancel_cursor_loading_indicator(&unique_id);
             }
         }
 
@@ -1462,6 +1580,7 @@ impl WaveformTimeline {
         let viewport = self.viewport.state.get_cloned();
         let cursor = self.cursor.state.get_cloned();
         let time_per_pixel = self.render_state.state.get_cloned().time_per_pixel;
+        let zoom_center = self.zoom_center.state.get_cloned();
 
         if viewport.end <= viewport.start {
             return;
@@ -1474,6 +1593,7 @@ impl WaveformTimeline {
                 end: viewport.end,
             }),
             zoom_level: Some(time_per_pixel.picoseconds() as f64 / PS_PER_NS as f64),
+            zoom_center: Some(zoom_center),
         };
 
         self.app_config
@@ -1493,6 +1613,14 @@ impl WaveformTimeline {
             if let Some(started_ms) = current_request.latest_request_started_ms.take() {
                 let duration_ms = Date::now() - started_ms;
                 self.record_request_duration(duration_ms);
+            }
+            let pending: Vec<String> = current_request
+                .latest_request_windows
+                .keys()
+                .cloned()
+                .collect();
+            for unique_id in pending {
+                self.cancel_cursor_loading_indicator(&unique_id);
             }
             current_request.latest_request_windows.clear();
             self.request_state.state.set(current_request);
@@ -1552,6 +1680,8 @@ impl WaveformTimeline {
             time_per_pixel,
             variables,
         });
+
+        self.refresh_tooltip();
     }
 
     fn update_zoom_center_only(&self, zoom_center: TimePs) {
@@ -1569,10 +1699,122 @@ impl WaveformTimeline {
         {
             let mut map = self.cursor_values.state.lock_mut();
             for (key, value) in values {
-                map.insert(key, value);
+                map.insert(key.clone(), value);
+                self.cancel_cursor_loading_indicator(&key);
             }
         }
         self.update_render_state();
+    }
+
+    fn refresh_tooltip(&self) {
+        let snapshot = match self.pointer_hover_snapshot.get_cloned() {
+            Some(snapshot) => snapshot,
+            None => {
+                self.tooltip_state.state.set_neq(None);
+                return;
+            }
+        };
+
+        let render_state = self.render_state.state.get_cloned();
+        if render_state.variables.is_empty() {
+            self.tooltip_state.state.set_neq(None);
+            return;
+        }
+
+        let total_rows = (render_state.variables.len() + 1) as f64;
+        let row_index = (snapshot.normalized_y * total_rows).floor() as usize;
+        if row_index >= render_state.variables.len() {
+            self.tooltip_state.state.set_neq(None);
+            return;
+        }
+
+        let series = &render_state.variables[row_index];
+        let start_ps = render_state.viewport_start.picoseconds();
+        let end_ps = render_state.viewport_end.picoseconds();
+        let duration_ps = end_ps.saturating_sub(start_ps);
+        let normalized_x = snapshot.normalized_x.clamp(0.0, 1.0);
+        let offset_ps = if duration_ps == 0 {
+            0
+        } else {
+            ((duration_ps as f64) * normalized_x).round() as u64
+        };
+        let target_time = TimePs::from_picoseconds(start_ps.saturating_add(offset_ps));
+        let target_ns = target_time.picoseconds() / PS_PER_NS;
+
+        let value = Self::cursor_value_from_transitions(series.transitions.as_ref(), target_ns);
+        let formatted_value = value.get_formatted(&series.formatter);
+        let variable_label = Self::tooltip_label_from_unique_id(&series.unique_id);
+        let time_label = format!("{}", target_time);
+
+        let canvas_width = render_state.canvas_width_px.max(1) as f32;
+        let canvas_height = render_state.canvas_height_px.max(1) as f32;
+
+        let mut screen_x = (normalized_x as f32) * canvas_width;
+        let mut screen_y = (snapshot.normalized_y as f32) * canvas_height;
+        const TOOLTIP_MARGIN: f32 = 12.0;
+        if canvas_width > TOOLTIP_MARGIN {
+            screen_x = screen_x.clamp(TOOLTIP_MARGIN, canvas_width - TOOLTIP_MARGIN);
+        }
+        if canvas_height > TOOLTIP_MARGIN {
+            screen_y = screen_y.clamp(TOOLTIP_MARGIN, canvas_height - TOOLTIP_MARGIN);
+        }
+
+        let vertical_alignment = if snapshot.normalized_y < 0.2 {
+            TooltipVerticalAlignment::Below
+        } else {
+            TooltipVerticalAlignment::Above
+        };
+
+        let educational_message =
+            Self::tooltip_special_state_message(&value).map(|message| message.to_string());
+
+        let tooltip = TimelineTooltipData {
+            variable_label,
+            variable_unique_id: series.unique_id.clone(),
+            time: target_time,
+            time_label,
+            value_label: formatted_value,
+            raw_value: value.clone(),
+            educational_message,
+            screen_x,
+            screen_y,
+            vertical_alignment,
+        };
+
+        self.tooltip_state.state.set_neq(Some(tooltip));
+    }
+
+    fn tooltip_label_from_unique_id(unique_id: &str) -> String {
+        let mut parts = unique_id.splitn(3, '|');
+        let file_part = parts.next();
+        let scope_part = parts.next();
+        let name_part = parts.next();
+
+        match (file_part, scope_part, name_part) {
+            (_, Some(scope), Some(name)) if !scope.is_empty() => {
+                format!("{} :: {}", scope, name)
+            }
+            (_, _, Some(name)) => name.to_string(),
+            _ => unique_id.to_string(),
+        }
+    }
+
+    fn tooltip_special_state_message(value: &SignalValue) -> Option<&'static str> {
+        match value {
+            SignalValue::Present(raw) => match raw.trim().to_ascii_uppercase().as_str() {
+                "Z" => Some(
+                    "High-Impedance (Z)\nSignal is disconnected or floating.\nCommon in tri-state buses and disabled outputs.",
+                ),
+                "X" => Some(
+                    "Unknown (X)\nSignal value cannot be determined.\nOften caused by timing violations or uninitialized logic.",
+                ),
+                "U" => Some(
+                    "Uninitialized (U)\nSignal has not been assigned a value.\nTypically seen during power-up or before reset.",
+                ),
+                _ => None,
+            },
+            _ => None,
+        }
     }
 
     async fn initialize_from_config(&self) {
@@ -1589,7 +1831,6 @@ impl WaveformTimeline {
             self.viewport
                 .state
                 .set(Viewport::new(range.start, range.end));
-            self.zoom_center.state.set_neq(range.start);
             self.viewport_initialized.set(true);
         } else {
             self.viewport_initialized.set(false);
@@ -1601,6 +1842,15 @@ impl WaveformTimeline {
             let viewport = self.viewport.state.get_cloned();
             self.cursor.state.set_neq(viewport.center());
         }
+
+        let desired_zoom_center = stored_state
+            .zoom_center
+            .or_else(|| stored_state.visible_range.map(|range| range.start))
+            .unwrap_or_else(|| self.viewport.state.get_cloned().start);
+        let clamped_zoom_center = self.clamp_to_bounds(desired_zoom_center);
+        self.zoom_center.state.set_neq(clamped_zoom_center);
+        *self.zoom_center_last_update_ms.borrow_mut() = Date::now();
+        self.update_zoom_center_only(clamped_zoom_center);
 
         self.update_render_state();
         self.schedule_config_save();
@@ -1646,7 +1896,6 @@ impl WaveformTimeline {
                 timeline.canvas_width.state.set_neq(width.max(1.0));
                 timeline.canvas_height.state.set_neq(height.max(1.0));
                 timeline.update_render_state();
-                timeline.schedule_request();
             }
         });
     }
@@ -1885,16 +2134,35 @@ impl WaveformTimeline {
         });
     }
 
-    fn spawn_request_triggers(&self) {
+    fn spawn_pointer_hover_handler(
+        &self,
+        pointer_hover_stream: impl futures::Stream<Item = Option<TimelinePointerHover>>
+        + Unpin
+        + 'static,
+    ) {
         let timeline = self.clone();
         Task::start(async move {
-            let mut cursor_stream = timeline.cursor.signal().to_stream().fuse();
-            while cursor_stream.next().await.is_some() {
-                timeline.update_render_state();
-                timeline.schedule_request();
+            let mut stream = pointer_hover_stream.fuse();
+            while let Some(event) = stream.next().await {
+                match event {
+                    Some(pointer) => {
+                        let snapshot = PointerHoverSnapshot {
+                            normalized_x: pointer.normalized_x.clamp(0.0, 1.0),
+                            normalized_y: pointer.normalized_y.clamp(0.0, 1.0),
+                        };
+                        timeline.pointer_hover_snapshot.set(Some(snapshot));
+                        timeline.refresh_tooltip();
+                    }
+                    None => {
+                        timeline.pointer_hover_snapshot.set(None);
+                        timeline.tooltip_state.state.set_neq(None);
+                    }
+                }
             }
         });
+    }
 
+    fn spawn_request_triggers(&self) {
         let timeline = self.clone();
         Task::start(async move {
             let mut viewport_stream = timeline.viewport.signal().to_stream().fuse();

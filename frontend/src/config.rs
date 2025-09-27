@@ -78,6 +78,7 @@ async fn compose_shared_app_config(
         None => (None, None),
     };
     let zoom_level = timeline_state.zoom_level.unwrap_or(1.0_f64) as f32;
+    let zoom_center_ns = timeline_state.zoom_center.map(|time| time.nanos());
 
     Some(shared::AppConfig {
         app: shared::AppSection::default(),
@@ -106,6 +107,7 @@ async fn compose_shared_app_config(
             timeline_visible_range_start_ns: visible_start_ns,
             timeline_visible_range_end_ns: visible_end_ns,
             timeline_zoom_level: zoom_level,
+            timeline_zoom_center_ns: zoom_center_ns,
         },
         ui: shared::UiSection {
             theme,
@@ -142,6 +144,7 @@ pub struct TimelineState {
     pub cursor_position: Option<TimePs>,
     pub visible_range: Option<TimeRange>,
     pub zoom_level: Option<f64>,
+    pub zoom_center: Option<TimePs>,
 }
 
 impl Default for TimelineState {
@@ -150,6 +153,7 @@ impl Default for TimelineState {
             cursor_position: None,
             visible_range: None,
             zoom_level: None,
+            zoom_center: None,
         }
     }
 }
@@ -1445,10 +1449,16 @@ impl AppConfig {
                         TimePs::from_nanos(loaded_config.workspace.timeline_cursor_position_ns)
                     });
 
+                    let zoom_center = loaded_config
+                        .workspace
+                        .timeline_zoom_center_ns
+                        .map(TimePs::from_nanos);
+
                     let timeline_state = TimelineState {
                         cursor_position,
                         visible_range,
                         zoom_level: Some(loaded_config.workspace.timeline_zoom_level as f64),
+                        zoom_center,
                     };
 
                     timeline_state_relay.send(timeline_state);

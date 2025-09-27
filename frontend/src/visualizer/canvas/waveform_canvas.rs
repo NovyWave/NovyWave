@@ -1,29 +1,18 @@
 use super::rendering::{RenderingParameters, VariableRenderSnapshot, WaveformRenderer};
 use crate::config::AppConfig;
 use crate::dataflow::*;
-use crate::visualizer::timeline::timeline_actor::{TimelineRenderState, WaveformTimeline};
+use crate::visualizer::timeline::timeline_actor::{
+    TimelinePointerHover, TimelineRenderState, TimelineTooltipData, TooltipVerticalAlignment,
+    WaveformTimeline,
+};
 use futures::{select, stream::StreamExt};
 use moonzoon_novyui::tokens::theme::Theme as NovyUITheme;
-use shared::{SignalValue, Theme};
+use moonzoon_novyui::*;
+use shared::Theme;
 use std::sync::Arc;
 use web_sys::HtmlCanvasElement;
 use zoon::events::{PointerDown, PointerLeave, PointerMove};
 use zoon::*;
-
-fn special_state_tooltip(value: &str) -> Option<&'static str> {
-    match value.trim().to_ascii_uppercase().as_str() {
-        "Z" => Some(
-            "High-Impedance (Z)\nSignal is disconnected or floating.\nCommon in tri-state buses and disabled outputs.",
-        ),
-        "X" => Some(
-            "Unknown (X)\nSignal value cannot be determined.\nOften caused by timing violations or uninitialized logic.",
-        ),
-        "U" => Some(
-            "Uninitialized (U)\nSignal has not been assigned a value.\nTypically seen during power-up or before reset.",
-        ),
-        _ => None,
-    }
-}
 
 #[derive(Clone)]
 pub struct WaveformCanvas {
@@ -269,13 +258,17 @@ pub fn waveform_canvas(
     let render_state_store_move = waveform_canvas.render_state_store.clone();
     let timeline_for_click = waveform_timeline.clone();
     let timeline_for_hover = waveform_timeline.clone();
+    let pointer_hover_relay_for_click = waveform_timeline.pointer_hover_relay.clone();
+    let pointer_hover_relay_for_move = waveform_timeline.pointer_hover_relay.clone();
+    let pointer_hover_relay_for_leave = waveform_timeline.pointer_hover_relay.clone();
     let canvas_element_store = waveform_canvas.canvas_element_store.clone();
-    let canvas_element_store_for_handlers = canvas_element_store.clone();
 
     let initial_theme = waveform_canvas.current_theme.get_cloned();
     theme_relay.send(initial_theme);
 
-    Canvas::new()
+    let theme_signal = waveform_canvas.current_theme.signal_cloned();
+
+    let canvas_element = Canvas::new()
         .width(1)
         .height(1)
         .s(Width::fill())
@@ -286,7 +279,6 @@ pub fn waveform_canvas(
             let render_state_store_move = render_state_store_move.clone();
             let timeline_for_click = timeline_for_click.clone();
             let timeline_for_hover = timeline_for_hover.clone();
-            let canvas_element_store_for_handlers = canvas_element_store_for_handlers.clone();
             move |raw_el| {
                 let raw_el = raw_el
                     .on_resize(move |width, height| {
@@ -297,15 +289,20 @@ pub fn waveform_canvas(
                     .event_handler({
                         let render_state_store_click = render_state_store_click.clone();
                         let timeline_for_click = timeline_for_click.clone();
+                        let pointer_hover_relay = pointer_hover_relay_for_click.clone();
                         move |event: PointerDown| {
                             if let Some(state) = render_state_store_click.get_cloned() {
                                 let width = state.canvas_width_px.max(1) as f64;
-                                let normalized = (event.offset_x() as f64 / width).clamp(0.0, 1.0);
+                                let height = state.canvas_height_px.max(1) as f64;
+                                let normalized_x =
+                                    (event.offset_x() as f64 / width).clamp(0.0, 1.0);
+                                let normalized_y =
+                                    (event.offset_y() as f64 / height).clamp(0.0, 1.0);
                                 let span_ps = state
                                     .viewport_end
                                     .duration_since(state.viewport_start)
                                     .picoseconds();
-                                let offset_ps = (span_ps as f64 * normalized).round() as u64;
+                                let offset_ps = (span_ps as f64 * normalized_x).round() as u64;
                                 let time_ps = state
                                     .viewport_start
                                     .picoseconds()
@@ -314,22 +311,30 @@ pub fn waveform_canvas(
                                     time_ps,
                                 );
                                 timeline_for_click.cursor_clicked_relay.send(time);
+                                pointer_hover_relay.send(Some(TimelinePointerHover {
+                                    normalized_x,
+                                    normalized_y,
+                                }));
                             }
                         }
                     })
                     .event_handler({
                         let render_state_store_move = render_state_store_move.clone();
                         let timeline_for_hover = timeline_for_hover.clone();
-                        let canvas_element_store_move = canvas_element_store_for_handlers.clone();
+                        let pointer_hover_relay = pointer_hover_relay_for_move.clone();
                         move |event: PointerMove| {
                             if let Some(state) = render_state_store_move.get_cloned() {
                                 let width = state.canvas_width_px.max(1) as f64;
-                                let normalized = (event.offset_x() as f64 / width).clamp(0.0, 1.0);
+                                let height = state.canvas_height_px.max(1) as f64;
+                                let normalized_x =
+                                    (event.offset_x() as f64 / width).clamp(0.0, 1.0);
+                                let normalized_y =
+                                    (event.offset_y() as f64 / height).clamp(0.0, 1.0);
                                 let span_ps = state
                                     .viewport_end
                                     .duration_since(state.viewport_start)
                                     .picoseconds();
-                                let offset_ps = (span_ps as f64 * normalized).round() as u64;
+                                let offset_ps = (span_ps as f64 * normalized_x).round() as u64;
                                 let time_ps = state
                                     .viewport_start
                                     .picoseconds()
@@ -337,62 +342,23 @@ pub fn waveform_canvas(
                                 let time = crate::visualizer::timeline::time_domain::TimePs::from_picoseconds(
                                     time_ps,
                                 );
-                                let time_ns = time.picoseconds() / crate::visualizer::timeline::time_domain::PS_PER_NS;
 
                                 timeline_for_hover
                                     .zoom_center_follow_mouse_relay
                                     .send(Some(time));
-
-                                if let Some(canvas_el) = canvas_element_store_move.get_cloned() {
-                                    let total_rows = (state.variables.len() + 1).max(1) as f32;
-                                    let row_height =
-                                        (state.canvas_height_px.max(1) as f32) / total_rows;
-                                    let pointer_row =
-                                        (event.offset_y() as f32 / row_height).floor().max(0.0)
-                                            as usize;
-
-                                    if pointer_row < state.variables.len() {
-                                        let variable = &state.variables[pointer_row];
-                                        let mut current_value: Option<&str> = None;
-                                        for transition in variable.transitions.iter() {
-                                            if transition.time_ns > time_ns {
-                                                break;
-                                            }
-                                            current_value = Some(transition.value.as_str());
-                                        }
-
-                                        if current_value.is_none() {
-                                            if let Some(SignalValue::Present(raw)) =
-                                                variable.cursor_value.as_ref()
-                                            {
-                                                current_value = Some(raw.as_str());
-                                            }
-                                        }
-
-                                        if let Some(value) = current_value {
-                                            if let Some(tooltip) = special_state_tooltip(value) {
-                                                let _ = canvas_el.set_attribute("title", tooltip);
-                                            } else {
-                                                let _ = canvas_el.remove_attribute("title");
-                                            }
-                                        } else {
-                                            let _ = canvas_el.remove_attribute("title");
-                                        }
-                                    } else {
-                                        let _ = canvas_el.remove_attribute("title");
-                                    }
-                                }
+                                pointer_hover_relay.send(Some(TimelinePointerHover {
+                                    normalized_x,
+                                    normalized_y,
+                                }));
                             }
                         }
                     })
                     .event_handler({
                         let timeline_for_hover = timeline_for_hover.clone();
-                        let canvas_element_store_leave = canvas_element_store_for_handlers.clone();
+                        let pointer_hover_relay = pointer_hover_relay_for_leave.clone();
                         move |_: PointerLeave| {
                             timeline_for_hover.zoom_center_follow_mouse_relay.send(None);
-                            if let Some(canvas_el) = canvas_element_store_leave.get_cloned() {
-                                let _ = canvas_el.remove_attribute("title");
-                            }
+                            pointer_hover_relay.send(None);
                         }
                     });
                 raw_el
@@ -410,4 +376,112 @@ pub fn waveform_canvas(
         .after_remove(move |_| {
             redraw_relay.send(());
         })
+        .unify();
+
+    let tooltip_signal = {
+        let tooltip_actor = waveform_timeline.tooltip_actor();
+        map_ref! {
+            let tooltip = tooltip_actor.state.signal_cloned(),
+            let theme = theme_signal => {
+                tooltip.clone().map(|data| (data, *theme))
+            }
+        }
+    };
+
+    let tooltip_layer = El::new()
+        .update_raw_el(|raw_el| {
+            raw_el
+                .style("position", "absolute")
+                .style("top", "0")
+                .style("left", "0")
+                .style("width", "100%")
+                .style("height", "100%")
+                .style("pointer-events", "none")
+        })
+        .child_signal(
+            tooltip_signal
+                .map(|maybe| maybe.map(|(data, theme)| tooltip_view(data, theme).unify())),
+        );
+
+    Stack::new()
+        .s(Width::fill())
+        .s(Height::fill())
+        .layer(canvas_element)
+        .layer(tooltip_layer)
+}
+
+fn tooltip_view(data: TimelineTooltipData, theme: Theme) -> impl Element {
+    let (background, border_color, primary_text, secondary_text) = match theme {
+        Theme::Light => (
+            "rgba(255, 255, 255, 0.97)",
+            "rgba(148, 163, 184, 0.35)",
+            "#0f172a",
+            "rgba(71, 85, 105, 0.8)",
+        ),
+        Theme::Dark => (
+            "rgba(15, 23, 42, 0.92)",
+            "rgba(148, 163, 184, 0.3)",
+            "#f8fafc",
+            "rgba(203, 213, 225, 0.7)",
+        ),
+    };
+
+    let transform = match data.vertical_alignment {
+        TooltipVerticalAlignment::Above => "translate(-50%, -110%)",
+        TooltipVerticalAlignment::Below => "translate(-50%, 18px)",
+    };
+
+    let educational = data.educational_message.clone();
+
+    let mut content = Column::new()
+        .s(Gap::new().y(4))
+        .item(
+            El::new()
+                .s(Font::new().size(12).weight(FontWeight::SemiBold))
+                .child(data.variable_label.clone()),
+        )
+        .item(
+            El::new()
+                .s(Font::new().size(11))
+                .update_raw_el(|raw_el| raw_el.style("color", secondary_text))
+                .child(data.time_label.clone()),
+        )
+        .item(
+            El::new()
+                .s(Font::new().size(12).weight(FontWeight::Medium))
+                .child(data.value_label.clone()),
+        );
+
+    if let Some(message) = educational {
+        let educational_block = Column::new()
+            .s(Gap::new().y(2))
+            .s(Padding::new().top(4))
+            .items(message.lines().map(|line| {
+                El::new()
+                    .s(Font::new().size(10))
+                    .update_raw_el(|raw_el| raw_el.style("color", secondary_text))
+                    .child(line)
+            }));
+        content = content.item(educational_block);
+    }
+
+    El::new()
+        .update_raw_el(move |raw_el| {
+            raw_el
+                .style("position", "absolute")
+                .style("left", &format!("{:.1}px", data.screen_x))
+                .style("top", &format!("{:.1}px", data.screen_y))
+                .style("transform", transform)
+                .style("min-width", "160px")
+                .style("max-width", "260px")
+                .style("padding", "8px 12px")
+                .style("border-radius", "8px")
+                .style("background", background)
+                .style("border", &format!("1px solid {}", border_color))
+                .style("box-shadow", "0 10px 30px rgba(15, 23, 42, 0.35)")
+                .style("backdrop-filter", "blur(8px)")
+                .style("color", primary_text)
+                .style("pointer-events", "none")
+        })
+        .child(content)
 }
