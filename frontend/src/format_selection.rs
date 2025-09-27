@@ -190,7 +190,7 @@ pub fn create_format_dropdown(
                         raw_el
                             .style("position", "fixed")
                             .style("inset", "0")
-                            .style("z-index", "9998")
+                            .style("z-index", "29999")
                             .style("background-color", "rgba(0,0,0,0)")
                     })
                     .on_pointer_down({
@@ -446,7 +446,7 @@ pub fn create_smart_dropdown(
 
                     let style = html_el.style();
                     let _ = style.set_property("position", "fixed");
-                    let _ = style.set_property("z-index", "9999");
+                    let _ = style.set_property("z-index", "30000");
                     let _ = style.set_property("min-width", "200px");
                     let _ =
                         style.set_property("max-height", &format!("{}px", dynamic_dropdown_height));

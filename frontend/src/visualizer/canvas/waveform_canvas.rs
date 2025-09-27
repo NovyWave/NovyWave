@@ -262,6 +262,7 @@ pub fn waveform_canvas(
     let pointer_hover_relay_for_move = waveform_timeline.pointer_hover_relay.clone();
     let pointer_hover_relay_for_leave = waveform_timeline.pointer_hover_relay.clone();
     let canvas_element_store = waveform_canvas.canvas_element_store.clone();
+    let canvas_element_store_for_insert = canvas_element_store.clone();
 
     let initial_theme = waveform_canvas.current_theme.get_cloned();
     theme_relay.send(initial_theme);
@@ -364,14 +365,17 @@ pub fn waveform_canvas(
                 raw_el
             }
         })
-        .after_insert(move |canvas: HtmlCanvasElement| {
-            let width = canvas.client_width() as f32;
-            let height = canvas.client_height() as f32;
-            if width > 0.0 && height > 0.0 {
-                canvas_dimensions_relay.send((width, height));
+        .after_insert({
+            let canvas_element_store = canvas_element_store_for_insert.clone();
+            move |canvas: HtmlCanvasElement| {
+                let width = canvas.client_width() as f32;
+                let height = canvas.client_height() as f32;
+                if width > 0.0 && height > 0.0 {
+                    canvas_dimensions_relay.send((width, height));
+                }
+                canvas_element_store.set(Some(canvas));
+                canvas_initialized_relay.send(());
             }
-            canvas_element_store.set(Some(canvas));
-            canvas_initialized_relay.send(());
         })
         .after_remove(move |_| {
             redraw_relay.send(());
@@ -388,6 +392,7 @@ pub fn waveform_canvas(
         }
     };
 
+    let canvas_element_store_for_tooltip = canvas_element_store.clone();
     let tooltip_layer = El::new()
         .update_raw_el(|raw_el| {
             raw_el
@@ -398,10 +403,18 @@ pub fn waveform_canvas(
                 .style("height", "100%")
                 .style("pointer-events", "none")
         })
-        .child_signal(
-            tooltip_signal
-                .map(|maybe| maybe.map(|(data, theme)| tooltip_view(data, theme).unify())),
-        );
+        .child_signal({
+            let canvas_element_store = canvas_element_store_for_tooltip.clone();
+            tooltip_signal.map(move |maybe| {
+                maybe.map(|(data, theme)| {
+                    let canvas_origin = canvas_element_store.lock_ref().as_ref().map(|canvas| {
+                        let rect = canvas.get_bounding_client_rect();
+                        (rect.left(), rect.top())
+                    });
+                    tooltip_view(data, theme, canvas_origin).unify()
+                })
+            })
+        });
 
     Stack::new()
         .s(Width::fill())
@@ -410,7 +423,11 @@ pub fn waveform_canvas(
         .layer(tooltip_layer)
 }
 
-fn tooltip_view(data: TimelineTooltipData, theme: Theme) -> impl Element {
+fn tooltip_view(
+    data: TimelineTooltipData,
+    theme: Theme,
+    canvas_origin: Option<(f64, f64)>,
+) -> impl Element {
     let (background, border_color, primary_text, secondary_text) = match theme {
         Theme::Light => (
             "rgba(255, 255, 255, 0.97)",
@@ -465,12 +482,16 @@ fn tooltip_view(data: TimelineTooltipData, theme: Theme) -> impl Element {
         content = content.item(educational_block);
     }
 
+    let (origin_x, origin_y) = canvas_origin.unwrap_or((0.0, 0.0));
+    let absolute_x = origin_x + data.screen_x as f64;
+    let absolute_y = origin_y + data.screen_y as f64;
+
     El::new()
         .update_raw_el(move |raw_el| {
             raw_el
-                .style("position", "absolute")
-                .style("left", &format!("{:.1}px", data.screen_x))
-                .style("top", &format!("{:.1}px", data.screen_y))
+                .style("position", "fixed")
+                .style("left", &format!("{:.1}px", absolute_x))
+                .style("top", &format!("{:.1}px", absolute_y))
                 .style("transform", transform)
                 .style("min-width", "160px")
                 .style("max-width", "260px")
@@ -482,6 +503,7 @@ fn tooltip_view(data: TimelineTooltipData, theme: Theme) -> impl Element {
                 .style("backdrop-filter", "blur(8px)")
                 .style("color", primary_text)
                 .style("pointer-events", "none")
+                .style("z-index", "15000")
         })
         .child(content)
 }

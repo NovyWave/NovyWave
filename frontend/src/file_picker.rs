@@ -349,6 +349,9 @@ pub fn file_paths_dialog(
         .update_raw_el(|raw_el| {
             raw_el
                 .style("display", "flex")
+                .style("position", "fixed")
+                .style("inset", "0")
+                .style("z-index", "20000")
                 .style("justify-content", "center")
                 .style("align-items", "center")
         })
