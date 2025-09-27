@@ -553,6 +553,7 @@ pub struct AppConfig {
     pub variables_width_changed_relay: Relay<f32>,
     pub timeline_height_changed_relay: Relay<f32>,
     pub timeline_state_changed_relay: Relay<TimelineState>,
+    pub timeline_state_restore_relay: Relay<TimelineState>,
     pub timeline_state_actor: Actor<TimelineState>,
     pub name_column_width_changed_relay: Relay<f32>,
     pub value_column_width_changed_relay: Relay<f32>,
@@ -604,6 +605,8 @@ impl AppConfig {
             session_state_changed_relay.subscribe();
         let (config_save_requested_relay, mut config_save_requested_stream) = relay();
         let (timeline_state_changed_relay, mut timeline_state_stream) = relay::<TimelineState>();
+        let (timeline_state_restore_relay, _timeline_state_restore_stream) =
+            relay::<TimelineState>();
         let timeline_state_save_relay = config_save_requested_relay.clone();
 
         let config_loaded_flag = Mutable::new(false);
@@ -1367,6 +1370,7 @@ impl AppConfig {
             let name_column_width_relay = name_column_width_changed_relay.clone();
             let value_column_width_relay = value_column_width_changed_relay.clone();
             let timeline_state_relay = timeline_state_changed_relay.clone();
+            let timeline_state_restore_relay = timeline_state_restore_relay.clone();
 
             Actor::new((), async move |_state| {
                 let mut config_stream = config_loaded_stream;
@@ -1472,7 +1476,8 @@ impl AppConfig {
                         zoom_center: Some(TimePs::from_picoseconds(zoom_center_ps)),
                     };
 
-                    timeline_state_relay.send(timeline_state);
+                    timeline_state_relay.send(timeline_state.clone());
+                    timeline_state_restore_relay.send(timeline_state);
 
                     // Update theme using proper relay
                     theme_relay.send(loaded_config.ui.theme);
@@ -1583,6 +1588,7 @@ impl AppConfig {
             variables_width_changed_relay,
             timeline_height_changed_relay,
             timeline_state_changed_relay,
+            timeline_state_restore_relay,
             timeline_state_actor,
             name_column_width_changed_relay,
             value_column_width_changed_relay,

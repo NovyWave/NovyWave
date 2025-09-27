@@ -12,7 +12,7 @@ use js_sys::Date;
 use shared::{
     SignalTransition, SignalValue, UnifiedSignalData, UnifiedSignalRequest, UpMsg, VarFormat,
 };
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -294,6 +294,7 @@ pub struct WaveformTimeline {
     request_debounce: Rc<RefCell<Option<Timeout>>>,
     config_debounce: Rc<RefCell<Option<Timeout>>>,
     viewport_initialized: Mutable<bool>,
+    restoring_from_config: Rc<Cell<bool>>,
     pointer_hover_snapshot: Mutable<Option<PointerHoverSnapshot>>,
     zoom_center_pending: Rc<RefCell<Option<TimePs>>>,
     zoom_center_timer: Rc<RefCell<Option<Timeout>>>,
@@ -414,6 +415,7 @@ impl WaveformTimeline {
         let config_debounce = Rc::new(RefCell::new(None));
         let viewport_initialized = Mutable::new(false);
         let pointer_hover_snapshot = Mutable::new(None);
+        let restoring_from_config = Rc::new(Cell::new(false));
 
         let timeline = Self {
             cursor,
@@ -440,6 +442,7 @@ impl WaveformTimeline {
             request_debounce,
             config_debounce,
             viewport_initialized,
+            restoring_from_config: restoring_from_config.clone(),
             pointer_hover_snapshot: pointer_hover_snapshot.clone(),
             left_key_pressed_relay,
             right_key_pressed_relay,
@@ -465,6 +468,7 @@ impl WaveformTimeline {
         };
 
         timeline.initialize_from_config().await;
+        timeline.spawn_config_restore_listener();
         timeline.spawn_shift_tracking(shift_pressed_stream, shift_released_stream);
         timeline.spawn_canvas_resize_handler(canvas_resized_stream);
         timeline.spawn_cursor_navigation(
@@ -1162,6 +1166,9 @@ impl WaveformTimeline {
     }
 
     fn schedule_config_save(&self) {
+        if self.restoring_from_config.get() {
+            return;
+        }
         if let Some(timer) = self.config_debounce.borrow_mut().take() {
             timer.cancel();
         }
@@ -1816,7 +1823,7 @@ impl WaveformTimeline {
     }
 
     async fn initialize_from_config(&self) {
-        let stored_state = self
+        let initial_state = self
             .app_config
             .timeline_state_actor
             .signal()
@@ -1825,33 +1832,155 @@ impl WaveformTimeline {
             .await
             .unwrap_or_default();
 
-        if let Some(range) = stored_state.visible_range {
-            self.viewport
-                .state
-                .set(Viewport::new(range.start, range.end));
+        self.apply_config_state(&initial_state, true);
+    }
+
+    fn spawn_config_restore_listener(&self) {
+        let timeline = self.clone();
+        Task::start(async move {
+            let mut stream = timeline
+                .app_config
+                .timeline_state_restore_relay
+                .subscribe()
+                .fuse();
+
+            while let Some(state) = stream.next().await {
+                timeline.apply_config_state(&state, false);
+            }
+        });
+    }
+
+    fn apply_config_state(&self, state: &TimelineState, is_initial: bool) {
+        self.restoring_from_config.set(true);
+
+        let sanitized_range = state
+            .visible_range
+            .as_ref()
+            .map(|range| self.sanitize_config_range(range));
+
+        let mut viewport_changed = false;
+        if let Some((start, end)) = sanitized_range {
+            let current_viewport = self.viewport.state.get_cloned();
+            if current_viewport.start != start || current_viewport.end != end {
+                self.viewport.state.set(Viewport::new(start, end));
+                viewport_changed = true;
+            }
             self.viewport_initialized.set(true);
-        } else {
+        } else if is_initial {
             self.viewport_initialized.set(false);
         }
 
-        if let Some(cursor) = stored_state.cursor_position {
-            self.cursor.state.set_neq(cursor);
-        } else {
-            let viewport = self.viewport.state.get_cloned();
-            self.cursor.state.set_neq(viewport.center());
+        let mut cursor_changed = false;
+        if let Some((start, end)) = sanitized_range {
+            let target = state.cursor_position.unwrap_or(start);
+            let clamped = Self::clamp_time_to_range(target, start, end);
+            if self.cursor.state.get_cloned() != clamped {
+                self.cursor.state.set_neq(clamped);
+                cursor_changed = true;
+            }
+        } else if let Some(cursor) = state.cursor_position {
+            let clamped = self.clamp_to_bounds(cursor);
+            if self.cursor.state.get_cloned() != clamped {
+                self.cursor.state.set_neq(clamped);
+                cursor_changed = true;
+            }
+        } else if is_initial {
+            let center = self.viewport.state.get_cloned().center();
+            if self.cursor.state.get_cloned() != center {
+                self.cursor.state.set_neq(center);
+                cursor_changed = true;
+            }
         }
 
-        let desired_zoom_center = stored_state
+        let mut zoom_target = state
             .zoom_center
-            .or_else(|| stored_state.visible_range.map(|range| range.start))
+            .or_else(|| state.visible_range.map(|range| range.start))
             .unwrap_or_else(|| self.viewport.state.get_cloned().start);
-        let clamped_zoom_center = self.clamp_to_bounds(desired_zoom_center);
-        self.zoom_center.state.set_neq(clamped_zoom_center);
-        *self.zoom_center_last_update_ms.borrow_mut() = Date::now();
-        self.update_zoom_center_only(clamped_zoom_center);
 
-        self.update_render_state();
-        self.schedule_config_save();
+        if let Some((start, end)) = sanitized_range {
+            zoom_target = Self::clamp_time_to_range(zoom_target, start, end);
+        } else {
+            zoom_target = self.clamp_to_bounds(zoom_target);
+        }
+
+        let mut zoom_changed = false;
+        if self.zoom_center.state.get_cloned() != zoom_target {
+            self.zoom_center.state.set_neq(zoom_target);
+            zoom_changed = true;
+        }
+        *self.zoom_center_last_update_ms.borrow_mut() = Date::now();
+        self.update_zoom_center_only(zoom_target);
+
+        self.restoring_from_config.set(false);
+
+        if viewport_changed {
+            self.ensure_cursor_within_viewport();
+        }
+        if viewport_changed || cursor_changed {
+            self.refresh_cursor_values_from_series();
+        }
+        if viewport_changed || cursor_changed || zoom_changed {
+            self.update_render_state();
+        }
+        if viewport_changed {
+            self.schedule_request();
+        } else if cursor_changed {
+            self.schedule_request();
+        }
+    }
+
+    fn sanitize_config_range(&self, range: &TimeRange) -> (TimePs, TimePs) {
+        let mut start_ps = range.start.picoseconds();
+        let mut end_ps = range.end.picoseconds();
+
+        if let Some(bounds) = self.bounds() {
+            let bounds_start = bounds.start.picoseconds();
+            let bounds_end = bounds.end.picoseconds();
+            if bounds_end > bounds_start {
+                start_ps = start_ps.clamp(bounds_start, bounds_end);
+                end_ps = end_ps.clamp(bounds_start, bounds_end);
+            } else {
+                start_ps = bounds_start;
+                end_ps = bounds_start.saturating_add(1);
+            }
+        }
+
+        if end_ps <= start_ps {
+            if let Some(bounds) = self.bounds() {
+                let bounds_start = bounds.start.picoseconds();
+                let bounds_end = bounds.end.picoseconds();
+                if bounds_end > bounds_start {
+                    if start_ps >= bounds_end {
+                        start_ps = bounds_end.saturating_sub(1);
+                        end_ps = bounds_end;
+                    } else {
+                        end_ps = (start_ps + 1).min(bounds_end);
+                        if end_ps <= start_ps {
+                            end_ps = bounds_end.min(start_ps.saturating_add(1));
+                        }
+                    }
+                } else {
+                    end_ps = start_ps.saturating_add(1);
+                }
+            } else {
+                end_ps = start_ps.saturating_add(1);
+            }
+        }
+
+        (
+            TimePs::from_picoseconds(start_ps),
+            TimePs::from_picoseconds(end_ps),
+        )
+    }
+
+    fn clamp_time_to_range(time: TimePs, start: TimePs, end: TimePs) -> TimePs {
+        if time < start {
+            start
+        } else if time > end {
+            end
+        } else {
+            time
+        }
     }
 
     fn spawn_shift_tracking(

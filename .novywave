@@ -47,7 +47,7 @@ unique_id = "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s|
 unique_id = "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s|B"
 
 [workspace.timeline]
-cursor_position_ps = 125000000000000
-visible_range_start_ps = 0
-visible_range_end_ps = 250000000000000
-zoom_center_ps = 0
+cursor_position_ps = 20341207349081
+visible_range_start_ps = 10925196850394
+visible_range_end_ps = 185925196850394
+zoom_center_ps = 36417322834646

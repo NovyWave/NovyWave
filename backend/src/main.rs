@@ -109,25 +109,13 @@ impl SignalCacheManager {
 
         let start_time = std::time::Instant::now();
 
-        println!(
-            "🔧 BACKEND: timeline query start (requests={}, cursor_time={:?})",
-            signal_requests.len(),
-            cursor_time
-        );
-
         // Ensure all referenced waveform bodies are loaded before processing requests
         let mut ensured_files = HashSet::new();
         for request in &signal_requests {
             if ensured_files.insert(request.file_path.clone()) {
                 match ensure_waveform_body_loaded(&request.file_path).await {
-                    Ok(()) => {
-                        println!("🔧 BACKEND: waveform body ready for {}", request.file_path);
-                    }
+                    Ok(()) => {}
                     Err(error) => {
-                        println!(
-                            "❌ BACKEND: ensure_waveform_body_loaded failed for {}: {}",
-                            request.file_path, error
-                        );
                         return Err(error);
                     }
                 }
@@ -140,30 +128,12 @@ impl SignalCacheManager {
             .filter_map(|request| self.get_or_load_signal_data(request).ok())
             .collect();
 
-        println!(
-            "🔧 BACKEND: timeline query collected {} signal payloads",
-            signal_data.len()
-        );
-        for data in &signal_data {
-            println!(
-                "   • {} transitions={} range={:?}",
-                data.unique_id,
-                data.transitions.len(),
-                data.actual_time_range_ns
-            );
-        }
-
         // Compute cursor values if requested
         let cursor_values = if let Some(time) = cursor_time {
             self.compute_cursor_values(&signal_data, time)
         } else {
             BTreeMap::new()
         };
-
-        println!(
-            "🔧 BACKEND: cursor values resolved for {} variables",
-            cursor_values.len()
-        );
 
         // Update cache statistics
         let query_time = start_time.elapsed().as_millis() as u64;
@@ -616,6 +586,90 @@ impl SignalCacheManager {
             let max_time = transitions.last().unwrap().time_ns;
             Some((min_time, max_time))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn project_path(relative: &str) -> String {
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        std::path::Path::new(manifest_dir)
+            .join(relative)
+            .display()
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn unified_signal_query_returns_transitions_for_simple_vcd() {
+        let file_path = project_path("../test_files/simple.vcd");
+
+        ensure_waveform_body_loaded(&file_path)
+            .await
+            .expect("load waveform body");
+
+        let request = UnifiedSignalRequest {
+            file_path: file_path.clone(),
+            scope_path: "simple_tb.s".into(),
+            variable_name: "A".into(),
+            time_range_ns: Some((0, 1_000_000)),
+            max_transitions: Some(1024),
+            format: shared::VarFormat::Binary,
+        };
+
+        let (signal_data, cursor_values, _stats) = SignalCacheManager::new()
+            .query_unified_signals(vec![request], Some(0))
+            .await
+            .expect("query unified signals");
+
+        assert!(
+            !signal_data.is_empty(),
+            "expected at least one signal payload to be returned"
+        );
+        assert!(
+            !signal_data[0].transitions.is_empty(),
+            "expected transitions for simple_tb.s|A"
+        );
+        assert!(
+            cursor_values.contains_key(&format!(
+                "{}|{}|{}",
+                file_path, "simple_tb.s", "A"
+            )),
+            "expected cursor value for the requested signal"
+        );
+    }
+
+    #[tokio::test]
+    async fn unified_signal_query_returns_transitions_for_fst_waveform() {
+        let file_path = project_path("../test_files/wave_27.fst");
+
+        ensure_waveform_body_loaded(&file_path)
+            .await
+            .expect("load fst waveform body");
+
+        let request = UnifiedSignalRequest {
+            file_path: file_path.clone(),
+            scope_path: "TOP".into(),
+            variable_name: "clk".into(),
+            time_range_ns: Some((0, 10_000_000)),
+            max_transitions: Some(4096),
+            format: shared::VarFormat::Binary,
+        };
+
+        let (signal_data, _cursor_values, _stats) = SignalCacheManager::new()
+            .query_unified_signals(vec![request], Some(0))
+            .await
+            .expect("query unified signals");
+
+        assert!(
+            !signal_data.is_empty(),
+            "expected at least one signal payload for FST waveform"
+        );
+        assert!(
+            !signal_data[0].transitions.is_empty(),
+            "expected transitions for TOP|clk from FST waveform"
+        );
     }
 }
 
@@ -2383,7 +2437,9 @@ async fn ensure_waveform_body_loaded(file_path: &str) -> Result<(), String> {
 
         if loading_in_progress.contains(file_path) {
             drop(loading_in_progress);
-            for _ in 0..100 {
+
+            loop {
+                // Check if waveform finished loading successfully
                 if WAVEFORM_DATA_STORE
                     .lock()
                     .map(|store| store.contains_key(file_path))
@@ -2391,12 +2447,33 @@ async fn ensure_waveform_body_loaded(file_path: &str) -> Result<(), String> {
                 {
                     return Ok(());
                 }
+
+                // If the loader cleared the in-progress flag without populating the store,
+                // treat it as a failure and bubble the error up to the caller.
+                let still_loading = VCD_LOADING_IN_PROGRESS
+                    .lock()
+                    .map(|loading| loading.contains(file_path))
+                    .unwrap_or(false);
+
+                if !still_loading {
+                    break;
+                }
+
                 sleep(Duration::from_millis(10)).await;
             }
-            return Err(format!(
-                "Waveform '{}' is still loading and did not finish in time",
-                file_path
-            ));
+
+            if WAVEFORM_DATA_STORE
+                .lock()
+                .map(|store| store.contains_key(file_path))
+                .unwrap_or(false)
+            {
+                return Ok(());
+            } else {
+                return Err(format!(
+                    "Waveform '{}' failed to load while waiting for existing load",
+                    file_path
+                ));
+            }
         }
 
         // Mark this file as being loaded
