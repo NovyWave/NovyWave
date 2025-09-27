@@ -1203,12 +1203,23 @@ fn default_toast_dismiss_ms() -> u64 {
     10000 // Default 10 seconds
 }
 
-fn default_timeline_cursor_position_ns() -> u64 {
-    10_000_000_000 // Default timeline cursor position: 10 seconds in nanoseconds
+pub const PS_PER_NS: u64 = 1_000;
+pub const DEFAULT_TIMELINE_RANGE_PS: u64 = 1_000_000_000 * PS_PER_NS;
+
+fn default_cursor_position_ps() -> u64 {
+    0
 }
 
-fn default_timeline_zoom_level() -> f32 {
-    1.0 // Default zoom level (1.0 = normal, no zoom)
+fn default_visible_range_start_ps() -> u64 {
+    0
+}
+
+fn default_visible_range_end_ps() -> u64 {
+    DEFAULT_TIMELINE_RANGE_PS
+}
+
+fn default_zoom_center_ps() -> u64 {
+    0
 }
 
 impl Default for UiSection {
@@ -1228,6 +1239,29 @@ where
     use serde::de::Error;
     let s = String::deserialize(deserializer)?;
     Theme::from_str(&s).map_err(D::Error::custom)
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct TimelineConfig {
+    #[serde(default = "default_cursor_position_ps")]
+    pub cursor_position_ps: u64,
+    #[serde(default = "default_visible_range_start_ps")]
+    pub visible_range_start_ps: u64,
+    #[serde(default = "default_visible_range_end_ps")]
+    pub visible_range_end_ps: u64,
+    #[serde(default = "default_zoom_center_ps")]
+    pub zoom_center_ps: u64,
+}
+
+impl Default for TimelineConfig {
+    fn default() -> Self {
+        Self {
+            cursor_position_ps: default_cursor_position_ps(),
+            visible_range_start_ps: default_visible_range_start_ps(),
+            visible_range_end_ps: default_visible_range_end_ps(),
+            zoom_center_ps: default_zoom_center_ps(),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -1252,20 +1286,8 @@ pub struct WorkspaceSection {
     pub variables_search_filter: String,
     #[serde(default)]
     pub selected_variables: Vec<SelectedVariable>,
-    // Timeline cursor position in nanoseconds
-    #[serde(default = "default_timeline_cursor_position_ns")]
-    pub timeline_cursor_position_ns: u64,
-
-    #[serde(default = "default_timeline_zoom_level")]
-    pub timeline_zoom_level: f32,
-
-    // Timeline visible range in nanoseconds
     #[serde(default)]
-    pub timeline_visible_range_start_ns: Option<u64>,
-    #[serde(default)]
-    pub timeline_visible_range_end_ns: Option<u64>,
-    #[serde(default)]
-    pub timeline_zoom_center_ns: Option<u64>,
+    pub timeline: TimelineConfig,
 }
 
 impl Default for WorkspaceSection {
@@ -1281,13 +1303,7 @@ impl Default for WorkspaceSection {
             load_files_scroll_position: 0,
             variables_search_filter: String::new(),
             selected_variables: Vec::new(),
-            // New nanosecond fields
-            timeline_cursor_position_ns: default_timeline_cursor_position_ns(),
-            timeline_visible_range_start_ns: None,
-            timeline_visible_range_end_ns: None,
-            timeline_zoom_center_ns: None,
-
-            timeline_zoom_level: default_timeline_zoom_level(),
+            timeline: TimelineConfig::default(),
         }
     }
 }

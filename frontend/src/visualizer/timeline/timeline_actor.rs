@@ -1579,7 +1579,6 @@ impl WaveformTimeline {
     fn sync_state_to_config(&self) {
         let viewport = self.viewport.state.get_cloned();
         let cursor = self.cursor.state.get_cloned();
-        let time_per_pixel = self.render_state.state.get_cloned().time_per_pixel;
         let zoom_center = self.zoom_center.state.get_cloned();
 
         if viewport.end <= viewport.start {
@@ -1592,7 +1591,6 @@ impl WaveformTimeline {
                 start: viewport.start,
                 end: viewport.end,
             }),
-            zoom_level: Some(time_per_pixel.picoseconds() as f64 / PS_PER_NS as f64),
             zoom_center: Some(zoom_center),
         };
 
@@ -2169,6 +2167,7 @@ impl WaveformTimeline {
             while viewport_stream.next().await.is_some() {
                 timeline.ensure_viewport_within_bounds();
                 timeline.schedule_request();
+                timeline.schedule_config_save();
             }
         });
 
@@ -2178,6 +2177,7 @@ impl WaveformTimeline {
             while width_stream.next().await.is_some() {
                 timeline.update_render_state();
                 timeline.schedule_request();
+                timeline.schedule_config_save();
             }
         });
     }

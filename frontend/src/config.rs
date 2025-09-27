@@ -69,16 +69,30 @@ async fn compose_shared_app_config(
     let value_column_width_right = value_column_width_right_state.get_cloned();
     let timeline_state = timeline_state_actor.signal().to_stream().next().await?;
 
-    let cursor_position_ns = timeline_state
-        .cursor_position
-        .map(|time| time.nanos())
-        .unwrap_or_default();
-    let (visible_start_ns, visible_end_ns) = match timeline_state.visible_range {
-        Some(range) => (Some(range.start.nanos()), Some(range.end.nanos())),
-        None => (None, None),
+    let (visible_start_ps, visible_end_ps) = if let Some(range) = timeline_state.visible_range {
+        let start = range.start.picoseconds();
+        let end = range.end.picoseconds().max(start + 1);
+        (start, end)
+    } else {
+        (0, shared::DEFAULT_TIMELINE_RANGE_PS)
     };
-    let zoom_level = timeline_state.zoom_level.unwrap_or(1.0_f64) as f32;
-    let zoom_center_ns = timeline_state.zoom_center.map(|time| time.nanos());
+
+    let cursor_position_ps = timeline_state
+        .cursor_position
+        .map(|time| time.picoseconds())
+        .unwrap_or(visible_start_ps);
+
+    let zoom_center_ps = timeline_state
+        .zoom_center
+        .map(|time| time.picoseconds())
+        .unwrap_or(visible_start_ps);
+
+    let timeline_config = shared::TimelineConfig {
+        cursor_position_ps,
+        visible_range_start_ps: visible_start_ps,
+        visible_range_end_ps: visible_end_ps,
+        zoom_center_ps,
+    };
 
     Some(shared::AppConfig {
         app: shared::AppSection::default(),
@@ -103,11 +117,8 @@ async fn compose_shared_app_config(
             load_files_scroll_position: scroll_position,
             variables_search_filter: session.variables_search_filter.clone(),
             selected_variables: selected_variables_snapshot,
-            timeline_cursor_position_ns: cursor_position_ns,
-            timeline_visible_range_start_ns: visible_start_ns,
-            timeline_visible_range_end_ns: visible_end_ns,
-            timeline_zoom_level: zoom_level,
-            timeline_zoom_center_ns: zoom_center_ns,
+            timeline: timeline_config,
+            ..shared::WorkspaceSection::default()
         },
         ui: shared::UiSection {
             theme,
@@ -143,7 +154,6 @@ impl Default for SessionState {
 pub struct TimelineState {
     pub cursor_position: Option<TimePs>,
     pub visible_range: Option<TimeRange>,
-    pub zoom_level: Option<f64>,
     pub zoom_center: Option<TimePs>,
 }
 
@@ -152,7 +162,6 @@ impl Default for TimelineState {
         Self {
             cursor_position: None,
             visible_range: None,
-            zoom_level: None,
             zoom_center: None,
         }
     }
@@ -595,12 +604,15 @@ impl AppConfig {
             session_state_changed_relay.subscribe();
         let (config_save_requested_relay, mut config_save_requested_stream) = relay();
         let (timeline_state_changed_relay, mut timeline_state_stream) = relay::<TimelineState>();
+        let timeline_state_save_relay = config_save_requested_relay.clone();
 
         let config_loaded_flag = Mutable::new(false);
 
         let timeline_state_actor = Actor::new(TimelineState::default(), async move |state| {
+            let save_relay = timeline_state_save_relay;
             while let Some(new_state) = timeline_state_stream.next().await {
                 state.set(new_state);
+                save_relay.send(());
             }
         });
 
@@ -1430,35 +1442,34 @@ impl AppConfig {
                     };
                     value_column_width_relay.send(current_value_width);
 
-                    let visible_range = loaded_config
-                        .workspace
-                        .timeline_visible_range_start_ns
-                        .zip(loaded_config.workspace.timeline_visible_range_end_ns)
-                        .and_then(|(start_ns, end_ns)| {
-                            if end_ns > start_ns {
-                                Some(TimeRange {
-                                    start: TimePs::from_nanos(start_ns),
-                                    end: TimePs::from_nanos(end_ns),
-                                })
-                            } else {
-                                None
-                            }
-                        });
+                    let timeline_cfg = &loaded_config.workspace.timeline;
 
-                    let cursor_position = visible_range.as_ref().map(|_| {
-                        TimePs::from_nanos(loaded_config.workspace.timeline_cursor_position_ns)
-                    });
+                    let mut visible_start_ps = timeline_cfg.visible_range_start_ps;
+                    let mut visible_end_ps = timeline_cfg.visible_range_end_ps;
+                    if visible_end_ps <= visible_start_ps {
+                        visible_end_ps = visible_start_ps + 1;
+                    }
 
-                    let zoom_center = loaded_config
-                        .workspace
-                        .timeline_zoom_center_ns
-                        .map(TimePs::from_nanos);
+                    let mut cursor_position_ps = timeline_cfg.cursor_position_ps;
+                    if cursor_position_ps < visible_start_ps || cursor_position_ps > visible_end_ps
+                    {
+                        cursor_position_ps = visible_start_ps;
+                    }
+
+                    let mut zoom_center_ps = timeline_cfg.zoom_center_ps;
+                    if zoom_center_ps < visible_start_ps || zoom_center_ps > visible_end_ps {
+                        zoom_center_ps = visible_start_ps;
+                    }
+
+                    let visible_range = TimeRange {
+                        start: TimePs::from_picoseconds(visible_start_ps),
+                        end: TimePs::from_picoseconds(visible_end_ps),
+                    };
 
                     let timeline_state = TimelineState {
-                        cursor_position,
-                        visible_range,
-                        zoom_level: Some(loaded_config.workspace.timeline_zoom_level as f64),
-                        zoom_center,
+                        cursor_position: Some(TimePs::from_picoseconds(cursor_position_ps)),
+                        visible_range: Some(visible_range),
+                        zoom_center: Some(TimePs::from_picoseconds(zoom_center_ps)),
                     };
 
                     timeline_state_relay.send(timeline_state);

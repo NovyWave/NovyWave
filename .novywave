@@ -24,11 +24,6 @@ load_files_expanded_directories = [
     "/home/martinkavik/repos/NovyWave/test_files/nested_dir",
 ]
 load_files_scroll_position = 973
-timeline_cursor_position_ns = 23293963254
-timeline_zoom_level = 328084000.0
-timeline_visible_range_start_ns = 0
-timeline_visible_range_end_ns = 250000000000
-timeline_zoom_center_ns = 22965879265
 
 [workspace.docked_bottom_dimensions]
 files_and_scopes_panel_width = 393.0
@@ -50,3 +45,9 @@ unique_id = "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s|
 
 [[workspace.selected_variables]]
 unique_id = "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s|B"
+
+[workspace.timeline]
+cursor_position_ps = 125000000000000
+visible_range_start_ps = 0
+visible_range_end_ps = 250000000000000
+zoom_center_ps = 0
