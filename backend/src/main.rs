@@ -632,10 +632,7 @@ mod tests {
             "expected transitions for simple_tb.s|A"
         );
         assert!(
-            cursor_values.contains_key(&format!(
-                "{}|{}|{}",
-                file_path, "simple_tb.s", "A"
-            )),
+            cursor_values.contains_key(&format!("{}|{}|{}", file_path, "simple_tb.s", "A")),
             "expected cursor value for the requested signal"
         );
     }

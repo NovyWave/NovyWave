@@ -300,6 +300,7 @@ pub struct WaveformTimeline {
     zoom_center_timer: Rc<RefCell<Option<Timeout>>>,
     zoom_center_last_update_ms: Rc<RefCell<f64>>,
     zoom_center_anchor_ratio: Rc<RefCell<Option<f64>>>,
+    config_restored: Mutable<bool>,
 
     pub left_key_pressed_relay: Relay<()>,
     pub right_key_pressed_relay: Relay<()>,
@@ -416,6 +417,7 @@ impl WaveformTimeline {
         let viewport_initialized = Mutable::new(false);
         let pointer_hover_snapshot = Mutable::new(None);
         let restoring_from_config = Rc::new(Cell::new(false));
+        let config_restored = Mutable::new(false);
 
         let timeline = Self {
             cursor,
@@ -444,6 +446,7 @@ impl WaveformTimeline {
             viewport_initialized,
             restoring_from_config: restoring_from_config.clone(),
             pointer_hover_snapshot: pointer_hover_snapshot.clone(),
+            config_restored: config_restored.clone(),
             left_key_pressed_relay,
             right_key_pressed_relay,
             zoom_in_pressed_relay,
@@ -1912,6 +1915,9 @@ impl WaveformTimeline {
         self.update_zoom_center_only(zoom_target);
 
         self.restoring_from_config.set(false);
+        if !is_initial {
+            self.config_restored.set_neq(true);
+        }
 
         if viewport_changed {
             self.ensure_cursor_within_viewport();
@@ -2248,6 +2254,18 @@ impl WaveformTimeline {
                     }
                 } else {
                     timeline.bounds_state.set(None);
+
+                    let has_variables = !timeline
+                        .selected_variables
+                        .variables_vec_actor
+                        .state
+                        .get_cloned()
+                        .is_empty();
+
+                    if timeline.config_restored.get_cloned() && has_variables {
+                        continue;
+                    }
+
                     timeline.viewport.state.set(Viewport::new(
                         TimePs::ZERO,
                         TimePs::from_nanos(1_000_000_000),
@@ -2256,6 +2274,9 @@ impl WaveformTimeline {
                     timeline.schedule_request();
                     timeline.schedule_config_save();
                     timeline.viewport_initialized.set(false);
+                    if !has_variables {
+                        timeline.config_restored.set_neq(false);
+                    }
                 }
             }
         });
