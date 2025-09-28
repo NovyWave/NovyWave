@@ -57,8 +57,8 @@ unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP|clk"
 unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv|AlignerPlugin_logic_buffer_hm_GSharePlugin_GSHARE_COUNTER_0"
 
 [workspace.timeline]
-cursor_position_ps = 3770266
-visible_range_start_ps = 0
-visible_range_end_ps = 250000000000000
-zoom_center_ps = 21981627296588
+cursor_position_ps = 1385198
+visible_range_start_ps = 1292099
+visible_range_end_ps = 1473534
+zoom_center_ps = 1372578
 tooltip_enabled = true

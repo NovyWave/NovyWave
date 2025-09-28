@@ -266,6 +266,37 @@ fn push_transition(target: &mut Vec<SignalTransition>, transition: &SignalTransi
     target.push(transition.clone());
 }
 
+fn ensure_leading_transition(
+    transitions: &mut Vec<SignalTransition>,
+    range_start_ns: u64,
+    previous: Option<&[SignalTransition]>,
+) {
+    if transitions.is_empty() {
+        return;
+    }
+
+    if transitions.first().map(|t| t.time_ns).unwrap_or(u64::MAX) <= range_start_ns {
+        return;
+    }
+
+    if let Some(prev_list) = previous {
+        if let Some(previous_transition) = prev_list
+            .iter()
+            .rev()
+            .find(|transition| transition.time_ns <= range_start_ns)
+        {
+            let mut synthetic = previous_transition.clone();
+            synthetic.time_ns = range_start_ns;
+            transitions.insert(0, synthetic);
+            return;
+        }
+    }
+
+    let mut synthetic = transitions.first().cloned().unwrap();
+    synthetic.time_ns = range_start_ns;
+    transitions.insert(0, synthetic);
+}
+
 /// Primary timeline actor coordinating cursor, viewport, zoom and data requests.
 #[derive(Clone)]
 pub struct WaveformTimeline {
@@ -809,8 +840,17 @@ impl WaveformTimeline {
         if faster {
             step = step.saturating_mul(3);
         }
-        let new_start = viewport.start.picoseconds().saturating_sub(step);
-        let new_end = viewport.end.picoseconds().saturating_sub(step);
+        let start_ps = viewport.start.picoseconds();
+        let available_left = match self.bounds() {
+            Some(bounds) => start_ps.saturating_sub(bounds.start.picoseconds()),
+            None => start_ps,
+        };
+        let shift = step.min(available_left);
+        if shift == 0 {
+            return;
+        }
+        let new_start = start_ps.saturating_sub(shift);
+        let new_end = viewport.end.picoseconds().saturating_sub(shift);
         self.set_viewport_clamped(
             TimePs::from_picoseconds(new_start),
             TimePs::from_picoseconds(new_end.max(new_start + 1)),
@@ -824,8 +864,17 @@ impl WaveformTimeline {
         if faster {
             step = step.saturating_mul(3);
         }
-        let new_start = viewport.start.picoseconds().saturating_add(step);
-        let new_end = viewport.end.picoseconds().saturating_add(step);
+        let end_ps = viewport.end.picoseconds();
+        let available_right = match self.bounds() {
+            Some(bounds) => bounds.end.picoseconds().saturating_sub(end_ps),
+            None => u64::MAX.saturating_sub(end_ps),
+        };
+        let shift = step.min(available_right);
+        if shift == 0 {
+            return;
+        }
+        let new_start = viewport.start.picoseconds().saturating_add(shift);
+        let new_end = end_ps.saturating_add(shift);
         self.set_viewport_clamped(
             TimePs::from_picoseconds(new_start),
             TimePs::from_picoseconds(new_end.max(new_start + 1)),
@@ -1506,24 +1555,34 @@ impl WaveformTimeline {
         let mut cache = self.window_cache.state.lock_mut();
         let mut series_map = self.series_map.state.lock_mut();
 
-        for data in signal_data {
-            let unique_id = data.unique_id.clone();
+        for UnifiedSignalData {
+            unique_id,
+            transitions,
+            total_transitions,
+            actual_time_range_ns,
+            ..
+        } in signal_data
+        {
             let requested_window = request_windows.remove(&unique_id);
+            let existing_series = series_map
+                .get(&unique_id)
+                .map(|series| series.transitions.clone());
 
-            let mut merged_range = data
-                .actual_time_range_ns
+            let mut transitions_vec = transitions;
+            let mut total_transitions = total_transitions;
+
+            let mut merged_range = actual_time_range_ns
                 .or_else(|| requested_window.as_ref().map(|window| window.range_ns))
                 .or_else(|| {
-                    let start = data.transitions.first()?.time_ns;
-                    let end = data.transitions.last()?.time_ns;
+                    let start = transitions_vec.first()?.time_ns;
+                    let end = transitions_vec.last()?.time_ns;
                     Some((start, end))
                 })
                 .unwrap_or((0, 0));
 
-            let mut transitions_vec = data.transitions;
-            let mut total_transitions = data.total_transitions;
+            let mut cache_slot_action: Option<u64> = None;
 
-            if let Some(window) = requested_window {
+            if let Some(window) = &requested_window {
                 let lod_bucket = window.lod_bucket;
                 let slots = cache
                     .entries
@@ -1550,7 +1609,42 @@ impl WaveformTimeline {
                     });
                 }
 
-                let transitions_arc = Arc::new(transitions_vec);
+                cache_slot_action = Some(lod_bucket);
+            }
+
+            let leading_start_ns = requested_window
+                .as_ref()
+                .map(|window| window.range_ns.0)
+                .or_else(|| actual_time_range_ns.map(|range| range.0))
+                .unwrap_or(merged_range.0);
+
+            let previous_slice = existing_series.as_ref().map(|arc| arc.as_slice());
+            ensure_leading_transition(&mut transitions_vec, leading_start_ns, previous_slice);
+            merged_range.0 = merged_range.0.min(leading_start_ns);
+            total_transitions = transitions_vec.len();
+
+            if let Some(existing_arc) = &existing_series {
+                let existing_slice = existing_arc.as_ref();
+                if !existing_slice.is_empty() {
+                    transitions_vec =
+                        merge_signal_transitions(existing_slice, transitions_vec.as_slice());
+                    if let Some(first) = existing_slice.first() {
+                        merged_range.0 = merged_range.0.min(first.time_ns);
+                    }
+                    if let Some(last) = existing_slice.last() {
+                        merged_range.1 = merged_range.1.max(last.time_ns);
+                    }
+                    total_transitions = transitions_vec.len();
+                }
+            }
+
+            let transitions_arc = Arc::new(transitions_vec);
+
+            if let Some(lod_bucket) = cache_slot_action {
+                let slots = cache
+                    .entries
+                    .entry(unique_id.clone())
+                    .or_insert_with(VecDeque::new);
                 slots.push_front(TimelineCacheEntry {
                     lod_bucket,
                     range_ns: merged_range,
@@ -1560,24 +1654,15 @@ impl WaveformTimeline {
                 while slots.len() > CACHE_MAX_SEGMENTS_PER_VARIABLE {
                     slots.pop_back();
                 }
-
-                series_map.insert(
-                    unique_id,
-                    VariableSeriesData {
-                        transitions: transitions_arc,
-                        total_transitions,
-                    },
-                );
-            } else {
-                let transitions_arc = Arc::new(transitions_vec);
-                series_map.insert(
-                    unique_id,
-                    VariableSeriesData {
-                        transitions: transitions_arc,
-                        total_transitions,
-                    },
-                );
             }
+
+            series_map.insert(
+                unique_id,
+                VariableSeriesData {
+                    transitions: transitions_arc,
+                    total_transitions,
+                },
+            );
         }
 
         drop(series_map);
