@@ -34,7 +34,7 @@ variables_search_filter = "counter_0_"
 
 [workspace.docked_bottom_dimensions]
 files_and_scopes_panel_width = 393.0
-files_and_scopes_panel_height = 527.0
+files_and_scopes_panel_height = 462.0
 selected_variables_panel_name_column_width = 299.0
 selected_variables_panel_value_column_width = 232.0
 
@@ -50,17 +50,18 @@ formatter = "Hexadecimal"
 
 [[workspace.selected_variables]]
 unique_id = "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s|B"
+formatter = "BinaryWithGroups"
 
 [[workspace.selected_variables]]
 unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP|clk"
 
 [[workspace.selected_variables]]
 unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv|AlignerPlugin_logic_buffer_hm_GSharePlugin_GSHARE_COUNTER_0"
-formatter = "Hexadecimal"
+formatter = "Unsigned"
 
 [workspace.timeline]
 cursor_position_ps = 1400000
 visible_range_start_ps = 1292099
 visible_range_end_ps = 1473534
-zoom_center_ps = 1366992
-tooltip_enabled = false
+zoom_center_ps = 1312968
+tooltip_enabled = true
