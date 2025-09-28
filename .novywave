@@ -28,7 +28,6 @@ load_files_expanded_directories = [
     "/home/martinkavik/repos/NovyWave/test_files",
     "/home/martinkavik/repos/NovyWave/test_files/nested_dir",
 ]
-selected_scope_id = "scope_/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv"
 load_files_scroll_position = 973
 variables_search_filter = "counter_0_"
 
@@ -63,5 +62,5 @@ formatter = "Unsigned"
 cursor_position_ps = 1400000
 visible_range_start_ps = 1292099
 visible_range_end_ps = 1473534
-zoom_center_ps = 1312968
+zoom_center_ps = 1353463
 tooltip_enabled = true
