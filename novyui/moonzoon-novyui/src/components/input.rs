@@ -4,7 +4,7 @@
 use crate::components::icon::{IconColor, IconName, IconSize, icon_str};
 use crate::tokens::*;
 use std::rc::Rc;
-use zoon::*;
+use zoon::{KeyboardEvent, *};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum InputSize {
@@ -49,6 +49,7 @@ pub struct InputBuilder {
     on_change: Option<Rc<dyn Fn(String)>>,
     on_focus: Option<Rc<dyn Fn()>>,
     on_blur: Option<Rc<dyn Fn()>>,
+    on_key_down_event: Option<Rc<dyn Fn(KeyboardEvent)>>,
 }
 
 impl InputBuilder {
@@ -70,6 +71,7 @@ impl InputBuilder {
             on_change: None,
             on_focus: None,
             on_blur: None,
+            on_key_down_event: None,
         }
     }
 
@@ -179,6 +181,14 @@ impl InputBuilder {
         self
     }
 
+    pub fn on_key_down_event<F>(mut self, handler: F) -> Self
+    where
+        F: Fn(KeyboardEvent) + 'static,
+    {
+        self.on_key_down_event = Some(Rc::new(handler));
+        self
+    }
+
     pub fn build(self) -> impl Element {
         let (focused, focused_signal) = Mutable::new_and_signal(false);
 
@@ -271,6 +281,7 @@ impl InputBuilder {
         let right_icon_signal = self.right_icon_signal;
         let on_right_icon_click = self.on_right_icon_click;
         let size = self.size;
+        let on_key_down_event = self.on_key_down_event;
 
         // Container with proper styling matching Vue implementation
         Row::new()
@@ -409,8 +420,8 @@ impl InputBuilder {
                         .build()
                 })
             }))
-            .item(
-                TextInput::new()
+            .item({
+                let mut text_input = TextInput::new()
                     .s(Width::fill())
                     .s(Height::fill())
                     .s(Font::new()
@@ -465,8 +476,17 @@ impl InputBuilder {
                                 handler();
                             }
                         }
-                    }),
-            )
+                    });
+
+                if let Some(handler) = on_key_down_event {
+                    let handler = handler.clone();
+                    text_input = text_input.on_key_down_event(move |event| {
+                        handler(event);
+                    });
+                }
+
+                text_input
+            })
             .item_signal({
                 // Use signal if available, otherwise fall back to static right_icon
                 let icon_signal = if let Some(signal) = right_icon_signal {

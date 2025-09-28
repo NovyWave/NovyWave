@@ -12,6 +12,7 @@ use moonzoon_novyui::tokens::color::{neutral_8, neutral_11, primary_6};
 use moonzoon_novyui::*;
 use shared::{SelectedVariable, TrackedFile, VarFormat};
 use zoon::*;
+use zoon::{JsCast, Key, RawKeyboardEvent};
 
 /// Selected Variables panel row height
 pub const SELECTED_VARIABLES_ROW_HEIGHT: u32 = 30;
@@ -94,6 +95,36 @@ pub fn variables_panel(
                                 .on_blur({
                                     let relay = search_focus_relay.clone();
                                     move || relay.send(false)
+                                })
+                                .on_key_down_event({
+                                    let focus_relay = search_focus_relay.clone();
+                                    move |event| {
+                                        if event.key() == &Key::Escape {
+                                            event.pass_to_parent(false);
+                                            if let RawKeyboardEvent::KeyDown(native_event) =
+                                                &event.raw_event
+                                            {
+                                                native_event.prevent_default();
+                                            }
+
+                                            if let Some(window) = web_sys::window() {
+                                                if let Some(document) = window.document() {
+                                                    if let Some(active_element) =
+                                                        document.active_element()
+                                                    {
+                                                        if let Ok(html_element) =
+                                                            active_element
+                                                                .dyn_into::<web_sys::HtmlElement>()
+                                                        {
+                                                            let _ = html_element.blur();
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            focus_relay.send(false);
+                                        }
+                                    }
                                 })
                                 .build(),
                         ),

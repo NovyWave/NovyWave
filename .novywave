@@ -30,7 +30,7 @@ load_files_expanded_directories = [
 ]
 selected_scope_id = "scope_/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv"
 load_files_scroll_position = 973
-variables_search_filter = "counter"
+variables_search_filter = "counter_0_"
 
 [workspace.docked_bottom_dimensions]
 files_and_scopes_panel_width = 393.0
@@ -59,8 +59,8 @@ unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRi
 formatter = "Hexadecimal"
 
 [workspace.timeline]
-cursor_position_ps = 1385198
+cursor_position_ps = 1400000
 visible_range_start_ps = 1292099
 visible_range_end_ps = 1473534
-zoom_center_ps = 1375931
-tooltip_enabled = true
+zoom_center_ps = 1366992
+tooltip_enabled = false
