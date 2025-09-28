@@ -14,9 +14,9 @@ futures = "0.3"
 indexmap = "2.0"
 fast2d = { path = "../../Fast2D/crates/fast2d", default-features = false, features = [
     # Choose one of the following rendering APIs:
-    "webgl",
+    # "webgl",
     # "webgpu",
-    # "canvas",
+    "canvas",
 ] }
 moonzoon-novyui = { path = "../novyui/moonzoon-novyui" }
 web-sys = { version = "0.3", features = ["Performance", "Window", "console", "IntersectionObserver", "IntersectionObserverEntry", "IntersectionObserverInit", "Element", "HtmlElement", "DomRect", "Document", "HtmlHeadElement", "HtmlLinkElement", "Node", "Clipboard", "Navigator"] }

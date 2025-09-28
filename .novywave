@@ -28,7 +28,7 @@ load_files_expanded_directories = [
     "/home/martinkavik/repos/NovyWave/test_files",
     "/home/martinkavik/repos/NovyWave/test_files/nested_dir",
 ]
-selected_scope_id = "scope_/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s"
+selected_scope_id = "scope_/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv"
 load_files_scroll_position = 973
 
 [workspace.docked_bottom_dimensions]
@@ -53,9 +53,12 @@ unique_id = "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s|
 [[workspace.selected_variables]]
 unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP|clk"
 
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP.VexiiRiscv|AlignerPlugin_logic_buffer_hm_GSharePlugin_GSHARE_COUNTER_0"
+
 [workspace.timeline]
-cursor_position_ps = 125000000000000
+cursor_position_ps = 3770266
 visible_range_start_ps = 0
 visible_range_end_ps = 250000000000000
-zoom_center_ps = 34120734908136
+zoom_center_ps = 21981627296588
 tooltip_enabled = true
