@@ -34,8 +34,8 @@ load_files_scroll_position = 973
 [workspace.docked_bottom_dimensions]
 files_and_scopes_panel_width = 393.0
 files_and_scopes_panel_height = 527.0
-selected_variables_panel_name_column_width = 251.0
-selected_variables_panel_value_column_width = 266.0
+selected_variables_panel_name_column_width = 299.0
+selected_variables_panel_value_column_width = 232.0
 
 [workspace.docked_right_dimensions]
 files_and_scopes_panel_width = 381.0
@@ -61,5 +61,5 @@ formatter = "Hexadecimal"
 cursor_position_ps = 1385198
 visible_range_start_ps = 1292099
 visible_range_end_ps = 1473534
-zoom_center_ps = 1301111
+zoom_center_ps = 1341142
 tooltip_enabled = true

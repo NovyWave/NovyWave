@@ -303,12 +303,12 @@ fn name_column_footer(
     El::new()
         .s(Height::exact(SELECTED_VARIABLES_ROW_HEIGHT))
         .s(Width::fill())
-        .s(Padding::all(8))
+        .s(Padding::all(1))
         .s(Font::new().color_signal(neutral_8()).size(12).center())
         .s(Transform::new().move_up(4))
         .child(
             Row::new()
-                .s(Align::new().center_y())
+                // .s(Align::new().center_y())
                 .item(
                     // Z key - Reset zoom center
                     kbd("Z")
@@ -476,7 +476,7 @@ fn value_column_footer(
     El::new()
         .s(Height::exact(SELECTED_VARIABLES_ROW_HEIGHT))
         .s(Width::fill())
-        .s(Padding::all(8))
+        .s(Padding::all(1))
         .s(Transform::new().move_up(4))
         .child(
             Row::new()
