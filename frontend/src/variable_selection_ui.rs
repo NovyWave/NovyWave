@@ -287,14 +287,26 @@ pub fn selected_variables_with_waveform_panel(
                                                             )
                                                             .item(El::new().s(Width::fill()))
                                                             .item(
-                                                                El::new()
-                                                                    .on_click({
-                                                                        let relay = waveform_timeline.reset_zoom_pressed_relay.clone();
-                                                                        move || {
-                                                                            relay.send(());
-                                                                        }
-                                                                    })
-                                                                    .child(kbd("R").size(KbdSize::Small).variant(KbdVariant::Outlined).title("Reset zoom to 1x, fit all data, and center cursor").build())
+                                                                Row::new()
+                                                                    .s(Align::center())
+                                                                    .s(Gap::new().x(SPACING_4))
+                                                                    .item(
+                                                                        El::new()
+                                                                            .on_click({
+                                                                                let relay = waveform_timeline.reset_zoom_pressed_relay.clone();
+                                                                                move || {
+                                                                                    relay.send(());
+                                                                                }
+                                                                            })
+                                                                            .child(kbd("R").size(KbdSize::Small).variant(KbdVariant::Outlined).title("Reset zoom to 1x, fit all data, and center cursor").build())
+                                                                    )
+                                                                    .item(
+                                                                        kbd("T")
+                                                                            .size(KbdSize::Small)
+                                                                            .variant(KbdVariant::Outlined)
+                                                                            .title("Toggle waveform tooltip visibility")
+                                                                            .build()
+                                                                    )
                                                             )
                                                     )
                                             )

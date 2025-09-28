@@ -353,19 +353,31 @@ fn name_column_footer(
                 )
                 .item(El::new().s(Width::fill()))
                 .item(
-                    // R key - Reset zoom
-                    El::new()
-                        .on_click({
-                            let relay = waveform_timeline.reset_zoom_pressed_relay.clone();
-                            move || {
-                                relay.send(());
-                            }
-                        })
-                        .child(
-                            kbd("R")
+                    // R key - Reset zoom, T key - Toggle tooltip visibility
+                    Row::new()
+                        .s(Align::center())
+                        .s(Gap::new().x(SPACING_4))
+                        .item(
+                            El::new()
+                                .on_click({
+                                    let relay = waveform_timeline.reset_zoom_pressed_relay.clone();
+                                    move || {
+                                        relay.send(());
+                                    }
+                                })
+                                .child(
+                                    kbd("R")
+                                        .size(KbdSize::Small)
+                                        .variant(KbdVariant::Outlined)
+                                        .title("Press R to reset to default zoom center, zoom and cursor position.")
+                                        .build()
+                                )
+                        )
+                        .item(
+                            kbd("T")
                                 .size(KbdSize::Small)
                                 .variant(KbdVariant::Outlined)
-                                .title("Press R to reset to default zoom center, zoom and cursor position.")
+                                .title("Press T to toggle waveform tooltip visibility")
                                 .build()
                         )
                 )

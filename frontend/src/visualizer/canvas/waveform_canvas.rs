@@ -268,8 +268,6 @@ pub fn waveform_canvas(
     theme_relay.send(initial_theme);
 
     let theme_signal_for_tooltip = waveform_canvas.current_theme.signal_cloned();
-    let theme_signal_for_hint = waveform_canvas.current_theme.signal_cloned();
-    let tooltip_visibility_handle = waveform_timeline.tooltip_visibility_handle();
 
     let canvas_element = Canvas::new()
         .width(1)
@@ -395,8 +393,6 @@ pub fn waveform_canvas(
         }
     };
 
-    let tooltip_enabled_signal = tooltip_visibility_handle.signal_cloned();
-
     let canvas_element_store_for_tooltip = canvas_element_store.clone();
     let tooltip_layer = El::new()
         .update_raw_el(|raw_el| {
@@ -421,61 +417,11 @@ pub fn waveform_canvas(
             })
         });
 
-    let tooltip_hint_layer = El::new()
-        .update_raw_el(|raw_el| {
-            raw_el
-                .style("position", "absolute")
-                .style("top", "12px")
-                .style("right", "16px")
-                .style("pointer-events", "none")
-        })
-        .child_signal({
-            let theme_signal = theme_signal_for_hint;
-            let tooltip_enabled_signal = tooltip_enabled_signal;
-            map_ref! {
-                let theme = theme_signal,
-                let tooltip_enabled = tooltip_enabled_signal => {
-                    if *tooltip_enabled {
-                        None
-                    } else {
-                        let (background, border, text_color) = match theme {
-                            Theme::Light => (
-                                "rgba(15, 23, 42, 0.08)",
-                                "rgba(148, 163, 184, 0.45)",
-                                "#0f172a",
-                            ),
-                            Theme::Dark => (
-                                "rgba(15, 23, 42, 0.75)",
-                                "rgba(148, 163, 184, 0.35)",
-                                "#f8fafc",
-                            ),
-                        };
-
-                        Some(
-                            El::new()
-                                .s(Padding::new().x(10).y(6))
-                                .s(RoundedCorners::all(6))
-                                .s(Font::new().size(11))
-                                .update_raw_el(|raw_el| {
-                                    raw_el
-                                        .style("background", background)
-                                        .style("border", &format!("1px solid {}", border))
-                                        .style("color", text_color)
-                                })
-                                .child("Tooltips hidden - press T to show")
-                                .unify(),
-                        )
-                    }
-                }
-            }
-        });
-
     Stack::new()
         .s(Width::fill())
         .s(Height::fill())
         .layer(canvas_element)
         .layer(tooltip_layer)
-        .layer(tooltip_hint_layer)
 }
 
 fn tooltip_view(
@@ -485,13 +431,13 @@ fn tooltip_view(
 ) -> impl Element {
     let (background, border_color, primary_text, secondary_text) = match theme {
         Theme::Light => (
-            "rgba(255, 255, 255, 0.97)",
+            "rgba(255, 255, 255, 0.9)",
             "rgba(148, 163, 184, 0.35)",
             "#0f172a",
             "rgba(71, 85, 105, 0.8)",
         ),
         Theme::Dark => (
-            "rgba(15, 23, 42, 0.92)",
+            "rgba(15, 23, 42, 0.85)",
             "rgba(148, 163, 184, 0.3)",
             "#f8fafc",
             "rgba(203, 213, 225, 0.7)",
@@ -505,6 +451,11 @@ fn tooltip_view(
         .item(
             El::new()
                 .s(Font::new().size(12).weight(FontWeight::SemiBold))
+                .update_raw_el(|raw_el| {
+                    raw_el
+                        .style("white-space", "normal")
+                        .style("overflow-wrap", "anywhere")
+                })
                 .child(data.variable_label.clone()),
         )
         .item(
@@ -531,14 +482,6 @@ fn tooltip_view(
             }));
         content = content.item(educational_block);
     }
-
-    content = content.item(
-        El::new()
-            .s(Padding::new().top(4))
-            .s(Font::new().size(10))
-            .update_raw_el(|raw_el| raw_el.style("color", secondary_text))
-            .child("Press T to hide tooltip"),
-    );
 
     let (origin_x, origin_y) = canvas_origin.unwrap_or((0.0, 0.0));
     let anchor_x = origin_x + data.screen_x as f64;
