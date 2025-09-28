@@ -8,6 +8,8 @@
 
 ## Demo
 
+https://github.com/user-attachments/assets/a54f447c-11a4-479f-97c4-2a78dd0feaf1
+
 ## Milestones
 
 - **5a.** Efficiently transfer signal data from the Tauri backend	
