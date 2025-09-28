@@ -550,7 +550,6 @@ pub struct AppConfig {
     pub dock_mode_button_clicked_relay: Relay,
     pub theme_changed_relay: Relay<SharedTheme>,
     pub dock_mode_changed_relay: Relay<DockMode>,
-    pub variables_filter_changed_relay: Relay<String>,
     pub files_width_right_changed_relay: Relay<f32>,
     pub files_height_right_changed_relay: Relay<f32>,
     pub files_width_bottom_changed_relay: Relay<f32>,
@@ -580,6 +579,7 @@ pub struct AppConfig {
     _config_loaded_actor: Actor<()>,
     _treeview_sync_actor: Actor<()>,
     _tracked_files_sync_actor: Actor<()>,
+    _variables_filter_bridge_actor: Actor<()>,
     _selected_variables_snapshot_actor: Actor<Vec<shared::SelectedVariable>>,
 }
 
@@ -603,7 +603,6 @@ impl AppConfig {
         let (dock_mode_button_clicked_relay, mut dock_mode_button_clicked_stream) = relay();
         let (theme_changed_relay, mut theme_changed_stream) = relay();
         let (dock_mode_changed_relay, mut dock_mode_changed_stream) = relay();
-        let (variables_filter_changed_relay, variables_filter_changed_stream) = relay();
         let (session_state_changed_relay, session_state_changed_stream) = relay::<SessionState>();
         let session_state_changed_stream_for_config_saver = session_state_changed_relay.subscribe();
         let session_state_changed_stream_for_session_actor =
@@ -923,20 +922,12 @@ impl AppConfig {
             },
             async move |state| {
                 let mut session_stream = session_state_changed_stream_for_session_actor;
-                let mut variables_filter_stream = variables_filter_changed_stream;
 
                 loop {
                     select! {
                         session_change = session_stream.next() => {
                             if let Some(new_session) = session_change {
                                 state.set_neq(new_session);
-                            }
-                        }
-                        filter_change = variables_filter_stream.next() => {
-                            if let Some(new_filter) = filter_change {
-                                state.update_mut(|session| {
-                                    session.variables_search_filter = new_filter;
-                                });
                             }
                         }
                         complete => break,
@@ -1129,6 +1120,50 @@ impl AppConfig {
 
                     // Trigger save
                     session_relay_for_files.send(current_session);
+                }
+            })
+        };
+
+        // Bridge variables search filter between SelectedVariables domain and SessionState
+        let variables_filter_bridge_actor = {
+            let session_state_actor_for_bridge = session_state_actor.clone();
+            let session_state_relay_for_bridge = session_state_changed_relay.clone();
+            let search_filter_relay = selected_variables.search_filter_changed_relay.clone();
+
+            Actor::new((), async move |_state| {
+                let mut session_state_stream =
+                    session_state_actor_for_bridge.signal().to_stream().fuse();
+                let mut filter_events_stream = search_filter_relay.subscribe().fuse();
+
+                let mut current_session = session_state_stream.next().await.unwrap_or_default();
+                let mut current_filter = current_session.variables_search_filter.clone();
+
+                loop {
+                    select! {
+                        session = session_state_stream.next() => {
+                            if let Some(session_state) = session {
+                                if current_filter != session_state.variables_search_filter {
+                                    current_filter = session_state.variables_search_filter.clone();
+                                    search_filter_relay.send(current_filter.clone());
+                                }
+                                current_session = session_state;
+                            } else {
+                                break;
+                            }
+                        }
+                        filter = filter_events_stream.next() => {
+                            if let Some(filter_text) = filter {
+                                if current_filter == filter_text {
+                                    continue;
+                                }
+                                current_filter = filter_text.clone();
+                                current_session.variables_search_filter = filter_text;
+                                session_state_relay_for_bridge.send(current_session.clone());
+                            } else {
+                                break;
+                            }
+                        }
+                    }
                 }
             })
         };
@@ -1586,7 +1621,6 @@ impl AppConfig {
             dock_mode_button_clicked_relay,
             theme_changed_relay,
             dock_mode_changed_relay,
-            variables_filter_changed_relay,
             files_width_right_changed_relay,
             files_height_right_changed_relay,
             files_width_bottom_changed_relay,
@@ -1619,6 +1653,7 @@ impl AppConfig {
             _connection_message_actor: connection_message_actor,
             _treeview_sync_actor: treeview_sync_actor,
             _tracked_files_sync_actor: tracked_files_sync_actor,
+            _variables_filter_bridge_actor: variables_filter_bridge_actor,
             _selected_variables_snapshot_actor: selected_variables_snapshot_actor,
         }
     }
