@@ -192,6 +192,7 @@ script = '''
 ./mzoon/bin/mzoon clean
 cd src-tauri && cargo clean
 rm -rf frontend_dist
+rm -rf plugins/dist
 '''
 
 ######  HELPER TASKS  ######
@@ -214,6 +215,31 @@ args = [
     "7c5178d891cf4afbc2bbbe864ca63588b6c10f2a",
     "--root",
     "mzoon",
+]
+
+[tasks.build_plugins]
+description = "Build all plugin components and copy artifacts to plugins/dist"
+script_runner = "bash"
+script = [
+    "set -eu",
+    "DIST_DIR=plugins/dist",
+    "mkdir -p \"${DIST_DIR}\"",
+    "mapfile -t targets < <(find plugins -maxdepth 2 -name Cargo.toml)",
+    "if [ ${#targets[@]} -eq 0 ]; then echo 'No plugin manifests found under plugins/'; exit 0; fi",
+    "for manifest in \"${targets[@]}\"; do echo \"Building component for ${manifest}\"; cargo component build --release --manifest-path \"${manifest}\"; done",
+    "rm -f \"${DIST_DIR}\"/*.wasm",
+    "find target/wasm32-wasip1/release -maxdepth 1 -name '*.wasm' -print -exec cp {} \"${DIST_DIR}/\" \\;",
+    "echo \"Plugin components copied to ${DIST_DIR}/\""
+]
+
+[tasks.watch_plugins]
+description = "Watch plugin sources and rebuild components"
+script_runner = "bash"
+script = [
+    "set -eu",
+    "> dev_plugins.log",
+    "echo '[watch_plugins] watching plugins/**' >> dev_plugins.log",
+    "cargo watch -w plugins -i plugins/dist/** -s 'makers build_plugins' >> dev_plugins.log 2>&1"
 ]
 
 [tasks.install_tauri_cli]

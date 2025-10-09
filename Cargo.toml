@@ -3,8 +3,10 @@ resolver = "3"
 members = [
     "frontend",
     "backend",
+    "backend/crates/plugin_host",
     "shared",
     "src-tauri",
+    "plugins/hello_world",
 ]
 
 [workspace.package]

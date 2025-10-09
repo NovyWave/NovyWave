@@ -1,7 +1,8 @@
 use convert_base;
 use serde::{Deserialize, Deserializer, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::str::FromStr;
+use toml::value::Table as TomlTable;
 
 // ===== TIME TYPES =====
 
@@ -1161,6 +1162,8 @@ pub struct AppConfig {
     pub app: AppSection,
     pub ui: UiSection,
     pub workspace: WorkspaceSection,
+    #[serde(default)]
+    pub plugins: PluginsSection,
 }
 
 // AppSection contains configuration metadata, primarily for versioning and migration
@@ -1315,6 +1318,162 @@ impl Default for WorkspaceSection {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct PluginsSection {
+    #[serde(default = "PluginsSection::default_schema_version")]
+    pub schema_version: u32,
+    #[serde(default)]
+    pub entries: Vec<PluginConfigEntry>,
+}
+
+impl PluginsSection {
+    const DEFAULT_SCHEMA_VERSION: u32 = 1;
+
+    const fn default_schema_version() -> u32 {
+        Self::DEFAULT_SCHEMA_VERSION
+    }
+
+    pub fn is_default(&self) -> bool {
+        self.schema_version == Self::DEFAULT_SCHEMA_VERSION && self.entries.is_empty()
+    }
+
+    pub fn validate_and_fix(&mut self) -> Vec<String> {
+        let mut warnings = Vec::new();
+
+        if self.schema_version == 0 {
+            warnings.push(
+                "Plugins schema version missing or zero; defaulting to version 1".to_string(),
+            );
+            self.schema_version = Self::DEFAULT_SCHEMA_VERSION;
+        }
+
+        let mut normalized_entries = Vec::with_capacity(self.entries.len());
+        for mut entry in std::mem::take(&mut self.entries) {
+            entry.id = entry.id.trim().to_string();
+            if entry.id.is_empty() {
+                warnings.push("Removed plugin entry with empty id".to_string());
+                continue;
+            }
+            warnings.extend(entry.validate_and_fix());
+            normalized_entries.push(entry);
+        }
+        self.entries = normalized_entries;
+
+        warnings
+    }
+}
+
+impl Default for PluginsSection {
+    fn default() -> Self {
+        Self {
+            schema_version: Self::DEFAULT_SCHEMA_VERSION,
+            entries: Vec::new(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct PluginConfigEntry {
+    pub id: String,
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub artifact_path: String,
+    #[serde(default = "PluginConfigEntry::default_config")]
+    pub config: TomlTable,
+    #[serde(default)]
+    pub watch: Option<PluginWatchConfig>,
+}
+
+impl PluginConfigEntry {
+    fn default_config() -> TomlTable {
+        TomlTable::new()
+    }
+
+    pub fn validate_and_fix(&mut self) -> Vec<String> {
+        let mut warnings = Vec::new();
+
+        self.artifact_path = self.artifact_path.trim().to_string();
+        if self.artifact_path.is_empty() {
+            warnings.push(format!(
+                "Plugin '{}' missing artifact_path; disabling entry",
+                self.id
+            ));
+            self.enabled = false;
+        }
+
+        if let Some(watch) = &mut self.watch {
+            warnings.extend(watch.validate_and_fix(&self.id));
+        }
+
+        warnings
+    }
+}
+
+impl Default for PluginConfigEntry {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            enabled: false,
+            artifact_path: String::new(),
+            config: TomlTable::new(),
+            watch: None,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+pub struct PluginWatchConfig {
+    #[serde(default)]
+    pub directories: Vec<String>,
+    #[serde(default = "PluginWatchConfig::default_debounce_ms")]
+    pub debounce_ms: u32,
+}
+
+impl PluginWatchConfig {
+    const fn default_debounce_ms() -> u32 {
+        250
+    }
+
+    fn validate_and_fix(&mut self, plugin_id: &str) -> Vec<String> {
+        let mut warnings = Vec::new();
+
+        let mut normalized = Vec::new();
+        let mut seen = BTreeSet::new();
+        for dir in std::mem::take(&mut self.directories) {
+            let trimmed = dir.trim();
+            if trimmed.is_empty() {
+                warnings.push(format!(
+                    "Plugin '{}' watch directory entry was empty and has been discarded",
+                    plugin_id
+                ));
+                continue;
+            }
+            let normalized_dir = trimmed.to_string();
+            if !seen.insert(normalized_dir.clone()) {
+                warnings.push(format!(
+                    "Plugin '{}' watch directory '{}' duplicated; keeping single entry",
+                    plugin_id, trimmed
+                ));
+                continue;
+            }
+            normalized.push(normalized_dir);
+        }
+        self.directories = normalized;
+
+        if self.debounce_ms < 50 {
+            let fallback = Self::default_debounce_ms();
+            warnings.push(format!(
+                "Plugin '{}' debounce_ms {} too low; setting to {}",
+                plugin_id, self.debounce_ms, fallback
+            ));
+            self.debounce_ms = fallback;
+        }
+
+        warnings
+    }
+}
+
 // Custom deserializer for dock mode with backward compatibility
 fn deserialize_dock_mode<'de, D>(deserializer: D) -> Result<DockMode, D::Error>
 where
@@ -1429,6 +1588,9 @@ impl AppConfig {
 
         // Migrate expanded_scopes from old format to new format
         warnings.extend(self.migrate_expanded_scopes());
+
+        // Validate plugins section
+        warnings.extend(self.plugins.validate_and_fix());
 
         warnings
     }

@@ -1,3 +1,5 @@
+mod plugins;
+
 use jwalk::WalkDir;
 use moon::*;
 use rayon::prelude::*;
@@ -1970,6 +1972,32 @@ async fn load_config(session_id: SessionId, cor_id: CorId) {
         });
     }
 
+    let plugin_reload = plugins::reload_plugins(&config.plugins);
+    if plugin_reload.reloaded {
+        for status in &plugin_reload.statuses {
+            let init_msg = status
+                .init_message
+                .as_ref()
+                .map(|msg| msg.as_str())
+                .unwrap_or("");
+            let last_msg = status
+                .last_message
+                .as_ref()
+                .map(|msg| msg.as_str())
+                .unwrap_or("");
+            let detail = match (init_msg.is_empty(), last_msg.is_empty()) {
+                (false, false) => format!(" | init: {} | last: {}", init_msg, last_msg),
+                (false, true) => format!(" | init: {}", init_msg),
+                (true, false) => format!(" | last: {}", last_msg),
+                (true, true) => String::new(),
+            };
+            println!(
+                "🔌 BACKEND: plugin '{}' status {:?}{}",
+                status.id, status.state, detail
+            );
+        }
+    }
+
     println!(
         "🚀 BACKEND: Sending ConfigLoaded to frontend with {} expanded directories",
         config.workspace.load_files_expanded_directories.len()
@@ -1978,6 +2006,32 @@ async fn load_config(session_id: SessionId, cor_id: CorId) {
 }
 
 async fn save_config(config: AppConfig, session_id: SessionId, cor_id: CorId) {
+    let plugin_reload = plugins::reload_plugins(&config.plugins);
+    if plugin_reload.reloaded {
+        for status in &plugin_reload.statuses {
+            let init_msg = status
+                .init_message
+                .as_ref()
+                .map(|msg| msg.as_str())
+                .unwrap_or("");
+            let last_msg = status
+                .last_message
+                .as_ref()
+                .map(|msg| msg.as_str())
+                .unwrap_or("");
+            let detail = match (init_msg.is_empty(), last_msg.is_empty()) {
+                (false, false) => format!(" | init: {} | last: {}", init_msg, last_msg),
+                (false, true) => format!(" | init: {}", init_msg),
+                (true, false) => format!(" | last: {}", last_msg),
+                (true, true) => String::new(),
+            };
+            println!(
+                "🔌 BACKEND: plugin '{}' status {:?}{}",
+                status.id, status.state, detail
+            );
+        }
+    }
+
     match save_config_to_file(&config) {
         Ok(()) => {
             send_down_msg(DownMsg::ConfigSaved, session_id, cor_id).await;

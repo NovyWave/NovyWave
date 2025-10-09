@@ -31,6 +31,7 @@ async fn compose_shared_app_config(
     value_column_width_bottom_state: &Mutable<f32>,
     value_column_width_right_state: &Mutable<f32>,
     timeline_state_actor: &Actor<TimelineState>,
+    plugins_state: &Mutable<shared::PluginsSection>,
 ) -> Option<shared::AppConfig> {
     let theme = theme_actor.signal().to_stream().next().await?;
     let dock_mode = dock_mode_actor.signal().to_stream().next().await?;
@@ -127,6 +128,7 @@ async fn compose_shared_app_config(
             theme,
             toast_dismiss_ms: toast_dismiss_ms as u64,
         },
+        plugins: plugins_state.get_cloned(),
     })
 }
 
@@ -537,6 +539,7 @@ pub struct AppConfig {
 
     pub session_state_actor: Actor<SessionState>,
     pub toast_dismiss_ms_actor: Actor<u32>,
+    pub plugins_state: Mutable<shared::PluginsSection>,
 
     // File picker domain with proper Actor+Relay architecture
     pub file_picker_domain: FilePickerDomain,
@@ -598,6 +601,8 @@ impl AppConfig {
         let config = Self::load_config_from_backend()
             .await
             .unwrap_or_else(|_error| SharedAppConfig::default());
+
+        let plugins_state = Mutable::new(config.plugins.clone());
 
         let (theme_button_clicked_relay, mut theme_button_clicked_stream) = relay();
         let (dock_mode_button_clicked_relay, mut dock_mode_button_clicked_stream) = relay();
@@ -1211,6 +1216,7 @@ impl AppConfig {
             let name_column_width_right_state_clone = name_column_width_right_state.clone();
             let value_column_width_bottom_state_clone = value_column_width_bottom_state.clone();
             let value_column_width_right_state_clone = value_column_width_right_state.clone();
+            let plugins_state_clone = plugins_state.clone();
 
             Actor::new((), async move |_state| {
                 let mut config_save_requested_stream = config_save_requested_stream.fuse();
@@ -1259,6 +1265,7 @@ impl AppConfig {
                                                 &value_column_width_bottom_state_clone,
                                                 &value_column_width_right_state_clone,
                                                 &timeline_state_actor_clone,
+                                                &plugins_state_clone,
                                             )
                                             .await
                                             {
@@ -1303,6 +1310,7 @@ impl AppConfig {
                                                 &value_column_width_bottom_state_clone,
                                                 &value_column_width_right_state_clone,
                                                 &timeline_state_actor_clone,
+                                                &plugins_state_clone,
                                             )
                                             .await
                                             {
@@ -1411,11 +1419,13 @@ impl AppConfig {
             let value_column_width_relay = value_column_width_changed_relay.clone();
             let timeline_state_relay = timeline_state_changed_relay.clone();
             let timeline_state_restore_relay = timeline_state_restore_relay.clone();
+            let plugins_state_clone = plugins_state.clone();
 
             Actor::new((), async move |_state| {
                 let mut config_stream = config_loaded_stream;
 
                 while let Some(loaded_config) = config_stream.next().await {
+                    plugins_state_clone.set(loaded_config.plugins.clone());
                     dock_mode_state_for_config.set(loaded_config.workspace.dock_mode.clone());
 
                     let loaded_files_width_right = loaded_config
@@ -1612,6 +1622,7 @@ impl AppConfig {
             variables_value_column_width_actor,
             session_state_actor,
             toast_dismiss_ms_actor,
+            plugins_state,
 
             file_picker_domain,
 
@@ -1660,6 +1671,7 @@ impl AppConfig {
 
     /// Update config from loaded backend data
     pub fn update_from_loaded_config(&self, loaded_config: shared::AppConfig) {
+        self.plugins_state.set(loaded_config.plugins.clone());
         // Update theme using proper relay (not direct state access)
         self.theme_changed_relay.send(loaded_config.ui.theme);
 

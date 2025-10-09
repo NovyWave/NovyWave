@@ -1,0 +1,13 @@
+[package]
+name = "plugin_host"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow = "1.0"
+thiserror = "1.0"
+wasmtime = { version = "36.0.2", features = ["component-model"] }
+wasmtime-wasi = "36.0.2"
+shared = { path = "../../../shared" }
+toml = "0.8"
