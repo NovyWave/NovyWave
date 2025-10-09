@@ -2,6 +2,7 @@ use crate::config::{AppConfig, TimeRange, TimelineState};
 use crate::connection::ConnectionAdapter;
 use crate::dataflow::{Actor, Atom, Relay, relay};
 use crate::selected_variables::SelectedVariables;
+use crate::tracked_files::TrackedFiles;
 use crate::visualizer::timeline::maximum_timeline_range::MaximumTimelineRange;
 use crate::visualizer::timeline::time_domain::{
     FS_PER_PS, MIN_CURSOR_STEP_NS, PS_PER_NS, TimePerPixel, TimePs, Viewport,
@@ -209,6 +210,12 @@ impl TimelineWindowCache {
         self.entries.retain(|key, _| desired.contains(key));
     }
 
+    fn invalidate_ids(&mut self, unique_ids: &[String]) {
+        for unique_id in unique_ids {
+            self.entries.remove(unique_id);
+        }
+    }
+
     fn clear(&mut self) {
         self.entries.clear();
     }
@@ -399,6 +406,7 @@ impl WaveformTimeline {
 
     pub async fn new(
         selected_variables: SelectedVariables,
+        tracked_files: TrackedFiles,
         maximum_range: MaximumTimelineRange,
         connection: ConnectionAdapter,
         app_config: AppConfig,
@@ -530,6 +538,7 @@ impl WaveformTimeline {
         timeline.spawn_variable_format_handler(format_updated_stream);
         timeline.spawn_selected_variables_listener();
         timeline.spawn_bounds_listener();
+        timeline.spawn_file_reload_listener(tracked_files);
         timeline.spawn_pointer_hover_handler(pointer_hover_stream);
         timeline.spawn_tooltip_toggle_handler(tooltip_toggle_stream);
         timeline.spawn_request_triggers();
@@ -2135,6 +2144,60 @@ impl WaveformTimeline {
         });
     }
 
+    fn handle_file_reload_requested(&self, file_path: &str) {
+        let variables_snapshot = self
+            .selected_variables
+            .variables_vec_actor
+            .state
+            .get_cloned();
+
+        let affected_ids: HashSet<String> = variables_snapshot
+            .iter()
+            .filter_map(|var| {
+                var.file_path().and_then(|path| {
+                    if path == file_path {
+                        Some(var.unique_id.clone())
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect();
+
+        if affected_ids.is_empty() {
+            return;
+        }
+
+        let affected_list: Vec<String> = affected_ids.iter().cloned().collect();
+
+        {
+            let mut series_map = self.series_map.state.lock_mut();
+            for unique_id in &affected_list {
+                series_map.remove(unique_id);
+            }
+        }
+
+        {
+            let mut cursor_values = self.cursor_values.state.lock_mut();
+            for unique_id in &affected_list {
+                cursor_values.insert(unique_id.clone(), SignalValue::Loading);
+            }
+        }
+
+        {
+            let mut window_cache = self.window_cache.state.lock_mut();
+            window_cache.invalidate_ids(&affected_list);
+        }
+
+        for unique_id in &affected_list {
+            self.cancel_cursor_loading_indicator(unique_id);
+            self.schedule_cursor_loading_indicator(unique_id.clone());
+        }
+
+        self.update_render_state();
+        self.schedule_request();
+    }
+
     fn spawn_canvas_resize_handler(
         &self,
         canvas_resized_stream: impl futures::Stream<Item = (f32, f32)> + Unpin + 'static,
@@ -2329,6 +2392,17 @@ impl WaveformTimeline {
 
             while let Some(variables) = stream.next().await {
                 timeline.on_selected_variables_updated(variables);
+            }
+        });
+    }
+
+    fn spawn_file_reload_listener(&self, tracked_files: TrackedFiles) {
+        let timeline = self.clone();
+        Task::start(async move {
+            let mut reload_stream = tracked_files.file_reload_requested_relay.subscribe().fuse();
+
+            while let Some(file_id) = reload_stream.next().await {
+                timeline.handle_file_reload_requested(&file_id);
             }
         });
     }

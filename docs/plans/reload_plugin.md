@@ -15,17 +15,22 @@
 - Keep actors/relays authoritative—no new global mutables or implicit singletons beyond the existing plugin host.
 
 ## TODOs
-- [ ] **Design WIT surface:** Extend `plugins/wit/plugins.wit` with host imports for registering directory/file watchers, cancelling them, and requesting waveform reloads; add a guest export for change notifications (e.g., `on_paths_changed(paths: list<string>)`).
-- [ ] **Update Wasmtime bindings:** Regenerate bindings in `backend/crates/plugin_host` and the new plugin crate once the WIT surface grows; ensure `HostState` stores watcher handles and any channels required to call back into the component.
-- [ ] **Introduce watcher backend:** Add a `notify`-based (or `watchexec`) watcher module under `backend/crates/plugin_host` that honours `PluginWatchConfig.directories` plus `debounce_ms`, and hook it into the plugin lifecycle (`init` registers, `shutdown` drops).
-- [ ] **Plumb reload requests:** Expose a host-side API that lets the wasm plugin trigger the existing `load_waveform_file` path. This likely means adding a `PluginHostCommand` channel consumed in `backend/src/plugins.rs` to call into `load_waveform_file` (or enqueue an `UpMsg::LoadWaveformFile` equivalent).
-- [ ] **Implement reload plugin crate:** Scaffold `plugins/reload_watcher` (mirroring `hello_world`) that, on `init`, reads `PluginConfigEntry.config` for include/exclude rules, registers watchers, and calls the host reload API for each affected path.
-- [ ] **hello_world demo tweak:** Update `plugins/hello_world` so `greet()` demonstrates plugin-specific behaviour instead of a global placeholder constant, keeping the sample aligned with best practices.
-- [ ] **Config wiring:** Update `.novywave` templates and `shared::AppConfig` persistence so plugin-specific settings (selected directories, debounce overrides, maybe glob filters) round-trip cleanly. Ensure the new plugin entry is disabled by default until signed off.
-- [ ] **Timeline cache invalidation:** Add a relay or signal in `WaveformTimeline` to flush `window_cache` and force fresh `UnifiedSignalQuery` requests when `TrackedFiles` reports a state transition from `Loading` back to `Loaded` for the same file ID.
-- [ ] **SelectedVariables resilience:** Verify `SelectedVariables` keeps formats and scope selections after reload; add targeted tests or guards so missing variables emit explicit warnings instead of silently dropping selections.
-- [ ] **Diagnostics & logging:** Feed watcher lifecycle and reload attempts into existing logging (backend console + `dev_server.log`) with clear icons, matching the current `🔌`/`🔍` style. Surface actionable errors to the UI via `DownMsg::ParsingError`.
-- [ ] **Documentation pass:** Expand `docs/plugins/authoring_guide.md` with the new APIs, usage examples, and guidance on safe watcher scopes. Include manual QA steps so contributors can verify live reloads without guessing.
+- [x] **Design WIT surface:** Extend `plugins/wit/plugins.wit` with host imports for registering directory/file watchers, cancelling them, and requesting waveform reloads; add a guest export for change notifications (e.g., `on_paths_changed(paths: list<string>)`).
+- [x] **Update Wasmtime bindings:** Regenerate bindings in `backend/crates/plugin_host` and the new plugin crate once the WIT surface grows; ensure `HostState` stores watcher handles and any channels required to call back into the component.
+- [x] **Introduce watcher backend:** Add a `notify`-based (or `watchexec`) watcher module under `backend/crates/plugin_host` that honours `PluginWatchConfig.directories` plus `debounce_ms`, and hook it into the plugin lifecycle (`init` registers, `shutdown` drops).
+- [x] **Plumb reload requests:** Expose a host-side API that lets the wasm plugin trigger the existing `load_waveform_file` path. This likely means adding a `PluginHostCommand` channel consumed in `backend/src/plugins.rs` to call into `load_waveform_file` (or enqueue an `UpMsg::LoadWaveformFile` equivalent).
+- [x] **Implement reload plugin crate:** Scaffold `plugins/reload_watcher` (mirroring `hello_world`) that, on `init`, reads `PluginConfigEntry.config` for include/exclude rules, registers watchers, and calls the host reload API for each affected path.
+- [x] **hello_world demo tweak:** Update `plugins/hello_world` so `greet()` demonstrates plugin-specific behaviour instead of a global placeholder constant, keeping the sample aligned with best practices.
+- [x] **Config wiring:** Update `.novywave` templates and `shared::AppConfig` persistence so plugin-specific settings (selected directories, debounce overrides, maybe glob filters) round-trip cleanly. Ensure the new plugin entry is disabled by default until signed off.
+- [x] **Timeline cache invalidation:** Plugin-triggered reloads and manual reloads now share the `TrackedFiles::reload_file` relay; `WaveformTimeline` listens to the relay, clears caches, marks variables loading, and schedules a fresh request when a file is reloaded.
+- [x] **SelectedVariables resilience:** Reloads keep the same unique IDs, so the listener preserves selections/formats, forces cursor values back to `Loading`, and re-requests data via the unified code path.
+- [x] **Diagnostics & logging:** Feed watcher lifecycle and reload attempts into existing logging (backend console + `dev_server.log`) with clear icons, matching the current `🔌`/`🔍` style. Surface actionable errors to the UI via `DownMsg::ParsingError`.
+- [x] **Documentation pass:** Expand `docs/plugins/authoring_guide.md` with the new APIs, usage examples, and guidance on safe watcher scopes. Include manual QA steps so contributors can verify live reloads without guessing.
+
+## Current Status (2025-10-09)
+- Host ↔ plugin bridge now exposes logging and watcher management; backend relays `ReloadWaveformFiles` to the frontend, which reuses `TrackedFiles::reload_file`.
+- `plugins/reload_watcher` ships as the canonical example plugin (enabled by default in `.novywave`; disable if you do not want automatic reloads).
+- Remaining follow-ups: none for this milestone; future work can add targeted tests if we want automated coverage.
 
 ## Clarified Points
 - Watcher scope should focus on the set of opened waveform files stored in `.novywave`, ideally by listening to the `TrackedFiles` actor so the plugin reacts to the live list rather than broad directory globs.

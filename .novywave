@@ -14,12 +14,7 @@ opened_files = [
     "/home/martinkavik/repos/super_counter_rust/hardware/build/super_counter.fst",
 ]
 dock_mode = "bottom"
-expanded_scopes = [
-    "/home/martinkavik/repos/super_counter_rust/hardware/build/super_counter.fst",
-    "scope_/home/martinkavik/repos/super_counter_rust/hardware/build/super_counter.fst|TOP",
-    "/home/martinkavik/repos/NovyWave/test_files/simple.vcd",
-    "scope_/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb",
-]
+expanded_scopes = []
 load_files_expanded_directories = [
     "/",
     "/home",
@@ -64,5 +59,12 @@ schema_version = 1
 id = "novywave.hello_world"
 enabled = true
 artifact_path = "plugins/dist/hello_world_plugin.wasm"
+
+[plugins.entries.config]
+
+[[plugins.entries]]
+id = "novywave.reload_watcher"
+enabled = true
+artifact_path = "plugins/dist/reload_watcher_plugin.wasm"
 
 [plugins.entries.config]

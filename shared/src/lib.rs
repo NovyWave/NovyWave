@@ -89,6 +89,9 @@ pub enum DownMsg {
         file_path: String,
         error: String,
     },
+    ReloadWaveformFiles {
+        file_paths: Vec<String>,
+    },
     /// Unified signal data response with all requested information
     UnifiedSignalResponse {
         request_id: String,

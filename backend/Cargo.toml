@@ -16,3 +16,5 @@ jwalk = "0.8"
 memmap2 = "0.9"
 rayon = "1.8"
 plugin_host = { path = "crates/plugin_host" }
+notify = "6"
+notify-debouncer-mini = "0.4"

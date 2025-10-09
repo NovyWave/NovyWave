@@ -1,11 +1,12 @@
-use plugin_host::PluginHost;
+use plugin_host::{NullBridge, PluginHost};
 use shared::AppConfig;
+use std::sync::Arc;
 
 fn main() {
     let config_toml = std::fs::read_to_string(".novywave").expect("read .novywave");
     let config: AppConfig = toml::from_str(&config_toml).expect("parse app config");
 
-    let host = PluginHost::new().expect("init plugin host");
+    let host = PluginHost::new(Arc::new(NullBridge::default())).expect("init plugin host");
 
     if config.plugins.entries.is_empty() {
         println!("no plugins configured");

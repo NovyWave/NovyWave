@@ -4,9 +4,15 @@ This guide captures the current workflow for building and wiring WebAssembly plu
 
 ## Runtime Snapshot
 - **Host runtime:** Wasmtime 36.x LTS (component model enabled, backtrace details on).
-- **Shared WIT:** `plugins/wit/plugins.wit` exports the minimal `runtime` world (`init`, `greet`, `shutdown`) with *no* host imports yet.
-- **Host crate:** `backend/crates/plugin_host` exposes `PluginHost` + `PluginHandle`; `backend/src/plugins.rs` keeps a singleton manager that caches the last applied config to avoid redundant reloads.
-- **Reference plugin:** `plugins/hello_world` demonstrates a Rust component compiled with `wit-bindgen 0.41` and `cargo component`.
+- **Shared WIT:** `plugins/wit/plugins.wit` exports the `runtime` world (`init`, `greet`, `shutdown`) and imports the `host-runtime` interface for logging, watcher registration, and cleanup.
+- **Host crate:** `backend/crates/plugin_host` exposes `PluginHost` + `PluginHandle`; `backend/src/plugins.rs` keeps a singleton manager that caches the last applied config to avoid redundant reloads and now proxies watcher APIs to the backend bridge.
+- **Reference plugins:** `plugins/hello_world` demonstrates basic logging, and `plugins/reload_watcher` shows live waveform reload orchestration.
+
+## Host Runtime API
+- `host-runtime.get-opened-files() -> list<string>` — snapshot of the workspace's opened waveform paths.
+- `host-runtime.register-watched-files(paths: list<string>, debounce-ms: u32)` — replace the watched set for the calling plugin; passing an empty list clears watchers.
+- `host-runtime.clear-watched-files()` — explicitly drop any active watchers for the plugin.
+- `host-runtime.log-info(message: string)` / `host-runtime.log-error(message: string)` — route plugin logs through the backend (console + toasts).
 
 ## Prerequisites
 1. Install the Rust component toolchain:

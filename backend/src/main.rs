@@ -1972,7 +1972,7 @@ async fn load_config(session_id: SessionId, cor_id: CorId) {
         });
     }
 
-    let plugin_reload = plugins::reload_plugins(&config.plugins);
+    let plugin_reload = plugins::reload_plugins(&config.plugins, &config.workspace.opened_files);
     if plugin_reload.reloaded {
         for status in &plugin_reload.statuses {
             let init_msg = status
@@ -2006,7 +2006,7 @@ async fn load_config(session_id: SessionId, cor_id: CorId) {
 }
 
 async fn save_config(config: AppConfig, session_id: SessionId, cor_id: CorId) {
-    let plugin_reload = plugins::reload_plugins(&config.plugins);
+    let plugin_reload = plugins::reload_plugins(&config.plugins, &config.workspace.opened_files);
     if plugin_reload.reloaded {
         for status in &plugin_reload.statuses {
             let init_msg = status

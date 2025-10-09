@@ -55,6 +55,7 @@ pub struct ConnectionMessageActor {
     pub batch_signal_values_relay: Relay<Vec<(String, SignalValue)>>,
     pub unified_signal_response_relay: Relay<UnifiedSignalResponseEvent>,
     pub unified_signal_error_relay: Relay<(String, String)>,
+    pub reload_waveform_relay: Relay<Vec<String>>,
 
     // Actor handles message processing
     _message_actor: Actor<()>,
@@ -99,6 +100,7 @@ impl ConnectionMessageActor {
         let (batch_signal_values_relay, _) = relay::<Vec<(String, SignalValue)>>();
         let (unified_signal_response_relay, _) = relay::<UnifiedSignalResponseEvent>();
         let (unified_signal_error_relay, _) = relay::<(String, String)>();
+        let (reload_waveform_relay, _) = relay::<Vec<String>>();
 
         // Clone relays for use in Actor closure
         let config_loaded_relay_clone = config_loaded_relay.clone();
@@ -110,6 +112,7 @@ impl ConnectionMessageActor {
         let batch_signal_values_relay_clone = batch_signal_values_relay.clone();
         let unified_signal_response_relay_clone = unified_signal_response_relay.clone();
         let unified_signal_error_relay_clone = unified_signal_error_relay.clone();
+        let reload_waveform_relay_clone = reload_waveform_relay.clone();
 
         // Actor processes DownMsg stream and routes to appropriate relays
 
@@ -196,6 +199,11 @@ impl ConnectionMessageActor {
                             DownMsg::UnifiedSignalError { request_id, error } => {
                                 unified_signal_error_relay_clone.send((request_id, error));
                             }
+                            DownMsg::ReloadWaveformFiles { file_paths } => {
+                                if !file_paths.is_empty() {
+                                    reload_waveform_relay_clone.send(file_paths);
+                                }
+                            }
                             _ => {
                                 // Other message types can be added as needed
                             }
@@ -218,6 +226,7 @@ impl ConnectionMessageActor {
             batch_signal_values_relay,
             unified_signal_response_relay,
             unified_signal_error_relay,
+            reload_waveform_relay,
             _message_actor: message_actor,
         }
     }
@@ -259,6 +268,9 @@ pub struct NovyWaveApp {
 
     /// Bridges connection message relays into the timeline domain
     _timeline_message_bridge_actor: Actor<()>,
+
+    /// Handles backend-triggered waveform reload requests
+    _reload_listener_actor: Actor<()>,
 
     // === UI STATE (Atom pattern for local UI concerns) ===
     /// File picker dialog visibility
@@ -371,6 +383,7 @@ impl NovyWaveApp {
 
         let waveform_timeline = WaveformTimeline::new(
             selected_variables.clone(),
+            tracked_files.clone(),
             maximum_timeline_range.clone(),
             connection_adapter,
             config.clone(),
@@ -464,6 +477,23 @@ impl NovyWaveApp {
             })
         };
 
+        let reload_listener_actor = {
+            let tracked_files_for_reload = tracked_files.clone();
+            use futures::StreamExt;
+            let mut reload_stream = connection_message_actor
+                .reload_waveform_relay
+                .subscribe()
+                .fuse();
+
+            Actor::new((), async move |_state| {
+                while let Some(paths) = reload_stream.next().await {
+                    for path in paths {
+                        tracked_files_for_reload.reload_file(path.clone());
+                    }
+                }
+            })
+        };
+
         // Request config loading through platform layer
         if let Err(e) =
             <crate::platform::CurrentPlatform as crate::platform::Platform>::send_message(
@@ -496,6 +526,7 @@ impl NovyWaveApp {
             connection_message_actor,
             scope_selection_sync_actor,
             _timeline_message_bridge_actor: timeline_message_bridge_actor,
+            _reload_listener_actor: reload_listener_actor,
             file_dialog_visible,
             search_filter,
             app_loading,
