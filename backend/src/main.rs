@@ -68,6 +68,16 @@ static WAVEFORM_METADATA_STORE: Lazy<Arc<Mutex<HashMap<String, WaveformMetadata>
 static VCD_LOADING_IN_PROGRESS: Lazy<Arc<Mutex<std::collections::HashSet<String>>>> =
     Lazy::new(|| Arc::new(Mutex::new(std::collections::HashSet::new())));
 
+fn invalidate_waveform_resources(file_path: &str) {
+    if let Ok(mut store) = WAVEFORM_DATA_STORE.lock() {
+        store.remove(file_path);
+    }
+    if let Ok(mut metadata) = WAVEFORM_METADATA_STORE.lock() {
+        metadata.remove(file_path);
+    }
+    SIGNAL_CACHE_MANAGER.invalidate_file(file_path);
+}
+
 // ===== UNIFIED SIGNAL CACHE MANAGER =====
 
 /// High-performance signal cache manager for desktop applications
@@ -92,6 +102,12 @@ impl SignalCacheManager {
             transition_cache: Arc::new(RwLock::new(BTreeMap::new())),
             cache_stats: Arc::new(RwLock::new(CacheStats::default())),
         }
+    }
+
+    fn invalidate_file(&self, file_path: &str) {
+        let prefix = format!("{}|", file_path);
+        let mut cache = self.transition_cache.write().unwrap();
+        cache.retain(|key, _| !key.starts_with(&prefix));
     }
 
     /// Process unified signal query with parallel processing
@@ -824,6 +840,8 @@ async fn load_waveform_file(file_path: String, session_id: SessionId, cor_id: Co
         .await;
         return;
     }
+
+    invalidate_waveform_resources(&file_path);
 
     // Let wellen handle all validation - it knows best
 

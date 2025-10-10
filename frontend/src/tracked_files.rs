@@ -247,9 +247,7 @@ impl TrackedFiles {
     }
 
     pub fn get_current_files(&self) -> Vec<TrackedFile> {
-        // TODO: This should use signals for proper Actor+Relay architecture
-        // For now, return empty vec until callers are updated to use signals
-        Vec::new()
+        self.files_vec_signal.get_cloned()
     }
 
     pub fn update_file_state(&self, file_id: String, new_state: FileState) {

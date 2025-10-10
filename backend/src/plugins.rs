@@ -189,6 +189,7 @@ pub struct PluginManager {
     handles: HashMap<String, PluginHandle>,
     statuses: HashMap<String, PluginStatus>,
     current_config: Option<PluginsSection>,
+    current_opened_files: Vec<String>,
 }
 
 impl PluginManager {
@@ -200,18 +201,46 @@ impl PluginManager {
             handles: HashMap::new(),
             statuses: HashMap::new(),
             current_config: None,
+            current_opened_files: Vec::new(),
         })
     }
 
     pub fn reload(&mut self, section: &PluginsSection, opened_files: &[String]) -> bool {
-        if self.current_config.as_ref() == Some(section) {
+        let config_changed = self.current_config.as_ref() != Some(section);
+        let opened_changed = self.current_opened_files != opened_files;
+
+        if !config_changed && !opened_changed {
             return false;
+        }
+
+        self.bridge.set_opened_files(opened_files);
+        self.current_opened_files = opened_files.to_vec();
+
+        if !config_changed {
+            let mut greet_ok = false;
+            for handle in self.handles.values_mut() {
+                match handle.greet() {
+                    Ok(_) => {
+                        if let Some(status) = self.statuses.get_mut(handle.id()) {
+                            status.state = PluginRuntimeState::Ready;
+                            status.last_message = Some("greet() ok".to_string());
+                        }
+                        greet_ok = true;
+                    }
+                    Err(err) => {
+                        if let Some(status) = self.statuses.get_mut(handle.id()) {
+                            status.state = PluginRuntimeState::Error;
+                            status.last_message = Some(err.to_string());
+                        }
+                    }
+                }
+            }
+            return greet_ok || opened_changed;
         }
 
         self.shutdown_all();
         self.statuses.clear();
         self.current_config = Some(section.clone());
-        self.bridge.set_opened_files(opened_files);
 
         for entry in &section.entries {
             if !entry.enabled {
