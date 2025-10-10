@@ -94,17 +94,6 @@ pub fn clear_all_files(
     tracked_files.all_files_cleared_relay.send(());
 }
 
-/// Monitor directory expansions for file picker
-/// NOTE: This function is currently unused - directory expansion monitoring is handled
-/// directly by the FilePickerDomain Actor system through directory_expanded_relay
-pub fn monitor_directory_expansions(
-    expanded: std::collections::HashSet<String>,
-    app_config: &crate::config::AppConfig,
-) {
-    // This function is deprecated - use FilePickerDomain actors instead
-    zoon::println!("⚠️ monitor_directory_expansions is deprecated - use FilePickerDomain actors");
-}
-
 /// Extract filename from a full path
 pub fn extract_filename(path: &str) -> String {
     path.split('/').last().unwrap_or(path).to_string()

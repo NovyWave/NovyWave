@@ -175,17 +175,9 @@ impl Default for TimelineState {
 }
 
 pub const DEFAULT_PANEL_WIDTH: f32 = 300.0;
-pub const DEFAULT_PANEL_HEIGHT: f32 = 300.0;
 pub const DEFAULT_TIMELINE_HEIGHT: f32 = 200.0;
 pub const DEFAULT_NAME_COLUMN_WIDTH: f32 = 190.0;
 pub const DEFAULT_VALUE_COLUMN_WIDTH: f32 = 220.0;
-
-pub const MIN_PANEL_HEIGHT: f32 = 150.0;
-pub const MAX_PANEL_HEIGHT: f32 = 530.0;
-pub const MIN_COLUMN_WIDTH: f32 = 100.0;
-pub const MAX_COLUMN_WIDTH: f32 = 400.0;
-pub const MIN_FILES_PANEL_WIDTH: f32 = 200.0;
-pub const MAX_FILES_PANEL_WIDTH: f32 = 600.0;
 
 /// File picker domain with proper Actor+Relay architecture
 #[derive(Clone)]
@@ -226,11 +218,10 @@ impl FilePickerDomain {
         connection: std::sync::Arc<SendWrapper<Connection<shared::UpMsg, shared::DownMsg>>>,
         connection_message_actor: crate::app::ConnectionMessageActor,
     ) -> Self {
-        let (directory_expanded_relay, mut directory_expanded_stream) = relay::<String>();
-        let (directory_collapsed_relay, mut directory_collapsed_stream) = relay::<String>();
-        let (scroll_position_changed_relay, mut scroll_position_changed_stream) = relay::<i32>();
-        let (directory_load_requested_relay, mut directory_load_requested_stream) =
-            relay::<String>();
+        let (directory_expanded_relay, directory_expanded_stream) = relay::<String>();
+        let (directory_collapsed_relay, directory_collapsed_stream) = relay::<String>();
+        let (scroll_position_changed_relay, scroll_position_changed_stream) = relay::<i32>();
+        let (directory_load_requested_relay, directory_load_requested_stream) = relay::<String>();
         let (tree_rendering_relay, _tree_rendering_stream) = relay();
 
         // File selection relays for load files dialog
@@ -239,10 +230,10 @@ impl FilePickerDomain {
         let (clear_selection_relay, mut clear_selection_stream) = relay();
 
         // ✅ ACTOR+RELAY: Subscribe to ConnectionMessageActor relays instead of internal ones
-        let mut directory_contents_received_stream = connection_message_actor
+        let directory_contents_received_stream = connection_message_actor
             .directory_contents_relay
             .subscribe();
-        let mut directory_error_received_stream =
+        let directory_error_received_stream =
             connection_message_actor.directory_error_relay.subscribe();
         let config_save_requested_relay = config_save_relay;
 
@@ -291,14 +282,12 @@ impl FilePickerDomain {
                                 state.set_neq(position);
 
                                 // ✅ Debounce pattern: nested select loop for config save
-                                let mut latest_position = position;
                                 loop {
                                     futures::select! {
                                         // Check for newer scroll position updates
                                         newer_position = position_stream.next() => {
                                             if let Some(newer_pos) = newer_position {
                                                 state.set_neq(newer_pos); // Update state immediately
-                                                latest_position = newer_pos; // Update latest for saving
                                             }
                                         }
                                         // Debounce timer - save after 500ms of no changes
@@ -320,19 +309,15 @@ impl FilePickerDomain {
             // ✅ FIX: Move stream into closure to prevent reference capture after Send bounds removal
             let mut directory_contents_stream = directory_contents_received_stream;
             async move |state| {
-                let mut message_count = 0;
                 loop {
                     use futures::StreamExt;
                     if let Some((path, items)) = directory_contents_stream.next().await {
-                        message_count += 1;
-
                         // Check current cache state before update
                         let current_cache = state.get_cloned();
 
                         // Use set_neq with proper change detection - this MUST trigger signals
                         let mut cache = current_cache;
                         cache.insert(path.clone(), items);
-                        let cache_size = cache.len();
 
                         state.set_neq(cache);
 
@@ -366,9 +351,10 @@ impl FilePickerDomain {
         // Since connection can't be used directly in Actor (Send trait issues), we use a different approach:
         // The Actor tracks loading requests and the UI layer polls for pending requests
         let directory_loading_actor = Actor::new(std::collections::HashSet::<String>::new(), {
+            let mut load_stream = directory_load_requested_stream.fuse();
             async move |state| loop {
                 futures::select! {
-                    requested_path = directory_load_requested_stream.next() => {
+                    requested_path = load_stream.next() => {
                         if let Some(path) = requested_path {
                             let mut pending_requests = state.get_cloned();
                             pending_requests.insert(path);
@@ -608,11 +594,11 @@ impl AppConfig {
         let (dock_mode_button_clicked_relay, mut dock_mode_button_clicked_stream) = relay();
         let (theme_changed_relay, mut theme_changed_stream) = relay();
         let (dock_mode_changed_relay, mut dock_mode_changed_stream) = relay();
-        let (session_state_changed_relay, session_state_changed_stream) = relay::<SessionState>();
+        let (session_state_changed_relay, _session_state_changed_stream) = relay::<SessionState>();
         let session_state_changed_stream_for_config_saver = session_state_changed_relay.subscribe();
         let session_state_changed_stream_for_session_actor =
             session_state_changed_relay.subscribe();
-        let (config_save_requested_relay, mut config_save_requested_stream) = relay();
+        let (config_save_requested_relay, config_save_requested_stream) = relay();
         let (timeline_state_changed_relay, mut timeline_state_stream) = relay::<TimelineState>();
         let (timeline_state_restore_relay, _timeline_state_restore_stream) =
             relay::<TimelineState>();
@@ -948,13 +934,6 @@ impl AppConfig {
                 }
             });
 
-        // Clone actors for config_saver_actor closure
-        let theme_actor_clone = theme_actor.clone();
-        let dock_mode_actor_clone = dock_mode_actor.clone();
-        let session_actor_clone = session_state_actor.clone();
-        let toast_actor_clone = toast_dismiss_ms_actor.clone();
-        let timeline_state_actor_clone = timeline_state_actor.clone();
-
         // FIX: Connect ConfigSaver to button click relays for immediate save trigger
 
         // Clone the relay for struct return since it will be moved into Tasks
@@ -1205,6 +1184,7 @@ impl AppConfig {
             let dock_mode_actor_clone = dock_mode_actor.clone();
             let session_actor_clone = session_state_actor.clone();
             let toast_actor_clone = toast_dismiss_ms_actor.clone();
+            let timeline_state_actor_clone = timeline_state_actor.clone();
             let file_picker_domain_clone = file_picker_domain.clone();
             let selected_variables_snapshot_actor_clone = selected_variables_snapshot_actor.clone();
             let config_loaded_flag_for_saver = config_loaded_flag.clone();
@@ -1377,12 +1357,7 @@ impl AppConfig {
                         #[cfg(web_sys_unstable_apis)]
                         {
                             let clipboard = navigator.clipboard();
-                            match JsFuture::from(clipboard.write_text(&text)).await {
-                                Ok(_) => {
-                                    // Clipboard copy successful
-                                }
-                                Err(e) => {}
-                            }
+                            let _ = JsFuture::from(clipboard.write_text(&text)).await;
                         }
 
                         #[cfg(not(web_sys_unstable_apis))]
@@ -1498,7 +1473,7 @@ impl AppConfig {
 
                     let timeline_cfg = &loaded_config.workspace.timeline;
 
-                    let mut visible_start_ps = timeline_cfg.visible_range_start_ps;
+                    let visible_start_ps = timeline_cfg.visible_range_start_ps;
                     let mut visible_end_ps = timeline_cfg.visible_range_end_ps;
                     if visible_end_ps <= visible_start_ps {
                         visible_end_ps = visible_start_ps + 1;

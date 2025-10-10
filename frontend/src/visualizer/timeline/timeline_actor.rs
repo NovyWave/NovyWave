@@ -1188,19 +1188,6 @@ impl WaveformTimeline {
         self.schedule_config_save();
     }
 
-    fn determine_formatter(&self, unique_id: &str) -> VarFormat {
-        let snapshot = self
-            .selected_variables
-            .variables_vec_actor
-            .state
-            .get_cloned();
-        snapshot
-            .into_iter()
-            .find(|var| var.unique_id == unique_id)
-            .and_then(|var| var.formatter)
-            .unwrap_or(VarFormat::Hexadecimal)
-    }
-
     fn schedule_request(&self) {
         {
             let mut slot = self.request_debounce.borrow_mut();
@@ -1567,7 +1554,7 @@ impl WaveformTimeline {
         for UnifiedSignalData {
             unique_id,
             transitions,
-            total_transitions,
+            total_transitions: _,
             actual_time_range_ns,
             ..
         } in signal_data
@@ -1578,7 +1565,6 @@ impl WaveformTimeline {
                 .map(|series| series.transitions.clone());
 
             let mut transitions_vec = transitions;
-            let mut total_transitions = total_transitions;
 
             let mut merged_range = actual_time_range_ns
                 .or_else(|| requested_window.as_ref().map(|window| window.range_ns))
@@ -1610,8 +1596,6 @@ impl WaveformTimeline {
                         existing_entry.range_ns.0.min(merged_range.0),
                         existing_entry.range_ns.1.max(merged_range.1),
                     );
-                    total_transitions = transitions_vec.len();
-
                     slots.retain(|entry| {
                         !(entry.lod_bucket == lod_bucket
                             && range_contains(merged_range, entry.range_ns))
@@ -1630,7 +1614,6 @@ impl WaveformTimeline {
             let previous_slice = existing_series.as_ref().map(|arc| arc.as_slice());
             ensure_leading_transition(&mut transitions_vec, leading_start_ns, previous_slice);
             merged_range.0 = merged_range.0.min(leading_start_ns);
-            total_transitions = transitions_vec.len();
 
             if let Some(existing_arc) = &existing_series {
                 let existing_slice = existing_arc.as_ref();
@@ -1643,11 +1626,11 @@ impl WaveformTimeline {
                     if let Some(last) = existing_slice.last() {
                         merged_range.1 = merged_range.1.max(last.time_ns);
                     }
-                    total_transitions = transitions_vec.len();
                 }
             }
 
             let transitions_arc = Arc::new(transitions_vec);
+            let transition_count = transitions_arc.len();
 
             if let Some(lod_bucket) = cache_slot_action {
                 let slots = cache
@@ -1658,7 +1641,7 @@ impl WaveformTimeline {
                     lod_bucket,
                     range_ns: merged_range,
                     transitions: Arc::clone(&transitions_arc),
-                    total_transitions,
+                    total_transitions: transition_count,
                 });
                 while slots.len() > CACHE_MAX_SEGMENTS_PER_VARIABLE {
                     slots.pop_back();
@@ -1669,7 +1652,7 @@ impl WaveformTimeline {
                 unique_id,
                 VariableSeriesData {
                     transitions: transitions_arc,
-                    total_transitions,
+                    total_transitions: transition_count,
                 },
             );
         }

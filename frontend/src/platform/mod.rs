@@ -11,6 +11,7 @@ pub trait Platform {
     async fn send_message(msg: UpMsg) -> Result<(), String>;
 
     /// Send a request and wait for response
+    #[allow(dead_code)]
     async fn request_response<T>(msg: UpMsg) -> Result<T, String>
     where
         T: serde::de::DeserializeOwned;

@@ -13,9 +13,14 @@ opened_files = [
     "/home/martinkavik/repos/super_counter_rust/hardware/build/super_counter.fst",
     "/home/martinkavik/repos/NovyWave/test_files/simple.vcd",
     "/home/martinkavik/repos/NovyWave/test_files/simple_reload_test.vcd",
+    "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst",
 ]
 dock_mode = "bottom"
-expanded_scopes = []
+expanded_scopes = [
+    "/home/martinkavik/repos/NovyWave/test_files/simple_reload_test.vcd",
+    "scope_/home/martinkavik/repos/NovyWave/test_files/simple_reload_test.vcd|simple_tb",
+    "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst",
+]
 load_files_expanded_directories = [
     "/",
     "/home",
@@ -27,7 +32,7 @@ load_files_expanded_directories = [
     "/home/martinkavik/repos/super_counter_rust/hardware/build",
     "/home/martinkavik/repos/NovyWave/test_files",
 ]
-selected_scope_id = "scope_/home/martinkavik/repos/NovyWave/test_files/simple_reload_test.vcd|simple_tb.s"
+selected_scope_id = "scope_/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP"
 load_files_scroll_position = 941
 
 [workspace.docked_bottom_dimensions]
@@ -48,11 +53,14 @@ unique_id = "/home/martinkavik/repos/NovyWave/test_files/simple_reload_test.vcd|
 [[workspace.selected_variables]]
 unique_id = "/home/martinkavik/repos/NovyWave/test_files/simple_reload_test.vcd|simple_tb.s|ReloadA"
 
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP|clk"
+
 [workspace.timeline]
 cursor_position_ps = 125000000000000
 visible_range_start_ps = 0
 visible_range_end_ps = 250000000000000
-zoom_center_ps = 126179245283019
+zoom_center_ps = 0
 tooltip_enabled = true
 
 [plugins]

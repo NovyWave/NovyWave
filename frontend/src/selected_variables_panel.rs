@@ -287,19 +287,6 @@ fn name_column_variable_row(
 fn name_column_footer(
     waveform_timeline: crate::visualizer::timeline::timeline_actor::WaveformTimeline,
 ) -> impl Element {
-    let zoom_signal = {
-        let viewport_actor = waveform_timeline.viewport_actor();
-        let width_actor = waveform_timeline.canvas_width_actor();
-        map_ref! {
-            let viewport = viewport_actor.signal(),
-            let width = width_actor.signal() => {
-                let range_ps = viewport.duration().picoseconds();
-                let width_px = width.max(1.0).round().max(1.0) as u32;
-                TimePerPixel::formatted_from_duration_and_width(range_ps, width_px)
-            }
-        }
-    };
-
     El::new()
         .s(Height::exact(SELECTED_VARIABLES_ROW_HEIGHT))
         .s(Width::fill())
@@ -340,7 +327,19 @@ fn name_column_footer(
                                         .style("max-width", "80px")
                                 })
                                 .s(Font::new().color_signal(neutral_11()).center())
-                                .child_signal(zoom_signal.map(Text::new))
+                                .child_signal({
+                                    let viewport_actor = waveform_timeline.viewport_actor();
+                                    let width_actor = waveform_timeline.canvas_width_actor();
+                                    map_ref! {
+                                        let viewport = viewport_actor.signal(),
+                                        let width = width_actor.signal() => {
+                                            let range_ps = viewport.duration().picoseconds();
+                                            let width_px = width.max(1.0).round().max(1.0) as u32;
+                                            TimePerPixel::formatted_from_duration_and_width(range_ps, width_px)
+                                        }
+                                    }
+                                    .map(Text::new)
+                                })
                         )
                         .item(
                             // S key - Zoom out
@@ -460,19 +459,6 @@ fn value_column_footer(
         }
     };
 
-    let zoom_signal = {
-        let viewport_actor = waveform_timeline.viewport_actor();
-        let width_actor = waveform_timeline.canvas_width_actor();
-        map_ref! {
-            let viewport = viewport_actor.signal(),
-            let width = width_actor.signal() => {
-                let range_ps = viewport.duration().picoseconds();
-                let width_px = width.max(1.0).round().max(1.0) as u32;
-                TimePerPixel::formatted_from_duration_and_width(range_ps, width_px)
-            }
-        }
-    };
-
     El::new()
         .s(Height::exact(SELECTED_VARIABLES_ROW_HEIGHT))
         .s(Width::fill())
@@ -564,10 +550,10 @@ fn value_column_footer(
 
 /// Wave Column with Fast2D canvas integration
 fn selected_variables_wave_column(
-    selected_variables: &crate::selected_variables::SelectedVariables,
+    _selected_variables: &crate::selected_variables::SelectedVariables,
     waveform_timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline,
     waveform_canvas: &crate::visualizer::canvas::waveform_canvas::WaveformCanvas,
-    app_config: &crate::config::AppConfig,
+    _app_config: &crate::config::AppConfig,
 ) -> impl Element {
     El::new()
         .s(Width::fill())

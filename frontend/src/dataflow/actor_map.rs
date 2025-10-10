@@ -102,6 +102,7 @@ where
     ///     }
     /// });
     /// ```
+    #[allow(dead_code)]
     #[track_caller]
     pub fn new<F, Fut>(initial_map: BTreeMap<K, V>, processor: F) -> Self
     where

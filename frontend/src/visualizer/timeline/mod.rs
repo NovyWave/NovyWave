@@ -8,5 +8,5 @@ pub mod time_domain;
 pub mod timeline_actor;
 
 pub use maximum_timeline_range::MaximumTimelineRange;
-pub use time_domain::{DurationPs, TimePerPixel, TimePs, TimelineCoordinates, Viewport};
-pub use timeline_actor::{TimelineRenderState, TimelineVariableSeries, WaveformTimeline};
+pub use time_domain::{TimePerPixel, TimePs};
+pub use timeline_actor::WaveformTimeline;

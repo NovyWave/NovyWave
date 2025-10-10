@@ -530,23 +530,24 @@ fn tooltip_view(
             let width = rect.width().max(1.0);
             let height = rect.height().max(1.0);
 
-            let mut alignment = preferred_alignment;
-            let mut top = match alignment {
-                TooltipVerticalAlignment::Above => anchor_y - height - POINTER_GAP,
-                TooltipVerticalAlignment::Below => anchor_y + POINTER_GAP,
+            let mut top = match preferred_alignment {
+                TooltipVerticalAlignment::Above => {
+                    let candidate = anchor_y - height - POINTER_GAP;
+                    if candidate < VIEWPORT_MARGIN {
+                        anchor_y + POINTER_GAP
+                    } else {
+                        candidate
+                    }
+                }
+                TooltipVerticalAlignment::Below => {
+                    let candidate = anchor_y + POINTER_GAP;
+                    if candidate + height > viewport_height - VIEWPORT_MARGIN {
+                        anchor_y - height - POINTER_GAP
+                    } else {
+                        candidate
+                    }
+                }
             };
-
-            if alignment == TooltipVerticalAlignment::Above && top < VIEWPORT_MARGIN {
-                alignment = TooltipVerticalAlignment::Below;
-                top = anchor_y + POINTER_GAP;
-            }
-
-            if alignment == TooltipVerticalAlignment::Below
-                && top + height > viewport_height - VIEWPORT_MARGIN
-            {
-                alignment = TooltipVerticalAlignment::Above;
-                top = anchor_y - height - POINTER_GAP;
-            }
 
             if top < VIEWPORT_MARGIN {
                 top = VIEWPORT_MARGIN;

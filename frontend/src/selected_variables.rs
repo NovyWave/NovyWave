@@ -3,10 +3,10 @@
 #![allow(dead_code)] // Actor+Relay API not yet fully integrated
 
 use crate::dataflow::{Actor, ActorVec, Relay, relay};
-use futures::{StreamExt, future::Either};
+use futures::StreamExt;
 use indexmap::IndexSet;
 use shared::SelectedVariable;
-use zoon::{Mutable, MutableExt, SignalExt, SignalVecExt};
+use zoon::{MutableExt, SignalExt};
 #[derive(Clone, Debug)]
 pub struct SelectedVariables {
     // State actors

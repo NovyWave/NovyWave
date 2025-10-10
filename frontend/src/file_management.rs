@@ -1,7 +1,7 @@
 use crate::dataflow::atom::Atom;
-use moonzoon_novyui::tokens::color::{neutral_8, neutral_11, primary_6};
+use moonzoon_novyui::tokens::color::neutral_8;
 use moonzoon_novyui::*;
-use shared::{FileState, ScopeData, TrackedFile, generate_smart_labels};
+use shared::{ScopeData, TrackedFile, generate_smart_labels};
 use std::collections::HashMap;
 use std::sync::Arc;
 use zoon::*;
@@ -30,58 +30,6 @@ pub fn files_panel_with_dialog(
                     Some(IconName::Folder),
                     file_dialog_visible,
                 ))
-                .item(El::new().s(Width::growable()))
-                .item(crate::action_buttons::clear_all_files_button(
-                    &tracked_files,
-                    &selected_variables,
-                )),
-            Column::new()
-                .s(Gap::new().y(SPACING_4))
-                .s(Padding::new().top(SPACING_4).right(SPACING_4))
-                .s(Height::fill())
-                .s(Width::growable())
-                .item(El::new().s(Height::fill()).s(Width::growable()).child(
-                    Column::new().s(Width::fill()).s(Height::fill()).item(
-                        El::new().s(Height::fill()).s(Width::fill()).child_signal({
-                            let tracked_files_for_map = tracked_files.clone();
-                            let selected_variables_for_map = selected_variables.clone();
-                            file_count_broadcaster.signal().map(move |file_count| {
-                                if file_count == 0 {
-                                    empty_state_hint("Click 'Load Files' to add waveform files.")
-                                        .unify()
-                                } else {
-                                    create_stable_tree_view(
-                                        tracked_files_for_map.clone(),
-                                        selected_variables_for_map.clone(),
-                                        app_config.clone(),
-                                    )
-                                    .unify()
-                                }
-                            })
-                        }),
-                    ),
-                )),
-        ))
-}
-
-/// Create the main files panel with header and content
-pub fn files_panel(
-    tracked_files: crate::tracked_files::TrackedFiles,
-    selected_variables: crate::selected_variables::SelectedVariables,
-    load_files_button: impl Element + 'static,
-    app_config: crate::config::AppConfig,
-) -> impl Element {
-    let file_count_broadcaster = tracked_files.files.signal_vec().len().broadcast();
-    El::new()
-        .s(Height::fill())
-        .s(Width::fill())
-        .child(crate::panel_layout::create_panel(
-            Row::new()
-                .s(Gap::new().x(SPACING_8))
-                .s(Align::new().center_y())
-                .item(El::new().s(Font::new().no_wrap()).child("Files & Scopes"))
-                .item(El::new().s(Width::growable()))
-                .item(load_files_button)
                 .item(El::new().s(Width::growable()))
                 .item(crate::action_buttons::clear_all_files_button(
                     &tracked_files,
@@ -402,39 +350,6 @@ pub fn compute_smart_label_for_file(
     }
 }
 
-/// Render tracked file reactively with expanded scopes signal
-pub fn render_tracked_file_reactive(
-    tracked_file: TrackedFile,
-    expanded_scopes_signal: impl zoon::Signal<Item = indexmap::IndexSet<String>>
-    + 'static
-    + std::marker::Unpin,
-    tracked_files: crate::tracked_files::TrackedFiles,
-    selected_variables: crate::selected_variables::SelectedVariables,
-    app_config: crate::config::AppConfig,
-) -> impl Element {
-    let all_files = tracked_files.files_vec_signal.get_cloned();
-    let disambiguation_map = disambiguation_labels(&all_files);
-    let smart_label = compute_smart_label_for_file(&tracked_file, &disambiguation_map);
-
-    El::new().child_signal({
-        let tracked_file = tracked_file.clone();
-        let smart_label = smart_label.clone();
-        let tracked_files = tracked_files.clone();
-        let selected_variables = selected_variables.clone();
-        let app_config_for_closure = app_config.clone();
-        expanded_scopes_signal.map(move |_expanded_scopes| {
-            render_tracked_file_as_tree_item_with_label_and_expanded_state(
-                tracked_file.clone(),
-                smart_label.clone(),
-                tracked_files.clone(),
-                selected_variables.clone(),
-                app_config_for_closure.clone(),
-            )
-            .into_element()
-        })
-    })
-}
-
 /// Convert scope data to tree view item data
 pub fn convert_scope_to_tree_data(scope: &ScopeData) -> TreeViewItemData {
     let mut children = Vec::new();
@@ -477,34 +392,4 @@ pub fn empty_state_hint(text: &str) -> impl Element {
         .s(Padding::all(20))
         .s(Font::new().color_signal(neutral_8()).italic())
         .child(text)
-}
-
-/// Files panel with dynamic height based on config
-pub fn files_panel_with_height(
-    tracked_files: &crate::tracked_files::TrackedFiles,
-    selected_variables: &crate::selected_variables::SelectedVariables,
-    app_config: &crate::config::AppConfig,
-) -> impl Element {
-    El::new()
-        .s(Height::exact_signal(
-            crate::dragging::files_panel_height_signal(app_config.clone()).map(|h| h as u32),
-        ))
-        .s(Width::growable())
-        .update_raw_el(|raw_el| {
-            raw_el.style("scrollbar-width", "thin").style_signal(
-                "scrollbar-color",
-                primary_6()
-                    .map(|thumb| {
-                        moonzoon_novyui::tokens::color::primary_3()
-                            .map(move |track| format!("{} {}", thumb, track))
-                    })
-                    .flatten(),
-            )
-        })
-        .child(files_panel(
-            tracked_files.clone(),
-            selected_variables.clone(),
-            button().label("Load Files").disabled(true).build(), // Placeholder - no file_dialog_visible access
-            app_config.clone(),
-        ))
 }

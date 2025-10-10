@@ -3,7 +3,7 @@
 //! Proper Actor+Relay architecture for file loading and management.
 //! Uses dataflow Actor pattern instead of global Mutables.
 
-use crate::dataflow::{Actor, ActorVec, Relay, relay};
+use crate::dataflow::{ActorVec, Relay, relay};
 use futures::{StreamExt, select};
 use shared::{FileState, LoadingStatus, TrackedFile, create_tracked_file};
 use zoon::*;
@@ -91,10 +91,8 @@ impl TrackedFiles {
                                     cached_files.push(new_file.clone());
                                     files_vec.lock_mut().push_cloned(new_file.clone());
                                     // Update dedicated Vec signal
-                                    let current_value_before = files_vec_signal_for_actor.get_cloned();
                                     let new_files_vec = cached_files.clone();
                                     files_vec_signal_for_actor.set_neq(new_files_vec.clone());
-                                    let current_value_after = files_vec_signal_for_actor.get_cloned();
 
                                     // Send parse request to backend for the new file
                                     send_parse_request_to_backend(new_file.path.clone()).await;
@@ -263,18 +261,6 @@ impl TrackedFiles {
     pub fn update_file_state(&self, file_id: String, new_state: FileState) {
         self.file_load_completed_relay.send((file_id, new_state));
     }
-}
-
-/// Update the state of an existing tracked file
-/// Utility function for compatibility with existing code
-pub fn update_tracked_file_state(
-    file_id: &str,
-    new_state: FileState,
-    tracked_files: &TrackedFiles,
-) {
-    tracked_files
-        .file_load_completed_relay
-        .send((file_id.to_string(), new_state));
 }
 
 async fn send_parse_request_to_backend(file_path: String) {

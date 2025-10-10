@@ -1,8 +1,7 @@
 use crate::dataflow::Atom;
 use moonzoon_novyui::components::icon::{IconColor, IconName, IconSize, icon};
 use moonzoon_novyui::tokens::color::{
-    neutral_1, neutral_2, neutral_3, neutral_4, neutral_6, neutral_8, neutral_11, primary_6,
-    primary_8,
+    neutral_1, neutral_2, neutral_3, neutral_4, neutral_8, neutral_11, primary_6,
 };
 use moonzoon_novyui::*;
 use shared::{SignalValue, VarFormat, truncate_value};
@@ -103,14 +102,6 @@ pub fn create_format_dropdown(
     let latest_value = Atom::new(SignalValue::Loading);
     let app_config_for_copy = app_config.clone();
 
-    let toggle_open = {
-        let is_open = is_open.clone();
-        move || {
-            let currently_open = is_open.get_cloned();
-            is_open.set(!currently_open);
-        }
-    };
-
     let chevron_icon = El::new().child_signal(is_open.signal().map(|open| {
         if open {
             icon(IconName::ChevronUp)
@@ -176,9 +167,6 @@ pub fn create_format_dropdown(
         .state
         .signal_cloned()
         .map(move |map| map.get(&unique_id_for_display).cloned());
-
-    let selected_variables_shared = selected_variables.clone();
-    let waveform_timeline_shared = waveform_timeline.clone();
 
     let overlay_signal = {
         let is_open_for_signal = is_open.clone();

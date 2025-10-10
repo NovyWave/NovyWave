@@ -1,6 +1,6 @@
 //! NovyWaveApp - Self-contained Actor+Relay Architecture
 
-use futures::{StreamExt, select};
+use futures::StreamExt;
 use futures_signals::signal_vec::SignalVecExt;
 use gloo_timers::callback::Interval;
 use indexmap::IndexSet;
@@ -87,7 +87,7 @@ fn stop_key_repeat(handles: &Rc<RefCell<HashMap<KeyAction, Interval>>>, action: 
 impl ConnectionMessageActor {
     /// Create ConnectionMessageActor with DownMsg stream from connection
     pub async fn new(
-        mut down_msg_stream: impl futures::stream::Stream<Item = DownMsg> + Unpin + 'static,
+        down_msg_stream: impl futures::stream::Stream<Item = DownMsg> + Unpin + 'static,
         tracked_files_for_reload: TrackedFiles,
     ) -> Self {
         // Create all message-specific relays
@@ -117,11 +117,7 @@ impl ConnectionMessageActor {
 
         let message_actor = Actor::new((), async move |_state| {
             let mut stream = down_msg_stream;
-            let mut loop_counter = 0;
             loop {
-                loop_counter += 1;
-
-                use futures::StreamExt;
                 match stream.next().await {
                     Some(down_msg) => {
                         // Route each message type to its specific relay
@@ -133,7 +129,6 @@ impl ConnectionMessageActor {
                                 config_saved_relay_clone.send(());
                             }
                             DownMsg::DirectoryContents { path, items } => {
-                                let path_for_relay = path.clone();
                                 directory_contents_relay_clone.send((path, items));
                             }
                             DownMsg::DirectoryError { path, error } => {
@@ -234,9 +229,6 @@ impl ConnectionMessageActor {
     }
 }
 
-// Import from extracted modules
-use crate::action_buttons::load_files_button_with_progress;
-use crate::file_management::files_panel;
 use crate::file_operations::process_selected_file_paths;
 use crate::file_picker::file_paths_dialog;
 
@@ -264,10 +256,10 @@ pub struct NovyWaveApp {
     pub connection: std::sync::Arc<SendWrapper<Connection<UpMsg, DownMsg>>>,
 
     /// Message routing actor (keeps relays alive)
-    pub connection_message_actor: ConnectionMessageActor,
+    _connection_message_actor: ConnectionMessageActor,
 
     /// Synchronizes Files panel scope selection into SelectedVariables domain
-    scope_selection_sync_actor: Actor<()>,
+    _scope_selection_sync_actor: Actor<()>,
 
     /// Bridges connection message relays into the timeline domain
     _timeline_message_bridge_actor: Actor<()>,
@@ -275,26 +267,6 @@ pub struct NovyWaveApp {
     // === UI STATE (Atom pattern for local UI concerns) ===
     /// File picker dialog visibility
     pub file_dialog_visible: Atom<bool>,
-
-    /// Current search filter text in various panels
-    pub search_filter: Atom<String>,
-
-    /// Loading/error states for UI feedback
-    pub app_loading: Atom<bool>,
-    pub error_message: Atom<Option<String>>,
-
-    // === EVENT-SOURCE RELAYS (app-level events) ===
-    /// App initialization completed
-    pub app_initialized_relay: Relay<()>,
-
-    /// File dialog open/close requested
-    pub file_dialog_toggle_requested_relay: Relay<()>,
-
-    /// Global error occurred (for toast notifications)
-    pub error_occurred_relay: Relay<String>,
-
-    /// App shutdown requested
-    pub shutdown_requested_relay: Relay<()>,
 
     key_repeat_handles: Rc<RefCell<HashMap<KeyAction, Interval>>>,
 }
@@ -426,15 +398,15 @@ impl NovyWaveApp {
         };
 
         let timeline_message_bridge_actor = {
-            let mut unified_signal_response_stream = connection_message_actor
+            let unified_signal_response_stream = connection_message_actor
                 .unified_signal_response_relay
                 .subscribe()
                 .fuse();
-            let mut unified_signal_error_stream = connection_message_actor
+            let unified_signal_error_stream = connection_message_actor
                 .unified_signal_error_relay
                 .subscribe()
                 .fuse();
-            let mut batch_signal_values_stream = connection_message_actor
+            let batch_signal_values_stream = connection_message_actor
                 .batch_signal_values_relay
                 .subscribe()
                 .fuse();
@@ -478,22 +450,14 @@ impl NovyWaveApp {
         };
 
         // Request config loading through platform layer
-        if let Err(e) =
+        if let Err(_e) =
             <crate::platform::CurrentPlatform as crate::platform::Platform>::send_message(
                 shared::UpMsg::LoadConfig,
             )
             .await
         {}
 
-        let (shutdown_requested_relay, mut shutdown_requested_stream) = relay();
-        let (app_initialized_relay, _app_initialized_stream) = relay();
-        let (file_dialog_toggle_requested_relay, _file_dialog_toggle_requested_stream) = relay();
-        let (error_occurred_relay, _error_occurred_stream) = relay();
-
         let file_dialog_visible = Atom::new(false);
-        let search_filter = Atom::new(String::new());
-        let app_loading = Atom::new(false); // Initialization complete
-        let error_message = Atom::new(None);
         let key_repeat_handles = Rc::new(RefCell::new(HashMap::new()));
 
         Self::setup_app_coordination(&selected_variables, &config).await;
@@ -506,17 +470,10 @@ impl NovyWaveApp {
             config,
             dragging_system,
             connection: connection_arc,
-            connection_message_actor,
-            scope_selection_sync_actor,
+            _connection_message_actor: connection_message_actor,
+            _scope_selection_sync_actor: scope_selection_sync_actor,
             _timeline_message_bridge_actor: timeline_message_bridge_actor,
             file_dialog_visible,
-            search_filter,
-            app_loading,
-            error_message,
-            app_initialized_relay,
-            file_dialog_toggle_requested_relay,
-            error_occurred_relay,
-            shutdown_requested_relay,
             key_repeat_handles,
         }
     }
@@ -542,7 +499,7 @@ impl NovyWaveApp {
     /// Returns both connection and message actor for proper Actor+Relay architecture
     async fn create_connection_with_message_actor(
         tracked_files: TrackedFiles,
-        selected_variables: SelectedVariables,
+        _selected_variables: SelectedVariables,
     ) -> (
         SendWrapper<Connection<UpMsg, DownMsg>>,
         ConnectionMessageActor,
@@ -551,7 +508,6 @@ impl NovyWaveApp {
 
         let (down_msg_sender, down_msg_receiver) = mpsc::unbounded::<DownMsg>();
         let tf_relay = tracked_files.file_load_completed_relay.clone();
-        let selected_variables_relay = selected_variables.clone();
 
         // Create ConnectionMessageActor with the message stream
         // ✅ FIX: Move receiver into closure to prevent reference capture after Send bounds removal

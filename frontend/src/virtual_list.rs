@@ -618,8 +618,6 @@ fn create_stable_variable_element_hybrid(
     // Clone selected_variables for the multiple closures that need it
     let selected_variables_1 = selected_variables.clone();
     let selected_variables_2 = selected_variables.clone();
-    let selected_variables_3 = selected_variables.clone();
-
     Row::new()
         .s(Gap::new().x(SPACING_8))
         .s(Width::fill())

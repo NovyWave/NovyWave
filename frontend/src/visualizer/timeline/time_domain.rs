@@ -16,10 +16,6 @@ pub const FS_PER_PS: u64 = 1_000;
 pub const AS_PER_PS: u64 = 1_000_000;
 
 pub const MIN_CURSOR_STEP_NS: u64 = 1_000_000;
-pub const MAX_CURSOR_STEP_NS: u64 = 1_000_000_000;
-
-pub const DEFAULT_TIMELINE_RANGE_NS: u64 = 1_000_000_000;
-pub const DEFAULT_TIMELINE_RANGE_PS: u64 = DEFAULT_TIMELINE_RANGE_NS * PS_PER_NS;
 
 const PS_PER_SECOND_F64: f64 = PS_PER_SECOND as f64;
 const PS_PER_MS_F64: f64 = PS_PER_MS as f64;
@@ -417,41 +413,5 @@ impl Viewport {
 impl fmt::Display for Viewport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} → {}", self.start, self.end)
-    }
-}
-
-/// Timeline coordinate system for all timeline operations
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct TimelineCoordinates {
-    pub cursor_ns: TimePs,
-    pub viewport_start_ns: TimePs,
-    pub time_per_pixel: TimePerPixel,
-    pub canvas_width_pixels: u32,
-}
-
-impl TimelineCoordinates {
-    pub fn new(
-        cursor_ns: TimePs,
-        viewport_start_ns: TimePs,
-        time_per_pixel: TimePerPixel,
-        canvas_width_pixels: u32,
-    ) -> Self {
-        TimelineCoordinates {
-            cursor_ns,
-            viewport_start_ns,
-            time_per_pixel,
-            canvas_width_pixels,
-        }
-    }
-}
-
-impl Default for TimelineCoordinates {
-    fn default() -> Self {
-        Self {
-            cursor_ns: TimePs::ZERO,
-            viewport_start_ns: TimePs::ZERO,
-            time_per_pixel: TimePerPixel::default(),
-            canvas_width_pixels: 640,
-        }
     }
 }

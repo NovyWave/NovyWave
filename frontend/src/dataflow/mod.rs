@@ -27,6 +27,7 @@ pub mod relay;
 
 // Core exports
 pub use actor::Actor;
+#[allow(unused_imports)]
 pub use actor_map::ActorMap;
 pub use actor_vec::ActorVec;
 pub use atom::Atom;

@@ -166,7 +166,7 @@ impl DraggingSystem {
                         match drag_moved {
                             Some(current_position) => {
                         // Use Actor's own cached state - no external state queries
-                        let mut current_drag_state = state_handle.lock_mut();
+                        let current_drag_state = state_handle.lock_mut();
 
                         if let Some(divider_type) = current_drag_state.active_divider {
                             let (delta, new_value) = match divider_type {
@@ -357,17 +357,4 @@ pub fn process_drag_movement(system: &DraggingSystem, current_position: (f32, f3
 /// Stop dragging
 pub fn end_drag(system: &DraggingSystem) {
     system.drag_ended_relay.send(());
-}
-
-/// Check if any divider is currently being dragged (legacy compatibility)
-pub fn is_any_divider_dragging(system: &DraggingSystem) -> impl Signal<Item = bool> {
-    system.is_any_divider_dragging()
-}
-
-/// Check if a specific divider type is being dragged (legacy compatibility)
-pub fn is_divider_dragging(
-    system: &DraggingSystem,
-    divider_type: DividerType,
-) -> impl Signal<Item = bool> {
-    system.is_divider_dragging(divider_type)
 }

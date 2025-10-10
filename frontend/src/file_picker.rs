@@ -1,15 +1,15 @@
-use crate::dataflow::{Actor, atom::Atom, relay};
+use crate::dataflow::{Actor, atom::Atom};
 use crate::file_operations::extract_filename;
-use futures::{stream::FusedStream, stream::StreamExt as FuturesStreamExt};
+use futures::StreamExt;
 use indexmap::IndexSet;
 use moonzoon_novyui::tokens::color::{
     neutral_1, neutral_2, neutral_4, neutral_8, neutral_11, neutral_12, primary_3, primary_6,
 };
 use moonzoon_novyui::tokens::theme::Theme;
 use moonzoon_novyui::*;
-use shared::{FileSystemItem, UpMsg};
-use std::collections::{HashMap, HashSet};
-use wasm_bindgen::{JsCast, closure::Closure};
+use shared::FileSystemItem;
+use std::collections::HashMap;
+use wasm_bindgen::JsCast;
 use zoon::events::{Click, KeyDown};
 use zoon::map_ref;
 use zoon::*;
@@ -122,8 +122,6 @@ impl SelectedFilesSyncActors {
                     .selected_files_vec_signal
                     .signal_cloned()
                     .to_stream();
-                let mut previous_files: Vec<String> = Vec::new();
-
                 while let Some(files_vec) = signal_stream.next().await {
                     let current_mutable = selected_files_sync.lock_ref().to_vec();
 
@@ -139,8 +137,6 @@ impl SelectedFilesSyncActors {
                     // Remove files that are no longer in the domain
                     let mut current_mutable = selected_files_sync.lock_mut();
                     current_mutable.retain(|file| files_vec.contains(file));
-
-                    previous_files = files_vec;
                 }
             }
         });
@@ -311,7 +307,7 @@ fn build_directory_item(
 /// Main file paths dialog for selecting waveform files
 pub fn file_paths_dialog(
     tracked_files: crate::tracked_files::TrackedFiles,
-    selected_variables: crate::selected_variables::SelectedVariables,
+    _selected_variables: crate::selected_variables::SelectedVariables,
     app_config: crate::config::AppConfig,
     file_dialog_visible: Atom<bool>,
     connection: crate::connection::ConnectionAdapter,
@@ -590,7 +586,7 @@ pub fn file_picker_content(
     let selected_files_sync =
         SelectedFilesSyncActors::new(file_picker_domain.clone(), selected_files_vec.clone());
 
-    let tree_rendering_stream = file_picker_domain.tree_rendering_relay.subscribe();
+    let _tree_rendering_stream = file_picker_domain.tree_rendering_relay.subscribe();
 
     El::new()
         .s(Height::fill())
@@ -656,7 +652,7 @@ pub fn file_picker_content(
         .child(file_picker_tree(
             &app_config,
             selected_files_vec.clone(),
-            connection.clone(),
+            connection,
         ))
 }
 
@@ -664,7 +660,7 @@ pub fn file_picker_content(
 pub fn file_picker_tree(
     app_config: &crate::config::AppConfig,
     selected_files: zoon::MutableVec<String>,
-    connection: crate::connection::ConnectionAdapter,
+    _connection: crate::connection::ConnectionAdapter,
 ) -> impl Element {
     // Initialize directories and request contents for expanded directories from config
     let initialization_actor =
@@ -692,7 +688,6 @@ pub fn file_picker_tree(
             let initialization_actor_for_closure = initialization_actor.clone();
             cache_signal.map(move |cache| {
                 if cache.contains_key("/") {
-                    if let Some(root_items) = cache.get("/") {}
                     // Root directory loaded - show tree
                     let tree_data = build_tree_data("/", &cache, &std::collections::HashMap::new());
 
@@ -787,109 +782,4 @@ pub fn file_picker_tree(
                 }
             })
         })
-}
-
-/// Check if folder should be disabled based on content
-pub fn should_disable_folder(
-    path: &str,
-    tree_cache: &HashMap<String, Vec<shared::FileSystemItem>>,
-) -> bool {
-    if let Some(items) = tree_cache.get(path) {
-        let has_subfolders = items.iter().any(|item| item.is_directory);
-        let has_waveform_files = items
-            .iter()
-            .any(|item| !item.is_directory && item.is_waveform_file);
-
-        return !has_subfolders && !has_waveform_files;
-    }
-
-    false
-}
-
-/// Build hierarchical tree structure from cache data with expansion handlers
-pub fn build_hierarchical_tree(
-    path: &str,
-    tree_cache: &HashMap<String, Vec<shared::FileSystemItem>>,
-    error_cache: &HashMap<String, String>,
-) -> Vec<TreeViewItemData> {
-    if let Some(items) = tree_cache.get(path) {
-        items
-            .iter()
-            .map(|item| {
-                if item.is_directory {
-                    if let Some(_error_msg) = error_cache.get(&item.path) {
-                        let data = TreeViewItemData::new(item.path.clone(), item.name.clone())
-                            .icon("folder".to_string())
-                            .item_type(TreeViewItemType::Folder)
-                            .with_children(vec![
-                                TreeViewItemData::new(
-                                    "access_denied",
-                                    &error_cache
-                                        .get(&item.path)
-                                        .map(|err| {
-                                            crate::error_display::make_error_user_friendly(err)
-                                        })
-                                        .unwrap_or_else(|| {
-                                            "Cannot access this directory".to_string()
-                                        }),
-                                )
-                                .item_type(TreeViewItemType::Default)
-                                .disabled(true),
-                            ]);
-                        data
-                    } else if let Some(_children) = tree_cache.get(&item.path) {
-                        let _children =
-                            build_hierarchical_tree(&item.path, tree_cache, error_cache);
-                        let mut data = TreeViewItemData::new(item.path.clone(), item.name.clone())
-                            .icon("folder".to_string())
-                            .item_type(TreeViewItemType::Folder)
-                            .with_children(_children);
-
-                        if should_disable_folder(&item.path, tree_cache) {
-                            data = data.with_children(vec![
-                                TreeViewItemData::new("no_supported_files", "No supported files")
-                                    .item_type(TreeViewItemType::Default)
-                                    .disabled(true),
-                            ]);
-                        }
-
-                        data
-                    } else {
-                        let mut data = TreeViewItemData::new(item.path.clone(), item.name.clone())
-                            .icon("folder".to_string())
-                            .item_type(TreeViewItemType::Folder);
-
-                        if item.has_expandable_content {
-                            data = data.with_children(vec![
-                                TreeViewItemData::new("loading", "Loading...")
-                                    .item_type(TreeViewItemType::Default)
-                                    .disabled(true),
-                            ]);
-                        } else {
-                            data = data.with_children(vec![
-                                TreeViewItemData::new("no_supported_files", "No supported files")
-                                    .item_type(TreeViewItemType::Default)
-                                    .disabled(true),
-                            ]);
-                        }
-
-                        data
-                    }
-                } else {
-                    let mut data = TreeViewItemData::new(item.path.clone(), item.name.clone())
-                        .icon("file".to_string())
-                        .item_type(TreeViewItemType::File)
-                        .is_waveform_file(item.is_waveform_file);
-
-                    if !item.is_waveform_file {
-                        data = data.disabled(true);
-                    }
-
-                    data
-                }
-            })
-            .collect()
-    } else {
-        vec![]
-    }
 }

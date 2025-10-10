@@ -31,6 +31,7 @@ struct ThemeColors {
     neutral_12: (u8, u8, u8, f32),
     grid_color: (u8, u8, u8, f32),
     separator_color: (u8, u8, u8, f32),
+    #[allow(dead_code)]
     cursor_color: (u8, u8, u8, f32),
     segment_divider_color: (u8, u8, u8, f32),
     value_low_color: (u8, u8, u8, f32),
@@ -56,6 +57,7 @@ pub struct VariableRenderSnapshot {
     pub unique_id: String,
     pub formatter: VarFormat,
     pub transitions: Arc<Vec<SignalTransition>>,
+    #[allow(dead_code)]
     pub cursor_value: Option<SignalValue>,
 }
 
@@ -149,8 +151,11 @@ impl StaticRenderKey {
 
 #[derive(Clone, Debug)]
 pub struct RenderResult {
+    #[allow(dead_code)]
     pub render_count: u32,
+    #[allow(dead_code)]
     pub objects_rendered: usize,
+    #[allow(dead_code)]
     pub rendering_time_ms: f32,
 }
 
@@ -168,6 +173,7 @@ impl WaveformRenderer {
         self.canvas = Some(canvas);
     }
 
+    #[allow(dead_code)]
     pub fn has_canvas(&self) -> bool {
         self.canvas.is_some()
     }
@@ -681,11 +687,12 @@ impl WaveformRenderer {
             if (params.viewport_start_ps..=params.viewport_end_ps).contains(&cursor_ps) {
                 let ratio = (cursor_ps - params.viewport_start_ps) as f64 / range_ps;
                 let x = (ratio * params.canvas_width as f64) as f32;
+                let (r, g, b, a) = theme_colors.cursor_color;
                 objects.push(
                     Rectangle::new()
                         .position(x - 1.0, 0.0)
                         .size(3.0, params.canvas_height as f32)
-                        .color(255, 165, 0, 1.0)
+                        .color(r, g, b, a)
                         .into(),
                 );
             }

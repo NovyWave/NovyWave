@@ -42,10 +42,7 @@ pub fn main_layout(
     file_dialog_visible: &crate::dataflow::atom::Atom<bool>,
 ) -> impl Element {
     use crate::file_management::files_panel_with_dialog;
-    use crate::variable_selection_ui::{
-        selected_variables_with_waveform_panel, variables_panel_with_fill,
-    };
-    use moonzoon_novyui::*;
+    use crate::variable_selection_ui::variables_panel_with_fill;
 
     El::new().s(Width::fill()).s(Height::fill()).child_signal(
         app_config.dock_mode_actor.signal().map({

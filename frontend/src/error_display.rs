@@ -113,6 +113,7 @@ pub fn make_error_user_friendly(error: &str) -> String {
 }
 
 // Global toast management
+#[allow(dead_code)]
 static TOAST_ID_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 /// Error Display domain using proper Actor+Relay architecture
@@ -154,6 +155,7 @@ impl ErrorDisplay {
     }
 }
 
+#[allow(dead_code)]
 pub async fn add_error_alert(mut alert: ErrorAlert, app_config: &crate::config::AppConfig) {
     zoon::println!("Error: {}", alert.technical_error);
 
@@ -177,11 +179,13 @@ pub async fn add_error_alert(mut alert: ErrorAlert, app_config: &crate::config::
 
 /// Log error to browser console only (no toast notification)
 /// Use for background operations or non-user-initiated errors
+#[allow(dead_code)]
 pub fn log_error_console_only(alert: ErrorAlert) {
     // Log technical error to console for developers/debugging
     zoon::println!("Error: {}", alert.technical_error);
 }
 
+#[allow(dead_code)]
 pub async fn dismiss_error_alert(id: &str, app_config: &crate::config::AppConfig) {
     app_config
         .error_display
