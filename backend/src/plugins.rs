@@ -129,9 +129,10 @@ impl HostBridge for BackendPluginBridge {
                 };
                 sessions::broadcast_down_msg(&msg, CorId::new()).await;
                 println!(
-                    "🔌 BACKEND: plugin '{}' requested reload for {} path(s)",
+                    "🔌 BACKEND: plugin '{}' requested reload for {} path(s): {:?}",
                     broadcast_plugin,
-                    file_paths.len()
+                    file_paths.len(),
+                    file_paths
                 );
             }
         });

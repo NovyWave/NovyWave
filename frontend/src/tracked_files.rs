@@ -127,8 +127,18 @@ impl TrackedFiles {
                                 files.retain(|f| f.id != file_id);
                                 files.push_cloned(new_file.clone());
 
+                                // Update dedicated Vec signal to keep snapshot in sync
+                                files_vec_signal_for_actor.set_neq(cached_files.clone());
+
                                 // Send parse request for reloaded file
                                 send_parse_request_to_backend(new_file.path.clone()).await;
+                            }
+                            else {
+                                zoon::println!(
+                                    "⚠️ TrackedFiles reload miss for {} (cached {})",
+                                    file_id,
+                                    cached_files.len()
+                                );
                             }
                         }
                     }
@@ -238,6 +248,7 @@ impl TrackedFiles {
     }
 
     pub fn reload_file(&self, file_id: String) {
+        zoon::println!("🔁 TrackedFiles::reload_file enqueued {}", file_id);
         self.file_reload_requested_relay.send(file_id);
     }
 
@@ -272,7 +283,9 @@ async fn send_parse_request_to_backend(file_path: String) {
     use shared::UpMsg;
 
     match CurrentPlatform::send_message(UpMsg::LoadWaveformFile(file_path.clone())).await {
-        Ok(()) => {}
+        Ok(()) => {
+            zoon::println!("📡 Requested backend reload for {}", file_path);
+        }
         Err(e) => {
             zoon::eprintln!(
                 "🚨 TrackedFiles: Failed to send parse request for {}: {}",

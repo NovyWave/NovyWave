@@ -55,7 +55,7 @@ unique_id = "/home/martinkavik/repos/NovyWave/test_files/simple_reload_test.vcd|
 cursor_position_ps = 125000000000000
 visible_range_start_ps = 0
 visible_range_end_ps = 250000000000000
-zoom_center_ps = 6682389937107
+zoom_center_ps = 115172955974843
 tooltip_enabled = true
 
 [plugins]

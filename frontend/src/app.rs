@@ -201,6 +201,10 @@ impl ConnectionMessageActor {
                             }
                             DownMsg::ReloadWaveformFiles { file_paths } => {
                                 if !file_paths.is_empty() {
+                                    zoon::println!(
+                                        "🔁 ConnectionMessageActor received ReloadWaveformFiles {:?}",
+                                        file_paths
+                                    );
                                     reload_waveform_relay_clone.send(file_paths);
                                 }
                             }
@@ -235,6 +239,7 @@ impl ConnectionMessageActor {
 // Import from extracted modules
 use crate::action_buttons::load_files_button_with_progress;
 use crate::file_management::files_panel;
+use crate::file_operations::process_selected_file_paths;
 use crate::file_picker::file_paths_dialog;
 
 /// Self-contained NovyWave application
@@ -487,9 +492,11 @@ impl NovyWaveApp {
 
             Actor::new((), async move |_state| {
                 while let Some(paths) = reload_stream.next().await {
-                    for path in paths {
-                        tracked_files_for_reload.reload_file(path.clone());
+                    if paths.is_empty() {
+                        continue;
                     }
+                    zoon::println!("🔁 Reload listener received plugin paths {:?}", paths);
+                    process_selected_file_paths(tracked_files_for_reload.clone(), paths).await;
                 }
             })
         };

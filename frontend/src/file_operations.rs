@@ -1,5 +1,7 @@
 use crate::dataflow::atom::Atom;
 use shared::TrackedFile;
+use std::collections::HashSet;
+use std::path::PathBuf;
 use zoon::*;
 
 /// Clean up file-related state when a file is removed
@@ -18,54 +20,70 @@ pub fn cleanup_file_related_state(
 }
 
 /// Process file picker selection and handle new/existing files
+pub async fn process_selected_file_paths(
+    tracked_files: crate::tracked_files::TrackedFiles,
+    selected_files: Vec<String>,
+) {
+    if selected_files.is_empty() {
+        return;
+    }
+
+    let tracked_files_snapshot = tracked_files.get_current_files();
+    let mut known_paths: HashSet<String> = HashSet::new();
+    for tracked in &tracked_files_snapshot {
+        known_paths.insert(PathBuf::from(&tracked.id).to_string_lossy().to_string());
+        known_paths.insert(PathBuf::from(&tracked.path).to_string_lossy().to_string());
+    }
+
+    let mut new_files: Vec<PathBuf> = Vec::new();
+
+    for selected_path in selected_files {
+        let selected_pathbuf = PathBuf::from(&selected_path);
+        let normalized_path = selected_pathbuf.to_string_lossy().to_string();
+
+        // Attempt to reload any existing tracked file first so UI state updates immediately.
+        zoon::println!(
+            "🔁 process_selected_file_paths handling {} (known: {})",
+            normalized_path,
+            known_paths.contains(&normalized_path)
+        );
+        tracked_files.reload_file(normalized_path.clone());
+
+        if !known_paths.contains(&normalized_path) {
+            known_paths.insert(normalized_path);
+            new_files.push(selected_pathbuf);
+        }
+    }
+
+    if !new_files.is_empty() {
+        zoon::println!(
+            "📤 FILE_OPERATIONS: Sending {} files through files_dropped_relay",
+            new_files.len()
+        );
+        for file in &new_files {
+            zoon::println!("  📄 File: {:?}", file);
+        }
+        tracked_files.files_dropped_relay.send(new_files);
+        zoon::println!("✅ FILE_OPERATIONS: Sent files through relay");
+    }
+    // Existing files have already been enqueued via reload_file calls above.
+}
+
 pub fn process_file_picker_selection(
     tracked_files: crate::tracked_files::TrackedFiles,
     selected_files: Vec<String>,
     file_dialog_visible: Atom<bool>,
 ) {
-    Task::start(async move {
-        if !selected_files.is_empty() {
-            use std::path::PathBuf;
-
-            let tracked_files_snapshot = tracked_files.get_current_files();
-
-            let mut new_files: Vec<PathBuf> = Vec::new();
-            let mut reload_files: Vec<String> = Vec::new();
-
-            for selected_path in selected_files {
-                let selected_pathbuf = PathBuf::from(&selected_path);
-
-                if let Some(existing_file) = tracked_files_snapshot
-                    .iter()
-                    .find(|f| f.id == selected_path || f.path == selected_path)
-                {
-                    reload_files.push(existing_file.id.clone());
-                } else {
-                    new_files.push(selected_pathbuf);
-                }
+    let dialog_visibility = file_dialog_visible.clone();
+    Task::start({
+        let tracked_files = tracked_files.clone();
+        async move {
+            if selected_files.is_empty() {
+                dialog_visibility.set(false);
+            } else {
+                process_selected_file_paths(tracked_files, selected_files).await;
+                dialog_visibility.set(false);
             }
-
-            let tracked_files = &tracked_files;
-
-            if !new_files.is_empty() {
-                zoon::println!(
-                    "📤 FILE_OPERATIONS: Sending {} files through files_dropped_relay",
-                    new_files.len()
-                );
-                for file in &new_files {
-                    zoon::println!("  📄 File: {:?}", file);
-                }
-                tracked_files.files_dropped_relay.send(new_files);
-                zoon::println!("✅ FILE_OPERATIONS: Sent files through relay");
-            }
-
-            if !reload_files.is_empty() {
-                for file_id in reload_files {
-                    tracked_files.reload_file(file_id);
-                }
-            }
-
-            file_dialog_visible.set(false);
         }
     }); // End of async Task::start block
 }
