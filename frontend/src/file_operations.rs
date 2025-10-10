@@ -42,11 +42,6 @@ pub async fn process_selected_file_paths(
         let normalized_path = selected_pathbuf.to_string_lossy().to_string();
 
         // Attempt to reload any existing tracked file first so UI state updates immediately.
-        zoon::println!(
-            "🔁 process_selected_file_paths handling {} (known: {})",
-            normalized_path,
-            known_paths.contains(&normalized_path)
-        );
         tracked_files.reload_file(normalized_path.clone());
 
         if !known_paths.contains(&normalized_path) {
@@ -56,15 +51,7 @@ pub async fn process_selected_file_paths(
     }
 
     if !new_files.is_empty() {
-        zoon::println!(
-            "📤 FILE_OPERATIONS: Sending {} files through files_dropped_relay",
-            new_files.len()
-        );
-        for file in &new_files {
-            zoon::println!("  📄 File: {:?}", file);
-        }
         tracked_files.files_dropped_relay.send(new_files);
-        zoon::println!("✅ FILE_OPERATIONS: Sent files through relay");
     }
     // Existing files have already been enqueued via reload_file calls above.
 }

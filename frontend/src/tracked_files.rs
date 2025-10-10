@@ -248,7 +248,6 @@ impl TrackedFiles {
     }
 
     pub fn reload_file(&self, file_id: String) {
-        zoon::println!("🔁 TrackedFiles::reload_file enqueued {}", file_id);
         self.file_reload_requested_relay.send(file_id);
     }
 
@@ -283,9 +282,7 @@ async fn send_parse_request_to_backend(file_path: String) {
     use shared::UpMsg;
 
     match CurrentPlatform::send_message(UpMsg::LoadWaveformFile(file_path.clone())).await {
-        Ok(()) => {
-            zoon::println!("📡 Requested backend reload for {}", file_path);
-        }
+        Ok(()) => {}
         Err(e) => {
             zoon::eprintln!(
                 "🚨 TrackedFiles: Failed to send parse request for {}: {}",

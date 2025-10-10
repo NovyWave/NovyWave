@@ -55,7 +55,6 @@ pub struct ConnectionMessageActor {
     pub batch_signal_values_relay: Relay<Vec<(String, SignalValue)>>,
     pub unified_signal_response_relay: Relay<UnifiedSignalResponseEvent>,
     pub unified_signal_error_relay: Relay<(String, String)>,
-    pub reload_waveform_relay: Relay<Vec<String>>,
 
     // Actor handles message processing
     _message_actor: Actor<()>,
@@ -89,6 +88,7 @@ impl ConnectionMessageActor {
     /// Create ConnectionMessageActor with DownMsg stream from connection
     pub async fn new(
         mut down_msg_stream: impl futures::stream::Stream<Item = DownMsg> + Unpin + 'static,
+        tracked_files_for_reload: TrackedFiles,
     ) -> Self {
         // Create all message-specific relays
         let (config_loaded_relay, _) = relay();
@@ -100,7 +100,6 @@ impl ConnectionMessageActor {
         let (batch_signal_values_relay, _) = relay::<Vec<(String, SignalValue)>>();
         let (unified_signal_response_relay, _) = relay::<UnifiedSignalResponseEvent>();
         let (unified_signal_error_relay, _) = relay::<(String, String)>();
-        let (reload_waveform_relay, _) = relay::<Vec<String>>();
 
         // Clone relays for use in Actor closure
         let config_loaded_relay_clone = config_loaded_relay.clone();
@@ -112,7 +111,7 @@ impl ConnectionMessageActor {
         let batch_signal_values_relay_clone = batch_signal_values_relay.clone();
         let unified_signal_response_relay_clone = unified_signal_response_relay.clone();
         let unified_signal_error_relay_clone = unified_signal_error_relay.clone();
-        let reload_waveform_relay_clone = reload_waveform_relay.clone();
+        let tracked_files_for_reload = tracked_files_for_reload.clone();
 
         // Actor processes DownMsg stream and routes to appropriate relays
 
@@ -201,11 +200,11 @@ impl ConnectionMessageActor {
                             }
                             DownMsg::ReloadWaveformFiles { file_paths } => {
                                 if !file_paths.is_empty() {
-                                    zoon::println!(
-                                        "🔁 ConnectionMessageActor received ReloadWaveformFiles {:?}",
-                                        file_paths
-                                    );
-                                    reload_waveform_relay_clone.send(file_paths);
+                                    process_selected_file_paths(
+                                        tracked_files_for_reload.clone(),
+                                        file_paths,
+                                    )
+                                    .await;
                                 }
                             }
                             _ => {
@@ -230,7 +229,6 @@ impl ConnectionMessageActor {
             batch_signal_values_relay,
             unified_signal_response_relay,
             unified_signal_error_relay,
-            reload_waveform_relay,
             _message_actor: message_actor,
         }
     }
@@ -273,9 +271,6 @@ pub struct NovyWaveApp {
 
     /// Bridges connection message relays into the timeline domain
     _timeline_message_bridge_actor: Actor<()>,
-
-    /// Handles backend-triggered waveform reload requests
-    _reload_listener_actor: Actor<()>,
 
     // === UI STATE (Atom pattern for local UI concerns) ===
     /// File picker dialog visibility
@@ -482,25 +477,6 @@ impl NovyWaveApp {
             })
         };
 
-        let reload_listener_actor = {
-            let tracked_files_for_reload = tracked_files.clone();
-            use futures::StreamExt;
-            let mut reload_stream = connection_message_actor
-                .reload_waveform_relay
-                .subscribe()
-                .fuse();
-
-            Actor::new((), async move |_state| {
-                while let Some(paths) = reload_stream.next().await {
-                    if paths.is_empty() {
-                        continue;
-                    }
-                    zoon::println!("🔁 Reload listener received plugin paths {:?}", paths);
-                    process_selected_file_paths(tracked_files_for_reload.clone(), paths).await;
-                }
-            })
-        };
-
         // Request config loading through platform layer
         if let Err(e) =
             <crate::platform::CurrentPlatform as crate::platform::Platform>::send_message(
@@ -533,7 +509,6 @@ impl NovyWaveApp {
             connection_message_actor,
             scope_selection_sync_actor,
             _timeline_message_bridge_actor: timeline_message_bridge_actor,
-            _reload_listener_actor: reload_listener_actor,
             file_dialog_visible,
             search_filter,
             app_loading,
@@ -580,7 +555,8 @@ impl NovyWaveApp {
 
         // Create ConnectionMessageActor with the message stream
         // ✅ FIX: Move receiver into closure to prevent reference capture after Send bounds removal
-        let connection_message_actor = ConnectionMessageActor::new(down_msg_receiver).await;
+        let connection_message_actor =
+            ConnectionMessageActor::new(down_msg_receiver, tracked_files.clone()).await;
 
         // Create connection that sends to the stream
         let connection = Connection::new({
