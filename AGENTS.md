@@ -13,6 +13,8 @@ Run `makers install` once to install MoonZoon, the WASM target, and the Tauri CL
 Rely on the maintainer-run dev server and tail `dev_server.log` until you see "Frontend built"—scan just the newest chunk rather than dumping the full file. Report every warning or `error[E...]` line explicitly. Use Browser MCP (`@browsermcp/mcp`) for visual verification once compilation is clean. If compilation stalls or fails, stop and surface the minimal log excerpt showing the failure rather than attempting local rebuilds.
 When debugging, keep console output lean: add temporary `println!/log!` sparingly and remove them before finishing.
 
+Do not run `cargo check`, `cargo build`, or other cargo compilation commands locally unless this document explicitly instructs you to. Treat `dev_server.log` as the source of truth for build status and share relevant excerpts instead of running ad-hoc cargo builds.
+
 Always review the latest `dev_server.log` after making changes. If it shows any compilation errors or warnings, either fix them immediately or add a TODO documenting the follow-up work before proceeding.
 
 ## Coding Style & Testing

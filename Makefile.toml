@@ -239,7 +239,7 @@ script = [
     "set -eu",
     "> dev_plugins.log",
     "echo '[watch_plugins] watching plugins/**' >> dev_plugins.log",
-    "cargo watch -w plugins -i plugins/dist/** -s 'makers build_plugins' >> dev_plugins.log 2>&1"
+    "cargo watch -w plugins -i 'plugins/dist/**' -s 'makers build_plugins' >> dev_plugins.log 2>&1"
 ]
 
 [tasks.install_tauri_cli]
