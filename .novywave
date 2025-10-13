@@ -12,8 +12,8 @@ toast_dismiss_ms = 10000
 opened_files = [
     "/home/martinkavik/repos/super_counter_rust/hardware/build/super_counter.fst",
     "/home/martinkavik/repos/NovyWave/test_files/simple.vcd",
-    "/home/martinkavik/repos/NovyWave/test_files/simple_reload_test.vcd",
     "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst",
+    "/home/martinkavik/repos/NovyWave/test_files/simple_reload_test.vcd",
 ]
 dock_mode = "bottom"
 expanded_scopes = [
@@ -59,7 +59,7 @@ unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP|clk"
 cursor_position_ps = 125000000000000
 visible_range_start_ps = 0
 visible_range_end_ps = 250000000000000
-zoom_center_ps = 0
+zoom_center_ps = 2666666666667
 tooltip_enabled = true
 
 [plugins]
