@@ -465,7 +465,7 @@ pub fn get_variables_from_tracked_files(
                 for signal in signals {
                     variables_with_context.push(VariableWithContext {
                         signal,
-                        file_id: tracked_file.path.clone(),
+                        file_id: tracked_file.canonical_path.clone(),
                         scope_id: scope_id.to_string(),
                     });
                 }

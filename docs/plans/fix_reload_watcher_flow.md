@@ -14,25 +14,20 @@
 - Expose a lightweight relay from `TrackedFiles` publishing `(canonical_path, FileState)` updates; have the timeline rely on that feed instead of parsing strings from selected-variable IDs.
 
 ## Implementation TODOs
-1. Backend canonical path propagation  
-   - Extend `BackendPluginBridge::normalized_paths` (backend/src/plugins.rs) to yield tuples `(canonical_key, display_path)` instead of bare `PathBuf`.  
-   - Update plugin host WIT (`plugins/reload_watcher/wit/plugin.wit`) and the host bridge traits so `reload_waveform_files` accepts the tuple payload.  
-   - Modify `DownMsg::ReloadWaveformFiles` in `shared/src/lib.rs` to carry `Vec<CanonicalPathPayload { canonical: String, display: String }>` and adjust backend senders accordingly.  
-   - Keep the plugin’s log output readable by formatting with `display`.
-2. Frontend canonical path model  
-   - Add `CanonicalPath` struct to `shared` (and expose serde support).  
-   - Update `TrackedFile` to store both canonical and display path values; ensure `create_tracked_file` initialises both.  
-   - Refactor `TrackedFiles` actor (frontend/src/tracked_files.rs) to maintain a `HashMap<String, TrackedFile>` keyed by canonical path plus an ordered `Vec<String>` for UI iteration.  
-   - Adjust config persistence (`frontend/src/config.rs`) to read/write `display` paths but hydrate canonical keys on load.
-3. Reload flow refactor  
-   - Add `TrackedFiles::reload_existing_paths(&[CanonicalPath])` that mutates the map in place, updates state, and enqueues parse requests.  
-   - Change `ConnectionMessageActor` to pass canonical payloads directly, bypassing `process_selected_file_paths` for reload scenarios.  
-   - Limit `process_selected_file_paths` to new-file ingestion; canonicalise picker results via the shared helper before insertion.
-4. Timeline + selected variables sync  
-   - Expose a relay from `TrackedFiles` broadcasting `(canonical_key, FileState)` whenever a file state changes.  
-   - Update the timeline actor to invalidate caches by canonical key, and swap all string prefixes in `SelectedVariable.unique_id` to use the canonical key while storing the display path for UI labels.  
-   - Audit cursor map, cache keys, and request bookkeeping to confirm they use the canonical key end-to-end.
-5. Migration + cleanup  
-   - On config load, convert legacy `opened_files: Vec<String>` into canonical/display pairs (skip writing until the new struct is in place).  
-   - Provide a one-shot migration that removes stale duplicate entries in `TrackedFiles` after hydration.  
-   - Add an async integration test that simulates a reload with canonical vs. display path differences to ensure the timeline transitions out of `Loading`.
+1. Backend canonical path propagation *(done)*  
+   - `BackendPluginBridge::normalized_paths` now returns `CanonicalPathPayload` entries and deduplicates on canonical keys.  
+   - The plugin → host bridge still exchanges `list<string>` in WIT, but `HostState` adapts those canonical strings back into payloads so the backend can preserve display labels.  
+   - `DownMsg::ReloadWaveformFiles` carries `Vec<CanonicalPathPayload>` and backend logging formats with the display path when available.
+2. Frontend canonical path model *(done)*  
+   - `CanonicalPathPayload` lives in `shared`, and `TrackedFile` stores both canonical and display paths.  
+   - `TrackedFiles` maintains canonical-aware snapshots and exposes `reload_existing_paths` for reuse.  
+   - Config persistence serialises display strings but rehydrates canonical keys during load.
+3. Reload flow refactor *(done)*  
+   - `ConnectionMessageActor` routes canonical payloads straight into the new `TrackedFiles::reload_existing_paths`, keeping `process_selected_file_paths` focused on new files.  
+   - File picker ingestion normalises paths via `process_selected_file_paths` before inserting.
+4. Timeline + selected variables sync *(done)*  
+   - Timeline invalidation, cache keys, and selected-variable IDs now use canonical paths end-to-end, ensuring reloads refresh UI state.  
+   - Cursor/cache eviction listens to the canonical-key relay emitted by `TrackedFiles`.
+5. Migration + cleanup *(done)*  
+   - Legacy configs with `opened_files: Vec<String>` migrate to canonical/display pairs on load.  
+   - Duplicate tracked entries are collapsed during hydration, and a unit test covers the new config deserialisation path.

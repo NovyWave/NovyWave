@@ -19,7 +19,8 @@ use bindings::{
     hello_world::{Plugin as HelloPlugin, novywave::hello_world as hello_wit},
     reload_watcher::{Plugin as ReloadPlugin, novywave::reload_watcher as reload_wit},
 };
-use shared::PluginConfigEntry;
+use shared::{CanonicalPathPayload, PluginConfigEntry};
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use wasmtime::component::{Component, HasSelf, Linker, ResourceTable};
@@ -28,18 +29,18 @@ use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView, p2};
 
 /// Bridge trait implemented by the host runtime to service plugin requests.
 pub trait HostBridge: Send + Sync + 'static {
-    fn get_opened_files(&self, plugin_id: &str) -> Vec<String>;
+    fn get_opened_files(&self, plugin_id: &str) -> Vec<CanonicalPathPayload>;
     fn register_watched_files(
         &self,
         plugin_id: &str,
-        paths: Vec<String>,
+        paths: Vec<CanonicalPathPayload>,
         debounce_ms: u32,
     ) -> Result<(), HostBridgeError>;
     fn clear_watched_files(&self, plugin_id: &str);
     fn reload_waveform_files(
         &self,
         plugin_id: &str,
-        paths: Vec<String>,
+        paths: Vec<CanonicalPathPayload>,
     ) -> Result<(), HostBridgeError>;
     fn log_info(&self, plugin_id: &str, message: &str);
     fn log_error(&self, plugin_id: &str, message: &str);
@@ -50,14 +51,14 @@ pub trait HostBridge: Send + Sync + 'static {
 pub struct NullBridge;
 
 impl HostBridge for NullBridge {
-    fn get_opened_files(&self, _plugin_id: &str) -> Vec<String> {
+    fn get_opened_files(&self, _plugin_id: &str) -> Vec<CanonicalPathPayload> {
         Vec::new()
     }
 
     fn register_watched_files(
         &self,
         _plugin_id: &str,
-        _paths: Vec<String>,
+        _paths: Vec<CanonicalPathPayload>,
         _debounce_ms: u32,
     ) -> Result<(), HostBridgeError> {
         Ok(())
@@ -68,7 +69,7 @@ impl HostBridge for NullBridge {
     fn reload_waveform_files(
         &self,
         _plugin_id: &str,
-        _paths: Vec<String>,
+        _paths: Vec<CanonicalPathPayload>,
     ) -> Result<(), HostBridgeError> {
         Ok(())
     }
@@ -138,13 +139,31 @@ impl hello_wit::host::Host for HostState {
 
 impl reload_wit::host::Host for HostState {
     fn get_opened_files(&mut self) -> Vec<String> {
-        self.bridge.get_opened_files(&self.plugin_id)
+        self.bridge
+            .get_opened_files(&self.plugin_id)
+            .into_iter()
+            .map(|payload| payload.canonical)
+            .collect()
     }
 
     fn register_watched_files(&mut self, paths: Vec<String>, debounce_ms: u32) -> () {
+        let snapshot = self.bridge.get_opened_files(&self.plugin_id);
+        let lookup: HashMap<_, _> = snapshot
+            .into_iter()
+            .map(|payload| (payload.canonical.clone(), payload.display))
+            .collect();
+
+        let payloads: Vec<CanonicalPathPayload> = paths
+            .into_iter()
+            .map(|path| CanonicalPathPayload {
+                display: lookup.get(&path).cloned().unwrap_or_else(|| path.clone()),
+                canonical: path,
+            })
+            .collect();
+
         if let Err(err) = self
             .bridge
-            .register_watched_files(&self.plugin_id, paths, debounce_ms)
+            .register_watched_files(&self.plugin_id, payloads, debounce_ms)
         {
             self.bridge.log_error(&self.plugin_id, &err.to_string());
         }
@@ -155,7 +174,20 @@ impl reload_wit::host::Host for HostState {
     }
 
     fn reload_waveform_files(&mut self, paths: Vec<String>) -> () {
-        if let Err(err) = self.bridge.reload_waveform_files(&self.plugin_id, paths) {
+        let snapshot = self.bridge.get_opened_files(&self.plugin_id);
+        let lookup: HashMap<_, _> = snapshot
+            .into_iter()
+            .map(|payload| (payload.canonical.clone(), payload.display))
+            .collect();
+
+        let payloads: Vec<CanonicalPathPayload> = paths
+            .into_iter()
+            .map(|path| CanonicalPathPayload {
+                display: lookup.get(&path).cloned().unwrap_or_else(|| path.clone()),
+                canonical: path,
+            })
+            .collect();
+        if let Err(err) = self.bridge.reload_waveform_files(&self.plugin_id, payloads) {
             self.bridge.log_error(&self.plugin_id, &err.to_string());
         }
     }
@@ -329,15 +361,24 @@ impl PluginHandle {
         }
     }
 
-    pub fn watched_files_changed(&mut self, paths: Vec<String>) -> Result<(), PluginHostError> {
+    pub fn watched_files_changed(
+        &mut self,
+        paths: Vec<CanonicalPathPayload>,
+    ) -> Result<(), PluginHostError> {
         match &mut self.runtime {
             RuntimeVariant::HelloWorld(_) => Ok(()),
-            RuntimeVariant::ReloadWatcher(runtime) => runtime
-                .call_watched_files_changed(&mut self.store, &paths)
-                .map_err(|source| PluginHostError::GuestCall {
-                    plugin_id: self.id.clone(),
-                    source,
-                }),
+            RuntimeVariant::ReloadWatcher(runtime) => {
+                let wit_paths: Vec<String> = paths
+                    .iter()
+                    .map(|payload| payload.canonical.clone())
+                    .collect();
+                runtime
+                    .call_watched_files_changed(&mut self.store, &wit_paths)
+                    .map_err(|source| PluginHostError::GuestCall {
+                        plugin_id: self.id.clone(),
+                        source,
+                    })
+            }
         }
     }
 

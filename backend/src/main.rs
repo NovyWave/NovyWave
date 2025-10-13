@@ -2,7 +2,6 @@ mod plugins;
 
 use jwalk::WalkDir;
 use moon::*;
-use rayon::prelude::*;
 use shared::{
     self, AppConfig, DownMsg, FileError, FileFormat, FileHierarchy, FileSystemItem, ScopeData,
     SignalStatistics, SignalTransition, SignalTransitionQuery, SignalTransitionResult, SignalValue,
@@ -140,11 +139,14 @@ impl SignalCacheManager {
             }
         }
 
-        // Process requests in parallel using rayon
-        let signal_data: Vec<UnifiedSignalData> = signal_requests
-            .par_iter()
-            .filter_map(|request| self.get_or_load_signal_data(request).ok())
-            .collect();
+        // Load each requested signal; bail on the first failure
+        let mut signal_data = Vec::with_capacity(signal_requests.len());
+        for request in &signal_requests {
+            match self.get_or_load_signal_data(request) {
+                Ok(data) => signal_data.push(data),
+                Err(err) => return Err(err),
+            }
+        }
 
         // Compute cursor values if requested
         let cursor_values = if let Some(time) = cursor_time {

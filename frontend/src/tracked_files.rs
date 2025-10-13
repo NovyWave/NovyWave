@@ -5,8 +5,9 @@
 
 use crate::dataflow::{ActorVec, Relay, relay};
 use futures::{StreamExt, select};
-use shared::{FileState, LoadingStatus, TrackedFile, create_tracked_file};
-use std::path::{Path, PathBuf};
+use shared::{CanonicalPathPayload, FileState, LoadingStatus, TrackedFile, create_tracked_file};
+use std::collections::HashSet;
+use std::path::PathBuf;
 use zoon::*;
 
 /// TrackedFiles domain with proper Actor+Relay architecture
@@ -14,10 +15,10 @@ use zoon::*;
 pub struct TrackedFiles {
     pub files: ActorVec<TrackedFile>,
     pub files_vec_signal: zoon::Mutable<Vec<TrackedFile>>, // Dedicated Vec signal for sync
-    pub config_files_loaded_relay: Relay<Vec<String>>,
-    pub files_dropped_relay: Relay<Vec<std::path::PathBuf>>,
+    pub config_files_loaded_relay: Relay<Vec<CanonicalPathPayload>>,
+    pub files_dropped_relay: Relay<Vec<PathBuf>>,
     pub file_removed_relay: Relay<String>,
-    pub file_reload_requested_relay: Relay<String>,
+    pub file_reload_requested_relay: Relay<CanonicalPathPayload>,
     pub file_load_completed_relay: Relay<(String, FileState)>,
     pub parsing_progress_relay: Relay<(String, f32, LoadingStatus)>,
     pub loading_started_relay: Relay<(String, String)>,
@@ -27,10 +28,12 @@ pub struct TrackedFiles {
 
 impl TrackedFiles {
     pub async fn new() -> Self {
-        let (config_files_loaded_relay, mut config_files_loaded_stream) = relay::<Vec<String>>();
-        let (files_dropped_relay, mut files_dropped_stream) = relay::<Vec<std::path::PathBuf>>();
+        let (config_files_loaded_relay, mut config_files_loaded_stream) =
+            relay::<Vec<CanonicalPathPayload>>();
+        let (files_dropped_relay, mut files_dropped_stream) = relay::<Vec<PathBuf>>();
         let (file_removed_relay, mut file_removed_stream) = relay::<String>();
-        let (file_reload_requested_relay, mut file_reload_requested_stream) = relay::<String>();
+        let (file_reload_requested_relay, mut file_reload_requested_stream) =
+            relay::<CanonicalPathPayload>();
         let (file_load_completed_relay, mut file_load_completed_stream) =
             relay::<(String, FileState)>();
         let (parsing_progress_relay, mut parsing_progress_stream) =
@@ -55,11 +58,25 @@ impl TrackedFiles {
             loop {
                 select! {
                     file_paths = config_files_loaded_stream.next() => {
-                        if let Some(file_paths) = file_paths {
-                            let tracked_files: Vec<TrackedFile> = file_paths.into_iter()
-                                .map(|path_str| {
-                                    let tracked_file = create_tracked_file(path_str.clone(), FileState::Loading(LoadingStatus::Starting));
-                                    tracked_file
+                        if let Some(file_payloads) = file_paths {
+                            let mut seen = HashSet::new();
+                            let tracked_files: Vec<TrackedFile> = file_payloads
+                                .into_iter()
+                                .filter_map(|payload| {
+                                    let canonical = if payload.canonical.is_empty() {
+                                        payload.display.clone()
+                                    } else {
+                                        payload.canonical.clone()
+                                    };
+
+                                    if seen.insert(canonical) {
+                                        Some(create_tracked_file(
+                                            payload,
+                                            FileState::Loading(LoadingStatus::Starting),
+                                        ))
+                                    } else {
+                                        None
+                                    }
                                 })
                                 .collect();
                             cached_files = tracked_files.clone();
@@ -73,16 +90,26 @@ impl TrackedFiles {
 
                             // Send parse requests for config-loaded files
                             for file in tracked_files {
-                                send_parse_request_to_backend(file.path.clone()).await;
+                                let load_path = if file.path.is_empty() {
+                                    file.canonical_path.clone()
+                                } else {
+                                    file.path.clone()
+                                };
+                                send_parse_request_to_backend(load_path).await;
                             }
                         }
                     }
                     file_paths = files_dropped_stream.next() => {
                         if let Some(file_paths) = file_paths {
-                            let new_files: Vec<TrackedFile> = file_paths.into_iter()
+                            let new_files: Vec<TrackedFile> = file_paths
+                                .into_iter()
                                 .map(|path| {
                                     let path_str = path.to_string_lossy().to_string();
-                                    create_tracked_file(path_str, FileState::Loading(LoadingStatus::Starting))
+                                    let payload = payload_from_string(path_str);
+                                    create_tracked_file(
+                                        payload,
+                                        FileState::Loading(LoadingStatus::Starting),
+                                    )
                                 })
                                 .collect();
 
@@ -109,55 +136,66 @@ impl TrackedFiles {
                             files_vec_signal_for_actor.set_neq(cached_files.clone());
                         }
                     }
-                    file_id = file_reload_requested_stream.next() => {
-                        if let Some(file_id) = file_id {
-                            let canonical_candidate = canonicalize_path(&file_id);
-                            let matched = cached_files
-                                .iter()
-                                .find(|tracked| tracked_matches(tracked, &file_id, canonical_candidate.as_ref()))
-                                .cloned();
+                    payload = file_reload_requested_stream.next() => {
+                        if let Some(payload) = payload {
+                            let canonical_key = if payload.canonical.is_empty() {
+                                payload.display.clone()
+                            } else {
+                                payload.canonical.clone()
+                            };
+                            let display_path = if payload.display.is_empty() {
+                                canonical_key.clone()
+                            } else {
+                                payload.display.clone()
+                            };
 
-                            if let Some(existing_file) = matched {
-                                let new_file = create_tracked_file(
-                                    existing_file.path.clone(),
-                                    FileState::Loading(LoadingStatus::Starting)
-                                );
+                            let new_file = create_tracked_file(
+                                payload.clone(),
+                                FileState::Loading(LoadingStatus::Starting),
+                            );
 
-                                // Update cache
-                                cached_files.retain(|f| f.id != file_id);
-                                cached_files.push(new_file.clone());
-
-                                // Update files_vec properly
-                                let mut files = files_vec.lock_mut();
-                                files.retain(|f| f.id != file_id);
-                                files.push_cloned(new_file.clone());
-
-                                // Update dedicated Vec signal to keep snapshot in sync
-                                files_vec_signal_for_actor.set_neq(cached_files.clone());
-
-                                // Send parse request for reloaded file
-                                send_parse_request_to_backend(new_file.path.clone()).await;
-                            }
-                            else {
+                            if let Some(index) = cached_files.iter().position(|f| {
+                                f.canonical_path == canonical_key || f.path == display_path
+                            }) {
+                                cached_files[index] = new_file.clone();
+                            } else {
                                 zoon::println!(
                                     "⚠️ TrackedFiles reload miss for {} (cached {})",
-                                    file_id,
+                                    canonical_key,
                                     cached_files.len()
                                 );
+                                cached_files.push(new_file.clone());
                             }
+
+                            {
+                                let mut vec = files_vec.lock_mut();
+                                vec.clear();
+                                vec.extend(cached_files.clone());
+                            }
+                            files_vec_signal_for_actor.set_neq(cached_files.clone());
+
+                            let load_path = if payload.display.is_empty() {
+                                canonical_key.clone()
+                            } else {
+                                payload.display.clone()
+                            };
+                            send_parse_request_to_backend(load_path).await;
                         }
                     }
                     load_result = file_load_completed_stream.next() => {
                         if let Some((file_id, new_state)) = load_result {
                             cached_loading_states.insert(file_id.clone(), new_state.clone());
 
-                            let canonical_candidate = canonicalize_path(&file_id);
+                            if matches!(new_state, FileState::Loaded(_)) {
+                                zoon::println!("✅ TrackedFiles loaded {}", file_id);
+                            }
 
                             // Update cached state
-                            if let Some(file) = cached_files
-                                .iter_mut()
-                                .find(|tracked| tracked_matches(tracked, &file_id, canonical_candidate.as_ref()))
-                            {
+                            if let Some(file) = cached_files.iter_mut().find(|tracked| {
+                                tracked.canonical_path == file_id || tracked.path == file_id
+                            }) {
+                                file.id = file_id.clone();
+                                file.canonical_path = file_id.clone();
                                 file.state = new_state;
                                 {
                                     let mut vec = files_vec.lock_mut();
@@ -198,7 +236,11 @@ impl TrackedFiles {
                     }
                     loading_result = loading_started_stream.next() => {
                         if let Some((file_id, filename)) = loading_result {
-                            let loading_file = create_tracked_file(filename, FileState::Loading(LoadingStatus::Starting));
+                            let mut loading_file = create_tracked_file(
+                                payload_from_string(file_id.clone()),
+                                FileState::Loading(LoadingStatus::Starting),
+                            );
+                            loading_file.filename = filename.clone();
                             let existing_index = cached_files.iter().position(|f| f.id == file_id);
 
                             if let Some(_index) = existing_index {
@@ -257,8 +299,19 @@ impl TrackedFiles {
         }
     }
 
-    pub fn reload_file(&self, file_id: String) {
-        self.file_reload_requested_relay.send(file_id);
+    pub fn reload_existing_paths(&self, files: Vec<CanonicalPathPayload>) {
+        for payload in files {
+            zoon::println!(
+                "🔁 TrackedFiles reload request canonical={} display={}",
+                if payload.canonical.is_empty() {
+                    payload.display.as_str()
+                } else {
+                    payload.canonical.as_str()
+                },
+                payload.display
+            );
+            self.file_reload_requested_relay.send(payload);
+        }
     }
 
     /// Get signal for tracked files list
@@ -279,6 +332,8 @@ async fn send_parse_request_to_backend(file_path: String) {
     use crate::platform::{CurrentPlatform, Platform};
     use shared::UpMsg;
 
+    zoon::println!("🛰️ Sending LoadWaveformFile for {}", file_path);
+
     match CurrentPlatform::send_message(UpMsg::LoadWaveformFile(file_path.clone())).await {
         Ok(()) => {}
         Err(e) => {
@@ -291,32 +346,9 @@ async fn send_parse_request_to_backend(file_path: String) {
     }
 }
 
-fn tracked_matches(
-    tracked: &TrackedFile,
-    candidate: &str,
-    canonical_candidate: Option<&PathBuf>,
-) -> bool {
-    if tracked.id == candidate || tracked.path == candidate {
-        return true;
+fn payload_from_string(path: String) -> CanonicalPathPayload {
+    CanonicalPathPayload {
+        canonical: path.clone(),
+        display: path,
     }
-
-    if let Some(candidate_canonical) = canonical_candidate {
-        if let Some(tracked_id) = canonicalize_path(&tracked.id) {
-            if &tracked_id == candidate_canonical {
-                return true;
-            }
-        }
-        if let Some(tracked_path) = canonicalize_path(&tracked.path) {
-            if &tracked_path == candidate_canonical {
-                return true;
-            }
-        }
-    }
-
-    false
-}
-
-fn canonicalize_path(input: &str) -> Option<PathBuf> {
-    let path = Path::new(input);
-    std::fs::canonicalize(path).ok()
 }

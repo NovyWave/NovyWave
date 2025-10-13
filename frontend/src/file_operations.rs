@@ -1,5 +1,5 @@
 use crate::dataflow::atom::Atom;
-use shared::TrackedFile;
+use shared::{CanonicalPathPayload, TrackedFile};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use zoon::*;
@@ -31,29 +31,43 @@ pub async fn process_selected_file_paths(
     let tracked_files_snapshot = tracked_files.get_current_files();
     let mut known_paths: HashSet<String> = HashSet::new();
     for tracked in &tracked_files_snapshot {
-        known_paths.insert(PathBuf::from(&tracked.id).to_string_lossy().to_string());
-        known_paths.insert(PathBuf::from(&tracked.path).to_string_lossy().to_string());
+        known_paths.insert(tracked.canonical_path.clone());
+        known_paths.insert(tracked.path.clone());
     }
 
     let mut new_files: Vec<PathBuf> = Vec::new();
+    let mut reload_payloads: Vec<CanonicalPathPayload> = Vec::new();
+    let mut reload_seen: HashSet<String> = HashSet::new();
 
     for selected_path in selected_files {
         let selected_pathbuf = PathBuf::from(&selected_path);
-        let normalized_path = selected_pathbuf.to_string_lossy().to_string();
+        let display_path = selected_pathbuf.to_string_lossy().to_string();
 
-        // Attempt to reload any existing tracked file first so UI state updates immediately.
-        tracked_files.reload_file(normalized_path.clone());
+        if let Some(existing) = tracked_files_snapshot
+            .iter()
+            .find(|tracked| tracked.path == display_path || tracked.canonical_path == display_path)
+        {
+            if reload_seen.insert(existing.canonical_path.clone()) {
+                reload_payloads.push(CanonicalPathPayload {
+                    canonical: existing.canonical_path.clone(),
+                    display: display_path.clone(),
+                });
+            }
+            continue;
+        }
 
-        if !known_paths.contains(&normalized_path) {
-            known_paths.insert(normalized_path);
+        if !known_paths.contains(&display_path) {
+            known_paths.insert(display_path.clone());
             new_files.push(selected_pathbuf);
         }
     }
 
+    if !reload_payloads.is_empty() {
+        tracked_files.reload_existing_paths(reload_payloads);
+    }
     if !new_files.is_empty() {
         tracked_files.files_dropped_relay.send(new_files);
     }
-    // Existing files have already been enqueued via reload_file calls above.
 }
 
 pub fn process_file_picker_selection(

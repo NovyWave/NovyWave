@@ -8,7 +8,7 @@ pub fn get_signal_type_for_selected_variable_from_files(
 ) -> String {
     if let Some((file_path, scope_path, variable_name)) = selected_var.parse_unique_id() {
         for tracked_file in files.iter() {
-            if tracked_file.path == file_path {
+            if tracked_file.canonical_path == file_path || tracked_file.path == file_path {
                 if let FileState::Loaded(waveform_file) = &tracked_file.state {
                     let full_scope_id = format!("{}|{}", file_path, scope_path);
 

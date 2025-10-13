@@ -1502,6 +1502,16 @@ impl WaveformTimeline {
 
         let cursor_ns = self.cursor.state.get_cloned().nanos();
 
+        zoon::println!(
+            "🔁 Timeline sending query for {} variables (ids: {:?})",
+            requests.len(),
+            plans
+                .iter()
+                .filter(|plan| plan.needs_request)
+                .map(|plan| plan.unique_id.as_str())
+                .collect::<Vec<_>>()
+        );
+
         let request_id = format!(
             "timeline-{}",
             self.request_counter.fetch_add(1, Ordering::SeqCst)
@@ -1550,6 +1560,12 @@ impl WaveformTimeline {
 
         let mut cache = self.window_cache.state.lock_mut();
         let mut series_map = self.series_map.state.lock_mut();
+
+        zoon::println!(
+            "✅ Timeline response {} series, cursor entries {}",
+            signal_data.len(),
+            cursor_values.len()
+        );
 
         for UnifiedSignalData {
             unique_id,
@@ -1663,6 +1679,7 @@ impl WaveformTimeline {
         {
             let mut values_map = self.cursor_values.state.lock_mut();
             for (unique_id, value) in cursor_values {
+                zoon::println!("✅ Cursor value {} -> {:?}", unique_id, value);
                 values_map.insert(unique_id.clone(), value);
                 self.cancel_cursor_loading_indicator(&unique_id);
             }
@@ -2384,7 +2401,13 @@ impl WaveformTimeline {
         Task::start(async move {
             let mut reload_stream = tracked_files.file_reload_requested_relay.subscribe().fuse();
 
-            while let Some(file_id) = reload_stream.next().await {
+            while let Some(payload) = reload_stream.next().await {
+                let file_id = if payload.canonical.is_empty() {
+                    payload.display.clone()
+                } else {
+                    payload.canonical.clone()
+                };
+                zoon::println!("🔁 Timeline handling reload for {}", file_id);
                 timeline.handle_file_reload_requested(&file_id);
             }
         });

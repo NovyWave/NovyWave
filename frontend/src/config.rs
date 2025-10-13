@@ -5,7 +5,9 @@ use futures::{FutureExt, StreamExt, select};
 use moonzoon_novyui::tokens::theme;
 use serde::{Deserialize, Serialize};
 use shared::UpMsg;
-use shared::{self, AppConfig as SharedAppConfig, DockMode, Theme as SharedTheme};
+use shared::{
+    self, AppConfig as SharedAppConfig, CanonicalPathPayload, DockMode, Theme as SharedTheme,
+};
 use wasm_bindgen_futures::{JsFuture, spawn_local};
 use zoon::*;
 
@@ -134,7 +136,7 @@ async fn compose_shared_app_config(
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SessionState {
-    pub opened_files: Vec<String>,
+    pub opened_files: Vec<CanonicalPathPayload>,
     pub expanded_scopes: Vec<String>,
     pub selected_scope_id: Option<String>,
     pub variables_search_filter: String,
@@ -1055,9 +1057,12 @@ impl AppConfig {
                 // Force initial sync with current value
                 let initial_files = files_signal.get_cloned();
                 if !initial_files.is_empty() {
-                    let file_paths: Vec<String> = initial_files
+                    let file_paths: Vec<CanonicalPathPayload> = initial_files
                         .iter()
-                        .map(|tracked_file| tracked_file.path.clone())
+                        .map(|tracked_file| CanonicalPathPayload {
+                            canonical: tracked_file.canonical_path.clone(),
+                            display: tracked_file.path.clone(),
+                        })
                         .collect();
 
                     let mut current_session = session_state_actor_for_files
@@ -1081,9 +1086,12 @@ impl AppConfig {
                 let mut stream = files_signal.signal_cloned().to_stream();
                 while let Some(files) = stream.next().await {
                     // Extract file paths from TrackedFile structs
-                    let file_paths: Vec<String> = files
+                    let file_paths: Vec<CanonicalPathPayload> = files
                         .iter()
-                        .map(|tracked_file| tracked_file.path.clone())
+                        .map(|tracked_file| CanonicalPathPayload {
+                            canonical: tracked_file.canonical_path.clone(),
+                            display: tracked_file.path.clone(),
+                        })
                         .collect();
 
                     // Update session state - preserve other fields

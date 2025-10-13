@@ -90,7 +90,7 @@ pub enum DownMsg {
         error: String,
     },
     ReloadWaveformFiles {
-        file_paths: Vec<String>,
+        file_paths: Vec<CanonicalPathPayload>,
     },
     /// Unified signal data response with all requested information
     UnifiedSignalResponse {
@@ -971,6 +971,7 @@ pub enum FileState {
 #[derive(Clone, Debug, PartialEq)]
 pub struct TrackedFile {
     pub id: String,
+    pub canonical_path: String,
     pub path: String,
     pub filename: String,
     pub state: FileState,
@@ -1277,10 +1278,33 @@ fn default_tooltip_enabled() -> bool {
     true
 }
 
+fn deserialize_opened_files<'de, D>(deserializer: D) -> Result<Vec<CanonicalPathPayload>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum OpenedFilesHelper {
+        Strings(Vec<String>),
+        Objects(Vec<CanonicalPathPayload>),
+    }
+
+    match OpenedFilesHelper::deserialize(deserializer)? {
+        OpenedFilesHelper::Strings(strings) => Ok(strings
+            .into_iter()
+            .map(|path| CanonicalPathPayload {
+                canonical: path.clone(),
+                display: path,
+            })
+            .collect()),
+        OpenedFilesHelper::Objects(objects) => Ok(objects),
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct WorkspaceSection {
-    #[serde(default)]
-    pub opened_files: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_opened_files")]
+    pub opened_files: Vec<CanonicalPathPayload>,
     #[serde(default, deserialize_with = "deserialize_dock_mode")]
     pub dock_mode: DockMode,
     #[serde(default)]
@@ -1592,6 +1616,9 @@ impl AppConfig {
         // Migrate expanded_scopes from old format to new format
         warnings.extend(self.migrate_expanded_scopes());
 
+        // Migrate selected variables to canonical file paths
+        warnings.extend(self.migrate_selected_variables());
+
         // Validate plugins section
         warnings.extend(self.plugins.validate_and_fix());
 
@@ -1634,6 +1661,48 @@ impl AppConfig {
         warnings
     }
 
+    fn migrate_selected_variables(&mut self) -> Vec<String> {
+        let mut warnings = Vec::new();
+        if self.workspace.selected_variables.is_empty() {
+            return warnings;
+        }
+
+        let mut canonical_lookup: HashMap<String, String> = HashMap::new();
+        for payload in &self.workspace.opened_files {
+            let canonical = canonical_str(payload).to_string();
+            canonical_lookup.insert(canonical.clone(), canonical.clone());
+            canonical_lookup.insert(display_str(payload).to_string(), canonical.clone());
+
+            if let Some(file_name) = std::path::Path::new(display_str(payload))
+                .file_name()
+                .and_then(|n| n.to_str())
+            {
+                canonical_lookup
+                    .entry(file_name.to_string())
+                    .or_insert_with(|| canonical.clone());
+            }
+        }
+
+        for variable in &mut self.workspace.selected_variables {
+            if let Some((file_path, scope_path, variable_name)) = variable.parse_unique_id() {
+                if let Some(canonical) = canonical_lookup.get(&file_path) {
+                    if canonical != &file_path {
+                        warnings.push(format!(
+                            "Migrated selected variable '{}' file path '{}' -> '{}'",
+                            variable.display_name(),
+                            file_path,
+                            canonical
+                        ));
+                        variable.unique_id =
+                            format!("{}|{}|{}", canonical, scope_path, variable_name);
+                    }
+                }
+            }
+        }
+
+        warnings
+    }
+
     /// Check if scope ID is in old format
     fn is_old_scope_format(&self, scope_id: &str) -> bool {
         // New format: {full_path}|{scope} or just {full_path} (starting with /)
@@ -1648,9 +1717,21 @@ impl AppConfig {
 
         // Check if it matches generate_file_id() output - if so, it's old sanitized format
         for opened_file_path in &self.workspace.opened_files {
-            let generated_file_id = generate_file_id(opened_file_path);
-            if generated_file_id == scope_id {
-                // This is an old sanitized file-only entry that needs migration
+            let generated_display_id = generate_file_id(display_str(opened_file_path));
+            if generated_display_id == scope_id {
+                return true;
+            }
+
+            let generated_canonical_id = generate_file_id(canonical_str(opened_file_path));
+            if generated_canonical_id == scope_id {
+                return true;
+            }
+
+            let filename = std::path::Path::new(display_str(opened_file_path))
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("");
+            if filename == scope_id {
                 return true;
             }
         }
@@ -1668,10 +1749,11 @@ impl AppConfig {
     fn convert_to_new_format(&self, old_scope_id: &str) -> Option<String> {
         // First check if this is a sanitized file-only entry (direct match with generate_file_id)
         for opened_file_path in &self.workspace.opened_files {
-            let generated_file_id = generate_file_id(opened_file_path);
-            if generated_file_id == old_scope_id {
+            let display_id = generate_file_id(display_str(opened_file_path));
+            let canonical_id = generate_file_id(canonical_str(opened_file_path));
+            if display_id == old_scope_id || canonical_id == old_scope_id {
                 // This is a sanitized file-only entry - convert to full path
-                return Some(opened_file_path.clone());
+                return Some(canonical_str(opened_file_path).to_string());
             }
         }
 
@@ -1690,27 +1772,30 @@ impl AppConfig {
 
         // Find matching file in opened_files by looking for files whose generated ID matches
         for opened_file_path in &self.workspace.opened_files {
-            let generated_file_id = generate_file_id(opened_file_path);
+            let canonical_path = canonical_str(opened_file_path);
+            let display_path = display_str(opened_file_path);
+            let generated_file_id = generate_file_id(display_path);
+            let generated_canonical_id = generate_file_id(canonical_path);
 
             // Check for file_id match (for entries like "wave_27.fst_TOP")
-            if generated_file_id == file_id {
+            if generated_file_id == file_id || generated_canonical_id == file_id {
                 // Found matching file - construct new format
                 return Some(match scope_name {
-                    Some(scope) => format!("{}|{}", opened_file_path, scope),
-                    None => opened_file_path.clone(), // File-only entry
+                    Some(scope) => format!("{}|{}", canonical_path, scope),
+                    None => canonical_path.to_string(),
                 });
             }
 
             // Check legacy format (filename-only ID) for backwards compatibility
-            let filename = std::path::Path::new(opened_file_path)
+            let filename = std::path::Path::new(display_path)
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("");
             if filename == file_id {
                 // Found matching file using legacy filename-only matching
                 return Some(match scope_name {
-                    Some(scope) => format!("{}|{}", opened_file_path, scope),
-                    None => opened_file_path.clone(), // File-only entry
+                    Some(scope) => format!("{}|{}", canonical_path, scope),
+                    None => canonical_path.to_string(),
                 });
             }
         }
@@ -1911,19 +1996,50 @@ fn find_minimal_disambiguation(paths: &[String]) -> Vec<String> {
 }
 
 /// Create a TrackedFile from basic file information with initial state
-pub fn create_tracked_file(file_path: String, state: FileState) -> TrackedFile {
-    let filename = std::path::Path::new(&file_path)
+/// Create a TrackedFile from basic file information with initial state
+pub fn create_tracked_file(path: CanonicalPathPayload, state: FileState) -> TrackedFile {
+    let display_path = path.display.clone();
+    let canonical = if path.canonical.is_empty() {
+        path.display.clone()
+    } else {
+        path.canonical.clone()
+    };
+
+    let filename = std::path::Path::new(&display_path)
         .file_name()
         .and_then(|n| n.to_str())
-        .unwrap_or(&file_path)
+        .unwrap_or(&display_path)
         .to_string();
 
     TrackedFile {
-        id: file_path.clone(), // Use full path as ID for new format consistency
-        path: file_path,
+        id: canonical.clone(),
+        canonical_path: canonical,
+        path: display_path,
         filename: filename.clone(),
         state,
         smart_label: String::new(), // Unused - smart labels computed by derived signal
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CanonicalPathPayload {
+    pub canonical: String,
+    pub display: String,
+}
+
+fn canonical_str<'a>(payload: &'a CanonicalPathPayload) -> &'a str {
+    if payload.canonical.is_empty() {
+        payload.display.as_str()
+    } else {
+        payload.canonical.as_str()
+    }
+}
+
+fn display_str<'a>(payload: &'a CanonicalPathPayload) -> &'a str {
+    if payload.display.is_empty() {
+        canonical_str(payload)
+    } else {
+        payload.display.as_str()
     }
 }
 
@@ -1962,6 +2078,7 @@ pub fn get_file_extension(path: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn test_theme_serialization() {
@@ -2407,6 +2524,56 @@ mod tests {
         assert_eq!(
             sanitize_path_for_id("/valid-path_123/test-file_v2.vcd"),
             "valid-path_123_test-file_v2.vcd"
+        );
+    }
+
+    #[test]
+    fn workspace_opened_files_deserializes_strings() {
+        let value = json!({
+            "opened_files": ["/tmp/sample.vcd"],
+            "dock_mode": "right"
+        });
+
+        let section: WorkspaceSection = serde_json::from_value(value).unwrap();
+        assert_eq!(section.opened_files.len(), 1);
+        assert_eq!(section.opened_files[0].canonical, "/tmp/sample.vcd");
+        assert_eq!(section.opened_files[0].display, "/tmp/sample.vcd");
+    }
+
+    #[test]
+    fn workspace_opened_files_deserializes_payloads() {
+        let value = json!({
+            "opened_files": [{
+                "canonical": "/abs/foo.vcd",
+                "display": "foo.vcd"
+            }],
+            "dock_mode": "right"
+        });
+
+        let section: WorkspaceSection = serde_json::from_value(value).unwrap();
+        assert_eq!(section.opened_files.len(), 1);
+        assert_eq!(section.opened_files[0].canonical, "/abs/foo.vcd");
+        assert_eq!(section.opened_files[0].display, "foo.vcd");
+    }
+
+    #[test]
+    fn migrate_selected_variables_to_canonical_paths() {
+        let mut config = AppConfig::default();
+        config.workspace.opened_files = vec![CanonicalPathPayload {
+            canonical: "/abs/foo.vcd".to_string(),
+            display: "foo.vcd".to_string(),
+        }];
+        config.workspace.selected_variables = vec![SelectedVariable {
+            unique_id: "foo.vcd|scope|sig".to_string(),
+            formatter: None,
+        }];
+
+        let warnings = config.validate_and_fix();
+
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(
+            config.workspace.selected_variables[0].unique_id,
+            "/abs/foo.vcd|scope|sig"
         );
     }
 }

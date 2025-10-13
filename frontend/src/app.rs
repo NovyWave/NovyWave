@@ -195,11 +195,7 @@ impl ConnectionMessageActor {
                             }
                             DownMsg::ReloadWaveformFiles { file_paths } => {
                                 if !file_paths.is_empty() {
-                                    process_selected_file_paths(
-                                        tracked_files_for_reload.clone(),
-                                        file_paths,
-                                    )
-                                    .await;
+                                    tracked_files_for_reload.reload_existing_paths(file_paths);
                                 }
                             }
                             _ => {
@@ -229,7 +225,6 @@ impl ConnectionMessageActor {
     }
 }
 
-use crate::file_operations::process_selected_file_paths;
 use crate::file_picker::file_paths_dialog;
 
 /// Self-contained NovyWave application
