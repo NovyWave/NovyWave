@@ -323,6 +323,9 @@ pub struct WaveformTimeline {
     debug_metrics: Actor<TimelineDebugMetrics>,
     debug_overlay_enabled: Atom<bool>,
     tooltip_enabled: Mutable<bool>,
+    reload_in_progress: Rc<RefCell<HashSet<String>>>,
+    reload_viewport_snapshot: Rc<RefCell<Option<(Viewport, TimePs)>>>,
+    reload_restore_pending: Rc<Cell<bool>>,
 
     selected_variables: SelectedVariables,
     maximum_range: MaximumTimelineRange,
@@ -453,6 +456,9 @@ impl WaveformTimeline {
         let zoom_center_timer = Rc::new(RefCell::new(None));
         let zoom_center_last_update_ms = Rc::new(RefCell::new(Date::now()));
         let zoom_center_anchor_ratio = Rc::new(RefCell::new(None));
+        let reload_in_progress = Rc::new(RefCell::new(HashSet::new()));
+        let reload_viewport_snapshot = Rc::new(RefCell::new(None));
+        let reload_restore_pending = Rc::new(Cell::new(false));
 
         let bounds_state = Mutable::new(None);
         let request_debounce = Rc::new(RefCell::new(None));
@@ -479,6 +485,9 @@ impl WaveformTimeline {
             debug_metrics,
             debug_overlay_enabled,
             tooltip_enabled,
+            reload_in_progress: reload_in_progress.clone(),
+            reload_viewport_snapshot: reload_viewport_snapshot.clone(),
+            reload_restore_pending: reload_restore_pending.clone(),
             selected_variables,
             maximum_range,
             connection,
@@ -538,7 +547,9 @@ impl WaveformTimeline {
         timeline.spawn_variable_format_handler(format_updated_stream);
         timeline.spawn_selected_variables_listener();
         timeline.spawn_bounds_listener();
-        timeline.spawn_file_reload_listener(tracked_files);
+        let tracked_files_for_reload = tracked_files.clone();
+        timeline.spawn_file_reload_listener(tracked_files_for_reload);
+        timeline.spawn_file_reload_completion_listener(tracked_files);
         timeline.spawn_pointer_hover_handler(pointer_hover_stream);
         timeline.spawn_tooltip_toggle_handler(tooltip_toggle_stream);
         timeline.spawn_request_triggers();
@@ -1502,16 +1513,6 @@ impl WaveformTimeline {
 
         let cursor_ns = self.cursor.state.get_cloned().nanos();
 
-        zoon::println!(
-            "🔁 Timeline sending query for {} variables (ids: {:?})",
-            requests.len(),
-            plans
-                .iter()
-                .filter(|plan| plan.needs_request)
-                .map(|plan| plan.unique_id.as_str())
-                .collect::<Vec<_>>()
-        );
-
         let request_id = format!(
             "timeline-{}",
             self.request_counter.fetch_add(1, Ordering::SeqCst)
@@ -1560,12 +1561,6 @@ impl WaveformTimeline {
 
         let mut cache = self.window_cache.state.lock_mut();
         let mut series_map = self.series_map.state.lock_mut();
-
-        zoon::println!(
-            "✅ Timeline response {} series, cursor entries {}",
-            signal_data.len(),
-            cursor_values.len()
-        );
 
         for UnifiedSignalData {
             unique_id,
@@ -1679,13 +1674,22 @@ impl WaveformTimeline {
         {
             let mut values_map = self.cursor_values.state.lock_mut();
             for (unique_id, value) in cursor_values {
-                zoon::println!("✅ Cursor value {} -> {:?}", unique_id, value);
                 values_map.insert(unique_id.clone(), value);
                 self.cancel_cursor_loading_indicator(&unique_id);
             }
         }
 
         self.update_render_state();
+        self.refresh_cursor_values_from_series();
+
+        if self.reload_in_progress.borrow().is_empty() && self.reload_restore_pending.get() {
+            if let Some((viewport, cursor)) = self.reload_viewport_snapshot.borrow_mut().take() {
+                self.viewport.state.set(viewport);
+                self.cursor.state.set(cursor);
+                self.update_render_state();
+            }
+            self.reload_restore_pending.set(false);
+        }
 
         current_request.latest_request_windows = request_windows;
         self.request_state.state.set(current_request);
@@ -2145,6 +2149,24 @@ impl WaveformTimeline {
     }
 
     fn handle_file_reload_requested(&self, file_path: &str) {
+        let mut set = self.reload_in_progress.borrow_mut();
+        if set.is_empty() {
+            let snapshot = (
+                self.viewport.state.get_cloned(),
+                self.cursor.state.get_cloned(),
+            );
+            *self.reload_viewport_snapshot.borrow_mut() = Some(snapshot);
+        }
+        set.insert(file_path.to_string());
+        drop(set);
+        self.reload_restore_pending.set(false);
+
+        {
+            let mut series_map = self.series_map.state.lock_mut();
+            let prefix = format!("{}|", file_path);
+            series_map.retain(|key, _| !key.starts_with(&prefix));
+        }
+
         let variables_snapshot = self
             .selected_variables
             .variables_vec_actor
@@ -2171,13 +2193,6 @@ impl WaveformTimeline {
         let affected_list: Vec<String> = affected_ids.iter().cloned().collect();
 
         {
-            let mut series_map = self.series_map.state.lock_mut();
-            for unique_id in &affected_list {
-                series_map.remove(unique_id);
-            }
-        }
-
-        {
             let mut cursor_values = self.cursor_values.state.lock_mut();
             for unique_id in &affected_list {
                 cursor_values.insert(unique_id.clone(), SignalValue::Loading);
@@ -2196,6 +2211,24 @@ impl WaveformTimeline {
 
         self.update_render_state();
         self.schedule_request();
+    }
+
+    fn handle_file_reload_completed(&self, file_path: &str) {
+        let mut set = self.reload_in_progress.borrow_mut();
+        set.remove(file_path);
+        let pending = !set.is_empty();
+        drop(set);
+
+        if !pending {
+            if self.reload_viewport_snapshot.borrow().is_some() {
+                self.reload_restore_pending.set(true);
+            }
+            self.schedule_request();
+        }
+    }
+
+    fn has_active_reload(&self) -> bool {
+        !self.reload_in_progress.borrow().is_empty()
     }
 
     fn spawn_canvas_resize_handler(
@@ -2407,8 +2440,18 @@ impl WaveformTimeline {
                 } else {
                     payload.canonical.clone()
                 };
-                zoon::println!("🔁 Timeline handling reload for {}", file_id);
                 timeline.handle_file_reload_requested(&file_id);
+            }
+        });
+    }
+
+    fn spawn_file_reload_completion_listener(&self, tracked_files: TrackedFiles) {
+        let timeline = self.clone();
+        Task::start(async move {
+            let mut stream = tracked_files.file_reload_completed_relay.subscribe().fuse();
+
+            while let Some(file_id) = stream.next().await {
+                timeline.handle_file_reload_completed(&file_id);
             }
         });
     }
@@ -2420,6 +2463,9 @@ impl WaveformTimeline {
 
             while let Some(maybe_range) = stream.next().await {
                 if let Some((start, end)) = maybe_range {
+                    if timeline.has_active_reload() || timeline.reload_restore_pending.get() {
+                        continue;
+                    }
                     let bounds = TimelineBounds { start, end };
                     timeline.bounds_state.set(Some(bounds.clone()));
 
@@ -2450,6 +2496,9 @@ impl WaveformTimeline {
                         timeline.ensure_viewport_within_bounds();
                     }
                 } else {
+                    if timeline.has_active_reload() || timeline.reload_restore_pending.get() {
+                        continue;
+                    }
                     timeline.bounds_state.set(None);
 
                     let has_variables = !timeline

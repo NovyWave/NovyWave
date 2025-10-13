@@ -26,6 +26,7 @@ load_files_expanded_directories = [
     "/home/martinkavik/repos/super_counter_rust/hardware/build",
     "/home/martinkavik/repos/NovyWave/test_files",
 ]
+selected_scope_id = "scope_/home/martinkavik/repos/NovyWave/test_files/simple_reload_test.vcd|simple_tb.s"
 load_files_scroll_position = 941
 
 [[workspace.opened_files]]
@@ -60,15 +61,15 @@ selected_variables_panel_value_column_width = 220.0
 unique_id = "/home/martinkavik/repos/NovyWave/test_files/simple_reload_test.vcd|simple_tb.s|B"
 
 [[workspace.selected_variables]]
-unique_id = "/home/martinkavik/repos/NovyWave/test_files/simple_reload_test.vcd|simple_tb.s|ReloadA"
-
-[[workspace.selected_variables]]
 unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP|clk"
 
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/simple_reload_test.vcd|simple_tb.s|A"
+
 [workspace.timeline]
-cursor_position_ps = 1807741000
+cursor_position_ps = 125000000000000
 visible_range_start_ps = 0
-visible_range_end_ps = 1807741000
+visible_range_end_ps = 250000000000000
 zoom_center_ps = 0
 tooltip_enabled = true
 
