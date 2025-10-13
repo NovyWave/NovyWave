@@ -1,0 +1,41 @@
+package novywave:plugin-example;
+
+/// Logging helpers exposed by the host runtime.
+interface logging {
+  log-info: func(message: string);
+  log-error: func(message: string);
+}
+
+/// Optional helpers for components that watch files on disk.
+interface opened-files {
+  /// Return the current set of opened waveform files.
+  get-opened-files: func() -> list<string>;
+}
+
+interface watcher-control {
+  /// Replace the watched file set for this component; supplying an empty list clears watchers.
+  register-watched-files: func(paths: list<string>, debounce-ms: u32);
+  /// Remove any registered watchers for this component.
+  clear-watched-files: func();
+  /// Ask the host to broadcast ReloadWaveformFiles for these paths.
+  reload-waveform-files: func(paths: list<string>);
+}
+
+/// Minimal lifecycle for components that only need logging.
+world basic {
+  import logging;
+  export init: func();
+  export shutdown: func();
+}
+
+/// Extended lifecycle for components that react to file-system changes.
+world watcher {
+  import logging;
+  import opened-files;
+  import watcher-control;
+
+  export init: func();
+  export refresh-opened-files: func();
+  export watched-files-changed: func(paths: list<string>);
+  export shutdown: func();
+}

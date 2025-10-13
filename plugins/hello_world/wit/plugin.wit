@@ -1,0 +1,17 @@
+package novywave:hello-world;
+
+interface host {
+  /// Log an informational message via the host runtime.
+  log-info: func(message: string);
+  /// Log an error message via the host runtime.
+  log-error: func(message: string);
+}
+
+world plugin {
+  import host;
+
+  /// Called once when the plugin starts.
+  export init: func();
+  /// Called before the component is unloaded.
+  export shutdown: func();
+}

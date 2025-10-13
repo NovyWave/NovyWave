@@ -32,7 +32,6 @@ load_files_expanded_directories = [
     "/home/martinkavik/repos/super_counter_rust/hardware/build",
     "/home/martinkavik/repos/NovyWave/test_files",
 ]
-selected_scope_id = "scope_/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP"
 load_files_scroll_position = 941
 
 [workspace.docked_bottom_dimensions]

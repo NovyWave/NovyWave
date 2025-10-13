@@ -14,5 +14,5 @@ wit-bindgen-rt = "0.41"
 package = "novywave:reload-watcher"
 
 [package.metadata.component.target]
-path = "../wit"
-world = "runtime"
+path = "./wit"
+world = "plugin"

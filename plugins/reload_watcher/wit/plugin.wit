@@ -1,0 +1,34 @@
+package novywave:reload-watcher;
+
+interface host {
+  /// Return the current set of opened waveform files.
+  get-opened-files: func() -> list<string>;
+
+  /// Replace the watched file set for this plugin; supplying an empty list clears watchers.
+  register-watched-files: func(paths: list<string>, debounce-ms: u32);
+
+  /// Remove any registered watchers for this plugin.
+  clear-watched-files: func();
+
+  /// Request the host to reload the provided waveform files.
+  reload-waveform-files: func(paths: list<string>);
+
+  /// Log an informational message via the host.
+  log-info: func(message: string);
+
+  /// Log an error message via the host.
+  log-error: func(message: string);
+}
+
+world plugin {
+  import host;
+
+  /// Called once when the plugin starts; register any watchers here.
+  export init: func();
+  /// Called when the backend reloads the plugin configuration or opened file list.
+  export refresh-opened-files: func();
+  /// Called by the backend when watched files change on disk.
+  export watched-files-changed: func(paths: list<string>);
+  /// Called before the component is unloaded; clean up watchers here.
+  export shutdown: func();
+}

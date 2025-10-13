@@ -1,7 +1,9 @@
 use moon::{Lazy, moonlight::CorId, sessions};
 use notify::{RecommendedWatcher, RecursiveMode};
 use notify_debouncer_mini::{DebounceEventResult, new_debouncer};
-use plugin_host::{HostBridge, HostBridgeError, PluginHandle, PluginHost, PluginHostError};
+use plugin_host::{
+    HostBridge, HostBridgeError, PluginHandle, PluginHost, PluginHostError, PluginWorld,
+};
 use shared::{DownMsg, PluginsSection};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -116,7 +118,7 @@ impl HostBridge for BackendPluginBridge {
             }
         }
 
-        let broadcast_plugin = plugin_id.to_string();
+        let dispatch_plugin = plugin_id.to_string();
         let task = tokio::spawn(async move {
             while let Some(paths) = rx.recv().await {
                 let unique: HashSet<String> = paths.into_iter().collect();
@@ -124,16 +126,7 @@ impl HostBridge for BackendPluginBridge {
                     continue;
                 }
                 let file_paths: Vec<String> = unique.into_iter().collect();
-                let msg = DownMsg::ReloadWaveformFiles {
-                    file_paths: file_paths.clone(),
-                };
-                sessions::broadcast_down_msg(&msg, CorId::new()).await;
-                println!(
-                    "🔌 BACKEND: plugin '{}' requested reload for {} path(s): {:?}",
-                    broadcast_plugin,
-                    file_paths.len(),
-                    file_paths
-                );
+                dispatch_watched_files_changed(&dispatch_plugin, file_paths);
             }
         });
 
@@ -160,12 +153,61 @@ impl HostBridge for BackendPluginBridge {
         }
     }
 
+    fn reload_waveform_files(
+        &self,
+        plugin_id: &str,
+        paths: Vec<String>,
+    ) -> Result<(), HostBridgeError> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+
+        let unique: HashSet<String> = paths.into_iter().collect();
+        if unique.is_empty() {
+            return Ok(());
+        }
+        let file_paths: Vec<String> = unique.into_iter().collect();
+        let plugin_label = plugin_id.to_string();
+
+        tokio::spawn(async move {
+            let msg = DownMsg::ReloadWaveformFiles {
+                file_paths: file_paths.clone(),
+            };
+            sessions::broadcast_down_msg(&msg, CorId::new()).await;
+            println!(
+                "🔌 BACKEND: plugin '{}' requested reload for {} path(s): {:?}",
+                plugin_label,
+                file_paths.len(),
+                file_paths
+            );
+        });
+
+        Ok(())
+    }
+
     fn log_info(&self, plugin_id: &str, message: &str) {
         println!("🔌 PLUGIN[{}]: {}", plugin_id, message);
     }
 
     fn log_error(&self, plugin_id: &str, message: &str) {
         eprintln!("🔌 PLUGIN[{}]: {}", plugin_id, message);
+    }
+}
+
+fn dispatch_watched_files_changed(plugin_id: &str, paths: Vec<String>) {
+    if paths.is_empty() {
+        return;
+    }
+    match PLUGIN_MANAGER.lock() {
+        Ok(mut manager) => {
+            manager.handle_watched_files_changed(plugin_id, paths);
+        }
+        Err(err) => {
+            eprintln!(
+                "🔌 BACKEND: failed to dispatch watcher event for plugin '{}': {}",
+                plugin_id, err
+            );
+        }
     }
 }
 
@@ -218,15 +260,15 @@ impl PluginManager {
         self.current_opened_files = opened_files.to_vec();
 
         if !config_changed {
-            let mut greet_ok = false;
+            let mut refresh_ok = false;
             for handle in self.handles.values_mut() {
-                match handle.greet() {
+                match handle.refresh_opened_files() {
                     Ok(_) => {
                         if let Some(status) = self.statuses.get_mut(handle.id()) {
                             status.state = PluginRuntimeState::Ready;
-                            status.last_message = Some("greet() ok".to_string());
+                            status.last_message = Some("refresh_opened_files() ok".to_string());
                         }
-                        greet_ok = true;
+                        refresh_ok = true;
                     }
                     Err(err) => {
                         if let Some(status) = self.statuses.get_mut(handle.id()) {
@@ -236,7 +278,7 @@ impl PluginManager {
                     }
                 }
             }
-            return greet_ok || opened_changed;
+            return refresh_ok || opened_changed;
         }
 
         self.shutdown_all();
@@ -261,14 +303,15 @@ impl PluginManager {
             match self.host.load(entry) {
                 Ok(mut handle) => {
                     let init_message = handle.init_message().to_string();
-                    let greet_result = handle.greet().ok();
+                    let refresh_result = handle.refresh_opened_files().ok();
                     self.statuses.insert(
                         entry.id.clone(),
                         PluginStatus {
                             id: entry.id.clone(),
                             state: PluginRuntimeState::Ready,
                             init_message: Some(init_message),
-                            last_message: greet_result.map(|_| "greet() ok".to_string()),
+                            last_message: refresh_result
+                                .map(|_| "refresh_opened_files() ok".to_string()),
                         },
                     );
                     self.handles.insert(entry.id.clone(), handle);
@@ -293,6 +336,51 @@ impl PluginManager {
 
     pub fn statuses(&self) -> Vec<PluginStatus> {
         self.statuses.values().cloned().collect()
+    }
+
+    fn handle_watched_files_changed(&mut self, plugin_id: &str, paths: Vec<String>) {
+        if paths.is_empty() {
+            return;
+        }
+
+        match self.handles.get_mut(plugin_id) {
+            Some(handle) => {
+                if !matches!(handle.world(), PluginWorld::ReloadWatcher) {
+                    self.bridge.log_info(
+                        plugin_id,
+                        "watched_files_changed ignored for plugin without reload support",
+                    );
+                    return;
+                }
+
+                match handle.watched_files_changed(paths.clone()) {
+                    Ok(_) => {
+                        if let Some(status) = self.statuses.get_mut(plugin_id) {
+                            status.last_message = Some(format!(
+                                "watched_files_changed() ok for {} path(s)",
+                                paths.len()
+                            ));
+                        }
+                    }
+                    Err(err) => {
+                        self.bridge.log_error(
+                            plugin_id,
+                            &format!("watched_files_changed failed: {}", err),
+                        );
+                        if let Some(status) = self.statuses.get_mut(plugin_id) {
+                            status.state = PluginRuntimeState::Error;
+                            status.last_message = Some(err.to_string());
+                        }
+                    }
+                }
+            }
+            None => {
+                self.bridge.log_error(
+                    plugin_id,
+                    "received watcher event but plugin handle is not loaded",
+                );
+            }
+        }
     }
 
     fn shutdown_all(&mut self) {

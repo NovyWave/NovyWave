@@ -1,11 +1,10 @@
 mod bindings {
     wit_bindgen::generate!({
-        path: "../wit",
-        world: "runtime",
+        path: "./wit",
     });
 }
 
-use bindings::{__export_world_runtime_cabi, host, Guest};
+use bindings::{__export_world_plugin_cabi, novywave::reload_watcher::host, Guest};
 
 struct ReloadWatcher;
 
@@ -19,13 +18,31 @@ fn configure_watchers() {
     ));
 }
 
+fn request_reload(paths: &[String]) {
+    if paths.is_empty() {
+        return;
+    }
+    host::reload_waveform_files(paths);
+    host::log_info(&format!(
+        "Requested reload for {} waveform path(s)",
+        paths.len()
+    ));
+}
+
 impl Guest for ReloadWatcher {
     fn init() {
         configure_watchers();
     }
 
-    fn greet() {
+    fn refresh_opened_files() {
         configure_watchers();
+    }
+
+    fn watched_files_changed(paths: Vec<String>) {
+        if paths.is_empty() {
+            return;
+        }
+        request_reload(&paths);
     }
 
     fn shutdown() {
@@ -34,4 +51,4 @@ impl Guest for ReloadWatcher {
     }
 }
 
-__export_world_runtime_cabi!(ReloadWatcher with_types_in bindings);
+__export_world_plugin_cabi!(ReloadWatcher with_types_in bindings);

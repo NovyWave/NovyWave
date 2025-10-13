@@ -6,6 +6,7 @@
 use crate::dataflow::{ActorVec, Relay, relay};
 use futures::{StreamExt, select};
 use shared::{FileState, LoadingStatus, TrackedFile, create_tracked_file};
+use std::path::{Path, PathBuf};
 use zoon::*;
 
 /// TrackedFiles domain with proper Actor+Relay architecture
@@ -110,7 +111,13 @@ impl TrackedFiles {
                     }
                     file_id = file_reload_requested_stream.next() => {
                         if let Some(file_id) = file_id {
-                            if let Some(existing_file) = cached_files.iter().find(|f| f.id == file_id).cloned() {
+                            let canonical_candidate = canonicalize_path(&file_id);
+                            let matched = cached_files
+                                .iter()
+                                .find(|tracked| tracked_matches(tracked, &file_id, canonical_candidate.as_ref()))
+                                .cloned();
+
+                            if let Some(existing_file) = matched {
                                 let new_file = create_tracked_file(
                                     existing_file.path.clone(),
                                     FileState::Loading(LoadingStatus::Starting)
@@ -144,8 +151,13 @@ impl TrackedFiles {
                         if let Some((file_id, new_state)) = load_result {
                             cached_loading_states.insert(file_id.clone(), new_state.clone());
 
+                            let canonical_candidate = canonicalize_path(&file_id);
+
                             // Update cached state
-                            if let Some(file) = cached_files.iter_mut().find(|f| f.id == file_id) {
+                            if let Some(file) = cached_files
+                                .iter_mut()
+                                .find(|tracked| tracked_matches(tracked, &file_id, canonical_candidate.as_ref()))
+                            {
                                 file.state = new_state;
                                 {
                                     let mut vec = files_vec.lock_mut();
@@ -277,4 +289,34 @@ async fn send_parse_request_to_backend(file_path: String) {
             );
         }
     }
+}
+
+fn tracked_matches(
+    tracked: &TrackedFile,
+    candidate: &str,
+    canonical_candidate: Option<&PathBuf>,
+) -> bool {
+    if tracked.id == candidate || tracked.path == candidate {
+        return true;
+    }
+
+    if let Some(candidate_canonical) = canonical_candidate {
+        if let Some(tracked_id) = canonicalize_path(&tracked.id) {
+            if &tracked_id == candidate_canonical {
+                return true;
+            }
+        }
+        if let Some(tracked_path) = canonicalize_path(&tracked.path) {
+            if &tracked_path == candidate_canonical {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+fn canonicalize_path(input: &str) -> Option<PathBuf> {
+    let path = Path::new(input);
+    std::fs::canonicalize(path).ok()
 }

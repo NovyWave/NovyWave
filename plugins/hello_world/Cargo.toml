@@ -15,5 +15,5 @@ once_cell = "1.21"
 package = "novywave:hello-world"
 
 [package.metadata.component.target]
-path = "../wit"
-world = "runtime"
+path = "./wit"
+world = "plugin"

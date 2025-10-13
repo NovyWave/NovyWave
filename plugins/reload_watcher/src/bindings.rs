@@ -9,9 +9,34 @@ pub unsafe fn _export_init_cabi<T: Guest>() {
 }
 #[doc(hidden)]
 #[allow(non_snake_case)]
-pub unsafe fn _export_greet_cabi<T: Guest>() {
+pub unsafe fn _export_refresh_opened_files_cabi<T: Guest>() {
     #[cfg(target_arch = "wasm32")] _rt::run_ctors_once();
-    T::greet();
+    T::refresh_opened_files();
+}
+#[doc(hidden)]
+#[allow(non_snake_case)]
+pub unsafe fn _export_watched_files_changed_cabi<T: Guest>(arg0: *mut u8, arg1: usize) {
+    #[cfg(target_arch = "wasm32")] _rt::run_ctors_once();
+    let base3 = arg0;
+    let len3 = arg1;
+    let mut result3 = _rt::Vec::with_capacity(len3);
+    for i in 0..len3 {
+        let base = base3.add(i * (2 * ::core::mem::size_of::<*const u8>()));
+        let e3 = {
+            let l0 = *base.add(0).cast::<*mut u8>();
+            let l1 = *base.add(::core::mem::size_of::<*const u8>()).cast::<usize>();
+            let len2 = l1;
+            let bytes2 = _rt::Vec::from_raw_parts(l0.cast(), len2, len2);
+            _rt::string_lift(bytes2)
+        };
+        result3.push(e3);
+    }
+    _rt::cabi_dealloc(
+        base3,
+        len3 * (2 * ::core::mem::size_of::<*const u8>()),
+        ::core::mem::size_of::<*const u8>(),
+    );
+    T::watched_files_changed(result3);
 }
 #[doc(hidden)]
 #[allow(non_snake_case)]
@@ -20,181 +45,255 @@ pub unsafe fn _export_shutdown_cabi<T: Guest>() {
     T::shutdown();
 }
 pub trait Guest {
+    /// Called once when the plugin starts; register any watchers here.
     fn init() -> ();
-    fn greet() -> ();
+    /// Called when the backend reloads the plugin configuration or opened file list.
+    fn refresh_opened_files() -> ();
+    /// Called by the backend when watched files change on disk.
+    fn watched_files_changed(paths: _rt::Vec<_rt::String>) -> ();
+    /// Called before the component is unloaded; clean up watchers here.
     fn shutdown() -> ();
 }
 #[doc(hidden)]
-macro_rules! __export_world_runtime_cabi {
+macro_rules! __export_world_plugin_cabi {
     ($ty:ident with_types_in $($path_to_types:tt)*) => {
         const _ : () = { #[unsafe (export_name = "init")] unsafe extern "C" fn
         export_init() { unsafe { $($path_to_types)*:: _export_init_cabi::<$ty > () } }
-        #[unsafe (export_name = "greet")] unsafe extern "C" fn export_greet() { unsafe {
-        $($path_to_types)*:: _export_greet_cabi::<$ty > () } } #[unsafe (export_name =
-        "shutdown")] unsafe extern "C" fn export_shutdown() { unsafe {
+        #[unsafe (export_name = "refresh-opened-files")] unsafe extern "C" fn
+        export_refresh_opened_files() { unsafe { $($path_to_types)*::
+        _export_refresh_opened_files_cabi::<$ty > () } } #[unsafe (export_name =
+        "watched-files-changed")] unsafe extern "C" fn export_watched_files_changed(arg0
+        : * mut u8, arg1 : usize,) { unsafe { $($path_to_types)*::
+        _export_watched_files_changed_cabi::<$ty > (arg0, arg1) } } #[unsafe (export_name
+        = "shutdown")] unsafe extern "C" fn export_shutdown() { unsafe {
         $($path_to_types)*:: _export_shutdown_cabi::<$ty > () } } };
     };
 }
 #[doc(hidden)]
-pub(crate) use __export_world_runtime_cabi;
-#[allow(dead_code, async_fn_in_trait, unused_imports, clippy::all)]
-pub mod host {
-    #[used]
-    #[doc(hidden)]
-    static __FORCE_SECTION_REF: fn() = super::__link_custom_section_describing_imports;
-    use super::_rt;
-    #[allow(unused_unsafe, clippy::all)]
-    /// Return the current set of opened waveform files.
-    pub fn get_opened_files() -> _rt::Vec<_rt::String> {
-        unsafe {
-            #[cfg_attr(target_pointer_width = "64", repr(align(8)))]
-            #[cfg_attr(target_pointer_width = "32", repr(align(4)))]
-            struct RetArea(
-                [::core::mem::MaybeUninit<u8>; 2 * ::core::mem::size_of::<*const u8>()],
-            );
-            let mut ret_area = RetArea(
-                [::core::mem::MaybeUninit::uninit(); 2
-                    * ::core::mem::size_of::<*const u8>()],
-            );
-            let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
-            #[cfg(target_arch = "wasm32")]
-            #[link(wasm_import_module = "host")]
-            unsafe extern "C" {
-                #[link_name = "get-opened-files"]
-                fn wit_import1(_: *mut u8);
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            unsafe extern "C" fn wit_import1(_: *mut u8) {
-                unreachable!()
-            }
-            unsafe { wit_import1(ptr0) };
-            let l2 = *ptr0.add(0).cast::<*mut u8>();
-            let l3 = *ptr0.add(::core::mem::size_of::<*const u8>()).cast::<usize>();
-            let base7 = l2;
-            let len7 = l3;
-            let mut result7 = _rt::Vec::with_capacity(len7);
-            for i in 0..len7 {
-                let base = base7.add(i * (2 * ::core::mem::size_of::<*const u8>()));
-                let e7 = {
-                    let l4 = *base.add(0).cast::<*mut u8>();
-                    let l5 = *base
+pub(crate) use __export_world_plugin_cabi;
+#[rustfmt::skip]
+#[allow(dead_code, clippy::all)]
+pub mod novywave {
+    pub mod reload_watcher {
+        #[allow(dead_code, async_fn_in_trait, unused_imports, clippy::all)]
+        pub mod host {
+            #[used]
+            #[doc(hidden)]
+            static __FORCE_SECTION_REF: fn() = super::super::super::__link_custom_section_describing_imports;
+            use super::super::super::_rt;
+            #[allow(unused_unsafe, clippy::all)]
+            /// Return the current set of opened waveform files.
+            pub fn get_opened_files() -> _rt::Vec<_rt::String> {
+                unsafe {
+                    #[cfg_attr(target_pointer_width = "64", repr(align(8)))]
+                    #[cfg_attr(target_pointer_width = "32", repr(align(4)))]
+                    struct RetArea(
+                        [::core::mem::MaybeUninit<
+                            u8,
+                        >; 2 * ::core::mem::size_of::<*const u8>()],
+                    );
+                    let mut ret_area = RetArea(
+                        [::core::mem::MaybeUninit::uninit(); 2
+                            * ::core::mem::size_of::<*const u8>()],
+                    );
+                    let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "novywave:reload-watcher/host")]
+                    unsafe extern "C" {
+                        #[link_name = "get-opened-files"]
+                        fn wit_import1(_: *mut u8);
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    unsafe extern "C" fn wit_import1(_: *mut u8) {
+                        unreachable!()
+                    }
+                    unsafe { wit_import1(ptr0) };
+                    let l2 = *ptr0.add(0).cast::<*mut u8>();
+                    let l3 = *ptr0
                         .add(::core::mem::size_of::<*const u8>())
                         .cast::<usize>();
-                    let len6 = l5;
-                    let bytes6 = _rt::Vec::from_raw_parts(l4.cast(), len6, len6);
-                    _rt::string_lift(bytes6)
-                };
-                result7.push(e7);
-            }
-            _rt::cabi_dealloc(
-                base7,
-                len7 * (2 * ::core::mem::size_of::<*const u8>()),
-                ::core::mem::size_of::<*const u8>(),
-            );
-            let result8 = result7;
-            result8
-        }
-    }
-    #[allow(unused_unsafe, clippy::all)]
-    /// Replace the watched file set for this plugin; supplying an empty list clears watchers.
-    pub fn register_watched_files(paths: &[_rt::String], debounce_ms: u32) -> () {
-        unsafe {
-            let vec1 = paths;
-            let len1 = vec1.len();
-            let layout1 = _rt::alloc::Layout::from_size_align_unchecked(
-                vec1.len() * (2 * ::core::mem::size_of::<*const u8>()),
-                ::core::mem::size_of::<*const u8>(),
-            );
-            let result1 = if layout1.size() != 0 {
-                let ptr = _rt::alloc::alloc(layout1).cast::<u8>();
-                if ptr.is_null() {
-                    _rt::alloc::handle_alloc_error(layout1);
+                    let base7 = l2;
+                    let len7 = l3;
+                    let mut result7 = _rt::Vec::with_capacity(len7);
+                    for i in 0..len7 {
+                        let base = base7
+                            .add(i * (2 * ::core::mem::size_of::<*const u8>()));
+                        let e7 = {
+                            let l4 = *base.add(0).cast::<*mut u8>();
+                            let l5 = *base
+                                .add(::core::mem::size_of::<*const u8>())
+                                .cast::<usize>();
+                            let len6 = l5;
+                            let bytes6 = _rt::Vec::from_raw_parts(l4.cast(), len6, len6);
+                            _rt::string_lift(bytes6)
+                        };
+                        result7.push(e7);
+                    }
+                    _rt::cabi_dealloc(
+                        base7,
+                        len7 * (2 * ::core::mem::size_of::<*const u8>()),
+                        ::core::mem::size_of::<*const u8>(),
+                    );
+                    let result8 = result7;
+                    result8
                 }
-                ptr
-            } else {
-                ::core::ptr::null_mut()
-            };
-            for (i, e) in vec1.into_iter().enumerate() {
-                let base = result1.add(i * (2 * ::core::mem::size_of::<*const u8>()));
-                {
-                    let vec0 = e;
+            }
+            #[allow(unused_unsafe, clippy::all)]
+            /// Replace the watched file set for this plugin; supplying an empty list clears watchers.
+            pub fn register_watched_files(
+                paths: &[_rt::String],
+                debounce_ms: u32,
+            ) -> () {
+                unsafe {
+                    let vec1 = paths;
+                    let len1 = vec1.len();
+                    let layout1 = _rt::alloc::Layout::from_size_align_unchecked(
+                        vec1.len() * (2 * ::core::mem::size_of::<*const u8>()),
+                        ::core::mem::size_of::<*const u8>(),
+                    );
+                    let result1 = if layout1.size() != 0 {
+                        let ptr = _rt::alloc::alloc(layout1).cast::<u8>();
+                        if ptr.is_null() {
+                            _rt::alloc::handle_alloc_error(layout1);
+                        }
+                        ptr
+                    } else {
+                        ::core::ptr::null_mut()
+                    };
+                    for (i, e) in vec1.into_iter().enumerate() {
+                        let base = result1
+                            .add(i * (2 * ::core::mem::size_of::<*const u8>()));
+                        {
+                            let vec0 = e;
+                            let ptr0 = vec0.as_ptr().cast::<u8>();
+                            let len0 = vec0.len();
+                            *base
+                                .add(::core::mem::size_of::<*const u8>())
+                                .cast::<usize>() = len0;
+                            *base.add(0).cast::<*mut u8>() = ptr0.cast_mut();
+                        }
+                    }
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "novywave:reload-watcher/host")]
+                    unsafe extern "C" {
+                        #[link_name = "register-watched-files"]
+                        fn wit_import2(_: *mut u8, _: usize, _: i32);
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    unsafe extern "C" fn wit_import2(_: *mut u8, _: usize, _: i32) {
+                        unreachable!()
+                    }
+                    unsafe { wit_import2(result1, len1, _rt::as_i32(&debounce_ms)) };
+                    if layout1.size() != 0 {
+                        _rt::alloc::dealloc(result1.cast(), layout1);
+                    }
+                }
+            }
+            #[allow(unused_unsafe, clippy::all)]
+            /// Remove any registered watchers for this plugin.
+            pub fn clear_watched_files() -> () {
+                unsafe {
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "novywave:reload-watcher/host")]
+                    unsafe extern "C" {
+                        #[link_name = "clear-watched-files"]
+                        fn wit_import0();
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    unsafe extern "C" fn wit_import0() {
+                        unreachable!()
+                    }
+                    unsafe { wit_import0() };
+                }
+            }
+            #[allow(unused_unsafe, clippy::all)]
+            /// Request the host to reload the provided waveform files.
+            pub fn reload_waveform_files(paths: &[_rt::String]) -> () {
+                unsafe {
+                    let vec1 = paths;
+                    let len1 = vec1.len();
+                    let layout1 = _rt::alloc::Layout::from_size_align_unchecked(
+                        vec1.len() * (2 * ::core::mem::size_of::<*const u8>()),
+                        ::core::mem::size_of::<*const u8>(),
+                    );
+                    let result1 = if layout1.size() != 0 {
+                        let ptr = _rt::alloc::alloc(layout1).cast::<u8>();
+                        if ptr.is_null() {
+                            _rt::alloc::handle_alloc_error(layout1);
+                        }
+                        ptr
+                    } else {
+                        ::core::ptr::null_mut()
+                    };
+                    for (i, e) in vec1.into_iter().enumerate() {
+                        let base = result1
+                            .add(i * (2 * ::core::mem::size_of::<*const u8>()));
+                        {
+                            let vec0 = e;
+                            let ptr0 = vec0.as_ptr().cast::<u8>();
+                            let len0 = vec0.len();
+                            *base
+                                .add(::core::mem::size_of::<*const u8>())
+                                .cast::<usize>() = len0;
+                            *base.add(0).cast::<*mut u8>() = ptr0.cast_mut();
+                        }
+                    }
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "novywave:reload-watcher/host")]
+                    unsafe extern "C" {
+                        #[link_name = "reload-waveform-files"]
+                        fn wit_import2(_: *mut u8, _: usize);
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    unsafe extern "C" fn wit_import2(_: *mut u8, _: usize) {
+                        unreachable!()
+                    }
+                    unsafe { wit_import2(result1, len1) };
+                    if layout1.size() != 0 {
+                        _rt::alloc::dealloc(result1.cast(), layout1);
+                    }
+                }
+            }
+            #[allow(unused_unsafe, clippy::all)]
+            /// Log an informational message via the host.
+            pub fn log_info(message: &str) -> () {
+                unsafe {
+                    let vec0 = message;
                     let ptr0 = vec0.as_ptr().cast::<u8>();
                     let len0 = vec0.len();
-                    *base.add(::core::mem::size_of::<*const u8>()).cast::<usize>() = len0;
-                    *base.add(0).cast::<*mut u8>() = ptr0.cast_mut();
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "novywave:reload-watcher/host")]
+                    unsafe extern "C" {
+                        #[link_name = "log-info"]
+                        fn wit_import1(_: *mut u8, _: usize);
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    unsafe extern "C" fn wit_import1(_: *mut u8, _: usize) {
+                        unreachable!()
+                    }
+                    unsafe { wit_import1(ptr0.cast_mut(), len0) };
                 }
             }
-            #[cfg(target_arch = "wasm32")]
-            #[link(wasm_import_module = "host")]
-            unsafe extern "C" {
-                #[link_name = "register-watched-files"]
-                fn wit_import2(_: *mut u8, _: usize, _: i32);
+            #[allow(unused_unsafe, clippy::all)]
+            /// Log an error message via the host.
+            pub fn log_error(message: &str) -> () {
+                unsafe {
+                    let vec0 = message;
+                    let ptr0 = vec0.as_ptr().cast::<u8>();
+                    let len0 = vec0.len();
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "novywave:reload-watcher/host")]
+                    unsafe extern "C" {
+                        #[link_name = "log-error"]
+                        fn wit_import1(_: *mut u8, _: usize);
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    unsafe extern "C" fn wit_import1(_: *mut u8, _: usize) {
+                        unreachable!()
+                    }
+                    unsafe { wit_import1(ptr0.cast_mut(), len0) };
+                }
             }
-            #[cfg(not(target_arch = "wasm32"))]
-            unsafe extern "C" fn wit_import2(_: *mut u8, _: usize, _: i32) {
-                unreachable!()
-            }
-            unsafe { wit_import2(result1, len1, _rt::as_i32(&debounce_ms)) };
-            if layout1.size() != 0 {
-                _rt::alloc::dealloc(result1.cast(), layout1);
-            }
-        }
-    }
-    #[allow(unused_unsafe, clippy::all)]
-    /// Remove any registered watchers for this plugin.
-    pub fn clear_watched_files() -> () {
-        unsafe {
-            #[cfg(target_arch = "wasm32")]
-            #[link(wasm_import_module = "host")]
-            unsafe extern "C" {
-                #[link_name = "clear-watched-files"]
-                fn wit_import0();
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            unsafe extern "C" fn wit_import0() {
-                unreachable!()
-            }
-            unsafe { wit_import0() };
-        }
-    }
-    #[allow(unused_unsafe, clippy::all)]
-    /// Log an informational message via the host.
-    pub fn log_info(message: &str) -> () {
-        unsafe {
-            let vec0 = message;
-            let ptr0 = vec0.as_ptr().cast::<u8>();
-            let len0 = vec0.len();
-            #[cfg(target_arch = "wasm32")]
-            #[link(wasm_import_module = "host")]
-            unsafe extern "C" {
-                #[link_name = "log-info"]
-                fn wit_import1(_: *mut u8, _: usize);
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            unsafe extern "C" fn wit_import1(_: *mut u8, _: usize) {
-                unreachable!()
-            }
-            unsafe { wit_import1(ptr0.cast_mut(), len0) };
-        }
-    }
-    #[allow(unused_unsafe, clippy::all)]
-    /// Log an error message via the host.
-    pub fn log_error(message: &str) -> () {
-        unsafe {
-            let vec0 = message;
-            let ptr0 = vec0.as_ptr().cast::<u8>();
-            let len0 = vec0.len();
-            #[cfg(target_arch = "wasm32")]
-            #[link(wasm_import_module = "host")]
-            unsafe extern "C" {
-                #[link_name = "log-error"]
-                fn wit_import1(_: *mut u8, _: usize);
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            unsafe extern "C" fn wit_import1(_: *mut u8, _: usize) {
-                unreachable!()
-            }
-            unsafe { wit_import1(ptr0.cast_mut(), len0) };
         }
     }
 }
@@ -301,32 +400,35 @@ mod _rt {
 /// ```
 #[allow(unused_macros)]
 #[doc(hidden)]
-macro_rules! __export_runtime_impl {
+macro_rules! __export_plugin_impl {
     ($ty:ident) => {
         self::export!($ty with_types_in self);
     };
     ($ty:ident with_types_in $($path_to_types_root:tt)*) => {
-        $($path_to_types_root)*:: __export_world_runtime_cabi!($ty with_types_in
+        $($path_to_types_root)*:: __export_world_plugin_cabi!($ty with_types_in
         $($path_to_types_root)*);
     };
 }
 #[doc(inline)]
-pub(crate) use __export_runtime_impl as export;
+pub(crate) use __export_plugin_impl as export;
 #[cfg(target_arch = "wasm32")]
 #[unsafe(
-    link_section = "component-type:wit-bindgen:0.41.0:novywave:plugins:runtime:encoded world"
+    link_section = "component-type:wit-bindgen:0.41.0:novywave:reload-watcher:plugin:encoded world"
 )]
 #[doc(hidden)]
 #[allow(clippy::octal_escapes)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 361] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xeb\x01\x01A\x02\x01\
-A\x06\x01B\x0a\x01ps\x01@\0\0\0\x04\0\x10get-opened-files\x01\x01\x01@\x02\x05pa\
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 484] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xe7\x02\x01A\x02\x01\
+A\x09\x01B\x0c\x01ps\x01@\0\0\0\x04\0\x10get-opened-files\x01\x01\x01@\x02\x05pa\
 ths\0\x0bdebounce-msy\x01\0\x04\0\x16register-watched-files\x01\x02\x01@\0\x01\0\
-\x04\0\x13clear-watched-files\x01\x03\x01@\x01\x07messages\x01\0\x04\0\x08log-in\
-fo\x01\x04\x04\0\x09log-error\x01\x04\x03\0\x04host\x05\0\x01@\0\x01\0\x04\0\x04\
-init\x01\x01\x04\0\x05greet\x01\x01\x04\0\x08shutdown\x01\x01\x04\0\x18novywave:\
-plugins/runtime\x04\0\x0b\x0d\x01\0\x07runtime\x03\0\0\0G\x09producers\x01\x0cpr\
-ocessed-by\x02\x0dwit-component\x070.227.1\x10wit-bindgen-rust\x060.41.0";
+\x04\0\x13clear-watched-files\x01\x03\x01@\x01\x05paths\0\x01\0\x04\0\x15reload-\
+waveform-files\x01\x04\x01@\x01\x07messages\x01\0\x04\0\x08log-info\x01\x05\x04\0\
+\x09log-error\x01\x05\x03\0\x1cnovywave:reload-watcher/host\x05\0\x01@\0\x01\0\x04\
+\0\x04init\x01\x01\x04\0\x14refresh-opened-files\x01\x01\x01ps\x01@\x01\x05paths\
+\x02\x01\0\x04\0\x15watched-files-changed\x01\x03\x04\0\x08shutdown\x01\x01\x04\0\
+\x1enovywave:reload-watcher/plugin\x04\0\x0b\x0c\x01\0\x06plugin\x03\0\0\0G\x09p\
+roducers\x01\x0cprocessed-by\x02\x0dwit-component\x070.227.1\x10wit-bindgen-rust\
+\x060.41.0";
 #[inline(never)]
 #[doc(hidden)]
 pub fn __link_custom_section_describing_imports() {

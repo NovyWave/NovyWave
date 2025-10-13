@@ -1,12 +1,24 @@
 mod bindings {
-    wasmtime::component::bindgen!({
-        path: "../../../plugins/wit",
-        world: "runtime",
-    });
+    pub mod hello_world {
+        wasmtime::component::bindgen!({
+            path: "../../../plugins/hello_world/wit",
+            world: "plugin",
+        });
+    }
+
+    pub mod reload_watcher {
+        wasmtime::component::bindgen!({
+            path: "../../../plugins/reload_watcher/wit",
+            world: "plugin",
+        });
+    }
 }
 
 use anyhow::Error;
-use bindings::Runtime;
+use bindings::{
+    hello_world::{Plugin as HelloPlugin, novywave::hello_world as hello_wit},
+    reload_watcher::{Plugin as ReloadPlugin, novywave::reload_watcher as reload_wit},
+};
 use shared::PluginConfigEntry;
 use std::path::Path;
 use std::sync::Arc;
@@ -24,6 +36,11 @@ pub trait HostBridge: Send + Sync + 'static {
         debounce_ms: u32,
     ) -> Result<(), HostBridgeError>;
     fn clear_watched_files(&self, plugin_id: &str);
+    fn reload_waveform_files(
+        &self,
+        plugin_id: &str,
+        paths: Vec<String>,
+    ) -> Result<(), HostBridgeError>;
     fn log_info(&self, plugin_id: &str, message: &str);
     fn log_error(&self, plugin_id: &str, message: &str);
 }
@@ -47,6 +64,14 @@ impl HostBridge for NullBridge {
     }
 
     fn clear_watched_files(&self, _plugin_id: &str) {}
+
+    fn reload_waveform_files(
+        &self,
+        _plugin_id: &str,
+        _paths: Vec<String>,
+    ) -> Result<(), HostBridgeError> {
+        Ok(())
+    }
 
     fn log_info(&self, plugin_id: &str, message: &str) {
         println!("[plugin:{}] {}", plugin_id, message);
@@ -101,7 +126,17 @@ fn host_state_lookup(state: &mut HostState) -> &mut HostState {
     state
 }
 
-impl bindings::host::Host for HostState {
+impl hello_wit::host::Host for HostState {
+    fn log_info(&mut self, message: String) -> () {
+        self.bridge.log_info(&self.plugin_id, &message);
+    }
+
+    fn log_error(&mut self, message: String) -> () {
+        self.bridge.log_error(&self.plugin_id, &message);
+    }
+}
+
+impl reload_wit::host::Host for HostState {
     fn get_opened_files(&mut self) -> Vec<String> {
         self.bridge.get_opened_files(&self.plugin_id)
     }
@@ -119,12 +154,31 @@ impl bindings::host::Host for HostState {
         self.bridge.clear_watched_files(&self.plugin_id);
     }
 
+    fn reload_waveform_files(&mut self, paths: Vec<String>) -> () {
+        if let Err(err) = self.bridge.reload_waveform_files(&self.plugin_id, paths) {
+            self.bridge.log_error(&self.plugin_id, &err.to_string());
+        }
+    }
+
     fn log_info(&mut self, message: String) -> () {
         self.bridge.log_info(&self.plugin_id, &message);
     }
 
     fn log_error(&mut self, message: String) -> () {
         self.bridge.log_error(&self.plugin_id, &message);
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PluginWorld {
+    HelloWorld,
+    ReloadWatcher,
+}
+
+fn plugin_world(id: &str) -> PluginWorld {
+    match id {
+        "novywave.reload_watcher" => PluginWorld::ReloadWatcher,
+        _ => PluginWorld::HelloWorld,
     }
 }
 
@@ -154,36 +208,78 @@ impl PluginHost {
             }
         })?;
 
-        let mut linker = Linker::new(&self.engine);
-        p2::add_to_linker_sync(&mut linker).map_err(|source| PluginHostError::Instantiation {
-            plugin_id: entry.id.clone(),
-            source,
-        })?;
-        bindings::host::add_to_linker::<HostState, HasSelf<HostState>>(
-            &mut linker,
-            host_state_lookup,
-        )
-        .map_err(|source| PluginHostError::Instantiation {
-            plugin_id: entry.id.clone(),
-            source,
-        })?;
+        let world = plugin_world(&entry.id);
 
         let host_state = HostState::new(entry.id.clone(), self.bridge.clone());
         let mut store = Store::new(&self.engine, host_state);
 
-        let runtime = Runtime::instantiate(&mut store, &component, &linker).map_err(|source| {
-            PluginHostError::Instantiation {
-                plugin_id: entry.id.clone(),
-                source,
-            }
-        })?;
+        let runtime =
+            match world {
+                PluginWorld::HelloWorld => {
+                    let mut linker = Linker::new(&self.engine);
+                    p2::add_to_linker_sync(&mut linker).map_err(|source| {
+                        PluginHostError::Instantiation {
+                            plugin_id: entry.id.clone(),
+                            source,
+                        }
+                    })?;
+                    HelloPlugin::add_to_linker::<HostState, HasSelf<HostState>>(
+                        &mut linker,
+                        host_state_lookup,
+                    )
+                    .map_err(|source| PluginHostError::Instantiation {
+                        plugin_id: entry.id.clone(),
+                        source,
+                    })?;
 
-        runtime
-            .call_init(&mut store)
-            .map_err(|source| PluginHostError::GuestCall {
-                plugin_id: entry.id.clone(),
-                source,
-            })?;
+                    let runtime = HelloPlugin::instantiate(&mut store, &component, &linker)
+                        .map_err(|source| PluginHostError::Instantiation {
+                            plugin_id: entry.id.clone(),
+                            source,
+                        })?;
+
+                    runtime
+                        .call_init(&mut store)
+                        .map_err(|source| PluginHostError::GuestCall {
+                            plugin_id: entry.id.clone(),
+                            source,
+                        })?;
+
+                    RuntimeVariant::HelloWorld(runtime)
+                }
+                PluginWorld::ReloadWatcher => {
+                    let mut linker = Linker::new(&self.engine);
+                    p2::add_to_linker_sync(&mut linker).map_err(|source| {
+                        PluginHostError::Instantiation {
+                            plugin_id: entry.id.clone(),
+                            source,
+                        }
+                    })?;
+                    ReloadPlugin::add_to_linker::<HostState, HasSelf<HostState>>(
+                        &mut linker,
+                        host_state_lookup,
+                    )
+                    .map_err(|source| PluginHostError::Instantiation {
+                        plugin_id: entry.id.clone(),
+                        source,
+                    })?;
+
+                    let runtime = ReloadPlugin::instantiate(&mut store, &component, &linker)
+                        .map_err(|source| PluginHostError::Instantiation {
+                            plugin_id: entry.id.clone(),
+                            source,
+                        })?;
+
+                    runtime
+                        .call_init(&mut store)
+                        .map_err(|source| PluginHostError::GuestCall {
+                            plugin_id: entry.id.clone(),
+                            source,
+                        })?;
+
+                    RuntimeVariant::ReloadWatcher(runtime)
+                }
+            };
 
         let init_message = "initialized".to_string();
 
@@ -193,16 +289,23 @@ impl PluginHost {
             store,
             init_message,
             bridge: self.bridge.clone(),
+            world,
         })
     }
 }
 
+enum RuntimeVariant {
+    HelloWorld(HelloPlugin),
+    ReloadWatcher(ReloadPlugin),
+}
+
 pub struct PluginHandle {
     id: String,
-    runtime: Runtime,
+    runtime: RuntimeVariant,
     store: Store<HostState>,
     init_message: String,
     bridge: Arc<dyn HostBridge>,
+    world: PluginWorld,
 }
 
 impl PluginHandle {
@@ -214,25 +317,52 @@ impl PluginHandle {
         &self.init_message
     }
 
-    pub fn greet(&mut self) -> Result<(), PluginHostError> {
-        self.runtime
-            .call_greet(&mut self.store)
-            .map_err(|source| PluginHostError::GuestCall {
-                plugin_id: self.id.clone(),
-                source,
-            })
+    pub fn refresh_opened_files(&mut self) -> Result<(), PluginHostError> {
+        match &mut self.runtime {
+            RuntimeVariant::HelloWorld(_) => Ok(()),
+            RuntimeVariant::ReloadWatcher(runtime) => runtime
+                .call_refresh_opened_files(&mut self.store)
+                .map_err(|source| PluginHostError::GuestCall {
+                    plugin_id: self.id.clone(),
+                    source,
+                }),
+        }
+    }
+
+    pub fn watched_files_changed(&mut self, paths: Vec<String>) -> Result<(), PluginHostError> {
+        match &mut self.runtime {
+            RuntimeVariant::HelloWorld(_) => Ok(()),
+            RuntimeVariant::ReloadWatcher(runtime) => runtime
+                .call_watched_files_changed(&mut self.store, &paths)
+                .map_err(|source| PluginHostError::GuestCall {
+                    plugin_id: self.id.clone(),
+                    source,
+                }),
+        }
     }
 
     pub fn shutdown(&mut self) -> Result<(), PluginHostError> {
-        let result = self
-            .runtime
-            .call_shutdown(&mut self.store)
-            .map_err(|source| PluginHostError::GuestCall {
-                plugin_id: self.id.clone(),
-                source,
-            });
+        let result =
+            match &mut self.runtime {
+                RuntimeVariant::HelloWorld(runtime) => runtime
+                    .call_shutdown(&mut self.store)
+                    .map_err(|source| PluginHostError::GuestCall {
+                        plugin_id: self.id.clone(),
+                        source,
+                    }),
+                RuntimeVariant::ReloadWatcher(runtime) => runtime
+                    .call_shutdown(&mut self.store)
+                    .map_err(|source| PluginHostError::GuestCall {
+                        plugin_id: self.id.clone(),
+                        source,
+                    }),
+            };
         self.bridge.clear_watched_files(&self.id);
         result
+    }
+
+    pub fn world(&self) -> PluginWorld {
+        self.world
     }
 }
 

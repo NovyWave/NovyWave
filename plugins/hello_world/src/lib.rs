@@ -1,24 +1,16 @@
 mod bindings {
     wit_bindgen::generate!({
-        path: "../wit",
-        world: "runtime",
+        path: "./wit",
     });
 }
 
-use bindings::{__export_world_runtime_cabi, host, Guest};
-
-const GREETING: &str = "NovyWave";
+use bindings::{__export_world_plugin_cabi, novywave::hello_world::host, Guest};
 
 struct HelloWorld;
 
 impl Guest for HelloWorld {
     fn init() {
-        let message = format!("{} plugin initialized", GREETING);
-        host::log_info(&message);
-    }
-
-    fn greet() {
-        host::log_info("hello_world plugin greeting from inside Wasm");
+        host::log_info("Hello World!");
     }
 
     fn shutdown() {
@@ -26,4 +18,4 @@ impl Guest for HelloWorld {
     }
 }
 
-__export_world_runtime_cabi!(HelloWorld with_types_in bindings);
+__export_world_plugin_cabi!(HelloWorld with_types_in bindings);

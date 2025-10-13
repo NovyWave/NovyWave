@@ -4,7 +4,11 @@ This guide captures the current workflow for building and wiring WebAssembly plu
 
 ## Runtime Snapshot
 - **Host runtime:** Wasmtime 36.x LTS (component model enabled, backtrace details on).
-- **Shared WIT:** `plugins/wit/plugins.wit` exports the `runtime` world (`init`, `greet`, `shutdown`) and imports the `host-runtime` interface for logging, watcher registration, and cleanup.
+- **Plugin WIT:** every plugin owns its own WIT package under `plugins/<id>/wit/`.
+  - `plugins/hello_world/wit/plugin.wit` defines a minimal world (`init`/`shutdown`) importing only logging.
+  - `plugins/reload_watcher/wit/plugin.wit` extends that surface with watcher APIs (`get-opened-files`, `register-watched-files`, `reload-waveform-files`, …).
+  - See `plugins/plugin_example.wit` for a documented snapshot of all host imports and expected exports.
+  - Current `wit-bindgen` releases still require copying shared imports into each package—worlds with host interfaces cannot yet be reused across packages (see [component-model#295](https://github.com/WebAssembly/component-model/issues/295) / [wit-bindgen#1046](https://github.com/bytecodealliance/wit-bindgen/issues/1046)).
 - **Host crate:** `backend/crates/plugin_host` exposes `PluginHost` + `PluginHandle`; `backend/src/plugins.rs` keeps a singleton manager that caches the last applied config to avoid redundant reloads and now proxies watcher APIs to the backend bridge.
 - **Reference plugins:** `plugins/hello_world` demonstrates basic logging, and `plugins/reload_watcher` shows live waveform reload orchestration.
 
@@ -27,20 +31,20 @@ This guide captures the current workflow for building and wiring WebAssembly plu
 ## Creating a Plugin
 1. Create a new crate under `plugins/<plugin_id>/` with `crate-type = ["cdylib"]`.
 2. Add `wit-bindgen` (0.41) and any runtime dependencies (e.g., `once_cell`).
-3. Point `package.metadata.component.target` at `../wit` and select the `runtime` world:
+3. Point `package.metadata.component.target` at the plugin-local WIT directory and select the `plugin` world:
    ```toml
    [package.metadata.component]
    package = "novywave:plugins/<plugin_id>"
 
-   [package.metadata.component.target]
-   path = "../wit"
-   world = "runtime"
+[package.metadata.component.target]
+path = "./wit"
+world = "plugin"
    ```
-4. Use `wit_bindgen::generate!` to bind the shared WIT and implement the generated `Guest` trait:
+4. Use `wit_bindgen::generate!` to bind the plugin-specific WIT and implement the generated `Guest` trait:
   ```rust
   wit_bindgen::generate!({
-      path: "../wit",
-      world: "runtime",
+      path: "./wit",
+      world: "plugin",
   });
 
   use bindings::Guest;
@@ -49,7 +53,6 @@ This guide captures the current workflow for building and wiring WebAssembly plu
 
   impl Guest for MyPlugin {
       fn init() {}
-      fn greet() {}
       fn shutdown() {}
   }
 
