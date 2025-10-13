@@ -10,7 +10,7 @@ $end
 $scope module simple_tb $end
 $scope module s $end
 $var wire 4 ! A [3:0] $end
-$var wire 4 " B [3:0] $end
+$var wire 4 " C [3:0] $end
 $upscope $end
 $upscope $end
 $enddefinitions $end

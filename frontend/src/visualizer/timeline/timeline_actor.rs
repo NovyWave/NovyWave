@@ -1738,11 +1738,28 @@ impl WaveformTimeline {
                 .keys()
                 .cloned()
                 .collect();
-            for unique_id in pending {
-                self.cancel_cursor_loading_indicator(&unique_id);
+
+            {
+                let mut values_map = self.cursor_values.state.lock_mut();
+                for unique_id in &pending {
+                    let is_loading = values_map
+                        .get(unique_id)
+                        .map(|value| matches!(value, SignalValue::Loading))
+                        .unwrap_or(true);
+                    if is_loading {
+                        values_map.insert(unique_id.clone(), SignalValue::Missing);
+                    }
+                }
+            }
+
+            for unique_id in &pending {
+                self.cancel_cursor_loading_indicator(unique_id);
             }
             current_request.latest_request_windows.clear();
             self.request_state.state.set(current_request);
+            if !pending.is_empty() {
+                self.update_render_state();
+            }
         }
     }
 

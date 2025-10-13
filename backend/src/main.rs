@@ -139,13 +139,50 @@ impl SignalCacheManager {
             }
         }
 
-        // Load each requested signal; bail on the first failure
+        // Load each requested signal; tolerate missing variables so other signals still resolve
         let mut signal_data = Vec::with_capacity(signal_requests.len());
+        let mut missing_signals: Vec<(String, String, String, String, Option<(u64, u64)>)> =
+            Vec::new();
         for request in &signal_requests {
+            let unique_id = format!(
+                "{}|{}|{}",
+                request.file_path, request.scope_path, request.variable_name
+            );
+
             match self.get_or_load_signal_data(request) {
                 Ok(data) => signal_data.push(data),
-                Err(err) => return Err(err),
+                Err(err) => {
+                    if err.starts_with("Signal data not found:") {
+                        debug_log!(
+                            DEBUG_BACKEND,
+                            "🔍 BACKEND: signal '{}' missing after reload ({})",
+                            unique_id,
+                            err
+                        );
+                        missing_signals.push((
+                            unique_id,
+                            request.file_path.clone(),
+                            request.scope_path.clone(),
+                            request.variable_name.clone(),
+                            request.time_range_ns,
+                        ));
+                    } else {
+                        return Err(err);
+                    }
+                }
             }
+        }
+
+        for (unique_id, file_path, scope_path, variable_name, requested_range) in missing_signals {
+            signal_data.push(UnifiedSignalData {
+                file_path,
+                scope_path,
+                variable_name,
+                unique_id,
+                transitions: Vec::new(),
+                total_transitions: 0,
+                actual_time_range_ns: requested_range,
+            });
         }
 
         // Compute cursor values if requested

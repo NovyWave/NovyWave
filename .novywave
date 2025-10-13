@@ -58,13 +58,13 @@ selected_variables_panel_name_column_width = 190.0
 selected_variables_panel_value_column_width = 220.0
 
 [[workspace.selected_variables]]
-unique_id = "/home/martinkavik/repos/NovyWave/test_files/simple_reload_test.vcd|simple_tb.s|B"
-
-[[workspace.selected_variables]]
 unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP|clk"
 
 [[workspace.selected_variables]]
 unique_id = "/home/martinkavik/repos/NovyWave/test_files/simple_reload_test.vcd|simple_tb.s|A"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/test_files/simple_reload_test.vcd|simple_tb.s|C"
 
 [workspace.timeline]
 cursor_position_ps = 125000000000000
