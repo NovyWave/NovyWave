@@ -1059,9 +1059,8 @@ impl AppConfig {
                 if !initial_files.is_empty() {
                     let file_paths: Vec<CanonicalPathPayload> = initial_files
                         .iter()
-                        .map(|tracked_file| CanonicalPathPayload {
-                            canonical: tracked_file.canonical_path.clone(),
-                            display: tracked_file.path.clone(),
+                        .map(|tracked_file| {
+                            CanonicalPathPayload::new(tracked_file.canonical_path.clone())
                         })
                         .collect();
 
@@ -1088,9 +1087,8 @@ impl AppConfig {
                     // Extract file paths from TrackedFile structs
                     let file_paths: Vec<CanonicalPathPayload> = files
                         .iter()
-                        .map(|tracked_file| CanonicalPathPayload {
-                            canonical: tracked_file.canonical_path.clone(),
-                            display: tracked_file.path.clone(),
+                        .map(|tracked_file| {
+                            CanonicalPathPayload::new(tracked_file.canonical_path.clone())
                         })
                         .collect();
 

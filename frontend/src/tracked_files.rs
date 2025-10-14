@@ -66,12 +66,10 @@ impl TrackedFiles {
                             let tracked_files: Vec<TrackedFile> = file_payloads
                                 .into_iter()
                                 .filter_map(|payload| {
-                                    let canonical = if payload.canonical.is_empty() {
-                                        payload.display.clone()
-                                    } else {
-                                        payload.canonical.clone()
-                                    };
-
+                                    let canonical = payload.canonical.clone();
+                                    if canonical.is_empty() {
+                                        return None;
+                                    }
                                     if seen.insert(canonical) {
                                         Some(create_tracked_file(
                                             payload,
@@ -141,25 +139,21 @@ impl TrackedFiles {
                     }
                     payload = file_reload_requested_stream.next() => {
                         if let Some(payload) = payload {
-                            let canonical_key = if payload.canonical.is_empty() {
-                                payload.display.clone()
-                            } else {
-                                payload.canonical.clone()
-                            };
-                            let display_path = if payload.display.is_empty() {
-                                canonical_key.clone()
-                            } else {
-                                payload.display.clone()
-                            };
+                            let canonical_key = payload.canonical.clone();
+                            if canonical_key.is_empty() {
+                                zoon::println!("⚠️ TrackedFiles reload received empty canonical path");
+                                continue;
+                            }
 
                             let new_file = create_tracked_file(
                                 payload.clone(),
                                 FileState::Loading(LoadingStatus::Starting),
                             );
 
-                            if let Some(index) = cached_files.iter().position(|f| {
-                                f.canonical_path == canonical_key || f.path == display_path
-                            }) {
+                            if let Some(index) = cached_files
+                                .iter()
+                                .position(|f| f.canonical_path == canonical_key)
+                            {
                                 cached_files[index] = new_file.clone();
                             } else {
                                 zoon::println!(
@@ -177,12 +171,7 @@ impl TrackedFiles {
                             }
                             files_vec_signal_for_actor.set_neq(cached_files.clone());
 
-                            let load_path = if payload.display.is_empty() {
-                                canonical_key.clone()
-                            } else {
-                                payload.display.clone()
-                            };
-                            send_parse_request_to_backend(load_path).await;
+                            send_parse_request_to_backend(canonical_key).await;
                         }
                     }
                     load_result = file_load_completed_stream.next() => {
@@ -354,8 +343,5 @@ async fn send_parse_request_to_backend(file_path: String) {
 }
 
 fn payload_from_string(path: String) -> CanonicalPathPayload {
-    CanonicalPathPayload {
-        canonical: path.clone(),
-        display: path,
-    }
+    CanonicalPathPayload::new(path)
 }

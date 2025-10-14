@@ -160,16 +160,11 @@ impl BackendPluginBridge {
         let mut seen = HashSet::new();
         let mut result = Vec::new();
         for payload in paths {
-            let canonical_str = if payload.canonical.trim().is_empty() {
-                payload.display.trim()
-            } else {
-                payload.canonical.trim()
-            };
-
-            if canonical_str.is_empty() {
+            let trimmed = payload.canonical.trim();
+            if trimmed.is_empty() {
                 continue;
             }
-            let mut canonical_path = PathBuf::from(canonical_str);
+            let mut canonical_path = PathBuf::from(trimmed);
             if !canonical_path.is_absolute() {
                 if let Ok(abs) = std::fs::canonicalize(&canonical_path) {
                     canonical_path = abs;
@@ -177,14 +172,7 @@ impl BackendPluginBridge {
             }
             let canonical_text = canonical_path.to_string_lossy().to_string();
             if seen.insert(canonical_text.clone()) {
-                result.push(CanonicalPathPayload {
-                    canonical: canonical_text,
-                    display: if payload.display.trim().is_empty() {
-                        canonical_path.to_string_lossy().to_string()
-                    } else {
-                        payload.display.clone()
-                    },
-                });
+                result.push(CanonicalPathPayload::new(canonical_text));
             }
         }
         result
@@ -331,7 +319,7 @@ impl BackendPluginBridge {
                 new_files.len(),
                 new_files
                     .iter()
-                    .map(|payload| payload.display.as_str())
+                    .map(|payload| payload.display())
                     .collect::<Vec<_>>()
             );
         });
@@ -441,12 +429,8 @@ impl BackendPluginBridge {
                     continue;
                 }
 
-                discovered
-                    .entry(canonical_text.clone())
-                    .or_insert_with(|| CanonicalPathPayload {
-                        display: path.to_string_lossy().to_string(),
-                        canonical: canonical_text,
-                    });
+                let payload = CanonicalPathPayload::new(canonical_text.clone());
+                discovered.entry(canonical_text).or_insert(payload);
             }
         }
 
@@ -485,10 +469,6 @@ impl HostBridge for BackendPluginBridge {
         let (tx, mut rx) = mpsc::unbounded_channel::<Vec<CanonicalPathPayload>>();
         let plugin_label = plugin_id.to_string();
         let plugin_label_for_watcher = plugin_label.clone();
-        let display_lookup: HashMap<String, String> = normalized
-            .iter()
-            .map(|payload| (payload.canonical.clone(), payload.display.clone()))
-            .collect();
 
         let mut debouncer =
             new_debouncer(debounce, move |result: DebounceEventResult| match result {
@@ -499,11 +479,7 @@ impl HostBridge for BackendPluginBridge {
                         let canonical_buf = std::fs::canonicalize(&path).unwrap_or(path.clone());
                         if let Some(text) = canonical_buf.to_str() {
                             let canonical = text.to_string();
-                            let display = display_lookup
-                                .get(&canonical)
-                                .cloned()
-                                .unwrap_or_else(|| canonical.clone());
-                            changed.push(CanonicalPathPayload { canonical, display });
+                            changed.push(CanonicalPathPayload::new(canonical));
                         }
                     }
                     if !changed.is_empty() {
@@ -616,8 +592,7 @@ impl HostBridge for BackendPluginBridge {
                         }
 
                         let canonical = canonical_buf.to_string_lossy().to_string();
-                        let display = path.to_string_lossy().to_string();
-                        discovered.push(CanonicalPathPayload { canonical, display });
+                        discovered.push(CanonicalPathPayload::new(canonical));
                     }
                     if !discovered.is_empty() {
                         let _ = tx.send(discovered);
@@ -717,7 +692,7 @@ impl HostBridge for BackendPluginBridge {
                 file_paths.len(),
                 file_paths
                     .iter()
-                    .map(|payload| payload.display.as_str())
+                    .map(|payload| payload.display())
                     .collect::<Vec<_>>()
             );
         });
@@ -1071,20 +1046,13 @@ mod tests {
     #[test]
     fn normalized_paths_deduplicates_canonical_entries() {
         let input = vec![
-            CanonicalPathPayload {
-                canonical: "/tmp/sample.vcd".to_string(),
-                display: "/tmp/sample.vcd".to_string(),
-            },
-            CanonicalPathPayload {
-                canonical: "/tmp/sample.vcd".to_string(),
-                display: "sample.vcd".to_string(),
-            },
+            CanonicalPathPayload::new("/tmp/sample.vcd".to_string()),
+            CanonicalPathPayload::new("/tmp/sample.vcd".to_string()),
         ];
 
         let normalized = BackendPluginBridge::normalized_paths(input);
         assert_eq!(normalized.len(), 1);
         assert_eq!(normalized[0].canonical, "/tmp/sample.vcd");
-        assert_eq!(normalized[0].display, "/tmp/sample.vcd");
     }
 
     #[test]

@@ -9,6 +9,15 @@ theme = "dark"
 toast_dismiss_ms = 10000
 
 [workspace]
+opened_files = [
+    "/home/martinkavik/repos/super_counter_rust/hardware/build/super_counter.fst",
+    "/home/martinkavik/repos/NovyWave/test_files/simple.vcd",
+    "/home/martinkavik/repos/NovyWave/test_files/simple_reload_test.vcd",
+    "/home/martinkavik/repos/NovyWave/test_files/to_discover/tmp_discovery.vcd",
+    "/home/martinkavik/repos/NovyWave/test_files/to_discover/wave_27.fst",
+    "/home/martinkavik/repos/NovyWave/test_files/to_discover/wave_27_2.fst",
+    "/home/martinkavik/repos/NovyWave/test_files/to_discover/new_discovery_sample.vcd",
+]
 dock_mode = "bottom"
 expanded_scopes = ["scope_/home/martinkavik/repos/NovyWave/test_files/simple_reload_test.vcd|simple_tb"]
 load_files_expanded_directories = [
@@ -24,38 +33,6 @@ load_files_expanded_directories = [
 ]
 selected_scope_id = "scope_/home/martinkavik/repos/NovyWave/test_files/simple_reload_test.vcd|simple_tb.s"
 load_files_scroll_position = 941
-
-[[workspace.opened_files]]
-canonical = "/home/martinkavik/repos/super_counter_rust/hardware/build/super_counter.fst"
-display = "/home/martinkavik/repos/super_counter_rust/hardware/build/super_counter.fst"
-
-[[workspace.opened_files]]
-canonical = "/home/martinkavik/repos/NovyWave/test_files/simple.vcd"
-display = "/home/martinkavik/repos/NovyWave/test_files/simple.vcd"
-
-[[workspace.opened_files]]
-canonical = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst"
-display = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst"
-
-[[workspace.opened_files]]
-canonical = "/home/martinkavik/repos/NovyWave/test_files/simple_reload_test.vcd"
-display = "/home/martinkavik/repos/NovyWave/test_files/simple_reload_test.vcd"
-
-[[workspace.opened_files]]
-canonical = "/home/martinkavik/repos/NovyWave/test_files/to_discover/new_discovery_sample.vcd"
-display = "/home/martinkavik/repos/NovyWave/test_files/to_discover/new_discovery_sample.vcd"
-
-[[workspace.opened_files]]
-canonical = "/home/martinkavik/repos/NovyWave/test_files/to_discover/tmp_discovery.vcd"
-display = "/home/martinkavik/repos/NovyWave/test_files/to_discover/tmp_discovery.vcd"
-
-[[workspace.opened_files]]
-canonical = "/home/martinkavik/repos/NovyWave/test_files/to_discover/wave_27.fst"
-display = "/home/martinkavik/repos/NovyWave/test_files/to_discover/wave_27.fst"
-
-[[workspace.opened_files]]
-canonical = "/home/martinkavik/repos/NovyWave/test_files/to_discover/wave_27_2.fst"
-display = "/home/martinkavik/repos/NovyWave/test_files/to_discover/wave_27_2.fst"
 
 [workspace.docked_bottom_dimensions]
 files_and_scopes_panel_width = 400.0
@@ -108,13 +85,5 @@ enabled = true
 artifact_path = "plugins/dist/files_discovery_plugin.wasm"
 
 [plugins.entries.config]
-allow_extensions = [
-    "vcd",
-    "fst",
-]
-base_dir = "."
 debounce_ms = 200
-patterns = [
-    "test_files/to_discover/**/*.vcd",
-    "test_files/to_discover/**/*.fst",
-]
+patterns = ["test_files/to_discover/**/*.*"]

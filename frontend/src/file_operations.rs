@@ -32,7 +32,6 @@ pub async fn process_selected_file_paths(
     let mut known_paths: HashSet<String> = HashSet::new();
     for tracked in &tracked_files_snapshot {
         known_paths.insert(tracked.canonical_path.clone());
-        known_paths.insert(tracked.path.clone());
     }
 
     let mut new_files: Vec<PathBuf> = Vec::new();
@@ -42,22 +41,21 @@ pub async fn process_selected_file_paths(
     for selected_path in selected_files {
         let selected_pathbuf = PathBuf::from(&selected_path);
         let display_path = selected_pathbuf.to_string_lossy().to_string();
+        let canonical_path = std::fs::canonicalize(&selected_pathbuf)
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| display_path.clone());
 
         if let Some(existing) = tracked_files_snapshot
             .iter()
-            .find(|tracked| tracked.path == display_path || tracked.canonical_path == display_path)
+            .find(|tracked| tracked.canonical_path == canonical_path)
         {
             if reload_seen.insert(existing.canonical_path.clone()) {
-                reload_payloads.push(CanonicalPathPayload {
-                    canonical: existing.canonical_path.clone(),
-                    display: display_path.clone(),
-                });
+                reload_payloads.push(CanonicalPathPayload::new(existing.canonical_path.clone()));
             }
             continue;
         }
 
-        if !known_paths.contains(&display_path) {
-            known_paths.insert(display_path.clone());
+        if known_paths.insert(canonical_path.clone()) {
             new_files.push(selected_pathbuf);
         }
     }

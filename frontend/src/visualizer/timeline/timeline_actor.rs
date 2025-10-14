@@ -2452,12 +2452,7 @@ impl WaveformTimeline {
             let mut reload_stream = tracked_files.file_reload_requested_relay.subscribe().fuse();
 
             while let Some(payload) = reload_stream.next().await {
-                let file_id = if payload.canonical.is_empty() {
-                    payload.display.clone()
-                } else {
-                    payload.canonical.clone()
-                };
-                timeline.handle_file_reload_requested(&file_id);
+                timeline.handle_file_reload_requested(&payload.canonical);
             }
         });
     }

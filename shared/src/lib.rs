@@ -1295,10 +1295,7 @@ where
     match OpenedFilesHelper::deserialize(deserializer)? {
         OpenedFilesHelper::Strings(strings) => Ok(strings
             .into_iter()
-            .map(|path| CanonicalPathPayload {
-                canonical: path.clone(),
-                display: path,
-            })
+            .map(CanonicalPathPayload::new)
             .collect()),
         OpenedFilesHelper::Objects(objects) => Ok(objects),
     }
@@ -1616,195 +1613,10 @@ impl AppConfig {
             self.ui.toast_dismiss_ms = 300000;
         }
 
-        // Migrate expanded_scopes from old format to new format
-        warnings.extend(self.migrate_expanded_scopes());
-
-        // Migrate selected variables to canonical file paths
-        warnings.extend(self.migrate_selected_variables());
-
         // Validate plugins section
         warnings.extend(self.plugins.validate_and_fix());
 
         warnings
-    }
-
-    /// Migrate expanded_scopes from old format ({file_id}_{scope}) to new format ({full_path}|{scope})
-    fn migrate_expanded_scopes(&mut self) -> Vec<String> {
-        let mut warnings = Vec::new();
-        let mut migrated_scopes = Vec::new();
-        let mut migration_occurred = false;
-
-        for scope_id in &self.workspace.expanded_scopes {
-            if self.is_old_scope_format(scope_id) {
-                if let Some(migrated_id) = self.convert_to_new_format(scope_id) {
-                    warnings.push(format!(
-                        "Migrated scope ID: '{}' -> '{}'",
-                        scope_id, migrated_id
-                    ));
-                    migrated_scopes.push(migrated_id);
-                    migration_occurred = true;
-                } else {
-                    warnings.push(format!(
-                        "Could not migrate scope ID '{}' - keeping old format",
-                        scope_id
-                    ));
-                    migrated_scopes.push(scope_id.clone());
-                }
-            } else {
-                // Already in new format or file-only entry
-                migrated_scopes.push(scope_id.clone());
-            }
-        }
-
-        if migration_occurred {
-            self.workspace.expanded_scopes = migrated_scopes;
-            warnings.push("Expanded scopes format migration completed".to_string());
-        }
-
-        warnings
-    }
-
-    fn migrate_selected_variables(&mut self) -> Vec<String> {
-        let mut warnings = Vec::new();
-        if self.workspace.selected_variables.is_empty() {
-            return warnings;
-        }
-
-        let mut canonical_lookup: HashMap<String, String> = HashMap::new();
-        for payload in &self.workspace.opened_files {
-            let canonical = canonical_str(payload).to_string();
-            canonical_lookup.insert(canonical.clone(), canonical.clone());
-            canonical_lookup.insert(display_str(payload).to_string(), canonical.clone());
-
-            if let Some(file_name) = std::path::Path::new(display_str(payload))
-                .file_name()
-                .and_then(|n| n.to_str())
-            {
-                canonical_lookup
-                    .entry(file_name.to_string())
-                    .or_insert_with(|| canonical.clone());
-            }
-        }
-
-        for variable in &mut self.workspace.selected_variables {
-            if let Some((file_path, scope_path, variable_name)) = variable.parse_unique_id() {
-                if let Some(canonical) = canonical_lookup.get(&file_path) {
-                    if canonical != &file_path {
-                        warnings.push(format!(
-                            "Migrated selected variable '{}' file path '{}' -> '{}'",
-                            variable.display_name(),
-                            file_path,
-                            canonical
-                        ));
-                        variable.unique_id =
-                            format!("{}|{}|{}", canonical, scope_path, variable_name);
-                    }
-                }
-            }
-        }
-
-        warnings
-    }
-
-    /// Check if scope ID is in old format
-    fn is_old_scope_format(&self, scope_id: &str) -> bool {
-        // New format: {full_path}|{scope} or just {full_path} (starting with /)
-        if scope_id.contains('|') || scope_id.starts_with('/') {
-            return false;
-        }
-
-        // Old format includes:
-        // 1. {file_id}_{scope} entries (with underscore separator)
-        // 2. Sanitized file-only entries that match generate_file_id() output
-        //    (e.g., "home_user_path_file.ext" should become "/home/user/path/file.ext")
-
-        // Check if it matches generate_file_id() output - if so, it's old sanitized format
-        for opened_file_path in &self.workspace.opened_files {
-            let generated_display_id = generate_file_id(display_str(opened_file_path));
-            if generated_display_id == scope_id {
-                return true;
-            }
-
-            let generated_canonical_id = generate_file_id(canonical_str(opened_file_path));
-            if generated_canonical_id == scope_id {
-                return true;
-            }
-
-            let filename = std::path::Path::new(display_str(opened_file_path))
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("");
-            if filename == scope_id {
-                return true;
-            }
-        }
-
-        // Check if it contains underscore (old scope format like "file_scope")
-        if scope_id.contains('_') {
-            return true;
-        }
-
-        // If we get here, it's likely an orphaned entry - don't migrate
-        false
-    }
-
-    /// Convert old format scope ID to new format using opened_files as lookup
-    fn convert_to_new_format(&self, old_scope_id: &str) -> Option<String> {
-        // First check if this is a sanitized file-only entry (direct match with generate_file_id)
-        for opened_file_path in &self.workspace.opened_files {
-            let display_id = generate_file_id(display_str(opened_file_path));
-            let canonical_id = generate_file_id(canonical_str(opened_file_path));
-            if display_id == old_scope_id || canonical_id == old_scope_id {
-                // This is a sanitized file-only entry - convert to full path
-                return Some(canonical_str(opened_file_path).to_string());
-            }
-        }
-
-        // Parse old format: {file_id}_{scope} or {file_id}
-        let parts: Vec<&str> = old_scope_id.splitn(2, '_').collect();
-        if parts.is_empty() {
-            return None;
-        }
-
-        let file_id = parts[0];
-        let scope_name = if parts.len() > 1 {
-            Some(parts[1])
-        } else {
-            None
-        };
-
-        // Find matching file in opened_files by looking for files whose generated ID matches
-        for opened_file_path in &self.workspace.opened_files {
-            let canonical_path = canonical_str(opened_file_path);
-            let display_path = display_str(opened_file_path);
-            let generated_file_id = generate_file_id(display_path);
-            let generated_canonical_id = generate_file_id(canonical_path);
-
-            // Check for file_id match (for entries like "wave_27.fst_TOP")
-            if generated_file_id == file_id || generated_canonical_id == file_id {
-                // Found matching file - construct new format
-                return Some(match scope_name {
-                    Some(scope) => format!("{}|{}", canonical_path, scope),
-                    None => canonical_path.to_string(),
-                });
-            }
-
-            // Check legacy format (filename-only ID) for backwards compatibility
-            let filename = std::path::Path::new(display_path)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("");
-            if filename == file_id {
-                // Found matching file using legacy filename-only matching
-                return Some(match scope_name {
-                    Some(scope) => format!("{}|{}", canonical_path, scope),
-                    None => canonical_path.to_string(),
-                });
-            }
-        }
-
-        // Could not find matching file
-        None
     }
 
     /// Create a config with validation applied
@@ -2000,49 +1812,39 @@ fn find_minimal_disambiguation(paths: &[String]) -> Vec<String> {
 
 /// Create a TrackedFile from basic file information with initial state
 /// Create a TrackedFile from basic file information with initial state
-pub fn create_tracked_file(path: CanonicalPathPayload, state: FileState) -> TrackedFile {
-    let display_path = path.display.clone();
-    let canonical = if path.canonical.is_empty() {
-        path.display.clone()
-    } else {
-        path.canonical.clone()
-    };
-
-    let filename = std::path::Path::new(&display_path)
+pub fn create_tracked_file(payload: CanonicalPathPayload, state: FileState) -> TrackedFile {
+    let canonical = payload.canonical.clone();
+    let filename = std::path::Path::new(&canonical)
         .file_name()
         .and_then(|n| n.to_str())
-        .unwrap_or(&display_path)
+        .unwrap_or(&canonical)
         .to_string();
 
     TrackedFile {
         id: canonical.clone(),
-        canonical_path: canonical,
-        path: display_path,
-        filename: filename.clone(),
+        canonical_path: canonical.clone(),
+        path: canonical,
+        filename,
         state,
         smart_label: String::new(), // Unused - smart labels computed by derived signal
     }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
+#[serde(transparent)]
 pub struct CanonicalPathPayload {
     pub canonical: String,
-    pub display: String,
 }
 
-fn canonical_str<'a>(payload: &'a CanonicalPathPayload) -> &'a str {
-    if payload.canonical.is_empty() {
-        payload.display.as_str()
-    } else {
-        payload.canonical.as_str()
+impl CanonicalPathPayload {
+    pub fn new(path: impl Into<String>) -> Self {
+        Self {
+            canonical: path.into(),
+        }
     }
-}
 
-fn display_str<'a>(payload: &'a CanonicalPathPayload) -> &'a str {
-    if payload.display.is_empty() {
-        canonical_str(payload)
-    } else {
-        payload.display.as_str()
+    pub fn display(&self) -> &str {
+        &self.canonical
     }
 }
 
@@ -2540,43 +2342,6 @@ mod tests {
         let section: WorkspaceSection = serde_json::from_value(value).unwrap();
         assert_eq!(section.opened_files.len(), 1);
         assert_eq!(section.opened_files[0].canonical, "/tmp/sample.vcd");
-        assert_eq!(section.opened_files[0].display, "/tmp/sample.vcd");
-    }
-
-    #[test]
-    fn workspace_opened_files_deserializes_payloads() {
-        let value = json!({
-            "opened_files": [{
-                "canonical": "/abs/foo.vcd",
-                "display": "foo.vcd"
-            }],
-            "dock_mode": "right"
-        });
-
-        let section: WorkspaceSection = serde_json::from_value(value).unwrap();
-        assert_eq!(section.opened_files.len(), 1);
-        assert_eq!(section.opened_files[0].canonical, "/abs/foo.vcd");
-        assert_eq!(section.opened_files[0].display, "foo.vcd");
-    }
-
-    #[test]
-    fn migrate_selected_variables_to_canonical_paths() {
-        let mut config = AppConfig::default();
-        config.workspace.opened_files = vec![CanonicalPathPayload {
-            canonical: "/abs/foo.vcd".to_string(),
-            display: "foo.vcd".to_string(),
-        }];
-        config.workspace.selected_variables = vec![SelectedVariable {
-            unique_id: "foo.vcd|scope|sig".to_string(),
-            formatter: None,
-        }];
-
-        let warnings = config.validate_and_fix();
-
-        assert_eq!(warnings.len(), 1);
-        assert_eq!(
-            config.workspace.selected_variables[0].unique_id,
-            "/abs/foo.vcd|scope|sig"
-        );
+        assert_eq!(section.opened_files[0].display(), "/tmp/sample.vcd");
     }
 }

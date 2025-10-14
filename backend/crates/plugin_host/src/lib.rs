@@ -28,7 +28,6 @@ use bindings::{
     reload_watcher::{Plugin as ReloadPlugin, novywave::reload_watcher as reload_wit},
 };
 use shared::{CanonicalPathPayload, PluginConfigEntry};
-use std::collections::HashMap;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -191,18 +190,9 @@ impl reload_wit::host::Host for HostState {
     }
 
     fn register_watched_files(&mut self, paths: Vec<String>, debounce_ms: u32) -> () {
-        let snapshot = self.bridge.get_opened_files(&self.plugin_id);
-        let lookup: HashMap<_, _> = snapshot
-            .into_iter()
-            .map(|payload| (payload.canonical.clone(), payload.display))
-            .collect();
-
         let payloads: Vec<CanonicalPathPayload> = paths
             .into_iter()
-            .map(|path| CanonicalPathPayload {
-                display: lookup.get(&path).cloned().unwrap_or_else(|| path.clone()),
-                canonical: path,
-            })
+            .map(CanonicalPathPayload::new)
             .collect();
 
         if let Err(err) = self
@@ -218,18 +208,9 @@ impl reload_wit::host::Host for HostState {
     }
 
     fn reload_waveform_files(&mut self, paths: Vec<String>) -> () {
-        let snapshot = self.bridge.get_opened_files(&self.plugin_id);
-        let lookup: HashMap<_, _> = snapshot
-            .into_iter()
-            .map(|payload| (payload.canonical.clone(), payload.display))
-            .collect();
-
         let payloads: Vec<CanonicalPathPayload> = paths
             .into_iter()
-            .map(|path| CanonicalPathPayload {
-                display: lookup.get(&path).cloned().unwrap_or_else(|| path.clone()),
-                canonical: path,
-            })
+            .map(CanonicalPathPayload::new)
             .collect();
         if let Err(err) = self.bridge.reload_waveform_files(&self.plugin_id, payloads) {
             self.bridge.log_error(&self.plugin_id, &err.to_string());
@@ -278,7 +259,6 @@ impl discovery_wit::host::Host for HostState {
 
         let mut payloads = Vec::new();
         for path in paths {
-            let display = path.clone();
             let absolute = if Path::new(&path).is_absolute() {
                 PathBuf::from(&path)
             } else {
@@ -291,7 +271,7 @@ impl discovery_wit::host::Host for HostState {
             let canonical_buf =
                 std::fs::canonicalize(&absolute).unwrap_or_else(|_| absolute.clone());
             let canonical = canonical_buf.to_string_lossy().to_string();
-            payloads.push(CanonicalPathPayload { canonical, display });
+            payloads.push(CanonicalPathPayload::new(canonical));
         }
 
         if payloads.is_empty() {
