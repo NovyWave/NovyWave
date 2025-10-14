@@ -955,10 +955,13 @@ impl NovyWaveApp {
     }
 
     fn workspace_bar(&self) -> impl Element {
-        use moonzoon_novyui::tokens::color::{neutral_8, neutral_11};
+        use moonzoon_novyui::tokens::color::neutral_8;
 
         let workspace_label = {
-            let label_color_signal = neutral_11();
+            let label_color_signal = self.config.theme_actor.signal().map(|theme| match theme {
+                shared::Theme::Light => Some("oklch(28% 0.02 255)"),
+                shared::Theme::Dark => Some("oklch(92% 0.02 255)"),
+            });
 
             El::new()
                 .s(Font::new().weight(FontWeight::Medium))
@@ -1073,14 +1076,20 @@ impl NovyWaveApp {
         );
 
         let background_color_signal = self.config.theme_actor.signal().map(|theme| match theme {
-            shared::Theme::Light => "oklch(99% 0.025 255)",
-            shared::Theme::Dark => "oklch(68% 0.025 255)",
+            shared::Theme::Light => Some("oklch(96% 0.015 255)"),
+            shared::Theme::Dark => Some("oklch(26% 0.02 255)"),
+        });
+
+        let divider_color_signal = self.config.theme_actor.signal().map(|theme| match theme {
+            shared::Theme::Light => Border::new().width(1).color("oklch(82% 0.015 255)"),
+            shared::Theme::Dark => Border::new().width(1).color("oklch(40% 0.02 255)"),
         });
 
         Row::new()
             .s(Width::fill())
             .s(Padding::new().x(SPACING_6).y(SPACING_4))
             .s(Background::new().color_signal(background_color_signal))
+            .s(Borders::new().bottom_signal(divider_color_signal))
             .s(Align::new().center_y())
             .item(workspace_label)
             .item(
