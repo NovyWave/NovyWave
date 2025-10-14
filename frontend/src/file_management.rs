@@ -343,6 +343,20 @@ pub fn compute_smart_label_for_file(
                 base_name
             }
         }
+        shared::FileState::Failed(error) => {
+            let readable = base_name.clone();
+            let reason = match error {
+                shared::FileError::FileNotFound { .. } => "missing",
+                shared::FileError::PermissionDenied { .. } => "no access",
+                shared::FileError::IoError { .. } => "i/o error",
+                shared::FileError::UnsupportedFormat { .. } => "unsupported",
+                shared::FileError::InvalidFormat { .. } => "invalid",
+                shared::FileError::CorruptedFile { .. } => "corrupted",
+                shared::FileError::FileTooLarge { .. } => "too large",
+                _ => "error",
+            };
+            format!("{} ({})", readable, reason)
+        }
         shared::FileState::Loading(_) => {
             format!("{} (Loading...)", base_name)
         }

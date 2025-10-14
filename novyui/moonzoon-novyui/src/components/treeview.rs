@@ -774,7 +774,24 @@ fn render_tree_item(
                                 .s(Padding::new().x(SPACING_2))
                                 .child({
                                     // Apply inline smart label styling if label contains '/' or timeline info
-                                    if item.label.contains('/') && item.label.contains(" (") && item.label.contains("–") && item.label.ends_with(')') {
+                                    let item_id_for_error_check = item_id.clone();
+                                    let has_error_message = item.error_message.is_some();
+                                    let is_file_error = matches!(item.item_type, Some(TreeViewItemType::FileError));
+                                    let is_error_state = item_id_for_error_check == "access_denied"
+                                        || has_error_message
+                                        || is_file_error;
+
+                                    if is_error_state {
+                                        let error_color_signal = theme().map(|t| match t {
+                                            crate::tokens::theme::Theme::Light => "oklch(65% 0.26 25)",
+                                            crate::tokens::theme::Theme::Dark => "oklch(82% 0.26 25)",
+                                        });
+
+                                        El::new()
+                                            .s(Font::new().color_signal(error_color_signal).no_wrap())
+                                            .child(Text::new(&item.label))
+                                            .unify()
+                                    } else if item.label.contains('/') && item.label.contains(" (") && item.label.contains("–") && item.label.ends_with(')') {
                                         // Parse labels with BOTH path prefix AND timeline info
                                         if let Some(last_slash) = item.label.rfind('/') {
                                             let prefix = &item.label[..=last_slash]; // Include trailing slash
@@ -876,36 +893,40 @@ fn render_tree_item(
                                         .weight(FontWeight::Number(FONT_WEIGHT_4))
                                         .no_wrap();
 
-                                    // Only apply color signal for non-styled labels (styled labels handle their own colors)
-                                    if !item.label.contains('/') {
-                                        let item_id_for_error_check = item_id.clone();
-                                        let has_error_message = item.error_message.is_some();
-                                        let is_file_error = matches!(item.item_type, Some(TreeViewItemType::FileError));
+                                    // Re-evaluate error state for styling layer
+                                    let row_has_error = item.id == "access_denied"
+                                        || item.error_message.is_some()
+                                        || matches!(item.item_type, Some(TreeViewItemType::FileError));
+
+                                    // Only apply color signal for error rows or non-styled labels
+                                    if row_has_error || !item.label.contains('/') {
                                         font = font.color_signal(map_ref! {
                                             let theme = theme(),
                                             let is_selected = selected_items.signal_ref({
                                                 let item_id = item_id.clone();
                                                 move |selected| selected.contains(&item_id)
-                                            }) => {
-                                            if item_id_for_error_check == "access_denied" || has_error_message || is_file_error {
+                                            }),
+                                            let is_error = always(row_has_error),
+                                            let is_disabled_signal = always(is_disabled) => {
+                                            if *is_error {
                                                 match *theme {
-                                                    Theme::Light => "oklch(55% 0.16 15)", // Error color light
-                                                    Theme::Dark => "oklch(70% 0.16 15)", // Error color dark
+                                                    Theme::Light => "oklch(65% 0.26 25)",
+                                                    Theme::Dark => "oklch(82% 0.26 25)",
                                                 }
-                                            } else if is_disabled {
+                                            } else if *is_disabled_signal {
                                                 match *theme {
-                                                    Theme::Light => "oklch(45% 0.14 250)", // neutral_5 light
-                                                    Theme::Dark => "oklch(55% 0.14 250)", // neutral_5 dark
+                                                    Theme::Light => "oklch(45% 0.14 250)",
+                                                    Theme::Dark => "oklch(55% 0.14 250)",
                                                 }
                                             } else if *is_selected {
                                                 match *theme {
-                                                    Theme::Light => "oklch(55% 0.22 250)", // primary_7 light
-                                                    Theme::Dark => "oklch(65% 0.22 250)", // primary_7 dark
+                                                    Theme::Light => "oklch(55% 0.22 250)",
+                                                    Theme::Dark => "oklch(65% 0.22 250)",
                                                 }
                                             } else {
                                                 match *theme {
-                                                    Theme::Light => "oklch(15% 0.14 250)", // neutral_9 light
-                                                    Theme::Dark => "oklch(95% 0.14 250)", // neutral_11 dark
+                                                    Theme::Light => "oklch(15% 0.14 250)",
+                                                    Theme::Dark => "oklch(95% 0.14 250)",
                                                 }
                                             }}
                                         });
