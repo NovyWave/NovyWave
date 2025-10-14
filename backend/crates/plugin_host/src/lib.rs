@@ -190,10 +190,8 @@ impl reload_wit::host::Host for HostState {
     }
 
     fn register_watched_files(&mut self, paths: Vec<String>, debounce_ms: u32) -> () {
-        let payloads: Vec<CanonicalPathPayload> = paths
-            .into_iter()
-            .map(CanonicalPathPayload::new)
-            .collect();
+        let payloads: Vec<CanonicalPathPayload> =
+            paths.into_iter().map(CanonicalPathPayload::new).collect();
 
         if let Err(err) = self
             .bridge
@@ -208,10 +206,8 @@ impl reload_wit::host::Host for HostState {
     }
 
     fn reload_waveform_files(&mut self, paths: Vec<String>) -> () {
-        let payloads: Vec<CanonicalPathPayload> = paths
-            .into_iter()
-            .map(CanonicalPathPayload::new)
-            .collect();
+        let payloads: Vec<CanonicalPathPayload> =
+            paths.into_iter().map(CanonicalPathPayload::new).collect();
         if let Err(err) = self.bridge.reload_waveform_files(&self.plugin_id, payloads) {
             self.bridge.log_error(&self.plugin_id, &err.to_string());
         }

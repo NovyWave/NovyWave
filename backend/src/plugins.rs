@@ -55,7 +55,7 @@ impl DiscoveryHostConfig {
             return None;
         }
 
-        let host_cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let workspace_root = crate::workspace_context().root();
         let base_dir = entry
             .config
             .get("base_dir")
@@ -65,10 +65,10 @@ impl DiscoveryHostConfig {
                 if candidate.is_absolute() {
                     candidate
                 } else {
-                    host_cwd.join(candidate)
+                    workspace_root.join(candidate)
                 }
             })
-            .unwrap_or_else(|| host_cwd.clone());
+            .unwrap_or_else(|| workspace_root.clone());
         let canonical_base_dir =
             std::fs::canonicalize(&base_dir).unwrap_or_else(|_| base_dir.clone());
 
@@ -159,6 +159,7 @@ impl BackendPluginBridge {
     fn normalized_paths(paths: Vec<CanonicalPathPayload>) -> Vec<CanonicalPathPayload> {
         let mut seen = HashSet::new();
         let mut result = Vec::new();
+        let workspace_root = crate::workspace_context().root();
         for payload in paths {
             let trimmed = payload.canonical.trim();
             if trimmed.is_empty() {
@@ -166,9 +167,10 @@ impl BackendPluginBridge {
             }
             let mut canonical_path = PathBuf::from(trimmed);
             if !canonical_path.is_absolute() {
-                if let Ok(abs) = std::fs::canonicalize(&canonical_path) {
-                    canonical_path = abs;
-                }
+                canonical_path = workspace_root.join(&canonical_path);
+            }
+            if let Ok(abs) = std::fs::canonicalize(&canonical_path) {
+                canonical_path = abs;
             }
             let canonical_text = canonical_path.to_string_lossy().to_string();
             if seen.insert(canonical_text.clone()) {
@@ -181,6 +183,7 @@ impl BackendPluginBridge {
     fn normalized_directories(directories: Vec<String>) -> Vec<String> {
         let mut seen = HashSet::new();
         let mut result = Vec::new();
+        let workspace_root = crate::workspace_context().root();
 
         for directory in directories {
             let trimmed = directory.trim();
@@ -192,10 +195,7 @@ impl BackendPluginBridge {
             let absolute = if candidate.is_absolute() {
                 candidate
             } else {
-                match env::current_dir() {
-                    Ok(root) => root.join(candidate),
-                    Err(_) => PathBuf::from(trimmed),
-                }
+                workspace_root.join(&candidate)
             };
 
             if let Some(normalized) = Self::canonical_watch_directory(&absolute) {

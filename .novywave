@@ -11,27 +11,27 @@ toast_dismiss_ms = 10000
 [workspace]
 opened_files = [
     "/home/martinkavik/repos/super_counter_rust/hardware/build/super_counter.fst",
-    "/home/martinkavik/repos/NovyWave/test_files/simple.vcd",
-    "/home/martinkavik/repos/NovyWave/test_files/simple_reload_test.vcd",
-    "/home/martinkavik/repos/NovyWave/test_files/to_discover/tmp_discovery.vcd",
-    "/home/martinkavik/repos/NovyWave/test_files/to_discover/wave_27.fst",
-    "/home/martinkavik/repos/NovyWave/test_files/to_discover/wave_27_2.fst",
-    "/home/martinkavik/repos/NovyWave/test_files/to_discover/new_discovery_sample.vcd",
+    "test_files/simple.vcd",
+    "test_files/simple_reload_test.vcd",
+    "test_files/to_discover/tmp_discovery.vcd",
+    "test_files/to_discover/wave_27.fst",
+    "test_files/to_discover/wave_27_2.fst",
+    "test_files/to_discover/new_discovery_sample.vcd",
 ]
 dock_mode = "bottom"
-expanded_scopes = ["scope_/home/martinkavik/repos/NovyWave/test_files/simple_reload_test.vcd|simple_tb"]
+expanded_scopes = ["scope_test_files/simple_reload_test.vcd|simple_tb"]
 load_files_expanded_directories = [
     "/",
     "/home",
     "/home/martinkavik",
     "/home/martinkavik/repos",
-    "/home/martinkavik/repos/NovyWave",
+    "",
     "/home/martinkavik/repos/super_counter_rust",
     "/home/martinkavik/repos/super_counter_rust/hardware",
     "/home/martinkavik/repos/super_counter_rust/hardware/build",
-    "/home/martinkavik/repos/NovyWave/test_files",
+    "test_files",
 ]
-selected_scope_id = "scope_/home/martinkavik/repos/NovyWave/test_files/simple_reload_test.vcd|simple_tb.s"
+selected_scope_id = "scope_test_files/simple_reload_test.vcd|simple_tb.s"
 load_files_scroll_position = 941
 
 [workspace.docked_bottom_dimensions]
@@ -47,13 +47,13 @@ selected_variables_panel_name_column_width = 190.0
 selected_variables_panel_value_column_width = 220.0
 
 [[workspace.selected_variables]]
-unique_id = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst|TOP|clk"
+unique_id = "test_files/wave_27.fst|TOP|clk"
 
 [[workspace.selected_variables]]
-unique_id = "/home/martinkavik/repos/NovyWave/test_files/simple_reload_test.vcd|simple_tb.s|A"
+unique_id = "test_files/simple_reload_test.vcd|simple_tb.s|A"
 
 [[workspace.selected_variables]]
-unique_id = "/home/martinkavik/repos/NovyWave/test_files/simple_reload_test.vcd|simple_tb.s|C"
+unique_id = "test_files/simple_reload_test.vcd|simple_tb.s|C"
 
 [workspace.timeline]
 cursor_position_ps = 125000000000000

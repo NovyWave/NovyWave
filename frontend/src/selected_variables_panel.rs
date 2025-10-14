@@ -35,7 +35,7 @@ pub fn selected_variables_panel(
         .s(Height::fill())
         .item(crate::panel_layout::create_panel(
             // Header with title and action buttons
-            selected_variables_panel_header(&selected_variables_for_header, &app_config.clone()),
+            selected_variables_panel_header(&selected_variables_for_header),
             // Three-column content area
             selected_variables_panel_content(
                 selected_variables,
@@ -51,7 +51,6 @@ pub fn selected_variables_panel(
 /// Panel header with title and action buttons
 fn selected_variables_panel_header(
     selected_variables: &crate::selected_variables::SelectedVariables,
-    app_config: &crate::config::AppConfig,
 ) -> impl Element {
     Row::new()
         .s(Gap::new().x(SPACING_8))
@@ -67,22 +66,9 @@ fn selected_variables_panel_header(
             // Spacer to push buttons to center and right
             El::new().s(Width::growable()),
         )
-        .item(
-            // Theme toggle button (center-left)
-            crate::action_buttons::theme_toggle_button(app_config),
-        )
-        .item(
-            // Dock mode toggle button (center-right)
-            crate::action_buttons::dock_toggle_button(app_config),
-        )
-        .item(
-            // Spacer to push Clear All to right
-            El::new().s(Width::growable()),
-        )
-        .item(
-            // Remove All button - right aligned
-            crate::action_buttons::clear_all_variables_button(selected_variables),
-        )
+        .item(crate::action_buttons::clear_all_variables_button(
+            selected_variables,
+        ))
 }
 
 /// Three-column content area with proper layout

@@ -13,6 +13,9 @@ pub enum UpMsg {
     LoadWaveformFile(String),
     GetParsingProgress(String),
     LoadConfig,
+    SelectWorkspace {
+        root: String,
+    },
     SaveConfig(AppConfig),
     BrowseDirectory(String),
     BrowseDirectories(Vec<String>), // Batch directory requests for parallel processing
@@ -56,6 +59,10 @@ pub enum DownMsg {
         error: String,
     },
     ConfigLoaded(AppConfig),
+    WorkspaceLoaded {
+        root: String,
+        config: AppConfig,
+    },
     ConfigSaved,
     ConfigError(String),
     DirectoryContents {
@@ -1293,10 +1300,9 @@ where
     }
 
     match OpenedFilesHelper::deserialize(deserializer)? {
-        OpenedFilesHelper::Strings(strings) => Ok(strings
-            .into_iter()
-            .map(CanonicalPathPayload::new)
-            .collect()),
+        OpenedFilesHelper::Strings(strings) => {
+            Ok(strings.into_iter().map(CanonicalPathPayload::new).collect())
+        }
         OpenedFilesHelper::Objects(objects) => Ok(objects),
     }
 }

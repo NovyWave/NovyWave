@@ -2,15 +2,16 @@ mod plugins;
 
 use jwalk::WalkDir;
 use moon::*;
+use serde::{Deserialize, Serialize};
 use shared::{
-    self, AppConfig, DownMsg, FileError, FileFormat, FileHierarchy, FileSystemItem, ScopeData,
-    SignalStatistics, SignalTransition, SignalTransitionQuery, SignalTransitionResult, SignalValue,
-    SignalValueQuery, SignalValueResult, UnifiedSignalData, UnifiedSignalRequest, UpMsg,
-    WaveformFile,
+    self, AppConfig, CanonicalPathPayload, DownMsg, FileError, FileFormat, FileHierarchy,
+    FileSystemItem, ScopeData, SignalStatistics, SignalTransition, SignalTransitionQuery,
+    SignalTransitionResult, SignalValue, SignalValueQuery, SignalValueResult, UnifiedSignalData,
+    UnifiedSignalRequest, UpMsg, WaveformFile,
 };
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
 use tokio::time::{Duration, sleep};
 
@@ -107,6 +108,15 @@ impl SignalCacheManager {
         let prefix = format!("{}|", file_path);
         let mut cache = self.transition_cache.write().unwrap();
         cache.retain(|key, _| !key.starts_with(&prefix));
+    }
+
+    fn reset(&self) {
+        if let Ok(mut cache) = self.transition_cache.write() {
+            cache.clear();
+        }
+        if let Ok(mut stats) = self.cache_stats.write() {
+            *stats = CacheStats::default();
+        }
     }
 
     /// Process unified signal query with parallel processing
@@ -759,6 +769,9 @@ async fn up_msg_handler(req: UpMsgRequest<UpMsg>) {
         }
         UpMsg::LoadConfig => {
             load_config(session_id, cor_id).await;
+        }
+        UpMsg::SelectWorkspace { root } => {
+            select_workspace(root.clone(), session_id, cor_id).await;
         }
         UpMsg::SaveConfig(config) => {
             save_config(config.clone(), session_id, cor_id).await;
@@ -1944,92 +1957,379 @@ async fn send_down_msg(msg: DownMsg, session_id: SessionId, cor_id: CorId) {
     }
 }
 
-const CONFIG_FILE_PATH: &str = ".novywave";
+const CONFIG_FILENAME: &str = ".novywave";
+const RECENT_WORKSPACES_FILENAME: &str = "recent_workspaces.json";
+const RECENT_WORKSPACES_MAX: usize = 5;
 
-async fn load_config(session_id: SessionId, cor_id: CorId) {
-    // Loading config from filesystem
+static INITIAL_CWD: Lazy<PathBuf> =
+    Lazy::new(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
-    let config = match fs::read_to_string(CONFIG_FILE_PATH) {
-        Ok(content) => {
-            match toml::from_str::<AppConfig>(&content) {
-                Ok(mut config) => {
-                    // Enable migration system - validate and fix config after loading
-                    let migration_warnings = config.validate_and_fix();
+static WORKSPACE_CONTEXT: Lazy<WorkspaceContext> =
+    Lazy::new(|| WorkspaceContext::new((*INITIAL_CWD).clone()));
 
-                    // Log migration warnings if any
-                    if !migration_warnings.is_empty() {
-                        // Save migrated config to persist changes
-                        if let Err(_save_err) = save_config_to_file(&config) {
-                            // Migration applied but failed to save - continue with in-memory config
-                        }
-                    }
+pub(crate) fn workspace_context() -> &'static WorkspaceContext {
+    &WORKSPACE_CONTEXT
+}
 
-                    config
-                }
-                Err(e) => {
-                    send_down_msg(
-                        DownMsg::ConfigError(format!("Failed to parse config: {}", e)),
-                        session_id,
-                        cor_id,
-                    )
-                    .await;
-                    return;
-                }
-            }
+struct WorkspaceContext {
+    root: RwLock<PathBuf>,
+}
+
+impl WorkspaceContext {
+    fn new(initial_root: PathBuf) -> Self {
+        Self {
+            root: RwLock::new(initial_root),
         }
-        Err(_e) => {
-            // Config file not found - create default
-            // Create default config with validation already applied
-            let mut default_config = AppConfig::default();
-            let _warnings = default_config.validate_and_fix(); // Ensure defaults are validated too
+    }
 
-            // Try to save default config
-            if let Err(save_err) = save_config_to_file(&default_config) {
-                send_down_msg(
-                    DownMsg::ConfigError(format!("Failed to create default config: {}", save_err)),
-                    session_id,
-                    cor_id,
-                )
-                .await;
-                return;
+    fn root(&self) -> PathBuf {
+        self.root
+            .read()
+            .expect("workspace root lock poisoned")
+            .clone()
+    }
+
+    fn set_root(&self, new_root: PathBuf) {
+        let mut guard = self.root.write().expect("workspace root lock poisoned");
+        *guard = new_root;
+    }
+
+    fn config_path(&self) -> PathBuf {
+        let root = self.root();
+        root.join(CONFIG_FILENAME)
+    }
+
+    fn to_absolute(&self, candidate: impl AsRef<Path>) -> PathBuf {
+        let candidate = candidate.as_ref();
+        if candidate.is_absolute() {
+            candidate.to_path_buf()
+        } else {
+            let root = self.root();
+            root.join(candidate)
+        }
+    }
+
+    fn to_relative_if_in_workspace(&self, candidate: impl AsRef<Path>) -> Option<PathBuf> {
+        let root = self.root();
+        candidate
+            .as_ref()
+            .strip_prefix(&root)
+            .map(|p| p.to_path_buf())
+            .ok()
+    }
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct RecentWorkspaceStore {
+    recent: Vec<String>,
+}
+
+fn recent_workspace_store_path() -> PathBuf {
+    INITIAL_CWD.join(RECENT_WORKSPACES_FILENAME)
+}
+
+fn read_recent_workspace_store() -> RecentWorkspaceStore {
+    let path = recent_workspace_store_path();
+    if let Ok(content) = fs::read_to_string(&path) {
+        serde_json::from_str(&content).unwrap_or_default()
+    } else {
+        RecentWorkspaceStore::default()
+    }
+}
+
+fn write_recent_workspace_store(
+    store: &RecentWorkspaceStore,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let path = recent_workspace_store_path();
+    let json = serde_json::to_string_pretty(store)?;
+    fs::write(path, json)?;
+    Ok(())
+}
+
+fn record_recent_workspace(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let mut store = read_recent_workspace_store();
+    let root_str = root.to_string_lossy().to_string();
+    store.recent.retain(|entry| entry != &root_str);
+    store.recent.insert(0, root_str);
+    store.recent.truncate(RECENT_WORKSPACES_MAX);
+    write_recent_workspace_store(&store)
+}
+
+fn expand_config_paths(config: &mut AppConfig) {
+    let context = workspace_context();
+
+    config.workspace.opened_files = config
+        .workspace
+        .opened_files
+        .iter()
+        .map(|payload| {
+            let path_buf = PathBuf::from(&payload.canonical);
+            let absolute = context.to_absolute(&path_buf);
+            CanonicalPathPayload::new(absolute.to_string_lossy().to_string())
+        })
+        .collect();
+
+    config.workspace.load_files_expanded_directories = config
+        .workspace
+        .load_files_expanded_directories
+        .iter()
+        .map(|dir| {
+            let path_buf = PathBuf::from(dir);
+            let absolute = context.to_absolute(&path_buf);
+            absolute.to_string_lossy().to_string()
+        })
+        .collect();
+
+    config.workspace.expanded_scopes = config
+        .workspace
+        .expanded_scopes
+        .iter()
+        .map(|id| expand_scope_identifier(id, context))
+        .collect();
+
+    if let Some(selected_scope) = config.workspace.selected_scope_id.clone() {
+        config.workspace.selected_scope_id =
+            Some(expand_scope_identifier(&selected_scope, context));
+    }
+
+    config.workspace.selected_variables = config
+        .workspace
+        .selected_variables
+        .iter()
+        .map(|var| {
+            let mut cloned = var.clone();
+            cloned.unique_id = expand_unique_id(&cloned.unique_id, context);
+            cloned
+        })
+        .collect();
+}
+
+fn relativize_config_paths(config: &mut AppConfig) {
+    let context = workspace_context();
+
+    config.workspace.opened_files = config
+        .workspace
+        .opened_files
+        .iter()
+        .map(|payload| {
+            let path_buf = PathBuf::from(&payload.canonical);
+            let normalized = context
+                .to_relative_if_in_workspace(&path_buf)
+                .unwrap_or(path_buf.clone());
+            CanonicalPathPayload::new(normalized.to_string_lossy().to_string())
+        })
+        .collect();
+
+    config.workspace.load_files_expanded_directories = config
+        .workspace
+        .load_files_expanded_directories
+        .iter()
+        .map(|dir| {
+            let path_buf = PathBuf::from(dir);
+            let normalized = context
+                .to_relative_if_in_workspace(&path_buf)
+                .unwrap_or(path_buf.clone());
+            normalized.to_string_lossy().to_string()
+        })
+        .collect();
+
+    config.workspace.expanded_scopes = config
+        .workspace
+        .expanded_scopes
+        .iter()
+        .map(|id| relativize_scope_identifier(id, context))
+        .collect();
+
+    if let Some(selected_scope) = config.workspace.selected_scope_id.clone() {
+        config.workspace.selected_scope_id =
+            Some(relativize_scope_identifier(&selected_scope, context));
+    }
+
+    config.workspace.selected_variables = config
+        .workspace
+        .selected_variables
+        .iter()
+        .map(|var| {
+            let mut cloned = var.clone();
+            cloned.unique_id = relativize_unique_id(&cloned.unique_id, context);
+            cloned
+        })
+        .collect();
+}
+
+fn expand_unique_id(unique_id: &str, context: &WorkspaceContext) -> String {
+    if let Some((path_part, rest)) = unique_id.split_once('|') {
+        let path_buf = PathBuf::from(path_part);
+        let absolute = context.to_absolute(&path_buf);
+        format!("{}|{}", absolute.to_string_lossy(), rest)
+    } else {
+        let path_buf = PathBuf::from(unique_id);
+        let absolute = context.to_absolute(&path_buf);
+        absolute.to_string_lossy().to_string()
+    }
+}
+
+fn relativize_unique_id(unique_id: &str, context: &WorkspaceContext) -> String {
+    if let Some((path_part, rest)) = unique_id.split_once('|') {
+        let path_buf = PathBuf::from(path_part);
+        let normalized = context
+            .to_relative_if_in_workspace(&path_buf)
+            .unwrap_or(path_buf.clone());
+        format!("{}|{}", normalized.to_string_lossy(), rest)
+    } else {
+        unique_id.to_string()
+    }
+}
+
+fn expand_scope_identifier(scope_id: &str, context: &WorkspaceContext) -> String {
+    if let Some(stripped) = scope_id.strip_prefix("scope_") {
+        let (path_part, remainder) = match stripped.split_once('|') {
+            Some((path, rest)) => (path, Some(rest)),
+            None => (stripped, None),
+        };
+        let path_buf = PathBuf::from(path_part);
+        let absolute = context.to_absolute(&path_buf);
+        let mut result = format!("scope_{}", absolute.to_string_lossy());
+        if let Some(rest) = remainder {
+            result.push('|');
+            result.push_str(rest);
+        }
+        result
+    } else {
+        scope_id.to_string()
+    }
+}
+
+fn relativize_scope_identifier(scope_id: &str, context: &WorkspaceContext) -> String {
+    if let Some(stripped) = scope_id.strip_prefix("scope_") {
+        let (path_part, remainder) = match stripped.split_once('|') {
+            Some((path, rest)) => (path, Some(rest)),
+            None => (stripped, None),
+        };
+        let path_buf = PathBuf::from(path_part);
+        let normalized = context
+            .to_relative_if_in_workspace(&path_buf)
+            .unwrap_or(path_buf.clone());
+        let mut result = format!("scope_{}", normalized.to_string_lossy());
+        if let Some(rest) = remainder {
+            result.push('|');
+            result.push_str(rest);
+        }
+        result
+    } else {
+        scope_id.to_string()
+    }
+}
+
+fn reset_runtime_state_for_workspace() {
+    if let Ok(mut sessions) = PARSING_SESSIONS.lock() {
+        sessions.clear();
+    }
+    if let Ok(mut store) = WAVEFORM_DATA_STORE.lock() {
+        store.clear();
+    }
+    if let Ok(mut metadata) = WAVEFORM_METADATA_STORE.lock() {
+        metadata.clear();
+    }
+    if let Ok(mut loading) = VCD_LOADING_IN_PROGRESS.lock() {
+        loading.clear();
+    }
+    SIGNAL_CACHE_MANAGER.reset();
+}
+
+fn read_or_create_config() -> Result<AppConfig, String> {
+    let context = workspace_context();
+    let config_path = context.config_path();
+
+    let content = match fs::read_to_string(&config_path) {
+        Ok(content) => content,
+        Err(err) => {
+            if err.kind() == std::io::ErrorKind::NotFound {
+                let mut default_config = AppConfig::default();
+                let _ = default_config.validate_and_fix();
+                expand_config_paths(&mut default_config);
+                if let Err(save_err) = save_config_to_file(&default_config) {
+                    return Err(format!(
+                        "Failed to create default config '{}': {}",
+                        config_path.display(),
+                        save_err
+                    ));
+                }
+                return Ok(default_config);
+            } else {
+                return Err(format!(
+                    "Failed to read config '{}': {}",
+                    config_path.display(),
+                    err
+                ));
             }
-
-            default_config
         }
     };
 
-    // PARALLEL PRELOADING: Start preloading expanded directories in background for instant file dialog
-    let expanded_dirs = config.workspace.load_files_expanded_directories.clone();
-    if !expanded_dirs.is_empty() {
-        // Spawn background task to preload directories - precompute for instant access
-        tokio::spawn(async move {
-            let mut preload_tasks = Vec::new();
+    let mut config: AppConfig = toml::from_str(&content).map_err(|err| {
+        format!(
+            "Failed to parse config '{}': {}",
+            config_path.display(),
+            err
+        )
+    })?;
 
-            // Create async task for each expanded directory
-            for dir_path in expanded_dirs {
-                let path = dir_path.clone();
-
-                preload_tasks.push(tokio::spawn(async move {
-                    let path_obj = Path::new(&path);
-
-                    // Precompute directory contents for instant access
-                    if path_obj.exists() && path_obj.is_dir() {
-                        match scan_directory_async(path_obj).await {
-                            Ok(_items) => {}
-                            Err(_e) => {}
-                        }
-                    }
-                }));
-            }
-
-            // Wait for all preloading tasks to complete
-            for task in preload_tasks {
-                let _ = task.await; // Ignore individual task errors
-            }
-        });
+    let migration_warnings = config.validate_and_fix();
+    if !migration_warnings.is_empty() {
+        if let Err(save_err) = save_config_to_file(&config) {
+            eprintln!(
+                "⚠️ BACKEND: Failed to persist migrated config '{}': {}",
+                config_path.display(),
+                save_err
+            );
+        }
     }
 
-    let plugin_reload = plugins::reload_plugins(&config.plugins, &config.workspace.opened_files);
+    expand_config_paths(&mut config);
+    Ok(config)
+}
+
+fn spawn_directory_preload(expanded_dirs: Vec<String>) {
+    if expanded_dirs.is_empty() {
+        return;
+    }
+
+    tokio::spawn(async move {
+        let mut preload_tasks = Vec::new();
+        for dir_path in expanded_dirs {
+            preload_tasks.push(tokio::spawn(async move {
+                let path_obj = Path::new(&dir_path);
+                if path_obj.exists() && path_obj.is_dir() {
+                    let _ = scan_directory_async(path_obj).await;
+                }
+            }));
+        }
+
+        for task in preload_tasks {
+            let _ = task.await;
+        }
+    });
+}
+
+async fn handle_loaded_config(
+    config: AppConfig,
+    session_id: SessionId,
+    cor_id: CorId,
+    workspace_event_root: Option<String>,
+) {
+    let config_for_messages = config;
+
+    spawn_directory_preload(
+        config_for_messages
+            .workspace
+            .load_files_expanded_directories
+            .clone(),
+    );
+
+    let plugin_reload = plugins::reload_plugins(
+        &config_for_messages.plugins,
+        &config_for_messages.workspace.opened_files,
+    );
     if plugin_reload.reloaded {
         for status in &plugin_reload.statuses {
             let init_msg = status
@@ -2053,18 +2353,62 @@ async fn load_config(session_id: SessionId, cor_id: CorId) {
                 status.id, status.state, detail
             );
         }
+    }
+
+    plugins::flush_initial_discoveries();
+
+    if let Err(err) = record_recent_workspace(&workspace_context().root()) {
+        eprintln!("⚠️ BACKEND: Failed to record recent workspace: {}", err);
+    }
+
+    if let Some(root) = workspace_event_root {
+        send_down_msg(
+            DownMsg::WorkspaceLoaded {
+                root,
+                config: config_for_messages.clone(),
+            },
+            session_id,
+            cor_id,
+        )
+        .await;
     }
 
     println!(
         "🚀 BACKEND: Sending ConfigLoaded to frontend with {} expanded directories",
-        config.workspace.load_files_expanded_directories.len()
+        config_for_messages
+            .workspace
+            .load_files_expanded_directories
+            .len()
     );
-    send_down_msg(DownMsg::ConfigLoaded(config), session_id, cor_id).await;
-    plugins::flush_initial_discoveries();
+
+    send_down_msg(
+        DownMsg::ConfigLoaded(config_for_messages),
+        session_id,
+        cor_id,
+    )
+    .await;
+}
+
+async fn load_config(session_id: SessionId, cor_id: CorId) {
+    match read_or_create_config() {
+        Ok(config) => {
+            let root_display = workspace_context().root().to_string_lossy().to_string();
+            handle_loaded_config(config, session_id, cor_id, Some(root_display)).await;
+        }
+        Err(message) => {
+            send_down_msg(DownMsg::ConfigError(message), session_id, cor_id).await;
+        }
+    }
 }
 
 async fn save_config(config: AppConfig, session_id: SessionId, cor_id: CorId) {
-    let plugin_reload = plugins::reload_plugins(&config.plugins, &config.workspace.opened_files);
+    let mut runtime_config = config.clone();
+    expand_config_paths(&mut runtime_config);
+
+    let plugin_reload = plugins::reload_plugins(
+        &runtime_config.plugins,
+        &runtime_config.workspace.opened_files,
+    );
     if plugin_reload.reloaded {
         for status in &plugin_reload.statuses {
             let init_msg = status
@@ -2092,7 +2436,7 @@ async fn save_config(config: AppConfig, session_id: SessionId, cor_id: CorId) {
 
     plugins::flush_initial_discoveries();
 
-    match save_config_to_file(&config) {
+    match save_config_to_file(&runtime_config) {
         Ok(()) => {
             send_down_msg(DownMsg::ConfigSaved, session_id, cor_id).await;
         }
@@ -2107,8 +2451,63 @@ async fn save_config(config: AppConfig, session_id: SessionId, cor_id: CorId) {
     }
 }
 
+async fn select_workspace(root: String, session_id: SessionId, cor_id: CorId) {
+    let context = workspace_context();
+    let requested = PathBuf::from(&root);
+    let absolute_candidate = if requested.is_absolute() {
+        requested
+    } else {
+        context.to_absolute(&requested)
+    };
+
+    let canonical_root = match fs::canonicalize(&absolute_candidate) {
+        Ok(path) => path,
+        Err(err) => {
+            send_down_msg(
+                DownMsg::ConfigError(format!("Failed to open workspace '{}': {}", root, err)),
+                session_id,
+                cor_id,
+            )
+            .await;
+            return;
+        }
+    };
+
+    if !canonical_root.is_dir() {
+        send_down_msg(
+            DownMsg::ConfigError(format!(
+                "Workspace '{}' is not a directory",
+                canonical_root.display()
+            )),
+            session_id,
+            cor_id,
+        )
+        .await;
+        return;
+    }
+
+    context.set_root(canonical_root.clone());
+    reset_runtime_state_for_workspace();
+
+    if let Err(err) = record_recent_workspace(&canonical_root) {
+        eprintln!("⚠️ BACKEND: Failed to record recent workspace: {}", err);
+    }
+
+    match read_or_create_config() {
+        Ok(config) => {
+            let root_display = canonical_root.to_string_lossy().to_string();
+            handle_loaded_config(config, session_id, cor_id, Some(root_display)).await;
+        }
+        Err(message) => {
+            send_down_msg(DownMsg::ConfigError(message), session_id, cor_id).await;
+        }
+    }
+}
+
 fn save_config_to_file(config: &AppConfig) -> Result<(), Box<dyn std::error::Error>> {
-    let toml_content = toml::to_string_pretty(config)?;
+    let mut config_to_write = config.clone();
+    relativize_config_paths(&mut config_to_write);
+    let toml_content = toml::to_string_pretty(&config_to_write)?;
 
     // Add header comment
     let content_with_header = format!(
@@ -2119,7 +2518,11 @@ fn save_config_to_file(config: &AppConfig) -> Result<(), Box<dyn std::error::Err
         toml_content
     );
 
-    fs::write(CONFIG_FILE_PATH, content_with_header)?;
+    let config_path = workspace_context().config_path();
+    if let Some(parent) = config_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(config_path, content_with_header)?;
     Ok(())
 }
 

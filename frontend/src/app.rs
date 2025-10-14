@@ -4,6 +4,7 @@ use futures::StreamExt;
 use futures_signals::signal_vec::SignalVecExt;
 use gloo_timers::callback::Interval;
 use indexmap::IndexSet;
+use moonzoon_novyui::*;
 use zoon::events::{KeyDown, KeyUp};
 use zoon::events_extra;
 use zoon::{EventOptions, *};
@@ -29,6 +30,12 @@ pub struct UnifiedSignalResponseEvent {
     pub statistics: Option<SignalStatistics>,
 }
 
+#[derive(Clone, Debug)]
+pub struct WorkspaceLoadedEvent {
+    pub root: String,
+    pub config: shared::AppConfig,
+}
+
 const KEY_REPEAT_INTERVAL_MS: u32 = 55;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -47,6 +54,8 @@ enum KeyAction {
 pub struct ConnectionMessageActor {
     // Message-specific relays that domains can subscribe to
     pub config_loaded_relay: Relay<shared::AppConfig>,
+    pub workspace_loaded_relay: Relay<WorkspaceLoadedEvent>,
+    pub config_error_relay: Relay<String>,
     pub config_saved_relay: Relay<()>,
     pub directory_contents_relay: Relay<(String, Vec<shared::FileSystemItem>)>,
     pub directory_error_relay: Relay<(String, String)>,
@@ -92,6 +101,8 @@ impl ConnectionMessageActor {
     ) -> Self {
         // Create all message-specific relays
         let (config_loaded_relay, _) = relay();
+        let (workspace_loaded_relay, _) = relay();
+        let (config_error_relay, _) = relay();
         let (config_saved_relay, _) = relay();
         let (directory_contents_relay, _) = relay();
         let (directory_error_relay, _) = relay();
@@ -103,6 +114,8 @@ impl ConnectionMessageActor {
 
         // Clone relays for use in Actor closure
         let config_loaded_relay_clone = config_loaded_relay.clone();
+        let workspace_loaded_relay_clone = workspace_loaded_relay.clone();
+        let config_error_relay_clone = config_error_relay.clone();
         let config_saved_relay_clone = config_saved_relay.clone();
         let directory_contents_relay_clone = directory_contents_relay.clone();
         let directory_error_relay_clone = directory_error_relay.clone();
@@ -124,6 +137,13 @@ impl ConnectionMessageActor {
                         match down_msg {
                             DownMsg::ConfigLoaded(config) => {
                                 config_loaded_relay_clone.send(config);
+                            }
+                            DownMsg::WorkspaceLoaded { root, config } => {
+                                workspace_loaded_relay_clone
+                                    .send(WorkspaceLoadedEvent { root, config });
+                            }
+                            DownMsg::ConfigError(error) => {
+                                config_error_relay_clone.send(error);
                             }
                             DownMsg::ConfigSaved => {
                                 config_saved_relay_clone.send(());
@@ -227,6 +247,8 @@ impl ConnectionMessageActor {
 
         Self {
             config_loaded_relay,
+            workspace_loaded_relay,
+            config_error_relay,
             config_saved_relay,
             directory_contents_relay,
             directory_error_relay,
@@ -267,6 +289,8 @@ pub struct NovyWaveApp {
 
     /// Message routing actor (keeps relays alive)
     _connection_message_actor: ConnectionMessageActor,
+    _workspace_event_actor: Actor<()>,
+    _config_error_actor: Actor<()>,
 
     /// Synchronizes Files panel scope selection into SelectedVariables domain
     _scope_selection_sync_actor: Actor<()>,
@@ -277,6 +301,9 @@ pub struct NovyWaveApp {
     // === UI STATE (Atom pattern for local UI concerns) ===
     /// File picker dialog visibility
     pub file_dialog_visible: Atom<bool>,
+
+    pub workspace_path: Mutable<Option<String>>,
+    pub workspace_loading: Mutable<bool>,
 
     key_repeat_handles: Rc<RefCell<HashMap<KeyAction, Interval>>>,
 }
@@ -339,6 +366,33 @@ impl NovyWaveApp {
             selected_variables.clone(),
         )
         .await;
+
+        let workspace_path = Mutable::new(None);
+        let workspace_loading = Mutable::new(true);
+
+        let workspace_event_actor = {
+            let mut workspace_stream = connection_message_actor.workspace_loaded_relay.subscribe();
+            let workspace_path = workspace_path.clone();
+            let workspace_loading = workspace_loading.clone();
+
+            Actor::new((), async move |_state| {
+                while let Some(event) = workspace_stream.next().await {
+                    workspace_loading.set(false);
+                    workspace_path.set(Some(event.root.clone()));
+                }
+            })
+        };
+
+        let config_error_actor = {
+            let mut error_stream = connection_message_actor.config_error_relay.subscribe();
+            let workspace_loading = workspace_loading.clone();
+
+            Actor::new((), async move |_state| {
+                while let Some(_error) = error_stream.next().await {
+                    workspace_loading.set(false);
+                }
+            })
+        };
 
         // Initialize platform layer with the working connection
         let connection_arc = std::sync::Arc::new(connection);
@@ -481,9 +535,13 @@ impl NovyWaveApp {
             dragging_system,
             connection: connection_arc,
             _connection_message_actor: connection_message_actor,
+            _workspace_event_actor: workspace_event_actor,
+            _config_error_actor: config_error_actor,
             _scope_selection_sync_actor: scope_selection_sync_actor,
             _timeline_message_bridge_actor: timeline_message_bridge_actor,
             file_dialog_visible,
+            workspace_path,
+            workspace_loading,
             key_repeat_handles,
         }
     }
@@ -540,6 +598,7 @@ impl NovyWaveApp {
                         }
                     }
                     DownMsg::ConfigLoaded(_config_loaded) => {}
+                    DownMsg::WorkspaceLoaded { .. } => {}
                     DownMsg::ParsingStarted { file_id, .. } => {
                         tf_relay.send((
                             file_id.clone(),
@@ -839,7 +898,18 @@ impl NovyWaveApp {
                     })
                 }
             })
-            .layer(self.main_layout())
+            .layer(
+                Column::new()
+                    .s(Width::fill())
+                    .s(Height::fill())
+                    .item(self.workspace_bar())
+                    .item(
+                        El::new()
+                            .s(Width::fill())
+                            .s(Height::growable())
+                            .child(self.main_layout()),
+                    ),
+            )
             .layer_signal(
                 dragging_system_for_overlay
                     .active_overlay_divider_signal()
@@ -882,6 +952,201 @@ impl NovyWaveApp {
             &self.waveform_canvas,
             &self.file_dialog_visible,
         )
+    }
+
+    fn workspace_bar(&self) -> impl Element {
+        use moonzoon_novyui::tokens::color::{neutral_8, neutral_11};
+
+        let workspace_label = {
+            let label_color_signal = neutral_11();
+
+            El::new()
+                .s(Font::new().weight(FontWeight::Medium))
+                .s(Font::new().color_signal(label_color_signal))
+                .child_signal(self.workspace_path.signal_cloned().map(|maybe_path| {
+                    let (label, tooltip) = match maybe_path.clone() {
+                        Some(path) => {
+                            let display = NovyWaveApp::workspace_display_name(&path);
+                            (format!("Workspace: {}", display), Some(path))
+                        }
+                        None => ("Workspace: (loading)".to_string(), None),
+                    };
+
+                    let mut element = El::new().child(label);
+                    if let Some(tooltip) = tooltip {
+                        element = element.update_raw_el(|raw_el| raw_el.attr("title", &tooltip));
+                    }
+                    element.into_element()
+                }))
+        };
+
+        let loading_indicator =
+            El::new().child_signal(self.workspace_loading.signal().map_true(|| {
+                El::new()
+                    .s(Font::new().size(12).color_signal(neutral_8()))
+                    .child("Loading workspace…")
+                    .into_element()
+            }));
+
+        let workspace_loading_for_prompt = self.workspace_loading.clone();
+        let workspace_path_for_prompt = self.workspace_path.clone();
+        let tracked_files_for_prompt = self.tracked_files.clone();
+        let selected_variables_for_prompt = self.selected_variables.clone();
+
+        let open_workspace_button = button()
+            .label("Open Workspace…")
+            .variant(ButtonVariant::Outline)
+            .size(ButtonSize::Small)
+            .on_press(move || {
+                if workspace_loading_for_prompt.lock_ref().clone() {
+                    return;
+                }
+
+                let default_path = workspace_path_for_prompt
+                    .lock_ref()
+                    .clone()
+                    .unwrap_or_default();
+
+                if let Some(window) = web_sys::window() {
+                    if let Ok(result) = window.prompt_with_message_and_default(
+                        "Enter workspace folder path",
+                        &default_path,
+                    ) {
+                        if let Some(input) = result {
+                            let trimmed = input.trim();
+                            if trimmed.is_empty() {
+                                return;
+                            }
+                            NovyWaveApp::start_workspace_switch(
+                                workspace_loading_for_prompt.clone(),
+                                workspace_path_for_prompt.clone(),
+                                tracked_files_for_prompt.clone(),
+                                selected_variables_for_prompt.clone(),
+                                trimmed.to_string(),
+                            );
+                        }
+                    }
+                }
+            })
+            .build();
+
+        let workspace_loading_for_buttons = self.workspace_loading.clone();
+        let workspace_path_for_buttons = self.workspace_path.clone();
+        let tracked_files_for_buttons = self.tracked_files.clone();
+        let selected_variables_for_buttons = self.selected_variables.clone();
+
+        let quick_buttons = Row::new().s(Gap::new().x(SPACING_4)).items(
+            ["workspace_a", "workspace_b"]
+                .into_iter()
+                .zip(
+                    [
+                        "test_files/my_workspaces/workspace_a",
+                        "test_files/my_workspaces/workspace_b",
+                    ]
+                    .into_iter(),
+                )
+                .map(|(label, path)| {
+                    let workspace_loading = workspace_loading_for_buttons.clone();
+                    let workspace_path = workspace_path_for_buttons.clone();
+                    let tracked_files = tracked_files_for_buttons.clone();
+                    let selected_variables = selected_variables_for_buttons.clone();
+
+                    button()
+                        .label(label)
+                        .variant(ButtonVariant::Ghost)
+                        .size(ButtonSize::Small)
+                        .on_press(move || {
+                            if workspace_loading.lock_ref().clone() {
+                                return;
+                            }
+                            NovyWaveApp::start_workspace_switch(
+                                workspace_loading.clone(),
+                                workspace_path.clone(),
+                                tracked_files.clone(),
+                                selected_variables.clone(),
+                                path.to_string(),
+                            );
+                        })
+                        .build()
+                        .into_element()
+                }),
+        );
+
+        let background_color_signal = self.config.theme_actor.signal().map(|theme| match theme {
+            shared::Theme::Light => "oklch(99% 0.025 255)",
+            shared::Theme::Dark => "oklch(68% 0.025 255)",
+        });
+
+        Row::new()
+            .s(Width::fill())
+            .s(Padding::new().x(SPACING_6).y(SPACING_4))
+            .s(Background::new().color_signal(background_color_signal))
+            .s(Align::new().center_y())
+            .item(workspace_label)
+            .item(
+                El::new()
+                    .s(Padding::new().left(SPACING_4))
+                    .child(loading_indicator),
+            )
+            .item(
+                Row::new()
+                    .s(Padding::new().left(SPACING_6))
+                    .s(Gap::new().x(SPACING_4))
+                    .item(open_workspace_button)
+                    .item(quick_buttons),
+            )
+            .item(El::new().s(Width::growable()))
+            .item(crate::action_buttons::theme_toggle_button(&self.config))
+            .item(
+                El::new()
+                    .s(Padding::new().left(SPACING_4))
+                    .child(crate::action_buttons::dock_toggle_button(&self.config)),
+            )
+    }
+
+    fn workspace_display_name(path: &str) -> String {
+        path.rsplit(|c| c == '/' || c == '\\')
+            .find(|segment| !segment.is_empty())
+            .unwrap_or(path)
+            .to_string()
+    }
+
+    fn start_workspace_switch(
+        workspace_loading: Mutable<bool>,
+        workspace_path: Mutable<Option<String>>,
+        tracked_files: TrackedFiles,
+        selected_variables: SelectedVariables,
+        path: String,
+    ) {
+        let trimmed = path.trim().to_string();
+        if trimmed.is_empty() {
+            return;
+        }
+
+        workspace_loading.set(true);
+        workspace_path.set(None);
+        tracked_files.all_files_cleared_relay.send(());
+        selected_variables.selection_cleared_relay.send(());
+
+        Task::start({
+            let request_path = trimmed.clone();
+            let workspace_loading = workspace_loading.clone();
+            let workspace_path = workspace_path.clone();
+            async move {
+                if let Err(err) =
+                    <crate::platform::CurrentPlatform as crate::platform::Platform>::send_message(
+                        shared::UpMsg::SelectWorkspace {
+                            root: request_path.clone(),
+                        },
+                    )
+                    .await
+                {
+                    workspace_loading.set(false);
+                    zoon::println!("Failed to request workspace '{}': {}", request_path, err);
+                    workspace_path.set(Some(request_path));
+                }
+            }
+        });
     }
 
     fn toast_notifications_container(&self) -> impl Element {
