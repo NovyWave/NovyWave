@@ -10,11 +10,7 @@ toast_dismiss_ms = 10000
 
 [workspace]
 dock_mode = "bottom"
-expanded_scopes = [
-    "/home/martinkavik/repos/NovyWave/test_files/simple_reload_test.vcd",
-    "scope_/home/martinkavik/repos/NovyWave/test_files/simple_reload_test.vcd|simple_tb",
-    "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst",
-]
+expanded_scopes = ["scope_/home/martinkavik/repos/NovyWave/test_files/simple_reload_test.vcd|simple_tb"]
 load_files_expanded_directories = [
     "/",
     "/home",
@@ -44,6 +40,14 @@ display = "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst"
 [[workspace.opened_files]]
 canonical = "/home/martinkavik/repos/NovyWave/test_files/simple_reload_test.vcd"
 display = "/home/martinkavik/repos/NovyWave/test_files/simple_reload_test.vcd"
+
+[[workspace.opened_files]]
+canonical = "/home/martinkavik/repos/NovyWave/test_files/to_discover/new_discovery_sample.vcd"
+display = "/home/martinkavik/repos/NovyWave/test_files/to_discover/new_discovery_sample.vcd"
+
+[[workspace.opened_files]]
+canonical = "/home/martinkavik/repos/NovyWave/test_files/to_discover/tmp_discovery_test.vcd"
+display = "/home/martinkavik/repos/NovyWave/test_files/to_discover/tmp_discovery_test.vcd"
 
 [workspace.docked_bottom_dimensions]
 files_and_scopes_panel_width = 400.0

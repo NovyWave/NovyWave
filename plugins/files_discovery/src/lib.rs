@@ -11,6 +11,7 @@ use once_cell::sync::Lazy;
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::env;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -31,6 +32,8 @@ struct DiscoveryConfig {
     debounce_ms: Option<u32>,
     #[serde(default)]
     base_dir: Option<String>,
+    #[serde(default)]
+    host_base_dir: Option<String>,
 }
 
 impl Default for DiscoveryConfig {
@@ -40,6 +43,7 @@ impl Default for DiscoveryConfig {
             allow_extensions: Self::default_allow_extensions(),
             debounce_ms: Some(DEFAULT_DEBOUNCE_MS),
             base_dir: None,
+            host_base_dir: None,
         }
     }
 }
@@ -78,6 +82,14 @@ impl DiscoveryConfig {
         self.debounce_ms
             .unwrap_or(DEFAULT_DEBOUNCE_MS)
             .max(MIN_DEBOUNCE_MS)
+    }
+
+    fn effective_base_dir(&self) -> PathBuf {
+        if let Some(host_base) = &self.host_base_dir {
+            PathBuf::from(host_base)
+        } else {
+            self.resolved_base_dir()
+        }
     }
 
     fn allowed_extensions_set(&self) -> HashSet<String> {
@@ -123,7 +135,12 @@ impl DiscoveryState {
             return Err("no patterns configured".to_string());
         }
 
-        let base_dir = normalize_base_dir(config.resolved_base_dir());
+        let base_dir = normalize_base_dir(config.effective_base_dir());
+        host::log_info(&format!(
+            "files_discovery: resolved base_dir = {} (host override {:?})",
+            base_dir.display(),
+            config.host_base_dir
+        ));
 
         let mut builder = GitignoreBuilder::new(&base_dir);
         for pattern in &config.patterns {
@@ -259,7 +276,7 @@ impl DiscoveryState {
         matches!(
             self.matcher
                 .matched_path_or_any_parents(&absolute, absolute.is_dir()),
-            Match::Whitelist(_)
+            Match::Whitelist(_) | Match::Ignore(_)
         )
     }
 
@@ -312,6 +329,10 @@ impl Guest for DiscoveryPlugin {
             host::clear_watched_directories();
             host::log_info("files_discovery: no resolvable directories to watch");
         } else {
+            host::log_info(&format!(
+                "files_discovery: registering watch roots: {:?}",
+                watch_roots
+            ));
             host::register_watched_directories(&watch_roots, debounce_ms);
             host::log_info(&format!(
                 "files_discovery: watching {} {}",
@@ -393,10 +414,18 @@ fn load_config() -> DiscoveryConfig {
         Ok(config) => {
             let normalized = config.normalize();
             host::log_info(&format!(
-                "files_discovery: config parsed (patterns={}, allow_extensions={}, debounce_ms={})",
+                "files_discovery: config parsed (patterns={}, allow_extensions={}, debounce_ms={}, base_dir={}, host_base_dir={})",
                 normalized.patterns.len(),
                 normalized.allow_extensions.len(),
                 normalized.debounce_ms.unwrap_or(DEFAULT_DEBOUNCE_MS),
+                normalized
+                    .base_dir
+                    .as_deref()
+                    .unwrap_or("<resolved>"),
+                normalized
+                    .host_base_dir
+                    .as_deref()
+                    .unwrap_or("<none>")
             ));
             normalized
         }
@@ -436,6 +465,7 @@ fn parse_config(raw: &str) -> Result<DiscoveryConfig, toml::de::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn parse_inline_table_config() {
@@ -461,14 +491,31 @@ allow_extensions = ["fst", "vcd"]
             vec!["fst".to_string(), "vcd".to_string()]
         );
     }
+
+    #[test]
+    fn resolve_watch_root_combines_base_and_candidate() {
+        let base = PathBuf::from("/workspace");
+        let resolved =
+            resolve_watch_root(&base, PathBuf::from("test_files/subset")).expect("root produced");
+        assert_eq!(resolved, "/workspace/test_files/subset");
+    }
+
+    #[test]
+    fn normalize_virtual_path_strips_cur_dir() {
+        let cleaned = normalize_virtual_path(PathBuf::from("/workspace/./to_discover/./"));
+        assert_eq!(cleaned.to_string_lossy(), "/workspace/to_discover");
+    }
 }
 
 fn normalize_base_dir(path: PathBuf) -> PathBuf {
-    if path.exists() {
-        std::fs::canonicalize(&path).unwrap_or(path)
-    } else {
+    let resolved = if path.is_absolute() {
         path
-    }
+    } else {
+        let fallback = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        fallback.join(path)
+    };
+
+    normalize_virtual_path(resolved)
 }
 
 fn compute_watch_roots(patterns: &[String], base_dir: &Path) -> Vec<String> {
@@ -536,7 +583,7 @@ fn pattern_root(pattern: &str) -> PathBuf {
 }
 
 fn resolve_watch_root(base_dir: &Path, candidate: PathBuf) -> Option<String> {
-    let mut current = if candidate.as_os_str().is_empty() {
+    let joined = if candidate.as_os_str().is_empty() {
         base_dir.to_path_buf()
     } else if candidate.is_absolute() {
         candidate
@@ -544,22 +591,67 @@ fn resolve_watch_root(base_dir: &Path, candidate: PathBuf) -> Option<String> {
         base_dir.join(candidate)
     };
 
-    loop {
-        if current.exists() {
-            let canonical = std::fs::canonicalize(&current).unwrap_or_else(|_| current.clone());
-            return Some(canonical.to_string_lossy().to_string());
-        }
+    let normalized = normalize_virtual_path(joined);
+    let text = normalized.to_string_lossy().to_string();
+    if text.trim().is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
 
-        if !current.pop() {
-            break;
+fn normalize_virtual_path(path: PathBuf) -> PathBuf {
+    use std::path::Component;
+
+    let mut parts: Vec<OsString> = Vec::new();
+    let mut absolute = false;
+    let mut prefix: Option<OsString> = None;
+
+    for component in path.components() {
+        match component {
+            Component::Prefix(p) => {
+                prefix = Some(p.as_os_str().to_os_string());
+            }
+            Component::RootDir => {
+                absolute = true;
+                parts.clear();
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if let Some(last) = parts.last() {
+                    if last != ".." {
+                        parts.pop();
+                        continue;
+                    }
+                }
+                if !absolute {
+                    parts.push(OsString::from(".."));
+                }
+            }
+            Component::Normal(segment) => {
+                parts.push(segment.to_os_string());
+            }
         }
     }
 
-    // Fall back to the base directory if no ancestor exists yet.
-    if base_dir.exists() {
-        let canonical = std::fs::canonicalize(base_dir).unwrap_or_else(|_| base_dir.to_path_buf());
-        Some(canonical.to_string_lossy().to_string())
+    let mut normalized = PathBuf::new();
+    if let Some(prefix) = prefix {
+        normalized.push(prefix);
+    }
+    if absolute {
+        normalized.push("/");
+    }
+    for segment in parts {
+        normalized.push(segment);
+    }
+
+    if normalized.as_os_str().is_empty() {
+        if absolute {
+            PathBuf::from("/")
+        } else {
+            PathBuf::new()
+        }
     } else {
-        Some(base_dir.to_string_lossy().to_string())
+        normalized
     }
 }

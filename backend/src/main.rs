@@ -2060,6 +2060,7 @@ async fn load_config(session_id: SessionId, cor_id: CorId) {
         config.workspace.load_files_expanded_directories.len()
     );
     send_down_msg(DownMsg::ConfigLoaded(config), session_id, cor_id).await;
+    plugins::flush_initial_discoveries();
 }
 
 async fn save_config(config: AppConfig, session_id: SessionId, cor_id: CorId) {
@@ -2088,6 +2089,8 @@ async fn save_config(config: AppConfig, session_id: SessionId, cor_id: CorId) {
             );
         }
     }
+
+    plugins::flush_initial_discoveries();
 
     match save_config_to_file(&config) {
         Ok(()) => {

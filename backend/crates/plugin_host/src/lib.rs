@@ -356,7 +356,37 @@ impl PluginHost {
         let world = plugin_world(&entry.id);
 
         // Serialize the config table once here so guests receive a stable TOML snapshot.
-        let config_toml = TomlValue::Table(entry.config.clone()).to_string();
+        let mut config_table = entry.config.clone();
+
+        let host_cwd = std::env::current_dir().unwrap_or_default();
+        let canonical_base_dir = config_table
+            .get("base_dir")
+            .and_then(|v| v.as_str())
+            .map(|path_str| {
+                let candidate = PathBuf::from(path_str);
+                if candidate.is_absolute() {
+                    candidate
+                } else {
+                    host_cwd.join(candidate)
+                }
+            })
+            .unwrap_or_else(|| host_cwd.clone());
+
+        let canonical_base_dir = std::fs::canonicalize(&canonical_base_dir)
+            .unwrap_or(canonical_base_dir)
+            .to_string_lossy()
+            .to_string();
+
+        config_table.insert(
+            "host_base_dir".to_string(),
+            TomlValue::String(canonical_base_dir.clone()),
+        );
+
+        let config_toml = TomlValue::Table(config_table).to_string();
+        eprintln!(
+            "🔌 PLUGIN[{}]: serialized config for guest: {}",
+            entry.id, config_toml
+        );
 
         let host_state = HostState::new(entry.id.clone(), config_toml, self.bridge.clone());
         let mut store = Store::new(&self.engine, host_state);

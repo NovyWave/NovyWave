@@ -1,28 +1,149 @@
+use ignore::gitignore::{Gitignore, GitignoreBuilder};
+use ignore::{Match, WalkBuilder};
 use moon::{Lazy, moonlight::CorId, sessions};
 use notify::{RecommendedWatcher, RecursiveMode};
 use notify_debouncer_mini::{DebounceEventResult, new_debouncer};
 use plugin_host::{
     HostBridge, HostBridgeError, PluginHandle, PluginHost, PluginHostError, PluginWorld,
 };
-use shared::{CanonicalPathPayload, DownMsg, PluginsSection};
+use shared::{CanonicalPathPayload, DownMsg, PluginConfigEntry, PluginsSection};
 use std::collections::{HashMap, HashSet};
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
-#[derive(Default)]
 struct BackendPluginBridge {
     opened_files: RwLock<Vec<CanonicalPathPayload>>,
     file_watchers: Mutex<HashMap<String, PluginWatcher>>,
     directory_watchers: Mutex<HashMap<String, PluginWatcher>>,
+    discovery_configs: RwLock<HashMap<String, DiscoveryHostConfig>>,
+    pending_initial_discoveries: Mutex<HashMap<String, Vec<CanonicalPathPayload>>>,
 }
 
 struct PluginWatcher {
     _debouncer: notify_debouncer_mini::Debouncer<RecommendedWatcher>,
     task: JoinHandle<()>,
+}
+
+impl Default for BackendPluginBridge {
+    fn default() -> Self {
+        Self {
+            opened_files: RwLock::new(Vec::new()),
+            file_watchers: Mutex::new(HashMap::new()),
+            directory_watchers: Mutex::new(HashMap::new()),
+            discovery_configs: RwLock::new(HashMap::new()),
+            pending_initial_discoveries: Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct DiscoveryHostConfig {
+    base_dir: PathBuf,
+    patterns: Vec<String>,
+    allow_extensions: HashSet<String>,
+}
+
+impl DiscoveryHostConfig {
+    const DEFAULT_EXTENSIONS: &'static [&'static str] = &["fst", "vcd"];
+
+    fn from_entry(entry: &PluginConfigEntry) -> Option<Self> {
+        if entry.id != "novywave.files_discovery" {
+            return None;
+        }
+
+        let host_cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let base_dir = entry
+            .config
+            .get("base_dir")
+            .and_then(|value| value.as_str())
+            .map(|path_str| {
+                let candidate = PathBuf::from(path_str.trim());
+                if candidate.is_absolute() {
+                    candidate
+                } else {
+                    host_cwd.join(candidate)
+                }
+            })
+            .unwrap_or_else(|| host_cwd.clone());
+        let canonical_base_dir =
+            std::fs::canonicalize(&base_dir).unwrap_or_else(|_| base_dir.clone());
+
+        let patterns = entry
+            .config
+            .get("patterns")
+            .and_then(|value| value.as_array())
+            .map(|array| {
+                array
+                    .iter()
+                    .filter_map(|value| value.as_str())
+                    .map(|pattern| pattern.trim().to_string())
+                    .filter(|pattern| !pattern.is_empty())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        let allow_extensions = entry
+            .config
+            .get("allow_extensions")
+            .and_then(|value| value.as_array())
+            .map(|array| {
+                array
+                    .iter()
+                    .filter_map(|value| value.as_str())
+                    .map(|ext| ext.trim().trim_start_matches('.').to_ascii_lowercase())
+                    .filter(|ext| !ext.is_empty())
+                    .collect::<HashSet<_>>()
+            })
+            .filter(|set| !set.is_empty())
+            .unwrap_or_else(|| {
+                Self::DEFAULT_EXTENSIONS
+                    .iter()
+                    .map(|ext| ext.to_string())
+                    .collect()
+            });
+
+        Some(Self {
+            base_dir: canonical_base_dir,
+            patterns,
+            allow_extensions,
+        })
+    }
+
+    fn build_matcher(&self) -> Result<Gitignore, String> {
+        let mut builder = GitignoreBuilder::new(&self.base_dir);
+        for pattern in &self.patterns {
+            if let Err(err) = builder.add_line(None, pattern) {
+                return Err(err.to_string());
+            }
+        }
+        builder
+            .build()
+            .map_err(|err| format!("failed to build matcher: {err}"))
+    }
+
+    fn extension_allowed(&self, path: &Path) -> bool {
+        path.extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| self.allow_extensions.contains(&ext.to_ascii_lowercase()))
+            .unwrap_or(false)
+    }
+
+    fn matches(&self, matcher: &Gitignore, path: &Path) -> bool {
+        let absolute = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            self.base_dir.join(path)
+        };
+
+        matches!(
+            matcher.matched_path_or_any_parents(&absolute, absolute.is_dir()),
+            Match::Whitelist(_) | Match::Ignore(_)
+        )
+    }
 }
 
 impl BackendPluginBridge {
@@ -89,14 +210,252 @@ impl BackendPluginBridge {
                 }
             };
 
-            let canonical = std::fs::canonicalize(&absolute).unwrap_or(absolute);
-            let canonical_text = canonical.to_string_lossy().to_string();
-            if seen.insert(canonical_text.clone()) {
-                result.push(canonical_text);
+            if let Some(normalized) = Self::canonical_watch_directory(&absolute) {
+                let text = normalized.to_string_lossy().to_string();
+                if seen.insert(text.clone()) {
+                    result.push(text);
+                }
             }
         }
 
         result
+    }
+
+    fn canonical_watch_directory(path: &Path) -> Option<PathBuf> {
+        let mut candidate = path.to_path_buf();
+        let mut popped = false;
+
+        loop {
+            match std::fs::canonicalize(&candidate) {
+                Ok(canonical) => {
+                    if canonical.as_path() == Path::new("/") && popped && path != Path::new("/") {
+                        eprintln!(
+                            "🔌 BACKEND: skipping watch registration for '{}' to avoid monitoring filesystem root",
+                            path.display()
+                        );
+                        return None;
+                    }
+                    return Some(canonical);
+                }
+                Err(_) => {
+                    if !candidate.pop() {
+                        break;
+                    }
+                    popped = true;
+                }
+            }
+        }
+
+        if path == Path::new("/") {
+            Some(PathBuf::from("/"))
+        } else {
+            eprintln!(
+                "🔌 BACKEND: unable to resolve watch directory '{}'; skipping",
+                path.display()
+            );
+            None
+        }
+    }
+
+    fn queue_initial_discovery(&self, plugin_id: &str, payloads: Vec<CanonicalPathPayload>) {
+        if payloads.is_empty() {
+            return;
+        }
+
+        let mut guard = self
+            .pending_initial_discoveries
+            .lock()
+            .expect("pending_initial_discoveries poisoned");
+        let entry = guard.entry(plugin_id.to_string()).or_insert_with(Vec::new);
+
+        let mut seen: HashSet<String> = entry
+            .iter()
+            .map(|payload| payload.canonical.clone())
+            .collect();
+        for payload in payloads {
+            if seen.insert(payload.canonical.clone()) {
+                entry.push(payload);
+            }
+        }
+    }
+
+    fn take_initial_discoveries(&self) -> HashMap<String, Vec<CanonicalPathPayload>> {
+        self.pending_initial_discoveries
+            .lock()
+            .expect("pending_initial_discoveries poisoned")
+            .drain()
+            .collect()
+    }
+
+    fn dispatch_open_waveform_files(&self, plugin_id: &str, paths: Vec<CanonicalPathPayload>) {
+        if paths.is_empty() {
+            return;
+        }
+
+        let mut unique = HashMap::new();
+        for payload in paths {
+            unique.entry(payload.canonical.clone()).or_insert(payload);
+        }
+        if unique.is_empty() {
+            return;
+        }
+
+        let opened_set: HashSet<String> = self
+            .opened_files
+            .read()
+            .expect("opened_files poisoned")
+            .iter()
+            .map(|payload| payload.canonical.clone())
+            .collect();
+
+        let mut new_files = Vec::new();
+        for (_, payload) in unique {
+            if !opened_set.contains(&payload.canonical) {
+                new_files.push(payload);
+            }
+        }
+
+        if new_files.is_empty() {
+            return;
+        }
+
+        let plugin_label = plugin_id.to_string();
+        tokio::spawn(async move {
+            let msg = DownMsg::OpenWaveformFiles {
+                file_paths: new_files.clone(),
+            };
+            sessions::broadcast_down_msg(&msg, CorId::new()).await;
+            println!(
+                "🔌 BACKEND: plugin '{}' discovered {} new path(s): {:?}",
+                plugin_label,
+                new_files.len(),
+                new_files
+                    .iter()
+                    .map(|payload| payload.display.as_str())
+                    .collect::<Vec<_>>()
+            );
+        });
+    }
+
+    fn update_discovery_config(&self, plugin_id: &str, config: Option<DiscoveryHostConfig>) {
+        let mut guard = self
+            .discovery_configs
+            .write()
+            .expect("discovery_configs poisoned");
+        if let Some(config) = config {
+            guard.insert(plugin_id.to_string(), config);
+        } else {
+            guard.remove(plugin_id);
+        }
+    }
+
+    fn discovery_config(&self, plugin_id: &str) -> Option<DiscoveryHostConfig> {
+        self.discovery_configs
+            .read()
+            .ok()
+            .and_then(|guard| guard.get(plugin_id).cloned())
+    }
+
+    fn perform_initial_discovery(&self, plugin_id: &str, directories: &[String]) {
+        let Some(config) = self.discovery_config(plugin_id) else {
+            return;
+        };
+        if config.patterns.is_empty() {
+            return;
+        }
+
+        let matcher = match config.build_matcher() {
+            Ok(matcher) => matcher,
+            Err(err) => {
+                eprintln!(
+                    "🔌 BACKEND: failed to compile discovery patterns for '{}': {}",
+                    plugin_id, err
+                );
+                return;
+            }
+        };
+
+        let opened: HashSet<String> = self
+            .opened_files
+            .read()
+            .map(|guard| {
+                guard
+                    .iter()
+                    .map(|payload| payload.canonical.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let mut discovered = HashMap::new();
+
+        for directory in directories {
+            let dir_path = PathBuf::from(directory);
+            if !dir_path.exists() {
+                continue;
+            }
+
+            let mut walker = WalkBuilder::new(&dir_path);
+            walker
+                .standard_filters(false)
+                .git_ignore(false)
+                .git_exclude(false)
+                .git_global(false)
+                .follow_links(false)
+                .threads(1);
+
+            for entry in walker.build() {
+                let entry = match entry {
+                    Ok(entry) => entry,
+                    Err(err) => {
+                        eprintln!(
+                            "🔌 BACKEND: discovery walker error under '{}': {}",
+                            dir_path.display(),
+                            err
+                        );
+                        continue;
+                    }
+                };
+
+                if !entry
+                    .file_type()
+                    .map(|kind| kind.is_file())
+                    .unwrap_or(false)
+                {
+                    continue;
+                }
+
+                let path = entry.path();
+                if !config.extension_allowed(path) {
+                    continue;
+                }
+                if !config.matches(&matcher, path) {
+                    continue;
+                }
+
+                let canonical = match std::fs::canonicalize(path) {
+                    Ok(canonical) => canonical,
+                    Err(_) => continue,
+                };
+                let canonical_text = canonical.to_string_lossy().to_string();
+                if opened.contains(&canonical_text) {
+                    continue;
+                }
+
+                discovered
+                    .entry(canonical_text.clone())
+                    .or_insert_with(|| CanonicalPathPayload {
+                        display: path.to_string_lossy().to_string(),
+                        canonical: canonical_text,
+                    });
+            }
+        }
+
+        if discovered.is_empty() {
+            return;
+        }
+
+        let payloads: Vec<CanonicalPathPayload> = discovered.into_values().collect();
+        self.queue_initial_discovery(plugin_id, payloads);
     }
 }
 
@@ -221,7 +580,16 @@ impl HostBridge for BackendPluginBridge {
     ) -> Result<(), HostBridgeError> {
         self.clear_watched_directories(plugin_id);
 
+        eprintln!(
+            "🔌 BACKEND: plugin '{}' requested directory watches: {:?}",
+            plugin_id, directories
+        );
+
         let normalized = Self::normalized_directories(directories);
+        eprintln!(
+            "🔌 BACKEND: plugin '{}' normalized directory watches: {:?}",
+            plugin_id, normalized
+        );
         if normalized.is_empty() {
             return Ok(());
         }
@@ -303,6 +671,8 @@ impl HostBridge for BackendPluginBridge {
             },
         );
 
+        self.perform_initial_discovery(plugin_id, &normalized);
+
         Ok(())
     }
 
@@ -360,55 +730,7 @@ impl HostBridge for BackendPluginBridge {
         plugin_id: &str,
         paths: Vec<CanonicalPathPayload>,
     ) -> Result<(), HostBridgeError> {
-        if paths.is_empty() {
-            return Ok(());
-        }
-
-        let mut unique = HashMap::new();
-        for payload in paths {
-            unique.entry(payload.canonical.clone()).or_insert(payload);
-        }
-
-        if unique.is_empty() {
-            return Ok(());
-        }
-
-        let opened_set: HashSet<String> = self
-            .opened_files
-            .read()
-            .expect("opened_files poisoned")
-            .iter()
-            .map(|payload| payload.canonical.clone())
-            .collect();
-
-        let mut new_files = Vec::new();
-        for (canonical, payload) in unique.into_iter() {
-            if !opened_set.contains(&canonical) {
-                new_files.push(payload);
-            }
-        }
-
-        if new_files.is_empty() {
-            return Ok(());
-        }
-
-        let plugin_label = plugin_id.to_string();
-        tokio::spawn(async move {
-            let msg = DownMsg::OpenWaveformFiles {
-                file_paths: new_files.clone(),
-            };
-            sessions::broadcast_down_msg(&msg, CorId::new()).await;
-            println!(
-                "🔌 BACKEND: plugin '{}' discovered {} new path(s): {:?}",
-                plugin_label,
-                new_files.len(),
-                new_files
-                    .iter()
-                    .map(|payload| payload.display.as_str())
-                    .collect::<Vec<_>>()
-            );
-        });
-
+        self.dispatch_open_waveform_files(plugin_id, paths);
         Ok(())
     }
 
@@ -534,9 +856,14 @@ impl PluginManager {
         self.shutdown_all();
         self.statuses.clear();
         self.current_config = Some(section.clone());
+        self.bridge
+            .update_discovery_config("novywave.files_discovery", None);
 
         for entry in &section.entries {
             if !entry.enabled {
+                if entry.id == "novywave.files_discovery" {
+                    self.bridge.update_discovery_config(&entry.id, None);
+                }
                 self.bridge.clear_watched_files(&entry.id);
                 self.bridge.clear_watched_directories(&entry.id);
                 self.statuses.insert(
@@ -549,6 +876,11 @@ impl PluginManager {
                     },
                 );
                 continue;
+            }
+
+            if entry.id == "novywave.files_discovery" {
+                let config = DiscoveryHostConfig::from_entry(entry);
+                self.bridge.update_discovery_config(&entry.id, config);
             }
 
             match self.host.load(entry) {
@@ -588,6 +920,22 @@ impl PluginManager {
 
     pub fn statuses(&self) -> Vec<PluginStatus> {
         self.statuses.values().cloned().collect()
+    }
+
+    fn flush_initial_discoveries(&self) {
+        let pending = self.bridge.take_initial_discoveries();
+        for (plugin_id, payloads) in pending {
+            if payloads.is_empty() {
+                continue;
+            }
+            println!(
+                "🔌 BACKEND: emitting initial discovery for plugin '{}' with {} path(s)",
+                plugin_id,
+                payloads.len()
+            );
+            self.bridge
+                .dispatch_open_waveform_files(&plugin_id, payloads);
+        }
     }
 
     fn handle_watched_files_changed(&mut self, plugin_id: &str, paths: Vec<CanonicalPathPayload>) {
@@ -708,9 +1056,17 @@ pub fn reload_plugins(
     PluginReloadOutcome { statuses, reloaded }
 }
 
+pub fn flush_initial_discoveries() {
+    if let Ok(manager) = PLUGIN_MANAGER.lock() {
+        manager.flush_initial_discoveries();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn normalized_paths_deduplicates_canonical_entries() {
@@ -729,5 +1085,38 @@ mod tests {
         assert_eq!(normalized.len(), 1);
         assert_eq!(normalized[0].canonical, "/tmp/sample.vcd");
         assert_eq!(normalized[0].display, "/tmp/sample.vcd");
+    }
+
+    #[test]
+    fn discovery_host_config_matches_expected_files() {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let temp_root = env::temp_dir().join(format!("novywave_discovery_test_{suffix}"));
+        let target_dir = temp_root.join("test_files/to_discover");
+        fs::create_dir_all(&target_dir).unwrap();
+        let file_path = target_dir.join("sample.vcd");
+        fs::write(&file_path, b"dummy").unwrap();
+
+        let mut entry = PluginConfigEntry::default();
+        entry.id = "novywave.files_discovery".to_string();
+        entry.config.insert(
+            "base_dir".to_string(),
+            toml::Value::String(temp_root.to_string_lossy().to_string()),
+        );
+        entry.config.insert(
+            "patterns".to_string(),
+            toml::Value::Array(vec![toml::Value::String(
+                "test_files/to_discover/**/*.vcd".to_string(),
+            )]),
+        );
+
+        let config = DiscoveryHostConfig::from_entry(&entry).expect("config present");
+        let matcher = config.build_matcher().expect("matcher builds");
+        assert!(config.extension_allowed(&file_path));
+        assert!(config.matches(&matcher, &file_path));
+
+        fs::remove_dir_all(&temp_root).unwrap();
     }
 }

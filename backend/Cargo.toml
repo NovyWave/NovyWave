@@ -18,3 +18,4 @@ rayon = "1.8"
 plugin_host = { path = "crates/plugin_host" }
 notify = "6"
 notify-debouncer-mini = "0.4"
+ignore = "0.4"
