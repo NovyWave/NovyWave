@@ -198,6 +198,11 @@ impl ConnectionMessageActor {
                                     tracked_files_for_reload.reload_existing_paths(file_paths);
                                 }
                             }
+                            DownMsg::OpenWaveformFiles { file_paths } => {
+                                if !file_paths.is_empty() {
+                                    tracked_files_for_reload.load_new_paths(file_paths);
+                                }
+                            }
                             _ => {
                                 // Other message types can be added as needed
                             }

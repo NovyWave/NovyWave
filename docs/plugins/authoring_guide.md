@@ -6,7 +6,8 @@ This guide captures the current workflow for building and wiring WebAssembly plu
 - **Host runtime:** Wasmtime 36.x LTS (component model enabled, backtrace details on).
 - **Plugin WIT:** every plugin owns its own WIT package under `plugins/<id>/wit/`.
   - `plugins/hello_world/wit/plugin.wit` defines a minimal world (`init`/`shutdown`) importing only logging.
-  - `plugins/reload_watcher/wit/plugin.wit` extends that surface with watcher APIs (`get-opened-files`, `register-watched-files`, `reload-waveform-files`, …).
+  - `plugins/reload_watcher/wit/plugin.wit` extends that surface with file watcher APIs (`get-opened-files`, `register-watched-files`, `reload-waveform-files`, …).
+  - `plugins/files_discovery/wit/plugin.wit` layers directory discovery helpers (`register-watched-directories`, `open-waveform-files`, `get-config-toml`).
   - See `plugins/plugin_example.wit` for a documented snapshot of all host imports and expected exports.
   - Current `wit-bindgen` releases still require copying shared imports into each package—worlds with host interfaces cannot yet be reused across packages (see [component-model#295](https://github.com/WebAssembly/component-model/issues/295) / [wit-bindgen#1046](https://github.com/bytecodealliance/wit-bindgen/issues/1046)).
 - **Host crate:** `backend/crates/plugin_host` exposes `PluginHost` + `PluginHandle`; `backend/src/plugins.rs` keeps a singleton manager that caches the last applied config to avoid redundant reloads and now proxies watcher APIs to the backend bridge.
@@ -14,8 +15,13 @@ This guide captures the current workflow for building and wiring WebAssembly plu
 
 ## Host Runtime API
 - `host-runtime.get-opened-files() -> list<string>` — snapshot of the workspace's opened waveform paths.
-- `host-runtime.register-watched-files(paths: list<string>, debounce-ms: u32)` — replace the watched set for the calling plugin; passing an empty list clears watchers.
-- `host-runtime.clear-watched-files()` — explicitly drop any active watchers for the plugin.
+- `host-runtime.register-watched-files(paths: list<string>, debounce-ms: u32)` — replace the watched file set for the calling plugin; passing an empty list clears watchers.
+- `host-runtime.clear-watched-files()` — explicitly drop any active file watchers for the plugin.
+- `host-runtime.register-watched-directories(directories: list<string>, debounce-ms: u32)` — watch canonical directories for new filesystem entries (recursive by default).
+- `host-runtime.clear-watched-directories()` — drop directory watchers registered by the calling plugin.
+- `host-runtime.reload-waveform-files(paths: list<string>)` — request the backend to broadcast `DownMsg::ReloadWaveformFiles` for the provided canonical paths.
+- `host-runtime.open-waveform-files(paths: list<string>)` — request the backend to broadcast `DownMsg::OpenWaveformFiles` so the frontend loads newly discovered files.
+- `host-runtime.get-config-toml() -> string` — return the plugin's configuration (from `.novywave`) encoded as TOML.
 - `host-runtime.log-info(message: string)` / `host-runtime.log-error(message: string)` — route plugin logs through the backend (console + toasts).
 
 ## Prerequisites

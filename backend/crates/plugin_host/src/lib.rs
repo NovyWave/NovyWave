@@ -12,21 +12,32 @@ mod bindings {
             world: "plugin",
         });
     }
+
+    pub mod files_discovery {
+        wasmtime::component::bindgen!({
+            path: "../../../plugins/files_discovery/wit",
+            world: "plugin",
+        });
+    }
 }
 
 use anyhow::Error;
 use bindings::{
+    files_discovery::{Plugin as DiscoveryPlugin, novywave::files_discovery as discovery_wit},
     hello_world::{Plugin as HelloPlugin, novywave::hello_world as hello_wit},
     reload_watcher::{Plugin as ReloadPlugin, novywave::reload_watcher as reload_wit},
 };
 use shared::{CanonicalPathPayload, PluginConfigEntry};
 use std::collections::HashMap;
-use std::path::Path;
+use std::env;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use toml::Value as TomlValue;
 use wasmtime::component::{Component, HasSelf, Linker, ResourceTable};
 use wasmtime::{Config, Engine, Store};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView, p2};
 
+// files_discovery: host wiring for discovery plugin.
 /// Bridge trait implemented by the host runtime to service plugin requests.
 pub trait HostBridge: Send + Sync + 'static {
     fn get_opened_files(&self, plugin_id: &str) -> Vec<CanonicalPathPayload>;
@@ -37,7 +48,19 @@ pub trait HostBridge: Send + Sync + 'static {
         debounce_ms: u32,
     ) -> Result<(), HostBridgeError>;
     fn clear_watched_files(&self, plugin_id: &str);
+    fn register_watched_directories(
+        &self,
+        plugin_id: &str,
+        directories: Vec<String>,
+        debounce_ms: u32,
+    ) -> Result<(), HostBridgeError>;
+    fn clear_watched_directories(&self, plugin_id: &str);
     fn reload_waveform_files(
+        &self,
+        plugin_id: &str,
+        paths: Vec<CanonicalPathPayload>,
+    ) -> Result<(), HostBridgeError>;
+    fn open_waveform_files(
         &self,
         plugin_id: &str,
         paths: Vec<CanonicalPathPayload>,
@@ -66,7 +89,26 @@ impl HostBridge for NullBridge {
 
     fn clear_watched_files(&self, _plugin_id: &str) {}
 
+    fn register_watched_directories(
+        &self,
+        _plugin_id: &str,
+        _directories: Vec<String>,
+        _debounce_ms: u32,
+    ) -> Result<(), HostBridgeError> {
+        Ok(())
+    }
+
+    fn clear_watched_directories(&self, _plugin_id: &str) {}
+
     fn reload_waveform_files(
+        &self,
+        _plugin_id: &str,
+        _paths: Vec<CanonicalPathPayload>,
+    ) -> Result<(), HostBridgeError> {
+        Ok(())
+    }
+
+    fn open_waveform_files(
         &self,
         _plugin_id: &str,
         _paths: Vec<CanonicalPathPayload>,
@@ -96,10 +138,11 @@ struct HostState {
     wasi: WasiCtx,
     plugin_id: String,
     bridge: Arc<dyn HostBridge>,
+    config_toml: String,
 }
 
 impl HostState {
-    fn new(plugin_id: String, bridge: Arc<dyn HostBridge>) -> Self {
+    fn new(plugin_id: String, config_toml: String, bridge: Arc<dyn HostBridge>) -> Self {
         let wasi = WasiCtxBuilder::new()
             .inherit_stdio()
             .inherit_env()
@@ -110,6 +153,7 @@ impl HostState {
             wasi,
             plugin_id,
             bridge,
+            config_toml,
         }
     }
 }
@@ -201,14 +245,83 @@ impl reload_wit::host::Host for HostState {
     }
 }
 
+impl discovery_wit::host::Host for HostState {
+    fn get_opened_files(&mut self) -> Vec<String> {
+        self.bridge
+            .get_opened_files(&self.plugin_id)
+            .into_iter()
+            .map(|payload| payload.canonical)
+            .collect()
+    }
+
+    fn get_config_toml(&mut self) -> String {
+        self.config_toml.clone()
+    }
+
+    fn register_watched_directories(&mut self, directories: Vec<String>, debounce_ms: u32) -> () {
+        if let Err(err) =
+            self.bridge
+                .register_watched_directories(&self.plugin_id, directories, debounce_ms)
+        {
+            self.bridge.log_error(&self.plugin_id, &err.to_string());
+        }
+    }
+
+    fn clear_watched_directories(&mut self) -> () {
+        self.bridge.clear_watched_directories(&self.plugin_id);
+    }
+
+    fn open_waveform_files(&mut self, paths: Vec<String>) -> () {
+        if paths.is_empty() {
+            return;
+        }
+
+        let mut payloads = Vec::new();
+        for path in paths {
+            let display = path.clone();
+            let absolute = if Path::new(&path).is_absolute() {
+                PathBuf::from(&path)
+            } else {
+                match env::current_dir() {
+                    Ok(root) => root.join(&path),
+                    Err(_) => PathBuf::from(&path),
+                }
+            };
+
+            let canonical_buf =
+                std::fs::canonicalize(&absolute).unwrap_or_else(|_| absolute.clone());
+            let canonical = canonical_buf.to_string_lossy().to_string();
+            payloads.push(CanonicalPathPayload { canonical, display });
+        }
+
+        if payloads.is_empty() {
+            return;
+        }
+
+        if let Err(err) = self.bridge.open_waveform_files(&self.plugin_id, payloads) {
+            self.bridge.log_error(&self.plugin_id, &err.to_string());
+        }
+    }
+
+    fn log_info(&mut self, message: String) -> () {
+        self.bridge.log_info(&self.plugin_id, &message);
+    }
+
+    fn log_error(&mut self, message: String) -> () {
+        self.bridge.log_error(&self.plugin_id, &message);
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PluginWorld {
     HelloWorld,
     ReloadWatcher,
+    FilesDiscovery,
 }
 
 fn plugin_world(id: &str) -> PluginWorld {
     match id {
+        "novywave.files_discovery" => PluginWorld::FilesDiscovery,
         "novywave.reload_watcher" => PluginWorld::ReloadWatcher,
         _ => PluginWorld::HelloWorld,
     }
@@ -242,7 +355,10 @@ impl PluginHost {
 
         let world = plugin_world(&entry.id);
 
-        let host_state = HostState::new(entry.id.clone(), self.bridge.clone());
+        // Serialize the config table once here so guests receive a stable TOML snapshot.
+        let config_toml = TomlValue::Table(entry.config.clone()).to_string();
+
+        let host_state = HostState::new(entry.id.clone(), config_toml, self.bridge.clone());
         let mut store = Store::new(&self.engine, host_state);
 
         let runtime =
@@ -311,6 +427,38 @@ impl PluginHost {
 
                     RuntimeVariant::ReloadWatcher(runtime)
                 }
+                PluginWorld::FilesDiscovery => {
+                    let mut linker = Linker::new(&self.engine);
+                    p2::add_to_linker_sync(&mut linker).map_err(|source| {
+                        PluginHostError::Instantiation {
+                            plugin_id: entry.id.clone(),
+                            source,
+                        }
+                    })?;
+                    DiscoveryPlugin::add_to_linker::<HostState, HasSelf<HostState>>(
+                        &mut linker,
+                        host_state_lookup,
+                    )
+                    .map_err(|source| PluginHostError::Instantiation {
+                        plugin_id: entry.id.clone(),
+                        source,
+                    })?;
+
+                    let runtime = DiscoveryPlugin::instantiate(&mut store, &component, &linker)
+                        .map_err(|source| PluginHostError::Instantiation {
+                            plugin_id: entry.id.clone(),
+                            source,
+                        })?;
+
+                    runtime
+                        .call_init(&mut store)
+                        .map_err(|source| PluginHostError::GuestCall {
+                            plugin_id: entry.id.clone(),
+                            source,
+                        })?;
+
+                    RuntimeVariant::FilesDiscovery(runtime)
+                }
             };
 
         let init_message = "initialized".to_string();
@@ -329,6 +477,7 @@ impl PluginHost {
 enum RuntimeVariant {
     HelloWorld(HelloPlugin),
     ReloadWatcher(ReloadPlugin),
+    FilesDiscovery(DiscoveryPlugin),
 }
 
 pub struct PluginHandle {
@@ -358,6 +507,12 @@ impl PluginHandle {
                     plugin_id: self.id.clone(),
                     source,
                 }),
+            RuntimeVariant::FilesDiscovery(runtime) => runtime
+                .call_refresh_opened_files(&mut self.store)
+                .map_err(|source| PluginHostError::GuestCall {
+                    plugin_id: self.id.clone(),
+                    source,
+                }),
         }
     }
 
@@ -379,6 +534,28 @@ impl PluginHandle {
                         source,
                     })
             }
+            RuntimeVariant::FilesDiscovery(_) => Ok(()),
+        }
+    }
+
+    pub fn paths_discovered(
+        &mut self,
+        paths: Vec<CanonicalPathPayload>,
+    ) -> Result<(), PluginHostError> {
+        match &mut self.runtime {
+            RuntimeVariant::FilesDiscovery(runtime) => {
+                let wit_paths: Vec<String> = paths
+                    .iter()
+                    .map(|payload| payload.canonical.clone())
+                    .collect();
+                runtime
+                    .call_paths_discovered(&mut self.store, &wit_paths)
+                    .map_err(|source| PluginHostError::GuestCall {
+                        plugin_id: self.id.clone(),
+                        source,
+                    })
+            }
+            _ => Ok(()),
         }
     }
 
@@ -397,8 +574,15 @@ impl PluginHandle {
                         plugin_id: self.id.clone(),
                         source,
                     }),
+                RuntimeVariant::FilesDiscovery(runtime) => runtime
+                    .call_shutdown(&mut self.store)
+                    .map_err(|source| PluginHostError::GuestCall {
+                        plugin_id: self.id.clone(),
+                        source,
+                    }),
             };
         self.bridge.clear_watched_files(&self.id);
+        self.bridge.clear_watched_directories(&self.id);
         result
     }
 

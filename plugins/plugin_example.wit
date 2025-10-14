@@ -21,6 +21,22 @@ interface watcher-control {
   reload-waveform-files: func(paths: list<string>);
 }
 
+/// Helpers for discovering new waveform files based on directory patterns.
+interface discovery-control {
+  /// Replace the watched directory set for this component; supplying an empty list clears watchers.
+  register-watched-directories: func(directories: list<string>, debounce-ms: u32);
+  /// Remove any registered directory watchers for this component.
+  clear-watched-directories: func();
+  /// Request the host to load new waveform files via the standard pipeline.
+  open-waveform-files: func(paths: list<string>);
+}
+
+/// Provides access to the plugin-specific configuration stored in `.novywave`.
+interface plugin-config {
+  /// Return the plugin configuration as a TOML document.
+  get-config-toml: func() -> string;
+}
+
 /// Minimal lifecycle for components that only need logging.
 world basic {
   import logging;
@@ -37,5 +53,18 @@ world watcher {
   export init: func();
   export refresh-opened-files: func();
   export watched-files-changed: func(paths: list<string>);
+  export shutdown: func();
+}
+
+/// Files discovery lifecycle for components that expand glob patterns into files.
+world files-discovery {
+  import logging;
+  import opened-files;
+  import discovery-control;
+  import plugin-config;
+
+  export init: func();
+  export refresh-opened-files: func();
+  export paths-discovered: func(paths: list<string>);
   export shutdown: func();
 }

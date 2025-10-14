@@ -8,6 +8,7 @@ members = [
     "src-tauri",
     "plugins/hello_world",
     "plugins/reload_watcher",
+    "plugins/files_discovery",
 ]
 
 [workspace.package]

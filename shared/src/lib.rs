@@ -92,6 +92,9 @@ pub enum DownMsg {
     ReloadWaveformFiles {
         file_paths: Vec<CanonicalPathPayload>,
     },
+    OpenWaveformFiles {
+        file_paths: Vec<CanonicalPathPayload>,
+    },
     /// Unified signal data response with all requested information
     UnifiedSignalResponse {
         request_id: String,

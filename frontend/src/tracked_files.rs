@@ -317,6 +317,19 @@ impl TrackedFiles {
         }
     }
 
+    pub fn load_new_paths(&self, files: Vec<CanonicalPathPayload>) {
+        for payload in files {
+            let load_path = if payload.display.trim().is_empty() {
+                payload.canonical.clone()
+            } else {
+                payload.display.clone()
+            };
+            if !load_path.trim().is_empty() {
+                self.file_parse_requested_relay.send(load_path);
+            }
+        }
+    }
+
     /// Get signal for tracked files list
     pub fn files_signal(&self) -> impl zoon::Signal<Item = Vec<TrackedFile>> {
         self.files.signal_vec().to_signal_cloned()

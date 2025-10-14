@@ -6,6 +6,7 @@ use plugin_host::{
 };
 use shared::{CanonicalPathPayload, DownMsg, PluginsSection};
 use std::collections::{HashMap, HashSet};
+use std::env;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
@@ -15,7 +16,8 @@ use tokio::task::JoinHandle;
 #[derive(Default)]
 struct BackendPluginBridge {
     opened_files: RwLock<Vec<CanonicalPathPayload>>,
-    watchers: Mutex<HashMap<String, PluginWatcher>>,
+    file_watchers: Mutex<HashMap<String, PluginWatcher>>,
+    directory_watchers: Mutex<HashMap<String, PluginWatcher>>,
 }
 
 struct PluginWatcher {
@@ -64,6 +66,36 @@ impl BackendPluginBridge {
                 });
             }
         }
+        result
+    }
+
+    fn normalized_directories(directories: Vec<String>) -> Vec<String> {
+        let mut seen = HashSet::new();
+        let mut result = Vec::new();
+
+        for directory in directories {
+            let trimmed = directory.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            let candidate = PathBuf::from(trimmed);
+            let absolute = if candidate.is_absolute() {
+                candidate
+            } else {
+                match env::current_dir() {
+                    Ok(root) => root.join(candidate),
+                    Err(_) => PathBuf::from(trimmed),
+                }
+            };
+
+            let canonical = std::fs::canonicalize(&absolute).unwrap_or(absolute);
+            let canonical_text = canonical.to_string_lossy().to_string();
+            if seen.insert(canonical_text.clone()) {
+                result.push(canonical_text);
+            }
+        }
+
         result
     }
 }
@@ -158,7 +190,7 @@ impl HostBridge for BackendPluginBridge {
             }
         });
 
-        let mut watchers = self.watchers.lock().expect("watchers poisoned");
+        let mut watchers = self.file_watchers.lock().expect("file_watchers poisoned");
         watchers.insert(
             plugin_id.to_string(),
             PluginWatcher {
@@ -172,9 +204,113 @@ impl HostBridge for BackendPluginBridge {
 
     fn clear_watched_files(&self, plugin_id: &str) {
         if let Some(watcher) = self
-            .watchers
+            .file_watchers
             .lock()
-            .expect("watchers poisoned")
+            .expect("file_watchers poisoned")
+            .remove(plugin_id)
+        {
+            watcher.task.abort();
+        }
+    }
+
+    fn register_watched_directories(
+        &self,
+        plugin_id: &str,
+        directories: Vec<String>,
+        debounce_ms: u32,
+    ) -> Result<(), HostBridgeError> {
+        self.clear_watched_directories(plugin_id);
+
+        let normalized = Self::normalized_directories(directories);
+        if normalized.is_empty() {
+            return Ok(());
+        }
+
+        let debounce_ms = debounce_ms.max(50);
+        let debounce = Duration::from_millis(debounce_ms as u64);
+        let (tx, mut rx) = mpsc::unbounded_channel::<Vec<CanonicalPathPayload>>();
+        let plugin_label = plugin_id.to_string();
+        let plugin_label_for_watcher = plugin_label.clone();
+
+        let mut debouncer =
+            new_debouncer(debounce, move |result: DebounceEventResult| match result {
+                Ok(events) => {
+                    let mut discovered = Vec::new();
+                    for event in events.into_iter() {
+                        let path = event.path;
+                        let canonical_buf =
+                            std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+                        let is_dir = std::fs::metadata(&canonical_buf)
+                            .map(|meta| meta.is_dir())
+                            .unwrap_or(false);
+                        if is_dir {
+                            continue;
+                        }
+
+                        let canonical = canonical_buf.to_string_lossy().to_string();
+                        let display = path.to_string_lossy().to_string();
+                        discovered.push(CanonicalPathPayload { canonical, display });
+                    }
+                    if !discovered.is_empty() {
+                        let _ = tx.send(discovered);
+                    }
+                }
+                Err(err) => {
+                    eprintln!(
+                        "🔌 BACKEND: directory watcher error for plugin '{}': {}",
+                        plugin_label_for_watcher, err
+                    );
+                }
+            })
+            .map_err(|err| HostBridgeError::Message(format!("failed to create watcher: {err}")))?;
+
+        for directory in &normalized {
+            let path = PathBuf::from(directory);
+            if let Err(err) = debouncer.watcher().watch(&path, RecursiveMode::Recursive) {
+                eprintln!(
+                    "🔌 BACKEND: directory watcher failed for plugin '{}' on '{}': {}",
+                    plugin_label,
+                    path.display(),
+                    err
+                );
+            }
+        }
+
+        let dispatch_plugin = plugin_id.to_string();
+        let task = tokio::spawn(async move {
+            while let Some(paths) = rx.recv().await {
+                let mut unique = HashMap::new();
+                for payload in paths {
+                    unique.entry(payload.canonical.clone()).or_insert(payload);
+                }
+                if unique.is_empty() {
+                    continue;
+                }
+                let discovered: Vec<CanonicalPathPayload> = unique.into_values().collect();
+                dispatch_paths_discovered(&dispatch_plugin, discovered);
+            }
+        });
+
+        let mut watchers = self
+            .directory_watchers
+            .lock()
+            .expect("directory_watchers poisoned");
+        watchers.insert(
+            plugin_id.to_string(),
+            PluginWatcher {
+                _debouncer: debouncer,
+                task,
+            },
+        );
+
+        Ok(())
+    }
+
+    fn clear_watched_directories(&self, plugin_id: &str) {
+        if let Some(watcher) = self
+            .directory_watchers
+            .lock()
+            .expect("directory_watchers poisoned")
             .remove(plugin_id)
         {
             watcher.task.abort();
@@ -219,6 +355,63 @@ impl HostBridge for BackendPluginBridge {
         Ok(())
     }
 
+    fn open_waveform_files(
+        &self,
+        plugin_id: &str,
+        paths: Vec<CanonicalPathPayload>,
+    ) -> Result<(), HostBridgeError> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+
+        let mut unique = HashMap::new();
+        for payload in paths {
+            unique.entry(payload.canonical.clone()).or_insert(payload);
+        }
+
+        if unique.is_empty() {
+            return Ok(());
+        }
+
+        let opened_set: HashSet<String> = self
+            .opened_files
+            .read()
+            .expect("opened_files poisoned")
+            .iter()
+            .map(|payload| payload.canonical.clone())
+            .collect();
+
+        let mut new_files = Vec::new();
+        for (canonical, payload) in unique.into_iter() {
+            if !opened_set.contains(&canonical) {
+                new_files.push(payload);
+            }
+        }
+
+        if new_files.is_empty() {
+            return Ok(());
+        }
+
+        let plugin_label = plugin_id.to_string();
+        tokio::spawn(async move {
+            let msg = DownMsg::OpenWaveformFiles {
+                file_paths: new_files.clone(),
+            };
+            sessions::broadcast_down_msg(&msg, CorId::new()).await;
+            println!(
+                "🔌 BACKEND: plugin '{}' discovered {} new path(s): {:?}",
+                plugin_label,
+                new_files.len(),
+                new_files
+                    .iter()
+                    .map(|payload| payload.display.as_str())
+                    .collect::<Vec<_>>()
+            );
+        });
+
+        Ok(())
+    }
+
     fn log_info(&self, plugin_id: &str, message: &str) {
         println!("🔌 PLUGIN[{}]: {}", plugin_id, message);
     }
@@ -239,6 +432,24 @@ fn dispatch_watched_files_changed(plugin_id: &str, paths: Vec<CanonicalPathPaylo
         Err(err) => {
             eprintln!(
                 "🔌 BACKEND: failed to dispatch watcher event for plugin '{}': {}",
+                plugin_id, err
+            );
+        }
+    }
+}
+
+fn dispatch_paths_discovered(plugin_id: &str, paths: Vec<CanonicalPathPayload>) {
+    if paths.is_empty() {
+        return;
+    }
+
+    match PLUGIN_MANAGER.lock() {
+        Ok(mut manager) => {
+            manager.handle_paths_discovered(plugin_id, paths);
+        }
+        Err(err) => {
+            eprintln!(
+                "🔌 BACKEND: failed to dispatch discovery event for plugin '{}': {}",
                 plugin_id, err
             );
         }
@@ -327,6 +538,7 @@ impl PluginManager {
         for entry in &section.entries {
             if !entry.enabled {
                 self.bridge.clear_watched_files(&entry.id);
+                self.bridge.clear_watched_directories(&entry.id);
                 self.statuses.insert(
                     entry.id.clone(),
                     PluginStatus {
@@ -357,6 +569,7 @@ impl PluginManager {
                 }
                 Err(err) => {
                     self.bridge.clear_watched_files(&entry.id);
+                    self.bridge.clear_watched_directories(&entry.id);
                     self.statuses.insert(
                         entry.id.clone(),
                         PluginStatus {
@@ -422,10 +635,52 @@ impl PluginManager {
         }
     }
 
+    fn handle_paths_discovered(&mut self, plugin_id: &str, paths: Vec<CanonicalPathPayload>) {
+        if paths.is_empty() {
+            return;
+        }
+
+        match self.handles.get_mut(plugin_id) {
+            Some(handle) => {
+                if !matches!(handle.world(), PluginWorld::FilesDiscovery) {
+                    self.bridge.log_info(
+                        plugin_id,
+                        "paths_discovered ignored for plugin without discovery support",
+                    );
+                    return;
+                }
+
+                match handle.paths_discovered(paths.clone()) {
+                    Ok(_) => {
+                        if let Some(status) = self.statuses.get_mut(plugin_id) {
+                            status.last_message =
+                                Some(format!("paths_discovered() ok for {} path(s)", paths.len()));
+                        }
+                    }
+                    Err(err) => {
+                        self.bridge
+                            .log_error(plugin_id, &format!("paths_discovered failed: {}", err));
+                        if let Some(status) = self.statuses.get_mut(plugin_id) {
+                            status.state = PluginRuntimeState::Error;
+                            status.last_message = Some(err.to_string());
+                        }
+                    }
+                }
+            }
+            None => {
+                self.bridge.log_error(
+                    plugin_id,
+                    "received discovery event but plugin handle is not loaded",
+                );
+            }
+        }
+    }
+
     fn shutdown_all(&mut self) {
         for handle in self.handles.values_mut() {
             let _ = handle.shutdown();
             self.bridge.clear_watched_files(handle.id());
+            self.bridge.clear_watched_directories(handle.id());
         }
         self.handles.clear();
     }

@@ -89,3 +89,20 @@ enabled = true
 artifact_path = "plugins/dist/reload_watcher_plugin.wasm"
 
 [plugins.entries.config]
+
+[[plugins.entries]]
+id = "novywave.files_discovery"
+enabled = true
+artifact_path = "plugins/dist/files_discovery_plugin.wasm"
+
+[plugins.entries.config]
+allow_extensions = [
+    "vcd",
+    "fst",
+]
+base_dir = "."
+debounce_ms = 200
+patterns = [
+    "test_files/to_discover/**/*.vcd",
+    "test_files/to_discover/**/*.fst",
+]

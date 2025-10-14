@@ -1,0 +1,40 @@
+package novywave:files-discovery;
+
+interface host {
+  /// Return the current set of opened waveform files.
+  get-opened-files: func() -> list<string>;
+
+  /// Replace the watched directory set for this plugin; supplying an empty list clears watchers.
+  register-watched-directories: func(directories: list<string>, debounce-ms: u32);
+
+  /// Remove any registered directory watchers for this plugin.
+  clear-watched-directories: func();
+
+  /// Request the host to open the provided waveform files.
+  open-waveform-files: func(paths: list<string>);
+
+  /// Return the plugin configuration as a TOML document.
+  get-config-toml: func() -> string;
+
+  /// Log an informational message via the host.
+  log-info: func(message: string);
+
+  /// Log an error message via the host.
+  log-error: func(message: string);
+}
+
+world plugin {
+  import host;
+
+  /// Called once when the plugin starts; set up watchers and discover existing files.
+  export init: func();
+
+  /// Called when the backend reloads the plugin configuration or opened file list.
+  export refresh-opened-files: func();
+
+  /// Called by the backend when watched directories emit new filesystem entries.
+  export paths-discovered: func(paths: list<string>);
+
+  /// Called before the component is unloaded; clean up watchers here.
+  export shutdown: func();
+}
