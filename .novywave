@@ -46,8 +46,16 @@ canonical = "/home/martinkavik/repos/NovyWave/test_files/to_discover/new_discove
 display = "/home/martinkavik/repos/NovyWave/test_files/to_discover/new_discovery_sample.vcd"
 
 [[workspace.opened_files]]
-canonical = "/home/martinkavik/repos/NovyWave/test_files/to_discover/tmp_discovery_test.vcd"
-display = "/home/martinkavik/repos/NovyWave/test_files/to_discover/tmp_discovery_test.vcd"
+canonical = "/home/martinkavik/repos/NovyWave/test_files/to_discover/tmp_discovery.vcd"
+display = "/home/martinkavik/repos/NovyWave/test_files/to_discover/tmp_discovery.vcd"
+
+[[workspace.opened_files]]
+canonical = "/home/martinkavik/repos/NovyWave/test_files/to_discover/wave_27.fst"
+display = "/home/martinkavik/repos/NovyWave/test_files/to_discover/wave_27.fst"
+
+[[workspace.opened_files]]
+canonical = "/home/martinkavik/repos/NovyWave/test_files/to_discover/wave_27_2.fst"
+display = "/home/martinkavik/repos/NovyWave/test_files/to_discover/wave_27_2.fst"
 
 [workspace.docked_bottom_dimensions]
 files_and_scopes_panel_width = 400.0

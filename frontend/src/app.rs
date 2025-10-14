@@ -142,6 +142,16 @@ impl ConnectionMessageActor {
                                     ));
                                 }
                             }
+                            DownMsg::ParsingError { file_id, error } => {
+                                let failed_path = file_id.clone();
+                                file_loaded_relay_clone.send((
+                                    failed_path.clone(),
+                                    shared::FileState::Failed(shared::FileError::IoError {
+                                        path: failed_path,
+                                        error: error.clone(),
+                                    }),
+                                ));
+                            }
                             DownMsg::ParsingStarted { file_id, filename } => {
                                 parsing_started_relay_clone.send((file_id, filename));
                             }
@@ -534,6 +544,14 @@ impl NovyWaveApp {
                         tf_relay.send((
                             file_id.clone(),
                             shared::FileState::Loading(shared::LoadingStatus::Parsing),
+                        ));
+                    }
+                    DownMsg::ParsingError { file_id, error: _ } => {
+                        tf_relay.send((
+                            file_id.clone(),
+                            shared::FileState::Failed(shared::FileError::FileNotFound {
+                                path: file_id.clone(),
+                            }),
                         ));
                     }
                     _ => {

@@ -871,7 +871,7 @@ async fn load_waveform_file(file_path: String, session_id: SessionId, cor_id: Co
         send_down_msg(
             DownMsg::ParsingError {
                 file_id: file_path.clone(), // Use full path to match frontend TrackedFile IDs
-                error: error_msg,
+                error: error_msg.clone(),
             },
             session_id,
             cor_id,
