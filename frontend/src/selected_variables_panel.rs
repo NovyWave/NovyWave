@@ -29,13 +29,14 @@ pub fn selected_variables_panel(
     waveform_canvas: crate::visualizer::canvas::waveform_canvas::WaveformCanvas,
 ) -> impl Element {
     let selected_variables_for_header = selected_variables.clone();
+    let app_config_for_header = app_config.clone();
 
     Column::new()
         .s(Width::fill())
         .s(Height::fill())
         .item(crate::panel_layout::create_panel(
             // Header with title and action buttons
-            selected_variables_panel_header(&selected_variables_for_header),
+            selected_variables_panel_header(&selected_variables_for_header, &app_config_for_header),
             // Three-column content area
             selected_variables_panel_content(
                 selected_variables,
@@ -51,6 +52,7 @@ pub fn selected_variables_panel(
 /// Panel header with title and action buttons
 fn selected_variables_panel_header(
     selected_variables: &crate::selected_variables::SelectedVariables,
+    app_config: &crate::config::AppConfig,
 ) -> impl Element {
     Row::new()
         .s(Gap::new().x(SPACING_8))
@@ -63,8 +65,12 @@ fn selected_variables_panel_header(
                 .child("Selected Variables"),
         )
         .item(
-            // Spacer to push buttons to center and right
-            El::new().s(Width::growable()),
+            Row::new()
+                .s(Width::fill())
+                .s(Align::new().center_y())
+                .item(El::new().s(Width::growable()))
+                .item(crate::action_buttons::dock_toggle_button(app_config))
+                .item(El::new().s(Width::growable())),
         )
         .item(crate::action_buttons::clear_all_variables_button(
             selected_variables,
