@@ -16,7 +16,7 @@ use zoon::*;
 
 /// TreeView sync actors to handle bi-directional sync between FilePickerDomain and TreeView
 /// Replaces zoon::Task pattern with proper Actor+Relay architecture
-struct TreeViewSyncActors {
+pub struct TreeViewSyncActors {
     // Keep actors alive by storing them in the struct
     _domain_to_treeview_sync: Actor<()>,
     _treeview_to_domain_sync: Actor<()>,
@@ -24,13 +24,13 @@ struct TreeViewSyncActors {
 
 /// Selected files sync actors to handle bi-directional sync between FilePickerDomain and TreeView
 /// Similar to expanded directories sync but for file selections
-struct SelectedFilesSyncActors {
+pub struct SelectedFilesSyncActors {
     _domain_to_treeview_sync: Actor<()>,
     _treeview_to_domain_sync: Actor<()>,
 }
 
 impl TreeViewSyncActors {
-    fn new(
+    pub fn new(
         domain: crate::config::FilePickerDomain,
         external_expanded: zoon::Mutable<IndexSet<String>>,
     ) -> Self {
@@ -109,7 +109,7 @@ impl TreeViewSyncActors {
 }
 
 impl SelectedFilesSyncActors {
-    fn new(
+    pub fn new(
         domain: crate::config::FilePickerDomain,
         selected_files_mutable: zoon::MutableVec<String>,
     ) -> Self {
@@ -192,7 +192,7 @@ impl SelectedFilesSyncActors {
 }
 
 /// Initialize directories on first use and when restored from config
-fn initialize_directories_and_request_contents(
+pub fn initialize_directories_and_request_contents(
     file_picker_domain: &crate::config::FilePickerDomain,
 ) -> crate::dataflow::Actor<()> {
     file_picker_domain

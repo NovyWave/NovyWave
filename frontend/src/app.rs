@@ -1,10 +1,15 @@
 //! NovyWaveApp - Self-contained Actor+Relay Architecture
 
 use futures::StreamExt;
+use futures_signals::signal::SignalExt;
 use futures_signals::signal_vec::SignalVecExt;
 use gloo_timers::callback::Interval;
 use indexmap::IndexSet;
 use moonzoon_novyui::*;
+use moonzoon_novyui::components::treeview::{
+    tree_view, TreeViewItemData, TreeViewItemType, TreeViewSize, TreeViewVariant,
+};
+use zoon::RawHtmlEl;
 use zoon::events::{Click, KeyDown, KeyUp};
 use zoon::events_extra;
 use zoon::{EventOptions, *};
@@ -287,6 +292,9 @@ pub struct NovyWaveApp {
     /// Backend communication connection (Arc for cloning)
     pub connection: std::sync::Arc<SendWrapper<Connection<UpMsg, DownMsg>>>,
 
+    /// Dedicated file-picker style domain for workspace selection tree
+    pub workspace_picker_domain: crate::config::FilePickerDomain,
+
     /// Message routing actor (keeps relays alive)
     _connection_message_actor: ConnectionMessageActor,
     _workspace_event_actor: Actor<()>,
@@ -405,6 +413,20 @@ impl NovyWaveApp {
         // Initialize platform layer with the working connection
         let connection_arc = std::sync::Arc::new(connection);
         crate::platform::set_platform_connection(connection_arc.clone());
+
+        let (workspace_picker_save_relay, mut workspace_picker_save_stream) = relay();
+        let workspace_picker_domain = crate::config::FilePickerDomain::new(
+            IndexSet::new(),
+            0,
+            workspace_picker_save_relay.clone(),
+            connection_arc.clone(),
+            connection_message_actor.clone(),
+        )
+        .await;
+
+        Task::start(async move {
+            while workspace_picker_save_stream.next().await.is_some() {}
+        });
 
         // Create main config with proper connection and message routing
         let config = AppConfig::new(
@@ -552,6 +574,7 @@ impl NovyWaveApp {
             workspace_path,
             workspace_loading,
             default_workspace_path,
+            workspace_picker_domain,
             key_repeat_handles,
         }
     }
@@ -939,6 +962,7 @@ impl NovyWaveApp {
                 let tracked_files = self.tracked_files.clone();
                 let selected_variables = self.selected_variables.clone();
                 let default_workspace_path = self.default_workspace_path.clone();
+                let workspace_picker_domain = self.workspace_picker_domain.clone();
                 move || {
                     workspace_picker_dialog(
                         workspace_picker_visible.clone(),
@@ -947,6 +971,7 @@ impl NovyWaveApp {
                         tracked_files.clone(),
                         selected_variables.clone(),
                         default_workspace_path.clone(),
+                        workspace_picker_domain.clone(),
                     )
                 }
             }))
@@ -999,31 +1024,30 @@ impl NovyWaveApp {
 
         let path_signal = map_ref! {
             let current = self.workspace_path.signal_cloned(),
-            let default = self.default_workspace_path.signal_cloned() => {
+            let default = self.default_workspace_path.signal_cloned(),
+            let loading = self.workspace_loading.signal() => {
                 if let Some(path) = current.clone().or_else(|| default.clone()) {
-                    format!(
-                        "{}{}",
-                        path,
-                        if path.ends_with('/') {
-                            ".novywave"
-                        } else {
-                            "/.novywave"
-                        }
-                    )
+                    let suffix = if path.ends_with('/') { ".novywave" } else { "/.novywave" };
+                    format!("{path}{suffix}")
+                } else if *loading {
+                    String::from("Loading workspace...")
                 } else {
-                    String::from("(loading)")
+                    String::from("No workspace selected")
                 }
             }
         };
 
-        let workspace_input = input()
-            .size(InputSize::Small)
-            .value_signal(path_signal)
-            .readonly()
-            .build();
+        let workspace_input = El::new()
+            .s(Width::fill())
+            .child(
+                input()
+                    .size(InputSize::Small)
+                    .value_signal(path_signal)
+                    .readonly()
+                    .build(),
+            );
 
         let open_workspace_button = {
-            let workspace_loading = self.workspace_loading.clone();
             let workspace_picker_visible = self.workspace_picker_visible.clone();
 
             button()
@@ -1031,9 +1055,6 @@ impl NovyWaveApp {
                 .variant(ButtonVariant::Outline)
                 .size(ButtonSize::Small)
                 .on_press(move || {
-                    if workspace_loading.lock_ref().clone() {
-                        return;
-                    }
                     workspace_picker_visible.set(true);
                 })
                 .build()
@@ -1173,23 +1194,17 @@ fn workspace_picker_dialog(
     tracked_files: TrackedFiles,
     selected_variables: SelectedVariables,
     default_workspace_path: Mutable<Option<String>>,
+    workspace_picker_domain: crate::config::FilePickerDomain,
 ) -> impl Element {
-    use moonzoon_novyui::components::input::{InputSize, input};
     use moonzoon_novyui::tokens::color::{neutral_1, neutral_4, neutral_8, neutral_11};
     use moonzoon_novyui::tokens::theme::{Theme, theme};
 
-    let initial_value = workspace_path
-        .lock_ref()
-        .clone()
-        .or_else(|| default_workspace_path.lock_ref().clone())
-        .unwrap_or_default();
-    let input_state = Mutable::new(initial_value);
     let default_workspace_snapshot = default_workspace_path.lock_ref().clone();
 
     let open_disabled_signal = map_ref! {
         let loading = workspace_loading.signal(),
-        let value = input_state.signal_cloned() => {
-            *loading || value.trim().is_empty()
+        let selected = workspace_picker_domain.selected_files_vec_signal.signal_cloned() => {
+            *loading || selected.is_empty()
         }
     };
 
@@ -1199,21 +1214,21 @@ fn workspace_picker_dialog(
         let tracked_files = tracked_files.clone();
         let selected_variables = selected_variables.clone();
         let workspace_picker_visible = workspace_picker_visible.clone();
-        let input_state = input_state.clone();
+        let workspace_picker_domain = workspace_picker_domain.clone();
         move || {
             if workspace_loading.lock_ref().clone() {
                 return;
             }
-            let trimmed = input_state.lock_ref().trim().to_string();
-            if trimmed.is_empty() {
+            let selected_paths = workspace_picker_domain.selected_files_vec_signal.lock_ref();
+            let Some(path) = selected_paths.first().cloned() else {
                 return;
-            }
+            };
             NovyWaveApp::start_workspace_switch(
                 workspace_loading.clone(),
                 workspace_path.clone(),
                 tracked_files.clone(),
                 selected_variables.clone(),
-                trimmed,
+                path,
             );
             workspace_picker_visible.set(false);
         }
@@ -1277,14 +1292,21 @@ fn workspace_picker_dialog(
                 .s(Borders::all_signal(neutral_4().map(|color| {
                     Border::new().width(1).color(color)
                 })))
-                .s(Padding::all(20))
-                .s(Width::fill().max(520))
-                .s(Height::fill().max(420))
+                .s(Width::fill().max(700))
+                .s(Height::fill().max(640))
+                .s(
+                    Padding::new()
+                        .top(SPACING_6)
+                        .bottom(SPACING_6)
+                        .left(SPACING_6)
+                        .right(SPACING_6),
+                )
                 .update_raw_el(|raw_el| raw_el.event_handler(|event: Click| event.stop_propagation()))
                 .child(
                     Column::new()
                         .s(Height::fill())
                         .s(Gap::new().y(SPACING_16))
+                        .s(Padding::new().bottom(SPACING_6))
                         .item(
                             Column::new()
                                 .s(Gap::new().y(SPACING_2))
@@ -1296,147 +1318,188 @@ fn workspace_picker_dialog(
                                 .item(
                                     El::new()
                                         .s(Font::new().size(14).color_signal(neutral_8()))
-                                        .child("Select a directory containing a .novywave file or enter a path manually.")
+                                        .child("Pick a directory to use as your workspace. NovyWave will create the .novywave file automatically if it is missing.")
                                 )
                         )
                         .item({
-                            let default_button_section = default_workspace_snapshot.clone().map(
-                                |default_path| {
-                                    let workspace_loading = workspace_loading.clone();
-                                    let workspace_path = workspace_path.clone();
-                                    let tracked_files = tracked_files.clone();
-                                    let selected_variables = selected_variables.clone();
-                                    let workspace_picker_visible =
-                                        workspace_picker_visible.clone();
-                                    let input_state = input_state.clone();
-                                    let default_path_label = default_path.clone();
-                                    let default_path_for_disable = default_path.clone();
+                            let mut sections: Vec<RawHtmlEl> = Vec::new();
 
-                                    let default_disabled_signal = map_ref! {
-                                        let loading = workspace_loading.signal(),
-                                        let current = workspace_path.signal_cloned() => {
-                                            *loading || current.as_ref().map(|path| path == &default_path_for_disable).unwrap_or(false)
-                                        }
-                                    };
+                            if let Some(default_path) = default_workspace_snapshot.clone() {
+                                let workspace_loading = workspace_loading.clone();
+                                let workspace_path = workspace_path.clone();
+                                let tracked_files = tracked_files.clone();
+                                let selected_variables = selected_variables.clone();
+                                let workspace_picker_visible = workspace_picker_visible.clone();
+                                let workspace_picker_domain = workspace_picker_domain.clone();
+                                let default_path_for_disable = default_path.clone();
+                                let display_path = default_path.clone();
+                                let action_path = default_path.clone();
 
-                                    let default_button = button()
-                                        .label("Default Workspace")
-                                        .left_icon(IconName::House)
-                                        .variant(ButtonVariant::Outline)
-                                        .size(ButtonSize::Small)
-                                        .disabled_signal(default_disabled_signal)
-                                        .on_press({
-                                            let workspace_loading = workspace_loading.clone();
-                                            let workspace_path = workspace_path.clone();
-                                            let tracked_files = tracked_files.clone();
-                                            let selected_variables = selected_variables.clone();
-                                            let workspace_picker_visible =
-                                                workspace_picker_visible.clone();
-                                            let input_state = input_state.clone();
-                                            let default_path = default_path.clone();
-                                            move || {
+                                let default_disabled_signal = map_ref! {
+                                    let loading = workspace_loading.signal(),
+                                    let current = workspace_path.signal_cloned() => {
+                                        *loading || current.as_ref().map(|path| path == &default_path_for_disable).unwrap_or(false)
+                                    }
+                                };
+
+                                let default_section = Column::new()
+                                    .s(Gap::new().y(SPACING_2))
+                                    .item(
+                                        El::new()
+                                            .s(Font::new()
+                                                .size(13)
+                                                .weight(FontWeight::Medium)
+                                                .color_signal(neutral_11()))
+                                            .child("Default workspace"),
+                                    )
+                                    .item(
+                                        button()
+                                            .label("Use Default Workspace")
+                                            .left_icon(IconName::House)
+                                            .variant(ButtonVariant::Outline)
+                                            .size(ButtonSize::Small)
+                                            .disabled_signal(default_disabled_signal)
+                                            .on_press(move || {
                                                 if workspace_loading.lock_ref().clone() {
                                                     return;
                                                 }
-                                                input_state.set(default_path.clone());
+                                                workspace_picker_domain.clear_selection_relay.send(());
+                                                workspace_picker_domain.file_selected_relay.send(action_path.clone());
                                                 NovyWaveApp::start_workspace_switch(
                                                     workspace_loading.clone(),
                                                     workspace_path.clone(),
                                                     tracked_files.clone(),
                                                     selected_variables.clone(),
-                                                    default_path.clone(),
+                                                    action_path.clone(),
                                                 );
                                                 workspace_picker_visible.set(false);
-                                            }
-                                        })
-                                        .build();
+                                            })
+                                            .build()
+                                    )
+                                    .item(
+                                        El::new()
+                                            .s(Font::new()
+                                                .size(12)
+                                                .color_signal(neutral_8()))
+                                            .child(display_path),
+                                    )
+                                    .into_raw_el();
 
-                                    Column::new()
-                                        .s(Gap::new().y(SPACING_2))
-                                        .item(default_button)
-                                        .item(
-                                            El::new()
-                                                .s(Font::new()
-                                                    .size(12)
-                                                    .color_signal(neutral_8()))
-                                                .child(default_path_label),
-                                        )
-                                        .into_element()
-                                },
-                            );
+                                sections.push(default_section);
+                            }
 
-                            let quick_path_buttons = if quick_paths.is_empty() {
-                                None
-                            } else {
-                                Some(
-                                    Row::new()
-                                        .s(Gap::new().x(SPACING_4))
-                                        .items(quick_paths.into_iter().map(|path| {
-                                            let workspace_loading = workspace_loading.clone();
-                                            let workspace_path = workspace_path.clone();
-                                            let tracked_files = tracked_files.clone();
-                                            let selected_variables =
-                                                selected_variables.clone();
-                                            let workspace_picker_visible =
-                                                workspace_picker_visible.clone();
-                                            let input_state = input_state.clone();
+                            if !quick_paths.is_empty() {
+                                let workspace_loading = workspace_loading.clone();
+                                let workspace_path = workspace_path.clone();
+                                let tracked_files = tracked_files.clone();
+                                let selected_variables = selected_variables.clone();
+                                let workspace_picker_visible = workspace_picker_visible.clone();
+                                let workspace_picker_domain = workspace_picker_domain.clone();
 
-                                            button()
-                                                .label(path.clone())
-                                                .variant(ButtonVariant::Ghost)
-                                                .size(ButtonSize::Small)
-                                                .on_press(move || {
-                                                    if workspace_loading.lock_ref().clone() {
-                                                        return;
-                                                    }
-                                                    input_state.set(path.clone());
-                                                    NovyWaveApp::start_workspace_switch(
-                                                        workspace_loading.clone(),
-                                                        workspace_path.clone(),
-                                                        tracked_files.clone(),
-                                                        selected_variables.clone(),
-                                                        path.clone(),
-                                                    );
-                                                    workspace_picker_visible.set(false);
-                                                })
-                                                .build()
-                                                .into_element()
-                                        }))
-                                        .into_element(),
+                                let recent_section = Column::new()
+                                    .s(Gap::new().y(SPACING_2))
+                                    .item(
+                                        El::new()
+                                            .s(Font::new()
+                                                .size(13)
+                                                .weight(FontWeight::Medium)
+                                                .color_signal(neutral_11()))
+                                            .child("Recent workspaces"),
+                                    )
+                                    .item(
+                                        Column::new()
+                                            .s(Gap::new().y(SPACING_2))
+                                            .items(quick_paths.iter().cloned().map(|path| {
+                                                let workspace_loading = workspace_loading.clone();
+                                                let workspace_path = workspace_path.clone();
+                                                let tracked_files = tracked_files.clone();
+                                                let selected_variables = selected_variables.clone();
+                                                let workspace_picker_visible = workspace_picker_visible.clone();
+                                                let workspace_picker_domain = workspace_picker_domain.clone();
+
+                                                button()
+                                                    .label(path.clone())
+                                                    .variant(ButtonVariant::Ghost)
+                                                    .size(ButtonSize::Small)
+                                                    .on_press(move || {
+                                                        if workspace_loading.lock_ref().clone() {
+                                                            return;
+                                                        }
+                                                        workspace_picker_domain.clear_selection_relay.send(());
+                                                        workspace_picker_domain.file_selected_relay.send(path.clone());
+                                                        NovyWaveApp::start_workspace_switch(
+                                                            workspace_loading.clone(),
+                                                            workspace_path.clone(),
+                                                            tracked_files.clone(),
+                                                            selected_variables.clone(),
+                                                            path.clone(),
+                                                        );
+                                                        workspace_picker_visible.set(false);
+                                                    })
+                                                    .build()
+                                                    .into_element()
+                                            })),
+                                    )
+                                    .into_raw_el();
+
+                                sections.push(recent_section);
+                            }
+
+                            let selection_hint = El::new()
+                                .s(Font::new()
+                                    .size(12)
+                                    .color_signal(neutral_8()))
+                                .child_signal(
+                                    workspace_picker_domain
+                                        .selected_files_vec_signal
+                                        .signal_cloned()
+                                        .map(|paths| {
+                                            paths
+                                                .first()
+                                                .cloned()
+                                                .map(|path| format!("Selected: {path}"))
+                                                .unwrap_or_else(|| "Select a workspace folder from the tree.".to_string())
+                                        }),
                                 )
-                            };
+                                .into_raw_el();
+
+                            sections.push(selection_hint);
+
+                            let actions_element = Column::new()
+                                .s(Width::fill())
+                                .s(Gap::new().y(SPACING_6))
+                                .items(sections.into_iter())
+                                .into_raw_el();
 
                             Column::new()
-                                .s(Gap::new().y(SPACING_4))
-                                .item(default_button_section)
+                                .s(Height::fill())
+                                .s(Width::fill())
+                                .item(actions_element)
                                 .item(
-                                    input()
-                                        .size(InputSize::Medium)
-                                        .value_signal(input_state.signal_cloned())
-                                        .on_change({
-                                            let input_state = input_state.clone();
-                                            move |value| input_state.set(value)
-                                        })
-                                        .build(),
+                                    El::new()
+                                        .s(Height::exact(380))
+                                        .s(Width::fill())
+                                        .s(Scrollbars::y_and_clip_x())
+                                        .update_raw_el(|raw_el| raw_el.style("min-height", "0"))
+                                        .child(workspace_picker_tree(workspace_picker_domain.clone()))
                                 )
-                                .item(quick_path_buttons)
                         })
                         .item(
                             Row::new()
                                 .s(Width::fill())
                                 .s(Gap::new().x(SPACING_4))
                                 .item(El::new().s(Width::growable()))
-                                    .item(
-                                        button()
-                                            .label("Cancel")
-                                            .variant(ButtonVariant::Ghost)
-                                            .size(ButtonSize::Small)
-                                            .on_press({
-                                                let workspace_picker_visible = workspace_picker_visible.clone();
-                                                move || workspace_picker_visible.set(false)
-                                            })
-                                            .build()
-                                    )
+                                .item(
+                                    button()
+                                        .label("Cancel")
+                                        .variant(ButtonVariant::Ghost)
+                                        .size(ButtonSize::Small)
+                                        .on_press({
+                                            let workspace_picker_visible = workspace_picker_visible.clone();
+                                            move || workspace_picker_visible.set(false)
+                                        })
+                                        .build()
+                                )
                                 .item(
                                     button()
                                         .label("Open")
@@ -1449,4 +1512,122 @@ fn workspace_picker_dialog(
                         )
                 )
         )
+}
+
+fn workspace_picker_tree(
+    domain: crate::config::FilePickerDomain,
+) -> impl Element {
+    use crate::file_picker::{
+        SelectedFilesSyncActors, TreeViewSyncActors, initialize_directories_and_request_contents,
+    };
+    use indexmap::IndexSet;
+    use moonzoon_novyui::tokens::color::neutral_8;
+
+    let selected_vec = MutableVec::<String>::new();
+    let selected_sync = SelectedFilesSyncActors::new(domain.clone(), selected_vec.clone());
+    let initialization_actor = initialize_directories_and_request_contents(&domain);
+    let cache_signal = domain.directory_cache_signal();
+
+    El::new()
+        .s(Height::fill())
+        .s(Width::fill())
+        .after_remove(move |_| {
+            drop(selected_sync);
+            drop(initialization_actor);
+        })
+        .child_signal({
+            let domain_for_treeview = domain.clone();
+            let selected_vec_for_tree = selected_vec.clone();
+            cache_signal.map(move |cache| {
+                if cache.contains_key("/") {
+                    let tree_data = workspace_build_tree_data("/", &cache);
+                    let external_expanded = Mutable::new(IndexSet::<String>::new());
+                    let sync_actors =
+                        TreeViewSyncActors::new(domain_for_treeview.clone(), external_expanded.clone());
+
+                    El::new()
+                        .s(Height::fill())
+                        .s(Width::fill())
+                        .after_remove(move |_| {
+                            drop(sync_actors);
+                        })
+                        .child(
+                            tree_view()
+                                .data(tree_data)
+                                .size(TreeViewSize::Medium)
+                                .variant(TreeViewVariant::Basic)
+                                .show_icons(true)
+                                .show_checkboxes(false)
+                                .external_expanded(external_expanded)
+                                .external_selected_vec(selected_vec_for_tree.clone())
+                                .build()
+                                .into_raw(),
+                        )
+                        .into_element()
+                } else {
+                    El::new()
+                        .s(Padding::all(20))
+                        .s(Font::new().color_signal(neutral_8()).italic())
+                        .child("Loading directory contents...")
+                        .into_element()
+                }
+            })
+        })
+}
+
+fn workspace_build_tree_data(
+    root_path: &str,
+    cache: &HashMap<String, Vec<shared::FileSystemItem>>,
+) -> Vec<TreeViewItemData> {
+    cache
+        .get(root_path)
+        .map(|entries| {
+            entries
+                .iter()
+                .filter(|entry| entry.is_directory)
+                .map(|entry| workspace_build_directory_item(&entry.path, &entry.name, cache))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn workspace_build_directory_item(
+    path: &str,
+    name: &str,
+    cache: &HashMap<String, Vec<shared::FileSystemItem>>,
+) -> TreeViewItemData {
+
+    let mut item = TreeViewItemData::new(path.to_string(), name.to_string())
+        .icon("folder".to_string())
+        .item_type(TreeViewItemType::Folder);
+
+    if let Some(children) = cache.get(path) {
+        let mut child_items = Vec::new();
+        for child in children {
+            if child.is_directory {
+                child_items.push(workspace_build_directory_item(
+                    &child.path,
+                    &child.name,
+                    cache,
+                ));
+            }
+        }
+        if child_items.is_empty() {
+            item = item.with_children(vec![
+                TreeViewItemData::new(format!("{path}::empty"), "Empty".to_string())
+                    .disabled(true)
+                    .item_type(TreeViewItemType::Default),
+            ]);
+        } else {
+            item = item.with_children(child_items);
+        }
+    } else {
+        item = item.with_children(vec![
+            TreeViewItemData::new(format!("{path}::loading"), "Loading...".to_string())
+                .disabled(true)
+                .item_type(TreeViewItemType::Default),
+        ]);
+    }
+
+    item
 }
