@@ -1201,12 +1201,6 @@ fn workspace_picker_dialog(
 
     let default_workspace_snapshot = default_workspace_path.lock_ref().clone();
 
-    let open_disabled_signal = map_ref! {
-        let loading = workspace_loading.signal(),
-        let selected = workspace_picker_domain.selected_files_vec_signal.signal_cloned() => {
-            *loading || selected.is_empty()
-        }
-    };
 
     let open_action = {
         let workspace_loading = workspace_loading.clone();
@@ -1233,6 +1227,7 @@ fn workspace_picker_dialog(
             workspace_picker_visible.set(false);
         }
     };
+    let open_action = Rc::new(open_action);
 
     let quick_paths: Vec<String> = {
         let mut paths = Vec::new();
@@ -1294,18 +1289,14 @@ fn workspace_picker_dialog(
                 })))
                 .s(Width::fill().max(700))
                 .s(Height::fill().max(640))
-                .s(
-                    Padding::new()
-                        .top(SPACING_6)
-                        .bottom(SPACING_6)
-                        .left(SPACING_6)
-                        .right(SPACING_6),
-                )
+                .s(Padding::all(SPACING_6))
                 .update_raw_el(|raw_el| raw_el.event_handler(|event: Click| event.stop_propagation()))
                 .child(
                     Column::new()
                         .s(Height::fill())
                         .s(Gap::new().y(SPACING_16))
+                        .s(Padding::new().bottom(SPACING_4))
+                        .update_raw_el(|raw_el| raw_el.style("min-height", "0"))
                         .s(Padding::new().bottom(SPACING_6))
                         .item(
                             Column::new()
@@ -1321,194 +1312,220 @@ fn workspace_picker_dialog(
                                         .child("Pick a directory to use as your workspace. NovyWave will create the .novywave file automatically if it is missing.")
                                 )
                         )
-                        .item({
-                            let mut sections: Vec<RawHtmlEl> = Vec::new();
+                        .item(
+                            El::new()
+                                .s(Height::fill())
+                                .s(Width::fill())
+                                .s(Background::new().color_signal(neutral_1()))
+                                .s(Borders::all_signal(neutral_4().map(|color| {
+                                    Border::new().width(1).color(color)
+                                })))
+                                .s(RoundedCorners::all(4))
+                                .s(Padding::all(8))
+                                .update_raw_el(|raw_el| {
+                                    raw_el
+                                        .style("min-height", "0")
+                                        .style("overflow", "hidden")
+                                })
+                                .child({
+                                    let mut sections: Vec<RawHtmlEl> = Vec::new();
 
-                            if let Some(default_path) = default_workspace_snapshot.clone() {
-                                let workspace_loading = workspace_loading.clone();
-                                let workspace_path = workspace_path.clone();
-                                let tracked_files = tracked_files.clone();
-                                let selected_variables = selected_variables.clone();
-                                let workspace_picker_visible = workspace_picker_visible.clone();
-                                let workspace_picker_domain = workspace_picker_domain.clone();
-                                let default_path_for_disable = default_path.clone();
-                                let display_path = default_path.clone();
-                                let action_path = default_path.clone();
+                                    if let Some(default_path) = default_workspace_snapshot.clone() {
+                                        let workspace_loading = workspace_loading.clone();
+                                        let workspace_path = workspace_path.clone();
+                                        let tracked_files = tracked_files.clone();
+                                        let selected_variables = selected_variables.clone();
+                                        let workspace_picker_visible = workspace_picker_visible.clone();
+                                        let workspace_picker_domain = workspace_picker_domain.clone();
+                                        let default_path_for_disable = default_path.clone();
+                                        let display_path = default_path.clone();
+                                        let action_path = default_path.clone();
 
-                                let default_disabled_signal = map_ref! {
-                                    let loading = workspace_loading.signal(),
-                                    let current = workspace_path.signal_cloned() => {
-                                        *loading || current.as_ref().map(|path| path == &default_path_for_disable).unwrap_or(false)
-                                    }
-                                };
+                                        let default_disabled_signal = map_ref! {
+                                            let loading = workspace_loading.signal(),
+                                            let current = workspace_path.signal_cloned() => {
+                                                *loading || current.as_ref().map(|path| path == &default_path_for_disable).unwrap_or(false)
+                                            }
+                                        };
 
-                                let default_section = Column::new()
-                                    .s(Gap::new().y(SPACING_2))
-                                    .item(
-                                        El::new()
-                                            .s(Font::new()
-                                                .size(13)
-                                                .weight(FontWeight::Medium)
-                                                .color_signal(neutral_11()))
-                                            .child("Default workspace"),
-                                    )
-                                    .item(
-                                        button()
-                                            .label("Use Default Workspace")
-                                            .left_icon(IconName::House)
-                                            .variant(ButtonVariant::Outline)
-                                            .size(ButtonSize::Small)
-                                            .disabled_signal(default_disabled_signal)
-                                            .on_press(move || {
-                                                if workspace_loading.lock_ref().clone() {
-                                                    return;
-                                                }
-                                                workspace_picker_domain.clear_selection_relay.send(());
-                                                workspace_picker_domain.file_selected_relay.send(action_path.clone());
-                                                NovyWaveApp::start_workspace_switch(
-                                                    workspace_loading.clone(),
-                                                    workspace_path.clone(),
-                                                    tracked_files.clone(),
-                                                    selected_variables.clone(),
-                                                    action_path.clone(),
-                                                );
-                                                workspace_picker_visible.set(false);
-                                            })
-                                            .build()
-                                    )
-                                    .item(
-                                        El::new()
-                                            .s(Font::new()
-                                                .size(12)
-                                                .color_signal(neutral_8()))
-                                            .child(display_path),
-                                    )
-                                    .into_raw_el();
-
-                                sections.push(default_section);
-                            }
-
-                            if !quick_paths.is_empty() {
-                                let workspace_loading = workspace_loading.clone();
-                                let workspace_path = workspace_path.clone();
-                                let tracked_files = tracked_files.clone();
-                                let selected_variables = selected_variables.clone();
-                                let workspace_picker_visible = workspace_picker_visible.clone();
-                                let workspace_picker_domain = workspace_picker_domain.clone();
-
-                                let recent_section = Column::new()
-                                    .s(Gap::new().y(SPACING_2))
-                                    .item(
-                                        El::new()
-                                            .s(Font::new()
-                                                .size(13)
-                                                .weight(FontWeight::Medium)
-                                                .color_signal(neutral_11()))
-                                            .child("Recent workspaces"),
-                                    )
-                                    .item(
-                                        Column::new()
+                                        let default_section = Column::new()
                                             .s(Gap::new().y(SPACING_2))
-                                            .items(quick_paths.iter().cloned().map(|path| {
-                                                let workspace_loading = workspace_loading.clone();
-                                                let workspace_path = workspace_path.clone();
-                                                let tracked_files = tracked_files.clone();
-                                                let selected_variables = selected_variables.clone();
-                                                let workspace_picker_visible = workspace_picker_visible.clone();
-                                                let workspace_picker_domain = workspace_picker_domain.clone();
-
+                                            .item(
+                                                El::new()
+                                                    .s(Font::new()
+                                                        .size(13)
+                                                        .weight(FontWeight::Medium)
+                                                        .color_signal(neutral_11()))
+                                                    .child("Default workspace"),
+                                            )
+                                            .item(
                                                 button()
-                                                    .label(path.clone())
-                                                    .variant(ButtonVariant::Ghost)
+                                                    .label("Use Default Workspace")
+                                                    .left_icon(IconName::House)
+                                                    .variant(ButtonVariant::Outline)
                                                     .size(ButtonSize::Small)
+                                                    .disabled_signal(default_disabled_signal)
                                                     .on_press(move || {
                                                         if workspace_loading.lock_ref().clone() {
                                                             return;
                                                         }
                                                         workspace_picker_domain.clear_selection_relay.send(());
-                                                        workspace_picker_domain.file_selected_relay.send(path.clone());
+                                                        workspace_picker_domain.file_selected_relay.send(action_path.clone());
                                                         NovyWaveApp::start_workspace_switch(
                                                             workspace_loading.clone(),
                                                             workspace_path.clone(),
                                                             tracked_files.clone(),
                                                             selected_variables.clone(),
-                                                            path.clone(),
+                                                            action_path.clone(),
                                                         );
                                                         workspace_picker_visible.set(false);
                                                     })
                                                     .build()
-                                                    .into_element()
-                                            })),
-                                    )
-                                    .into_raw_el();
+                                            )
+                                            .item(
+                                                El::new()
+                                                    .s(Font::new()
+                                                        .size(12)
+                                                        .color_signal(neutral_8()))
+                                                    .child(display_path),
+                                            )
+                                            .into_raw_el();
 
-                                sections.push(recent_section);
-                            }
+                                        sections.push(default_section);
+                                    }
 
-                            let selection_hint = El::new()
-                                .s(Font::new()
-                                    .size(12)
-                                    .color_signal(neutral_8()))
-                                .child_signal(
-                                    workspace_picker_domain
-                                        .selected_files_vec_signal
-                                        .signal_cloned()
-                                        .map(|paths| {
-                                            paths
-                                                .first()
-                                                .cloned()
-                                                .map(|path| format!("Selected: {path}"))
-                                                .unwrap_or_else(|| "Select a workspace folder from the tree.".to_string())
-                                        }),
-                                )
-                                .into_raw_el();
+                                    if !quick_paths.is_empty() {
+                                        let workspace_loading = workspace_loading.clone();
+                                        let workspace_path = workspace_path.clone();
+                                        let tracked_files = tracked_files.clone();
+                                        let selected_variables = selected_variables.clone();
+                                        let workspace_picker_visible = workspace_picker_visible.clone();
+                                        let workspace_picker_domain = workspace_picker_domain.clone();
 
-                            sections.push(selection_hint);
+                                        let recent_section = Column::new()
+                                            .s(Gap::new().y(SPACING_2))
+                                            .item(
+                                                El::new()
+                                                    .s(Font::new()
+                                                        .size(13)
+                                                        .weight(FontWeight::Medium)
+                                                        .color_signal(neutral_11()))
+                                                    .child("Recent workspaces"),
+                                            )
+                                            .item(
+                                                Column::new()
+                                                    .s(Gap::new().y(SPACING_2))
+                                                    .items(quick_paths.iter().cloned().map(|path| {
+                                                        let workspace_loading = workspace_loading.clone();
+                                                        let workspace_path = workspace_path.clone();
+                                                        let tracked_files = tracked_files.clone();
+                                                        let selected_variables = selected_variables.clone();
+                                                        let workspace_picker_visible = workspace_picker_visible.clone();
+                                                        let workspace_picker_domain = workspace_picker_domain.clone();
 
-                            let actions_element = Column::new()
-                                .s(Width::fill())
-                                .s(Gap::new().y(SPACING_6))
-                                .items(sections.into_iter())
-                                .into_raw_el();
+                                                        button()
+                                                            .label(path.clone())
+                                                            .variant(ButtonVariant::Ghost)
+                                                            .size(ButtonSize::Small)
+                                                            .on_press(move || {
+                                                                if workspace_loading.lock_ref().clone() {
+                                                                    return;
+                                                                }
+                                                                workspace_picker_domain.clear_selection_relay.send(());
+                                                                workspace_picker_domain.file_selected_relay.send(path.clone());
+                                                                NovyWaveApp::start_workspace_switch(
+                                                                    workspace_loading.clone(),
+                                                                    workspace_path.clone(),
+                                                                    tracked_files.clone(),
+                                                                    selected_variables.clone(),
+                                                                    path.clone(),
+                                                                );
+                                                                workspace_picker_visible.set(false);
+                                                            })
+                                                            .build()
+                                                            .into_element()
+                                                    })),
+                                            )
+                                            .into_raw_el();
 
-                            Column::new()
-                                .s(Height::fill())
-                                .s(Width::fill())
-                                .item(actions_element)
-                                .item(
-                                    El::new()
-                                        .s(Height::exact(380))
+                                        sections.push(recent_section);
+                                    }
+
+                                    let selection_hint = El::new()
+                                        .s(Font::new()
+                                            .size(12)
+                                            .color_signal(neutral_8()))
+                                        .child_signal(
+                                            workspace_picker_domain
+                                                .selected_files_vec_signal
+                                                .signal_cloned()
+                                                .map(|paths| {
+                                                    paths
+                                                        .first()
+                                                        .cloned()
+                                                        .map(|path| format!("Selected: {path}"))
+                                                        .unwrap_or_else(|| "Select a workspace folder from the tree.".to_string())
+                                                }),
+                                        )
+                                        .into_raw_el();
+
+                                    sections.push(selection_hint);
+
+                                    Column::new()
+                                        .s(Height::fill())
                                         .s(Width::fill())
-                                        .s(Scrollbars::y_and_clip_x())
-                                        .update_raw_el(|raw_el| raw_el.style("min-height", "0"))
-                                        .child(workspace_picker_tree(workspace_picker_domain.clone()))
-                                )
-                        })
-                        .item(
-                            Row::new()
-                                .s(Width::fill())
-                                .s(Gap::new().x(SPACING_4))
-                                .item(El::new().s(Width::growable()))
-                                .item(
-                                    button()
-                                        .label("Cancel")
-                                        .variant(ButtonVariant::Ghost)
-                                        .size(ButtonSize::Small)
-                                        .on_press({
-                                            let workspace_picker_visible = workspace_picker_visible.clone();
-                                            move || workspace_picker_visible.set(false)
-                                        })
-                                        .build()
-                                )
-                                .item(
-                                    button()
-                                        .label("Open")
-                                        .variant(ButtonVariant::Primary)
-                                        .size(ButtonSize::Small)
-                                        .disabled_signal(open_disabled_signal)
-                                        .on_press(open_action)
-                                        .build()
-                                )
+                                        .s(Gap::new().y(SPACING_6))
+                                        .item(
+                                            Column::new()
+                                                .s(Width::fill())
+                                                .s(Gap::new().y(SPACING_6))
+                                                .items(sections.into_iter())
+                                        )
+                                        .item(
+                                            El::new()
+                                                .s(Height::fill())
+                                                .s(Width::fill())
+                                                .s(Scrollbars::both())
+                                                .update_raw_el(|raw_el| raw_el.style("min-height", "0"))
+                                                .child(workspace_picker_tree(workspace_picker_domain.clone()))
+                                        )
+                                        .item(
+                                            Row::new()
+                                                .s(Width::fill())
+                                                .s(Padding::new().top(SPACING_6))
+                                                .s(Gap::new().x(SPACING_4))
+                                                .item(El::new().s(Width::growable()))
+                                                .item(
+                                                    button()
+                                                        .label("Cancel")
+                                                        .variant(ButtonVariant::Ghost)
+                                                        .size(ButtonSize::Small)
+                                                        .on_press({
+                                                            let workspace_picker_visible = workspace_picker_visible.clone();
+                                                            move || workspace_picker_visible.set(false)
+                                                        })
+                                                        .build()
+                                                )
+                                                .item(
+                                                    button()
+                                                        .label("Open")
+                                                        .variant(ButtonVariant::Primary)
+                                                        .size(ButtonSize::Small)
+                                                        .disabled_signal(map_ref! {
+                                                            let loading = workspace_loading.signal(),
+                                                            let selected = workspace_picker_domain.selected_files_vec_signal.signal_cloned() => {
+                                                                *loading || selected.is_empty()
+                                                            }
+                                                        })
+                                                        .on_press({
+                                                            let open_action = open_action.clone();
+                                                            move || open_action()
+                                                        })
+                                                        .build()
+                                                )
+                                        )
+                                        .into_raw_el()
+                                })
                         )
                 )
         )
