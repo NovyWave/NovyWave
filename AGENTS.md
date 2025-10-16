@@ -34,3 +34,4 @@ Commits are brief sentence-case summaries (`Implement dock-responsive panel layo
 - Autoreload guardrails: snapshot the timeline viewport/cursor when a reload begins, suppress bounds-driven refits while reloads are active, and only restore the snapshot when the refreshed data arrives. This avoids zoom snaps even when multiple reloads overlap.
 - Do not use sleeps or other timing hacks for synchronization. Coordinate via explicit messages, state flags, or await points; "sleep and hope" is never an acceptable fix.
 - For modal/tree layouts, copy the pattern from `frontend/src/file_picker.rs`: wrap the sections and tree inside a bordered container with `Scrollbars::both()`, `Width::fill()`, and `min-height: 0`. When the tree starts pushing buttons out of view, re-read `.claude/extra/project/patterns.md` for the exact container recipe.
+- When writing plans or design docs, skip author/date boilerplate—version control already captures that metadata.
