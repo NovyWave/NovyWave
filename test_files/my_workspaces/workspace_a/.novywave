@@ -52,7 +52,7 @@ selected_variables_panel_value_column_width = 220.0
 cursor_position_ps = 1000000000000
 visible_range_start_ps = 0
 visible_range_end_ps = 1000000000000
-zoom_center_ps = 351480420248
+zoom_center_ps = 640878701051
 tooltip_enabled = false
 
 [plugins]
