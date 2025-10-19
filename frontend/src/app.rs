@@ -495,18 +495,57 @@ impl NovyWaveApp {
             let target_clone = workspace_picker_target.clone();
             let config_clone = config.clone();
             Actor::new((), async move |_state| {
-                let mut expanded_stream = domain_clone
+                let initial_expanded = domain_clone
                     .expanded_directories_actor
                     .state
-                    .signal_cloned()
-                    .to_stream()
-                    .fuse();
-                while let Some(expanded_set) = expanded_stream.next().await {
-                    zoon::println!("picker expanded_state {:?}", expanded_set);
-                    let expanded_vec = expanded_set.iter().cloned().collect::<Vec<String>>();
-                    config_clone.update_workspace_picker_tree_state(expanded_vec.clone());
-                    if let Some(path) = target_clone.lock_ref().clone() {
-                        config_clone.update_workspace_tree_state(&path, expanded_vec.clone());
+                    .lock_ref()
+                    .clone();
+                let initial_vec = initial_expanded.iter().cloned().collect::<Vec<String>>();
+                config_clone.update_workspace_picker_tree_state(initial_vec.clone());
+                if let Some(path) = target_clone.lock_ref().clone() {
+                    config_clone.update_workspace_tree_state(&path, initial_vec.clone());
+                }
+
+                let mut expanded_stream = domain_clone.directory_expanded_relay.subscribe().fuse();
+                let mut collapsed_stream =
+                    domain_clone.directory_collapsed_relay.subscribe().fuse();
+
+                loop {
+                    futures::select! {
+                        event = expanded_stream.next() => {
+                            match event {
+                                Some(_) => {
+                                    let current = domain_clone
+                                        .expanded_directories_actor
+                                        .state
+                                        .lock_ref()
+                                        .clone();
+                                    let expanded_vec = current.iter().cloned().collect::<Vec<String>>();
+                                    config_clone.update_workspace_picker_tree_state(expanded_vec.clone());
+                                    if let Some(path) = target_clone.lock_ref().clone() {
+                                        config_clone.update_workspace_tree_state(&path, expanded_vec.clone());
+                                    }
+                                }
+                                None => break,
+                            }
+                        }
+                        event = collapsed_stream.next() => {
+                            match event {
+                                Some(_) => {
+                                    let current = domain_clone
+                                        .expanded_directories_actor
+                                        .state
+                                        .lock_ref()
+                                        .clone();
+                                    let expanded_vec = current.iter().cloned().collect::<Vec<String>>();
+                                    config_clone.update_workspace_picker_tree_state(expanded_vec.clone());
+                                    if let Some(path) = target_clone.lock_ref().clone() {
+                                        config_clone.update_workspace_tree_state(&path, expanded_vec.clone());
+                                    }
+                                }
+                                None => break,
+                            }
+                        }
                     }
                 }
             })
@@ -517,17 +556,27 @@ impl NovyWaveApp {
             let target_clone = workspace_picker_target.clone();
             let config_clone = config.clone();
             Actor::new((), async move |_state| {
+                let initial_scroll = *domain_clone.scroll_position_actor.state.lock_ref();
+                config_clone.update_workspace_picker_scroll(initial_scroll as f64);
+                if let Some(path) = target_clone.lock_ref().clone() {
+                    config_clone.update_workspace_scroll(&path, initial_scroll as f64);
+                }
+
                 let mut scroll_stream = domain_clone
-                    .scroll_position_actor
-                    .state
-                    .signal_cloned()
-                    .to_stream()
+                    .scroll_position_changed_relay
+                    .subscribe()
                     .fuse();
-                while let Some(scroll) = scroll_stream.next().await {
-                    let scroll_value = scroll as f64;
-                    config_clone.update_workspace_picker_scroll(scroll_value);
-                    if let Some(path) = target_clone.lock_ref().clone() {
-                        config_clone.update_workspace_scroll(&path, scroll_value);
+
+                loop {
+                    match scroll_stream.next().await {
+                        Some(position) => {
+                            let scroll_value = position as f64;
+                            config_clone.update_workspace_picker_scroll(scroll_value);
+                            if let Some(path) = target_clone.lock_ref().clone() {
+                                config_clone.update_workspace_scroll(&path, scroll_value);
+                            }
+                        }
+                        None => break,
                     }
                 }
             })
