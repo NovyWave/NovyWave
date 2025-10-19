@@ -255,7 +255,8 @@ impl FilePickerDomain {
                         dir = expanded_stream.next() => {
                             if let Some(dir) = dir {
                                 let mut current = state.get_cloned();
-                                if current.insert(dir) {
+                                if current.insert(dir.clone()) {
+                                    zoon::println!("expanded {}", dir);
                                     state.set_neq(current);
                                     save_relay.send(()); // Trigger config save
                                 }
@@ -265,6 +266,7 @@ impl FilePickerDomain {
                             if let Some(dir) = dir {
                                 let mut current = state.get_cloned();
                                 if current.shift_remove(&dir) {
+                                    zoon::println!("collapsed {}", dir);
                                     state.set_neq(current);
                                     save_relay.send(()); // Trigger config save
                                 }
@@ -1767,6 +1769,26 @@ impl AppConfig {
             .entry(path.to_string())
             .or_insert_with(shared::WorkspaceTreeState::default);
         entry.scroll_top = scroll_top;
+        history.clamp_to_limit(shared::WORKSPACE_HISTORY_MAX_RECENTS);
+        self.workspace_history_state.set_neq(history.clone());
+        self.workspace_history_update_relay.send(history);
+    }
+
+    pub fn update_workspace_picker_tree_state(&self, expanded_paths: Vec<String>) {
+        let mut history = self.workspace_history_state.get_cloned();
+        let entry = history.picker_state_mut();
+        entry.expanded_paths = expanded_paths;
+        zoon::println!("picker expanded_paths updated {:?}", entry.expanded_paths);
+        history.clamp_to_limit(shared::WORKSPACE_HISTORY_MAX_RECENTS);
+        self.workspace_history_state.set_neq(history.clone());
+        self.workspace_history_update_relay.send(history);
+    }
+
+    pub fn update_workspace_picker_scroll(&self, scroll_top: f64) {
+        let mut history = self.workspace_history_state.get_cloned();
+        let entry = history.picker_state_mut();
+        entry.scroll_top = scroll_top;
+        zoon::println!("picker scroll updated {}", entry.scroll_top);
         history.clamp_to_limit(shared::WORKSPACE_HISTORY_MAX_RECENTS);
         self.workspace_history_state.set_neq(history.clone());
         self.workspace_history_update_relay.send(history);

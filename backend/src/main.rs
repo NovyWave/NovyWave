@@ -2118,6 +2118,10 @@ fn persist_global_section(global: &shared::GlobalSection) -> shared::GlobalSecti
 }
 
 fn handle_workspace_history_update(history: shared::WorkspaceHistory) {
+    println!(
+        "🔧 BACKEND: UpdateWorkspaceHistory recents={:?} picker={:?}",
+        history.recent_paths, history.picker_tree_state
+    );
     let global_section = shared::GlobalSection {
         workspace_history: history,
     };

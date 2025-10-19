@@ -497,13 +497,16 @@ impl NovyWaveApp {
             Actor::new((), async move |_state| {
                 let mut expanded_stream = domain_clone
                     .expanded_directories_actor
-                    .signal()
+                    .state
+                    .signal_cloned()
                     .to_stream()
                     .fuse();
                 while let Some(expanded_set) = expanded_stream.next().await {
+                    zoon::println!("picker expanded_state {:?}", expanded_set);
+                    let expanded_vec = expanded_set.iter().cloned().collect::<Vec<String>>();
+                    config_clone.update_workspace_picker_tree_state(expanded_vec.clone());
                     if let Some(path) = target_clone.lock_ref().clone() {
-                        let expanded_vec = expanded_set.iter().cloned().collect::<Vec<String>>();
-                        config_clone.update_workspace_tree_state(&path, expanded_vec);
+                        config_clone.update_workspace_tree_state(&path, expanded_vec.clone());
                     }
                 }
             })
@@ -516,12 +519,15 @@ impl NovyWaveApp {
             Actor::new((), async move |_state| {
                 let mut scroll_stream = domain_clone
                     .scroll_position_actor
-                    .signal()
+                    .state
+                    .signal_cloned()
                     .to_stream()
                     .fuse();
                 while let Some(scroll) = scroll_stream.next().await {
+                    let scroll_value = scroll as f64;
+                    config_clone.update_workspace_picker_scroll(scroll_value);
                     if let Some(path) = target_clone.lock_ref().clone() {
-                        config_clone.update_workspace_scroll(&path, scroll as f64);
+                        config_clone.update_workspace_scroll(&path, scroll_value);
                     }
                 }
             })
@@ -532,24 +538,19 @@ impl NovyWaveApp {
             let domain_clone = workspace_picker_domain.clone();
             let visible_atom = workspace_picker_visible.clone();
             let target_clone = workspace_picker_target.clone();
+            let config_clone = config.clone();
             Actor::new((), async move |_state| {
                 let mut visibility_stream = visible_atom.signal().to_stream().fuse();
                 while let Some(visible) = visibility_stream.next().await {
                     if visible {
                         let history = history_state.get_cloned();
-                        let target_path = target_clone
-                            .lock_ref()
-                            .clone()
-                            .or_else(|| history.last_selected.clone());
-                        if let Some(path) = target_path {
-                            Self::apply_workspace_history_state(&history, &path, &domain_clone);
-                            target_clone.set_neq(Some(path.clone()));
-                            domain_clone.clear_selection_relay.send(());
-                            domain_clone.file_selected_relay.send(path.clone());
-                        } else {
-                            target_clone.set_neq(None);
-                            domain_clone.clear_selection_relay.send(());
-                            Self::apply_workspace_history_state(&history, "", &domain_clone);
+                        Self::apply_workspace_picker_tree_state(&history, &domain_clone);
+                        target_clone.set_neq(None);
+                        domain_clone.clear_selection_relay.send(());
+                        if let Some(picker_state) = history.picker_tree_state.clone() {
+                            config_clone
+                                .update_workspace_picker_tree_state(picker_state.expanded_paths);
+                            config_clone.update_workspace_picker_scroll(picker_state.scroll_top);
                         }
                     }
                 }
@@ -1305,6 +1306,26 @@ impl NovyWaveApp {
         domain.scroll_position_actor.state.set_neq(scroll_value);
     }
 
+    fn apply_workspace_picker_tree_state(
+        history: &shared::WorkspaceHistory,
+        domain: &crate::config::FilePickerDomain,
+    ) {
+        if let Some(tree_state) = history.picker_tree_state.as_ref() {
+            let mut expanded_set = IndexSet::new();
+            for entry in &tree_state.expanded_paths {
+                expanded_set.insert(entry.clone());
+            }
+            let scroll_clamped = tree_state.scroll_top.max(0.0).round();
+            let scroll_value = scroll_clamped.clamp(0.0, i32::MAX as f64) as i32;
+
+            domain
+                .expanded_directories_actor
+                .state
+                .set_neq(expanded_set);
+            domain.scroll_position_actor.state.set_neq(scroll_value);
+        }
+    }
+
     fn toast_notifications_container(&self) -> impl Element {
         crate::error_ui::toast_notifications_container(self.config.clone())
     }
@@ -1409,23 +1430,6 @@ fn workspace_picker_dialog(
         }
     };
     let open_action = Rc::new(open_action);
-
-    let fallback_recents_vec: Vec<String> = {
-        let mut paths = Vec::new();
-        for candidate in [
-            "test_files/my_workspaces/workspace_a",
-            "test_files/my_workspaces/workspace_b",
-        ] {
-            let is_default = default_workspace_snapshot
-                .as_ref()
-                .map(|default| default == candidate)
-                .unwrap_or(false);
-            if !is_default {
-                paths.push(candidate.to_string());
-            }
-        }
-        paths
-    };
 
     El::new()
         .s(Background::new().color_signal(theme().map(|t| match t {
@@ -1591,7 +1595,6 @@ fn workspace_picker_dialog(
                                 }
                             }
 
-                            let fallback_recents: Rc<Vec<String>> = Rc::new(fallback_recents_vec);
                             let recent_section = Column::new()
                                 .s(Width::fill())
                                 .s(Background::new().color_signal(neutral_2()))
@@ -1608,7 +1611,6 @@ fn workspace_picker_dialog(
                                 )
                                 .item(
                                     El::new().child_signal({
-                                        let fallback_recents = fallback_recents.clone();
                                         let workspace_loading = workspace_loading.clone();
                                         let workspace_path = workspace_path.clone();
                                         let tracked_files = tracked_files.clone();
@@ -1617,20 +1619,15 @@ fn workspace_picker_dialog(
                                         let workspace_picker_domain = workspace_picker_domain.clone();
                                         let workspace_picker_target = workspace_picker_target.clone();
                                         let app_config = app_config.clone();
+                                        let default_workspace_snapshot = default_workspace_snapshot.clone();
                                         app_config
                                             .workspace_history_state
                                             .signal_cloned()
                                             .map(move |history| {
-                                                let recents: Rc<Vec<String>> =
-                                                    if history.recent_paths.is_empty() {
-                                                        fallback_recents.clone()
-                                                    } else {
-                                                        Rc::new(history.recent_paths.clone())
-                                                    };
-
                                                 let current_workspace = workspace_path.lock_ref().clone();
 
-                                                let filtered: Vec<String> = recents
+                                                let filtered: Vec<String> = history
+                                                    .recent_paths
                                                     .iter()
                                                     .filter(|path| {
                                                         let matches_current = current_workspace
@@ -1972,7 +1969,7 @@ fn workspace_picker_tree(domain: crate::config::FilePickerDomain) -> impl Elemen
                                 .size(TreeViewSize::Medium)
                                 .variant(TreeViewVariant::Basic)
                                 .show_icons(true)
-                                .show_checkboxes(false)
+                                .show_checkboxes(true)
                                 .external_expanded(external_expanded)
                                 .external_selected_vec(selected_vec_for_tree.clone())
                                 .build()
@@ -2013,7 +2010,9 @@ fn workspace_build_directory_item(
 ) -> TreeViewItemData {
     let mut item = TreeViewItemData::new(path.to_string(), name.to_string())
         .icon("folder".to_string())
-        .item_type(TreeViewItemType::Folder);
+        .item_type(TreeViewItemType::File)
+        .has_expandable_content(true)
+        .is_waveform_file(true);
 
     if let Some(children) = cache.get(path) {
         let mut child_items = Vec::new();

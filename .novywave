@@ -70,10 +70,11 @@ zoom_center_ps = 143982808022923
 tooltip_enabled = false
 
 [global.workspace_history]
-last_selected = "/home/martinkavik/repos/NovyWave"
+last_selected = "/home/martinkavik/repos/NovyWave/test_files/my_workspaces/workspace_b"
 recent_paths = [
-    "/home/martinkavik/repos/NovyWave",
+    "/home/martinkavik/repos/NovyWave/test_files/my_workspaces/workspace_b",
     "/home/martinkavik/repos/NovyWave/test_files/my_workspaces/workspace_a",
+    "/home/martinkavik/repos/NovyWave",
 ]
 
 [plugins]

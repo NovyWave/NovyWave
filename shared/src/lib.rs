@@ -1280,6 +1280,8 @@ pub struct WorkspaceHistory {
     pub recent_paths: Vec<String>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub tree_state: HashMap<String, WorkspaceTreeState>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picker_tree_state: Option<WorkspaceTreeState>,
 }
 
 impl Default for WorkspaceHistory {
@@ -1288,6 +1290,7 @@ impl Default for WorkspaceHistory {
             last_selected: None,
             recent_paths: Vec::new(),
             tree_state: HashMap::new(),
+            picker_tree_state: None,
         }
     }
 }
@@ -1340,6 +1343,11 @@ impl WorkspaceHistory {
         self.recent_paths.retain(|entry| entry != path);
         self.recent_paths.insert(0, path.to_string());
         self.clamp_to_limit(limit);
+    }
+
+    pub fn picker_state_mut(&mut self) -> &mut WorkspaceTreeState {
+        self.picker_tree_state
+            .get_or_insert_with(WorkspaceTreeState::default)
     }
 }
 
