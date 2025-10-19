@@ -41,6 +41,9 @@ In production builds, configuration is stored in Tauri's default user storage lo
 ### Per-Project Configuration
 Like Cargo.toml for Rust projects, NovyWave supports per-project configuration. When a `.novywave` file exists in the current working directory, it takes precedence over the global user configuration.
 
+### Global Workspace History
+Open Workspace dialog state (recent workspaces, last selection, tree view scroll and expansion data) is persisted separately from per-project config in a `.novywave_global` file. During development this file lives alongside the repo; in production it is stored in the same platform-specific directory as the main app config (e.g., `~/.config/novywave/.novywave_global` on Linux). The history is capped at three recent entries and replaces the legacy `recent_workspaces.json` store.
+
 ## Configuration Format
 
 The configuration is stored as TOML format with the following structure:
@@ -90,6 +93,20 @@ visible_range_end_ns = 250000000
 [dialogs.file_picker]
 scroll_position = 0
 expanded_directories = ["/home/user", "/home/user/projects"]
+
+[global.workspace_history]
+last_selected = "/home/user/repos/NovyWave"
+recent_paths = [
+  "/home/user/repos/NovyWave",
+  "/home/user/projects/example"
+]
+
+[global.workspace_history.tree_state."/home/user/repos/NovyWave"]
+scroll_top = 128.0
+expanded_paths = [
+  "/home/user/repos/NovyWave/hardware",
+  "/home/user/repos/NovyWave/test_files"
+]
 
 [errors]
 toast_auto_dismiss_ms = 5000

@@ -24,6 +24,7 @@ use shared::{DownMsg, SignalStatistics, SignalValue, UnifiedSignalData, UpMsg};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
+use wasm_bindgen::{JsCast, closure::Closure};
 
 /// Event payload emitted for each `UnifiedSignalResponse` down message.
 #[derive(Clone, Debug)]
@@ -38,6 +39,7 @@ pub struct UnifiedSignalResponseEvent {
 #[derive(Clone, Debug)]
 pub struct WorkspaceLoadedEvent {
     pub root: String,
+    pub default_root: String,
     pub config: shared::AppConfig,
 }
 
@@ -143,9 +145,16 @@ impl ConnectionMessageActor {
                             DownMsg::ConfigLoaded(config) => {
                                 config_loaded_relay_clone.send(config);
                             }
-                            DownMsg::WorkspaceLoaded { root, config } => {
-                                workspace_loaded_relay_clone
-                                    .send(WorkspaceLoadedEvent { root, config });
+                            DownMsg::WorkspaceLoaded {
+                                root,
+                                default_root,
+                                config,
+                            } => {
+                                workspace_loaded_relay_clone.send(WorkspaceLoadedEvent {
+                                    root,
+                                    default_root,
+                                    config,
+                                });
                             }
                             DownMsg::ConfigError(error) => {
                                 config_error_relay_clone.send(error);
@@ -294,10 +303,12 @@ pub struct NovyWaveApp {
 
     /// Dedicated file-picker style domain for workspace selection tree
     pub workspace_picker_domain: crate::config::FilePickerDomain,
+    pub workspace_picker_target: Mutable<Option<String>>,
 
     /// Message routing actor (keeps relays alive)
     _connection_message_actor: ConnectionMessageActor,
     _workspace_event_actor: Actor<()>,
+    _config_loaded_actor: Actor<()>,
     _config_error_actor: Actor<()>,
 
     /// Synchronizes Files panel scope selection into SelectedVariables domain
@@ -305,6 +316,10 @@ pub struct NovyWaveApp {
 
     /// Bridges connection message relays into the timeline domain
     _timeline_message_bridge_actor: Actor<()>,
+    _workspace_history_selection_actor: Actor<()>,
+    _workspace_history_expanded_actor: Actor<()>,
+    _workspace_history_scroll_actor: Actor<()>,
+    _workspace_history_restore_actor: Actor<()>,
 
     // === UI STATE (Atom pattern for local UI concerns) ===
     /// File picker dialog visibility
@@ -392,9 +407,17 @@ impl NovyWaveApp {
                 while let Some(event) = workspace_stream.next().await {
                     workspace_loading.set(false);
                     workspace_path.set(Some(event.root.clone()));
-                    if default_workspace_path.lock_ref().is_none() {
-                        default_workspace_path.set(Some(event.root.clone()));
-                    }
+                    default_workspace_path.set(Some(event.default_root.clone()));
+                }
+            })
+        };
+
+        let config_loaded_actor = {
+            let mut config_stream = connection_message_actor.config_loaded_relay.subscribe();
+            let workspace_loading = workspace_loading.clone();
+            Actor::new((), async move |_state| {
+                while config_stream.next().await.is_some() {
+                    workspace_loading.set(false);
                 }
             })
         };
@@ -434,6 +457,104 @@ impl NovyWaveApp {
             selected_variables.clone(),
         )
         .await;
+
+        let initial_history = config.workspace_history_state.get_cloned();
+        let workspace_picker_target = Mutable::new(initial_history.last_selected.clone());
+
+        let workspace_history_selection_actor = {
+            let selected_signal = workspace_picker_domain.selected_files_vec_signal.clone();
+            let config_clone = config.clone();
+            let domain_clone = workspace_picker_domain.clone();
+            let target_clone = workspace_picker_target.clone();
+            Actor::new((), async move |_state| {
+                let mut selection_stream = selected_signal.signal_cloned().to_stream().fuse();
+                while let Some(selection) = selection_stream.next().await {
+                    if let Some(path) = selection.first().cloned() {
+                        target_clone.set_neq(Some(path.clone()));
+                        config_clone.record_workspace_selection(&path);
+
+                        let expanded_vec = domain_clone
+                            .expanded_directories_actor
+                            .state
+                            .lock_ref()
+                            .iter()
+                            .cloned()
+                            .collect::<Vec<String>>();
+                        config_clone.update_workspace_tree_state(&path, expanded_vec);
+
+                        let scroll_current =
+                            *domain_clone.scroll_position_actor.state.lock_ref() as f64;
+                        config_clone.update_workspace_scroll(&path, scroll_current);
+                    }
+                }
+            })
+        };
+
+        let workspace_history_expanded_actor = {
+            let domain_clone = workspace_picker_domain.clone();
+            let target_clone = workspace_picker_target.clone();
+            let config_clone = config.clone();
+            Actor::new((), async move |_state| {
+                let mut expanded_stream = domain_clone
+                    .expanded_directories_actor
+                    .signal()
+                    .to_stream()
+                    .fuse();
+                while let Some(expanded_set) = expanded_stream.next().await {
+                    if let Some(path) = target_clone.lock_ref().clone() {
+                        let expanded_vec = expanded_set.iter().cloned().collect::<Vec<String>>();
+                        config_clone.update_workspace_tree_state(&path, expanded_vec);
+                    }
+                }
+            })
+        };
+
+        let workspace_history_scroll_actor = {
+            let domain_clone = workspace_picker_domain.clone();
+            let target_clone = workspace_picker_target.clone();
+            let config_clone = config.clone();
+            Actor::new((), async move |_state| {
+                let mut scroll_stream = domain_clone
+                    .scroll_position_actor
+                    .signal()
+                    .to_stream()
+                    .fuse();
+                while let Some(scroll) = scroll_stream.next().await {
+                    if let Some(path) = target_clone.lock_ref().clone() {
+                        config_clone.update_workspace_scroll(&path, scroll as f64);
+                    }
+                }
+            })
+        };
+
+        let workspace_history_restore_actor = {
+            let history_state = config.workspace_history_state.clone();
+            let domain_clone = workspace_picker_domain.clone();
+            let visible_atom = workspace_picker_visible.clone();
+            let target_clone = workspace_picker_target.clone();
+            Actor::new((), async move |_state| {
+                let mut visibility_stream = visible_atom.signal().to_stream().fuse();
+                while let Some(visible) = visibility_stream.next().await {
+                    if visible {
+                        let history = history_state.get_cloned();
+                        let target_path = target_clone
+                            .lock_ref()
+                            .clone()
+                            .or_else(|| history.last_selected.clone());
+                        if let Some(path) = target_path {
+                            Self::apply_workspace_history_state(&history, &path, &domain_clone);
+                            target_clone.set_neq(Some(path.clone()));
+                            domain_clone.clear_selection_relay.send(());
+                            domain_clone.file_selected_relay.send(path.clone());
+                        } else {
+                            target_clone.set_neq(None);
+                            domain_clone.clear_selection_relay.send(());
+                            Self::apply_workspace_history_state(&history, "", &domain_clone);
+                        }
+                    }
+                }
+            })
+        };
 
         // Create MaximumTimelineRange standalone actor for centralized range computation
         let maximum_timeline_range = crate::visualizer::timeline::MaximumTimelineRange::new(
@@ -564,6 +685,7 @@ impl NovyWaveApp {
             connection: connection_arc,
             _connection_message_actor: connection_message_actor,
             _workspace_event_actor: workspace_event_actor,
+            _config_loaded_actor: config_loaded_actor,
             _config_error_actor: config_error_actor,
             _scope_selection_sync_actor: scope_selection_sync_actor,
             _timeline_message_bridge_actor: timeline_message_bridge_actor,
@@ -573,7 +695,12 @@ impl NovyWaveApp {
             workspace_loading,
             default_workspace_path,
             workspace_picker_domain,
+            workspace_picker_target,
             key_repeat_handles,
+            _workspace_history_selection_actor: workspace_history_selection_actor,
+            _workspace_history_expanded_actor: workspace_history_expanded_actor,
+            _workspace_history_scroll_actor: workspace_history_scroll_actor,
+            _workspace_history_restore_actor: workspace_history_restore_actor,
         }
     }
 
@@ -961,6 +1088,8 @@ impl NovyWaveApp {
                 let selected_variables = self.selected_variables.clone();
                 let default_workspace_path = self.default_workspace_path.clone();
                 let workspace_picker_domain = self.workspace_picker_domain.clone();
+                let config = self.config.clone();
+                let workspace_picker_target = self.workspace_picker_target.clone();
                 move || {
                     workspace_picker_dialog(
                         workspace_picker_visible.clone(),
@@ -969,6 +1098,8 @@ impl NovyWaveApp {
                         tracked_files.clone(),
                         selected_variables.clone(),
                         default_workspace_path.clone(),
+                        config.clone(),
+                        workspace_picker_target.clone(),
                         workspace_picker_domain.clone(),
                     )
                 }
@@ -1024,9 +1155,10 @@ impl NovyWaveApp {
             let current = self.workspace_path.signal_cloned(),
             let default = self.default_workspace_path.signal_cloned(),
             let loading = self.workspace_loading.signal() => {
-                if let Some(path) = current.clone().or_else(|| default.clone()) {
-                    let suffix = if path.ends_with('/') { ".novywave" } else { "/.novywave" };
-                    format!("{path}{suffix}")
+                if let Some(path) = current.clone() {
+                    path
+                } else if let Some(default_path) = default.clone() {
+                    default_path
                 } else if *loading {
                     String::from("Loading workspace...")
                 } else {
@@ -1056,13 +1188,21 @@ impl NovyWaveApp {
                 .build()
         };
 
-        let loading_indicator =
-            El::new().child_signal(self.workspace_loading.signal().map_true(|| {
-                El::new()
-                    .s(Font::new().size(12).color_signal(neutral_8()))
-                    .child("Loading workspace…")
-                    .into_element()
-            }));
+        let loading_indicator = El::new().child_signal(map_ref! {
+            let loading = self.workspace_loading.signal(),
+            let current = self.workspace_path.signal_cloned() => {
+                if *loading && current.is_none() {
+                    Some(
+                        El::new()
+                            .s(Font::new().size(12).color_signal(neutral_8()))
+                            .child("Loading workspace…")
+                            .into_element()
+                    )
+                } else {
+                    None
+                }
+            }
+        });
 
         Row::new()
             .s(Width::fill())
@@ -1103,8 +1243,19 @@ impl NovyWaveApp {
             return;
         }
 
+        let is_same_path = workspace_path
+            .lock_ref()
+            .as_ref()
+            .map(|current| current == &trimmed)
+            .unwrap_or(false);
+
+        if is_same_path {
+            workspace_loading.set(false);
+            return;
+        }
+
         workspace_loading.set(true);
-        workspace_path.set(None);
+        workspace_path.set(Some(trimmed.clone()));
         tracked_files.all_files_cleared_relay.send(());
         selected_variables.selection_cleared_relay.send(());
 
@@ -1127,6 +1278,31 @@ impl NovyWaveApp {
                 }
             }
         });
+    }
+
+    fn apply_workspace_history_state(
+        history: &shared::WorkspaceHistory,
+        path: &str,
+        domain: &crate::config::FilePickerDomain,
+    ) {
+        let mut expanded_set = IndexSet::new();
+        let mut scroll_value: i32 = 0;
+
+        if !path.is_empty() {
+            if let Some(tree_state) = history.tree_state.get(path) {
+                for entry in &tree_state.expanded_paths {
+                    expanded_set.insert(entry.clone());
+                }
+                let scroll_clamped = tree_state.scroll_top.max(0.0).round();
+                scroll_value = scroll_clamped.clamp(0.0, i32::MAX as f64) as i32;
+            }
+        }
+
+        domain
+            .expanded_directories_actor
+            .state
+            .set_neq(expanded_set);
+        domain.scroll_position_actor.state.set_neq(scroll_value);
     }
 
     fn toast_notifications_container(&self) -> impl Element {
@@ -1186,6 +1362,8 @@ fn workspace_picker_dialog(
     tracked_files: TrackedFiles,
     selected_variables: SelectedVariables,
     default_workspace_path: Mutable<Option<String>>,
+    app_config: AppConfig,
+    workspace_picker_target: Mutable<Option<String>>,
     workspace_picker_domain: crate::config::FilePickerDomain,
 ) -> impl Element {
     use moonzoon_novyui::tokens::color::{
@@ -1202,6 +1380,8 @@ fn workspace_picker_dialog(
         let selected_variables = selected_variables.clone();
         let workspace_picker_visible = workspace_picker_visible.clone();
         let workspace_picker_domain = workspace_picker_domain.clone();
+        let app_config_for_open = app_config.clone();
+        let workspace_picker_target_for_open = workspace_picker_target.clone();
         move || {
             if workspace_loading.lock_ref().clone() {
                 return;
@@ -1210,6 +1390,14 @@ fn workspace_picker_dialog(
             let Some(path) = selected_paths.first().cloned() else {
                 return;
             };
+            app_config_for_open.record_workspace_selection(&path);
+            workspace_picker_target_for_open.set_neq(Some(path.clone()));
+            let history_snapshot = app_config_for_open.workspace_history_state.get_cloned();
+            NovyWaveApp::apply_workspace_history_state(
+                &history_snapshot,
+                &path,
+                &workspace_picker_domain,
+            );
             NovyWaveApp::start_workspace_switch(
                 workspace_loading.clone(),
                 workspace_path.clone(),
@@ -1222,7 +1410,7 @@ fn workspace_picker_dialog(
     };
     let open_action = Rc::new(open_action);
 
-    let quick_paths: Vec<String> = {
+    let fallback_recents_vec: Vec<String> = {
         let mut paths = Vec::new();
         for candidate in [
             "test_files/my_workspaces/workspace_a",
@@ -1317,6 +1505,8 @@ fn workspace_picker_dialog(
                                 let selected_variables = selected_variables.clone();
                                 let workspace_picker_visible = workspace_picker_visible.clone();
                                 let workspace_picker_domain = workspace_picker_domain.clone();
+                                let app_config = app_config.clone();
+                                let workspace_picker_target = workspace_picker_target.clone();
                                 let default_path_for_disable = default_path.clone();
                                 let display_path = default_path.clone();
                                 let action_path = default_path.clone();
@@ -1328,12 +1518,14 @@ fn workspace_picker_dialog(
                                     .unwrap_or(true);
 
                                 if should_show_default_section {
-                                    let default_disabled_signal = map_ref! {
-                                        let loading = workspace_loading.signal(),
-                                        let current = workspace_path.signal_cloned() => {
-                                            *loading || current.as_ref().map(|path| path == &default_path_for_disable).unwrap_or(false)
-                                        }
-                                    };
+                                    let default_disabled_signal = workspace_path
+                                        .signal_cloned()
+                                        .map(move |current| {
+                                            current
+                                                .as_ref()
+                                                .map(|path| path == &default_path_for_disable)
+                                                .unwrap_or(false)
+                                        });
 
                                     let default_section = Column::new()
                                         .s(Width::fill())
@@ -1361,9 +1553,19 @@ fn workspace_picker_dialog(
                                                         .size(ButtonSize::Small)
                                                         .disabled_signal(default_disabled_signal)
                                                         .on_press(move || {
-                                                            if workspace_loading.lock_ref().clone() {
+                                                            if workspace_path
+                                                                .lock_ref()
+                                                                .as_ref()
+                                                                .map(|current| current == &action_path)
+                                                                .unwrap_or(false)
+                                                            {
+                                                                workspace_picker_visible.set(false);
                                                                 return;
                                                             }
+                                                            app_config.record_workspace_selection(&action_path);
+                                                            workspace_picker_target.set_neq(Some(action_path.clone()));
+                                                            let history = app_config.workspace_history_state.get_cloned();
+                                                            NovyWaveApp::apply_workspace_history_state(&history, &action_path, &workspace_picker_domain);
                                                             workspace_picker_domain.clear_selection_relay.send(());
                                                             workspace_picker_domain.file_selected_relay.send(action_path.clone());
                                                             NovyWaveApp::start_workspace_switch(
@@ -1389,64 +1591,167 @@ fn workspace_picker_dialog(
                                 }
                             }
 
-                            if !quick_paths.is_empty() {
-                                let workspace_loading = workspace_loading.clone();
-                                let workspace_path = workspace_path.clone();
-                                let tracked_files = tracked_files.clone();
-                                let selected_variables = selected_variables.clone();
-                                let workspace_picker_visible = workspace_picker_visible.clone();
-                                let workspace_picker_domain = workspace_picker_domain.clone();
+                            let fallback_recents: Rc<Vec<String>> = Rc::new(fallback_recents_vec);
+                            let recent_section = Column::new()
+                                .s(Width::fill())
+                                .s(Background::new().color_signal(neutral_2()))
+                                .s(RoundedCorners::all(6))
+                                .s(Padding::new().x(SPACING_8).top(SPACING_4).bottom(SPACING_4))
+                                .s(Gap::new().y(SPACING_2))
+                                .item(
+                                    El::new()
+                                        .s(Font::new()
+                                            .size(13)
+                                            .weight(FontWeight::Medium)
+                                            .color_signal(neutral_11()))
+                                        .child("Recent workspaces"),
+                                )
+                                .item(
+                                    El::new().child_signal({
+                                        let fallback_recents = fallback_recents.clone();
+                                        let workspace_loading = workspace_loading.clone();
+                                        let workspace_path = workspace_path.clone();
+                                        let tracked_files = tracked_files.clone();
+                                        let selected_variables = selected_variables.clone();
+                                        let workspace_picker_visible = workspace_picker_visible.clone();
+                                        let workspace_picker_domain = workspace_picker_domain.clone();
+                                        let workspace_picker_target = workspace_picker_target.clone();
+                                        let app_config = app_config.clone();
+                                        app_config
+                                            .workspace_history_state
+                                            .signal_cloned()
+                                            .map(move |history| {
+                                                let recents: Rc<Vec<String>> =
+                                                    if history.recent_paths.is_empty() {
+                                                        fallback_recents.clone()
+                                                    } else {
+                                                        Rc::new(history.recent_paths.clone())
+                                                    };
 
-                                    let recent_section = Column::new()
-                                        .s(Width::fill())
-                                        .s(Background::new().color_signal(neutral_2()))
-                                        .s(RoundedCorners::all(6))
-                                        .s(Padding::new().x(SPACING_8).top(SPACING_4).bottom(SPACING_4))
-                                        .s(Gap::new().y(SPACING_2))
-                                    .item(
-                                        El::new()
-                                            .s(Font::new()
-                                                .size(13)
-                                                .weight(FontWeight::Medium)
-                                                .color_signal(neutral_11()))
-                                            .child("Recent workspaces"),
-                                    )
-                                    .item(
-                                        Column::new()
-                                            .s(Gap::new().y(SPACING_2))
-                                            .items(quick_paths.iter().cloned().map(|path| {
-                                                let workspace_loading = workspace_loading.clone();
-                                                let workspace_path = workspace_path.clone();
-                                                let tracked_files = tracked_files.clone();
-                                                let selected_variables = selected_variables.clone();
-                                                let workspace_picker_visible = workspace_picker_visible.clone();
-                                                let workspace_picker_domain = workspace_picker_domain.clone();
+                                                Column::new()
+                                                    .s(Gap::new().y(SPACING_2))
+                                                    .items(recents.iter().map(|path| {
+                                                        let path = path.clone();
+                                                        let workspace_loading = workspace_loading.clone();
+                                                        let workspace_path = workspace_path.clone();
+                                                        let tracked_files = tracked_files.clone();
+                                                        let selected_variables = selected_variables.clone();
+                                                        let workspace_picker_visible = workspace_picker_visible.clone();
+                                                        let workspace_picker_domain = workspace_picker_domain.clone();
+                                                        let workspace_picker_target = workspace_picker_target.clone();
+                                                        let app_config = app_config.clone();
+                                                        button()
+                                                            .label(path.clone())
+                                                            .variant(ButtonVariant::Ghost)
+                                                            .size(ButtonSize::Small)
+                                                            .on_press(move || {
+                                                                app_config.record_workspace_selection(&path);
+                                                                workspace_picker_target.set_neq(Some(path.clone()));
+                                                                let history_snapshot = app_config.workspace_history_state.get_cloned();
+                                                                NovyWaveApp::apply_workspace_history_state(&history_snapshot, &path, &workspace_picker_domain);
+                                                                workspace_picker_domain.clear_selection_relay.send(());
+                                                                workspace_picker_domain.file_selected_relay.send(path.clone());
+                                                                NovyWaveApp::start_workspace_switch(
+                                                                    workspace_loading.clone(),
+                                                                    workspace_path.clone(),
+                                                                    tracked_files.clone(),
+                                                                    selected_variables.clone(),
+                                                                    path.clone(),
+                                                                );
+                                                                workspace_picker_visible.set(false);
+                                                            })
+                                                            .build()
+                                                            .into_element()
+                                                    }))
+                                                    .into_raw_el()
+                                            })
+                                    })
+                                );
+                            top_sections.push(recent_section.into_raw_el());
 
-                                                button()
-                                                    .label(path.clone())
-                                                    .variant(ButtonVariant::Ghost)
-                                                    .size(ButtonSize::Small)
-                                                    .on_press(move || {
-                                                        if workspace_loading.lock_ref().clone() {
-                                                            return;
-                                                        }
-                                                        workspace_picker_domain.clear_selection_relay.send(());
-                                                        workspace_picker_domain.file_selected_relay.send(path.clone());
-                                                        NovyWaveApp::start_workspace_switch(
-                                                            workspace_loading.clone(),
-                                                            workspace_path.clone(),
-                                                            tracked_files.clone(),
-                                                            selected_variables.clone(),
-                                                            path.clone(),
-                                                        );
-                                                        workspace_picker_visible.set(false);
+                            let tree_scroll_container = El::new()
+                                .s(Height::fill())
+                                .s(Width::fill())
+                                .s(Scrollbars::both())
+                                .viewport_y_signal({
+                                    let scroll_position_actor =
+                                        workspace_picker_domain.scroll_position_actor.clone();
+                                    zoon::map_ref! {
+                                        let position = scroll_position_actor.signal() => {
+                                            *position
+                                        }
+                                    }
+                                })
+                                .update_raw_el({
+                                    let scroll_relay =
+                                        workspace_picker_domain.scroll_position_changed_relay.clone();
+                                    move |raw_el| {
+                                        let dom_element = raw_el.dom_element();
+                                        dom_element
+                                            .set_attribute("data-scroll-container", "workspace-picker")
+                                            .unwrap();
+
+                                        let relay_for_event = scroll_relay.clone();
+                                        let scroll_closure = Closure::wrap(Box::new(move |event: web_sys::Event| {
+                                            if let Some(target) = event.current_target() {
+                                                if let Ok(element) = target.dyn_into::<web_sys::Element>() {
+                                                    relay_for_event.send(element.scroll_top());
+                                                }
+                                            }
+                                        }) as Box<dyn FnMut(_)>);
+
+                                        dom_element
+                                            .add_event_listener_with_callback(
+                                                "scroll",
+                                                scroll_closure.as_ref().unchecked_ref(),
+                                            )
+                                            .unwrap();
+                                        scroll_closure.forget();
+
+                                        raw_el
+                                            .style("min-height", "0")
+                                            .style("overflow-x", "hidden")
+                                            .style("overflow-y", "auto")
+                                            .style("scrollbar-width", "thin")
+                                            .style_signal(
+                                                "scrollbar-color",
+                                                primary_6()
+                                                    .map(|thumb| {
+                                                        primary_3().map(move |track| {
+                                                            format!("{} {}", thumb, track)
+                                                        })
                                                     })
-                                                    .build()
-                                                    .into_element()
-                                            })),
-                                    );
-                                top_sections.push(recent_section.into_raw_el());
-                            }
+                                                    .flatten(),
+                                            )
+                                    }
+                                })
+                                .after_insert({
+                                    let scroll_position_actor =
+                                        workspace_picker_domain.scroll_position_actor.clone();
+                                    move |_element| {
+                                        Task::start({
+                                            let scroll_position_actor = scroll_position_actor.clone();
+                                            async move {
+                                                Task::next_macro_tick().await;
+                                                let position = *scroll_position_actor.state.lock_ref();
+                                                if position > 0 {
+                                                    if let Some(window) = web_sys::window() {
+                                                        if let Some(document) = window.document() {
+                                                            if let Ok(Some(element)) = document
+                                                                .query_selector(
+                                                                    "[data-scroll-container='workspace-picker']",
+                                                                )
+                                                            {
+                                                                element.set_scroll_top(position);
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        });
+                                    }
+                                })
+                                .child(workspace_picker_tree(workspace_picker_domain.clone()));
 
                             let tree_container = El::new()
                                 .s(Height::growable())
@@ -1457,34 +1762,8 @@ fn workspace_picker_dialog(
                                 })))
                                 .s(RoundedCorners::all(6))
                                 .s(Padding::all(SPACING_4))
-                                .update_raw_el(|raw_el| {
-                                    raw_el
-                                        .style("min-height", "0")
-                                        .style("overflow-x", "auto")
-                                        .style("overflow-y", "hidden")
-                                })
-                                .child(
-                                    El::new()
-                                        .s(Height::fill())
-                                        .s(Width::fill())
-                                        .update_raw_el(|raw_el| {
-                                            raw_el
-                                                .style("min-height", "0")
-                                                .style("overflow", "auto")
-                                                .style("scrollbar-width", "thin")
-                                                .style_signal(
-                                                    "scrollbar-color",
-                                                    primary_6()
-                                                        .map(|thumb| {
-                                                            primary_3().map(move |track| {
-                                                                format!("{} {}", thumb, track)
-                                                            })
-                                                        })
-                                                        .flatten(),
-                                                )
-                                        })
-                                        .child(workspace_picker_tree(workspace_picker_domain.clone()))
-                                );
+                                .update_raw_el(|raw_el| raw_el.style("min-height", "0"))
+                                .child(tree_scroll_container);
 
                             let selection_hint = El::new()
                                 .s(Font::new()
@@ -1588,10 +1867,33 @@ fn workspace_picker_tree(domain: crate::config::FilePickerDomain) -> impl Elemen
                         domain_for_treeview.clone(),
                         external_expanded.clone(),
                     );
+                    let tree_rendering_relay = domain_for_treeview.tree_rendering_relay.clone();
+                    let scroll_position_actor = domain_for_treeview.scroll_position_actor.clone();
 
                     El::new()
                         .s(Height::fill())
                         .s(Width::fill())
+                        .after_insert(move |_element| {
+                            tree_rendering_relay.send(());
+                            Task::start({
+                                let scroll_position_actor = scroll_position_actor.clone();
+                                async move {
+                                    Task::next_macro_tick().await;
+                                    let position = *scroll_position_actor.state.lock_ref();
+                                    if position > 0 {
+                                        if let Some(window) = web_sys::window() {
+                                            if let Some(document) = window.document() {
+                                                if let Ok(Some(element)) = document.query_selector(
+                                                    "[data-scroll-container='workspace-picker']",
+                                                ) {
+                                                    element.set_scroll_top(position);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            });
+                        })
                         .after_remove(move |_| {
                             drop(sync_actors);
                         })

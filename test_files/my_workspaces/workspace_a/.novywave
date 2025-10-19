@@ -9,9 +9,18 @@ theme = "dark"
 toast_dismiss_ms = 10000
 
 [workspace]
-opened_files = []
-dock_mode = "right"
-expanded_scopes = []
+opened_files = ["/home/martinkavik/repos/super_counter_rust/hardware/build/super_counter.fst"]
+dock_mode = "bottom"
+expanded_scopes = [
+    "scope_/home/martinkavik/repos/NovyWave/test_files/simple_reload_test.vcd|simple_tb",
+    "scope_/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb",
+    "scope_/home/martinkavik/repos/NovyWave/test_files/to_discover/wave_27_2.fst|TOP",
+    "/home/martinkavik/repos/NovyWave/test_files/simple.vcd",
+    "/home/martinkavik/repos/NovyWave/test_files/simple_reload_test.vcd",
+    "/home/martinkavik/repos/NovyWave/test_files/to_discover/wave_27_2.fst",
+    "/home/martinkavik/repos/super_counter_rust/hardware/build/super_counter.fst",
+    "scope_/home/martinkavik/repos/super_counter_rust/hardware/build/super_counter.fst|TOP",
+]
 load_files_expanded_directories = [
     "/",
     "/home",
@@ -23,12 +32,13 @@ load_files_expanded_directories = [
     "/home/martinkavik/repos/super_counter_rust/hardware/build",
     "/home/martinkavik/repos/NovyWave/test_files",
 ]
-load_files_scroll_position = 0
+selected_scope_id = "scope_/home/martinkavik/repos/super_counter_rust/hardware/build/super_counter.fst|TOP.super_counter"
+load_files_scroll_position = 635
 selected_variables = []
 
 [workspace.docked_bottom_dimensions]
-files_and_scopes_panel_width = 1400.0
-files_and_scopes_panel_height = 600.0
+files_and_scopes_panel_width = 400.0
+files_and_scopes_panel_height = 560.0
 selected_variables_panel_name_column_width = 190.0
 selected_variables_panel_value_column_width = 220.0
 
@@ -39,12 +49,34 @@ selected_variables_panel_name_column_width = 190.0
 selected_variables_panel_value_column_width = 220.0
 
 [workspace.timeline]
-cursor_position_ps = 0
+cursor_position_ps = 1000000000000
 visible_range_start_ps = 0
 visible_range_end_ps = 1000000000000
-zoom_center_ps = 661290322581
-tooltip_enabled = true
+zoom_center_ps = 351480420248
+tooltip_enabled = false
 
 [plugins]
 schema_version = 1
-entries = []
+
+[[plugins.entries]]
+id = "novywave.hello_world"
+enabled = true
+artifact_path = "plugins/dist/hello_world_plugin.wasm"
+
+[plugins.entries.config]
+
+[[plugins.entries]]
+id = "novywave.reload_watcher"
+enabled = true
+artifact_path = "plugins/dist/reload_watcher_plugin.wasm"
+
+[plugins.entries.config]
+
+[[plugins.entries]]
+id = "novywave.files_discovery"
+enabled = true
+artifact_path = "plugins/dist/files_discovery_plugin.wasm"
+
+[plugins.entries.config]
+debounce_ms = 200
+patterns = ["test_files/to_discover/**/*.*"]

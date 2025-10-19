@@ -9,7 +9,7 @@ use shared::{
     SignalTransitionResult, SignalValue, SignalValueQuery, SignalValueResult, UnifiedSignalData,
     UnifiedSignalRequest, UpMsg, WaveformFile,
 };
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
@@ -775,6 +775,9 @@ async fn up_msg_handler(req: UpMsgRequest<UpMsg>) {
         }
         UpMsg::SaveConfig(config) => {
             save_config(config.clone(), session_id, cor_id).await;
+        }
+        UpMsg::UpdateWorkspaceHistory(history) => {
+            handle_workspace_history_update(history.clone());
         }
         UpMsg::BrowseDirectory(dir_path) => {
             browse_directory(dir_path.clone(), session_id, cor_id).await;
@@ -1958,8 +1961,7 @@ async fn send_down_msg(msg: DownMsg, session_id: SessionId, cor_id: CorId) {
 }
 
 const CONFIG_FILENAME: &str = ".novywave";
-const RECENT_WORKSPACES_FILENAME: &str = "recent_workspaces.json";
-const RECENT_WORKSPACES_MAX: usize = 5;
+const GLOBAL_CONFIG_FILENAME: &str = ".novywave_global";
 
 static INITIAL_CWD: Lazy<PathBuf> =
     Lazy::new(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
@@ -1969,6 +1971,10 @@ static WORKSPACE_CONTEXT: Lazy<WorkspaceContext> =
 
 pub(crate) fn workspace_context() -> &'static WorkspaceContext {
     &WORKSPACE_CONTEXT
+}
+
+fn is_global_workspace_active() -> bool {
+    workspace_context().root() == *INITIAL_CWD
 }
 
 struct WorkspaceContext {
@@ -2020,39 +2026,102 @@ impl WorkspaceContext {
 }
 
 #[derive(Serialize, Deserialize, Default)]
-struct RecentWorkspaceStore {
-    recent: Vec<String>,
+struct GlobalConfigFile {
+    #[serde(default)]
+    global: shared::GlobalSection,
 }
 
-fn recent_workspace_store_path() -> PathBuf {
-    INITIAL_CWD.join(RECENT_WORKSPACES_FILENAME)
+fn global_config_path() -> PathBuf {
+    INITIAL_CWD.join(GLOBAL_CONFIG_FILENAME)
 }
 
-fn read_recent_workspace_store() -> RecentWorkspaceStore {
-    let path = recent_workspace_store_path();
-    if let Ok(content) = fs::read_to_string(&path) {
-        serde_json::from_str(&content).unwrap_or_default()
-    } else {
-        RecentWorkspaceStore::default()
+fn read_global_section() -> shared::GlobalSection {
+    let path = global_config_path();
+    let mut section = match fs::read_to_string(&path) {
+        Ok(content) => toml::from_str::<GlobalConfigFile>(&content)
+            .map(|file| file.global)
+            .unwrap_or_default(),
+        Err(err) => {
+            if err.kind() != std::io::ErrorKind::NotFound {
+                eprintln!(
+                    "⚠️ BACKEND: Failed to read global config '{}': {}",
+                    path.display(),
+                    err
+                );
+            }
+            shared::GlobalSection::default()
+        }
+    };
+    section
+        .workspace_history
+        .clamp_to_limit(shared::WORKSPACE_HISTORY_MAX_RECENTS);
+    section
+}
+
+fn save_global_section(
+    mut global: shared::GlobalSection,
+) -> Result<shared::GlobalSection, Box<dyn std::error::Error>> {
+    global
+        .workspace_history
+        .clamp_to_limit(shared::WORKSPACE_HISTORY_MAX_RECENTS);
+
+    let file = GlobalConfigFile {
+        global: global.clone(),
+    };
+    let toml_content = toml::to_string_pretty(&file)?;
+    let content_with_header = format!(
+        "# NovyWave Global Configuration\n\
+         # Stores workspace history shared across all projects\n\
+         \n\
+         {}",
+        toml_content
+    );
+
+    let path = global_config_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, content_with_header)?;
+    Ok(global)
+}
+
+fn update_workspace_history_on_select(root: &Path) -> shared::GlobalSection {
+    let mut global = read_global_section();
+    let path_str = root.to_string_lossy().to_string();
+    global
+        .workspace_history
+        .touch_path(&path_str, shared::WORKSPACE_HISTORY_MAX_RECENTS);
+    match save_global_section(global.clone()) {
+        Ok(updated) => updated,
+        Err(err) => {
+            eprintln!("⚠️ BACKEND: Failed to persist workspace history: {}", err);
+            global
+        }
     }
 }
 
-fn write_recent_workspace_store(
-    store: &RecentWorkspaceStore,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let path = recent_workspace_store_path();
-    let json = serde_json::to_string_pretty(store)?;
-    fs::write(path, json)?;
-    Ok(())
+fn persist_global_section(global: &shared::GlobalSection) -> shared::GlobalSection {
+    match save_global_section(global.clone()) {
+        Ok(updated) => updated,
+        Err(err) => {
+            eprintln!(
+                "⚠️ BACKEND: Failed to save global workspace history: {}",
+                err
+            );
+            let mut fallback = global.clone();
+            fallback
+                .workspace_history
+                .clamp_to_limit(shared::WORKSPACE_HISTORY_MAX_RECENTS);
+            fallback
+        }
+    }
 }
 
-fn record_recent_workspace(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let mut store = read_recent_workspace_store();
-    let root_str = root.to_string_lossy().to_string();
-    store.recent.retain(|entry| entry != &root_str);
-    store.recent.insert(0, root_str);
-    store.recent.truncate(RECENT_WORKSPACES_MAX);
-    write_recent_workspace_store(&store)
+fn handle_workspace_history_update(history: shared::WorkspaceHistory) {
+    let global_section = shared::GlobalSection {
+        workspace_history: history,
+    };
+    let _ = persist_global_section(&global_section);
 }
 
 fn expand_config_paths(config: &mut AppConfig) {
@@ -2357,14 +2426,12 @@ async fn handle_loaded_config(
 
     plugins::flush_initial_discoveries();
 
-    if let Err(err) = record_recent_workspace(&workspace_context().root()) {
-        eprintln!("⚠️ BACKEND: Failed to record recent workspace: {}", err);
-    }
-
     if let Some(root) = workspace_event_root {
+        let default_root_display = INITIAL_CWD.to_string_lossy().to_string();
         send_down_msg(
             DownMsg::WorkspaceLoaded {
                 root,
+                default_root: default_root_display,
                 config: config_for_messages.clone(),
             },
             session_id,
@@ -2391,8 +2458,9 @@ async fn handle_loaded_config(
 
 async fn load_config(session_id: SessionId, cor_id: CorId) {
     match read_or_create_config() {
-        Ok(config) => {
+        Ok(mut config) => {
             let root_display = workspace_context().root().to_string_lossy().to_string();
+            config.global = read_global_section();
             handle_loaded_config(config, session_id, cor_id, Some(root_display)).await;
         }
         Err(message) => {
@@ -2435,6 +2503,13 @@ async fn save_config(config: AppConfig, session_id: SessionId, cor_id: CorId) {
     }
 
     plugins::flush_initial_discoveries();
+
+    let persisted_global = persist_global_section(&config.global);
+    if is_global_workspace_active() {
+        runtime_config.global = persisted_global;
+    } else {
+        runtime_config.global = shared::GlobalSection::default();
+    }
 
     match save_config_to_file(&runtime_config) {
         Ok(()) => {
@@ -2489,13 +2564,12 @@ async fn select_workspace(root: String, session_id: SessionId, cor_id: CorId) {
     context.set_root(canonical_root.clone());
     reset_runtime_state_for_workspace();
 
-    if let Err(err) = record_recent_workspace(&canonical_root) {
-        eprintln!("⚠️ BACKEND: Failed to record recent workspace: {}", err);
-    }
+    let global_section = update_workspace_history_on_select(&canonical_root);
 
     match read_or_create_config() {
-        Ok(config) => {
+        Ok(mut config) => {
             let root_display = canonical_root.to_string_lossy().to_string();
+            config.global = global_section.clone();
             handle_loaded_config(config, session_id, cor_id, Some(root_display)).await;
         }
         Err(message) => {

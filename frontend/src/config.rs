@@ -33,6 +33,7 @@ async fn compose_shared_app_config(
     value_column_width_bottom_state: &Mutable<f32>,
     value_column_width_right_state: &Mutable<f32>,
     timeline_state_actor: &Actor<TimelineState>,
+    workspace_history_state: &Mutable<shared::WorkspaceHistory>,
     plugins_state: &Mutable<shared::PluginsSection>,
 ) -> Option<shared::AppConfig> {
     let theme = theme_actor.signal().to_stream().next().await?;
@@ -100,6 +101,9 @@ async fn compose_shared_app_config(
         tooltip_enabled,
     };
 
+    let mut workspace_history = workspace_history_state.get_cloned();
+    workspace_history.clamp_to_limit(shared::WORKSPACE_HISTORY_MAX_RECENTS);
+
     Some(shared::AppConfig {
         app: shared::AppSection::default(),
         workspace: shared::WorkspaceSection {
@@ -130,6 +134,7 @@ async fn compose_shared_app_config(
             theme,
             toast_dismiss_ms: toast_dismiss_ms as u64,
         },
+        global: shared::GlobalSection { workspace_history },
         plugins: plugins_state.get_cloned(),
     })
 }
@@ -528,6 +533,8 @@ pub struct AppConfig {
     pub session_state_actor: Actor<SessionState>,
     pub toast_dismiss_ms_actor: Actor<u32>,
     pub plugins_state: Mutable<shared::PluginsSection>,
+    pub workspace_history_state: Mutable<shared::WorkspaceHistory>,
+    pub workspace_history_update_relay: Relay<shared::WorkspaceHistory>,
 
     // File picker domain with proper Actor+Relay architecture
     pub file_picker_domain: FilePickerDomain,
@@ -567,6 +574,7 @@ pub struct AppConfig {
     _clipboard_actor: Actor<()>,
     _save_trigger_actor: Actor<()>,
     _config_save_debouncer_actor: Actor<()>,
+    _workspace_history_actor: Actor<()>,
     _config_loaded_actor: Actor<()>,
     _treeview_sync_actor: Actor<()>,
     _tracked_files_sync_actor: Actor<()>,
@@ -591,6 +599,40 @@ impl AppConfig {
             .unwrap_or_else(|_error| SharedAppConfig::default());
 
         let plugins_state = Mutable::new(config.plugins.clone());
+        let workspace_history_state = Mutable::new(config.global.workspace_history.clone());
+        let (workspace_history_update_relay, workspace_history_update_stream) =
+            relay::<shared::WorkspaceHistory>();
+        let workspace_history_actor = {
+            let mut update_stream = workspace_history_update_stream.fuse();
+            Actor::new((), async move |_state| {
+                while let Some(mut pending) = update_stream.next().await {
+                    loop {
+                        select! {
+                            next = update_stream.next() => {
+                                match next {
+                                    Some(next_history) => {
+                                        pending = next_history;
+                                        continue;
+                                    }
+                                    None => {
+                                        if let Err(e) = CurrentPlatform::send_message(UpMsg::UpdateWorkspaceHistory(pending.clone())).await {
+                                            zoon::eprintln!("❌ CONFIG: Failed to persist workspace history: {}", e);
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                            _ = zoon::Timer::sleep(250).fuse() => {
+                                if let Err(e) = CurrentPlatform::send_message(UpMsg::UpdateWorkspaceHistory(pending.clone())).await {
+                                    zoon::eprintln!("❌ CONFIG: Failed to persist workspace history: {}", e);
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+            })
+        };
 
         let (theme_button_clicked_relay, mut theme_button_clicked_stream) = relay();
         let (dock_mode_button_clicked_relay, mut dock_mode_button_clicked_stream) = relay();
@@ -1203,6 +1245,7 @@ impl AppConfig {
             let value_column_width_bottom_state_clone = value_column_width_bottom_state.clone();
             let value_column_width_right_state_clone = value_column_width_right_state.clone();
             let plugins_state_clone = plugins_state.clone();
+            let workspace_history_state_clone_for_save = workspace_history_state.clone();
 
             Actor::new((), async move |_state| {
                 let mut config_save_requested_stream = config_save_requested_stream.fuse();
@@ -1251,6 +1294,7 @@ impl AppConfig {
                                                 &value_column_width_bottom_state_clone,
                                                 &value_column_width_right_state_clone,
                                                 &timeline_state_actor_clone,
+                                                &workspace_history_state_clone_for_save,
                                                 &plugins_state_clone,
                                             )
                                             .await
@@ -1296,6 +1340,7 @@ impl AppConfig {
                                                 &value_column_width_bottom_state_clone,
                                                 &value_column_width_right_state_clone,
                                                 &timeline_state_actor_clone,
+                                                &workspace_history_state_clone_for_save,
                                                 &plugins_state_clone,
                                             )
                                             .await
@@ -1401,12 +1446,15 @@ impl AppConfig {
             let timeline_state_relay = timeline_state_changed_relay.clone();
             let timeline_state_restore_relay = timeline_state_restore_relay.clone();
             let plugins_state_clone = plugins_state.clone();
+            let workspace_history_state_clone = workspace_history_state.clone();
 
             Actor::new((), async move |_state| {
                 let mut config_stream = config_loaded_stream;
 
                 while let Some(loaded_config) = config_stream.next().await {
                     plugins_state_clone.set(loaded_config.plugins.clone());
+                    workspace_history_state_clone
+                        .set_neq(loaded_config.global.workspace_history.clone());
                     dock_mode_state_for_config.set(loaded_config.workspace.dock_mode.clone());
 
                     let loaded_files_width_right = loaded_config
@@ -1604,6 +1652,8 @@ impl AppConfig {
             session_state_actor,
             toast_dismiss_ms_actor,
             plugins_state,
+            workspace_history_state,
+            workspace_history_update_relay,
 
             file_picker_domain,
 
@@ -1641,6 +1691,7 @@ impl AppConfig {
             _clipboard_actor: clipboard_actor,
             _save_trigger_actor: save_trigger_actor,
             _config_save_debouncer_actor: config_save_debouncer_actor,
+            _workspace_history_actor: workspace_history_actor,
             _config_loaded_actor: config_loaded_actor,
             _connection_message_actor: connection_message_actor,
             _treeview_sync_actor: treeview_sync_actor,
@@ -1660,6 +1711,9 @@ impl AppConfig {
         self.dock_mode_changed_relay
             .send(loaded_config.workspace.dock_mode);
 
+        self.workspace_history_state
+            .set_neq(loaded_config.global.workspace_history.clone());
+
         // Update expanded directories using FilePickerDomain
         let mut expanded_set = indexmap::IndexSet::new();
         for dir in &loaded_config.workspace.load_files_expanded_directories {
@@ -1676,5 +1730,45 @@ impl AppConfig {
         self.file_picker_domain
             .scroll_position_changed_relay
             .send(loaded_config.workspace.load_files_scroll_position);
+    }
+
+    pub fn record_workspace_selection(&self, path: &str) {
+        if path.is_empty() {
+            return;
+        }
+        let mut history = self.workspace_history_state.get_cloned();
+        history.touch_path(path, shared::WORKSPACE_HISTORY_MAX_RECENTS);
+        self.workspace_history_state.set_neq(history.clone());
+        self.workspace_history_update_relay.send(history);
+    }
+
+    pub fn update_workspace_tree_state(&self, path: &str, expanded_paths: Vec<String>) {
+        if path.is_empty() {
+            return;
+        }
+        let mut history = self.workspace_history_state.get_cloned();
+        let entry = history
+            .tree_state
+            .entry(path.to_string())
+            .or_insert_with(shared::WorkspaceTreeState::default);
+        entry.expanded_paths = expanded_paths;
+        history.clamp_to_limit(shared::WORKSPACE_HISTORY_MAX_RECENTS);
+        self.workspace_history_state.set_neq(history.clone());
+        self.workspace_history_update_relay.send(history);
+    }
+
+    pub fn update_workspace_scroll(&self, path: &str, scroll_top: f64) {
+        if path.is_empty() {
+            return;
+        }
+        let mut history = self.workspace_history_state.get_cloned();
+        let entry = history
+            .tree_state
+            .entry(path.to_string())
+            .or_insert_with(shared::WorkspaceTreeState::default);
+        entry.scroll_top = scroll_top;
+        history.clamp_to_limit(shared::WORKSPACE_HISTORY_MAX_RECENTS);
+        self.workspace_history_state.set_neq(history.clone());
+        self.workspace_history_update_relay.send(history);
     }
 }

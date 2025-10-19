@@ -1,6 +1,6 @@
 use convert_base;
 use serde::{Deserialize, Deserializer, Serialize};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::str::FromStr;
 use toml::value::Table as TomlTable;
 
@@ -17,6 +17,7 @@ pub enum UpMsg {
         root: String,
     },
     SaveConfig(AppConfig),
+    UpdateWorkspaceHistory(WorkspaceHistory),
     BrowseDirectory(String),
     BrowseDirectories(Vec<String>), // Batch directory requests for parallel processing
     QuerySignalValues {
@@ -61,6 +62,7 @@ pub enum DownMsg {
     ConfigLoaded(AppConfig),
     WorkspaceLoaded {
         root: String,
+        default_root: String,
         config: AppConfig,
     },
     ConfigSaved,
@@ -1176,6 +1178,8 @@ pub struct AppConfig {
     pub app: AppSection,
     pub ui: UiSection,
     pub workspace: WorkspaceSection,
+    #[serde(default, skip_serializing_if = "GlobalSection::is_default")]
+    pub global: GlobalSection,
     #[serde(default)]
     pub plugins: PluginsSection,
 }
@@ -1244,6 +1248,114 @@ impl Default for UiSection {
         Self {
             theme: Theme::Dark,
             toast_dismiss_ms: 10000, // Default 10 seconds
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct GlobalSection {
+    #[serde(default)]
+    pub workspace_history: WorkspaceHistory,
+}
+
+impl Default for GlobalSection {
+    fn default() -> Self {
+        Self {
+            workspace_history: WorkspaceHistory::default(),
+        }
+    }
+}
+
+impl GlobalSection {
+    pub fn is_default(&self) -> bool {
+        self.workspace_history == WorkspaceHistory::default()
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct WorkspaceHistory {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_selected: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recent_paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub tree_state: HashMap<String, WorkspaceTreeState>,
+}
+
+impl Default for WorkspaceHistory {
+    fn default() -> Self {
+        Self {
+            last_selected: None,
+            recent_paths: Vec::new(),
+            tree_state: HashMap::new(),
+        }
+    }
+}
+
+pub const WORKSPACE_HISTORY_MAX_RECENTS: usize = 3;
+
+impl WorkspaceHistory {
+    pub fn clamp_to_limit(&mut self, limit: usize) {
+        let mut ordered = Vec::new();
+
+        if let Some(selected) = self.last_selected.clone() {
+            if !selected.is_empty() {
+                ordered.push(selected);
+            }
+        }
+
+        let mut existing = std::mem::take(&mut self.recent_paths);
+        for path in existing.drain(..) {
+            if !ordered.contains(&path) {
+                ordered.push(path);
+            }
+        }
+
+        if ordered.is_empty() {
+            if let Some(selected) = self.last_selected.clone() {
+                if !selected.is_empty() {
+                    ordered.push(selected);
+                }
+            }
+        }
+
+        ordered.truncate(limit);
+        self.recent_paths = ordered;
+
+        if let Some(first) = self.recent_paths.first().cloned() {
+            self.last_selected = Some(first);
+        } else {
+            self.last_selected = None;
+        }
+
+        let allowed: HashSet<_> = self.recent_paths.iter().cloned().collect();
+        self.tree_state.retain(|path, _| allowed.contains(path));
+    }
+
+    pub fn touch_path(&mut self, path: &str, limit: usize) {
+        if path.is_empty() {
+            return;
+        }
+        self.last_selected = Some(path.to_string());
+        self.recent_paths.retain(|entry| entry != path);
+        self.recent_paths.insert(0, path.to_string());
+        self.clamp_to_limit(limit);
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct WorkspaceTreeState {
+    #[serde(default)]
+    pub scroll_top: f64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub expanded_paths: Vec<String>,
+}
+
+impl Default for WorkspaceTreeState {
+    fn default() -> Self {
+        Self {
+            scroll_top: 0.0,
+            expanded_paths: Vec::new(),
         }
     }
 }

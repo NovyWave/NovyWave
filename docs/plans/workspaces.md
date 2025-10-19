@@ -11,6 +11,7 @@
 
 1. **Extend Global AppConfig**
    - Introduce a new `global` section (top-level field) in the existing global `.novywave` file.
+     The global config is stored in a dedicated `~/.novywave_global` alongside the app binary so it never collides with per-workspace `.novywave` files.
    - Within `global`, add a `workspace_history` struct that tracks:
      - `last_selected: Option<String>`
      - `recent_paths: Vec<String>` (max length 3, most-recent-first, deduplicated)
@@ -68,15 +69,15 @@
 
 ## Next Steps
 
-- [ ] Define shared `WorkspaceHistory` / `WorkspaceTreeState` structs in `shared/src/config.rs` (with serde defaults).
-- [ ] Update global `AppConfig` schema to include a `global` section containing `workspace_history`.
-- [ ] Remove legacy workspace-history JSON handling (delete read/write paths, remove file).
-- [ ] Adjust backend config loader to populate `workspace_history` when reading global `.novywave`.
-- [ ] Send `workspace_history` data alongside existing config payload in `ConfigLoaded`.
-- [ ] Add backend handler for `WorkspaceHistoryUpdate` messages (apply deltas, clamp recents, persist).
-- [ ] Implement frontend history actor: hydrate picker from payload, manage scroll/expanded sync, emit updates on changes.
-- [ ] Integrate tree scroll + expansion actors in Open Workspace dialog (mirroring file picker behavior).
-- [ ] Update “Recent workspaces” section to use incoming recents list (fallback to fixtures when empty).
-- [ ] Ensure Open Workspace dialog updates `last_selected` + recents before closing/launching workspace switch.
-- [ ] Cap stored `tree_state` entries to match recents (remove stale paths).
-- [ ] Update relevant docs (`docs/actors_relays/novywave/migration_strategy.md`, `.claude/extra/project/specs/specs.md`) to describe the new `global.workspace_history`.
+- [x] Define shared `WorkspaceHistory` / `WorkspaceTreeState` structs in `shared/src/config.rs` (with serde defaults).
+- [x] Update global `AppConfig` schema to include a `global` section containing `workspace_history`.
+- [x] Remove legacy workspace-history JSON handling (delete read/write paths, remove file).
+- [x] Adjust backend config loader to populate `workspace_history` when reading global `.novywave`.
+- [x] Send `workspace_history` data alongside existing config payload in `ConfigLoaded`.
+- [x] Add backend handler for `WorkspaceHistoryUpdate` messages (apply deltas, clamp recents, persist).
+- [x] Implement frontend history actor: hydrate picker from payload, manage scroll/expanded sync, emit updates on changes.
+- [x] Integrate tree scroll + expansion actors in Open Workspace dialog (mirroring file picker behavior).
+- [x] Update “Recent workspaces” section to use incoming recents list (fallback to fixtures when empty).
+- [x] Ensure Open Workspace dialog updates `last_selected` + recents before closing/launching workspace switch.
+- [x] Cap stored `tree_state` entries to match recents (remove stale paths).
+- [x] Update relevant docs (`docs/actors_relays/novywave/migration_strategy.md`, `.claude/extra/project/specs/specs.md`) to describe the new `global.workspace_history`.
