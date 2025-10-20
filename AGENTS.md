@@ -35,4 +35,5 @@ Commits are brief sentence-case summaries (`Implement dock-responsive panel layo
 - Do not use sleeps or other timing hacks for synchronization. Coordinate via explicit messages, state flags, or await points; "sleep and hope" is never an acceptable fix.
 - For modal/tree layouts, copy the pattern from `frontend/src/file_picker.rs`: wrap the sections and tree inside a bordered container with `Scrollbars::both()`, `Width::fill()`, and `min-height: 0`. When the tree starts pushing buttons out of view, re-read `.claude/extra/project/patterns.md` for the exact container recipe.
 - When writing plans or design docs, skip author/date boilerplate—version control already captures that metadata.
+- When updating `docs/plans/*`, avoid stamping explicit calendar dates; describe timelines in words ("current status", "latest run") instead.
 - While tracing Actor/Relay flows, it’s fine to add temporary debug logs (e.g., `println!`, `zoon::println!`) or message-send logs in-place—just annotate them with file/line references and remove them once the bug is understood.

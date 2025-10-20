@@ -18,6 +18,10 @@ pub enum UpMsg {
     },
     SaveConfig(AppConfig),
     UpdateWorkspaceHistory(WorkspaceHistory),
+    FrontendTrace {
+        target: String,
+        message: String,
+    },
     BrowseDirectory(String),
     BrowseDirectories(Vec<String>), // Batch directory requests for parallel processing
     QuerySignalValues {

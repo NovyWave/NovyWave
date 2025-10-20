@@ -66,14 +66,14 @@ unique_id = "test_files/simple_reload_test.vcd|simple_tb.s|C"
 cursor_position_ps = 125000000000000
 visible_range_start_ps = 0
 visible_range_end_ps = 250000000000000
-zoom_center_ps = 143982808022923
+zoom_center_ps = 9312320916905
 tooltip_enabled = false
 
 [global.workspace_history]
-last_selected = "/home/martinkavik/repos/NovyWave/test_files/my_workspaces/workspace_b"
+last_selected = "/home/martinkavik/repos/NovyWave/test_files/my_workspaces/workspace_a"
 recent_paths = [
-    "/home/martinkavik/repos/NovyWave/test_files/my_workspaces/workspace_b",
     "/home/martinkavik/repos/NovyWave/test_files/my_workspaces/workspace_a",
+    "/home/martinkavik/repos/NovyWave/test_files/my_workspaces/workspace_b",
     "/home/martinkavik/repos/NovyWave",
 ]
 

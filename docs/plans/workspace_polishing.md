@@ -7,23 +7,33 @@
 
 ## Outstanding Issues
 
-1. **Picker tree state persists as empty**
-   - Browser console traces show `expanded /…` events firing for every folder click.
-   - The actor currently subscribed to `expanded_directories_actor.state.signal_cloned()` often receives `{}` right after each expansion, so the payload forwarded to `update_workspace_picker_tree_state` becomes an empty vector.
-   - Backend logs confirm the message arrives (`🔧 BACKEND: UpdateWorkspaceHistory … picker=Some(WorkspaceTreeState { expanded_paths: [] })`), but `.novywave_global` never gains `picker_tree_state` because the vector is always empty.
-   - Suspected cause: the actor snapshot happens before `expanded_directories_actor` mutates its state. Need to mirror the domain’s expand/collapse relays (and possibly wait a `next_tick`) or maintain an independent set updated from the relay events.
+1. **Picker tree state never persisted (critical)**
+   - `.novywave_global` still lacks any `[global.workspace_history.picker_tree_state]` block—only `last_selected` / `recent_paths` are present.
+   - Restore playback now schedules a `🛰️ FRONTEND TRACE [workspace_picker_snapshot]` line (emitted in `dev_server.log`) after each restore or expansion; verify it shows non-empty paths when the dialog opens or folders are toggled.
+   - If those logs are emitted but the backend still writes empty vectors (`🔧 BACKEND: UpdateWorkspaceHistory … expanded_paths: []`), capture the full log chunk and inspect the payload sent in `UpMsg::UpdateWorkspaceHistory`.
 
-2. **Multiple folders remain checked**
-   - TreeView currently allows multi-select for non-scope items. Even after clearing selection on dialog open, users can check more than one workspace at a time.
-   - Tree component exposes `single_scope_selection`, but there is no equivalent for directory nodes; we may need to handle folder clicks manually (clear before setting) or post-process the selected vector inside the dialog.
+2. **Workspace selection not cleared on dialog open (regression)**
+   - Opening the picker shows the previously selected folder still checked despite `clear_selection_relay.send(())`.
+   - `SelectedFilesSyncActors` log `config.rs:selected_files clear_selection_relay`, verifying the domain vector is emptied. If the checkbox persists, inspect the tree-view sync to ensure `external_selected_vec` is also cleared.
 
-3. **Config reload wipes picker state**
-   - On dialog open we reapply `picker_tree_state`, but the domain immediately publishes the (still empty) snapshot back to the backend, overwriting the stored data.
-   - Need to short-circuit the initial sync—or write a guard that suppresses the first publish until after we have replayed the saved state.
+3. **Single-folder selection enforcement (fixed)**
+   - ActorVec now trims selections to a single path (`config.rs:selected push single=<path>`). Manual testing shows checking a second folder replaces the first as expected.
+
+4. **Scroll position persistence missing**
+   - `.novywave_global` still lacks `picker_tree_state.scroll_top`. `workspace_history_scroll_actor` now reads from the scroll actor signal after restore completes; combine its behaviour with the snapshot log to ensure we send the latest value.
+
+## Latest Debug Logs
+- `🛰️ FRONTEND TRACE [workspace_picker_snapshot]`: emitted after restore playback or any expansion/collapse, includes both expanded paths and scroll top in `dev_server.log`.
+- `🛰️ FRONTEND TRACE [workspace_picker_expand]` / `[workspace_picker_collapse]`: emitted for every directory toggle.
+- `🛰️ FRONTEND TRACE [workspace_picker_selection]`: fires whenever the tree selection vector changes.
+- `🛰️ FRONTEND TRACE [workspace_picker_scroll]`: captures scroll relay values while the dialog is open.
+- `🛰️ FRONTEND TRACE [workspace_picker_restore]`: shows lifecycle of the restore guard (`visible=true`, `restoring_complete`, `visible=false`).
+- `frontend/src/config.rs:selected push single`, `… removed`, `… clear_selection_relay`: show when selection actors receive clear/select events.
+- Backend persistence runs through `UpMsg::UpdateWorkspaceHistory`; watch `dev_server.log` for any errors after the snapshot log fires.
+- Keep logs active until persistence works; remove afterwards.
 
 ## Next Steps / Ideas
-- Subscribe directly to `directory_expanded_relay` / `directory_collapsed_relay`, keep a local `IndexSet` in the actor, and only flush after the mutation (possibly after `Task::next_tick().await`).
-- Defer the first persistence until after we replay config (`workspace_history_restore_actor`), so we don’t immediately send an empty snapshot.
-- For single-folder selection, intercept `selected_files_vec_signal` updates and trim to one entry before writing to `workspace_history_state`.
-- Once the above sticks, remove all temporary debug logging (`zyon::println!`, backend println) before final hand-off.
-- Feel free to sprinkle temporary debug prints directly inside actors/relays (with file:line comments) to trace message flow; just clean them up when the investigation is done.
+- Trace the flow when the picker opens: confirm the snapshot log shows the restored expansion list, then check `.novywave_global` after the backend write to ensure it matches.
+- If the backend still drops `picker_tree_state`, capture `UpMsg::UpdateWorkspaceHistory` payloads or backend logs to diagnose why the data is ignored.
+- Verify the TreeView reflects the cleared selection by inspecting the actual checkbox state after the restore Task completes.
+- Once persistence works, capture the resulting `.novywave_global` diff in the plan and remove temporary logging.

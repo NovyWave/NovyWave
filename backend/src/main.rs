@@ -779,6 +779,9 @@ async fn up_msg_handler(req: UpMsgRequest<UpMsg>) {
         UpMsg::UpdateWorkspaceHistory(history) => {
             handle_workspace_history_update(history.clone());
         }
+        UpMsg::FrontendTrace { target, message } => {
+            println!("🛰️ FRONTEND TRACE [{target}]: {message}");
+        }
         UpMsg::BrowseDirectory(dir_path) => {
             browse_directory(dir_path.clone(), session_id, cor_id).await;
         }

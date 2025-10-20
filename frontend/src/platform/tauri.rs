@@ -127,6 +127,7 @@ impl Platform for TauriPlatform {
 
                     Ok(())
                 }
+                UpMsg::FrontendTrace { .. } => Ok(()),
             }
         }
         #[cfg(not(feature = "tauri"))]

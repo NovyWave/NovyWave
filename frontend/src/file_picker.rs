@@ -79,6 +79,10 @@ impl TreeViewSyncActors {
 
                     for path in current_expanded.iter() {
                         if !previous_expanded.contains(path) {
+                            crate::app::emit_trace(
+                                "workspace_picker_expand_request",
+                                format!("path={path}"),
+                            );
                             domain_for_expansion
                                 .directory_expanded_relay
                                 .send(path.clone());
@@ -90,6 +94,10 @@ impl TreeViewSyncActors {
 
                     for path in previous_expanded.iter() {
                         if !current_expanded.contains(path) {
+                            crate::app::emit_trace(
+                                "workspace_picker_collapse_request",
+                                format!("path={path}"),
+                            );
                             domain_for_expansion
                                 .directory_collapsed_relay
                                 .send(path.clone());

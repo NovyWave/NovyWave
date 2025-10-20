@@ -256,7 +256,10 @@ impl FilePickerDomain {
                             if let Some(dir) = dir {
                                 let mut current = state.get_cloned();
                                 if current.insert(dir.clone()) {
-                                    zoon::println!("expanded {}", dir);
+                                    crate::app::emit_trace(
+                                        "workspace_picker_expanded_applied",
+                                        format!("path={dir}"),
+                                    );
                                     state.set_neq(current);
                                     save_relay.send(()); // Trigger config save
                                 }
@@ -266,7 +269,10 @@ impl FilePickerDomain {
                             if let Some(dir) = dir {
                                 let mut current = state.get_cloned();
                                 if current.shift_remove(&dir) {
-                                    zoon::println!("collapsed {}", dir);
+                                    crate::app::emit_trace(
+                                        "workspace_picker_collapsed_applied",
+                                        format!("path={dir}"),
+                                    );
                                     state.set_neq(current);
                                     save_relay.send(()); // Trigger config save
                                 }
@@ -442,22 +448,31 @@ impl FilePickerDomain {
                     futures::select! {
                         file_path = file_selected_stream.next() => {
                             if let Some(file_path) = file_path {
-                                let mut current_files = files_vec.lock_ref().to_vec();
-                                if !current_files.contains(&file_path) {
-                                    files_vec.lock_mut().push_cloned(file_path.clone());
-                                    current_files.push(file_path.clone());
-                                    selected_files_vec_signal_clone.set_neq(current_files);
+                                let mut files = files_vec.lock_mut();
+                                let already_selected = files.len() == 1
+                                    && files.iter().any(|path| path == &file_path);
+                                if already_selected {
+                                    drop(files);
+                                    continue;
                                 }
+                                files.clear();
+                                files.push_cloned(file_path.clone());
+                                drop(files);
+                                zoon::println!("config.rs:selected push single={file_path}");
+                                selected_files_vec_signal_clone
+                                    .set_neq(vec![file_path]);
                             }
                         }
                         file_path = file_deselected_stream.next() => {
                             if let Some(file_path) = file_path {
                                 files_vec.lock_mut().retain(|f| f != &file_path);
                                 let current_files = files_vec.lock_ref().to_vec();
+                                zoon::println!("config.rs:selected removed {file_path}, remaining={current_files:?}");
                                 selected_files_vec_signal_clone.set_neq(current_files);
                             }
                         }
                         _ = clear_selection_stream.next() => {
+                            zoon::println!("config.rs:selected_files clear_selection_relay");
                             files_vec.lock_mut().clear();
                             selected_files_vec_signal_clone.set_neq(Vec::new());
                         }
@@ -1777,8 +1792,8 @@ impl AppConfig {
     pub fn update_workspace_picker_tree_state(&self, expanded_paths: Vec<String>) {
         let mut history = self.workspace_history_state.get_cloned();
         let entry = history.picker_state_mut();
+        zoon::println!("config.rs:update_workspace_picker_tree_state paths={expanded_paths:?}");
         entry.expanded_paths = expanded_paths;
-        zoon::println!("picker expanded_paths updated {:?}", entry.expanded_paths);
         history.clamp_to_limit(shared::WORKSPACE_HISTORY_MAX_RECENTS);
         self.workspace_history_state.set_neq(history.clone());
         self.workspace_history_update_relay.send(history);
@@ -1787,8 +1802,8 @@ impl AppConfig {
     pub fn update_workspace_picker_scroll(&self, scroll_top: f64) {
         let mut history = self.workspace_history_state.get_cloned();
         let entry = history.picker_state_mut();
+        zoon::println!("config.rs:update_workspace_picker_scroll scroll_top={scroll_top}");
         entry.scroll_top = scroll_top;
-        zoon::println!("picker scroll updated {}", entry.scroll_top);
         history.clamp_to_limit(shared::WORKSPACE_HISTORY_MAX_RECENTS);
         self.workspace_history_state.set_neq(history.clone());
         self.workspace_history_update_relay.send(history);
