@@ -202,6 +202,7 @@ pub struct FilePickerDomain {
     // Event-source relays for UI interactions
     pub directory_expanded_relay: Relay<String>,
     pub directory_collapsed_relay: Relay<String>,
+    pub expanded_state_relay: Relay<Vec<String>>,
     pub scroll_position_changed_relay: Relay<i32>,
     pub config_save_requested_relay: Relay,
 
@@ -225,8 +226,9 @@ impl FilePickerDomain {
         connection: std::sync::Arc<SendWrapper<Connection<shared::UpMsg, shared::DownMsg>>>,
         connection_message_actor: crate::app::ConnectionMessageActor,
     ) -> Self {
-        let (directory_expanded_relay, directory_expanded_stream) = relay::<String>();
-        let (directory_collapsed_relay, directory_collapsed_stream) = relay::<String>();
+        let (directory_expanded_relay, mut directory_expanded_stream) = relay::<String>();
+        let (directory_collapsed_relay, mut directory_collapsed_stream) = relay::<String>();
+        let (expanded_state_relay, _expanded_state_stream) = relay::<Vec<String>>();
         let (scroll_position_changed_relay, scroll_position_changed_stream) = relay::<i32>();
         let (directory_load_requested_relay, directory_load_requested_stream) = relay::<String>();
         let (tree_rendering_relay, _tree_rendering_stream) = relay();
@@ -246,13 +248,11 @@ impl FilePickerDomain {
 
         let expanded_directories_actor = Actor::new(initial_expanded, {
             let save_relay = config_save_requested_relay.clone();
+            let expanded_state_relay = expanded_state_relay.clone();
             async move |state| {
-                let mut expanded_stream = directory_expanded_stream.fuse();
-                let mut collapsed_stream = directory_collapsed_stream.fuse();
-
                 loop {
                     futures::select! {
-                        dir = expanded_stream.next() => {
+                        dir = directory_expanded_stream.next() => {
                             if let Some(dir) = dir {
                                 let mut current = state.get_cloned();
                                 if current.insert(dir.clone()) {
@@ -260,12 +260,20 @@ impl FilePickerDomain {
                                         "workspace_picker_expanded_applied",
                                         format!("path={dir}"),
                                     );
+                                    crate::app::emit_trace(
+                                        "expanded_actor_state",
+                                        format!(
+                                            "after_insert paths={:?}",
+                                            current.iter().cloned().collect::<Vec<_>>()
+                                        ),
+                                    );
+                                    expanded_state_relay.send(current.iter().cloned().collect());
                                     state.set_neq(current);
                                     save_relay.send(()); // Trigger config save
                                 }
                             }
                         }
-                        dir = collapsed_stream.next() => {
+                        dir = directory_collapsed_stream.next() => {
                             if let Some(dir) = dir {
                                 let mut current = state.get_cloned();
                                 if current.shift_remove(&dir) {
@@ -273,6 +281,14 @@ impl FilePickerDomain {
                                         "workspace_picker_collapsed_applied",
                                         format!("path={dir}"),
                                     );
+                                    crate::app::emit_trace(
+                                        "expanded_actor_state",
+                                        format!(
+                                            "after_remove paths={:?}",
+                                            current.iter().cloned().collect::<Vec<_>>()
+                                        ),
+                                    );
+                                    expanded_state_relay.send(current.iter().cloned().collect());
                                     state.set_neq(current);
                                     save_relay.send(()); // Trigger config save
                                 }
@@ -495,6 +511,7 @@ impl FilePickerDomain {
             selected_files_vec_signal,
             directory_expanded_relay,
             directory_collapsed_relay,
+            expanded_state_relay,
             scroll_position_changed_relay,
             config_save_requested_relay,
             file_selected_relay,
@@ -623,6 +640,21 @@ impl AppConfig {
             let mut update_stream = workspace_history_update_stream.fuse();
             Actor::new((), async move |_state| {
                 while let Some(mut pending) = update_stream.next().await {
+                    let picker_state = pending.picker_tree_state.clone();
+                    let expanded_paths = picker_state
+                        .as_ref()
+                        .map(|state| state.expanded_paths.clone())
+                        .unwrap_or_default();
+                    let scroll_top = picker_state
+                        .as_ref()
+                        .map(|state| state.scroll_top)
+                        .unwrap_or(0.0);
+                    crate::app::emit_trace(
+                        "workspace_history_actor",
+                        format!(
+                            "stage=pending expanded_paths={expanded_paths:?} scroll_top={scroll_top}"
+                        ),
+                    );
                     loop {
                         select! {
                             next = update_stream.next() => {
@@ -632,6 +664,21 @@ impl AppConfig {
                                         continue;
                                     }
                                     None => {
+                                        let picker_state = pending.picker_tree_state.clone();
+                                        let expanded_paths = picker_state
+                                            .as_ref()
+                                            .map(|state| state.expanded_paths.clone())
+                                            .unwrap_or_default();
+                                        let scroll_top = picker_state
+                                            .as_ref()
+                                            .map(|state| state.scroll_top)
+                                            .unwrap_or(0.0);
+                                        crate::app::emit_trace(
+                                            "workspace_history_actor",
+                                            format!(
+                                                "stage=send_final expanded_paths={expanded_paths:?} scroll_top={scroll_top}"
+                                            ),
+                                        );
                                         if let Err(e) = CurrentPlatform::send_message(UpMsg::UpdateWorkspaceHistory(pending.clone())).await {
                                             zoon::eprintln!("❌ CONFIG: Failed to persist workspace history: {}", e);
                                         }
@@ -640,6 +687,21 @@ impl AppConfig {
                                 }
                             }
                             _ = zoon::Timer::sleep(250).fuse() => {
+                                let picker_state = pending.picker_tree_state.clone();
+                                let expanded_paths = picker_state
+                                    .as_ref()
+                                    .map(|state| state.expanded_paths.clone())
+                                    .unwrap_or_default();
+                                let scroll_top = picker_state
+                                    .as_ref()
+                                    .map(|state| state.scroll_top)
+                                    .unwrap_or(0.0);
+                                crate::app::emit_trace(
+                                    "workspace_history_actor",
+                                    format!(
+                                        "stage=send_debounced expanded_paths={expanded_paths:?} scroll_top={scroll_top}"
+                                    ),
+                                );
                                 if let Err(e) = CurrentPlatform::send_message(UpMsg::UpdateWorkspaceHistory(pending.clone())).await {
                                     zoon::eprintln!("❌ CONFIG: Failed to persist workspace history: {}", e);
                                 }
@@ -1792,7 +1854,16 @@ impl AppConfig {
     pub fn update_workspace_picker_tree_state(&self, expanded_paths: Vec<String>) {
         let mut history = self.workspace_history_state.get_cloned();
         let entry = history.picker_state_mut();
-        zoon::println!("config.rs:update_workspace_picker_tree_state paths={expanded_paths:?}");
+        let state_ptr = {
+            let guard = self.workspace_history_state.lock_ref();
+            (&*guard as *const shared::WorkspaceHistory) as usize
+        };
+        crate::app::emit_trace(
+            "workspace_history_mutation",
+            format!(
+                "origin=picker_tree_state ptr={state_ptr:#x} expanded_paths={expanded_paths:?}"
+            ),
+        );
         entry.expanded_paths = expanded_paths;
         history.clamp_to_limit(shared::WORKSPACE_HISTORY_MAX_RECENTS);
         self.workspace_history_state.set_neq(history.clone());
@@ -1802,7 +1873,14 @@ impl AppConfig {
     pub fn update_workspace_picker_scroll(&self, scroll_top: f64) {
         let mut history = self.workspace_history_state.get_cloned();
         let entry = history.picker_state_mut();
-        zoon::println!("config.rs:update_workspace_picker_scroll scroll_top={scroll_top}");
+        let state_ptr = {
+            let guard = self.workspace_history_state.lock_ref();
+            (&*guard as *const shared::WorkspaceHistory) as usize
+        };
+        crate::app::emit_trace(
+            "workspace_history_mutation",
+            format!("origin=picker_scroll ptr={state_ptr:#x} scroll_top={scroll_top}"),
+        );
         entry.scroll_top = scroll_top;
         history.clamp_to_limit(shared::WORKSPACE_HISTORY_MAX_RECENTS);
         self.workspace_history_state.set_neq(history.clone());

@@ -117,6 +117,8 @@ where
 
         if let Ok(mut subscribers) = self.subscribers.lock() {
             subscribers.push(sender);
+            #[cfg(debug_assertions)]
+            crate::app::emit_trace("relay_subscribe", format!("count={}", subscribers.len()));
         }
 
         receiver
@@ -162,8 +164,11 @@ where
         }
 
         if let Ok(mut subscribers) = self.subscribers.lock() {
-            // Send to all subscribers, removing closed ones
+            let before = subscribers.len();
             subscribers.retain(|sender| sender.unbounded_send(value.clone()).is_ok());
+            let after = subscribers.len();
+            #[cfg(debug_assertions)]
+            crate::app::emit_trace("relay_send", format!("before={} after={}", before, after));
         }
     }
 

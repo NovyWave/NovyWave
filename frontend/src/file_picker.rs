@@ -68,6 +68,10 @@ impl TreeViewSyncActors {
                 let mut is_first_sync = true;
 
                 while let Some(current_expanded) = external_signal_stream.next().await {
+                    crate::app::emit_trace(
+                        "treeview_sync_external",
+                        format!("incoming={current_expanded:?} previous={previous_expanded:?}"),
+                    );
                     // Don't send events on first sync to avoid clearing config
                     if is_first_sync {
                         is_first_sync = false;

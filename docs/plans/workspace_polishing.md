@@ -35,7 +35,18 @@
 - Keep logs active until persistence works; remove afterwards.
 
 ## Next Steps / Ideas
-- Trace the flow when the picker opens: confirm the snapshot log shows the restored expansion list, then check `.novywave_global` after the backend write to ensure it matches.
-- If the backend still drops `picker_tree_state`, capture `UpMsg::UpdateWorkspaceHistory` payloads or backend logs to diagnose why the data is ignored.
-- Verify the TreeView reflects the cleared selection by inspecting the actual checkbox state after the restore Task completes.
-- Once persistence works, capture the resulting `.novywave_global` diff in the plan and remove temporary logging.
+- Added full tracing for expanded-path persistence: relay send/subscribe counts, actor snapshots, and history task events.
+- Current logs show relay occasionally broadcasting with zero subscribers, so the history task only receives empty vectors; backend still writes `expanded_paths: []`.
+- Action items: capture subscriber lifecycle across dialog toggles, ensure broadcast happens after `state.set_neq`, and keep the history task subscribed across reopen cycles.
+- **TODO 1 – Verify AppConfig ownership:** Instrument `AppConfig::update_workspace_picker_tree_state` / `_scroll` to trace the pointer identity of `workspace_history_state` just before sending through `workspace_history_update_relay`; confirm the same instance is observed by the relay actor.
+- **TODO 2 – Inspect relay debouncing:** Add temporary logging inside the debounce loop in `AppConfig::new` (workspace_history_actor) to log every pending snapshot before persistence; stress-test expand/collapse spam and ensure the final payload still carries expanded paths.
+- **TODO 3 – Restore playback snapshot:** During dialog open, log `expanded_directories_actor.state` immediately after `apply_workspace_picker_tree_state` and once `restoring_flag` flips false; ensure a non-empty vec triggers a persistence call.
+- **TODO 4 – TreeView replay diff:** Temporarily remove the dedupe guard (`is_same`) or log the set before/after to verify that restored paths actually mutate the actor state; cross-check that the TreeView sync writes the full vector into `expanded_directories_actor`.
+- **TODO 5 – Backend clamp/persist check:** In `handle_workspace_history_update`, log the incoming history and the serialized output right before `save_global_section`; ensure no later call overwrites `picker_tree_state` with an empty vec.
+
+## Latest Debugging Notes
+- Added relay instrumentation (`relay_subscribe`, `relay_send`) and confirmed the expanded-path relay often reports `before=1 after=0` once the picker closes—subscribers vanish, so follow-up snapshot calls see `[]`.
+- Actor state remains accurate (`expanded_actor_state` logs the full path list) and the new `workspace_picker_tree_state_handle` mirrors that state into config; however, `workspace_history_expanded_actor` still restarts on every reopen and only ever logs `received paths=[]`.
+- Snapshot helper now skips empty vectors; backend `UpdateWorkspaceHistory` continues to show `expanded_paths: []`, matching the empty inputs.
+- Next session should: (1) keep `workspace_history_expanded_actor` subscribed once at app start (outside the dialog scope); (2) log the result of `config.workspace_history_state` immediately before sending `UpMsg::UpdateWorkspaceHistory`; (3) inspect backend serialization after a non-empty payload is confirmed.
+- Dead ends so far: pushing snapshots from the relay before `state.set_neq` (still produced empties) and forcing a snapshot during selection changes (history overwrite persisted empty arrays).
