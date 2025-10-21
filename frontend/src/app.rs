@@ -497,11 +497,18 @@ impl NovyWaveApp {
                             .iter()
                             .cloned()
                             .collect::<Vec<String>>();
+                        let expanded_vec_for_log = expanded_vec.clone();
                         config_clone.update_workspace_tree_state(&path, expanded_vec);
 
                         let scroll_current =
                             *domain_clone.scroll_position_actor.state.lock_ref() as f64;
                         config_clone.update_workspace_scroll(&path, scroll_current);
+                        emit_trace(
+                            "workspace_picker_selection",
+                            format!(
+                                "selection={selection:?} expanded_paths={expanded_vec_for_log:?} scroll={scroll_current}"
+                            ),
+                        );
                     }
                 }
             })
@@ -513,66 +520,42 @@ impl NovyWaveApp {
             let config_clone = config.clone();
             let restoring_flag = workspace_picker_restoring.clone();
             Actor::new((), async move |_state| {
-                let mut expanded_stream = domain_clone.directory_expanded_relay.subscribe().fuse();
-                let mut collapsed_stream =
-                    domain_clone.directory_collapsed_relay.subscribe().fuse();
+                let mut expanded_stream = domain_clone
+                    .expanded_directories_actor
+                    .state
+                    .signal_cloned()
+                    .to_stream()
+                    .fuse();
+                let mut last_snapshot: Option<Vec<String>> = None;
 
-                loop {
-                    futures::select! {
-                        event = expanded_stream.next() => {
-                            match event {
-                                Some(path) => {
-                                    emit_trace(
-                                        "workspace_picker_expand",
-                                        format!("path={path}"),
-                                    );
-                                    let domain_for_publish = domain_clone.clone();
-                                    let config_for_publish = config_clone.clone();
-                                    let target_for_publish = target_clone.clone();
-                                    let restoring_flag = restoring_flag.clone();
-                                    Task::start(async move {
-                                        Task::next_macro_tick().await;
-                                        if restoring_flag.get_cloned() {
-                                            return;
-                                        }
-                                        NovyWaveApp::publish_workspace_picker_snapshot(
-                                            &config_for_publish,
-                                            &domain_for_publish,
-                                            &target_for_publish,
-                                        );
-                                    });
-                                }
-                                None => break,
-                            }
-                        }
-                        event = collapsed_stream.next() => {
-                            match event {
-                                Some(path) => {
-                                    emit_trace(
-                                        "workspace_picker_collapse",
-                                        format!("path={path}"),
-                                    );
-                                    let domain_for_publish = domain_clone.clone();
-                                    let config_for_publish = config_clone.clone();
-                                    let target_for_publish = target_clone.clone();
-                                    let restoring_flag = restoring_flag.clone();
-                                    Task::start(async move {
-                                        Task::next_macro_tick().await;
-                                        if restoring_flag.get_cloned() {
-                                            return;
-                                        }
-                                        NovyWaveApp::publish_workspace_picker_snapshot(
-                                            &config_for_publish,
-                                            &domain_for_publish,
-                                            &target_for_publish,
-                                        );
-                                    });
-                                }
-                                None => break,
-                            }
-                        }
-                        complete => break,
+                while let Some(snapshot) = expanded_stream.next().await {
+                    let expanded_vec = snapshot.iter().cloned().collect::<Vec<String>>();
+                    emit_trace(
+                        "workspace_picker_expanded_state",
+                        format!(
+                            "paths={expanded_vec:?} restoring={}",
+                            restoring_flag.get_cloned()
+                        ),
+                    );
+
+                    let is_same = last_snapshot
+                        .as_ref()
+                        .map(|previous| previous == &expanded_vec)
+                        .unwrap_or(false);
+                    if is_same {
+                        continue;
                     }
+                    last_snapshot = Some(expanded_vec.clone());
+
+                    if restoring_flag.get_cloned() {
+                        continue;
+                    }
+
+                    NovyWaveApp::publish_workspace_picker_snapshot(
+                        &config_clone,
+                        &domain_clone,
+                        &target_clone,
+                    );
                 }
             })
         };
@@ -584,8 +567,9 @@ impl NovyWaveApp {
             let restoring_flag = workspace_picker_restoring.clone();
             Actor::new((), async move |_state| {
                 let mut scroll_stream = domain_clone
-                    .scroll_position_changed_relay
-                    .subscribe()
+                    .scroll_position_actor
+                    .signal()
+                    .to_stream()
                     .fuse();
 
                 while let Some(position) = scroll_stream.next().await {
@@ -619,35 +603,17 @@ impl NovyWaveApp {
                     if visible {
                         restoring_flag.set(true);
                         let history = history_state.get_cloned();
-                        emit_trace(
-                            "workspace_picker_restore",
-                            format!("visible=true picker_state={:?}", history.picker_tree_state),
-                        );
                         Self::apply_workspace_picker_tree_state(&history, &domain_clone);
                         target_clone.set_neq(None);
                         domain_clone.selected_files_vec_signal.set_neq(Vec::new());
                         domain_clone.clear_selection_relay.send(());
-                        Task::start({
-                            let domain_clone = domain_clone.clone();
-                            let config_clone = config_clone.clone();
-                            let target_clone = target_clone.clone();
-                            let restoring_flag = restoring_flag.clone();
-                            async move {
-                                Task::next_macro_tick().await;
-                                restoring_flag.set(false);
-                                emit_trace(
-                                    "workspace_picker_restore",
-                                    "restoring_complete".to_string(),
-                                );
-                                Self::publish_workspace_picker_snapshot(
-                                    &config_clone,
-                                    &domain_clone,
-                                    &target_clone,
-                                );
-                            }
-                        });
+                        Self::publish_workspace_picker_snapshot(
+                            &config_clone,
+                            &domain_clone,
+                            &target_clone,
+                        );
+                        restoring_flag.set(false);
                     } else {
-                        emit_trace("workspace_picker_restore", "visible=false".to_string());
                         restoring_flag.set(false);
                     }
                 }

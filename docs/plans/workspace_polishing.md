@@ -23,11 +23,13 @@
    - `.novywave_global` still lacks `picker_tree_state.scroll_top`. `workspace_history_scroll_actor` now reads from the scroll actor signal after restore completes; combine its behaviour with the snapshot log to ensure we send the latest value.
 
 ## Latest Debug Logs
-- `🛰️ FRONTEND TRACE [workspace_picker_snapshot]`: emitted after restore playback or any expansion/collapse, includes both expanded paths and scroll top in `dev_server.log`.
-- `🛰️ FRONTEND TRACE [workspace_picker_expand]` / `[workspace_picker_collapse]`: emitted for every directory toggle.
-- `🛰️ FRONTEND TRACE [workspace_picker_selection]`: fires whenever the tree selection vector changes.
-- `🛰️ FRONTEND TRACE [workspace_picker_scroll]`: captures scroll relay values while the dialog is open.
-- `🛰️ FRONTEND TRACE [workspace_picker_restore]`: shows lifecycle of the restore guard (`visible=true`, `restoring_complete`, `visible=false`).
+- `🛰️ FRONTEND TRACE [workspace_picker_expand_request]` / `[workspace_picker_collapse_request]`: TreeView requests.
+- `🛰️ FRONTEND TRACE [workspace_picker_expanded_applied]` / `[workspace_picker_collapsed_applied]`: actor commits.
+- `🛰️ FRONTEND TRACE [workspace_picker_expanded_state]`: snapshot stream; should precede persistence when restoring=false.
+- `🛰️ FRONTEND TRACE [workspace_picker_snapshot]`: published payload (expanded paths + scroll).
+- `🛰️ FRONTEND TRACE [workspace_picker_selection]`: selection changes (includes expanded set + scroll).
+- `🛰️ FRONTEND TRACE [workspace_picker_scroll]`: scroll actor updates during dialog use.
+- `🛰️ FRONTEND TRACE [workspace_picker_restore]`: restore lifecycle.
 - `frontend/src/config.rs:selected push single`, `… removed`, `… clear_selection_relay`: show when selection actors receive clear/select events.
 - Backend persistence runs through `UpMsg::UpdateWorkspaceHistory`; watch `dev_server.log` for any errors after the snapshot log fires.
 - Keep logs active until persistence works; remove afterwards.
