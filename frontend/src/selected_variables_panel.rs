@@ -97,59 +97,79 @@ fn selected_variables_panel_content(
                 .signal_vec()
                 .to_signal_cloned()
                 .map(|vars| {
-                    // Account for variables + footer row
-                    (vars.len() + 1) as u32 * SELECTED_VARIABLES_ROW_HEIGHT
+                    let rows = if vars.is_empty() { 2 } else { vars.len() + 1 };
+                    (rows as u32) * SELECTED_VARIABLES_ROW_HEIGHT
                 }),
         ))
         .s(Width::fill())
         .s(Scrollbars::x_and_clip_y())
-        .child(
-            Row::new()
-                .s(Height::fill())
-                .s(Width::fill())
-                .s(Align::new().top())
-                .item(
-                    // Name Column
-                    selected_variables_name_column(
-                        selected_variables.clone(),
-                        tracked_files.clone(),
-                        waveform_timeline.clone(),
-                        name_column_width_signal,
-                    ),
-                )
-                .item(
-                    // Name-Value divider
-                    crate::panel_layout::variables_name_vertical_divider(
-                        &app_config,
-                        dragging_system.clone(),
-                    ),
-                )
-                .item(
-                    // Value Column
-                    selected_variables_value_column(
-                        selected_variables.clone(),
-                        waveform_timeline.clone(),
-                        app_config.clone(),
-                        value_column_width_signal,
-                    ),
-                )
-                .item(
-                    // Value-Wave divider
-                    crate::panel_layout::variables_value_vertical_divider(
-                        &app_config,
-                        dragging_system.clone(),
-                    ),
-                )
-                .item(
-                    // Wave Column
-                    selected_variables_wave_column(
-                        &selected_variables,
-                        &waveform_timeline,
-                        &waveform_canvas,
-                        &app_config,
-                    ),
-                ),
-        )
+        .child_signal({
+            let selected_variables = selected_variables.clone();
+            let tracked_files = tracked_files.clone();
+            let app_config = app_config.clone();
+            let dragging_system = dragging_system.clone();
+            let waveform_timeline = waveform_timeline.clone();
+            let waveform_canvas = waveform_canvas.clone();
+            selected_variables_for_height
+                .variables
+                .signal_vec()
+                .to_signal_cloned()
+                .map(move |vars| {
+                    if vars.is_empty() {
+                        crate::file_management::empty_state_hint(
+                            "Select variables in the Variables panel to show them here.",
+                        )
+                        .into_raw()
+                    } else {
+                        // Recompute width signals inside the branch to avoid moving non-Copy signals into the closure
+                        let name_signal = variables_name_column_width_signal(app_config.clone());
+                        let value_signal = variables_value_column_width_signal(app_config.clone());
+                        zoon::RawElOrText::RawHtmlEl(
+                            Row::new()
+                                .s(Height::fill())
+                                .s(Width::fill())
+                                .s(Align::new().top())
+                                .item(
+                                    selected_variables_name_column(
+                                        selected_variables.clone(),
+                                        tracked_files.clone(),
+                                        waveform_timeline.clone(),
+                                        name_signal,
+                                    ),
+                                )
+                                .item(
+                                    crate::panel_layout::variables_name_vertical_divider(
+                                        &app_config,
+                                        dragging_system.clone(),
+                                    ),
+                                )
+                                .item(
+                                    selected_variables_value_column(
+                                        selected_variables.clone(),
+                                        waveform_timeline.clone(),
+                                        app_config.clone(),
+                                        value_signal,
+                                    ),
+                                )
+                                .item(
+                                    crate::panel_layout::variables_value_vertical_divider(
+                                        &app_config,
+                                        dragging_system.clone(),
+                                    ),
+                                )
+                                .item(
+                                    selected_variables_wave_column(
+                                        &selected_variables,
+                                        &waveform_timeline,
+                                        &waveform_canvas,
+                                        &app_config,
+                                    ),
+                                )
+                                .into_raw_el(),
+                        )
+                    }
+                })
+        })
 }
 
 /// Name Column with remove buttons and keyboard shortcuts footer

@@ -1401,17 +1401,30 @@ impl NovyWaveApp {
             let workspace_loading = workspace_loading.clone();
             let workspace_path = workspace_path.clone();
             async move {
-                if let Err(err) =
-                    <crate::platform::CurrentPlatform as crate::platform::Platform>::send_message(
-                        shared::UpMsg::SelectWorkspace {
-                            root: request_path.clone(),
-                        },
-                    )
-                    .await
-                {
-                    workspace_loading.set(false);
-                    zoon::println!("Failed to request workspace '{}': {}", request_path, err);
-                    workspace_path.set(Some(request_path));
+                // Robust retry: dev server may restart briefly on writes; tolerate transient fetch failures.
+                let mut attempt: u8 = 0;
+                loop {
+                    attempt += 1;
+                    let result = <crate::platform::CurrentPlatform as crate::platform::Platform>::send_message(
+                        shared::UpMsg::SelectWorkspace { root: request_path.clone() }
+                    ).await;
+                    match result {
+                        Ok(()) => { break; }
+                        Err(err) => {
+                            emit_trace(
+                                "workspace_switch_retry",
+                                format!("attempt={} error={}", attempt, err),
+                            );
+                            if attempt >= 5 {
+                                workspace_loading.set(false);
+                                zoon::println!("Failed to request workspace '{}' after retries: {}", request_path, err);
+                                workspace_path.set(Some(request_path.clone()));
+                                break;
+                            }
+                            zoon::Timer::sleep(350).await;
+                            continue;
+                        }
+                    }
                 }
             }
         });
