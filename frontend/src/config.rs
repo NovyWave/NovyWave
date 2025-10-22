@@ -1941,4 +1941,26 @@ impl AppConfig {
         self.workspace_history_state.set_neq(history.clone());
         self.workspace_history_update_relay.send(history);
     }
+
+    /// Remove a single path from Recent workspaces.
+    /// If it was the last_selected, promote the next recent if available.
+    pub fn remove_recent_workspace(&self, path: &str) {
+        if path.is_empty() {
+            return;
+        }
+        let mut history = self.workspace_history_state.get_cloned();
+        history.recent_paths.retain(|p| p != path);
+        history.tree_state.remove(path);
+        if history
+            .last_selected
+            .as_ref()
+            .map(|p| p == path)
+            .unwrap_or(false)
+        {
+            history.last_selected = history.recent_paths.first().cloned();
+        }
+        history.clamp_to_limit(shared::WORKSPACE_HISTORY_MAX_RECENTS);
+        self.workspace_history_state.set_neq(history.clone());
+        self.workspace_history_update_relay.send(history);
+    }
 }
