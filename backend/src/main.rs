@@ -2556,25 +2556,35 @@ async fn handle_loaded_config(
 }
 
 async fn load_config(session_id: SessionId, cor_id: CorId) {
-    match read_or_create_config() {
-        Ok(mut config) => {
-            // Read global and honor last_selected as the initial workspace root
-            config.global = read_global_section();
-            if let Some(last) = config.global.workspace_history.last_selected.clone() {
-                if !last.is_empty() {
-                    let candidate = PathBuf::from(&last);
-                    let absolute = if candidate.is_absolute() {
-                        candidate
-                    } else {
-                        INITIAL_CWD.join(candidate)
-                    };
-                    if let Ok(canon) = fs::canonicalize(&absolute) {
-                        if canon.is_dir() {
-                            workspace_context().set_root(canon);
-                        }
-                    }
+    // 1) Read global first and set the workspace root so we load the correct per-workspace config
+    let global_section = read_global_section();
+    if let Some(last) = global_section.workspace_history.last_selected.clone() {
+        if !last.is_empty() {
+            let candidate = PathBuf::from(&last);
+            let absolute = if candidate.is_absolute() {
+                candidate
+            } else {
+                INITIAL_CWD.join(candidate)
+            };
+            if let Ok(canon) = fs::canonicalize(&absolute) {
+                if canon.is_dir() {
+                    workspace_context().set_root(canon);
                 }
             }
+        }
+    }
+
+    // 2) Load the per-workspace config for the selected root
+    match read_or_create_config() {
+        Ok(mut config) => {
+            // Attach the global section we read above
+            let mut effective_global = global_section.clone();
+            // Ensure recents list limits are applied consistently
+            effective_global
+                .workspace_history
+                .clamp_to_limit(shared::WORKSPACE_HISTORY_MAX_RECENTS);
+            config.global = effective_global;
+
             let root_display = workspace_context().root().to_string_lossy().to_string();
             handle_loaded_config(config, session_id, cor_id, Some(root_display)).await;
         }

@@ -21,7 +21,7 @@ pub trait Platform {
 #[cfg(NOVYWAVE_PLATFORM = "WEB")]
 pub mod web;
 #[cfg(NOVYWAVE_PLATFORM = "WEB")]
-pub use web::{WebPlatform as CurrentPlatform, set_platform_connection, server_ready_signal, notify_server_alive};
+pub use web::{WebPlatform as CurrentPlatform, set_platform_connection, server_ready_signal, server_is_ready, notify_server_alive};
 
 #[cfg(NOVYWAVE_PLATFORM = "TAURI")]
 pub mod tauri;

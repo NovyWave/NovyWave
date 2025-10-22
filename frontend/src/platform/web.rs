@@ -19,9 +19,12 @@ static SERVER_READY: std::sync::LazyLock<Mutable<bool>> =
 // Track generic server aliveness (/_api/ responds) even if handler isn't mounted yet
 static SERVER_ALIVE: std::sync::LazyLock<Mutable<bool>> =
     std::sync::LazyLock::new(|| Mutable::new(false));
-// Prevent multiple concurrent LoadConfig attempts during server restarts
+// Prevent multiple concurrent LoadConfig attempts during dev-server swaps
 static LOADCONFIG_INFLIGHT: std::sync::LazyLock<Mutable<bool>> =
     std::sync::LazyLock::new(|| Mutable::new(false));
+// Timestamp (ms since epoch) of the last DownMsg observed, used to detect long gaps
+static LAST_DOWNMSG_MS: std::sync::LazyLock<Mutable<i64>> =
+    std::sync::LazyLock::new(|| Mutable::new(0));
 
 // Small queue for critical UpMsgs while the server isn't ready
 static PENDING_QUEUE: std::sync::LazyLock<Mutable<VecDeque<UpMsg>>> =
@@ -37,22 +40,66 @@ pub struct WebPlatform;
 pub fn set_platform_connection(connection: Arc<SendWrapper<zoon::Connection<UpMsg, DownMsg>>>) {
     (&*CONNECTION).set(Some(connection));
     zoon::println!("🌐 PLATFORM: Connection initialized for WebPlatform");
+
+    // Lightweight watchdog: when the window regains focus, re-request LoadConfig once.
+    // This fixes the common case of a backend hot-reload while the app tab stays open.
+    if let Some(window) = web_sys::window() {
+        let closure = wasm_bindgen::closure::Closure::wrap(Box::new(move || {
+            let has_conn = (&*CONNECTION).get_cloned().is_some();
+            if !has_conn { return; }
+            // Fire and forget; platform send already has a small retry loop for LoadConfig
+            zoon::Task::start(async move {
+                let _ = WebPlatform::send_message(UpMsg::LoadConfig).await;
+            });
+        }) as Box<dyn FnMut()>);
+        let _ = window.add_event_listener_with_callback("focus", closure.as_ref().unchecked_ref());
+        // Leak the closure for the lifetime of the app; event listener lives with the page
+        closure.forget();
+    }
 }
 
 /// Expose a read-only signal indicating whether the backend API appears ready
-pub fn server_ready_signal() -> impl zoon::Signal<Item = bool> { zoon::always(true) }
+pub fn server_ready_signal() -> impl zoon::Signal<Item = bool> { SERVER_READY.signal() }
 
 /// Mark the server as alive/ready when any DownMsg is received
-pub fn notify_server_alive() {}
+pub fn notify_server_alive() {
+    SERVER_ALIVE.set(true);
+    SERVER_READY.set(true);
+    // Update last seen DownMsg timestamp
+    if let Some(perf) = web_sys::window().and_then(|w| w.performance()) {
+        let now = perf.now() as i64;
+        LAST_DOWNMSG_MS.set(now);
+    }
+}
+
+/// Cheap readiness check for places that must avoid non-critical posts during boot
+pub fn server_is_ready() -> bool {
+    SERVER_READY.get()
+}
 
 impl Platform for WebPlatform {
     async fn send_message(msg: UpMsg) -> Result<(), String> {
         match (&*CONNECTION).get_cloned() {
-            Some(connection) => connection
-                .send_up_msg(msg)
-                .await
-                .map(|_| ())
-                .map_err(|e| format!("{:?}", e)),
+            Some(connection) => {
+                // Minimal local robustness: retry LoadConfig a few times on transient
+                // network errors (e.g., dev server just swapped) without extra flags.
+                if matches!(msg, UpMsg::LoadConfig) {
+                    let mut attempt: u8 = 0;
+                    loop {
+                        attempt = attempt.saturating_add(1);
+                        let result = connection.send_up_msg(UpMsg::LoadConfig).await;
+                        if result.is_ok() { return Ok(()); }
+                        if attempt >= 12 { return Err("LoadConfig failed".into()); }
+                        zoon::Timer::sleep(300).await;
+                    }
+                }
+
+                connection
+                    .send_up_msg(msg)
+                    .await
+                    .map(|_| ())
+                    .map_err(|e| format!("{:?}", e))
+            }
             None => Err("No platform connection available".to_string()),
         }
     }

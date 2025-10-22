@@ -1,89 +1,107 @@
-# Loading/Startup Reliability Plan (dev server restarts, last_selected)
+# Loading/Startup Reliability Plan (server-first, last_selected)
 
-## Current Status
-- After a MoonZoon dev‑server restart, the frontend can get stuck in a "Loading…" state and spam POST `/_api/up_msg_handler` with `net::ERR_EMPTY_RESPONSE`.
-- Browser Network tab shows many failed POSTs; static assets (fonts, css) load fine; the handler sometimes returns 200 briefly, then drops again while the server swaps.
-- Only `LoadConfig` needs to succeed to unblock the UI, but it’s the first message and collides with restart windows.
-- `last_selected` in `.novywave_global` should be applied on startup; we added backend support, but it only helps once `LoadConfig` completes.
+## Start Here — Execution Checklist
+1) Read this doc fully (assumptions, Boot Protocol, Persistence Flows).
+2) Backend: ensure SelectWorkspace persists last_selected server‑side and that WorkspaceLoaded precedes ConfigLoaded. Files: backend/src/main.rs (load_config, select_workspace, handle_loaded_config).
+3) Frontend: verify these are in place:
+   - Bar updates strictly on WorkspaceLoaded; default label “Default ([path])”. frontend/src/app.rs.
+   - Only LoadConfig retries at boot; SaveConfig/UpdateWorkspaceHistory are deferred until ConfigLoaded and ignore transient errors. frontend/src/platform/web.rs, frontend/src/config.rs.
+   - Open Workspace dialog: clear selection on open; recents filtered by current+default; per‑item X removes. frontend/src/app.rs, frontend/src/config.rs.
+4) Validate with the Test Plan using dev_server.log (no cargo): confirm WorkspaceLoaded and ConfigLoaded order, no early Save/History POSTs, and bar matches backend.
+5) Remove temporary traces after stability.
 
-## Constraints / Guidelines
-- Don’t run `cargo` locally. Use the maintainer dev server; rely on `dev_server.log` for truth. Share minimal relevant excerpts.
-- Avoid flooding the server during rebuilds. Use explicit readiness and a small queue instead of repeated posts.
-- Keep logs temporary and low‑noise; remove after green runs.
+This doc reflects observations from October 22, 2025 and folds in new constraints: the backend reads `.novywave_global` at start-of-process (before any frontend request). The server is therefore the source of truth for the active workspace at boot. The frontend must not “guess” and display a different workspace than the backend actually loads.
 
-## Repro Steps (minimal)
-1. Start the app in the browser; observe normal load.
-2. Restart the MoonZoon dev server (the one backing `/_api`).
-3. Watch:
-   - Network tab: `HEAD/GET /_api/up_msg_handler` readiness probes vs `POST /_api/up_msg_handler`.
-   - Console: any `load_config_retry`, `workspace_switch_retry` traces.
-   - `dev_server.log`: look for `WorkspaceLoaded` / `ConfigLoaded` lines; if absent, server never processed `LoadConfig`.
+## Current Problems (observed)
+- At fresh dev starts, the backend loads the default workspace even when the bar shows a different path; the bar was populated by a UI fallback (from last_selected/recent) before the server confirmed a workspace. Result: visual mismatch.
+- Early POSTs (SaveConfig/UpdateWorkspaceHistory) fail with net::ERR_EMPTY_RESPONSE while the handler swaps. Flooding obscures the real first mile (`LoadConfig`).
+- The Open Workspace dialog sometimes reopens with stale selection (checked path), disabling intent to select another.
+- The Recent workspaces list sometimes includes the default or current workspace; filtering uses stale state.
+- Persisting last_selected too late on the frontend means the next fresh start uses the default, not the last user selection — even though the bar shows otherwise.
 
-## Hypotheses
-1. Handler swap window: the HTTP server accepts static GETs earlier than it accepts POST to `/_api/up_msg_handler`; `HEAD` may succeed while the POST path is still closed, causing ERR_EMPTY_RESPONSE.
-2. Multi‑flight: concurrent `LoadConfig` senders (initial boot + internal retries) create a thundering herd; even if the server becomes ready, overlapping requests fail more often.
-3. UI stuck: `workspace_loading` flips to true and never flips false when `LoadConfig` fails early; no `WorkspaceLoaded`/`ConfigLoaded` arrive to clear it.
-4. Trace/noise: repeated `FrontendTrace` (or other non‑critical posts) during restart expand the outage window and mask real failures.
+## Non‑negotiable Principles
+1) Server‑first truth: The only authoritative signal for the active workspace is `DownMsg::WorkspaceLoaded { root, default_root }`. The bar must bind to this, not to UI fallbacks.
+2) Start‑of‑process load: The backend reads `.novywave_global` (last_selected + recents) before any frontend message. If the user wants a different workspace on next run, persist last_selected immediately when the user switches, so the next boot sees it.
+3) No POST storms at boot: Only `LoadConfig` should attempt early; defer Save/History until after `ConfigLoaded`.
+4) UI should never block user intent due to stale selection; dialog opens with no selection; “Open” enables on actual user choice.
+5) Recents must exclude both the current workspace and the current default root (computed live).
 
-## Fix Strategy (phased)
+## Boot Protocol (server‑first)
+1) Frontend sends only `LoadConfig` (with a minimal, local retry) until `ConfigLoaded` is received.
+2) Backend performs:
+   - Read `.novywave_global` (global section); apply `last_selected` if valid.
+   - Set workspace context; emit `WorkspaceLoaded { root, default_root }`.
+   - Emit `ConfigLoaded(app_config)`.
+3) Frontend updates UI strictly from `WorkspaceLoaded` (bar label) and unblocks from either `WorkspaceLoaded` or `ConfigLoaded`.
 
-### Phase A — Make startup robust and quiet
-- Platform gate (frontend/src/platform/web.rs):
-  - Use an API‑path probe that matches the transport used by `LoadConfig`.
-  - Switch to a tiny `GET /_api/up_msg_handler` (or `POST` with empty body) readiness probe; treat any non‑network error status (e.g. 405/400) as readiness.
-  - Add a short “circuit breaker” after `net::ERR_EMPTY_RESPONSE`: don’t re‑probe for 400–600 ms; then try again with exponential backoff (cap ~5–6 s).
-  - Keep a single‑flight guard for `LoadConfig` so only one in‑flight attempt exists.
-  - Drop non‑critical `UpMsg` while server is not ready (we already skip) and suppress repeated console logs.
+## Persistence Flows
+- User switches workspace (SelectWorkspace):
+  - Immediately persist last_selected on the frontend via `UpdateWorkspaceHistory` (best effort, quiet errors) AND request the switch.
+  - Backend on SelectWorkspace should also update and persist the global history (server‑side guarantee). If not already, add this to the backend.
+  - Next fresh start: server loads the newly persisted last_selected without waiting for the frontend.
 
-- App boot (frontend/src/app.rs::new):
-  - Retry `LoadConfig` only via the platform gate (remove extra manual loops once gate is proven) to avoid double retry stacks.
-  - Do not set `workspace_loading` to true at boot; only flip it after `WorkspaceLoaded` or when a user explicitly switches workspaces.
-  - Add a toast on prolonged server unavailability (optional; remove later).
+## Dialog Invariants (Open Workspace)
+- On open: clear any previous selection and target; “Open” is disabled until the user chooses.
+- Recent list filtering uses live state:
+  - Exclude `current_workspace` (from `WorkspaceLoaded`).
+  - Exclude `default_root` (live default, not a stale snapshot).
+- Per‑item “X” removes recent entries and persists quietly; UI updates immediately.
 
-### Phase B — Ensure last_selected is respected
-- Backend (backend/src/main.rs::load_config): already applies `last_selected` by canonicalizing the path and setting the workspace root before sending messages.
-- Fallbacks:
-  - If `last_selected` is invalid or missing, use `INITIAL_CWD` and log a concise `ConfigError` once.
-  - Ensure message order remains: `WorkspaceLoaded` (with `root` and `default_root`) then `ConfigLoaded`.
+## Network and Error Policy
+- Only `LoadConfig` retries locally (small backoff, finite attempts). Nothing else adds gates/queues.
+- `SaveConfig` and `UpdateWorkspaceHistory` are prevented before `ConfigLoaded` and run as best‑effort after it. Errors are ignored in dev to avoid UI breakage.
+- No `FrontendTrace` or other non‑critical posts during boot.
 
-### Phase C — Queue + flush strategy
-- While `server_ready=false`, queue critical UpMsgs (`SelectWorkspace`, `SaveConfig`, `UpdateWorkspaceHistory`) into a small ring (size ~8).
-- When readiness flips true (successful probe), flush the queue in order with 150–300 ms spacing (avoid stampede) and clear.
-- Always send `LoadConfig` first if pending, then others.
+## UI Policy (bar and labels)
+- The bar shows exactly the `WorkspaceLoaded.root` path. If root equals `default_root`, show `Default ([path])`.
+- Remove any bar fallback that derives from last_selected/recent; it can lie if the server chose a different root.
 
-## Code Pointers
-- Frontend:
-  - `frontend/src/platform/web.rs` — server readiness probe, single‑flight guard, message gating and logging.
-  - `frontend/src/app.rs` — initial `LoadConfig` request; `workspace_loading` handling; `WorkspaceLoaded`/`ConfigLoaded` actors.
-  - `frontend/src/app.rs::start_workspace_switch` — user‑initiated workspace changes; ensure rollback on retry exhaustion.
-- Backend:
-  - `backend/src/main.rs::load_config`, `handle_loaded_config`, `select_workspace`, `workspace_context`.
+## Concrete Tasks
+Frontend
+- [x] Remove bar fallback; update strictly on `WorkspaceLoaded`.
+- [x] On user switch, call `record_workspace_selection()` which sends `UpdateWorkspaceHistory` immediately (quiet errors) so the next fresh start uses the chosen workspace; keep the SelectWorkspace flow the same.
+- [x] Delay `SaveConfig` until `ConfigLoaded`; debounce normally afterward; ignore transient errors in dev.
+- [x] Delay `UpdateWorkspaceHistory` (tree/scroll) until `ConfigLoaded`; ignore transient errors in dev.
+- [x] On dialog open: clear selection and reset target; wire “Open” to actual selection.
+- [x] Filter recents by current workspace and current default root (read live, not snapshotted).
+- [x] Add small “X” button next to each recent to remove one entry.
+- [x] Minimal `LoadConfig` retry loop in the platform (no global gates/queues).
 
-## Implementation Tasks (checklist)
-- [ ] Replace HEAD probe with GET (or empty POST) to `/_api/up_msg_handler`; treat any non‑network response as ready.
-- [ ] Add short circuit‑breaker after `net::ERR_EMPTY_RESPONSE`; exponential backoff (250ms → 500ms → 1s → max 1.5–2s) with cap ~6s.
-- [ ] Keep single‑flight `LoadConfig`; ensure we never log "Sending message…" more than once per attempt.
-- [ ] Remove duplicate retry loop in `NovyWaveApp::new()`; rely on platform gate only.
-- [ ] Don’t set `workspace_loading` at startup; only on user switch. Ensure it is cleared on `WorkspaceLoaded` OR `ConfigLoaded` OR `ConfigError`.
-- [ ] Confirm backend `last_selected` path resolution works with relative and absolute paths and invalid entries.
-- [ ] Add small queue for critical UpMsgs during outage; flush after readiness.
-- [ ] Clean temporary traces and unused-variable warnings.
+Backend (recommended)
+- [ ] On `SelectWorkspace`, persist last_selected (and recents) server‑side in addition to the current frontend best‑effort. This guarantees the next start reflects the user’s last choice even if the frontend didn’t manage to POST before shutdown.
+- [ ] Ensure `WorkspaceLoaded` is always sent before `ConfigLoaded`, and that the values reflect the actual root/default used.
 
-## Test Plan (manual)
-1. Restart server while app is open.
-   - Expect: a handful of GET probes to `/_api/up_msg_handler`, no POST flood; once ready, exactly one `LoadConfig` POST; UI unblocks.
-2. Cold reload the app.
-   - Expect: app opens the `last_selected` workspace automatically (`WorkspaceLoaded` then `ConfigLoaded`); no stuck loading.
-3. Switch workspaces during rebuild.
-   - Expect: switch either completes after server is back or rolls back path with a toast; no indefinite loading and no POST storm.
-4. Verify `.novywave_global` remains strictly global (no per‑workspace tree_state entries) and picker scroll persists.
+## State / Message Order (target)
+```
+Browser boot → POST LoadConfig (retry locally if needed)
+Backend: read .novywave_global → set context
+Backend: DownMsg WorkspaceLoaded {root, default_root}
+Backend: DownMsg ConfigLoaded(app_config)
+Frontend: bar ← WorkspaceLoaded.root (Default([path]) if root == default_root)
+Frontend: unblock loading on WorkspaceLoaded or ConfigLoaded
+Frontend: AFTER ConfigLoaded → SaveConfig / UpdateWorkspaceHistory (debounced, quiet errors)
+```
+
+## Test Plan (new)
+1) Fresh start (no prior switch)
+   - Expect: default workspace loads; bar shows `Default ([path])`; no Save/History errors before ConfigLoaded.
+2) Switch to `workspace_b`, reload
+   - Expect: `workspace_b` loads (server reads updated last_selected); bar shows `workspace_b` (not Default); no fallback.
+3) Restart dev server while app open
+   - Expect: a handful of LoadConfig attempts until success; after ConfigLoaded, normal Save/History resumes quietly.
+4) Dialog re-open
+   - Expect: no pre-checked rows; “Open” enables when a new folder is picked.
+5) Recent list correctness
+   - Expect: current workspace and default root absent; removing a recent updates immediately.
 
 ## Minimal Log Filters
 ```
-rg -n "load_config_retry|workspace_switch_retry|WorkspaceLoaded|ConfigLoaded|ConfigError|UpdateWorkspaceHistory" dev_server.log
+rg -n "WorkspaceLoaded|ConfigLoaded|SelectWorkspace|UpdateWorkspaceHistory|SaveConfig" dev_server.log
 ```
 
-## Notes
-- If MoonZoon rejects `GET /_api/up_msg_handler`, probe `/_api/` or `/_api/public/content.css` and then do a single guarded `LoadConfig` POST.
-- Keep the queue/gate small to reduce complexity; the key is to send one `LoadConfig` at the right time.
+## Open Items
+- Backend persistence on `SelectWorkspace` (server-side guarantee) — recommended for true server-first behavior.
+- If backend plugin discovery continues to panic, guard it behind catch_unwind and never let it block WorkspaceLoaded/ConfigLoaded.
 
+## Rationale
+The server reads `.novywave_global` before any frontend message. A UI that “fills in” the workspace bar from last_selected or recents without waiting for `WorkspaceLoaded` can mislead users. This plan makes the backend authoritative for the active workspace, defers non-essential traffic until after `ConfigLoaded`, and ensures last_selected is persisted as soon as the user switches so a fresh load reflects reality without relying on timing.

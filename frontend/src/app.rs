@@ -81,12 +81,15 @@ pub(crate) fn emit_trace(target: &str, message: impl Into<String>) {
     let target_string = target.to_string();
     let message_string = message.into();
     Task::start(async move {
-        let _ =
-            <CurrentPlatform as crate::platform::Platform>::send_message(UpMsg::FrontendTrace {
-                target: target_string,
-                message: message_string,
-            })
-            .await;
+        // Avoid non-critical POSTs during boot or server restarts
+        if crate::platform::server_is_ready() {
+            let _ =
+                <CurrentPlatform as crate::platform::Platform>::send_message(UpMsg::FrontendTrace {
+                    target: target_string,
+                    message: message_string,
+                })
+                .await;
+        }
     });
 }
 
@@ -164,6 +167,14 @@ impl ConnectionMessageActor {
                                 default_root,
                                 config,
                             } => {
+                                // Trace to dev_server.log to aid validation
+                                emit_trace(
+                                    "workspace_loaded_event",
+                                    format!(
+                                        "root={} default_root={}",
+                                        root, default_root
+                                    ),
+                                );
                                 workspace_loaded_relay_clone.send(WorkspaceLoadedEvent {
                                     root,
                                     default_root,
@@ -418,12 +429,22 @@ impl NovyWaveApp {
             let workspace_path = workspace_path.clone();
             let workspace_loading = workspace_loading.clone();
             let default_workspace_path = default_workspace_path.clone();
+            let tracked_files_on_workspace = tracked_files.clone();
+            let selected_variables_on_workspace = selected_variables.clone();
 
             Actor::new((), async move |_state| {
                 while let Some(event) = workspace_stream.next().await {
                     workspace_loading.set(false);
+                    let previous = workspace_path.lock_ref().clone();
+                    let is_changed = previous.as_ref().map(|p| p != &event.root).unwrap_or(true);
                     workspace_path.set(Some(event.root.clone()));
                     default_workspace_path.set(Some(event.default_root.clone()));
+                    if is_changed {
+                        // Clear file selections and variables only after the server confirms
+                        // the workspace switch to avoid wiping state on failed attempts.
+                        tracked_files_on_workspace.all_files_cleared_relay.send(());
+                        selected_variables_on_workspace.selection_cleared_relay.send(());
+                    }
                 }
             })
         };
@@ -431,35 +452,9 @@ impl NovyWaveApp {
         let config_loaded_actor = {
             let mut config_stream = connection_message_actor.config_loaded_relay.subscribe();
             let workspace_loading = workspace_loading.clone();
-            let workspace_path_for_config = workspace_path.clone();
-            let default_workspace_path_for_config = default_workspace_path.clone();
             Actor::new((), async move |_state| {
-                while let Some(loaded_config) = config_stream.next().await {
+                while config_stream.next().await.is_some() {
                     workspace_loading.set(false);
-                    // Populate the bar from last_selected; if absent, fall back to the first recent
-                    // (which is the default root on a fresh run).
-                    if workspace_path_for_config.get_cloned().is_none() {
-                        let last = loaded_config
-                            .global
-                            .workspace_history
-                            .last_selected
-                            .unwrap_or_default();
-                        if !last.is_empty() {
-                            workspace_path_for_config.set(Some(last.clone()));
-                        } else if let Some(first_recent) = loaded_config
-                            .global
-                            .workspace_history
-                            .recent_paths
-                            .first()
-                            .cloned()
-                        {
-                            workspace_path_for_config.set(Some(first_recent.clone()));
-                            // Treat this as the default root hint for UI filtering
-                            if default_workspace_path_for_config.get_cloned().is_none() {
-                                default_workspace_path_for_config.set(Some(first_recent));
-                            }
-                        }
-                    }
                 }
             })
         };
@@ -1324,9 +1319,13 @@ impl NovyWaveApp {
                 let loading = self.workspace_loading.signal(),
                 let server_ready = server_ready_signal => {
                     if let Some(path) = current.clone() {
-                        path
+                        if let Some(def) = default.clone() {
+                            if def == path {
+                                format!("Default ({})", path)
+                            } else { path }
+                        } else { path }
                     } else if let Some(default_path) = default.clone() {
-                        default_path
+                        format!("Default ({})", default_path)
                     } else if !*server_ready {
                         String::from("Connecting to server… (retrying)")
                     } else if *loading {
@@ -1425,16 +1424,11 @@ impl NovyWaveApp {
             return;
         }
 
-        let previous_path = workspace_path.lock_ref().clone();
         workspace_loading.set(true);
-        workspace_path.set(Some(trimmed.clone()));
-        tracked_files.all_files_cleared_relay.send(());
-        selected_variables.selection_cleared_relay.send(());
 
         Task::start({
             let request_path = trimmed.clone();
             let workspace_loading = workspace_loading.clone();
-            let workspace_path = workspace_path.clone();
             async move {
                 // Robust retry: dev server may restart briefly on writes; tolerate transient fetch failures.
                 let mut attempt: u8 = 0;
@@ -1453,8 +1447,6 @@ impl NovyWaveApp {
                             if attempt >= 12 {
                                 workspace_loading.set(false);
                                 zoon::println!("Failed to request workspace '{}' after retries: {}", request_path, err);
-                                // Revert the visible path to the previous value on failure
-                                workspace_path.set(previous_path.clone());
                                 break;
                             }
                             zoon::Timer::sleep(500).await;
@@ -1607,7 +1599,13 @@ fn workspace_picker_dialog(
     };
     use moonzoon_novyui::tokens::theme::{Theme, theme};
 
-    let default_workspace_snapshot = default_workspace_path.lock_ref().clone();
+    // Do not snapshot default path here; read it on demand so filtering reflects
+    // the latest default even if it was set moments after dialog opens.
+
+    // Reset any stale selection when the dialog opens so the user
+    // can pick a new workspace immediately.
+    workspace_picker_domain.clear_selection_relay.send(());
+    workspace_picker_target.set_neq(None);
 
     // Apply saved picker tree state (expanded paths + scroll) before building the tree
     // to prevent the initialization actor from injecting default entries.
@@ -1781,7 +1779,7 @@ fn workspace_picker_dialog(
                         .item({
                             let mut top_sections: Vec<RawHtmlEl> = Vec::new();
 
-                            if let Some(default_path) = default_workspace_snapshot.clone() {
+                            if let Some(default_path) = default_workspace_path.lock_ref().clone() {
                                 let workspace_loading = workspace_loading.clone();
                                 let workspace_path = workspace_path.clone();
                                 let tracked_files = tracked_files.clone();
@@ -1898,13 +1896,13 @@ fn workspace_picker_dialog(
                                         let workspace_picker_domain = workspace_picker_domain.clone();
                                         let workspace_picker_target = workspace_picker_target.clone();
                                         let app_config = app_config.clone();
-                                        let default_workspace_snapshot = default_workspace_snapshot.clone();
                                         let recent_paths_vec = recent_paths_vec.clone();
                                         recent_paths_vec
                                             .signal_vec_cloned()
                                             .to_signal_cloned()
                                             .map(move |recents| {
                                                 let current_workspace = workspace_path.lock_ref().clone();
+                                                let default_workspace_snapshot = default_workspace_path.lock_ref().clone();
 
                                                 let filtered: Vec<String> = recents
                                                     .iter()

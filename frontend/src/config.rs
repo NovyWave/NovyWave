@@ -654,6 +654,11 @@ impl AppConfig {
             relay::<shared::WorkspaceHistory>();
         let workspace_history_actor = {
             let mut update_stream = workspace_history_update_stream.fuse();
+            let mut config_loaded_stream = connection_message_actor
+                .config_loaded_relay
+                .subscribe()
+                .fuse();
+            let mut ready = false;
             Actor::new((), async move |_state| {
                 while let Some(mut pending) = update_stream.next().await {
                     let picker_state = pending.picker_tree_state.clone();
@@ -673,6 +678,9 @@ impl AppConfig {
                     );
                     loop {
                         select! {
+                            _ = config_loaded_stream.next() => {
+                                ready = true;
+                            }
                             next = update_stream.next() => {
                                 match next {
                                     Some(next_history) => {
@@ -721,9 +729,7 @@ impl AppConfig {
                                                 "stage=send_final expanded_paths={expanded_paths:?} scroll_top={scroll_top}"
                                             ),
                                         );
-                                        if let Err(e) = CurrentPlatform::send_message(UpMsg::UpdateWorkspaceHistory(pending.clone())).await {
-                                            zoon::eprintln!("❌ CONFIG: Failed to persist workspace history: {}", e);
-                                        }
+                                        if ready { let _ = CurrentPlatform::send_message(UpMsg::UpdateWorkspaceHistory(pending.clone())).await; }
                                         break;
                                     }
                                 }
@@ -744,9 +750,7 @@ impl AppConfig {
                                         "stage=send_debounced expanded_paths={expanded_paths:?} scroll_top={scroll_top}"
                                     ),
                                 );
-                                if let Err(e) = CurrentPlatform::send_message(UpMsg::UpdateWorkspaceHistory(pending.clone())).await {
-                                    zoon::eprintln!("❌ CONFIG: Failed to persist workspace history: {}", e);
-                                }
+                                if ready { let _ = CurrentPlatform::send_message(UpMsg::UpdateWorkspaceHistory(pending.clone())).await; }
                                 break;
                             }
                         }
@@ -1399,7 +1403,8 @@ impl AppConfig {
                                         }
                                         // Timer completes - do the save
                                         _ = zoon::Timer::sleep(300).fuse() => {
-                                            if let Some(shared_config) = compose_shared_app_config(
+                                            if config_ready {
+                                                if let Some(shared_config) = compose_shared_app_config(
                                                 &theme_actor_clone,
                                                 &dock_mode_actor_clone,
                                                 &session_actor_clone,
@@ -1420,9 +1425,8 @@ impl AppConfig {
                                             )
                                             .await
                                             {
-                                                if let Err(e) = CurrentPlatform::send_message(UpMsg::SaveConfig(shared_config)).await {
-                                                    zoon::eprintln!("❌ CONFIG: Failed to save config: {}", e);
-                                                }
+                                                let _ = CurrentPlatform::send_message(UpMsg::SaveConfig(shared_config)).await;
+                                            }
                                             }
                                             break; // Back to outer loop
                                     }
@@ -1445,7 +1449,8 @@ impl AppConfig {
                                         }
                                         // Timer completes - do the save
                                         _ = zoon::Timer::sleep(300).fuse() => {
-                                            if let Some(shared_config) = compose_shared_app_config(
+                                            if config_ready {
+                                                if let Some(shared_config) = compose_shared_app_config(
                                                 &theme_actor_clone,
                                                 &dock_mode_actor_clone,
                                                 &session_actor_clone,
@@ -1466,9 +1471,8 @@ impl AppConfig {
                                             )
                                             .await
                                             {
-                                                if let Err(e) = CurrentPlatform::send_message(UpMsg::SaveConfig(shared_config)).await {
-                                                    zoon::eprintln!("❌ CONFIG: Failed to save config: {}", e);
-                                                }
+                                                let _ = CurrentPlatform::send_message(UpMsg::SaveConfig(shared_config)).await;
+                                            }
                                             }
                                             break; // Back to outer loop
                                         }
@@ -1861,6 +1865,14 @@ impl AppConfig {
         history.touch_path(path, shared::WORKSPACE_HISTORY_MAX_RECENTS);
         self.workspace_history_state.set_neq(history.clone());
         self.workspace_history_update_relay.send(history);
+        // Persist immediately so next app reload restores the intended workspace.
+        let history_now = self.workspace_history_state.get_cloned();
+        zoon::Task::start(async move {
+            let _ = crate::platform::CurrentPlatform::send_message(
+                shared::UpMsg::UpdateWorkspaceHistory(history_now),
+            )
+            .await;
+        });
     }
 
     pub fn update_workspace_tree_state(&self, path: &str, expanded_paths: Vec<String>) {
