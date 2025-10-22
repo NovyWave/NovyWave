@@ -38,7 +38,7 @@ load_files_expanded_directories = [
     "/home/martinkavik/repos/super_counter_rust/hardware/build",
     "test_files",
 ]
-load_files_scroll_position = 635
+load_files_scroll_position = 507
 
 [workspace.docked_bottom_dimensions]
 files_and_scopes_panel_width = 400.0
@@ -65,7 +65,7 @@ unique_id = "test_files/simple_reload_test.vcd|simple_tb.s|C"
 cursor_position_ps = 125000000000000
 visible_range_start_ps = 0
 visible_range_end_ps = 250000000000000
-zoom_center_ps = 9312320916905
+zoom_center_ps = 9782608695652
 tooltip_enabled = false
 
 [global.workspace_history]
@@ -77,7 +77,7 @@ recent_paths = [
 ]
 
 [global.workspace_history.picker_tree_state]
-scroll_top = 962.0
+scroll_top = 1234.0
 expanded_paths = [
     "/",
     "/home",
@@ -85,6 +85,7 @@ expanded_paths = [
     "/home/martinkavik/repos",
     "/home/martinkavik/repos/NovyWave",
     "/home/martinkavik/repos/NovyWave/test_files",
+    "/home/martinkavik/repos/NovyWave/test_files/my_workspaces",
 ]
 
 [plugins]

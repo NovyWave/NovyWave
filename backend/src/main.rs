@@ -2188,10 +2188,19 @@ fn merge_workspace_history(
     }
 
     if let Some(incoming_picker) = &incoming.picker_tree_state {
-        let should_apply_picker =
-            !incoming_picker.expanded_paths.is_empty() || target.picker_tree_state.is_none();
-        if should_apply_picker {
-            target.picker_tree_state = Some(incoming_picker.clone());
+        match target.picker_tree_state.as_mut() {
+            Some(existing) => {
+                // Always update scroll_top on picker writes
+                existing.scroll_top = incoming_picker.scroll_top;
+                // Only replace expanded_paths when non-empty arrives to avoid clearing
+                if !incoming_picker.expanded_paths.is_empty() {
+                    existing.expanded_paths = incoming_picker.expanded_paths.clone();
+                }
+            }
+            None => {
+                // First-time write: accept full picker state
+                target.picker_tree_state = Some(incoming_picker.clone());
+            }
         }
     }
 }

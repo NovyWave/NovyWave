@@ -4,6 +4,8 @@
 - `last_selected` and `recent_paths` are properly serialized into `.novywave_global` whenever a new workspace is chosen.
 - The Open Workspace tree renders checkboxes for folders, so workspaces can be selected directly.
 - The dialog clears prior selection when it opens (checkboxes are unchecked until the user picks a folder).
+- Expanded folders restore from `.novywave_global` on dialog open without injecting defaults; the tree no longer resets to just `/`.
+- Cancel, Escape, and clicking outside persist the final picker snapshot (expanded paths + scroll) before closing.
 
 ## Outstanding Issues
 
@@ -63,3 +65,43 @@
 - Snapshot helper now skips empty vectors; backend `UpdateWorkspaceHistory` continues to show `expanded_paths: []`, matching the empty inputs.
 - Next session should: (1) keep `workspace_history_expanded_actor` subscribed once at app start (outside the dialog scope); (2) log the result of `config.workspace_history_state` immediately before sending `UpMsg::UpdateWorkspaceHistory`; (3) inspect backend serialization after a non-empty payload is confirmed.
 - Dead ends so far: pushing snapshots from the relay before `state.set_neq` (still produced empties) and forcing a snapshot during selection changes (history overwrite persisted empty arrays).
+
+## Parity Attempt With Load Files (latest)
+- Copied the Load Files dialog scroll wiring to the Workspace picker:
+  - Attach the DOM `scroll` listener on the scroll container in `update_raw_el`, sending `element.scrollTop()` into `workspace_picker_domain.scroll_position_changed_relay`.
+  - Restore the saved scroll using `after_insert` (once) and leave the listener active; no polling.
+- Expand/collapse persistence now writes only `expanded_paths` (no scroll mutations from that path), preventing scroll resets on folder actions.
+- Scroll path now calls only `update_workspace_picker_scroll(..)` (plus `update_workspace_scroll(..)` when a target workspace exists); snapshotting is handled by the standard config saver path.
+
+## Instrumentation Added For Traceability
+- DOM event hook: `workspace_picker_dom_scroll` fires when the scroll listener runs.
+- History mutations: `workspace_history_mutation` traces both `origin=picker_tree_state` and `origin=picker_scroll` with the pointer and values.
+- Debouncer lifecycle: `workspace_history_actor` logs `stage=pending` and `stage=send_debounced` with the values that will be sent.
+- Backend confirm: `🔧 BACKEND: UpdateWorkspaceHistory` shows the final payload written to `.novywave_global`.
+
+### Log Snippets To Watch
+Use these quick filters while testing:
+```
+rg "workspace_picker_dom_scroll|origin=picker_scroll|workspace_history_actor|UpdateWorkspaceHistory" dev_server.log -n
+```
+
+## Findings From Last Runs
+- Reset-on-open is resolved; expanded paths restore correctly and `scroll_top` is not overwritten at dialog creation.
+- Reset-on-expand was caused by persisting a full picker snapshot on expand; switching to `expanded_paths`-only updates fixed this.
+- Scroll still not saving reliably during dialog use in Chrome. Traces show:
+  - DOM scroll events are sometimes not followed by a persisted non-zero `scroll_top` in the outgoing debounced history if an `expanded_paths`-only update arrives afterwards.
+  - To prevent this, `update_workspace_picker_tree_state` now preserves the previous `scroll_top` when updating `expanded_paths`, so the last write cannot reset it to `0.0`.
+
+## Hypothesis
+- Remaining loss of `scroll_top` is due to update ordering within the 250ms history debouncer: a later `expanded_paths`-only update can still supersede an earlier scroll update if the scroll was `0` at the time of expand (e.g., first scroll occurs after expand). Preserving `scroll_top` in `update_workspace_picker_tree_state` should mitigate this by keeping the prior non-zero value.
+
+## Next Session Plan
+1. Verify DOM → relay → actor → history path end-to-end by scrolling without expanding, then expanding, then scrolling again; confirm no `scroll_top` regressions in `.novywave_global`.
+2. If any regression remains, merge pending states in `workspace_history_actor` instead of wholesale replacement: when a new pending history arrives, retain non-default `picker_tree_state.scroll_top` from the previous pending.
+3. Remove remaining debug traces once the end-to-end flow is green.
+4. Only if Chrome still drops `scroll` on the container, add a `requestAnimationFrame`-based listener that reads `scrollTop` and compares with the last value before writing (no time-based polling).
+
+## Summary Of Achievements
+- Restored picker expanded paths and scroll at dialog open without default injections.
+- Prevented scroll reset on expand/collapse by removing snapshot-on-expand and preserving `scroll_top` on `expanded_paths` updates.
+- Aligned the scroll event handling with the Load Files dialog implementation.

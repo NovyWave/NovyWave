@@ -531,25 +531,6 @@ impl NovyWaveApp {
                 let mut expanded_stream = domain_clone.expanded_state_relay.subscribe().fuse();
                 let mut visibility_stream = visible_atom.signal().to_stream().fuse();
                 let mut is_visible = visible_atom.get_cloned();
-                let mut last_non_empty: Option<Vec<String>> = None;
-                {
-                    let initial_vec = domain_clone
-                        .expanded_directories_actor
-                        .state
-                        .lock_ref()
-                        .iter()
-                        .cloned()
-                        .collect::<Vec<String>>();
-                    if !initial_vec.is_empty() {
-                        last_non_empty = Some(initial_vec.clone());
-                        NovyWaveApp::publish_workspace_picker_snapshot(
-                            &config_clone,
-                            &domain_clone,
-                            &target_clone,
-                            Some(initial_vec),
-                        );
-                    }
-                }
                 loop {
                     select! {
                         expanded = expanded_stream.next() => {
@@ -561,6 +542,14 @@ impl NovyWaveApp {
                                         "paths={expanded_vec:?} restoring={restoring} visible={is_visible}"
                                     ),
                                 );
+                                // Ignore teardown-driven empty updates when the dialog is no longer visible
+                                if !is_visible && expanded_vec.is_empty() {
+                                    emit_trace(
+                                        "workspace_history_expanded_actor",
+                                        "skip_empty_invisible".to_string(),
+                                    );
+                                    continue;
+                                }
                                 if restoring {
                                     emit_trace(
                                         "workspace_history_expanded_actor",
@@ -568,43 +557,11 @@ impl NovyWaveApp {
                                     );
                                     continue;
                                 }
-                                if expanded_vec.is_empty() && !is_visible {
-                                    emit_trace(
-                                        "workspace_history_expanded_actor",
-                                        "skip_hidden_empty".to_string(),
-                                    );
-                                    continue;
+                                // Only persist expanded paths; do not touch scroll here
+                                config_clone.update_workspace_picker_tree_state(expanded_vec.clone());
+                                if let Some(path) = target_clone.lock_ref().clone() {
+                                    config_clone.update_workspace_tree_state(&path, expanded_vec);
                                 }
-                                if expanded_vec.is_empty() {
-                                    let should_persist_empty = last_non_empty.is_some();
-                                    if !should_persist_empty {
-                                        emit_trace(
-                                            "workspace_history_expanded_actor",
-                                            "skip_empty_no_previous".to_string(),
-                                        );
-                                        continue;
-                                    }
-                                    emit_trace(
-                                        "workspace_history_expanded_actor",
-                                        "persist_empty_state".to_string(),
-                                    );
-                                    let scroll_current =
-                                        *domain_clone.scroll_position_actor.state.lock_ref() as f64;
-                                    config_clone.update_workspace_picker_tree_state(Vec::new());
-                                    config_clone.update_workspace_picker_scroll(scroll_current);
-                                    if let Some(path) = target_clone.lock_ref().clone() {
-                                        config_clone.update_workspace_tree_state(&path, Vec::new());
-                                        config_clone.update_workspace_scroll(&path, scroll_current);
-                                    }
-                                    continue;
-                                }
-                                last_non_empty = Some(expanded_vec.clone());
-                                NovyWaveApp::publish_workspace_picker_snapshot(
-                                    &config_clone,
-                                    &domain_clone,
-                                    &target_clone,
-                                    Some(expanded_vec),
-                                );
                             } else {
                                 break;
                             }
@@ -636,6 +593,7 @@ impl NovyWaveApp {
                     .signal()
                     .to_stream()
                     .fuse();
+                // No injection here; picker_tree_state is restored before tree builds
 
                 while let Some(position) = scroll_stream.next().await {
                     if restoring_flag.get_cloned() {
@@ -647,6 +605,7 @@ impl NovyWaveApp {
                         "workspace_picker_scroll",
                         format!("scroll_top={scroll_value}"),
                     );
+                    // Mirror Load Files dialog: update scroll via config; snapshot happens via saver
                     config_clone.update_workspace_picker_scroll(scroll_value);
                     if let Some(path) = target_clone.lock_ref().clone() {
                         config_clone.update_workspace_scroll(&path, scroll_value);
@@ -654,6 +613,8 @@ impl NovyWaveApp {
                 }
             })
         };
+
+        // Removed scroll polling; rely on the same event-driven logic as Load Files dialog
 
         let workspace_history_restore_actor = {
             let history_state = config.workspace_history_state.clone();
@@ -680,6 +641,8 @@ impl NovyWaveApp {
                             .iter()
                             .cloned()
                             .collect::<Vec<String>>();
+                        // Sync applied expansions into history state so scroll writes are accepted.
+                        config_clone.update_workspace_picker_tree_state(applied_state.clone());
                         emit_trace(
                             "workspace_picker_restore",
                             format!("stage=post_apply expanded_paths={applied_state:?}"),
@@ -698,12 +661,7 @@ impl NovyWaveApp {
                         target_clone.set_neq(None);
                         domain_clone.selected_files_vec_signal.set_neq(Vec::new());
                         domain_clone.clear_selection_relay.send(());
-                        Self::publish_workspace_picker_snapshot(
-                            &config_clone,
-                            &domain_clone,
-                            &target_clone,
-                            Some(applied_state.clone()),
-                        );
+                        // Do not publish a snapshot on open; wait for user interaction
                         let post_snapshot_state = domain_clone
                             .expanded_directories_actor
                             .state
@@ -730,6 +688,13 @@ impl NovyWaveApp {
                         );
                         restoring_flag.set(false);
                     } else {
+                        // Dialog is closing: publish a final snapshot so scroll-only changes persist
+                        NovyWaveApp::publish_workspace_picker_snapshot(
+                            &config_clone,
+                            &domain_clone,
+                            &target_clone,
+                            None,
+                        );
                         restoring_flag.set(false);
                     }
                 }
@@ -1528,19 +1493,15 @@ impl NovyWaveApp {
             );
             return;
         }
-        let scroll_current = *domain.scroll_position_actor.state.lock_ref() as f64;
+        // Scroll persistence is event-driven via workspace_history_scroll_actor.
         emit_trace(
             "workspace_picker_snapshot",
-            format!("expanded_paths={expanded_vec:?} scroll_top={scroll_current}"),
+            format!("expanded_paths={expanded_vec:?}"),
         );
         config.update_workspace_picker_tree_state(expanded_vec.clone());
         if let Some(path) = target.lock_ref().clone() {
             config.update_workspace_tree_state(&path, expanded_vec);
-
-            config.update_workspace_scroll(&path, scroll_current);
         }
-
-        config.update_workspace_picker_scroll(scroll_current);
     }
 
     fn toast_notifications_container(&self) -> impl Element {
@@ -1611,9 +1572,8 @@ fn workspace_picker_dialog(
 
     let default_workspace_snapshot = default_workspace_path.lock_ref().clone();
 
-    // Apply saved picker tree state (expanded paths + scroll) immediately on dialog build.
-    // This ensures the initialization actor doesn't inject default entries ("/", HOME)
-    // when a non-empty state exists in `.novywave_global`.
+    // Apply saved picker tree state (expanded paths + scroll) before building the tree
+    // to prevent the initialization actor from injecting default entries.
     {
         let history_snapshot = app_config.workspace_history_state.get_cloned();
         NovyWaveApp::apply_workspace_picker_tree_state(&history_snapshot, &workspace_picker_domain);
@@ -1684,15 +1644,44 @@ fn workspace_picker_dialog(
         .update_raw_el({
             let workspace_picker_visible_for_click = workspace_picker_visible.clone();
             let workspace_picker_visible_for_key = workspace_picker_visible.clone();
+            let app_config_for_close = app_config.clone();
+            let domain_for_close = workspace_picker_domain.clone();
+            let target_for_close = workspace_picker_target.clone();
             move |raw_el| {
                 raw_el
-                    .event_handler(move |event: Click| {
-                        workspace_picker_visible_for_click.set(false);
-                        event.stop_propagation();
+                    .event_handler({
+                        let app_config_for_close = app_config_for_close.clone();
+                        let domain_for_close = domain_for_close.clone();
+                        let target_for_close = target_for_close.clone();
+                        let workspace_picker_visible_for_click =
+                            workspace_picker_visible_for_click.clone();
+                        move |event: Click| {
+                            NovyWaveApp::publish_workspace_picker_snapshot(
+                                &app_config_for_close,
+                                &domain_for_close,
+                                &target_for_close,
+                                None,
+                            );
+                            workspace_picker_visible_for_click.set(false);
+                            event.stop_propagation();
+                        }
                     })
-                    .global_event_handler(move |event: KeyDown| {
-                        if event.key() == "Escape" {
-                            workspace_picker_visible_for_key.set(false);
+                    .global_event_handler({
+                        let app_config_for_close = app_config_for_close.clone();
+                        let domain_for_close = domain_for_close.clone();
+                        let target_for_close = target_for_close.clone();
+                        let workspace_picker_visible_for_key =
+                            workspace_picker_visible_for_key.clone();
+                        move |event: KeyDown| {
+                            if event.key() == "Escape" {
+                                NovyWaveApp::publish_workspace_picker_snapshot(
+                                    &app_config_for_close,
+                                    &domain_for_close,
+                                    &target_for_close,
+                                    None,
+                                );
+                                workspace_picker_visible_for_key.set(false);
+                            }
                         }
                     })
             }
@@ -1983,21 +1972,44 @@ fn workspace_picker_dialog(
                                 .update_raw_el({
                                     let scroll_relay =
                                         workspace_picker_domain.scroll_position_changed_relay.clone();
+                                    let app_config_for_scroll = app_config.clone();
+                                    let target_for_scroll = workspace_picker_target.clone();
                                     move |raw_el| {
                                         let dom_element = raw_el.dom_element();
                                         dom_element
                                             .set_attribute("data-scroll-container", "workspace-picker")
                                             .unwrap();
-
+                                        // Attach scroll listener like in Load Files dialog
                                         let relay_for_event = scroll_relay.clone();
+                                        let app_config_for_event = app_config_for_scroll.clone();
+                                        let target_for_event = target_for_scroll.clone();
                                         let scroll_closure = Closure::wrap(Box::new(move |event: web_sys::Event| {
                                             if let Some(target) = event.current_target() {
                                                 if let Ok(element) = target.dyn_into::<web_sys::Element>() {
-                                                    relay_for_event.send(element.scroll_top());
+                                                    let top = element.scroll_top();
+                                                    crate::app::emit_trace(
+                                                        "workspace_picker_dom_scroll",
+                                                        format!("top={}", top),
+                                                    );
+                                                    relay_for_event.send(top);
+                                                    // Persist picker scroll immediately; debounced in workspace_history_actor
+                                                    app_config_for_event.update_workspace_picker_scroll(top as f64);
+                                                    if let Some(path) = target_for_event.lock_ref().clone() {
+                                                        app_config_for_event.update_workspace_scroll(&path, top as f64);
+                                                    }
+                                                } else {
+                                                    crate::app::emit_trace(
+                                                        "workspace_picker_dom_scroll",
+                                                        "no_element".to_string(),
+                                                    );
                                                 }
+                                            } else {
+                                                crate::app::emit_trace(
+                                                    "workspace_picker_dom_scroll",
+                                                    "no_target".to_string(),
+                                                );
                                             }
                                         }) as Box<dyn FnMut(_)>);
-
                                         dom_element
                                             .add_event_listener_with_callback(
                                                 "scroll",
@@ -2026,29 +2038,29 @@ fn workspace_picker_dialog(
                                 .after_insert({
                                     let scroll_position_actor =
                                         workspace_picker_domain.scroll_position_actor.clone();
-                                    move |_element| {
-                                        Task::start({
-                                            let scroll_position_actor = scroll_position_actor.clone();
-                                            async move {
-                                                Task::next_macro_tick().await;
-                                                let position = *scroll_position_actor.state.lock_ref();
-                                                if position > 0 {
-                                                    if let Some(window) = web_sys::window() {
-                                                        if let Some(document) = window.document() {
-                                                            if let Ok(Some(element)) = document
-                                                                .query_selector(
-                                                                    "[data-scroll-container='workspace-picker']",
-                                                                )
-                                                            {
-                                                                element.set_scroll_top(position);
-                                                            }
-                                                        }
+                            move |_element| {
+                                Task::start({
+                                    let scroll_position_actor = scroll_position_actor.clone();
+                                    async move {
+                                        Task::next_macro_tick().await;
+                                        let position = *scroll_position_actor.state.lock_ref();
+                                        if let Some(window) = web_sys::window() {
+                                            if let Some(document) = window.document() {
+                                                if let Ok(Some(element)) = document
+                                                    .query_selector(
+                                                        "[data-scroll-container='workspace-picker']",
+                                                    )
+                                                {
+                                                    if position > 0 {
+                                                        element.set_scroll_top(position);
                                                     }
                                                 }
                                             }
-                                        });
+                                        }
                                     }
-                                })
+                                });
+                            }
+                        })
                                 .child(workspace_picker_tree(
                                     app_config.clone(),
                                     workspace_picker_target.clone(),
@@ -2190,7 +2202,7 @@ fn workspace_picker_tree(
                     let scroll_position_actor = domain_for_treeview.scroll_position_actor.clone();
 
                     // Persist expanded paths to global history whenever they change.
-                    // Skip the very first empty sync to avoid clearing history.
+                    // Skip the very first sync to avoid writing initial state.
                     let persist_actor = Actor::new((), {
                         let domain_for_persist = domain_for_treeview.clone();
                         let external_for_persist = external_expanded.clone();
@@ -2201,17 +2213,12 @@ fn workspace_picker_tree(
                             let mut stream = external_for_persist.signal_cloned().to_stream();
                             while let Some(set) = stream.next().await {
                                 let vec = set.iter().cloned().collect::<Vec<String>>();
-                                if is_first {
-                                    is_first = false;
-                                    if vec.is_empty() { continue; }
+                                if is_first { is_first = false; continue; }
+                                // Only persist expanded paths; scroll is updated by the scroll actor
+                                config_for_persist.update_workspace_picker_tree_state(vec.clone());
+                                if let Some(path) = target_for_persist.lock_ref().clone() {
+                                    config_for_persist.update_workspace_tree_state(&path, vec);
                                 }
-                                emit_trace("workspace_picker_persist", format!("paths={vec:?}"));
-                                NovyWaveApp::publish_workspace_picker_snapshot(
-                                    &config_for_persist,
-                                    &domain_for_persist,
-                                    &target_for_persist,
-                                    Some(vec),
-                                );
                             }
                         }
                     });

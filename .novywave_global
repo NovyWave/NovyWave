@@ -10,7 +10,7 @@ recent_paths = [
 ]
 
 [global.workspace_history.picker_tree_state]
-scroll_top = 962.0
+scroll_top = 1150.0
 expanded_paths = [
     "/",
     "/home",
@@ -18,4 +18,5 @@ expanded_paths = [
     "/home/martinkavik/repos",
     "/home/martinkavik/repos/NovyWave",
     "/home/martinkavik/repos/NovyWave/test_files",
+    "/home/martinkavik/repos/NovyWave/test_files/my_workspaces",
 ]

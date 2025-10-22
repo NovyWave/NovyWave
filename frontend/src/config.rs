@@ -321,6 +321,10 @@ impl FilePickerDomain {
                     futures::select! {
                         position = position_stream.next() => {
                             if let Some(position) = position {
+                                crate::app::emit_trace(
+                                    "workspace_picker_scroll_capture",
+                                    format!("actor_set position={}", position),
+                                );
                                 // Update actor state immediately for UI reactivity
                                 state.set_neq(position);
 
@@ -672,7 +676,33 @@ impl AppConfig {
                             next = update_stream.next() => {
                                 match next {
                                     Some(next_history) => {
-                                        pending = next_history;
+                                        // Merge strategy: keep previous non-empty expanded paths
+                                        // and non-zero scroll_top if the incoming update would
+                                        // inadvertently clear them (e.g., teardown empties).
+                                        let prev_picker = pending.picker_tree_state.clone();
+                                        let mut merged = next_history.clone();
+                                        let next_picker = merged.picker_tree_state.get_or_insert_with(shared::WorkspaceTreeState::default);
+                                        if let Some(prev) = prev_picker {
+                                            let prev_len = prev.expanded_paths.len();
+                                            let next_len = next_picker.expanded_paths.len();
+                                            let prev_scroll = prev.scroll_top;
+                                            let next_scroll = next_picker.scroll_top;
+                                            if next_len == 0 && prev_len > 0 {
+                                                next_picker.expanded_paths = prev.expanded_paths;
+                                            }
+                                            if next_scroll <= 0.0 && prev_scroll > 0.0 {
+                                                next_picker.scroll_top = prev_scroll;
+                                            }
+                                            crate::app::emit_trace(
+                                                "workspace_history_actor",
+                                                format!(
+                                                    "stage=merge prev_len={prev_len} prev_scroll={prev_scroll} next_len={next_len} next_scroll={next_scroll} -> merged_len={} merged_scroll={}",
+                                                    next_picker.expanded_paths.len(),
+                                                    next_picker.scroll_top
+                                                ),
+                                            );
+                                        }
+                                        pending = merged;
                                         continue;
                                     }
                                     None => {
@@ -1865,6 +1895,11 @@ impl AppConfig {
 
     pub fn update_workspace_picker_tree_state(&self, expanded_paths: Vec<String>) {
         let mut history = self.workspace_history_state.get_cloned();
+        let prev_scroll = history
+            .picker_tree_state
+            .as_ref()
+            .map(|s| s.scroll_top)
+            .unwrap_or(0.0);
         let entry = history.picker_state_mut();
         let state_ptr = {
             let guard = self.workspace_history_state.lock_ref();
@@ -1877,6 +1912,11 @@ impl AppConfig {
             ),
         );
         entry.expanded_paths = expanded_paths;
+        // Preserve previous scroll_top if an entry already existed, so expand/collapse
+        // updates don’t reset scroll while the dialog is open.
+        if entry.scroll_top == 0.0 && prev_scroll > 0.0 {
+            entry.scroll_top = prev_scroll;
+        }
         history.clamp_to_limit(shared::WORKSPACE_HISTORY_MAX_RECENTS);
         self.workspace_history_state.set_neq(history.clone());
         self.workspace_history_update_relay.send(history);
@@ -1884,19 +1924,10 @@ impl AppConfig {
 
     pub fn update_workspace_picker_scroll(&self, scroll_top: f64) {
         let mut history = self.workspace_history_state.get_cloned();
-        let should_update = history
-            .picker_tree_state
-            .as_ref()
-            .map(|state| !state.expanded_paths.is_empty())
-            .unwrap_or(false);
-        if !should_update {
-            crate::app::emit_trace(
-                "workspace_history_mutation",
-                "origin=picker_scroll skip_empty_state".to_string(),
-            );
-            return;
-        }
-        let entry = history.picker_tree_state.as_mut().unwrap();
+        // Always ensure picker_tree_state exists and persist scroll.
+        // Later expanded-path updates will preserve this value, and backend merge
+        // ignores empty expanded_paths writes, so this is safe and robust.
+        let entry = history.picker_state_mut();
         let state_ptr = {
             let guard = self.workspace_history_state.lock_ref();
             (&*guard as *const shared::WorkspaceHistory) as usize
