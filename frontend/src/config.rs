@@ -420,37 +420,13 @@ impl FilePickerDomain {
             let directory_loading_for_sender = directory_loading_actor.clone();
             // ✅ FIX: Create separate stream subscription for directory expansion events
             let mut directory_expanded_stream_for_sender = directory_expanded_relay.subscribe();
-            // Gate non-critical posts until first DownMsg (ConfigLoaded/WorkspaceLoaded)
-            let ready_flag = Mutable::new(false);
-            {
-                // Flip ready flag when we see the first ConfigLoaded or WorkspaceLoaded
-                let mut cfg_stream = connection_message_actor
-                    .config_loaded_relay
-                    .subscribe();
-                let mut ws_stream = connection_message_actor
-                    .workspace_loaded_relay
-                    .subscribe();
-                let ready_clone = ready_flag.clone();
-                Actor::new((), async move |_state| {
-                    loop {
-                        futures::select! {
-                            _ = cfg_stream.next() => {
-                                ready_clone.set(true);
-                                break;
-                            }
-                            _ = ws_stream.next() => {
-                                ready_clone.set(true);
-                                break;
-                            }
-                        }
-                    }
-                });
-            }
 
             Actor::new((), async move |_state| {
                 let mut directory_loading_stream =
                     directory_loading_for_sender.signal().to_stream().fuse();
-                let mut ready_stream = ready_flag.signal().to_stream().fuse();
+                // Use global platform readiness which flips on first DownMsg
+                let mut ready_stream = crate::platform::server_ready_signal().to_stream().fuse();
+                let mut is_ready = crate::platform::server_is_ready();
 
                 loop {
                     futures::select! {
@@ -461,16 +437,14 @@ impl FilePickerDomain {
                                 // Check cache to avoid sending requests for directories that already have data
                                 let current_cache = directory_cache_for_sender.signal().to_stream().next().await.unwrap_or_default();
 
-                                for request_path in pending_requests.iter() {
-                                    if !current_cache.contains_key(request_path) {
-                                        // Suppress until backend is ready; will be flushed on ready event
-                                        if ready_flag.get_cloned() {
+                                if is_ready {
+                                    for request_path in pending_requests.iter() {
+                                        if !current_cache.contains_key(request_path) {
                                             let path_for_request = request_path.clone();
                                             let _ = connection_clone
                                                 .send_up_msg(shared::UpMsg::BrowseDirectory(path_for_request))
                                                 .await;
                                         }
-                                    } else {
                                     }
                                 }
                             } else {
@@ -485,19 +459,19 @@ impl FilePickerDomain {
                                 // Check cache to avoid duplicate requests
                                 let current_cache = directory_cache_for_sender.signal().to_stream().next().await.unwrap_or_default();
 
-                                if !current_cache.contains_key(&dir_path) {
-                                    if ready_flag.get_cloned() {
-                                        let _ = connection_clone
-                                            .send_up_msg(shared::UpMsg::BrowseDirectory(dir_path))
-                                            .await;
-                                    }
-                                } else {
+                                if is_ready && !current_cache.contains_key(&dir_path) {
+                                    let _ = connection_clone
+                                        .send_up_msg(shared::UpMsg::BrowseDirectory(dir_path))
+                                        .await;
                                 }
                             }
                         }
                         // Flush pending directory requests when backend becomes ready
                         ready = ready_stream.next() => {
-                            if let Some(true) = ready {
+                            if let Some(ready_now) = ready {
+                                is_ready = ready_now;
+                            }
+                            if is_ready {
                                 // Re-check current pending set and cache, then send
                                 let pending_requests = directory_loading_for_sender
                                     .signal()

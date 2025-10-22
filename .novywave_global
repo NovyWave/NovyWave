@@ -2,15 +2,15 @@
 # Stores workspace history shared across all projects
 
 [global.workspace_history]
-last_selected = "/home/martinkavik/repos/NovyWave"
+last_selected = "/home/martinkavik/repos/NovyWave/test_files/my_workspaces/workspace_a"
 recent_paths = [
-    "/home/martinkavik/repos/NovyWave",
     "/home/martinkavik/repos/NovyWave/test_files/my_workspaces/workspace_a",
     "/home/martinkavik/repos/NovyWave/test_files/my_workspaces/workspace_b",
+    "/home/martinkavik/repos/NovyWave/test_files/my_workspaces",
 ]
 
 [global.workspace_history.picker_tree_state]
-scroll_top = 0.0
+scroll_top = 1074.0
 expanded_paths = [
     "/",
     "/home",
