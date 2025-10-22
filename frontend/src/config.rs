@@ -626,6 +626,7 @@ pub struct AppConfig {
     _config_save_debouncer_actor: Actor<()>,
     _workspace_history_actor: Actor<()>,
     _config_loaded_actor: Actor<()>,
+    pub config_loaded_flag: Mutable<bool>,
     _treeview_sync_actor: Actor<()>,
     _tracked_files_sync_actor: Actor<()>,
     _variables_filter_bridge_actor: Actor<()>,
@@ -1820,12 +1821,19 @@ impl AppConfig {
             _config_save_debouncer_actor: config_save_debouncer_actor,
             _workspace_history_actor: workspace_history_actor,
             _config_loaded_actor: config_loaded_actor,
+            config_loaded_flag,
             _connection_message_actor: connection_message_actor,
             _treeview_sync_actor: treeview_sync_actor,
             _tracked_files_sync_actor: tracked_files_sync_actor,
             _variables_filter_bridge_actor: variables_filter_bridge_actor,
             _selected_variables_snapshot_actor: selected_variables_snapshot_actor,
         }
+    }
+
+    /// Mark that a workspace switch is in progress, pausing config saves
+    /// until the next ConfigLoaded arrives.
+    pub fn mark_workspace_switching(&self) {
+        self.config_loaded_flag.set(false);
     }
 
     /// Update config from loaded backend data

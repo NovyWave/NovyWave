@@ -57,7 +57,7 @@ pub fn notify_server_alive() {
 }
 
 /// Cheap readiness check for places that must avoid non-critical posts during boot
-pub fn server_is_ready() -> bool { true }
+pub fn server_is_ready() -> bool { SERVER_ALIVE.get() }
 
 /// Public helper: wait until the backend handler looks ready.
 pub async fn wait_until_handler_ready() -> bool {
@@ -73,6 +73,13 @@ impl Platform for WebPlatform {
                     if result.is_ok() { return Ok(()); }
                     zoon::Timer::sleep(300).await;
                     let _ = connection.send_up_msg(UpMsg::LoadConfig).await;
+                    return Ok(());
+                }
+
+                // Suppress non-critical posts until we see the first DownMsg
+                // to avoid ERR_EMPTY_RESPONSE during handler startup.
+                let is_critical = matches!(msg, UpMsg::LoadConfig | UpMsg::SelectWorkspace { .. } | UpMsg::LoadWaveformFile(_));
+                if !SERVER_ALIVE.get() && !is_critical {
                     return Ok(());
                 }
 

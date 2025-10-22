@@ -81,7 +81,7 @@ pub(crate) fn emit_trace(target: &str, message: impl Into<String>) {
     let target_string = target.to_string();
     let message_string = message.into();
     Task::start(async move {
-        // Avoid non-critical POSTs during boot or server restarts
+        // Avoid non-critical POSTs before first DownMsg
         if crate::platform::server_is_ready() {
             let _ =
                 <CurrentPlatform as crate::platform::Platform>::send_message(UpMsg::FrontendTrace {
@@ -1389,6 +1389,7 @@ impl NovyWaveApp {
         workspace_path: Mutable<Option<String>>,
         tracked_files: TrackedFiles,
         selected_variables: SelectedVariables,
+        app_config: AppConfig,
         path: String,
     ) {
         let trimmed = path.trim().to_string();
@@ -1416,6 +1417,8 @@ impl NovyWaveApp {
             let request_path = trimmed.clone();
             let workspace_loading = workspace_loading.clone();
             let workspace_path_for_revert = workspace_path.clone();
+            // Pause config saves until new ConfigLoaded arrives
+            app_config.mark_workspace_switching();
             async move {
                 // Keep it simple: send once; on error, one fallback after a brief wait.
                 let first = <crate::platform::CurrentPlatform as crate::platform::Platform>::send_message(
@@ -1643,6 +1646,7 @@ fn workspace_picker_dialog(
                 workspace_path.clone(),
                 tracked_files.clone(),
                 selected_variables.clone(),
+                app_config_for_open.clone(),
                 path,
             );
             workspace_picker_visible.set(false);
@@ -1846,6 +1850,7 @@ fn workspace_picker_dialog(
                                                                 workspace_path.clone(),
                                                                 tracked_files.clone(),
                                                                 selected_variables.clone(),
+                                                                app_config.clone(),
                                                                 action_path.clone(),
                                                             );
                                                             workspace_picker_visible.set(false);
@@ -1970,6 +1975,7 @@ fn workspace_picker_dialog(
                                                                                     workspace_path_sel.clone(),
                                                                                     tracked_files_sel.clone(),
                                                                                     selected_variables_sel.clone(),
+                                                                                    app_config_sel.clone(),
                                                                                     first_path_sel.clone(),
                                                                                 );
                                                                                 workspace_picker_visible_sel.set(false);
@@ -2035,6 +2041,7 @@ fn workspace_picker_dialog(
                                                                                     workspace_path_sel.clone(),
                                                                                     tracked_files_sel.clone(),
                                                                                     selected_variables_sel.clone(),
+                                                                                    app_config_sel.clone(),
                                                                                     path_sel.clone(),
                                                                                 );
                                                                                 workspace_picker_visible_sel.set(false);
