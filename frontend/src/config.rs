@@ -1702,8 +1702,10 @@ impl AppConfig {
                         .scroll_position_changed_relay
                         .send(loaded_config.workspace.load_files_scroll_position);
 
-                    // Restore tracked files from config
-                    if !loaded_config.workspace.opened_files.is_empty() {
+                    // Restore tracked files from config or clear when empty
+                    if loaded_config.workspace.opened_files.is_empty() {
+                        tracked_files_for_config.all_files_cleared_relay.send(());
+                    } else {
                         tracked_files_for_config
                             .config_files_loaded_relay
                             .send(loaded_config.workspace.opened_files.clone());

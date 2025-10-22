@@ -435,16 +435,11 @@ impl NovyWaveApp {
             Actor::new((), async move |_state| {
                 while let Some(event) = workspace_stream.next().await {
                     workspace_loading.set(false);
-                    let previous = workspace_path.lock_ref().clone();
-                    let is_changed = previous.as_ref().map(|p| p != &event.root).unwrap_or(true);
                     workspace_path.set(Some(event.root.clone()));
                     default_workspace_path.set(Some(event.default_root.clone()));
-                    if is_changed {
-                        // Clear file selections and variables only after the server confirms
-                        // the workspace switch to avoid wiping state on failed attempts.
-                        tracked_files_on_workspace.all_files_cleared_relay.send(());
-                        selected_variables_on_workspace.selection_cleared_relay.send(());
-                    }
+                    // Always clear file list and selection when a workspace is confirmed.
+                    tracked_files_on_workspace.all_files_cleared_relay.send(());
+                    selected_variables_on_workspace.selection_cleared_relay.send(());
 
                 }
             })
