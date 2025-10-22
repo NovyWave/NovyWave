@@ -1638,6 +1638,13 @@ fn workspace_picker_dialog(
             };
             app_config_for_open.record_workspace_selection(&path);
             workspace_picker_target_for_open.set_neq(Some(path.clone()));
+            // Persist the latest picker tree snapshot (expanded + scroll) before switching
+            NovyWaveApp::publish_workspace_picker_snapshot(
+                &app_config_for_open,
+                &workspace_picker_domain,
+                &workspace_picker_target_for_open,
+                None,
+            );
             let history_snapshot = app_config_for_open.workspace_history_state.get_cloned();
             NovyWaveApp::apply_workspace_history_state(
                 &history_snapshot,
@@ -2042,7 +2049,11 @@ fn workspace_picker_dialog(
                                         });
                                     }
                                 })
-                                .child(workspace_picker_tree(workspace_picker_domain.clone()));
+                                .child(workspace_picker_tree(
+                                    app_config.clone(),
+                                    workspace_picker_target.clone(),
+                                    workspace_picker_domain.clone(),
+                                ));
 
                             let tree_container = El::new()
                                 .s(Height::growable())
@@ -2078,17 +2089,28 @@ fn workspace_picker_dialog(
                                 .s(Padding::new().top(SPACING_6))
                                 .s(Gap::new().x(SPACING_4))
                                 .item(El::new().s(Width::growable()))
-                                .item(
-                                    button()
-                                        .label("Cancel")
-                                        .variant(ButtonVariant::Ghost)
-                                        .size(ButtonSize::Small)
-                                        .on_press({
-                                            let workspace_picker_visible = workspace_picker_visible.clone();
-                                            move || workspace_picker_visible.set(false)
-                                        })
-                                        .build()
-                                )
+                            .item(
+                                button()
+                                    .label("Cancel")
+                                    .variant(ButtonVariant::Ghost)
+                                    .size(ButtonSize::Small)
+                                    .on_press({
+                                        let workspace_picker_visible = workspace_picker_visible.clone();
+                                        let app_config_cancel = app_config.clone();
+                                        let domain_cancel = workspace_picker_domain.clone();
+                                        let target_cancel = workspace_picker_target.clone();
+                                        move || {
+                                            NovyWaveApp::publish_workspace_picker_snapshot(
+                                                &app_config_cancel,
+                                                &domain_cancel,
+                                                &target_cancel,
+                                                None,
+                                            );
+                                            workspace_picker_visible.set(false)
+                                        }
+                                    })
+                                    .build()
+                            )
                                 .item(
                                     button()
                                         .label("Open")
@@ -2128,7 +2150,11 @@ fn workspace_picker_dialog(
         )
 }
 
-fn workspace_picker_tree(domain: crate::config::FilePickerDomain) -> impl Element {
+fn workspace_picker_tree(
+    app_config: AppConfig,
+    workspace_picker_target: Mutable<Option<String>>,
+    domain: crate::config::FilePickerDomain,
+) -> impl Element {
     use crate::file_picker::{
         SelectedFilesSyncActors, TreeViewSyncActors, initialize_directories_and_request_contents,
     };
@@ -2150,6 +2176,8 @@ fn workspace_picker_tree(domain: crate::config::FilePickerDomain) -> impl Elemen
         .child_signal({
             let domain_for_treeview = domain.clone();
             let selected_vec_for_tree = selected_vec.clone();
+            let app_config_for_tree = app_config.clone();
+            let target_for_tree = workspace_picker_target.clone();
             cache_signal.map(move |cache| {
                 if cache.contains_key("/") {
                     let tree_data = workspace_build_tree_data("/", &cache);
@@ -2160,6 +2188,33 @@ fn workspace_picker_tree(domain: crate::config::FilePickerDomain) -> impl Elemen
                     );
                     let tree_rendering_relay = domain_for_treeview.tree_rendering_relay.clone();
                     let scroll_position_actor = domain_for_treeview.scroll_position_actor.clone();
+
+                    // Persist expanded paths to global history whenever they change.
+                    // Skip the very first empty sync to avoid clearing history.
+                    let persist_actor = Actor::new((), {
+                        let domain_for_persist = domain_for_treeview.clone();
+                        let external_for_persist = external_expanded.clone();
+                        let config_for_persist = app_config_for_tree.clone();
+                        let target_for_persist = target_for_tree.clone();
+                        async move |_state| {
+                            let mut is_first = true;
+                            let mut stream = external_for_persist.signal_cloned().to_stream();
+                            while let Some(set) = stream.next().await {
+                                let vec = set.iter().cloned().collect::<Vec<String>>();
+                                if is_first {
+                                    is_first = false;
+                                    if vec.is_empty() { continue; }
+                                }
+                                emit_trace("workspace_picker_persist", format!("paths={vec:?}"));
+                                NovyWaveApp::publish_workspace_picker_snapshot(
+                                    &config_for_persist,
+                                    &domain_for_persist,
+                                    &target_for_persist,
+                                    Some(vec),
+                                );
+                            }
+                        }
+                    });
 
                     El::new()
                         .s(Height::fill())
@@ -2187,6 +2242,7 @@ fn workspace_picker_tree(domain: crate::config::FilePickerDomain) -> impl Elemen
                         })
                         .after_remove(move |_| {
                             drop(sync_actors);
+                            drop(persist_actor);
                         })
                         .child(
                             tree_view()
