@@ -1197,15 +1197,6 @@ impl NovyWaveApp {
                         },
                     );
 
-                    let dragging_system_for_move = dragging_system_for_events.clone();
-                    let raw_el =
-                        raw_el.global_event_handler(move |event: events_extra::PointerMove| {
-                            crate::dragging::process_drag_movement(
-                                &dragging_system_for_move,
-                                (event.x() as f32, event.y() as f32),
-                            );
-                        });
-
                     let dragging_system_for_up = dragging_system_for_events.clone();
                     let raw_el = raw_el.global_event_handler(move |_: events_extra::PointerUp| {
                         crate::dragging::end_drag(&dragging_system_for_up);
@@ -1425,34 +1416,47 @@ impl NovyWaveApp {
             return;
         }
 
+        let previous_path = workspace_path.lock_ref().clone();
         workspace_loading.set(true);
+        // Optimistic update: reflect the user's choice immediately in the input.
+        workspace_path.set(Some(trimmed.clone()));
 
         Task::start({
             let request_path = trimmed.clone();
             let workspace_loading = workspace_loading.clone();
+            let workspace_path_for_revert = workspace_path.clone();
             async move {
-                // Simpler, reliable sequence:
-                // 1) Ensure handler looks ready.
+                // Keep it simple: probe once, send once, then one fallback.
                 let _ = crate::platform::wait_until_handler_ready().await;
-                // 2) Try SelectWorkspace once; on error, wait briefly, ensure ready, and try once more.
-                let mut sent_ok =
-                    <crate::platform::CurrentPlatform as crate::platform::Platform>::send_message(
-                        shared::UpMsg::SelectWorkspace { root: request_path.clone() }
-                    ).await.is_ok();
-                if !sent_ok {
+                let first = <crate::platform::CurrentPlatform as crate::platform::Platform>::send_message(
+                    shared::UpMsg::SelectWorkspace { root: request_path.clone() }
+                ).await;
+                if first.is_err() {
                     zoon::Timer::sleep(500).await;
                     let _ = crate::platform::wait_until_handler_ready().await;
-                    sent_ok = <crate::platform::CurrentPlatform as crate::platform::Platform>::send_message(
+                    let second = <crate::platform::CurrentPlatform as crate::platform::Platform>::send_message(
                         shared::UpMsg::SelectWorkspace { root: request_path.clone() }
-                    ).await.is_ok();
+                    ).await;
+                    if second.is_err() {
+                        // Revert optimistic input and stop loading
+                        workspace_loading.set(false);
+                        workspace_path_for_revert.set(previous_path.clone());
+                        zoon::println!("Workspace switch failed twice: {}", request_path);
+                        return;
+                    }
                 }
-                if !sent_ok {
-                    workspace_loading.set(false);
-                    zoon::println!(
-                        "Failed to request workspace '{}' after simple retry.",
-                        request_path
-                    );
-                }
+                // Watchdog: if no WorkspaceLoaded arrives within 6s, clear loading so UI doesn't get stuck.
+                let loading_flag = workspace_loading.clone();
+                let expected = request_path.clone();
+                let visible_path = workspace_path_for_revert.clone();
+                zoon::Task::start(async move {
+                    zoon::Timer::sleep(6000).await;
+                    let still_loading = *loading_flag.lock_ref();
+                    let current = visible_path.lock_ref().clone();
+                    if still_loading && current.as_ref().map(|p| p == &expected).unwrap_or(false) {
+                        loading_flag.set(false);
+                    }
+                });
             }
         });
     }
@@ -2244,12 +2248,12 @@ fn workspace_picker_dialog(
                                         .label("Open")
                                         .variant(ButtonVariant::Primary)
                                         .size(ButtonSize::Small)
-                                        .disabled_signal(map_ref! {
-                                            let loading = workspace_loading.signal(),
-                                            let selected = workspace_picker_domain.selected_files_vec_signal.signal_cloned() => {
-                                                *loading || selected.is_empty()
-                                            }
-                                        })
+                                        .disabled_signal(
+                                            workspace_picker_domain
+                                                .selected_files_vec_signal
+                                                .signal_cloned()
+                                                .map(|selected| selected.is_empty())
+                                        )
                                         .on_press({
                                             let open_action = open_action.clone();
                                             move || open_action()

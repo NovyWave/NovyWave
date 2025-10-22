@@ -40,22 +40,6 @@ pub struct WebPlatform;
 pub fn set_platform_connection(connection: Arc<SendWrapper<zoon::Connection<UpMsg, DownMsg>>>) {
     (&*CONNECTION).set(Some(connection));
     zoon::println!("🌐 PLATFORM: Connection initialized for WebPlatform");
-
-    // Lightweight watchdog: when the window regains focus, re-request LoadConfig once.
-    // This fixes the common case of a backend hot-reload while the app tab stays open.
-    if let Some(window) = web_sys::window() {
-        let closure = wasm_bindgen::closure::Closure::wrap(Box::new(move || {
-            let has_conn = (&*CONNECTION).get_cloned().is_some();
-            if !has_conn { return; }
-            // Fire and forget; platform send already has a small retry loop for LoadConfig
-            zoon::Task::start(async move {
-                let _ = WebPlatform::send_message(UpMsg::LoadConfig).await;
-            });
-        }) as Box<dyn FnMut()>);
-        let _ = window.add_event_listener_with_callback("focus", closure.as_ref().unchecked_ref());
-        // Leak the closure for the lifetime of the app; event listener lives with the page
-        closure.forget();
-    }
 }
 
 /// Expose a read-only signal indicating whether the backend API appears ready
