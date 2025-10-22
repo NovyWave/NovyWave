@@ -498,11 +498,8 @@ impl NovyWaveApp {
                             .cloned()
                             .collect::<Vec<String>>();
                         let expanded_vec_for_log = expanded_vec.clone();
-                        config_clone.update_workspace_tree_state(&path, expanded_vec.clone());
-
                         let scroll_current =
                             *domain_clone.scroll_position_actor.state.lock_ref() as f64;
-                        config_clone.update_workspace_scroll(&path, scroll_current);
                         emit_trace(
                             "workspace_picker_selection",
                             format!(
@@ -557,11 +554,8 @@ impl NovyWaveApp {
                                     );
                                     continue;
                                 }
-                                // Only persist expanded paths; do not touch scroll here
+                                // Only persist picker expanded paths; do not touch per-workspace state here
                                 config_clone.update_workspace_picker_tree_state(expanded_vec.clone());
-                                if let Some(path) = target_clone.lock_ref().clone() {
-                                    config_clone.update_workspace_tree_state(&path, expanded_vec);
-                                }
                             } else {
                                 break;
                             }
@@ -605,11 +599,8 @@ impl NovyWaveApp {
                         "workspace_picker_scroll",
                         format!("scroll_top={scroll_value}"),
                     );
-                    // Mirror Load Files dialog: update scroll via config; snapshot happens via saver
+                    // Mirror Load Files dialog: update picker scroll via config; snapshot happens via saver
                     config_clone.update_workspace_picker_scroll(scroll_value);
-                    if let Some(path) = target_clone.lock_ref().clone() {
-                        config_clone.update_workspace_scroll(&path, scroll_value);
-                    }
                 }
             })
         };
@@ -1499,9 +1490,6 @@ impl NovyWaveApp {
             format!("expanded_paths={expanded_vec:?}"),
         );
         config.update_workspace_picker_tree_state(expanded_vec.clone());
-        if let Some(path) = target.lock_ref().clone() {
-            config.update_workspace_tree_state(&path, expanded_vec);
-        }
     }
 
     fn toast_notifications_container(&self) -> impl Element {
@@ -1623,6 +1611,26 @@ fn workspace_picker_dialog(
     };
     let open_action = Rc::new(open_action);
 
+    // Keep a local recent-paths mirror that only updates when the list actually changes.
+    let recent_paths_vec = MutableVec::<String>::new();
+    let recent_paths_actor = Actor::new((), {
+        let history_state = app_config.workspace_history_state.clone();
+        let recent_paths_vec = recent_paths_vec.clone();
+        async move |_state| {
+            use futures::StreamExt;
+            let mut stream = history_state.signal_cloned().to_stream();
+            let mut prev: Option<Vec<String>> = None;
+            while let Some(history) = stream.next().await {
+                let recents = history.recent_paths.clone();
+                if prev.as_ref().map(|p| p == &recents).unwrap_or(false) {
+                    continue;
+                }
+                prev = Some(recents.clone());
+                recent_paths_vec.lock_mut().replace_cloned(recents);
+            }
+        }
+    });
+
     El::new()
         .s(Background::new().color_signal(theme().map(|t| match t {
             Theme::Light => "rgba(255, 255, 255, 0.85)",
@@ -1632,6 +1640,7 @@ fn workspace_picker_dialog(
         .s(Height::fill())
         .s(Align::center())
         .s(Padding::all(40))
+        .after_remove(move |_| { drop(recent_paths_actor); })
         .update_raw_el(|raw_el| {
             raw_el
                 .style("display", "flex")
@@ -1841,14 +1850,14 @@ fn workspace_picker_dialog(
                                         let workspace_picker_target = workspace_picker_target.clone();
                                         let app_config = app_config.clone();
                                         let default_workspace_snapshot = default_workspace_snapshot.clone();
-                                        app_config
-                                            .workspace_history_state
-                                            .signal_cloned()
-                                            .map(move |history| {
+                                        let recent_paths_vec = recent_paths_vec.clone();
+                                        recent_paths_vec
+                                            .signal_vec_cloned()
+                                            .to_signal_cloned()
+                                            .map(move |recents| {
                                                 let current_workspace = workspace_path.lock_ref().clone();
 
-                                                let filtered: Vec<String> = history
-                                                    .recent_paths
+                                                let filtered: Vec<String> = recents
                                                     .iter()
                                                     .filter(|path| {
                                                         let matches_current = current_workspace
@@ -1994,9 +2003,6 @@ fn workspace_picker_dialog(
                                                     relay_for_event.send(top);
                                                     // Persist picker scroll immediately; debounced in workspace_history_actor
                                                     app_config_for_event.update_workspace_picker_scroll(top as f64);
-                                                    if let Some(path) = target_for_event.lock_ref().clone() {
-                                                        app_config_for_event.update_workspace_scroll(&path, top as f64);
-                                                    }
                                                 } else {
                                                     crate::app::emit_trace(
                                                         "workspace_picker_dom_scroll",
@@ -2214,11 +2220,8 @@ fn workspace_picker_tree(
                             while let Some(set) = stream.next().await {
                                 let vec = set.iter().cloned().collect::<Vec<String>>();
                                 if is_first { is_first = false; continue; }
-                                // Only persist expanded paths; scroll is updated by the scroll actor
+                                // Only persist global picker expanded paths; scroll is updated by the scroll actor
                                 config_for_persist.update_workspace_picker_tree_state(vec.clone());
-                                if let Some(path) = target_for_persist.lock_ref().clone() {
-                                    config_for_persist.update_workspace_tree_state(&path, vec);
-                                }
                             }
                         }
                     });

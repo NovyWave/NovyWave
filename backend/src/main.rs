@@ -2068,6 +2068,10 @@ fn save_global_section(
         .workspace_history
         .clamp_to_limit(shared::WORKSPACE_HISTORY_MAX_RECENTS);
 
+    // Keep the global file truly global: only persist last_selected, recent_paths,
+    // and the picker_tree_state. Drop per-workspace tree_state entries.
+    global.workspace_history.tree_state.clear();
+
     let file = GlobalConfigFile {
         global: global.clone(),
     };
