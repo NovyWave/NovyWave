@@ -7,10 +7,10 @@
 
 ## Outstanding Issues
 
-1. **Picker tree state never persisted (critical)**
-   - `.novywave_global` still lacks any `[global.workspace_history.picker_tree_state]` block—only `last_selected` / `recent_paths` are present.
-   - Restore playback now schedules a `🛰️ FRONTEND TRACE [workspace_picker_snapshot]` line (emitted in `dev_server.log`) after each restore or expansion; verify it shows non-empty paths when the dialog opens or folders are toggled.
-   - If those logs are emitted but the backend still writes empty vectors (`🔧 BACKEND: UpdateWorkspaceHistory … expanded_paths: []`), capture the full log chunk and inspect the payload sent in `UpMsg::UpdateWorkspaceHistory`.
+1. **Picker tree state still volatile (critical)**
+   - Even after multiple reloads on 2025-10-22, `.novywave_global` only ever contains the auto-restored entries (`"/"`, `"/home/martinkavik"`); newly expanded folders never persist.
+   - Recent instrumentation shows `🛰️ FRONTEND TRACE [expanded_state_snapshot] action=insert …` firing for each expansion, yet no corresponding `workspace_picker_snapshot` log or backend update follows.
+   - We continue to see the backend receive `expanded_paths: []` immediately after dialog restore (`UpdateWorkspaceHistory … expanded_paths: []`), indicating an empty payload still wins the race somewhere in the pipeline.
 
 2. **Workspace selection not cleared on dialog open (regression)**
    - Opening the picker shows the previously selected folder still checked despite `clear_selection_relay.send(())`.
@@ -34,15 +34,28 @@
 - Backend persistence runs through `UpMsg::UpdateWorkspaceHistory`; watch `dev_server.log` for any errors after the snapshot log fires.
 - Keep logs active until persistence works; remove afterwards.
 
-## Next Steps / Ideas
-- Added full tracing for expanded-path persistence: relay send/subscribe counts, actor snapshots, and history task events.
-- Current logs show relay occasionally broadcasting with zero subscribers, so the history task only receives empty vectors; backend still writes `expanded_paths: []`.
-- Action items: capture subscriber lifecycle across dialog toggles, ensure broadcast happens after `state.set_neq`, and keep the history task subscribed across reopen cycles.
-- **TODO 1 – Verify AppConfig ownership:** Instrument `AppConfig::update_workspace_picker_tree_state` / `_scroll` to trace the pointer identity of `workspace_history_state` just before sending through `workspace_history_update_relay`; confirm the same instance is observed by the relay actor.
-- **TODO 2 – Inspect relay debouncing:** Add temporary logging inside the debounce loop in `AppConfig::new` (workspace_history_actor) to log every pending snapshot before persistence; stress-test expand/collapse spam and ensure the final payload still carries expanded paths.
-- **TODO 3 – Restore playback snapshot:** During dialog open, log `expanded_directories_actor.state` immediately after `apply_workspace_picker_tree_state` and once `restoring_flag` flips false; ensure a non-empty vec triggers a persistence call.
-- **TODO 4 – TreeView replay diff:** Temporarily remove the dedupe guard (`is_same`) or log the set before/after to verify that restored paths actually mutate the actor state; cross-check that the TreeView sync writes the full vector into `expanded_directories_actor`.
-- **TODO 5 – Backend clamp/persist check:** In `handle_workspace_history_update`, log the incoming history and the serialized output right before `save_global_section`; ensure no later call overwrites `picker_tree_state` with an empty vec.
+## Latest Snapshot – 2025-10-22
+- Added `expanded_state_snapshot` traces inside `FilePickerDomain::expanded_directories_actor` to confirm each expand/collapse produces the expected vector.
+- `workspace_history_expanded_actor` now remembers the last non-empty vector and skips “hidden” empty updates, yet we still observe empty persistence events immediately after restore.
+- Backend merge now ignores empty picker snapshots unless no prior data exists; empty writes have stopped, but new expansions still never reach disk.
+- Picker scroll updates are now gated on the picker snapshot being non-empty; no more scroll-only writes of an empty tree.
+
+## Current Hypotheses / Next Tests
+1. Restore actor clears selection before the initial non-empty snapshot can publish, causing the first payload to be empty.
+2. `workspace_history_expanded_actor` may subscribe after the first `expanded_state_snapshot`; confirm subscription ordering on dialog open.
+3. TreeView sync might emit a collapse for every node when the dialog closes, overwriting expanded state with the minimal set.
+4. Debounce loop inside `workspace_history_actor` could still flush an older `pending` value (empty) after a new non-empty snapshot arrives; inspect `pending` evolution.
+5. Picker snapshot helper relies on `domain.expanded_directories_actor.state.lock_ref()` which may already be cleared by the restore reset.
+6. Backend receives the correct non-empty payload but the clamp limit or merge logic drops paths outside the recent workspace list; need to trace `history.clamp_to_limit`.
+7. Scroll actor gating may skip updates when expanded paths change; verify scroll + expanded sequences during manual interaction.
+8. TreeView UI expansions might not mutate the `IndexSet` if the paths were already inserted during restore; dedupe prevents change detection.
+9. Config save relay could be lagging—ensure `workspace_history_update_relay` fires after each new snapshot and reaches the backend.
+10. The persisted paths we see (`"/"`, `"/home/martinkavik"`) might be inserted by the initialization actor, hiding the fact that user-driven expansions never make it in; compare logs against manual expand events.
+
+## TODOs
+- Capture a full dialog open → expand → close cycle with the new traces enabled; verify whether `workspace_picker_snapshot` ever logs during manual expansion.
+- Inspect `workspace_history_actor`'s `pending` state by adding temporary logs around the debounce loop to confirm it switches from `[]` to the expanded list.
+- Validate that the backend’s `UpdateWorkspaceHistory` handler now only prints non-empty picker snapshots; if any `[]` writes remain, gather the preceding frontend traces.
 
 ## Latest Debugging Notes
 - Added relay instrumentation (`relay_subscribe`, `relay_send`) and confirmed the expanded-path relay often reports `before=1 after=0` once the picker closes—subscribers vanish, so follow-up snapshot calls see `[]`.

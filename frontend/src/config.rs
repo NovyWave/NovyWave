@@ -267,7 +267,13 @@ impl FilePickerDomain {
                                             current.iter().cloned().collect::<Vec<_>>()
                                         ),
                                     );
-                                    expanded_state_relay.send(current.iter().cloned().collect());
+                                    let snapshot =
+                                        current.iter().cloned().collect::<Vec<_>>();
+                                    crate::app::emit_trace(
+                                        "expanded_state_snapshot",
+                                        format!("action=insert paths={snapshot:?}"),
+                                    );
+                                    expanded_state_relay.send(snapshot);
                                     state.set_neq(current);
                                     save_relay.send(()); // Trigger config save
                                 }
@@ -288,7 +294,13 @@ impl FilePickerDomain {
                                             current.iter().cloned().collect::<Vec<_>>()
                                         ),
                                     );
-                                    expanded_state_relay.send(current.iter().cloned().collect());
+                                    let snapshot =
+                                        current.iter().cloned().collect::<Vec<_>>();
+                                    crate::app::emit_trace(
+                                        "expanded_state_snapshot",
+                                        format!("action=remove paths={snapshot:?}"),
+                                    );
+                                    expanded_state_relay.send(snapshot);
                                     state.set_neq(current);
                                     save_relay.send(()); // Trigger config save
                                 }
@@ -1872,7 +1884,19 @@ impl AppConfig {
 
     pub fn update_workspace_picker_scroll(&self, scroll_top: f64) {
         let mut history = self.workspace_history_state.get_cloned();
-        let entry = history.picker_state_mut();
+        let should_update = history
+            .picker_tree_state
+            .as_ref()
+            .map(|state| !state.expanded_paths.is_empty())
+            .unwrap_or(false);
+        if !should_update {
+            crate::app::emit_trace(
+                "workspace_history_mutation",
+                "origin=picker_scroll skip_empty_state".to_string(),
+            );
+            return;
+        }
+        let entry = history.picker_tree_state.as_mut().unwrap();
         let state_ptr = {
             let guard = self.workspace_history_state.lock_ref();
             (&*guard as *const shared::WorkspaceHistory) as usize

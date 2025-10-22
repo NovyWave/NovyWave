@@ -2081,6 +2081,12 @@ fn save_global_section(
     );
 
     let path = global_config_path();
+    println!(
+        "💾 BACKEND: Writing global config to {} (picker_state={:?})",
+        path.display(),
+        file.global.workspace_history.picker_tree_state
+    );
+    println!("💾 BACKEND CONTENT:\n{}", content_with_header);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -2104,20 +2110,38 @@ fn update_workspace_history_on_select(root: &Path) -> shared::GlobalSection {
 }
 
 fn persist_global_section(global: &shared::GlobalSection) -> shared::GlobalSection {
-    match save_global_section(global.clone()) {
+    let existing = read_global_section();
+    let incoming_history = &global.workspace_history;
+    let has_incoming_updates = has_workspace_history_updates(incoming_history);
+    if !has_incoming_updates {
+        return existing;
+    }
+
+    let mut merged = existing.clone();
+    merge_workspace_history(&mut merged.workspace_history, incoming_history);
+
+    if merged.workspace_history == existing.workspace_history {
+        return existing;
+    }
+
+    match save_global_section(merged.clone()) {
         Ok(updated) => updated,
         Err(err) => {
             eprintln!(
                 "⚠️ BACKEND: Failed to save global workspace history: {}",
                 err
             );
-            let mut fallback = global.clone();
-            fallback
-                .workspace_history
-                .clamp_to_limit(shared::WORKSPACE_HISTORY_MAX_RECENTS);
-            fallback
+            updated_on_failure(global)
         }
     }
+}
+
+fn updated_on_failure(global: &shared::GlobalSection) -> shared::GlobalSection {
+    let mut fallback = global.clone();
+    fallback
+        .workspace_history
+        .clamp_to_limit(shared::WORKSPACE_HISTORY_MAX_RECENTS);
+    fallback
 }
 
 fn handle_workspace_history_update(history: shared::WorkspaceHistory) {
@@ -2129,6 +2153,47 @@ fn handle_workspace_history_update(history: shared::WorkspaceHistory) {
         workspace_history: history,
     };
     let _ = persist_global_section(&global_section);
+}
+
+fn has_workspace_history_updates(history: &shared::WorkspaceHistory) -> bool {
+    history
+        .last_selected
+        .as_ref()
+        .map(|value| !value.is_empty())
+        .unwrap_or(false)
+        || !history.recent_paths.is_empty()
+        || !history.tree_state.is_empty()
+        || history.picker_tree_state.is_some()
+}
+
+fn merge_workspace_history(
+    target: &mut shared::WorkspaceHistory,
+    incoming: &shared::WorkspaceHistory,
+) {
+    if incoming
+        .last_selected
+        .as_ref()
+        .map(|value| !value.is_empty())
+        .unwrap_or(false)
+    {
+        target.last_selected = incoming.last_selected.clone();
+    }
+
+    if !incoming.recent_paths.is_empty() {
+        target.recent_paths = incoming.recent_paths.clone();
+    }
+
+    if !incoming.tree_state.is_empty() {
+        target.tree_state = incoming.tree_state.clone();
+    }
+
+    if let Some(incoming_picker) = &incoming.picker_tree_state {
+        let should_apply_picker =
+            !incoming_picker.expanded_paths.is_empty() || target.picker_tree_state.is_none();
+        if should_apply_picker {
+            target.picker_tree_state = Some(incoming_picker.clone());
+        }
+    }
 }
 
 fn expand_config_paths(config: &mut AppConfig) {

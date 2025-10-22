@@ -135,20 +135,7 @@ impl SelectedFilesSyncActors {
                     .signal_cloned()
                     .to_stream();
                 while let Some(files_vec) = signal_stream.next().await {
-                    let current_mutable = selected_files_sync.lock_ref().to_vec();
-
-                    // Add new files
-                    for file_path in files_vec.iter() {
-                        if !current_mutable.contains(file_path) {
-                            selected_files_sync
-                                .lock_mut()
-                                .push_cloned(file_path.clone());
-                        }
-                    }
-
-                    // Remove files that are no longer in the domain
-                    let mut current_mutable = selected_files_sync.lock_mut();
-                    current_mutable.retain(|file| files_vec.contains(file));
+                    selected_files_sync.lock_mut().replace_cloned(files_vec);
                 }
             }
         });
