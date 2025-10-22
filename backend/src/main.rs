@@ -772,6 +772,7 @@ async fn up_msg_handler(req: UpMsgRequest<UpMsg>) {
             load_config(session_id, cor_id).await;
         }
         UpMsg::SelectWorkspace { root } => {
+            println!("🛰️ BACKEND: SelectWorkspace requested root='{}'", root);
             select_workspace(root.clone(), session_id, cor_id).await;
         }
         UpMsg::SaveConfig(config) => {

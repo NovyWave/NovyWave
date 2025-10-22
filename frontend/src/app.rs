@@ -445,6 +445,7 @@ impl NovyWaveApp {
                         tracked_files_on_workspace.all_files_cleared_relay.send(());
                         selected_variables_on_workspace.selection_cleared_relay.send(());
                     }
+
                 }
             })
         };
@@ -1430,29 +1431,27 @@ impl NovyWaveApp {
             let request_path = trimmed.clone();
             let workspace_loading = workspace_loading.clone();
             async move {
-                // Robust retry: dev server may restart briefly on writes; tolerate transient fetch failures.
-                let mut attempt: u8 = 0;
-                loop {
-                    attempt += 1;
-                    let result = <crate::platform::CurrentPlatform as crate::platform::Platform>::send_message(
+                // Simpler, reliable sequence:
+                // 1) Ensure handler looks ready.
+                let _ = crate::platform::wait_until_handler_ready().await;
+                // 2) Try SelectWorkspace once; on error, wait briefly, ensure ready, and try once more.
+                let mut sent_ok =
+                    <crate::platform::CurrentPlatform as crate::platform::Platform>::send_message(
                         shared::UpMsg::SelectWorkspace { root: request_path.clone() }
-                    ).await;
-                    match result {
-                        Ok(()) => { break; }
-                        Err(err) => {
-                            emit_trace(
-                                "workspace_switch_retry",
-                                format!("attempt={} error={}", attempt, err),
-                            );
-                            if attempt >= 12 {
-                                workspace_loading.set(false);
-                                zoon::println!("Failed to request workspace '{}' after retries: {}", request_path, err);
-                                break;
-                            }
-                            zoon::Timer::sleep(500).await;
-                            continue;
-                        }
-                    }
+                    ).await.is_ok();
+                if !sent_ok {
+                    zoon::Timer::sleep(500).await;
+                    let _ = crate::platform::wait_until_handler_ready().await;
+                    sent_ok = <crate::platform::CurrentPlatform as crate::platform::Platform>::send_message(
+                        shared::UpMsg::SelectWorkspace { root: request_path.clone() }
+                    ).await.is_ok();
+                }
+                if !sent_ok {
+                    workspace_loading.set(false);
+                    zoon::println!(
+                        "Failed to request workspace '{}' after simple retry.",
+                        request_path
+                    );
                 }
             }
         });

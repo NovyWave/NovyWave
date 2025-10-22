@@ -77,6 +77,11 @@ pub fn server_is_ready() -> bool {
     SERVER_READY.get()
 }
 
+/// Public helper: wait until the backend handler looks ready.
+pub async fn wait_until_handler_ready() -> bool {
+    wait_until_server_ready().await
+}
+
 impl Platform for WebPlatform {
     async fn send_message(msg: UpMsg) -> Result<(), String> {
         match (&*CONNECTION).get_cloned() {
@@ -94,11 +99,21 @@ impl Platform for WebPlatform {
                     }
                 }
 
-                connection
-                    .send_up_msg(msg)
-                    .await
-                    .map(|_| ())
-                    .map_err(|e| format!("{:?}", e))
+                let is_critical = !matches!(
+                    msg,
+                    UpMsg::SaveConfig(_) | UpMsg::UpdateWorkspaceHistory(_) | UpMsg::FrontendTrace { .. }
+                );
+                match connection.send_up_msg(msg).await {
+                    Ok(_cor_id) => Ok(()),
+                    Err(e) => {
+                        if is_critical && !LOADCONFIG_INFLIGHT.get() {
+                            LOADCONFIG_INFLIGHT.set(true);
+                            enqueue_critical(UpMsg::LoadConfig);
+                            ensure_flusher();
+                        }
+                        Err(format!("{:?}", e))
+                    }
+                }
             }
             None => Err("No platform connection available".to_string()),
         }
