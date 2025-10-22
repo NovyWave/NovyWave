@@ -1023,11 +1023,23 @@ pub fn reload_plugins(
     section: &PluginsSection,
     opened_files: &[CanonicalPathPayload],
 ) -> PluginReloadOutcome {
-    let mut manager = PLUGIN_MANAGER
-        .lock()
-        .expect("Plugin manager mutex poisoned");
-    let reloaded = manager.reload(section, opened_files);
-    let statuses = manager.statuses();
+    // Be resilient to previous panics: recover from poisoned mutex and try to reinitialize.
+    let mut guard = match PLUGIN_MANAGER.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            eprintln!("🔌 BACKEND: plugin manager mutex poisoned; attempting recovery");
+            let mut inner = poisoned.into_inner();
+            // Try to put the manager back into a clean state
+            inner.shutdown_all();
+            if let Ok(new_manager) = PluginManager::new() {
+                *inner = new_manager;
+            }
+            inner
+        }
+    };
+
+    let reloaded = guard.reload(section, opened_files);
+    let statuses = guard.statuses();
     PluginReloadOutcome { statuses, reloaded }
 }
 

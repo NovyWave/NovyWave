@@ -170,3 +170,10 @@ impl Platform for TauriPlatform {
         }
     }
 }
+
+/// In Tauri builds the backend is local; assume ready.
+pub fn server_ready_signal() -> impl zoon::Signal<Item = bool> {
+    zoon::always(true)
+}
+
+pub fn notify_server_alive() {}

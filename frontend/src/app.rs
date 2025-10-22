@@ -408,7 +408,8 @@ impl NovyWaveApp {
         .await;
 
         let workspace_path = Mutable::new(None);
-        let workspace_loading = Mutable::new(true);
+        // Do not set loading at boot; only flip on user-initiated switches
+        let workspace_loading = Mutable::new(false);
         let default_workspace_path = Mutable::new(None);
         let workspace_picker_visible = Atom::new(false);
 
@@ -430,9 +431,35 @@ impl NovyWaveApp {
         let config_loaded_actor = {
             let mut config_stream = connection_message_actor.config_loaded_relay.subscribe();
             let workspace_loading = workspace_loading.clone();
+            let workspace_path_for_config = workspace_path.clone();
+            let default_workspace_path_for_config = default_workspace_path.clone();
             Actor::new((), async move |_state| {
-                while config_stream.next().await.is_some() {
+                while let Some(loaded_config) = config_stream.next().await {
                     workspace_loading.set(false);
+                    // Populate the bar from last_selected; if absent, fall back to the first recent
+                    // (which is the default root on a fresh run).
+                    if workspace_path_for_config.get_cloned().is_none() {
+                        let last = loaded_config
+                            .global
+                            .workspace_history
+                            .last_selected
+                            .unwrap_or_default();
+                        if !last.is_empty() {
+                            workspace_path_for_config.set(Some(last.clone()));
+                        } else if let Some(first_recent) = loaded_config
+                            .global
+                            .workspace_history
+                            .recent_paths
+                            .first()
+                            .cloned()
+                        {
+                            workspace_path_for_config.set(Some(first_recent.clone()));
+                            // Treat this as the default root hint for UI filtering
+                            if default_workspace_path_for_config.get_cloned().is_none() {
+                                default_workspace_path_for_config.set(Some(first_recent));
+                            }
+                        }
+                    }
                 }
             })
         };
@@ -798,13 +825,12 @@ impl NovyWaveApp {
             })
         };
 
-        // Request config loading through platform layer
-        if let Err(_e) =
-            <crate::platform::CurrentPlatform as crate::platform::Platform>::send_message(
-                shared::UpMsg::LoadConfig,
-            )
-            .await
-        {}
+        // Request config loading once; the Web platform gate handles
+        // readiness probes, single-flight, and quiet retry during dev-server swaps.
+        let _ = <crate::platform::CurrentPlatform as crate::platform::Platform>::send_message(
+            shared::UpMsg::LoadConfig,
+        )
+        .await;
 
         let file_dialog_visible = Atom::new(false);
         let key_repeat_handles = Rc::new(RefCell::new(HashMap::new()));
@@ -881,6 +907,8 @@ impl NovyWaveApp {
         let connection = Connection::new({
             let sender = down_msg_sender; // Move sender explicitly before closure
             move |down_msg, _| {
+                // Mark server alive on any DownMsg
+                crate::platform::notify_server_alive();
                 // Log the received message
                 // Handle TrackedFiles messages directly (not routed through ConnectionMessageActor)
                 match &down_msg {
@@ -1288,18 +1316,24 @@ impl NovyWaveApp {
             shared::Theme::Dark => Border::new().width(1).color("oklch(40% 0.02 255)"),
         });
 
-        let path_signal = map_ref! {
-            let current = self.workspace_path.signal_cloned(),
-            let default = self.default_workspace_path.signal_cloned(),
-            let loading = self.workspace_loading.signal() => {
-                if let Some(path) = current.clone() {
-                    path
-                } else if let Some(default_path) = default.clone() {
-                    default_path
-                } else if *loading {
-                    String::from("Loading workspace...")
-                } else {
-                    String::from("No workspace selected")
+        let path_signal = {
+            let server_ready_signal = crate::platform::server_ready_signal();
+            map_ref! {
+                let current = self.workspace_path.signal_cloned(),
+                let default = self.default_workspace_path.signal_cloned(),
+                let loading = self.workspace_loading.signal(),
+                let server_ready = server_ready_signal => {
+                    if let Some(path) = current.clone() {
+                        path
+                    } else if let Some(default_path) = default.clone() {
+                        default_path
+                    } else if !*server_ready {
+                        String::from("Connecting to server… (retrying)")
+                    } else if *loading {
+                        String::from("Loading workspace...")
+                    } else {
+                        String::from("No workspace selected")
+                    }
                 }
             }
         };
@@ -1391,6 +1425,7 @@ impl NovyWaveApp {
             return;
         }
 
+        let previous_path = workspace_path.lock_ref().clone();
         workspace_loading.set(true);
         workspace_path.set(Some(trimmed.clone()));
         tracked_files.all_files_cleared_relay.send(());
@@ -1415,13 +1450,14 @@ impl NovyWaveApp {
                                 "workspace_switch_retry",
                                 format!("attempt={} error={}", attempt, err),
                             );
-                            if attempt >= 5 {
+                            if attempt >= 12 {
                                 workspace_loading.set(false);
                                 zoon::println!("Failed to request workspace '{}' after retries: {}", request_path, err);
-                                workspace_path.set(Some(request_path.clone()));
+                                // Revert the visible path to the previous value on failure
+                                workspace_path.set(previous_path.clone());
                                 break;
                             }
-                            zoon::Timer::sleep(350).await;
+                            zoon::Timer::sleep(500).await;
                             continue;
                         }
                     }

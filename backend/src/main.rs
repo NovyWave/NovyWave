@@ -768,6 +768,7 @@ async fn up_msg_handler(req: UpMsgRequest<UpMsg>) {
             send_parsing_progress(file_id.clone(), session_id, cor_id).await;
         }
         UpMsg::LoadConfig => {
+            println!("🛰️ BACKEND: LoadConfig received");
             load_config(session_id, cor_id).await;
         }
         UpMsg::SelectWorkspace { root } => {
@@ -858,6 +859,10 @@ async fn up_msg_handler(req: UpMsgRequest<UpMsg>) {
             cursor_time_ns,
             request_id,
         } => {
+            println!(
+                "🛰️ BACKEND: UnifiedSignalQuery len={} cursor={:?} id={}",
+                signal_requests.len(), cursor_time_ns, request_id
+            );
             // Handle unified signal query using the new cache manager
             debug_log!(
                 DEBUG_BACKEND,
@@ -2480,36 +2485,45 @@ async fn handle_loaded_config(
             .clone(),
     );
 
-    let plugin_reload = plugins::reload_plugins(
-        &config_for_messages.plugins,
-        &config_for_messages.workspace.opened_files,
-    );
-    if plugin_reload.reloaded {
-        for status in &plugin_reload.statuses {
-            let init_msg = status
-                .init_message
-                .as_ref()
-                .map(|msg| msg.as_str())
-                .unwrap_or("");
-            let last_msg = status
-                .last_message
-                .as_ref()
-                .map(|msg| msg.as_str())
-                .unwrap_or("");
-            let detail = match (init_msg.is_empty(), last_msg.is_empty()) {
-                (false, false) => format!(" | init: {} | last: {}", init_msg, last_msg),
-                (false, true) => format!(" | init: {}", init_msg),
-                (true, false) => format!(" | last: {}", last_msg),
-                (true, true) => String::new(),
-            };
-            println!(
-                "🔌 BACKEND: plugin '{}' status {:?}{}",
-                status.id, status.state, detail
-            );
+    // Guard plugin reload/flush so a plugin panic cannot block config delivery
+    match std::panic::catch_unwind(|| {
+        plugins::reload_plugins(
+            &config_for_messages.plugins,
+            &config_for_messages.workspace.opened_files,
+        )
+    }) {
+        Ok(plugin_reload) => {
+            if plugin_reload.reloaded {
+                for status in &plugin_reload.statuses {
+                    let init_msg = status
+                        .init_message
+                        .as_ref()
+                        .map(|msg| msg.as_str())
+                        .unwrap_or("");
+                    let last_msg = status
+                        .last_message
+                        .as_ref()
+                        .map(|msg| msg.as_str())
+                        .unwrap_or("");
+                    let detail = match (init_msg.is_empty(), last_msg.is_empty()) {
+                        (false, false) => format!(" | init: {} | last: {}", init_msg, last_msg),
+                        (false, true) => format!(" | init: {}", init_msg),
+                        (true, false) => format!(" | last: {}", last_msg),
+                        (true, true) => String::new(),
+                    };
+                    println!(
+                        "🔌 BACKEND: plugin '{}' status {:?}{}",
+                        status.id, status.state, detail
+                    );
+                }
+            }
+        }
+        Err(_) => {
+            eprintln!("🔌 BACKEND: plugin reload panicked; continuing without plugins");
         }
     }
 
-    plugins::flush_initial_discoveries();
+    let _ = std::panic::catch_unwind(|| plugins::flush_initial_discoveries());
 
     if let Some(root) = workspace_event_root {
         let default_root_display = INITIAL_CWD.to_string_lossy().to_string();
@@ -2544,8 +2558,24 @@ async fn handle_loaded_config(
 async fn load_config(session_id: SessionId, cor_id: CorId) {
     match read_or_create_config() {
         Ok(mut config) => {
-            let root_display = workspace_context().root().to_string_lossy().to_string();
+            // Read global and honor last_selected as the initial workspace root
             config.global = read_global_section();
+            if let Some(last) = config.global.workspace_history.last_selected.clone() {
+                if !last.is_empty() {
+                    let candidate = PathBuf::from(&last);
+                    let absolute = if candidate.is_absolute() {
+                        candidate
+                    } else {
+                        INITIAL_CWD.join(candidate)
+                    };
+                    if let Ok(canon) = fs::canonicalize(&absolute) {
+                        if canon.is_dir() {
+                            workspace_context().set_root(canon);
+                        }
+                    }
+                }
+            }
+            let root_display = workspace_context().root().to_string_lossy().to_string();
             handle_loaded_config(config, session_id, cor_id, Some(root_display)).await;
         }
         Err(message) => {
@@ -4277,6 +4307,8 @@ async fn handle_unified_signal_query(
                 signal_data.len(),
                 cursor_values.len()
             );
+            let resp_len = signal_data.len();
+            let cursor_len = cursor_values.len();
             send_down_msg(
                 DownMsg::UnifiedSignalResponse {
                     request_id,
@@ -4289,6 +4321,10 @@ async fn handle_unified_signal_query(
                 cor_id,
             )
             .await;
+            println!(
+                "🛰️ BACKEND: UnifiedSignalResponse sent: signal_data={} cursor_values={}",
+                resp_len, cursor_len
+            );
         }
         Err(error) => {
             debug_log!(
