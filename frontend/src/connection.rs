@@ -39,6 +39,18 @@ impl ConnectionAdapter {
     }
 
     pub async fn send_up_msg(&self, up_msg: UpMsg) {
+        // Suppress non-critical posts until the server is ready to avoid
+        // noisy ERR_EMPTY_RESPONSE during dev-server startup/hot-swap.
+        let is_critical = matches!(
+            up_msg,
+            UpMsg::LoadConfig | UpMsg::SelectWorkspace { .. } | UpMsg::LoadWaveformFile(_)
+        );
+
+        let ready = crate::platform::server_is_ready();
+        if !ready && !is_critical {
+            return;
+        }
+
         if let Err(error) = self.connection.send_up_msg(up_msg).await {
             zoon::println!("Failed to send message: {:?}", error);
         }

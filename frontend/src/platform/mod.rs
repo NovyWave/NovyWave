@@ -32,4 +32,10 @@ pub use tauri::{TauriPlatform as CurrentPlatform, server_ready_signal, notify_se
 #[cfg(not(any(NOVYWAVE_PLATFORM = "WEB", NOVYWAVE_PLATFORM = "TAURI")))]
 pub mod web;
 #[cfg(not(any(NOVYWAVE_PLATFORM = "WEB", NOVYWAVE_PLATFORM = "TAURI")))]
-pub use web::{WebPlatform as CurrentPlatform, set_platform_connection, server_ready_signal, notify_server_alive};
+pub use web::{
+    WebPlatform as CurrentPlatform,
+    set_platform_connection,
+    server_ready_signal,
+    server_is_ready,
+    notify_server_alive,
+};

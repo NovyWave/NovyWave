@@ -114,15 +114,21 @@ impl DiscoveryHostConfig {
     }
 
     fn build_matcher(&self) -> Result<Gitignore, String> {
-        let mut builder = GitignoreBuilder::new(&self.base_dir);
-        for pattern in &self.patterns {
-            if let Err(err) = builder.add_line(None, pattern) {
-                return Err(err.to_string());
+        // Guard against panics inside `ignore` on odd inputs/paths during dev.
+        let base_dir = self.base_dir.clone();
+        let patterns = self.patterns.clone();
+        std::panic::catch_unwind(move || {
+            let mut builder = GitignoreBuilder::new(&base_dir);
+            for pattern in &patterns {
+                if let Err(err) = builder.add_line(None, pattern) {
+                    return Err(err.to_string());
+                }
             }
-        }
-        builder
-            .build()
-            .map_err(|err| format!("failed to build matcher: {err}"))
+            builder
+                .build()
+                .map_err(|err| format!("failed to build matcher: {err}"))
+        })
+        .map_err(|_| "panic while building discovery matcher".to_string())?
     }
 
     fn extension_allowed(&self, path: &Path) -> bool {
@@ -139,10 +145,24 @@ impl DiscoveryHostConfig {
             self.base_dir.join(path)
         };
 
-        matches!(
-            matcher.matched_path_or_any_parents(&absolute, absolute.is_dir()),
-            Match::Whitelist(_) | Match::Ignore(_)
-        )
+        // Guard against panics inside the ignore crate on odd inputs/paths.
+        match std::panic::catch_unwind({
+            let absolute = absolute.clone();
+            let matcher = matcher.clone();
+            move || {
+                let m = matcher.matched_path_or_any_parents(&absolute, absolute.is_dir());
+                matches!(m, Match::Whitelist(_) | Match::Ignore(_))
+            }
+        }) {
+            Ok(is_match) => is_match,
+            Err(_) => {
+                eprintln!(
+                    "🔌 BACKEND: ignore::matched panic for path '{}'; skipping",
+                    absolute.display()
+                );
+                false
+            }
+        }
     }
 }
 
@@ -525,7 +545,16 @@ impl HostBridge for BackendPluginBridge {
             }
         });
 
-        let mut watchers = self.file_watchers.lock().expect("file_watchers poisoned");
+        // Be resilient to poisoned mutex during dev hot-reloads
+        let mut watchers = match self.file_watchers.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                eprintln!("🔌 BACKEND: file_watchers mutex poisoned; recovering");
+                let mut inner = poisoned.into_inner();
+                inner.clear();
+                inner
+            }
+        };
         watchers.insert(
             plugin_id.to_string(),
             PluginWatcher {
@@ -538,11 +567,14 @@ impl HostBridge for BackendPluginBridge {
     }
 
     fn clear_watched_files(&self, plugin_id: &str) {
-        if let Some(watcher) = self
-            .file_watchers
-            .lock()
-            .expect("file_watchers poisoned")
-            .remove(plugin_id)
+        if let Some(watcher) = match self.file_watchers.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                eprintln!("🔌 BACKEND: file_watchers mutex poisoned on clear; recovering");
+                poisoned.into_inner()
+            }
+        }
+        .remove(plugin_id)
         {
             watcher.task.abort();
         }
@@ -634,10 +666,15 @@ impl HostBridge for BackendPluginBridge {
             }
         });
 
-        let mut watchers = self
-            .directory_watchers
-            .lock()
-            .expect("directory_watchers poisoned");
+        let mut watchers = match self.directory_watchers.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                eprintln!("🔌 BACKEND: directory_watchers mutex poisoned; recovering");
+                let mut inner = poisoned.into_inner();
+                inner.clear();
+                inner
+            }
+        };
         watchers.insert(
             plugin_id.to_string(),
             PluginWatcher {
@@ -652,11 +689,14 @@ impl HostBridge for BackendPluginBridge {
     }
 
     fn clear_watched_directories(&self, plugin_id: &str) {
-        if let Some(watcher) = self
-            .directory_watchers
-            .lock()
-            .expect("directory_watchers poisoned")
-            .remove(plugin_id)
+        if let Some(watcher) = match self.directory_watchers.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                eprintln!("🔌 BACKEND: directory_watchers mutex poisoned on clear; recovering");
+                poisoned.into_inner()
+            }
+        }
+        .remove(plugin_id)
         {
             watcher.task.abort();
         }

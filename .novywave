@@ -73,8 +73,8 @@ tooltip_enabled = false
 last_selected = "/home/martinkavik/repos/NovyWave"
 recent_paths = [
     "/home/martinkavik/repos/NovyWave",
-    "/home/martinkavik/repos/NovyWave/test_files/my_workspaces/workspace_b",
     "/home/martinkavik/repos/NovyWave/test_files/my_workspaces/workspace_a",
+    "/home/martinkavik/repos/NovyWave/test_files/my_workspaces/workspace_b",
 ]
 
 [global.workspace_history.picker_tree_state]

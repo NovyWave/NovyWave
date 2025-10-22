@@ -862,17 +862,23 @@ impl NovyWaveApp {
     async fn load_and_register_fonts() {
         use zoon::futures_util::future::try_join_all;
 
-        let fonts = try_join_all([
+        let fonts_result = try_join_all([
             fast2d::fetch_file("/_api/public/fonts/FiraCode-Regular.ttf"),
             fast2d::fetch_file("/_api/public/fonts/Inter-Regular.ttf"),
             fast2d::fetch_file("/_api/public/fonts/Inter-Bold.ttf"),
             fast2d::fetch_file("/_api/public/fonts/Inter-Italic.ttf"),
             fast2d::fetch_file("/_api/public/fonts/Inter-BoldItalic.ttf"),
         ])
-        .await
-        .unwrap_throw();
+        .await;
 
-        fast2d::register_fonts(fonts).unwrap_throw();
+        match fonts_result {
+            Ok(fonts) => {
+                let _ = fast2d::register_fonts(fonts);
+            }
+            Err(err) => {
+                zoon::println!("Fonts load skipped (backend not ready yet?): {:?}", err);
+            }
+        }
     }
 
     /// Create connection with ConnectionMessageActor integration

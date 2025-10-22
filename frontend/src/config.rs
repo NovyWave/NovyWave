@@ -420,10 +420,37 @@ impl FilePickerDomain {
             let directory_loading_for_sender = directory_loading_actor.clone();
             // ✅ FIX: Create separate stream subscription for directory expansion events
             let mut directory_expanded_stream_for_sender = directory_expanded_relay.subscribe();
+            // Gate non-critical posts until first DownMsg (ConfigLoaded/WorkspaceLoaded)
+            let ready_flag = Mutable::new(false);
+            {
+                // Flip ready flag when we see the first ConfigLoaded or WorkspaceLoaded
+                let mut cfg_stream = connection_message_actor
+                    .config_loaded_relay
+                    .subscribe();
+                let mut ws_stream = connection_message_actor
+                    .workspace_loaded_relay
+                    .subscribe();
+                let ready_clone = ready_flag.clone();
+                Actor::new((), async move |_state| {
+                    loop {
+                        futures::select! {
+                            _ = cfg_stream.next() => {
+                                ready_clone.set(true);
+                                break;
+                            }
+                            _ = ws_stream.next() => {
+                                ready_clone.set(true);
+                                break;
+                            }
+                        }
+                    }
+                });
+            }
 
             Actor::new((), async move |_state| {
                 let mut directory_loading_stream =
                     directory_loading_for_sender.signal().to_stream().fuse();
+                let mut ready_stream = ready_flag.signal().to_stream().fuse();
 
                 loop {
                     futures::select! {
@@ -436,10 +463,13 @@ impl FilePickerDomain {
 
                                 for request_path in pending_requests.iter() {
                                     if !current_cache.contains_key(request_path) {
-                                        let path_for_request = request_path.clone();
-
-                                        // Connection requires async handling within Actor context
-                                        connection_clone.send_up_msg(shared::UpMsg::BrowseDirectory(path_for_request)).await.unwrap_throw();
+                                        // Suppress until backend is ready; will be flushed on ready event
+                                        if ready_flag.get_cloned() {
+                                            let path_for_request = request_path.clone();
+                                            let _ = connection_clone
+                                                .send_up_msg(shared::UpMsg::BrowseDirectory(path_for_request))
+                                                .await;
+                                        }
                                     } else {
                                     }
                                 }
@@ -456,8 +486,37 @@ impl FilePickerDomain {
                                 let current_cache = directory_cache_for_sender.signal().to_stream().next().await.unwrap_or_default();
 
                                 if !current_cache.contains_key(&dir_path) {
-                                    connection_clone.send_up_msg(shared::UpMsg::BrowseDirectory(dir_path)).await.unwrap_throw();
+                                    if ready_flag.get_cloned() {
+                                        let _ = connection_clone
+                                            .send_up_msg(shared::UpMsg::BrowseDirectory(dir_path))
+                                            .await;
+                                    }
                                 } else {
+                                }
+                            }
+                        }
+                        // Flush pending directory requests when backend becomes ready
+                        ready = ready_stream.next() => {
+                            if let Some(true) = ready {
+                                // Re-check current pending set and cache, then send
+                                let pending_requests = directory_loading_for_sender
+                                    .signal()
+                                    .to_stream()
+                                    .next()
+                                    .await
+                                    .unwrap_or_default();
+                                let current_cache = directory_cache_for_sender
+                                    .signal()
+                                    .to_stream()
+                                    .next()
+                                    .await
+                                    .unwrap_or_default();
+                                for request_path in pending_requests.iter() {
+                                    if !current_cache.contains_key(request_path) {
+                                        let _ = connection_clone
+                                            .send_up_msg(shared::UpMsg::BrowseDirectory(request_path.clone()))
+                                            .await;
+                                    }
                                 }
                             }
                         }
@@ -1404,7 +1463,7 @@ impl AppConfig {
                                         }
                                         // Timer completes - do the save
                                         _ = zoon::Timer::sleep(300).fuse() => {
-                                            if config_ready {
+                                            if config_ready && crate::platform::server_is_ready() {
                                                 if let Some(shared_config) = compose_shared_app_config(
                                                 &theme_actor_clone,
                                                 &dock_mode_actor_clone,
@@ -1450,7 +1509,7 @@ impl AppConfig {
                                         }
                                         // Timer completes - do the save
                                         _ = zoon::Timer::sleep(300).fuse() => {
-                                            if config_ready {
+                                            if config_ready && crate::platform::server_is_ready() {
                                                 if let Some(shared_config) = compose_shared_app_config(
                                                 &theme_actor_clone,
                                                 &dock_mode_actor_clone,

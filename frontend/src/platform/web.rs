@@ -43,7 +43,7 @@ pub fn set_platform_connection(connection: Arc<SendWrapper<zoon::Connection<UpMs
 }
 
 /// Expose a read-only signal indicating whether the backend API appears ready
-pub fn server_ready_signal() -> impl zoon::Signal<Item = bool> { zoon::always(true) }
+pub fn server_ready_signal() -> impl zoon::Signal<Item = bool> { SERVER_READY.signal() }
 
 /// Mark the server as alive/ready when any DownMsg is received
 pub fn notify_server_alive() {
@@ -69,9 +69,6 @@ impl Platform for WebPlatform {
         match (&*CONNECTION).get_cloned() {
             Some(connection) => {
                 if matches!(msg, UpMsg::LoadConfig) {
-                    let result = connection.send_up_msg(UpMsg::LoadConfig).await;
-                    if result.is_ok() { return Ok(()); }
-                    zoon::Timer::sleep(300).await;
                     let _ = connection.send_up_msg(UpMsg::LoadConfig).await;
                     return Ok(());
                 }
