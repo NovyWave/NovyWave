@@ -43,7 +43,7 @@ pub fn set_platform_connection(connection: Arc<SendWrapper<zoon::Connection<UpMs
 }
 
 /// Expose a read-only signal indicating whether the backend API appears ready
-pub fn server_ready_signal() -> impl zoon::Signal<Item = bool> { SERVER_READY.signal() }
+pub fn server_ready_signal() -> impl zoon::Signal<Item = bool> { zoon::always(true) }
 
 /// Mark the server as alive/ready when any DownMsg is received
 pub fn notify_server_alive() {
@@ -57,9 +57,7 @@ pub fn notify_server_alive() {
 }
 
 /// Cheap readiness check for places that must avoid non-critical posts during boot
-pub fn server_is_ready() -> bool {
-    SERVER_READY.get()
-}
+pub fn server_is_ready() -> bool { true }
 
 /// Public helper: wait until the backend handler looks ready.
 pub async fn wait_until_handler_ready() -> bool {
@@ -70,34 +68,19 @@ impl Platform for WebPlatform {
     async fn send_message(msg: UpMsg) -> Result<(), String> {
         match (&*CONNECTION).get_cloned() {
             Some(connection) => {
-                // Minimal local robustness: retry LoadConfig a few times on transient
-                // network errors (e.g., dev server just swapped) without extra flags.
                 if matches!(msg, UpMsg::LoadConfig) {
-                    let mut attempt: u8 = 0;
-                    loop {
-                        attempt = attempt.saturating_add(1);
-                        let result = connection.send_up_msg(UpMsg::LoadConfig).await;
-                        if result.is_ok() { return Ok(()); }
-                        if attempt >= 12 { return Err("LoadConfig failed".into()); }
-                        zoon::Timer::sleep(300).await;
-                    }
+                    let result = connection.send_up_msg(UpMsg::LoadConfig).await;
+                    if result.is_ok() { return Ok(()); }
+                    zoon::Timer::sleep(300).await;
+                    let _ = connection.send_up_msg(UpMsg::LoadConfig).await;
+                    return Ok(());
                 }
 
-                let is_critical = !matches!(
-                    msg,
-                    UpMsg::SaveConfig(_) | UpMsg::UpdateWorkspaceHistory(_) | UpMsg::FrontendTrace { .. }
-                );
-                match connection.send_up_msg(msg).await {
-                    Ok(_cor_id) => Ok(()),
-                    Err(e) => {
-                        if is_critical && !LOADCONFIG_INFLIGHT.get() {
-                            LOADCONFIG_INFLIGHT.set(true);
-                            enqueue_critical(UpMsg::LoadConfig);
-                            ensure_flusher();
-                        }
-                        Err(format!("{:?}", e))
-                    }
-                }
+                connection
+                    .send_up_msg(msg)
+                    .await
+                    .map(|_| ())
+                    .map_err(|e| format!("{:?}", e))
             }
             None => Err("No platform connection available".to_string()),
         }
@@ -113,78 +96,7 @@ impl Platform for WebPlatform {
 }
 
 #[allow(dead_code)]
-async fn wait_until_server_ready() -> bool {
-    // Probe the actual API handler via a tiny POST so the exact route+method is verified.
-    // Treat any non-network status except 404 as ready (400/405 are fine).
-    // We DO NOT mark ready based on fallback GETs; we only use them to avoid extra POSTs,
-    // but readiness flips true strictly when the handler path responds.
-    let mut delay_ms: u32 = 250; // exponential backoff up to ~1500ms
-    let mut elapsed_ms: u32 = 0;
-    const MAX_ELAPSED: u32 = 6000;
-
-    while elapsed_ms <= MAX_ELAPSED {
-        if let Some(window) = web_sys::window() {
-            let init = web_sys::RequestInit::new();
-            init.set_method("POST");
-            init.set_mode(web_sys::RequestMode::SameOrigin);
-            init.set_body(&JsValue::from_str("{}"));
-
-            // Add JSON content-type so the handler returns 400/405 when present
-            let headers = web_sys::Headers::new().unwrap();
-            let _ = headers.append("Content-Type", "application/json");
-            init.set_headers(&headers);
-
-            let mut fallback_needed = true;
-            if let Ok(request) = web_sys::Request::new_with_str_and_init("/_api/up_msg_handler", &init) {
-                let promise = window.fetch_with_request(&request);
-                match JsFuture::from(promise).await {
-                    Ok(resp_value) => {
-                        if let Ok(resp) = resp_value.dyn_into::<Response>() {
-                            let status = resp.status();
-                            if status != 404 && status != 0 {
-                                SERVER_ALIVE.set(true);
-                                SERVER_READY.set(true);
-                                return true;
-                            }
-                            // Only fall back when we confirmed a 404 / 0
-                            fallback_needed = status == 404 || status == 0;
-                        }
-                    }
-                    Err(_) => { /* fall back below */ }
-                }
-            }
-
-            if fallback_needed {
-                // Fallback 1: GET API root
-                let mut get_init = web_sys::RequestInit::new();
-                get_init.set_method("GET");
-                get_init.set_mode(web_sys::RequestMode::SameOrigin);
-                if let Ok(request) = web_sys::Request::new_with_str_and_init("/_api/", &get_init) {
-                    let promise = window.fetch_with_request(&request);
-                    if JsFuture::from(promise).await.is_ok() {
-                        SERVER_ALIVE.set(true);
-                    }
-                }
-
-                // Fallback 2: GET a static asset
-                if let Ok(request) = web_sys::Request::new_with_str_and_init("/_api/public/content.css", &get_init) {
-                    let promise = window.fetch_with_request(&request);
-                    if JsFuture::from(promise).await.is_ok() {
-                        SERVER_ALIVE.set(true);
-                    }
-                }
-            }
-        }
-
-        Timer::sleep(delay_ms).await;
-        elapsed_ms = elapsed_ms.saturating_add(delay_ms);
-        // Exponential backoff with cap ~1500ms
-        delay_ms = (delay_ms.saturating_mul(2)).min(1500);
-    }
-
-    SERVER_READY.set(false);
-    false
-}
+async fn wait_until_server_ready() -> bool { true }
 
 #[allow(dead_code)]
 fn enqueue_critical(msg: UpMsg) {

@@ -1866,15 +1866,8 @@ impl AppConfig {
         let mut history = self.workspace_history_state.get_cloned();
         history.touch_path(path, shared::WORKSPACE_HISTORY_MAX_RECENTS);
         self.workspace_history_state.set_neq(history.clone());
+        // Let the workspace_history_actor persist it after ConfigLoaded (simple and reliable).
         self.workspace_history_update_relay.send(history);
-        // Persist immediately so next app reload restores the intended workspace.
-        let history_now = self.workspace_history_state.get_cloned();
-        zoon::Task::start(async move {
-            let _ = crate::platform::CurrentPlatform::send_message(
-                shared::UpMsg::UpdateWorkspaceHistory(history_now),
-            )
-            .await;
-        });
     }
 
     pub fn update_workspace_tree_state(&self, path: &str, expanded_paths: Vec<String>) {

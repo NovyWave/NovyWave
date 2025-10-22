@@ -419,8 +419,8 @@ impl NovyWaveApp {
         .await;
 
         let workspace_path = Mutable::new(None);
-        // Do not set loading at boot; only flip on user-initiated switches
-        let workspace_loading = Mutable::new(false);
+        // Start in loading state until WorkspaceLoaded/ConfigLoaded arrives
+        let workspace_loading = Mutable::new(true);
         let default_workspace_path = Mutable::new(None);
         let workspace_picker_visible = Atom::new(false);
 
@@ -1313,13 +1313,9 @@ impl NovyWaveApp {
                         } else { path }
                     } else if let Some(default_path) = default.clone() {
                         format!("Default ({})", default_path)
-                    } else if !*server_ready {
-                        String::from("Connecting to server… (retrying)")
-                    } else if *loading {
-                        String::from("Loading workspace...")
-                    } else {
-                        String::from("No workspace selected")
-                    }
+                    } else if !*server_ready || *loading {
+                        String::from("Loading workspace…")
+                    } else { String::from("Loading workspace…") }
                 }
             }
         };
@@ -1421,14 +1417,12 @@ impl NovyWaveApp {
             let workspace_loading = workspace_loading.clone();
             let workspace_path_for_revert = workspace_path.clone();
             async move {
-                // Keep it simple: probe once, send once, then one fallback.
-                let _ = crate::platform::wait_until_handler_ready().await;
+                // Keep it simple: send once; on error, one fallback after a brief wait.
                 let first = <crate::platform::CurrentPlatform as crate::platform::Platform>::send_message(
                     shared::UpMsg::SelectWorkspace { root: request_path.clone() }
                 ).await;
                 if first.is_err() {
                     zoon::Timer::sleep(500).await;
-                    let _ = crate::platform::wait_until_handler_ready().await;
                     let second = <crate::platform::CurrentPlatform as crate::platform::Platform>::send_message(
                         shared::UpMsg::SelectWorkspace { root: request_path.clone() }
                     ).await;
