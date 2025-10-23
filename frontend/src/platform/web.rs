@@ -2,9 +2,7 @@
 use crate::platform::Platform;
 use shared::{DownMsg, UpMsg};
 use std::sync::Arc;
-use wasm_bindgen::{JsCast, JsValue};
-use wasm_bindgen_futures::JsFuture;
-use web_sys::Response;
+// cleaned unused imports
 use std::collections::VecDeque;
 use zoon::{Mutable, SendWrapper, Timer};
 
@@ -59,10 +57,7 @@ pub fn notify_server_alive() {
 /// Cheap readiness check for places that must avoid non-critical posts during boot
 pub fn server_is_ready() -> bool { SERVER_ALIVE.get() }
 
-/// Public helper: wait until the backend handler looks ready.
-pub async fn wait_until_handler_ready() -> bool {
-    wait_until_server_ready().await
-}
+// removed explicit wait_until_handler_ready; rely on DownMsg to flip readiness
 
 impl Platform for WebPlatform {
     async fn send_message(msg: UpMsg) -> Result<(), String> {

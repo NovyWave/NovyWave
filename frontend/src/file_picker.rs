@@ -194,13 +194,23 @@ impl SelectedFilesSyncActors {
 pub fn initialize_directories_and_request_contents(
     file_picker_domain: &crate::config::FilePickerDomain,
 ) -> crate::dataflow::Actor<()> {
-    file_picker_domain
-        .directory_load_requested_relay
-        .send("/".to_string());
-
     let domain_clone = file_picker_domain.clone();
+    crate::dataflow::Actor::new((), async move |state_handle| {
+        // Read current cache once and only request roots that are not loaded.
+        let cache = domain_clone
+            .directory_cache_actor
+            .signal()
+            .to_stream()
+            .next()
+            .await
+            .unwrap_or_default();
 
-    let initialization_actor = crate::dataflow::Actor::new((), async move |state_handle| {
+        if !cache.contains_key("/") {
+            domain_clone
+                .directory_load_requested_relay
+                .send("/".to_string());
+        }
+
         let mut current_expanded = domain_clone.expanded_directories_actor.signal().to_stream();
         if let Some(expanded) = current_expanded.next().await {
             if expanded.is_empty() {
@@ -223,13 +233,8 @@ pub fn initialize_directories_and_request_contents(
             }
         }
 
-        domain_clone
-            .directory_load_requested_relay
-            .send("/".to_string());
         state_handle.set(());
-    });
-
-    initialization_actor
+    })
 }
 
 /// Build tree data for TreeView component using Actor signals

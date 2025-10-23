@@ -8,7 +8,6 @@ use plugin_host::{
 };
 use shared::{CanonicalPathPayload, DownMsg, PluginConfigEntry, PluginsSection};
 use std::collections::{HashMap, HashSet};
-use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;

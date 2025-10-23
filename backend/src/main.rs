@@ -9,7 +9,7 @@ use shared::{
     SignalTransitionResult, SignalValue, SignalValueQuery, SignalValueResult, UnifiedSignalData,
     UnifiedSignalRequest, UpMsg, WaveformFile,
 };
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};

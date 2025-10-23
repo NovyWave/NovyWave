@@ -87,8 +87,8 @@ fn selected_variables_panel_content(
     waveform_canvas: crate::visualizer::canvas::waveform_canvas::WaveformCanvas,
 ) -> impl Element {
     let selected_variables_for_height = selected_variables.clone();
-    let name_column_width_signal = variables_name_column_width_signal(app_config.clone());
-    let value_column_width_signal = variables_value_column_width_signal(app_config.clone());
+    let _name_column_width_signal = variables_name_column_width_signal(app_config.clone());
+    let _value_column_width_signal = variables_value_column_width_signal(app_config.clone());
 
     El::new()
         .s(Height::exact_signal(

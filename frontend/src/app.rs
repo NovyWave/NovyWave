@@ -17,7 +17,7 @@ use zoon::{EventOptions, *};
 use crate::config::AppConfig;
 use crate::dataflow::atom::Atom;
 use crate::dataflow::{Actor, Relay, relay};
-use crate::platform::CurrentPlatform;
+// use crate::platform::CurrentPlatform; // not needed after silencing emit_trace
 use crate::selected_variables::SelectedVariables;
 use crate::tracked_files::TrackedFiles;
 use crate::visualizer::timeline::WaveformTimeline;
@@ -77,20 +77,8 @@ pub struct ConnectionMessageActor {
     _message_actor: Actor<()>,
 }
 
-pub(crate) fn emit_trace(target: &str, message: impl Into<String>) {
-    let target_string = target.to_string();
-    let message_string = message.into();
-    Task::start(async move {
-        // Avoid non-critical POSTs before first DownMsg
-        if crate::platform::server_is_ready() {
-            let _ =
-                <CurrentPlatform as crate::platform::Platform>::send_message(UpMsg::FrontendTrace {
-                    target: target_string,
-                    message: message_string,
-                })
-                .await;
-        }
-    });
+pub(crate) fn emit_trace(_target: &str, _message: impl Into<String>) {
+    // Silenced in normal builds to keep logs clean.
 }
 
 fn start_key_repeat<F>(
@@ -537,7 +525,7 @@ impl NovyWaveApp {
 
         let workspace_history_expanded_actor = {
             let domain_clone = workspace_picker_domain.clone();
-            let target_clone = workspace_picker_target.clone();
+            let _target_clone = workspace_picker_target.clone();
             let config_clone = config.clone();
             let restoring_flag = workspace_picker_restoring.clone();
             let visible_atom = workspace_picker_visible.clone();
@@ -596,7 +584,7 @@ impl NovyWaveApp {
 
         let workspace_history_scroll_actor = {
             let domain_clone = workspace_picker_domain.clone();
-            let target_clone = workspace_picker_target.clone();
+            let _target_clone = workspace_picker_target.clone();
             let config_clone = config.clone();
             let restoring_flag = workspace_picker_restoring.clone();
             Actor::new((), async move |_state| {
@@ -1393,8 +1381,8 @@ impl NovyWaveApp {
     fn start_workspace_switch(
         workspace_loading: Mutable<bool>,
         workspace_path: Mutable<Option<String>>,
-        tracked_files: TrackedFiles,
-        selected_variables: SelectedVariables,
+        _tracked_files: TrackedFiles,
+        _selected_variables: SelectedVariables,
         app_config: AppConfig,
         path: String,
     ) {
@@ -1507,7 +1495,7 @@ impl NovyWaveApp {
     fn publish_workspace_picker_snapshot(
         config: &AppConfig,
         domain: &crate::config::FilePickerDomain,
-        target: &Mutable<Option<String>>,
+        _target: &Mutable<Option<String>>,
         known_expanded: Option<Vec<String>>,
     ) {
         let expanded_vec = known_expanded.unwrap_or_else(|| {
@@ -2107,7 +2095,7 @@ fn workspace_picker_dialog(
                                         // Attach scroll listener like in Load Files dialog
                                         let relay_for_event = scroll_relay.clone();
                                         let app_config_for_event = app_config_for_scroll.clone();
-                                        let target_for_event = target_for_scroll.clone();
+                                        let _target_for_event = target_for_scroll.clone();
                                         let scroll_closure = Closure::wrap(Box::new(move |event: web_sys::Event| {
                                             if let Some(target) = event.current_target() {
                                                 if let Ok(element) = target.dyn_into::<web_sys::Element>() {
@@ -2326,10 +2314,10 @@ fn workspace_picker_tree(
                     // Persist expanded paths to global history whenever they change.
                     // Skip the very first sync to avoid writing initial state.
                     let persist_actor = Actor::new((), {
-                        let domain_for_persist = domain_for_treeview.clone();
+                        let _domain_for_persist = domain_for_treeview.clone();
                         let external_for_persist = external_expanded.clone();
                         let config_for_persist = app_config_for_tree.clone();
-                        let target_for_persist = target_for_tree.clone();
+                        let _target_for_persist = target_for_tree.clone();
                         async move |_state| {
                             let mut is_first = true;
                             let mut stream = external_for_persist.signal_cloned().to_stream();
