@@ -8824,28 +8824,3 @@ dependencies = [
  "syn 2.0.106",
  "winnow 0.7.11",
 ]
-
-[[patch.unused]]
-name = "naga"
-version = "26.0.4"
-source = "git+https://github.com/gfx-rs/wgpu?tag=v26.0.4#983d46054c521a2d3771b2a7f94d960687500f88"
-
-[[patch.unused]]
-name = "wgpu"
-version = "26.0.4"
-source = "git+https://github.com/gfx-rs/wgpu?tag=v26.0.4#983d46054c521a2d3771b2a7f94d960687500f88"
-
-[[patch.unused]]
-name = "wgpu-core"
-version = "26.0.4"
-source = "git+https://github.com/gfx-rs/wgpu?tag=v26.0.4#983d46054c521a2d3771b2a7f94d960687500f88"
-
-[[patch.unused]]
-name = "wgpu-hal"
-version = "26.0.4"
-source = "git+https://github.com/gfx-rs/wgpu?tag=v26.0.4#983d46054c521a2d3771b2a7f94d960687500f88"
-
-[[patch.unused]]
-name = "wgpu-types"
-version = "26.0.4"
-source = "git+https://github.com/gfx-rs/wgpu?tag=v26.0.4#983d46054c521a2d3771b2a7f94d960687500f88"

@@ -314,12 +314,7 @@ pub fn variables_display_context_signal(
         let unfiltered_variables = variables_loading_signal(tracked_files.clone(), selected_variables.clone(), app_config.clone()),
         let search_filter = selected_variables.search_filter.signal() => {
             let selected_scope_id = selected_scope_sv.clone().or_else(|| selected_scope_tree.clone());
-            zoon::println!(
-                "🔎 VARIABLES_CONTEXT: selected_scope_id={:?}, unfiltered_count={}, filter='{}'",
-                selected_scope_id,
-                unfiltered_variables.len(),
-                search_filter
-            );
+            // Debug-only: variables panel context (silenced by default)
             // Determine the appropriate context based on state
             if selected_scope_id.is_none() {
                 // No scope selected at all

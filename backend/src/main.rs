@@ -504,7 +504,7 @@ impl SignalCacheManager {
                 }
             };
 
-            if signal.unique_id.contains("wave_27.fst|TOP|clk") {
+            if DEBUG_CURSOR && signal.unique_id.contains("wave_27.fst|TOP|clk") {
                 let idx = transitions
                     .binary_search_by(|t| t.time_ns.cmp(&cursor_time))
                     .unwrap_or_else(|i| i);
@@ -514,7 +514,8 @@ impl SignalCacheManager {
                     .iter()
                     .map(|t| format!("{}:{}", t.time_ns, t.value))
                     .collect();
-                println!(
+                debug_log!(
+                    DEBUG_CURSOR,
                     "🔍 CURSOR TRACE clk at {} -> {:?} window=[{}] total={}",
                     cursor_time,
                     value,
@@ -861,7 +862,8 @@ async fn up_msg_handler(req: UpMsgRequest<UpMsg>) {
             cursor_time_ns,
             request_id,
         } => {
-            println!(
+            debug_log!(
+                DEBUG_BACKEND,
                 "🛰️ BACKEND: UnifiedSignalQuery len={} cursor={:?} id={}",
                 signal_requests.len(), cursor_time_ns, request_id
             );
@@ -2093,12 +2095,12 @@ fn save_global_section(
     );
 
     let path = global_config_path();
-    println!(
+    debug_log!(
+        DEBUG_BACKEND,
         "💾 BACKEND: Writing global config to {} (picker_state={:?})",
         path.display(),
         file.global.workspace_history.picker_tree_state
     );
-    println!("💾 BACKEND CONTENT:\n{}", content_with_header);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -4339,9 +4341,11 @@ async fn handle_unified_signal_query(
                 cor_id,
             )
             .await;
-            println!(
+            debug_log!(
+                DEBUG_BACKEND,
                 "🛰️ BACKEND: UnifiedSignalResponse sent: signal_data={} cursor_values={}",
-                resp_len, cursor_len
+                resp_len,
+                cursor_len
             );
         }
         Err(error) => {

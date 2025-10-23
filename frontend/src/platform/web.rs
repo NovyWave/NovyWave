@@ -37,7 +37,7 @@ pub struct WebPlatform;
 /// Initialize the platform with a connection
 pub fn set_platform_connection(connection: Arc<SendWrapper<zoon::Connection<UpMsg, DownMsg>>>) {
     (&*CONNECTION).set(Some(connection));
-    zoon::println!("🌐 PLATFORM: Connection initialized for WebPlatform");
+    // Debug-only: connection initialization notice (silenced by default)
 }
 
 /// Expose a read-only signal indicating whether the backend API appears ready

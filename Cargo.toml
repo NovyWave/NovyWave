@@ -22,9 +22,4 @@ publish = false
 zoon = { git = "https://github.com/MoonZoon/MoonZoon", rev = "7c5178d891cf4afbc2bbbe864ca63588b6c10f2a" }
 moon = { git = "https://github.com/MoonZoon/MoonZoon", rev = "7c5178d891cf4afbc2bbbe864ca63588b6c10f2a" }
 
-[patch.crates-io]
-wgpu = { git = "https://github.com/gfx-rs/wgpu", tag = "v26.0.4" }
-wgpu-core = { git = "https://github.com/gfx-rs/wgpu", tag = "v26.0.4", package = "wgpu-core" }
-wgpu-hal = { git = "https://github.com/gfx-rs/wgpu", tag = "v26.0.4", package = "wgpu-hal" }
-wgpu-types = { git = "https://github.com/gfx-rs/wgpu", tag = "v26.0.4", package = "wgpu-types" }
-naga = { git = "https://github.com/gfx-rs/wgpu", tag = "v26.0.4", package = "naga" }
+## Note: No workspace-wide wgpu patches are needed. Frontend uses Fast2D canvas path.
