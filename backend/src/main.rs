@@ -14,6 +14,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
 use tokio::time::{Duration, sleep};
+use std::time::Instant;
 
 // ===== CENTRALIZED DEBUG FLAGS =====
 const DEBUG_BACKEND: bool = false; // Backend request/response debugging
@@ -782,7 +783,7 @@ async fn up_msg_handler(req: UpMsgRequest<UpMsg>) {
             handle_workspace_history_update(history.clone());
         }
         UpMsg::FrontendTrace { target, message } => {
-            println!("🛰️ FRONTEND TRACE [{target}]: {message}");
+            debug_log!(DEBUG_BACKEND, "🛰️ FRONTEND TRACE [{target}]: {message}");
         }
         UpMsg::BrowseDirectory(dir_path) => {
             browse_directory(dir_path.clone(), session_id, cor_id).await;
@@ -1212,7 +1213,8 @@ async fn parse_waveform_file(
                             timescale_factor,
                             &file_path,
                         );
-                        println!(
+                        debug_log!(
+                            DEBUG_PARSE,
                             "🔍 FST inference: raw_min={} raw_max={} raw_range={} embedded_factor={} inferred_factor={}",
                             min_time,
                             max_time,
@@ -2155,9 +2157,11 @@ fn updated_on_failure(global: &shared::GlobalSection) -> shared::GlobalSection {
 }
 
 fn handle_workspace_history_update(history: shared::WorkspaceHistory) {
-    println!(
+    debug_log!(
+        DEBUG_BACKEND,
         "🔧 BACKEND: UpdateWorkspaceHistory recents={:?} picker={:?}",
-        history.recent_paths, history.picker_tree_state
+        history.recent_paths,
+        history.picker_tree_state
     );
     let global_section = shared::GlobalSection {
         workspace_history: history,
@@ -2741,7 +2745,7 @@ fn cleanup_parsing_session(file_id: &str) {
 }
 
 async fn browse_directory(dir_path: String, session_id: SessionId, cor_id: CorId) {
-    eprintln!("🔍 BACKEND: browse_directory called for path: {}", dir_path);
+    debug_log!(DEBUG_BACKEND, "🔍 BACKEND: browse_directory called for path: {}", dir_path);
 
     // Handle Windows multi-root scenario - enumerate drives when browsing "/"
     #[cfg(windows)]
@@ -2785,7 +2789,10 @@ async fn browse_directory(dir_path: String, session_id: SessionId, cor_id: CorId
     // Handle Linux/Unix root directory - provide useful starting points instead of actual "/"
     #[cfg(unix)]
     if dir_path == "/" {
-        eprintln!("🔍 BACKEND: Linux root directory requested, providing common paths");
+        debug_log!(
+            DEBUG_BACKEND,
+            "🔍 BACKEND: Linux root directory requested, providing common paths"
+        );
         let mut root_items = Vec::new();
 
         // Add common useful directories for file selection
@@ -4355,9 +4362,25 @@ async fn handle_unified_signal_query(
 
 #[moon::main]
 async fn main() -> std::io::Result<()> {
-    // Set panic hook to log all panics
+    // Set panic hook to log panics succinctly and throttle duplicates
+    static PANIC_THROTTLE: Lazy<Mutex<HashMap<String, Instant>>> =
+        Lazy::new(|| Mutex::new(HashMap::new()));
     std::panic::set_hook(Box::new(|panic_info| {
-        println!("BACKEND PANIC: {:?}", panic_info);
+        let loc_str = if let Some(loc) = panic_info.location() {
+            format!("{}:{}", loc.file(), loc.line())
+        } else {
+            "<unknown>".to_string()
+        };
+        let now = Instant::now();
+        let mut guard = PANIC_THROTTLE.lock().unwrap();
+        let should_log = match guard.get(&loc_str) {
+            Some(prev) => now.duration_since(*prev) > std::time::Duration::from_secs(30),
+            None => true,
+        };
+        if should_log {
+            guard.insert(loc_str.clone(), now);
+            eprintln!("🔌 BACKEND: panic at {} (details throttled)", loc_str);
+        }
     }));
 
     start(frontend, up_msg_handler, |_error| {

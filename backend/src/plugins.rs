@@ -155,10 +155,17 @@ impl DiscoveryHostConfig {
         }) {
             Ok(is_match) => is_match,
             Err(_) => {
-                eprintln!(
-                    "🔌 BACKEND: ignore::matched panic for path '{}'; skipping",
-                    absolute.display()
-                );
+                // Log each problematic path only once per process to avoid spam
+                static IGNORED_PANIC_PATHS: Lazy<Mutex<HashSet<String>>> =
+                    Lazy::new(|| Mutex::new(HashSet::new()));
+                let path_str = absolute.display().to_string();
+                let mut seen = IGNORED_PANIC_PATHS.lock().unwrap();
+                if seen.insert(path_str.clone()) {
+                    eprintln!(
+                        "🔌 BACKEND: ignore::matched panic for path '{}'; skipping",
+                        path_str
+                    );
+                }
                 false
             }
         }
