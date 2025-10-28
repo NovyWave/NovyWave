@@ -37,13 +37,14 @@ load_files_expanded_directories = [
     "/home/martinkavik/repos/super_counter_rust/hardware",
     "/home/martinkavik/repos/super_counter_rust/hardware/build",
     "test_files",
+    "test_files/to_discover",
 ]
-selected_scope_id = "scope_/home/martinkavik/repos/super_counter_rust/hardware/build/super_counter.fst|TOP.super_counter"
+selected_scope_id = "scope_test_files/simple_reload_test.vcd|simple_tb.s"
 load_files_scroll_position = 507
 
 [workspace.docked_bottom_dimensions]
 files_and_scopes_panel_width = 400.0
-files_and_scopes_panel_height = 560.0
+files_and_scopes_panel_height = 521.0
 selected_variables_panel_name_column_width = 190.0
 selected_variables_panel_value_column_width = 220.0
 
@@ -63,10 +64,10 @@ unique_id = "test_files/simple_reload_test.vcd|simple_tb.s|A"
 unique_id = "test_files/simple_reload_test.vcd|simple_tb.s|C"
 
 [workspace.timeline]
-cursor_position_ps = 714238
-visible_range_start_ps = 625336
-visible_range_end_ps = 714238
-zoom_center_ps = 659152
+cursor_position_ps = 205156599000
+visible_range_start_ps = 0
+visible_range_end_ps = 205156599000
+zoom_center_ps = 148344002354
 tooltip_enabled = false
 
 [global.workspace_history]
@@ -78,7 +79,7 @@ recent_paths = [
 ]
 
 [global.workspace_history.picker_tree_state]
-scroll_top = 794.0
+scroll_top = 747.0
 expanded_paths = [
     "/",
     "/home",

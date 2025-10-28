@@ -5,7 +5,7 @@
 version = "1.0.0"
 
 [ui]
-theme = "dark"
+theme = "light"
 toast_dismiss_ms = 10000
 
 [workspace]
@@ -18,8 +18,6 @@ expanded_scopes = [
     "/home/martinkavik/repos/NovyWave/test_files/simple.vcd",
     "/home/martinkavik/repos/NovyWave/test_files/simple_reload_test.vcd",
     "/home/martinkavik/repos/NovyWave/test_files/to_discover/wave_27_2.fst",
-    "/home/martinkavik/repos/super_counter_rust/hardware/build/super_counter.fst",
-    "scope_/home/martinkavik/repos/super_counter_rust/hardware/build/super_counter.fst|TOP",
 ]
 load_files_expanded_directories = [
     "/",
@@ -31,10 +29,11 @@ load_files_expanded_directories = [
     "/home/martinkavik/repos/super_counter_rust/hardware",
     "/home/martinkavik/repos/super_counter_rust/hardware/build",
     "/home/martinkavik/repos/NovyWave/test_files",
+    "/home/martinkavik/repos/NovyWave/test_files/to_discover",
+    "/home/martinkavik/repos/NovyWave",
 ]
-selected_scope_id = "scope_/home/martinkavik/repos/super_counter_rust/hardware/build/super_counter.fst|TOP.super_counter"
-load_files_scroll_position = 635
-selected_variables = []
+selected_scope_id = "scope_/home/martinkavik/repos/NovyWave/test_files/simple_reload_test.vcd|simple_tb.s"
+load_files_scroll_position = 1003
 
 [workspace.docked_bottom_dimensions]
 files_and_scopes_panel_width = 400.0
@@ -48,11 +47,14 @@ files_and_scopes_panel_height = 300.0
 selected_variables_panel_name_column_width = 190.0
 selected_variables_panel_value_column_width = 220.0
 
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/super_counter_rust/hardware/build/super_counter.fst|TOP.super_counter|led_counter"
+
 [workspace.timeline]
-cursor_position_ps = 1000000000000
+cursor_position_ps = 102578299500
 visible_range_start_ps = 0
-visible_range_end_ps = 1000000000000
-zoom_center_ps = 434574976122
+visible_range_end_ps = 205156599000
+zoom_center_ps = 116515568454
 tooltip_enabled = false
 
 [plugins]

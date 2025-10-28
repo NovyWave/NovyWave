@@ -11,16 +11,7 @@ toast_dismiss_ms = 10000
 [workspace]
 opened_files = []
 dock_mode = "right"
-expanded_scopes = [
-    "scope_/home/martinkavik/repos/NovyWave/test_files/simple_reload_test.vcd|simple_tb",
-    "scope_/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb",
-    "scope_/home/martinkavik/repos/NovyWave/test_files/to_discover/wave_27_2.fst|TOP",
-    "/home/martinkavik/repos/NovyWave/test_files/simple.vcd",
-    "/home/martinkavik/repos/NovyWave/test_files/simple_reload_test.vcd",
-    "/home/martinkavik/repos/NovyWave/test_files/to_discover/wave_27_2.fst",
-    "/home/martinkavik/repos/super_counter_rust/hardware/build/super_counter.fst",
-    "scope_/home/martinkavik/repos/super_counter_rust/hardware/build/super_counter.fst|TOP",
-]
+expanded_scopes = ["/home/martinkavik/repos/super_counter_rust/hardware/build/super_counter.fst"]
 load_files_expanded_directories = [
     "/",
     "/home",
@@ -31,6 +22,8 @@ load_files_expanded_directories = [
     "/home/martinkavik/repos/super_counter_rust/hardware",
     "/home/martinkavik/repos/super_counter_rust/hardware/build",
     "/home/martinkavik/repos/NovyWave/test_files",
+    "/home/martinkavik/repos/NovyWave/test_files/to_discover",
+    "/home/martinkavik/repos/NovyWave",
 ]
 selected_scope_id = "scope_/home/martinkavik/repos/super_counter_rust/hardware/build/super_counter.fst|TOP.super_counter"
 load_files_scroll_position = 0
