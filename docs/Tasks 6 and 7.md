@@ -1,6 +1,6 @@
 # Demo
 
-- TODO: Video
+https://github.com/user-attachments/assets/ef84bbd8-ae88-4455-a39f-8319d88dcd27
 
 # Task 6: Workspace and Plugin Management
 
