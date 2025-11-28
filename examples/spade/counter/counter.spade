@@ -1,0 +1,27 @@
+// 8-bit Counter in Spade HDL
+// Demonstrates waveform generation for NovyWave
+
+// Counter entity with enable control and overflow detection
+entity counter(clk: clock, rst: bool, enable: bool) -> (uint<8>, bool) {
+    // 8-bit counter register with synchronous reset
+    reg(clk) count: uint<8> reset(rst: 0) = if enable {
+        trunc(count + 1)
+    } else {
+        count
+    };
+
+    // Overflow detection (true when count is about to wrap from 255 to 0)
+    let overflow = enable && (count == 255);
+
+    (count, overflow)
+}
+
+// Top-level module with explicit output ports for testbench
+#[no_mangle]
+entity top(
+    #[no_mangle] clk: clock,
+    #[no_mangle] rst: bool,
+    #[no_mangle] enable: bool
+) -> (uint<8>, bool) {
+    inst counter(clk, rst, enable)
+}

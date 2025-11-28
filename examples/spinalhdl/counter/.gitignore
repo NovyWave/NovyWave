@@ -1,0 +1,20 @@
+# sbt build artifacts
+target/
+project/target/
+project/project/
+
+# SpinalHDL simulation workspace
+simWorkspace/
+
+# Generated RTL
+rtl/
+
+# Generated waveforms (keep counter.vcd as example)
+*.fst
+
+# IDE files
+.idea/
+*.iml
+.bsp/
+.metals/
+.vscode/

@@ -1,0 +1,240 @@
+# NovyWave HDL Examples Justfile
+# Comprehensive build and simulation orchestration for all example HDL projects
+
+# Default recipe: show help
+default:
+    @just --list
+
+# === TOOL INSTALLATION ===
+
+# Install all tools required to run all examples
+install-all: install-ghdl install-iverilog install-verilator install-sbt install-amaranth install-spade
+    @echo "✅ All tools installed!"
+
+# Install GHDL (VHDL simulator)
+install-ghdl:
+    @echo "📦 Installing GHDL..."
+    @if command -v ghdl >/dev/null 2>&1; then \
+        echo "  ✓ GHDL already installed: $(ghdl --version | head -1)"; \
+    else \
+        echo "  Installing via apt..."; \
+        sudo apt update && sudo apt install -y ghdl; \
+    fi
+
+# Install Icarus Verilog (Verilog simulator)
+install-iverilog:
+    @echo "📦 Installing Icarus Verilog..."
+    @if command -v iverilog >/dev/null 2>&1; then \
+        echo "  ✓ Icarus Verilog already installed: $(iverilog -V 2>&1 | head -1)"; \
+    else \
+        echo "  Installing via apt..."; \
+        sudo apt update && sudo apt install -y iverilog; \
+    fi
+
+# Install Verilator (for SpinalHDL simulation)
+install-verilator:
+    @echo "📦 Installing Verilator..."
+    @if command -v verilator >/dev/null 2>&1; then \
+        echo "  ✓ Verilator already installed: $(verilator --version)"; \
+    else \
+        echo "  Installing via apt..."; \
+        sudo apt update && sudo apt install -y verilator; \
+    fi
+
+# Install sbt via Coursier (for SpinalHDL)
+install-sbt:
+    @echo "📦 Installing sbt via Coursier..."
+    @if command -v sbt >/dev/null 2>&1 || [ -f "$HOME/.local/share/coursier/bin/sbt" ]; then \
+        echo "  ✓ sbt already installed"; \
+    else \
+        echo "  Installing Coursier and sbt..."; \
+        curl -fL https://github.com/coursier/coursier/releases/latest/download/cs-x86_64-pc-linux.gz | gzip -d > /tmp/cs; \
+        chmod +x /tmp/cs; \
+        /tmp/cs setup --yes; \
+        rm /tmp/cs; \
+        echo "  ⚠️  Run: export PATH=\"\$HOME/.local/share/coursier/bin:\$PATH\""; \
+    fi
+
+# Install Amaranth HDL (Python-based HDL) - creates venv in amaranth/counter
+install-amaranth:
+    @echo "📦 Installing Amaranth..."
+    @if [ -f amaranth/counter/.venv/bin/python ]; then \
+        echo "  ✓ Amaranth venv already exists"; \
+    else \
+        echo "  Creating virtual environment and installing..."; \
+        cd amaranth/counter && python3 -m venv .venv && .venv/bin/pip install amaranth; \
+        echo "  ✓ Amaranth installed in amaranth/counter/.venv"; \
+    fi
+
+# Install Spade HDL (Rust-based HDL)
+install-spade:
+    @echo "📦 Installing Spade..."
+    @if command -v spade >/dev/null 2>&1; then \
+        echo "  ✓ Spade already installed: $(spade --version 2>&1)"; \
+    else \
+        echo "  Installing via cargo..."; \
+        cargo install spade-lang; \
+    fi
+
+# Check which tools are installed
+check-tools:
+    @echo "🔍 Checking installed tools..."
+    @echo ""
+    @echo "VHDL (GHDL):"
+    @if command -v ghdl >/dev/null 2>&1; then echo "  ✓ $(ghdl --version | head -1)"; else echo "  ✗ Not installed"; fi
+    @echo ""
+    @echo "Verilog (Icarus Verilog):"
+    @if command -v iverilog >/dev/null 2>&1; then echo "  ✓ $(iverilog -V 2>&1 | head -1)"; else echo "  ✗ Not installed"; fi
+    @echo ""
+    @echo "Verilator:"
+    @if command -v verilator >/dev/null 2>&1; then echo "  ✓ $(verilator --version)"; else echo "  ✗ Not installed"; fi
+    @echo ""
+    @echo "sbt (for SpinalHDL):"
+    @if command -v sbt >/dev/null 2>&1; then echo "  ✓ sbt available in PATH"; \
+    elif [ -f "$HOME/.local/share/coursier/bin/sbt" ]; then echo "  ✓ sbt installed via Coursier (add to PATH)"; \
+    else echo "  ✗ Not installed"; fi
+    @echo ""
+    @echo "Amaranth (Python):"
+    @if [ -f amaranth/counter/.venv/bin/python ]; then echo "  ✓ Amaranth venv available"; \
+    elif python3 -c "import amaranth" 2>/dev/null; then echo "  ✓ Amaranth available (system)"; \
+    else echo "  ✗ Not installed (run: just install-amaranth)"; fi
+    @echo ""
+    @echo "Spade:"
+    @if command -v spade >/dev/null 2>&1; then echo "  ✓ Spade available"; else echo "  ✗ Not installed"; fi
+
+# === BUILD ALL ===
+
+# Build and simulate all examples (generates VCD/GHW files)
+sim-all: sim-vhdl sim-verilog sim-spinalhdl sim-amaranth sim-spade
+    @echo ""
+    @echo "✅ All simulations complete!"
+    @echo ""
+    @just list-waveforms
+
+# Clean all example build artifacts
+clean-all: clean-vhdl clean-verilog clean-spinalhdl clean-amaranth clean-spade
+    @echo "🧹 All examples cleaned!"
+
+# List all generated waveform files
+list-waveforms:
+    #!/usr/bin/env bash
+    echo "📊 Generated waveform files:"
+    echo ""
+    for f in vhdl/counter/counter.ghw verilog/counter/counter.vcd spinalhdl/counter/counter.vcd amaranth/counter/counter.vcd spade/counter/counter.vcd; do
+        if [ -f "$f" ]; then
+            size=$(ls -lh "$f" | awk '{print $5}')
+            echo "  ✓ $f ($size)"
+        else
+            echo "  ✗ $f (not generated)"
+        fi
+    done
+
+# === INDIVIDUAL EXAMPLES ===
+
+# VHDL example (using GHDL)
+sim-vhdl:
+    @echo "🔧 Building VHDL counter example..."
+    @cd vhdl/counter && make
+
+clean-vhdl:
+    @cd vhdl/counter && make clean
+
+# Verilog example (using Icarus Verilog)
+sim-verilog:
+    @echo "🔧 Building Verilog counter example..."
+    @cd verilog/counter && make
+
+clean-verilog:
+    @cd verilog/counter && make clean
+
+# SpinalHDL example (using sbt + Verilator)
+sim-spinalhdl:
+    #!/usr/bin/env bash
+    echo "🔧 Building SpinalHDL counter example..."
+    export PATH="$HOME/.local/share/coursier/bin:$PATH"
+    cd spinalhdl/counter && make
+
+clean-spinalhdl:
+    @cd spinalhdl/counter && make clean
+
+# Amaranth example (using Python)
+sim-amaranth:
+    @echo "🔧 Building Amaranth counter example..."
+    @cd amaranth/counter && make
+
+clean-amaranth:
+    @cd amaranth/counter && make clean
+
+# Spade example (using Spade + Icarus Verilog)
+sim-spade:
+    @echo "🔧 Building Spade counter example..."
+    @cd spade/counter && make
+
+clean-spade:
+    @cd spade/counter && make clean
+
+# === RTL GENERATION (SpinalHDL) ===
+
+# Generate Verilog RTL from SpinalHDL
+gen-verilog-from-spinalhdl:
+    #!/usr/bin/env bash
+    echo "🔧 Generating Verilog RTL from SpinalHDL..."
+    export PATH="$HOME/.local/share/coursier/bin:$PATH"
+    cd spinalhdl/counter && make verilog
+
+# Generate VHDL RTL from SpinalHDL
+gen-vhdl-from-spinalhdl:
+    #!/usr/bin/env bash
+    echo "🔧 Generating VHDL RTL from SpinalHDL..."
+    export PATH="$HOME/.local/share/coursier/bin:$PATH"
+    cd spinalhdl/counter && make vhdl
+
+# === VALIDATION ===
+
+# Build the Rust validation tool
+build-validator:
+    @echo "🔧 Building Rust validation tool..."
+    @cd validate && cargo build --release
+
+# Validate all waveform files (format, structure, signals)
+validate: build-validator
+    @./validate/target/release/validate-waveforms
+
+# Validate with verbose output (shows found signal names)
+validate-verbose: build-validator
+    @./validate/target/release/validate-waveforms --verbose
+
+# === QUICK START ===
+
+# Quick start: install tools, run simulations, and validate
+quickstart: install-all sim-all validate
+    @echo ""
+    @echo "🎉 Quick start complete! All waveform files generated and validated."
+    @echo ""
+    @echo "Open any waveform file in NovyWave:"
+    @echo "  novywave examples/vhdl/counter/counter.ghw"
+    @echo "  novywave examples/verilog/counter/counter.vcd"
+    @echo "  novywave examples/spinalhdl/counter/counter.vcd"
+    @echo "  novywave examples/amaranth/counter/counter.vcd"
+    @echo "  novywave examples/spade/counter/counter.vcd"
+
+# === DEVELOPMENT ===
+
+# Watch and rebuild a specific example (for development)
+watch example:
+    @echo "👀 Watching {{example}} for changes..."
+    @if [ "{{example}}" = "vhdl" ]; then \
+        cd vhdl/counter && while true; do inotifywait -e modify *.vhd && make; done; \
+    elif [ "{{example}}" = "verilog" ]; then \
+        cd verilog/counter && while true; do inotifywait -e modify *.v && make; done; \
+    elif [ "{{example}}" = "spinalhdl" ]; then \
+        export PATH="$$HOME/.local/share/coursier/bin:$$PATH" && \
+        cd spinalhdl/counter && while true; do inotifywait -e modify src/main/scala/counter/*.scala && make; done; \
+    elif [ "{{example}}" = "amaranth" ]; then \
+        cd amaranth/counter && while true; do inotifywait -e modify *.py && make; done; \
+    elif [ "{{example}}" = "spade" ]; then \
+        cd spade/counter && while true; do inotifywait -e modify *.spade && make; done; \
+    else \
+        echo "Unknown example: {{example}}"; \
+        echo "Available: vhdl, verilog, spinalhdl, amaranth, spade"; \
+    fi

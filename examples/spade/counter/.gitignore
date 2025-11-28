@@ -1,0 +1,10 @@
+# Generated Verilog
+counter_gen.v
+
+# Simulation output
+counter_sim
+counter.vcd
+
+# Editor files
+*.swp
+*~

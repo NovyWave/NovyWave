@@ -1,0 +1,15 @@
+[package]
+name = "validate-waveforms"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[[bin]]
+name = "validate-waveforms"
+path = "src/main.rs"
+
+[dependencies]
+wellen = { path = "/home/martinkavik/repos/wellen/wellen" }
+colored = "2"

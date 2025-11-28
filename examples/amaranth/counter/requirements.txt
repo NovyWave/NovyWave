@@ -1,0 +1,2 @@
+# Amaranth HDL and dependencies
+amaranth>=0.5.0
