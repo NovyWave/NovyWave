@@ -81,6 +81,9 @@ docs/research/
 **/dev_server.log
 
 
+# mdBook generated documentation
+docs/book/book/
+
 # Prevent .claude directories in subdirectories (should only be at project root)
 frontend/.claude/
 backend/.claude/

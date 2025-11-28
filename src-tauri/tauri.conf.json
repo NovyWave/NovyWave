@@ -4,8 +4,7 @@
   "version": "0.1.0",
   "identifier": "com.novywave.app",
   "build": {
-    "frontendDist": "../frontend_dist",
-    "beforeBuildCommand": "cd .. && makers build"
+    "frontendDist": "../frontend_dist"
   },
   "app": {
     "withGlobalTauri": true,
@@ -17,7 +16,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ipc: tauri: https:"
     }
   },
   "bundle": {

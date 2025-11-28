@@ -1987,12 +1987,10 @@ pub fn is_waveform_file(path: &str) -> bool {
         .and_then(|ext| ext.to_str())
     {
         match extension.to_lowercase().as_str() {
-            // ✅ TESTED: Confirmed working with test files
-            "vcd" | "fst" => true,
+            // Supported waveform formats
+            "vcd" | "fst" | "ghw" => true,
 
             // DISABLED: Additional waveform formats pending testing
-            // Enable these once test files are available and parsing is verified:
-            // "ghw" => true,  // GHDL waveform format
             // "vzt" => true,  // GTKWave compressed format
             // "lxt" => true,  // GTKWave format
             // "lx2" => true,  // GTKWave format

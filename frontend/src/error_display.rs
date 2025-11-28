@@ -85,11 +85,11 @@ pub fn make_error_user_friendly(error: &str) -> String {
     {
         if let Some(path) = file_path {
             format!(
-                "Unsupported file format '{}'. Only VCD and FST files are supported.",
+                "Unsupported file format '{}'. Only VCD, FST, and GHW files are supported.",
                 path
             )
         } else {
-            "Unsupported file format. Only VCD and FST files are supported.".to_string()
+            "Unsupported file format. Only VCD, FST, and GHW files are supported.".to_string()
         }
     } else if error_lower.contains("file not found") || error_lower.contains("no such file") {
         if let Some(path) = file_path {

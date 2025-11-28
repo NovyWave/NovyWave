@@ -2,13 +2,55 @@ name: Release
 
 on:
   push:
-    tags: ['v*']
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 0.1.0)'
+        required: true
+        type: string
 
 env:
-  RUST_BACKTRACE: 1
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: short
 
 jobs:
-  build:
+  create-release:
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create-release.outputs.result }}
+      version: ${{ steps.get-version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get version
+        id: get-version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Release
+        id: create-release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data } = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: `v${{ steps.get-version.outputs.version }}`,
+              name: `NovyWave v${{ steps.get-version.outputs.version }}`,
+              body: `## What\'s New\n\nSee [CHANGELOG.md](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/main/CHANGELOG.md) for details.\n\n## Downloads\n\n| Platform | File |\n|----------|------|\n| Windows (installer) | \`NovyWave_${{ steps.get-version.outputs.version }}_x64-setup.exe\` |\n| Windows (MSI) | \`NovyWave_${{ steps.get-version.outputs.version }}_x64_en-US.msi\` |\n| macOS (Apple Silicon) | \`NovyWave_${{ steps.get-version.outputs.version }}_aarch64.dmg\` |\n| macOS (Intel) | \`NovyWave_${{ steps.get-version.outputs.version }}_x64.dmg\` |\n| Linux (AppImage) | \`NovyWave_${{ steps.get-version.outputs.version }}_amd64.AppImage\` |\n| Linux (Debian/Ubuntu) | \`NovyWave_${{ steps.get-version.outputs.version }}_amd64.deb\` |\n| Linux (Fedora/RHEL) | \`NovyWave-${{ steps.get-version.outputs.version }}-1.x86_64.rpm\` |`,
+              draft: true,
+              prerelease: false
+            })
+            return data.id
+
+  build-tauri:
+    needs: create-release
     permissions:
       contents: write
     strategy:
@@ -17,25 +59,19 @@ jobs:
         include:
           - platform: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-            args: ''
-          - platform: macos-14
+          - platform: macos-latest
             target: aarch64-apple-darwin
-            args: '--target aarch64-apple-darwin'
-          - platform: macos-14
+          - platform: macos-latest
             target: x86_64-apple-darwin
-            args: '--target x86_64-apple-darwin'
-          - platform: windows-2022
+          - platform: windows-latest
             target: x86_64-pc-windows-msvc
-            args: ''
 
     runs-on: ${{ matrix.platform }}
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-action@stable
         with:
           targets: ${{ matrix.target }}
 
@@ -53,91 +89,209 @@ jobs:
             libappindicator3-dev \
             librsvg2-dev \
             patchelf \
-            libssl-dev
+            libssl-dev \
+            libgtk-3-dev \
+            libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev
 
       - name: Install cargo-make
-        run: cargo install cargo-make
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-make
 
-      - name: Build frontend (Linux/macOS)
-        if: matrix.platform != 'windows-2022'
+      - name: Install MoonZoon CLI
+        run: cargo install mzoon --git https://github.com/ArkadyKonovalov/MoonZoon --rev 7c5178d891cf4afbc2bbbe864ca63588b6c10f2a --locked
+
+      - name: Add wasm32 target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Build frontend
         run: makers build
 
-      - name: Build frontend (Windows)
-        if: matrix.platform == 'windows-2022'
-        shell: pwsh
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2.0.0" --locked
+
+      - name: Build Tauri app
         run: |
-          cargo install --locked mzoon --git https://github.com/nicksenger/nickmoon --rev 7c5178d891cf4afbc2bbbe864ca63588b6c10f2a
-          mzoon build -r
+          cd src-tauri
+          cargo tauri build --target ${{ matrix.target }}
 
-      - name: Build and release Tauri app
-        uses: tauri-apps/tauri-action@v0
+      - name: Upload release assets (Linux)
+        if: matrix.platform == 'ubuntu-22.04'
+        uses: actions/github-script@v7
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # macOS code signing (uncomment when certificates are ready)
-          # APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          # APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          # APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          # APPLE_ID: ${{ secrets.APPLE_ID }}
-          # APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          # Windows code signing (uncomment when certificates are ready)
-          # TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          # TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+          VERSION: ${{ needs.create-release.outputs.version }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: 'NovyWave ${{ github.ref_name }}'
-          releaseBody: |
-            ## What's New
-            See [CHANGELOG.md](https://github.com/NovyWave/NovyWave/blob/main/CHANGELOG.md) for details.
+          script: |
+            const fs = require('fs');
+            const path = require('path');
 
-            ## Installation
+            const bundleDir = 'src-tauri/target/x86_64-unknown-linux-gnu/release/bundle';
 
-            ### Linux
-            - **AppImage** (recommended): Download `novywave_*_amd64.AppImage`, make executable with `chmod +x`, and run
-            - **Debian/Ubuntu**: Download `novywave_*_amd64.deb` and install with `sudo dpkg -i`
+            const files = [
+              { dir: 'appimage', pattern: /\.AppImage$/ },
+              { dir: 'deb', pattern: /\.deb$/ },
+              { dir: 'rpm', pattern: /\.rpm$/ },
+            ];
 
-            ### macOS
-            - Download the `.dmg` file for your architecture (arm64 for M1/M2/M3, x64 for Intel)
-            - Open the DMG and drag NovyWave to Applications
-            - **Note**: You may need to right-click and select "Open" the first time due to Gatekeeper (app is not signed yet)
+            for (const { dir, pattern } of files) {
+              const fullDir = path.join(bundleDir, dir);
+              if (fs.existsSync(fullDir)) {
+                const file = fs.readdirSync(fullDir).find(f => pattern.test(f));
+                if (file) {
+                  const filePath = path.join(fullDir, file);
+                  console.log(`Uploading ${filePath}`);
+                  await github.rest.repos.uploadReleaseAsset({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    release_id: process.env.RELEASE_ID,
+                    name: file,
+                    data: fs.readFileSync(filePath),
+                  });
+                }
+              }
+            }
 
-            ### Windows
-            - Download the `.msi` installer and run it
-            - **Note**: You may see a SmartScreen warning (app is not signed yet). Click "More info" then "Run anyway"
+      - name: Upload release assets (macOS)
+        if: matrix.platform == 'macos-latest'
+        uses: actions/github-script@v7
+        env:
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+          VERSION: ${{ needs.create-release.outputs.version }}
+          TARGET: ${{ matrix.target }}
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
 
-            ## Supported File Formats
-            - VCD (Value Change Dump)
-            - FST (Fast Signal Trace)
-            - GHW (GHDL Waveform)
-          releaseDraft: true
-          prerelease: false
-          args: ${{ matrix.args }}
+            const bundleDir = `src-tauri/target/${process.env.TARGET}/release/bundle`;
+            const dmgDir = path.join(bundleDir, 'dmg');
 
-  # Create universal macOS binary after both architectures are built
-  create-macos-universal:
-    needs: build
-    runs-on: macos-14
+            if (fs.existsSync(dmgDir)) {
+              const file = fs.readdirSync(dmgDir).find(f => f.endsWith('.dmg'));
+              if (file) {
+                const arch = process.env.TARGET.includes('aarch64') ? 'aarch64' : 'x64';
+                const newName = `NovyWave_${process.env.VERSION}_${arch}.dmg`;
+                const filePath = path.join(dmgDir, file);
+                console.log(`Uploading ${filePath} as ${newName}`);
+                await github.rest.repos.uploadReleaseAsset({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  release_id: process.env.RELEASE_ID,
+                  name: newName,
+                  data: fs.readFileSync(filePath),
+                });
+              }
+            }
+
+      - name: Upload release assets (Windows)
+        if: matrix.platform == 'windows-latest'
+        uses: actions/github-script@v7
+        env:
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+          VERSION: ${{ needs.create-release.outputs.version }}
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+
+            const bundleDir = 'src-tauri/target/x86_64-pc-windows-msvc/release/bundle';
+
+            const files = [
+              { dir: 'msi', pattern: /\.msi$/ },
+              { dir: 'nsis', pattern: /\.exe$/ },
+            ];
+
+            for (const { dir, pattern } of files) {
+              const fullDir = path.join(bundleDir, dir);
+              if (fs.existsSync(fullDir)) {
+                const file = fs.readdirSync(fullDir).find(f => pattern.test(f));
+                if (file) {
+                  const filePath = path.join(fullDir, file);
+                  console.log(`Uploading ${filePath}`);
+                  await github.rest.repos.uploadReleaseAsset({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    release_id: process.env.RELEASE_ID,
+                    name: file,
+                    data: fs.readFileSync(filePath),
+                  });
+                }
+              }
+            }
+
+  publish-release:
+    needs: [create-release, build-tauri]
+    runs-on: ubuntu-latest
     permissions:
       contents: write
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Download arm64 artifact
-        uses: actions/download-artifact@v4
+      - name: Publish release
+        uses: actions/github-script@v7
+        env:
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
         with:
-          name: NovyWave_aarch64-apple-darwin
-          path: ./arm64
+          script: |
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: process.env.RELEASE_ID,
+              draft: false
+            })
 
-      - name: Download x64 artifact
-        uses: actions/download-artifact@v4
+  generate-updater:
+    needs: [create-release, build-tauri]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate and upload updater manifest
+        uses: actions/github-script@v7
+        env:
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+          VERSION: ${{ needs.create-release.outputs.version }}
         with:
-          name: NovyWave_x86_64-apple-darwin
-          path: ./x64
+          script: |
+            const fs = require('fs');
 
-      - name: Create universal binary
-        run: |
-          # This step would create a universal binary by combining both architectures
-          # For now, we ship separate binaries for each architecture
-          echo "Universal binary creation skipped - shipping separate arm64 and x64 builds"
+            const { data: assets } = await github.rest.repos.listReleaseAssets({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: process.env.RELEASE_ID,
+            });
+
+            const baseUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/v${process.env.VERSION}`;
+
+            const updaterJson = {
+              version: `v${process.env.VERSION}`,
+              notes: `NovyWave v${process.env.VERSION}`,
+              pub_date: new Date().toISOString(),
+              platforms: {}
+            };
+
+            for (const asset of assets) {
+              const url = `${baseUrl}/${asset.name}`;
+
+              if (asset.name.includes('aarch64') && asset.name.endsWith('.dmg')) {
+                updaterJson.platforms['darwin-aarch64'] = { url };
+              } else if (asset.name.includes('x64') && asset.name.endsWith('.dmg')) {
+                updaterJson.platforms['darwin-x86_64'] = { url };
+              } else if (asset.name.endsWith('.msi')) {
+                updaterJson.platforms['windows-x86_64'] = { url };
+              } else if (asset.name.endsWith('.AppImage')) {
+                updaterJson.platforms['linux-x86_64'] = { url };
+              }
+            }
+
+            fs.writeFileSync('latest.json', JSON.stringify(updaterJson, null, 2));
+
+            await github.rest.repos.uploadReleaseAsset({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: process.env.RELEASE_ID,
+              name: 'latest.json',
+              data: fs.readFileSync('latest.json'),
+            });

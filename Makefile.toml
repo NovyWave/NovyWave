@@ -124,21 +124,9 @@ cd src-tauri && cargo tauri dev --config tauri.dev.conf.json >> ../dev_tauri.log
 [tasks.tauri-build]
 description = "Build Tauri desktop app with embedded backend"
 dependencies = ["install", "install_tauri_cli", "build"]
-script_runner = "@duckscript"
-script = '''
-echo "Building Tauri desktop app..."
-
-# Check if frontend_dist exists
-if path_exists frontend_dist
-    echo "Frontend assets found in frontend_dist/"
-else
-    echo "Warning: frontend_dist directory not found"
-end
-
-# Build Tauri app
-cd src-tauri
-exec cargo tauri build
-'''
+cwd = "src-tauri"
+command = "cargo"
+args = ["tauri", "build"]
 
 [tasks.tauri-dev-standalone]
 description = "Start Tauri with external backend (for debugging)"
