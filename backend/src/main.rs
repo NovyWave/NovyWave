@@ -1587,12 +1587,194 @@ async fn parse_waveform_file(
 
             cleanup_parsing_session(&file_id);
         }
-        wellen::FileFormat::Ghw | wellen::FileFormat::Unknown => {
-            // GHW/Unknown format handling - these formats temporarily disabled
-            let error_msg = format!(
-                "GHW and Unknown formats temporarily disabled during error handling implementation"
+        wellen::FileFormat::Ghw => {
+            // GHW: Parse body to get time bounds (GHDL files are typically smaller)
+            debug_log!(
+                DEBUG_PARSE,
+                "🔍 PARSE: Processing GHW file '{}' from GHDL",
+                file_path
             );
-            send_parsing_error(file_id, filename, error_msg, session_id, cor_id).await;
+
+            // Calculate timescale factor from header (GHW has reliable timescale)
+            let timescale_factor = match header_result.hierarchy.timescale() {
+                Some(ts) => {
+                    use wellen::TimescaleUnit;
+                    match ts.unit {
+                        TimescaleUnit::FemtoSeconds => ts.factor as f64 * 1e-15,
+                        TimescaleUnit::PicoSeconds => ts.factor as f64 * 1e-12,
+                        TimescaleUnit::NanoSeconds => ts.factor as f64 * 1e-9,
+                        TimescaleUnit::MicroSeconds => ts.factor as f64 * 1e-6,
+                        TimescaleUnit::MilliSeconds => ts.factor as f64 * 1e-3,
+                        TimescaleUnit::Seconds => ts.factor as f64,
+                        TimescaleUnit::Unknown => {
+                            let error_msg = "Unknown timescale unit in GHW file";
+                            send_down_msg(
+                                DownMsg::ParsingError {
+                                    file_id: file_path.clone(),
+                                    error: error_msg.to_string(),
+                                },
+                                session_id,
+                                cor_id,
+                            )
+                            .await;
+                            return;
+                        }
+                    }
+                }
+                None => {
+                    let error_msg = "No timescale information in GHW file";
+                    send_down_msg(
+                        DownMsg::ParsingError {
+                            file_id: file_path.clone(),
+                            error: error_msg.to_string(),
+                        },
+                        session_id,
+                        cor_id,
+                    )
+                    .await;
+                    return;
+                }
+            };
+
+            // Parse GHW body to get time bounds
+            let body_result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                wellen::viewers::read_body(header_result.body, &header_result.hierarchy, None)
+            })) {
+                Ok(Ok(body)) => body,
+                Ok(Err(e)) => {
+                    send_down_msg(
+                        DownMsg::ParsingError {
+                            file_id: file_path.clone(),
+                            error: format!("Failed to parse GHW body: {}", e),
+                        },
+                        session_id,
+                        cor_id,
+                    )
+                    .await;
+                    return;
+                }
+                Err(_) => {
+                    send_down_msg(
+                        DownMsg::ParsingError {
+                            file_id: file_path.clone(),
+                            error: "Critical error parsing GHW body".to_string(),
+                        },
+                        session_id,
+                        cor_id,
+                    )
+                    .await;
+                    return;
+                }
+            };
+
+            // Get time bounds from parsed body
+            let (min_seconds, max_seconds) =
+                if let (Some(&min_time), Some(&max_time)) = (
+                    body_result.time_table.first(),
+                    body_result.time_table.last(),
+                ) {
+                    let min_seconds = min_time as f64 * timescale_factor;
+                    let max_seconds = max_time as f64 * timescale_factor;
+                    debug_log!(
+                        DEBUG_PARSE,
+                        "🔍 GHW time bounds: raw_min={} raw_max={} seconds_min={:.6} seconds_max={:.6}",
+                        min_time,
+                        max_time,
+                        min_seconds,
+                        max_seconds
+                    );
+                    (min_seconds, max_seconds)
+                } else {
+                    send_down_msg(
+                        DownMsg::ParsingError {
+                            file_id: file_path.clone(),
+                            error: "GHW file has no time data".to_string(),
+                        },
+                        session_id,
+                        cor_id,
+                    )
+                    .await;
+                    return;
+                };
+
+            // Convert to nanoseconds
+            let (min_time_ns, max_time_ns) = (
+                Some((min_seconds * 1_000_000_000.0) as u64),
+                Some((max_seconds * 1_000_000_000.0) as u64),
+            );
+
+            // Extract scopes from hierarchy
+            let scopes = extract_scopes_from_hierarchy(&header_result.hierarchy, &file_path);
+
+            // Store metadata for on-demand signal loading
+            let waveform_metadata = WaveformMetadata {
+                _file_path: file_path.clone(),
+                file_format: header_result.file_format,
+                timescale_factor,
+                _time_bounds: (min_seconds, max_seconds),
+            };
+
+            {
+                match WAVEFORM_METADATA_STORE.lock() {
+                    Ok(mut store) => {
+                        store.insert(file_path.clone(), waveform_metadata);
+                        debug_log!(
+                            DEBUG_PARSE,
+                            "🔍 PARSE: Successfully stored GHW metadata for '{}' (total files: {})",
+                            file_path,
+                            store.len()
+                        );
+                    }
+                    Err(e) => {
+                        let error_msg =
+                            format!("Internal error: Failed to store GHW metadata - {}", e);
+                        send_parsing_error(file_id.clone(), filename, error_msg, session_id, cor_id)
+                            .await;
+                        return;
+                    }
+                }
+            }
+
+            let format = FileFormat::GHW;
+
+            let waveform_file = WaveformFile {
+                id: file_id.clone(),
+                filename: filename.clone(),
+                format,
+                scopes,
+                min_time_ns,
+                max_time_ns,
+            };
+
+            let file_hierarchy = FileHierarchy {
+                files: vec![waveform_file],
+            };
+
+            {
+                match progress.lock() {
+                    Ok(mut p) => *p = 1.0,
+                    Err(_) => {
+                        eprintln!("Warning: Progress tracking failed for {}", filename);
+                    }
+                }
+            }
+            send_progress_update(file_id.clone(), 1.0, session_id, cor_id).await;
+
+            send_down_msg(
+                DownMsg::FileLoaded {
+                    file_id: file_id.clone(),
+                    hierarchy: file_hierarchy,
+                },
+                session_id,
+                cor_id,
+            )
+            .await;
+
+            cleanup_parsing_session(&file_id);
+        }
+        wellen::FileFormat::Unknown => {
+            let error_msg = "Unknown file format - only VCD, FST, and GHW files are supported";
+            send_parsing_error(file_id, filename, error_msg.to_string(), session_id, cor_id).await;
         }
     }
 }
@@ -1629,7 +1811,7 @@ fn convert_wellen_error_to_file_error(wellen_error: &str, file_path: &str) -> Fi
         FileError::UnsupportedFormat {
             path,
             extension: extension.to_string(),
-            supported_formats: vec!["vcd".to_string(), "fst".to_string()],
+            supported_formats: vec!["vcd".to_string(), "fst".to_string(), "ghw".to_string()],
         }
     } else {
         // Generic parsing error for everything else
@@ -3054,7 +3236,7 @@ async fn scan_directory_async(
                         // Only include directories and waveform files for cleaner file dialog
                         let is_waveform = if !is_directory {
                             let name_lower = name.to_lowercase();
-                            name_lower.ends_with(".vcd") || name_lower.ends_with(".fst")
+                            name_lower.ends_with(".vcd") || name_lower.ends_with(".fst") || name_lower.ends_with(".ghw")
                         } else {
                             false
                         };

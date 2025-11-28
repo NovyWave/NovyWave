@@ -1,0 +1,143 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+env:
+  RUST_BACKTRACE: 1
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            args: ''
+          - platform: macos-14
+            target: aarch64-apple-darwin
+            args: '--target aarch64-apple-darwin'
+          - platform: macos-14
+            target: x86_64-apple-darwin
+            args: '--target x86_64-apple-darwin'
+          - platform: windows-2022
+            target: x86_64-pc-windows-msvc
+            args: ''
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev
+
+      - name: Install cargo-make
+        run: cargo install cargo-make
+
+      - name: Build frontend (Linux/macOS)
+        if: matrix.platform != 'windows-2022'
+        run: makers build
+
+      - name: Build frontend (Windows)
+        if: matrix.platform == 'windows-2022'
+        shell: pwsh
+        run: |
+          cargo install --locked mzoon --git https://github.com/nicksenger/nickmoon --rev 7c5178d891cf4afbc2bbbe864ca63588b6c10f2a
+          mzoon build -r
+
+      - name: Build and release Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # macOS code signing (uncomment when certificates are ready)
+          # APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          # APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          # APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # APPLE_ID: ${{ secrets.APPLE_ID }}
+          # APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Windows code signing (uncomment when certificates are ready)
+          # TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          # TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'NovyWave ${{ github.ref_name }}'
+          releaseBody: |
+            ## What's New
+            See [CHANGELOG.md](https://github.com/NovyWave/NovyWave/blob/main/CHANGELOG.md) for details.
+
+            ## Installation
+
+            ### Linux
+            - **AppImage** (recommended): Download `novywave_*_amd64.AppImage`, make executable with `chmod +x`, and run
+            - **Debian/Ubuntu**: Download `novywave_*_amd64.deb` and install with `sudo dpkg -i`
+
+            ### macOS
+            - Download the `.dmg` file for your architecture (arm64 for M1/M2/M3, x64 for Intel)
+            - Open the DMG and drag NovyWave to Applications
+            - **Note**: You may need to right-click and select "Open" the first time due to Gatekeeper (app is not signed yet)
+
+            ### Windows
+            - Download the `.msi` installer and run it
+            - **Note**: You may see a SmartScreen warning (app is not signed yet). Click "More info" then "Run anyway"
+
+            ## Supported File Formats
+            - VCD (Value Change Dump)
+            - FST (Fast Signal Trace)
+            - GHW (GHDL Waveform)
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
+
+  # Create universal macOS binary after both architectures are built
+  create-macos-universal:
+    needs: build
+    runs-on: macos-14
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download arm64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: NovyWave_aarch64-apple-darwin
+          path: ./arm64
+
+      - name: Download x64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: NovyWave_x86_64-apple-darwin
+          path: ./x64
+
+      - name: Create universal binary
+        run: |
+          # This step would create a universal binary by combining both architectures
+          # For now, we ship separate binaries for each architecture
+          echo "Universal binary creation skipped - shipping separate arm64 and x64 builds"

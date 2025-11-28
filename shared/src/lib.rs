@@ -475,6 +475,7 @@ pub struct WaveformFile {
 pub enum FileFormat {
     VCD,
     FST,
+    GHW,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]

@@ -425,7 +425,7 @@ pub fn file_paths_dialog(
                                 .item(
                                     El::new()
                                         .s(Font::new().size(16).weight(FontWeight::Bold).color_signal(neutral_8()))
-                                        .child("(*.vcd, *.fst)")
+                                        .child("(*.vcd, *.fst, *.ghw)")
                                 )
                         )
                         .item(

@@ -1,0 +1,15 @@
+[book]
+title = "NovyWave Documentation"
+authors = ["NovyWave Contributors"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+create-missing = true
+
+[output.html]
+default-theme = "coal"
+preferred-dark-theme = "coal"
+git-repository-url = "https://github.com/NovyWave/NovyWave"
+edit-url-template = "https://github.com/NovyWave/NovyWave/edit/main/docs/{path}"

@@ -1,5 +1,7 @@
 mod commands;
 
+use tauri::Manager;
+
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -14,6 +16,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_http::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             greet,
             commands::load_config,
@@ -25,8 +28,15 @@ pub fn run() {
             commands::query_signal_transitions,
             commands::get_parsing_progress
         ])
-        .setup(|_app| {
+        .setup(|app| {
             println!("=== Tauri app setup completed ===");
+
+            // Check for updates in background
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                check_for_updates(handle).await;
+            });
+
             Ok(())
         })
         .on_window_event(|_window, _event| {
@@ -34,4 +44,33 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+async fn check_for_updates(app: tauri::AppHandle) {
+    use tauri_plugin_updater::UpdaterExt;
+
+    // Wait a bit before checking for updates to not slow down startup
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+    match app.updater() {
+        Ok(updater) => {
+            match updater.check().await {
+                Ok(Some(update)) => {
+                    println!("Update available: {} -> {}", update.current_version, update.version);
+                    // For now, just log. In the future, prompt user via frontend
+                    // update.download_and_install(|_, _| {}, || {}).await.ok();
+                }
+                Ok(None) => {
+                    println!("App is up to date");
+                }
+                Err(e) => {
+                    // Update check failed - not critical, just log
+                    println!("Update check failed: {}", e);
+                }
+            }
+        }
+        Err(e) => {
+            println!("Updater not available: {}", e);
+        }
+    }
 }

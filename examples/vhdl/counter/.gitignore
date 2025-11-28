@@ -1,0 +1,8 @@
+# GHDL build artifacts
+work/
+*.o
+*.cf
+counter_tb
+
+# Generated waveforms (optional - users may want to keep)
+# counter.ghw

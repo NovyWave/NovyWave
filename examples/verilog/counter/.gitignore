@@ -1,0 +1,5 @@
+# Icarus Verilog build artifacts
+counter_sim
+
+# Generated waveforms (optional - users may want to keep)
+# counter.vcd
