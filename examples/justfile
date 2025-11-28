@@ -204,6 +204,83 @@ validate: build-validator
 validate-verbose: build-validator
     @./validate/target/release/validate-waveforms --verbose
 
+# === INTEGRATION TESTING ===
+
+# Run integration tests using NovyWave's wellen backend
+integration-test: build-validator
+    #!/usr/bin/env bash
+    set -e
+    echo ""
+    echo "============================================================"
+    echo "  NovyWave Integration Tests (using NovyWave backend tools)"
+    echo "============================================================"
+    echo ""
+
+    # Try to build and use inspect_fst if backend is available
+    INSPECT_BIN="../backend/target/release/inspect_fst"
+    USE_INSPECT=false
+
+    if [ -f "$INSPECT_BIN" ]; then
+        USE_INSPECT=true
+        echo "Using NovyWave backend inspect_fst"
+    else
+        echo "ℹ️  NovyWave inspect_fst not available (run 'cargo build --release' in backend/)"
+        echo "   Using validation tool (same wellen library)"
+    fi
+    echo ""
+
+    # Test each waveform file
+    PASS=0
+    FAIL=0
+
+    for file in vhdl/counter/counter.ghw verilog/counter/counter.vcd spinalhdl/counter/counter.vcd amaranth/counter/counter.vcd spade/counter/counter.vcd; do
+        printf "%-45s " "$file"
+
+        if [ ! -f "$file" ]; then
+            echo "❌ NOT FOUND"
+            FAIL=$((FAIL + 1))
+            continue
+        fi
+
+        if [ "$USE_INSPECT" = true ]; then
+            if $INSPECT_BIN "$file" > /tmp/inspect_out.txt 2>&1; then
+                FORMAT=$(grep "^format:" /tmp/inspect_out.txt | awk '{print $2}')
+                echo "✓ $FORMAT"
+                PASS=$((PASS + 1))
+            else
+                echo "❌ FAILED"
+                FAIL=$((FAIL + 1))
+            fi
+        else
+            # Use validation tool - check if this specific file passes
+            if ./validate/target/release/validate-waveforms 2>&1 | grep -A15 "$file" | grep -q "PASSED"; then
+                echo "✓ validated"
+                PASS=$((PASS + 1))
+            else
+                echo "❌ FAILED"
+                FAIL=$((FAIL + 1))
+            fi
+        fi
+    done
+
+    echo ""
+    echo "============================================================"
+    echo "  Results: $PASS passed, $FAIL failed out of 5"
+    echo "============================================================"
+
+    if [ $FAIL -gt 0 ]; then
+        exit 1
+    fi
+
+# Test a single waveform file with NovyWave backend
+test-file file:
+    #!/usr/bin/env bash
+    echo "Testing {{file}} with NovyWave backend..."
+    cd .. && cargo run --release --bin inspect_fst -- "examples/{{file}}" 2>&1
+    echo ""
+    echo "Validation check:"
+    cd examples && ./validate/target/release/validate-waveforms --verbose 2>&1 | grep -A 20 "$(basename {{file}})" | head -25
+
 # === QUICK START ===
 
 # Quick start: install tools, run simulations, and validate
@@ -238,3 +315,50 @@ watch example:
         echo "Unknown example: {{example}}"; \
         echo "Available: vhdl, verilog, spinalhdl, amaranth, spade"; \
     fi
+
+# === E2E UI TESTING ===
+
+# Install E2E test dependencies (Playwright)
+install-e2e:
+    @echo "📦 Installing E2E test dependencies..."
+    @cd e2e-tests && npm install && npm run install-browsers
+    @echo "✅ E2E dependencies installed!"
+
+# Run E2E tests (requires NovyWave dev server running)
+e2e-test:
+    @echo "🎭 Running E2E tests with Playwright..."
+    @echo ""
+    @echo "⚠️  Make sure NovyWave dev server is running (makers start)"
+    @echo ""
+    @cd e2e-tests && npm test
+
+# Run E2E tests in headed mode (visible browser)
+e2e-test-headed:
+    @echo "🎭 Running E2E tests (headed mode)..."
+    @cd e2e-tests && npm run test:headed
+
+# Run E2E tests in debug mode
+e2e-test-debug:
+    @echo "🎭 Running E2E tests (debug mode)..."
+    @cd e2e-tests && npm run test:debug
+
+# Run E2E tests with Playwright UI
+e2e-test-ui:
+    @echo "🎭 Opening Playwright Test UI..."
+    @cd e2e-tests && npm run test:ui
+
+# Show E2E test report
+e2e-report:
+    @echo "📊 Opening E2E test report..."
+    @cd e2e-tests && npx playwright show-report
+
+# Clean E2E test artifacts
+clean-e2e:
+    @echo "🧹 Cleaning E2E test artifacts..."
+    @rm -rf e2e-tests/node_modules e2e-tests/playwright-report e2e-tests/test-results
+    @echo "✅ E2E artifacts cleaned!"
+
+# Full test suite (validation + E2E)
+test-all: validate e2e-test
+    @echo ""
+    @echo "✅ All tests complete!"

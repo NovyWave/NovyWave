@@ -88,32 +88,65 @@ This document describes how to test that the example waveform files load correct
    - [ ] `overflow` pulses high when count wraps around
    - [ ] Reset behavior visible at start of simulation
 
-## Automated Testing with Claude Code
+## CLI-Based Integration Testing
 
-When running with Claude Code and Browser MCP:
+### Quick Validation
+```bash
+cd examples
 
+# Run validation (uses same wellen library as NovyWave)
+just validate
+
+# With detailed output
+just validate-verbose
 ```
-# Navigate to NovyWave
-mcp__browsermcp__browser_navigate to http://localhost:8080
 
-# Take initial screenshot
-mcp__browsermcp__browser_screenshot
-
-# Get accessibility tree to find Load Files button
-mcp__browsermcp__browser_snapshot
-
-# Click Load Files button
-mcp__browsermcp__browser_click on "Load Files" button
-
-# Navigate to examples folder and load files
-# ... continue with file selection
-
-# Verify loaded files appear
-mcp__browsermcp__browser_snapshot
-
-# Check console for errors
-mcp__browsermcp__browser_get_console_logs
+### Full Integration Test
+```bash
+# Runs NovyWave's backend inspect tool on all waveform files
+just integration-test
 ```
+
+### Test Individual Files
+```bash
+# Test a specific file
+just test-file vhdl/counter/counter.ghw
+just test-file verilog/counter/counter.vcd
+```
+
+### Expected Integration Test Output
+```
+============================================================
+  NovyWave Integration Tests (using NovyWave backend tools)
+============================================================
+
+Testing: vhdl/counter/counter.ghw
+---
+format: Ghw
+embedded timescale: factor=1 unit=FemtoSeconds
+raw min 0 raw max 3840000000000000 raw range 3840000000000000
+  ✓ wellen backend: OK
+
+Testing: verilog/counter/counter.vcd
+---
+format: Vcd
+embedded timescale: factor=1 unit=PicoSeconds
+raw min 0 raw max 3830000 raw range 3830000
+  ✓ wellen backend: OK
+
+... (all 5 files)
+
+============================================================
+  Results: 5 passed, 0 failed
+============================================================
+```
+
+## UI Testing (Manual)
+
+### Prerequisites
+1. Start NovyWave: `cd .. && makers start`
+2. Wait for compilation (check `dev_server.log`)
+3. Open http://localhost:8080
 
 ## Expected Results
 
