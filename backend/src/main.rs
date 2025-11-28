@@ -2227,7 +2227,14 @@ struct GlobalConfigFile {
 }
 
 fn global_config_path() -> PathBuf {
-    INITIAL_CWD.join(GLOBAL_CONFIG_FILENAME)
+    // Use platform-specific config directory for global config
+    // Linux: ~/.config/novywave/.novywave_global
+    // macOS: ~/Library/Application Support/novywave/.novywave_global
+    // Windows: %APPDATA%\novywave\.novywave_global
+    dirs::config_dir()
+        .unwrap_or_else(|| INITIAL_CWD.clone())
+        .join("novywave")
+        .join(GLOBAL_CONFIG_FILENAME)
 }
 
 fn read_global_section() -> shared::GlobalSection {

@@ -4,22 +4,63 @@
 //! without needing HTTP/SSE communication.
 
 use serde_json;
-use shared::{AppConfig, SignalTransitionQuery, SignalValueQuery};
+use shared::{AppConfig, GlobalSection, SignalTransitionQuery, SignalValueQuery};
 use std::path::PathBuf;
 use tauri::Emitter;
 
+/// Per-project config filename (hidden dotfile in workspace)
+const PER_PROJECT_CONFIG_FILENAME: &str = ".novywave";
+
+/// Global workspace history filename (same as browser mode)
+const GLOBAL_HISTORY_FILENAME: &str = ".novywave_global";
+
+/// Determine the config path to use
+/// Resolution order:
+/// 1. Per-project: {cwd}/.novywave (if exists)
+/// 2. Global: {platform_config_dir}/novywave/config.toml
+fn get_config_path() -> Result<(PathBuf, bool), String> {
+    // Check for per-project config in current working directory
+    let cwd = std::env::current_dir()
+        .map_err(|e| format!("Failed to get current directory: {}", e))?;
+    let per_project_path = cwd.join(PER_PROJECT_CONFIG_FILENAME);
+
+    if per_project_path.exists() {
+        return Ok((per_project_path, true)); // (path, is_per_project)
+    }
+
+    // Fall back to global config
+    let config_dir = dirs::config_dir().ok_or("Could not find config directory")?;
+    let global_path = config_dir.join("novywave").join("config.toml");
+
+    Ok((global_path, false))
+}
+
+/// Get global workspace history path
+/// Always at: {platform_config_dir}/novywave/.novywave_global
+fn get_global_history_path() -> Result<PathBuf, String> {
+    let config_dir = dirs::config_dir().ok_or("Could not find config directory")?;
+    Ok(config_dir.join("novywave").join(GLOBAL_HISTORY_FILENAME))
+}
+
 /// Load application configuration from file system
+/// Checks for per-project .novywave first, then falls back to global config
 #[tauri::command]
 pub async fn load_config() -> Result<String, String> {
-    // Get config directory path
-    let config_dir = dirs::config_dir().ok_or("Could not find config directory")?;
+    let (config_path, is_per_project) = get_config_path()?;
 
-    let config_path = config_dir.join("novywave").join("config.toml");
+    // Log which config is being used
+    if is_per_project {
+        println!("📁 Loading per-project config from: {}", config_path.display());
+    } else {
+        println!("🌐 Loading global config from: {}", config_path.display());
+    }
 
-    // Create config directory if it doesn't exist
-    if let Some(parent) = config_path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create config directory: {}", e))?;
+    // Create config directory if it doesn't exist (only for global config)
+    if !is_per_project {
+        if let Some(parent) = config_path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create config directory: {}", e))?;
+        }
     }
 
     // Try to read existing config file
@@ -42,21 +83,29 @@ pub async fn load_config() -> Result<String, String> {
 }
 
 /// Save application configuration to file system
+/// Saves to per-project .novywave if it exists, otherwise to global config
 #[tauri::command]
 pub async fn save_config(config_json: String) -> Result<(), String> {
     // Parse JSON back to AppConfig
     let config: AppConfig = serde_json::from_str(&config_json)
         .map_err(|e| format!("Failed to parse config JSON: {}", e))?;
 
-    // Get config file path
-    let config_dir = dirs::config_dir().ok_or("Could not find config directory")?;
+    // Determine where to save (same logic as load)
+    let (config_path, is_per_project) = get_config_path()?;
 
-    let config_path = config_dir.join("novywave").join("config.toml");
+    // Log which config is being saved to
+    if is_per_project {
+        println!("💾 Saving to per-project config: {}", config_path.display());
+    } else {
+        println!("💾 Saving to global config: {}", config_path.display());
+    }
 
-    // Create config directory if it doesn't exist
-    if let Some(parent) = config_path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create config directory: {}", e))?;
+    // Create config directory if it doesn't exist (only for global config)
+    if !is_per_project {
+        if let Some(parent) = config_path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create config directory: {}", e))?;
+        }
     }
 
     // Serialize to TOML and write to file
@@ -65,6 +114,87 @@ pub async fn save_config(config_json: String) -> Result<(), String> {
 
     std::fs::write(&config_path, toml_content)
         .map_err(|e| format!("Failed to write config file: {}", e))?;
+
+    Ok(())
+}
+
+/// Wrapper for GlobalSection to match backend's TOML structure
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+struct GlobalConfigFile {
+    #[serde(default)]
+    global: GlobalSection,
+}
+
+/// Load workspace history from global config
+/// Path: {platform_config_dir}/novywave/.novywave_global
+#[tauri::command]
+pub async fn load_workspace_history() -> Result<String, String> {
+    let history_path = get_global_history_path()?;
+
+    println!(
+        "📂 Loading workspace history from: {}",
+        history_path.display()
+    );
+
+    // Create config directory if it doesn't exist
+    if let Some(parent) = history_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create config directory: {}", e))?;
+    }
+
+    // Try to read existing history file
+    match std::fs::read_to_string(&history_path) {
+        Ok(content) => {
+            // Parse TOML and extract GlobalSection
+            let global_file: GlobalConfigFile = toml::from_str(&content)
+                .map_err(|e| format!("Failed to parse workspace history: {}", e))?;
+
+            // Return as JSON string for consistent serialization
+            serde_json::to_string(&global_file.global)
+                .map_err(|e| format!("Failed to serialize workspace history: {}", e))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // File doesn't exist, return default
+            let default_section = GlobalSection::default();
+            serde_json::to_string(&default_section)
+                .map_err(|e| format!("Failed to serialize default workspace history: {}", e))
+        }
+        Err(e) => Err(format!("Failed to read workspace history: {}", e)),
+    }
+}
+
+/// Save workspace history to global config
+/// Path: {platform_config_dir}/novywave/.novywave_global
+#[tauri::command]
+pub async fn save_workspace_history(history_json: String) -> Result<(), String> {
+    // Parse JSON back to GlobalSection
+    let global_section: GlobalSection = serde_json::from_str(&history_json)
+        .map_err(|e| format!("Failed to parse workspace history JSON: {}", e))?;
+
+    let history_path = get_global_history_path()?;
+
+    println!(
+        "💾 Saving workspace history to: {}",
+        history_path.display()
+    );
+
+    // Create config directory if it doesn't exist
+    if let Some(parent) = history_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create config directory: {}", e))?;
+    }
+
+    // Wrap in GlobalConfigFile for consistent TOML structure
+    let global_file = GlobalConfigFile {
+        global: global_section,
+    };
+
+    // Serialize to TOML and write to file
+    let toml_content = toml::to_string_pretty(&global_file)
+        .map_err(|e| format!("Failed to serialize workspace history to TOML: {}", e))?;
+
+    std::fs::write(&history_path, toml_content)
+        .map_err(|e| format!("Failed to write workspace history file: {}", e))?;
 
     Ok(())
 }

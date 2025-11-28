@@ -1,7 +1,5 @@
 mod commands;
 
-use tauri::Manager;
-
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -21,6 +19,8 @@ pub fn run() {
             greet,
             commands::load_config,
             commands::save_config,
+            commands::load_workspace_history,
+            commands::save_workspace_history,
             commands::load_waveform_file,
             commands::browse_directory,
             commands::browse_directories,

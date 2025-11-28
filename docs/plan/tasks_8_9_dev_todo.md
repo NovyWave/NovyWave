@@ -14,6 +14,35 @@ Quick reference for remaining manual steps to complete the beta release.
 - [x] Example docs filled (VHDL, Verilog, SpinalHDL, Amaranth, Spade)
 - [x] README.md enhanced with features
 - [x] Linux builds working (AppImage, deb, rpm)
+- [x] Tauri workspace history commands implemented (feature parity with browser mode)
+
+---
+
+## ⚠️ IMPORTANT: Test Both Versions
+
+**Both browser and Tauri desktop versions must be tested to ensure feature parity:**
+
+### Browser Mode Testing
+```bash
+makers start                    # Start dev server at http://localhost:8080
+# Test workspace history:
+# 1. Open workspace, expand directories, select files
+# 2. Close and reopen - state should persist in ~/.config/novywave/.novywave_global
+```
+
+### Tauri Desktop Mode Testing
+```bash
+cd src-tauri && cargo tauri build   # Build desktop app
+./target/release/bundle/appimage/NovyWave_0.1.0_amd64.AppImage  # Run AppImage
+# Test workspace history:
+# 1. Open workspace, expand directories, select files
+# 2. Close and reopen - state should persist in ~/.config/novywave/.novywave_global
+```
+
+### Compilation Status (2024-11-28)
+- ✅ Browser mode: Compiles with 0 errors, 2 warnings (unused imports)
+- ✅ Tauri mode: Compiles with 0 errors, 0 warnings
+- ✅ All 3 Linux bundles generated: AppImage (79MB), DEB (8.4MB), RPM (8.4MB)
 
 ---
 
@@ -88,7 +117,45 @@ jobs:
 
 ---
 
-## 3. macOS Testing
+## 3. Linux Testing
+
+### Build
+```bash
+makers install
+makers tauri-build
+
+# Output: src-tauri/target/release/bundle/
+#   - appimage/novy-wave_0.1.0_amd64.AppImage
+#   - deb/novy-wave_0.1.0_amd64.deb
+#   - rpm/novy-wave-0.1.0-1.x86_64.rpm
+```
+
+### Test Checklist
+- [ ] AppImage runs directly (`chmod +x && ./NovyWave.AppImage`)
+- [ ] .deb installs (`sudo dpkg -i novywave.deb`)
+- [ ] .rpm installs (`sudo rpm -i novywave.rpm`)
+- [ ] App launches from terminal and desktop menu
+- [ ] File picker opens home directory (`~`)
+- [ ] Load VCD file → renders timeline
+- [ ] Load FST file → renders timeline
+- [ ] Load GHW file → renders timeline (NEW!)
+- [ ] Theme toggle (Ctrl+T)
+- [ ] Dock mode toggle (Ctrl+D)
+- [ ] Keyboard shortcuts (W/S zoom, A/D pan, Q/E cursor)
+- [ ] Config persists to `~/.config/novywave/` after restart
+- [ ] Global history persists to `~/.config/novywave/.novywave_global`
+
+### AppImage Portability
+```bash
+# Test portable mode - should work from any location
+mv NovyWave.AppImage /tmp/
+cd /tmp && ./NovyWave.AppImage
+# Config should still save to ~/.config/novywave/
+```
+
+---
+
+## 4. macOS Testing
 
 ### Build
 ```bash
@@ -121,7 +188,7 @@ cargo tauri build --target universal-apple-darwin
 
 ---
 
-## 4. Windows Testing
+## 5. Windows Testing
 
 ### Build
 ```bash
@@ -136,18 +203,20 @@ makers tauri-build
 
 ### Test Checklist
 - [ ] MSI installer works
+- [ ] NSIS installer works
 - [ ] App launches (may need "Run Anyway" for unsigned)
 - [ ] File picker navigates C:\, D:\, etc.
 - [ ] Load VCD/FST/GHW files
 - [ ] All keyboard shortcuts work
-- [ ] Config saves to `%APPDATA%\com.novywave.app\`
+- [ ] Config saves to `%APPDATA%\novywave\config.toml`
+- [ ] Global history saves to `%APPDATA%\novywave\.novywave_global`
 
 ### SmartScreen Bypass (Unsigned Beta)
 Document for users: "Click 'More info' → 'Run anyway'"
 
 ---
 
-## 5. GHW Format Testing
+## 6. GHW Format Testing
 
 ### Get Test Files
 ```bash
@@ -169,7 +238,7 @@ make  # Generates counter.ghw
 
 ---
 
-## 6. Example Projects Testing
+## 7. Example Projects Testing
 
 ### Run Each Example
 ```bash
@@ -197,7 +266,7 @@ cd examples/spade/counter && make && novywave counter.vcd
 
 ---
 
-## 7. CI/CD Release Pipeline
+## 8. CI/CD Release Pipeline
 
 ### GitHub Actions Setup
 Create `.github/workflows/release.yml`:
@@ -248,7 +317,7 @@ git push origin v0.2.0-beta.1
 
 ---
 
-## 8. Code Signing (Post-Beta)
+## 9. Code Signing (Post-Beta)
 
 ### macOS ($99/year Apple Developer)
 ```bash
@@ -273,6 +342,93 @@ xcrun notarytool submit NovyWave.dmg --apple-id $APPLE_ID --team-id $TEAM_ID
 
 ---
 
+## 10. Configuration File Handling ✅ IMPLEMENTED
+
+> **Documentation**: See `docs/configuration.md` for full config system documentation.
+> **Example**: See `.novywave_global_example` in repo root for global config format.
+
+### Current Implementation (Fixed)
+
+**Unified config resolution across both modes:**
+
+| Mode | Global Config | Workspace History | Per-Project Config |
+|------|---------------|-------------------|-------------------|
+| **Tauri (Desktop)** | `dirs::config_dir()/novywave/config.toml` | `dirs::config_dir()/novywave/.novywave_global` ✅ | `{cwd}/.novywave` (checked first) ✅ |
+| **Browser (Dev)** | `dirs::config_dir()/novywave/.novywave_global` ✅ | (same as global) | `{workspace}/.novywave` |
+
+### Platform-Specific Global Paths
+
+| Platform | `dirs::config_dir()` resolves to |
+|----------|----------------------------------|
+| **Linux** | `~/.config/novywave/` |
+| **macOS** | `~/Library/Application Support/novywave/` |
+| **Windows** | `%APPDATA%\novywave\` |
+
+### Current Issues (Hardcoded Paths)
+
+1. **Browser mode global config uses CWD:**
+   ```rust
+   // backend/src/main.rs:2229-2231
+   fn global_config_path() -> PathBuf {
+       INITIAL_CWD.join(GLOBAL_CONFIG_FILENAME)  // ❌ Not portable
+   }
+   ```
+
+2. **Tauri mode ignores per-project configs:**
+   ```rust
+   // src-tauri/src/commands.rs:17
+   let config_path = config_dir.join("novywave").join("config.toml");
+   // Always uses global - never checks for .novywave in workspace
+   ```
+
+3. **Different file names:**
+   - Tauri: `config.toml`
+   - Browser: `.novywave`
+
+### Recommended Config Resolution Order
+
+```
+1. Per-project:  {workspace}/.novywave     (if exists)
+2. Global:       {platform_config_dir}/novywave/config.toml
+```
+
+### Fix Checklist
+
+- [x] **Unify file naming**: `.novywave` for per-project, `.novywave_global` for global history, `config.toml` for Tauri global
+- [x] **Browser global path**: Use `dirs::config_dir()` instead of CWD ✅
+- [x] **Tauri per-project**: Check workspace for `.novywave` before falling back to global ✅
+- [ ] **Test all scenarios:**
+  - [x] Fresh install (no config files) → creates global config
+  - [x] Global config only → loads global
+  - [x] Per-project `.novywave` exists → loads per-project, ignores global
+  - [ ] AppImage portable → still saves to `~/.config/novywave/`
+  - [x] Config corruption → shows error, doesn't crash
+
+### Files Modified ✅
+
+| File | Change |
+|------|--------|
+| `backend/src/main.rs` | ✅ Use `dirs::config_dir()` for `global_config_path()` |
+| `src-tauri/src/commands.rs` | ✅ Add per-project `.novywave` check before global, use `dirs::config_dir()` for fallback |
+| `src-tauri/src/commands.rs` | ✅ Add `load_workspace_history` and `save_workspace_history` commands for feature parity with browser mode |
+| `src-tauri/src/lib.rs` | ✅ Register workspace history commands in invoke_handler |
+
+### Testing Matrix
+
+| Scenario | Linux | macOS | Windows |
+|----------|-------|-------|---------|
+| Global config load | ✅ | ⬜ | ⬜ |
+| Global config save | ✅ | ⬜ | ⬜ |
+| Per-project load | ✅ | ⬜ | ⬜ |
+| Per-project save | ✅ | ⬜ | ⬜ |
+| Workspace history load | ⬜ | ⬜ | ⬜ |
+| Workspace history save | ⬜ | ⬜ | ⬜ |
+| Config migration | ✅ | ⬜ | ⬜ |
+| AppImage portable | ⬜ | N/A | N/A |
+| Installer mode | ⬜ | ⬜ | ⬜ |
+
+---
+
 ## Quick Command Reference
 
 | Task | Command |
@@ -291,8 +447,9 @@ xcrun notarytool submit NovyWave.dmg --apple-id $APPLE_ID --team-id $TEAM_ID
 ## Priority Order
 
 1. **Generate signing keys** → enables auto-updater
-2. **Test GHW on all platforms** → new feature validation
-3. **Test macOS/Windows builds** → platform coverage
-4. **Set up GitHub Pages** → user documentation
-5. **Configure CI/CD** → automated releases
-6. **Code signing** → can defer to v1.0
+2. **Test Linux/macOS/Windows builds** → platform coverage
+3. **Test GHW on all platforms** → new feature validation
+4. **Fix config file handling** → cross-platform reliability
+5. **Set up GitHub Pages** → user documentation
+6. **Configure CI/CD** → automated releases
+7. **Code signing** → can defer to v1.0
