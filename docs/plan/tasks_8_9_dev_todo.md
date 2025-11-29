@@ -15,6 +15,9 @@ Quick reference for remaining manual steps to complete the beta release.
 - [x] README.md enhanced with features
 - [x] Linux builds working (AppImage, deb, rpm)
 - [x] Tauri workspace history commands implemented (feature parity with browser mode)
+- [x] CI/CD pipelines created (GitHub Actions + Woodpecker CI alternative)
+- [x] GitHub Actions: CI checks, release builds, docs deployment
+- [x] Woodpecker CI: Self-hostable alternative for Gitea/Forgejo
 
 ---
 
@@ -266,40 +269,28 @@ cd examples/spade/counter && make && novywave counter.vcd
 
 ---
 
-## 8. CI/CD Release Pipeline
+## 8. CI/CD Release Pipeline ✅ IMPLEMENTED
+
+### CI/CD Files Created
+
+| File | Purpose |
+|------|---------|
+| `.github/workflows/ci.yml` | Continuous integration (clippy, fmt, build, test examples) |
+| `.github/workflows/release.yml` | Multi-platform releases when tags pushed (Linux, macOS, Windows) |
+| `.github/workflows/docs.yml` | Auto-deploy documentation to GitHub Pages |
+| `.woodpecker.yml` | Self-hostable alternative (Woodpecker CI) |
 
 ### GitHub Actions Setup
-Create `.github/workflows/release.yml`:
-```yaml
-name: Release
-on:
-  push:
-    tags: ['v*']
+The release workflow (`.github/workflows/release.yml`) builds for all platforms:
+- **Linux**: AppImage, DEB, RPM (ubuntu-22.04)
+- **macOS**: DMG for both Intel and Apple Silicon, plus universal binary
+- **Windows**: MSI and NSIS installers
 
-jobs:
-  build:
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-          - os: macos-14
-            target: universal-apple-darwin
-          - os: windows-2022
-            target: x86_64-pc-windows-msvc
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-        with:
-          tagName: v__VERSION__
-          releaseName: 'NovyWave v__VERSION__'
-          releaseBody: 'See CHANGELOG.md'
-```
+### Woodpecker CI Alternative
+For self-hosted CI, use `.woodpecker.yml` which provides:
+- Matrix builds for Linux (amd64, arm64)
+- Gitea/Forgejo release integration
+- Documentation deployment pipeline
 
 ### Release Process
 ```bash
@@ -449,7 +440,7 @@ xcrun notarytool submit NovyWave.dmg --apple-id $APPLE_ID --team-id $TEAM_ID
 1. **Generate signing keys** → enables auto-updater
 2. **Test Linux/macOS/Windows builds** → platform coverage
 3. **Test GHW on all platforms** → new feature validation
-4. **Fix config file handling** → cross-platform reliability
-5. **Set up GitHub Pages** → user documentation
-6. **Configure CI/CD** → automated releases
+4. ~~**Fix config file handling**~~ ✅ → cross-platform reliability (DONE)
+5. ~~**Set up GitHub Pages**~~ ✅ → user documentation (workflow created)
+6. ~~**Configure CI/CD**~~ ✅ → automated releases (GitHub Actions + Woodpecker)
 7. **Code signing** → can defer to v1.0

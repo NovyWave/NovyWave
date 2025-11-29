@@ -2,296 +2,121 @@ name: Release
 
 on:
   push:
-    tags:
-      - 'v*'
-  workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version to release (e.g., 0.1.0)'
-        required: true
-        type: string
+    tags: ['v*']
 
-env:
-  CARGO_INCREMENTAL: 0
-  RUST_BACKTRACE: short
+permissions:
+  contents: write
 
 jobs:
-  create-release:
-    runs-on: ubuntu-latest
-    outputs:
-      release_id: ${{ steps.create-release.outputs.result }}
-      version: ${{ steps.get-version.outputs.version }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Get version
-        id: get-version
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
-          else
-            echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Create Release
-        id: create-release
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const { data } = await github.rest.repos.createRelease({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              tag_name: `v${{ steps.get-version.outputs.version }}`,
-              name: `NovyWave v${{ steps.get-version.outputs.version }}`,
-              body: `## What\'s New\n\nSee [CHANGELOG.md](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/main/CHANGELOG.md) for details.\n\n## Downloads\n\n| Platform | File |\n|----------|------|\n| Windows (installer) | \`NovyWave_${{ steps.get-version.outputs.version }}_x64-setup.exe\` |\n| Windows (MSI) | \`NovyWave_${{ steps.get-version.outputs.version }}_x64_en-US.msi\` |\n| macOS (Apple Silicon) | \`NovyWave_${{ steps.get-version.outputs.version }}_aarch64.dmg\` |\n| macOS (Intel) | \`NovyWave_${{ steps.get-version.outputs.version }}_x64.dmg\` |\n| Linux (AppImage) | \`NovyWave_${{ steps.get-version.outputs.version }}_amd64.AppImage\` |\n| Linux (Debian/Ubuntu) | \`NovyWave_${{ steps.get-version.outputs.version }}_amd64.deb\` |\n| Linux (Fedora/RHEL) | \`NovyWave-${{ steps.get-version.outputs.version }}-1.x86_64.rpm\` |`,
-              draft: true,
-              prerelease: false
-            })
-            return data.id
-
-  build-tauri:
-    needs: create-release
-    permissions:
-      contents: write
+  build:
     strategy:
       fail-fast: false
       matrix:
         include:
-          - platform: ubuntu-22.04
+          - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-          - platform: macos-latest
+            bundle: appimage,deb,rpm
+          - os: macos-14
             target: aarch64-apple-darwin
-          - platform: macos-latest
+            bundle: dmg
+          - os: macos-14
             target: x86_64-apple-darwin
-          - platform: windows-latest
+            bundle: dmg
+          - os: windows-2022
             target: x86_64-pc-windows-msvc
+            bundle: msi,nsis
 
-    runs-on: ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-action@stable
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: './src-tauri -> target'
+      - name: Install wasm-pack (Linux/macOS)
+        if: matrix.os != 'windows-2022'
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
-      - name: Install Linux dependencies
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            patchelf \
-            libssl-dev \
-            libgtk-3-dev \
-            libsoup-3.0-dev \
-            libjavascriptcoregtk-4.1-dev
+      - name: Install wasm-pack (Windows)
+        if: matrix.os == 'windows-2022'
+        run: cargo install wasm-pack
 
       - name: Install cargo-make
-        uses: taiki-e/install-action@v2
+        run: cargo install cargo-make
+
+      - name: Install Linux dependencies
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
         with:
-          tool: cargo-make
-
-      - name: Install MoonZoon CLI
-        run: cargo install mzoon --git https://github.com/ArkadyKonovalov/MoonZoon --rev 7c5178d891cf4afbc2bbbe864ca63588b6c10f2a --locked
-
-      - name: Add wasm32 target
-        run: rustup target add wasm32-unknown-unknown
+          workspaces: |
+            .
+            src-tauri
 
       - name: Build frontend
         run: makers build
 
-      - name: Install Tauri CLI
-        run: cargo install tauri-cli --version "^2.0.0" --locked
-
       - name: Build Tauri app
-        run: |
-          cd src-tauri
-          cargo tauri build --target ${{ matrix.target }}
-
-      - name: Upload release assets (Linux)
-        if: matrix.platform == 'ubuntu-22.04'
-        uses: actions/github-script@v7
+        uses: tauri-apps/tauri-action@v0
         env:
-          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
-          VERSION: ${{ needs.create-release.outputs.version }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          script: |
-            const fs = require('fs');
-            const path = require('path');
+          tagName: v__VERSION__
+          releaseName: 'NovyWave v__VERSION__'
+          releaseBody: 'See CHANGELOG.md for release notes.'
+          releaseDraft: true
+          prerelease: false
+          args: --target ${{ matrix.target }} --bundles ${{ matrix.bundle }}
 
-            const bundleDir = 'src-tauri/target/x86_64-unknown-linux-gnu/release/bundle';
+  build-macos-universal:
+    needs: build
+    runs-on: macos-14
 
-            const files = [
-              { dir: 'appimage', pattern: /\.AppImage$/ },
-              { dir: 'deb', pattern: /\.deb$/ },
-              { dir: 'rpm', pattern: /\.rpm$/ },
-            ];
-
-            for (const { dir, pattern } of files) {
-              const fullDir = path.join(bundleDir, dir);
-              if (fs.existsSync(fullDir)) {
-                const file = fs.readdirSync(fullDir).find(f => pattern.test(f));
-                if (file) {
-                  const filePath = path.join(fullDir, file);
-                  console.log(`Uploading ${filePath}`);
-                  await github.rest.repos.uploadReleaseAsset({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    release_id: process.env.RELEASE_ID,
-                    name: file,
-                    data: fs.readFileSync(filePath),
-                  });
-                }
-              }
-            }
-
-      - name: Upload release assets (macOS)
-        if: matrix.platform == 'macos-latest'
-        uses: actions/github-script@v7
-        env:
-          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
-          VERSION: ${{ needs.create-release.outputs.version }}
-          TARGET: ${{ matrix.target }}
-        with:
-          script: |
-            const fs = require('fs');
-            const path = require('path');
-
-            const bundleDir = `src-tauri/target/${process.env.TARGET}/release/bundle`;
-            const dmgDir = path.join(bundleDir, 'dmg');
-
-            if (fs.existsSync(dmgDir)) {
-              const file = fs.readdirSync(dmgDir).find(f => f.endsWith('.dmg'));
-              if (file) {
-                const arch = process.env.TARGET.includes('aarch64') ? 'aarch64' : 'x64';
-                const newName = `NovyWave_${process.env.VERSION}_${arch}.dmg`;
-                const filePath = path.join(dmgDir, file);
-                console.log(`Uploading ${filePath} as ${newName}`);
-                await github.rest.repos.uploadReleaseAsset({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  release_id: process.env.RELEASE_ID,
-                  name: newName,
-                  data: fs.readFileSync(filePath),
-                });
-              }
-            }
-
-      - name: Upload release assets (Windows)
-        if: matrix.platform == 'windows-latest'
-        uses: actions/github-script@v7
-        env:
-          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
-          VERSION: ${{ needs.create-release.outputs.version }}
-        with:
-          script: |
-            const fs = require('fs');
-            const path = require('path');
-
-            const bundleDir = 'src-tauri/target/x86_64-pc-windows-msvc/release/bundle';
-
-            const files = [
-              { dir: 'msi', pattern: /\.msi$/ },
-              { dir: 'nsis', pattern: /\.exe$/ },
-            ];
-
-            for (const { dir, pattern } of files) {
-              const fullDir = path.join(bundleDir, dir);
-              if (fs.existsSync(fullDir)) {
-                const file = fs.readdirSync(fullDir).find(f => pattern.test(f));
-                if (file) {
-                  const filePath = path.join(fullDir, file);
-                  console.log(`Uploading ${filePath}`);
-                  await github.rest.repos.uploadReleaseAsset({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    release_id: process.env.RELEASE_ID,
-                    name: file,
-                    data: fs.readFileSync(filePath),
-                  });
-                }
-              }
-            }
-
-  publish-release:
-    needs: [create-release, build-tauri]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
-      - name: Publish release
-        uses: actions/github-script@v7
-        env:
-          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
-          script: |
-            await github.rest.repos.updateRelease({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              release_id: process.env.RELEASE_ID,
-              draft: false
-            })
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
 
-  generate-updater:
-    needs: [create-release, build-tauri]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
-      - name: Generate and upload updater manifest
-        uses: actions/github-script@v7
-        env:
-          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
-          VERSION: ${{ needs.create-release.outputs.version }}
+      - name: Install cargo-make
+        run: cargo install cargo-make
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
         with:
-          script: |
-            const fs = require('fs');
+          workspaces: |
+            .
+            src-tauri
 
-            const { data: assets } = await github.rest.repos.listReleaseAssets({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              release_id: process.env.RELEASE_ID,
-            });
+      - name: Build frontend
+        run: makers build
 
-            const baseUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/v${process.env.VERSION}`;
-
-            const updaterJson = {
-              version: `v${process.env.VERSION}`,
-              notes: `NovyWave v${process.env.VERSION}`,
-              pub_date: new Date().toISOString(),
-              platforms: {}
-            };
-
-            for (const asset of assets) {
-              const url = `${baseUrl}/${asset.name}`;
-
-              if (asset.name.includes('aarch64') && asset.name.endsWith('.dmg')) {
-                updaterJson.platforms['darwin-aarch64'] = { url };
-              } else if (asset.name.includes('x64') && asset.name.endsWith('.dmg')) {
-                updaterJson.platforms['darwin-x86_64'] = { url };
-              } else if (asset.name.endsWith('.msi')) {
-                updaterJson.platforms['windows-x86_64'] = { url };
-              } else if (asset.name.endsWith('.AppImage')) {
-                updaterJson.platforms['linux-x86_64'] = { url };
-              }
-            }
-
-            fs.writeFileSync('latest.json', JSON.stringify(updaterJson, null, 2));
-
-            await github.rest.repos.uploadReleaseAsset({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              release_id: process.env.RELEASE_ID,
-              name: 'latest.json',
-              data: fs.readFileSync('latest.json'),
-            });
+      - name: Build universal macOS app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: v__VERSION__
+          releaseName: 'NovyWave v__VERSION__'
+          releaseBody: 'See CHANGELOG.md for release notes.'
+          releaseDraft: true
+          prerelease: false
+          args: --target universal-apple-darwin --bundles dmg

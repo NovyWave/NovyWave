@@ -1,0 +1,89 @@
+# Woodpecker CI Configuration
+# Self-hostable alternative to GitHub Actions
+# See: https://woodpecker-ci.org/docs/intro
+
+when:
+  event: tag
+  ref: refs/tags/v*
+
+variables:
+  - &rust_image "rust:1.75-bookworm"
+  - &node_image "node:20-bookworm"
+
+matrix:
+  include:
+    - PLATFORM: linux
+      ARCH: amd64
+      TARGET: x86_64-unknown-linux-gnu
+      BUNDLE: appimage,deb,rpm
+    - PLATFORM: linux
+      ARCH: arm64
+      TARGET: aarch64-unknown-linux-gnu
+      BUNDLE: appimage,deb
+
+steps:
+  # Install system dependencies for Tauri
+  install-deps:
+    image: *rust_image
+    commands:
+      - apt-get update
+      - apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - cargo install cargo-make
+      - rustup target add wasm32-unknown-unknown
+      - rustup target add ${TARGET}
+
+  # Build frontend WASM
+  build-frontend:
+    image: *rust_image
+    commands:
+      - makers build
+    depends_on:
+      - install-deps
+
+  # Build Tauri desktop app
+  build-tauri:
+    image: *rust_image
+    commands:
+      - cd src-tauri && cargo tauri build --target ${TARGET} --bundles ${BUNDLE}
+    depends_on:
+      - build-frontend
+
+  # Upload artifacts to release
+  release:
+    image: woodpeckerci/plugin-gitea-release
+    settings:
+      api_key:
+        from_secret: gitea_token
+      files:
+        - src-tauri/target/${TARGET}/release/bundle/**/*
+      title: "NovyWave ${CI_COMMIT_TAG}"
+      note: "See CHANGELOG.md for release notes."
+    when:
+      event: tag
+    depends_on:
+      - build-tauri
+
+---
+# Docs deployment pipeline (separate workflow)
+when:
+  event: push
+  branch: main
+  path: docs/**
+
+steps:
+  build-docs:
+    image: peaceiris/mdbook:latest
+    commands:
+      - cd docs/book && mdbook build
+
+  deploy-docs:
+    image: alpine:latest
+    commands:
+      - echo "Deploy docs to your hosting"
+      # Configure for your hosting provider:
+      # - Netlify: Use netlify-cli
+      # - Gitea Pages: Copy to pages branch
+      # - Custom server: rsync/scp
+    depends_on:
+      - build-docs
