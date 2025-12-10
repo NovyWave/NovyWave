@@ -31,11 +31,18 @@ pub fn run() {
         .setup(|app| {
             println!("=== Tauri app setup completed ===");
 
-            // Check for updates in background
-            let handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                check_for_updates(handle).await;
-            });
+            // Check for updates in background only when configured with a real endpoint & pubkey
+            let handle = app.handle();
+            if updates_configured(&handle) {
+                let handle_for_task = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    check_for_updates(handle_for_task).await;
+                });
+            } else {
+                println!(
+                    "Updater disabled: missing endpoints or pubkey in tauri.conf.json (local build)."
+                );
+            }
 
             Ok(())
         })
@@ -44,6 +51,27 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+fn updates_configured(app: &tauri::AppHandle) -> bool {
+    app.config()
+        .plugins
+        .0
+        .get("updater")
+        .and_then(|cfg| {
+            let endpoints_ok = cfg
+                .get("endpoints")
+                .and_then(|v| v.as_array())
+                .map(|arr| !arr.is_empty())
+                .unwrap_or(false);
+            let pubkey_ok = cfg
+                .get("pubkey")
+                .and_then(|v| v.as_str())
+                .map(|key| !key.trim().is_empty() && !key.contains("REPLACE_WITH_PUBLIC_KEY"))
+                .unwrap_or(false);
+            Some(endpoints_ok && pubkey_ok)
+        })
+        .unwrap_or(false)
 }
 
 async fn check_for_updates(app: tauri::AppHandle) {

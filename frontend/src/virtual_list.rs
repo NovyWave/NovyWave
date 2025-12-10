@@ -1,6 +1,6 @@
-use moonzoon_novyui::tokens::color::{
-    neutral_2, neutral_4, neutral_8, neutral_11, primary_3, primary_6,
-};
+use moonzoon_novyui::tokens::color::{neutral_2, neutral_4, neutral_8, neutral_11};
+#[cfg(NOVYWAVE_PLATFORM = "WEB")]
+use moonzoon_novyui::tokens::color::{primary_3, primary_6};
 use moonzoon_novyui::*;
 use wasm_bindgen::JsCast;
 use zoon::*;
@@ -17,6 +17,25 @@ pub fn empty_state_hint(text: &str) -> impl Element {
         .s(Padding::all(SPACING_20))
         .s(Font::new().color_signal(neutral_8()).italic())
         .child(text)
+}
+
+#[cfg(NOVYWAVE_PLATFORM = "WEB")]
+fn apply_scrollbar_colors(
+    raw_el: zoon::RawHtmlEl<web_sys::HtmlElement>,
+) -> zoon::RawHtmlEl<web_sys::HtmlElement> {
+    raw_el.style_signal(
+        "scrollbar-color",
+        primary_6()
+            .map(|thumb| primary_3().map(move |track| format!("{} {}", thumb, track)))
+            .flatten(),
+    )
+}
+
+#[cfg(not(NOVYWAVE_PLATFORM = "WEB"))]
+fn apply_scrollbar_colors(
+    raw_el: zoon::RawHtmlEl<web_sys::HtmlElement>,
+) -> zoon::RawHtmlEl<web_sys::HtmlElement> {
+    raw_el
 }
 
 // ===== CORE VIRTUAL LIST FUNCTIONS =====
@@ -556,14 +575,9 @@ pub fn rust_virtual_variables_list_with_signal(
                         mouseleave_closure.forget();
                     }
 
-                    raw_el.style("scrollbar-width", "thin").style_signal(
-                        "scrollbar-color",
-                        primary_6()
-                            .map(|thumb| {
-                                primary_3().map(move |track| format!("{} {}", thumb, track))
-                            })
-                            .flatten(),
-                    )
+                    raw_el
+                        .style("scrollbar-width", "thin")
+                        .apply(|raw_el| apply_scrollbar_colors(raw_el))
                 }
             })
             .child(

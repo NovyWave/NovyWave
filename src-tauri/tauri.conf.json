@@ -12,11 +12,12 @@
       {
         "title": "NovyWave",
         "width": 800,
-        "height": 600
+        "height": 600,
+        "devtools": true
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ipc: tauri: https:"
+      "csp": null
     }
   },
   "bundle": {

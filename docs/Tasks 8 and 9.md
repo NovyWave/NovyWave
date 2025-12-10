@@ -9,6 +9,8 @@ This task prepares NovyWave for release across Linux, Windows, and macOS by ensu
 
 - `makers install`
 - `makers tauri-build`
+- `cd target/release/bundle`
+- `appimage/NovyWave_0.1.0_amd64.AppImage`
 
 ## 8b. Finalize bundling, versioning, signing, releasing
 

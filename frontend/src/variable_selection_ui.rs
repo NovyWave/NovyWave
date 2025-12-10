@@ -3,7 +3,9 @@ use crate::selected_variables::{
     VariableWithContext, filter_variables_with_context, get_variables_from_tracked_files,
 };
 use crate::virtual_list::virtual_variables_list_pre_filtered;
-use moonzoon_novyui::tokens::color::{neutral_8, primary_6};
+use moonzoon_novyui::tokens::color::neutral_8;
+#[cfg(NOVYWAVE_PLATFORM = "WEB")]
+use moonzoon_novyui::tokens::color::{primary_3, primary_6};
 use moonzoon_novyui::*;
 use zoon::*;
 use zoon::{JsCast, Key, RawKeyboardEvent};
@@ -15,6 +17,25 @@ pub enum VariableDisplayContext {
     ScopeHasNoVariables,
     NoFilterMatches,
     Variables(Vec<VariableWithContext>),
+}
+
+#[cfg(NOVYWAVE_PLATFORM = "WEB")]
+fn apply_scrollbar_colors(
+    raw_el: zoon::RawHtmlEl<web_sys::HtmlElement>,
+) -> zoon::RawHtmlEl<web_sys::HtmlElement> {
+    raw_el.style_signal(
+        "scrollbar-color",
+        primary_6()
+            .map(|thumb| primary_3().map(move |track| format!("{} {}", thumb, track)))
+            .flatten(),
+    )
+}
+
+#[cfg(not(NOVYWAVE_PLATFORM = "WEB"))]
+fn apply_scrollbar_colors(
+    raw_el: zoon::RawHtmlEl<web_sys::HtmlElement>,
+) -> zoon::RawHtmlEl<web_sys::HtmlElement> {
+    raw_el
 }
 
 /// Main variables panel for browsing and searching variables
@@ -151,15 +172,9 @@ pub fn variables_panel_with_fill(
                         files_panel_height_signal(app_config.clone()).map(|h| h as u32),
                     ))
                     .update_raw_el(|raw_el| {
-                        raw_el.style("scrollbar-width", "thin").style_signal(
-                            "scrollbar-color",
-                            primary_6()
-                                .map(|thumb| {
-                                    moonzoon_novyui::tokens::color::primary_3()
-                                        .map(move |track| format!("{} {}", thumb, track))
-                                })
-                                .flatten(),
-                        )
+                        raw_el
+                            .style("scrollbar-width", "thin")
+                            .apply(|raw_el| apply_scrollbar_colors(raw_el))
                     })
                     .child(variables_panel(
                         &tracked_files,
@@ -174,15 +189,9 @@ pub fn variables_panel_with_fill(
                     .s(Width::fill())
                     .s(Height::fill())
                     .update_raw_el(|raw_el| {
-                        raw_el.style("scrollbar-width", "thin").style_signal(
-                            "scrollbar-color",
-                            primary_6()
-                                .map(|thumb| {
-                                    moonzoon_novyui::tokens::color::primary_3()
-                                        .map(move |track| format!("{} {}", thumb, track))
-                                })
-                                .flatten(),
-                        )
+                        raw_el
+                            .style("scrollbar-width", "thin")
+                            .apply(|raw_el| apply_scrollbar_colors(raw_el))
                     })
                     .child(variables_panel(
                         &tracked_files,

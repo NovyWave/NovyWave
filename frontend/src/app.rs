@@ -105,6 +105,26 @@ fn stop_key_repeat(handles: &Rc<RefCell<HashMap<KeyAction, Interval>>>, action: 
     handles.borrow_mut().remove(&action);
 }
 
+#[cfg(NOVYWAVE_PLATFORM = "WEB")]
+fn apply_scrollbar_colors(
+    raw_el: RawHtmlEl<web_sys::HtmlElement>,
+) -> RawHtmlEl<web_sys::HtmlElement> {
+    use moonzoon_novyui::tokens::color::{primary_3, primary_6};
+    raw_el.style_signal(
+        "scrollbar-color",
+        primary_6()
+            .map(|thumb| primary_3().map(move |track| format!("{} {}", thumb, track)))
+            .flatten(),
+    )
+}
+
+#[cfg(not(NOVYWAVE_PLATFORM = "WEB"))]
+fn apply_scrollbar_colors(
+    raw_el: RawHtmlEl<web_sys::HtmlElement>,
+) -> RawHtmlEl<web_sys::HtmlElement> {
+    raw_el
+}
+
 impl ConnectionMessageActor {
     /// Create ConnectionMessageActor with DownMsg stream from connection
     pub async fn new(
@@ -1585,9 +1605,7 @@ fn workspace_picker_dialog(
     workspace_picker_target: Mutable<Option<String>>,
     workspace_picker_domain: crate::config::FilePickerDomain,
 ) -> impl Element {
-    use moonzoon_novyui::tokens::color::{
-        neutral_1, neutral_2, neutral_4, neutral_8, neutral_11, primary_3, primary_6,
-    };
+    use moonzoon_novyui::tokens::color::{neutral_1, neutral_2, neutral_4, neutral_8, neutral_11};
     use moonzoon_novyui::tokens::theme::{Theme, theme};
 
     // Do not snapshot default path here; read it on demand so filtering reflects
@@ -2135,16 +2153,7 @@ fn workspace_picker_dialog(
                                             .style("overflow-x", "hidden")
                                             .style("overflow-y", "auto")
                                             .style("scrollbar-width", "thin")
-                                            .style_signal(
-                                                "scrollbar-color",
-                                                primary_6()
-                                                    .map(|thumb| {
-                                                        primary_3().map(move |track| {
-                                                            format!("{} {}", thumb, track)
-                                                        })
-                                                    })
-                                                    .flatten(),
-                                            )
+                                            .apply(|raw_el| apply_scrollbar_colors(raw_el))
                                     }
                                 })
                                 .after_insert({

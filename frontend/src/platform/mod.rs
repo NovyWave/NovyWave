@@ -29,7 +29,10 @@ pub use web::{
 #[cfg(NOVYWAVE_PLATFORM = "TAURI")]
 pub mod tauri;
 #[cfg(NOVYWAVE_PLATFORM = "TAURI")]
-pub use tauri::{TauriPlatform as CurrentPlatform, notify_server_alive, server_ready_signal};
+pub use tauri::{
+    TauriPlatform as CurrentPlatform, notify_server_alive, server_is_ready, server_ready_signal,
+    set_platform_connection,
+};
 
 // Fallback to web platform if no platform specified
 #[cfg(not(any(NOVYWAVE_PLATFORM = "WEB", NOVYWAVE_PLATFORM = "TAURI")))]

@@ -1,6 +1,6 @@
-use moonzoon_novyui::tokens::color::{
-    neutral_2, neutral_4, neutral_11, primary_3, primary_6, primary_7,
-};
+use moonzoon_novyui::tokens::color::{neutral_2, neutral_4, neutral_11, primary_7};
+#[cfg(NOVYWAVE_PLATFORM = "WEB")]
+use moonzoon_novyui::tokens::color::{primary_3, primary_6};
 use moonzoon_novyui::*;
 use zoon::*;
 use zoon::{PointerEvent, RawPointerEvent};
@@ -44,19 +44,30 @@ pub fn create_panel(header_content: impl Element, content: impl Element) -> impl
                                 .style("scrollbar-width", "thin")
                                 .style("overflow-x", "auto")
                                 .style("min-height", "0")
-                                .style_signal(
-                                    "scrollbar-color",
-                                    primary_6()
-                                        .map(|thumb| {
-                                            primary_3()
-                                                .map(move |track| format!("{} {}", thumb, track))
-                                        })
-                                        .flatten(),
-                                )
+                                .apply(|raw_el| apply_scrollbar_colors(raw_el))
                         })
                         .child(content),
                 ),
         )
+}
+
+#[cfg(NOVYWAVE_PLATFORM = "WEB")]
+fn apply_scrollbar_colors(
+    raw_el: zoon::RawHtmlEl<web_sys::HtmlElement>,
+) -> zoon::RawHtmlEl<web_sys::HtmlElement> {
+    raw_el.style_signal(
+        "scrollbar-color",
+        primary_6()
+            .map(|thumb| primary_3().map(move |track| format!("{} {}", thumb, track)))
+            .flatten(),
+    )
+}
+
+#[cfg(not(NOVYWAVE_PLATFORM = "WEB"))]
+fn apply_scrollbar_colors(
+    raw_el: zoon::RawHtmlEl<web_sys::HtmlElement>,
+) -> zoon::RawHtmlEl<web_sys::HtmlElement> {
+    raw_el
 }
 
 /// Vertical divider for variables name column

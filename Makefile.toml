@@ -123,10 +123,28 @@ cd src-tauri && cargo tauri dev --config tauri.dev.conf.json >> ../dev_tauri.log
 
 [tasks.tauri-build]
 description = "Build Tauri desktop app with embedded backend"
-dependencies = ["install", "install_tauri_cli", "build"]
+dependencies = ["install", "install_tauri_cli", "build-tauri"]
 cwd = "src-tauri"
 command = "cargo"
 args = ["tauri", "build"]
+
+[tasks.tauri-build-debug]
+description = "Build Tauri desktop app in debug profile (AppImage only, devtools on)"
+dependencies = ["install", "install_tauri_cli"]
+env = { NOVYWAVE_PLATFORM = "TAURI" }
+script = '''
+# Build frontend for TAURI in debug (no -r) to keep devtools and symbols
+NOVYWAVE_PLATFORM=TAURI ./mzoon/bin/mzoon build -f
+
+# Bundle debug Tauri app; limit to appimage to speed things up
+cd src-tauri && NOVYWAVE_PLATFORM=TAURI cargo tauri build --debug --bundles appimage --config tauri.conf.json
+'''
+
+[tasks.run-tauri-debug-appimage]
+description = "Run debug AppImage with verbose logs and devtools"
+script = '''
+TAURI_LOG_LEVEL=debug RUST_LOG=debug target/debug/bundle/appimage/NovyWave_0.1.0_amd64.AppImage
+'''
 
 [tasks.tauri-dev-standalone]
 description = "Start Tauri with external backend (for debugging)"

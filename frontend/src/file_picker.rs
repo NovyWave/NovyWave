@@ -3,8 +3,10 @@ use crate::file_operations::extract_filename;
 use futures::StreamExt;
 use indexmap::IndexSet;
 use moonzoon_novyui::tokens::color::{
-    neutral_1, neutral_2, neutral_4, neutral_8, neutral_11, neutral_12, primary_3, primary_6,
+    neutral_1, neutral_2, neutral_4, neutral_8, neutral_11, neutral_12,
 };
+#[cfg(NOVYWAVE_PLATFORM = "WEB")]
+use moonzoon_novyui::tokens::color::{primary_3, primary_6};
 use moonzoon_novyui::tokens::theme::Theme;
 use moonzoon_novyui::*;
 use shared::FileSystemItem;
@@ -27,6 +29,25 @@ pub struct TreeViewSyncActors {
 pub struct SelectedFilesSyncActors {
     _domain_to_treeview_sync: Actor<()>,
     _treeview_to_domain_sync: Actor<()>,
+}
+
+#[cfg(NOVYWAVE_PLATFORM = "WEB")]
+fn apply_scrollbar_colors(
+    raw_el: zoon::RawHtmlEl<web_sys::HtmlElement>,
+) -> zoon::RawHtmlEl<web_sys::HtmlElement> {
+    raw_el.style_signal(
+        "scrollbar-color",
+        primary_6()
+            .map(|thumb| primary_3().map(move |track| format!("{} {}", thumb, track)))
+            .flatten(),
+    )
+}
+
+#[cfg(not(NOVYWAVE_PLATFORM = "WEB"))]
+fn apply_scrollbar_colors(
+    raw_el: zoon::RawHtmlEl<web_sys::HtmlElement>,
+) -> zoon::RawHtmlEl<web_sys::HtmlElement> {
+    raw_el
 }
 
 impl TreeViewSyncActors {
@@ -646,12 +667,7 @@ pub fn file_picker_content(
             raw_el
                 .style("min-height", "0") // Allow flex shrinking
                 .style("scrollbar-width", "thin")
-                .style_signal(
-                    "scrollbar-color",
-                    primary_6()
-                        .map(|thumb| primary_3().map(move |track| format!("{} {}", thumb, track)))
-                        .flatten(),
-                )
+                .apply(|raw_el| apply_scrollbar_colors(raw_el))
         })
         .child(file_picker_tree(
             &app_config,
@@ -681,12 +697,7 @@ pub fn file_picker_tree(
                 .style("min-width", "fit-content")
                 .style("width", "100%")
                 .style("scrollbar-width", "thin")
-                .style_signal(
-                    "scrollbar-color",
-                    primary_6()
-                        .map(|thumb| primary_3().map(move |track| format!("{} {}", thumb, track)))
-                        .flatten(),
-                )
+                .apply(|raw_el| apply_scrollbar_colors(raw_el))
         })
         .child_signal({
             let initialization_actor_for_closure = initialization_actor.clone();

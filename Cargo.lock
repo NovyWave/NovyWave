@@ -6593,6 +6593,8 @@ version = "0.2.0"
 source = "git+https://github.com/nanoqsh/tauri-wasm#32f6cc1f90004d0d64816b2d903bf095954f1de6"
 dependencies = [
  "js-sys",
+ "serde",
+ "serde-wasm-bindgen",
  "wasm-bindgen",
  "wasm-bindgen-futures",
 ]

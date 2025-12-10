@@ -202,11 +202,58 @@ pub fn main_layout(
 }
 
 pub fn main() {
+    // Tauri builds don't include the devserver's ReconnectingEventSource helper.
+    // Provide a minimal shim so zoon's Connection can initialize without crashing.
+    ensure_reconnecting_event_source();
+
     Task::start(async {
         let app = crate::app::NovyWaveApp::new().await;
         let root_element = app.root();
         start_app("app", move || root_element);
     });
+}
+
+#[cfg(not(NOVYWAVE_PLATFORM = "TAURI"))]
+#[wasm_bindgen::prelude::wasm_bindgen(inline_js = r#"
+export function ensure_reconnecting_event_source() {
+  if (typeof window === 'undefined') return;
+  if (typeof window.ReconnectingEventSource !== 'undefined') return;
+  if (typeof window.EventSource !== 'undefined') {
+    window.ReconnectingEventSource = window.EventSource;
+    return;
+  }
+  // Fallback stub: won't stream events but prevents init crash.
+  window.ReconnectingEventSource = function(url) {
+    console.warn('ReconnectingEventSource stub: EventSource not available', url);
+    this.url = url;
+    this.close = function() {};
+    this.addEventListener = function() {};
+    this.removeEventListener = function() {};
+    this.dispatchEvent = function() { return true; };
+  };
+}
+"#)]
+extern "C" {
+    fn ensure_reconnecting_event_source();
+}
+
+#[cfg(NOVYWAVE_PLATFORM = "TAURI")]
+#[wasm_bindgen::prelude::wasm_bindgen(inline_js = r#"
+export function ensure_reconnecting_event_source() {
+  if (typeof window === 'undefined') return;
+  // Force a no-op stub to avoid EventSource network errors in desktop builds.
+  window.ReconnectingEventSource = function(_url) {
+    this.url = _url;
+    this.close = function() {};
+    this.addEventListener = function() {};
+    this.removeEventListener = function() {};
+    this.dispatchEvent = function() { return true; };
+  };
+  window.EventSource = window.ReconnectingEventSource;
+}
+"#)]
+extern "C" {
+    fn ensure_reconnecting_event_source();
 }
 
 // Rebuild trigger
