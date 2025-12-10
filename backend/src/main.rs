@@ -13,8 +13,8 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
-use tokio::time::{Duration, sleep};
 use std::time::Instant;
+use tokio::time::{Duration, sleep};
 
 // ===== CENTRALIZED DEBUG FLAGS =====
 const DEBUG_BACKEND: bool = false; // Backend request/response debugging
@@ -865,7 +865,9 @@ async fn up_msg_handler(req: UpMsgRequest<UpMsg>) {
             debug_log!(
                 DEBUG_BACKEND,
                 "🛰️ BACKEND: UnifiedSignalQuery len={} cursor={:?} id={}",
-                signal_requests.len(), cursor_time_ns, request_id
+                signal_requests.len(),
+                cursor_time_ns,
+                request_id
             );
             // Handle unified signal query using the new cache manager
             debug_log!(
@@ -1668,34 +1670,33 @@ async fn parse_waveform_file(
             };
 
             // Get time bounds from parsed body
-            let (min_seconds, max_seconds) =
-                if let (Some(&min_time), Some(&max_time)) = (
-                    body_result.time_table.first(),
-                    body_result.time_table.last(),
-                ) {
-                    let min_seconds = min_time as f64 * timescale_factor;
-                    let max_seconds = max_time as f64 * timescale_factor;
-                    debug_log!(
-                        DEBUG_PARSE,
-                        "🔍 GHW time bounds: raw_min={} raw_max={} seconds_min={:.6} seconds_max={:.6}",
-                        min_time,
-                        max_time,
-                        min_seconds,
-                        max_seconds
-                    );
-                    (min_seconds, max_seconds)
-                } else {
-                    send_down_msg(
-                        DownMsg::ParsingError {
-                            file_id: file_path.clone(),
-                            error: "GHW file has no time data".to_string(),
-                        },
-                        session_id,
-                        cor_id,
-                    )
-                    .await;
-                    return;
-                };
+            let (min_seconds, max_seconds) = if let (Some(&min_time), Some(&max_time)) = (
+                body_result.time_table.first(),
+                body_result.time_table.last(),
+            ) {
+                let min_seconds = min_time as f64 * timescale_factor;
+                let max_seconds = max_time as f64 * timescale_factor;
+                debug_log!(
+                    DEBUG_PARSE,
+                    "🔍 GHW time bounds: raw_min={} raw_max={} seconds_min={:.6} seconds_max={:.6}",
+                    min_time,
+                    max_time,
+                    min_seconds,
+                    max_seconds
+                );
+                (min_seconds, max_seconds)
+            } else {
+                send_down_msg(
+                    DownMsg::ParsingError {
+                        file_id: file_path.clone(),
+                        error: "GHW file has no time data".to_string(),
+                    },
+                    session_id,
+                    cor_id,
+                )
+                .await;
+                return;
+            };
 
             // Convert to nanoseconds
             let (min_time_ns, max_time_ns) = (
@@ -1728,8 +1729,14 @@ async fn parse_waveform_file(
                     Err(e) => {
                         let error_msg =
                             format!("Internal error: Failed to store GHW metadata - {}", e);
-                        send_parsing_error(file_id.clone(), filename, error_msg, session_id, cor_id)
-                            .await;
+                        send_parsing_error(
+                            file_id.clone(),
+                            filename,
+                            error_msg,
+                            session_id,
+                            cor_id,
+                        )
+                        .await;
                         return;
                     }
                 }
@@ -2936,7 +2943,11 @@ fn cleanup_parsing_session(file_id: &str) {
 }
 
 async fn browse_directory(dir_path: String, session_id: SessionId, cor_id: CorId) {
-    debug_log!(DEBUG_BACKEND, "🔍 BACKEND: browse_directory called for path: {}", dir_path);
+    debug_log!(
+        DEBUG_BACKEND,
+        "🔍 BACKEND: browse_directory called for path: {}",
+        dir_path
+    );
 
     // Handle Windows multi-root scenario - enumerate drives when browsing "/"
     #[cfg(windows)]
@@ -3243,7 +3254,9 @@ async fn scan_directory_async(
                         // Only include directories and waveform files for cleaner file dialog
                         let is_waveform = if !is_directory {
                             let name_lower = name.to_lowercase();
-                            name_lower.ends_with(".vcd") || name_lower.ends_with(".fst") || name_lower.ends_with(".ghw")
+                            name_lower.ends_with(".vcd")
+                                || name_lower.ends_with(".fst")
+                                || name_lower.ends_with(".ghw")
                         } else {
                             false
                         };

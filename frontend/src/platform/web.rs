@@ -41,7 +41,9 @@ pub fn set_platform_connection(connection: Arc<SendWrapper<zoon::Connection<UpMs
 }
 
 /// Expose a read-only signal indicating whether the backend API appears ready
-pub fn server_ready_signal() -> impl zoon::Signal<Item = bool> { SERVER_READY.signal() }
+pub fn server_ready_signal() -> impl zoon::Signal<Item = bool> {
+    SERVER_READY.signal()
+}
 
 /// Mark the server as alive/ready when any DownMsg is received
 pub fn notify_server_alive() {
@@ -55,7 +57,9 @@ pub fn notify_server_alive() {
 }
 
 /// Cheap readiness check for places that must avoid non-critical posts during boot
-pub fn server_is_ready() -> bool { SERVER_ALIVE.get() }
+pub fn server_is_ready() -> bool {
+    SERVER_ALIVE.get()
+}
 
 // removed explicit wait_until_handler_ready; rely on DownMsg to flip readiness
 
@@ -70,7 +74,10 @@ impl Platform for WebPlatform {
 
                 // Suppress non-critical posts until we see the first DownMsg
                 // to avoid ERR_EMPTY_RESPONSE during handler startup.
-                let is_critical = matches!(msg, UpMsg::LoadConfig | UpMsg::SelectWorkspace { .. } | UpMsg::LoadWaveformFile(_));
+                let is_critical = matches!(
+                    msg,
+                    UpMsg::LoadConfig | UpMsg::SelectWorkspace { .. } | UpMsg::LoadWaveformFile(_)
+                );
                 if !SERVER_ALIVE.get() && !is_critical {
                     return Ok(());
                 }
@@ -95,7 +102,9 @@ impl Platform for WebPlatform {
 }
 
 #[allow(dead_code)]
-async fn wait_until_server_ready() -> bool { true }
+async fn wait_until_server_ready() -> bool {
+    true
+}
 
 #[allow(dead_code)]
 fn enqueue_critical(msg: UpMsg) {
@@ -137,7 +146,9 @@ fn ensure_flusher() {
                 if let Some(connection) = (&*CONNECTION).get_cloned() {
                     let is_load_config = matches!(next_msg, UpMsg::LoadConfig);
                     let _ = connection.send_up_msg(next_msg).await;
-                    if is_load_config { LOADCONFIG_INFLIGHT.set(false); }
+                    if is_load_config {
+                        LOADCONFIG_INFLIGHT.set(false);
+                    }
                 }
                 Timer::sleep(200).await; // avoid stampede
             }

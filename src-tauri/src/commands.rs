@@ -20,8 +20,8 @@ const GLOBAL_HISTORY_FILENAME: &str = ".novywave_global";
 /// 2. Global: {platform_config_dir}/novywave/config.toml
 fn get_config_path() -> Result<(PathBuf, bool), String> {
     // Check for per-project config in current working directory
-    let cwd = std::env::current_dir()
-        .map_err(|e| format!("Failed to get current directory: {}", e))?;
+    let cwd =
+        std::env::current_dir().map_err(|e| format!("Failed to get current directory: {}", e))?;
     let per_project_path = cwd.join(PER_PROJECT_CONFIG_FILENAME);
 
     if per_project_path.exists() {
@@ -50,7 +50,10 @@ pub async fn load_config() -> Result<String, String> {
 
     // Log which config is being used
     if is_per_project {
-        println!("📁 Loading per-project config from: {}", config_path.display());
+        println!(
+            "📁 Loading per-project config from: {}",
+            config_path.display()
+        );
     } else {
         println!("🌐 Loading global config from: {}", config_path.display());
     }
@@ -173,10 +176,7 @@ pub async fn save_workspace_history(history_json: String) -> Result<(), String> 
 
     let history_path = get_global_history_path()?;
 
-    println!(
-        "💾 Saving workspace history to: {}",
-        history_path.display()
-    );
+    println!("💾 Saving workspace history to: {}", history_path.display());
 
     // Create config directory if it doesn't exist
     if let Some(parent) = history_path.parent() {

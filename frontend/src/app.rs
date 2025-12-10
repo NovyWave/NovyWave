@@ -158,10 +158,7 @@ impl ConnectionMessageActor {
                                 // Trace to dev_server.log to aid validation
                                 emit_trace(
                                     "workspace_loaded_event",
-                                    format!(
-                                        "root={} default_root={}",
-                                        root, default_root
-                                    ),
+                                    format!("root={} default_root={}", root, default_root),
                                 );
                                 workspace_loaded_relay_clone.send(WorkspaceLoadedEvent {
                                     root,
@@ -427,8 +424,9 @@ impl NovyWaveApp {
                     default_workspace_path.set(Some(event.default_root.clone()));
                     // Always clear file list and selection when a workspace is confirmed.
                     tracked_files_on_workspace.all_files_cleared_relay.send(());
-                    selected_variables_on_workspace.selection_cleared_relay.send(());
-
+                    selected_variables_on_workspace
+                        .selection_cleared_relay
+                        .send(());
                 }
             })
         };
@@ -1415,9 +1413,13 @@ impl NovyWaveApp {
             app_config.mark_workspace_switching();
             async move {
                 // Keep it simple: send once; on error, one fallback after a brief wait.
-                let first = <crate::platform::CurrentPlatform as crate::platform::Platform>::send_message(
-                    shared::UpMsg::SelectWorkspace { root: request_path.clone() }
-                ).await;
+                let first =
+                    <crate::platform::CurrentPlatform as crate::platform::Platform>::send_message(
+                        shared::UpMsg::SelectWorkspace {
+                            root: request_path.clone(),
+                        },
+                    )
+                    .await;
                 if first.is_err() {
                     zoon::Timer::sleep(500).await;
                     let second = <crate::platform::CurrentPlatform as crate::platform::Platform>::send_message(
@@ -2323,7 +2325,10 @@ fn workspace_picker_tree(
                             let mut stream = external_for_persist.signal_cloned().to_stream();
                             while let Some(set) = stream.next().await {
                                 let vec = set.iter().cloned().collect::<Vec<String>>();
-                                if is_first { is_first = false; continue; }
+                                if is_first {
+                                    is_first = false;
+                                    continue;
+                                }
                                 // Only persist global picker expanded paths; scroll is updated by the scroll actor
                                 config_for_persist.update_workspace_picker_tree_state(vec.clone());
                             }

@@ -1,2 +1,6 @@
 [build]
 rustflags = ["--cfg=web_sys_unstable_apis"]
+
+[profile.release]
+# Keep custom symbols like __TAURI_BUNDLE_TYPE so the bundler can patch binaries.
+strip = "none"

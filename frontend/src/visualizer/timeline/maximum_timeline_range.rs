@@ -6,7 +6,9 @@
 use super::time_domain::TimePs;
 use crate::dataflow::Actor;
 use futures::{StreamExt, select};
-use shared::{FileFormat, FileState, SelectedVariable, TrackedFile};
+#[cfg(debug_assertions)]
+use shared::FileFormat;
+use shared::{FileState, SelectedVariable, TrackedFile};
 use std::collections::HashSet;
 use zoon::{SignalExt, SignalVecExt};
 

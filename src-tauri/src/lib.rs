@@ -56,7 +56,10 @@ async fn check_for_updates(app: tauri::AppHandle) {
         Ok(updater) => {
             match updater.check().await {
                 Ok(Some(update)) => {
-                    println!("Update available: {} -> {}", update.current_version, update.version);
+                    println!(
+                        "Update available: {} -> {}",
+                        update.current_version, update.version
+                    );
                     // For now, just log. In the future, prompt user via frontend
                     // update.download_and_install(|_, _| {}, || {}).await.ok();
                 }

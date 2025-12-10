@@ -129,42 +129,32 @@ fn selected_variables_panel_content(
                                 .s(Height::fill())
                                 .s(Width::fill())
                                 .s(Align::new().top())
-                                .item(
-                                    selected_variables_name_column(
-                                        selected_variables.clone(),
-                                        tracked_files.clone(),
-                                        waveform_timeline.clone(),
-                                        name_signal,
-                                    ),
-                                )
-                                .item(
-                                    crate::panel_layout::variables_name_vertical_divider(
-                                        &app_config,
-                                        dragging_system.clone(),
-                                    ),
-                                )
-                                .item(
-                                    selected_variables_value_column(
-                                        selected_variables.clone(),
-                                        waveform_timeline.clone(),
-                                        app_config.clone(),
-                                        value_signal,
-                                    ),
-                                )
-                                .item(
-                                    crate::panel_layout::variables_value_vertical_divider(
-                                        &app_config,
-                                        dragging_system.clone(),
-                                    ),
-                                )
-                                .item(
-                                    selected_variables_wave_column(
-                                        &selected_variables,
-                                        &waveform_timeline,
-                                        &waveform_canvas,
-                                        &app_config,
-                                    ),
-                                )
+                                .item(selected_variables_name_column(
+                                    selected_variables.clone(),
+                                    tracked_files.clone(),
+                                    waveform_timeline.clone(),
+                                    name_signal,
+                                ))
+                                .item(crate::panel_layout::variables_name_vertical_divider(
+                                    &app_config,
+                                    dragging_system.clone(),
+                                ))
+                                .item(selected_variables_value_column(
+                                    selected_variables.clone(),
+                                    waveform_timeline.clone(),
+                                    app_config.clone(),
+                                    value_signal,
+                                ))
+                                .item(crate::panel_layout::variables_value_vertical_divider(
+                                    &app_config,
+                                    dragging_system.clone(),
+                                ))
+                                .item(selected_variables_wave_column(
+                                    &selected_variables,
+                                    &waveform_timeline,
+                                    &waveform_canvas,
+                                    &app_config,
+                                ))
                                 .into_raw_el(),
                         )
                     }

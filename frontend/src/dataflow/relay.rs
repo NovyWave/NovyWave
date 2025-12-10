@@ -5,7 +5,9 @@
 
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 use futures::stream::{FusedStream, Stream};
-use std::sync::{Arc, Mutex, OnceLock};
+#[cfg(debug_assertions)]
+use std::sync::OnceLock;
+use std::sync::{Arc, Mutex};
 
 /// Type-safe event streaming relay for Actor+Relay architecture.
 ///
