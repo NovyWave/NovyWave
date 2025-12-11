@@ -247,9 +247,9 @@ export function ensure_reconnecting_event_source() {
   const origFetch = window.fetch.bind(window);
   window.fetch = (input, init) => {
     try {
-      if (typeof input === 'string' && input.startsWith('/_api')) {
+      if (typeof input === 'string' && input.startsWith('/')) {
         input = ORIGIN + input;
-      } else if (input && input.url && input.url.startsWith && input.url.startsWith('/_api')) {
+      } else if (input && input.url && input.url.startsWith && input.url.startsWith('/')) {
         const cloned = new Request(ORIGIN + input.url, input);
         return origFetch(cloned, init);
       }
@@ -262,8 +262,12 @@ export function ensure_reconnecting_event_source() {
   // Redirect EventSource (and ReconnectingEventSource) to the embedded backend
   const NativeEventSource = window.EventSource;
   const makeES = function(url, opts) {
+    const target =
+      typeof url === 'string' && url.startsWith('/')
+        ? ORIGIN + url
+        : url;
     // Avoid infinite recursion by calling the saved native EventSource
-    return new NativeEventSource(ORIGIN + url, opts);
+    return new NativeEventSource(target, opts);
   };
   window.ReconnectingEventSource = makeES;
   window.EventSource = makeES;
