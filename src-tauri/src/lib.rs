@@ -1,5 +1,17 @@
 mod commands;
 
+use std::{
+    net::TcpListener,
+    path::PathBuf,
+    process::{Child, Command},
+    sync::{Mutex, OnceLock},
+};
+
+use tauri::{Manager, WindowEvent};
+
+// Keep handle to embedded backend so we can terminate it when the app closes.
+static BACKEND_CHILD: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
+
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -31,6 +43,10 @@ pub fn run() {
         .setup(|app| {
             println!("=== Tauri app setup completed ===");
 
+            if let Err(e) = spawn_backend_if_needed(app) {
+                println!("⚠️ Failed to spawn embedded backend: {}", e);
+            }
+
             // Check for updates in background only when configured with a real endpoint & pubkey
             let handle = app.handle();
             if updates_configured(&handle) {
@@ -46,11 +62,78 @@ pub fn run() {
 
             Ok(())
         })
-        .on_window_event(|_window, _event| {
-            // No backend cleanup needed - using external MoonZoon dev server
+        .on_window_event(|_window, event| {
+            if matches!(event, WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed) {
+                stop_backend();
+            }
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+fn spawn_backend_if_needed(app: &tauri::App) -> Result<(), String> {
+    // If port already in use, assume user/dev server is running; skip spawn
+    if TcpListener::bind("127.0.0.1:8080").is_err() {
+        println!("Backend already running on 127.0.0.1:8080, skipping embedded spawn.");
+        return Ok(());
+    }
+
+    // Resolve backend binary from resources or fallback to workspace target
+    let resolver = app.path();
+    let mut candidates: Vec<PathBuf> = vec![];
+
+    if let Ok(dir) = resolver.resource_dir() {
+        // In AppImage/Tauri bundle resources land under:
+        //   {resource_dir}/_up_/target/{profile}/backend
+        candidates.push(dir.join("_up_/target/release/backend"));
+        candidates.push(dir.join("_up_/target/debug/backend"));
+        // Older layout we tried first
+        candidates.push(dir.join("backend"));
+    }
+
+    // Fallbacks for dev runs (not packaged)
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(parent) = current_exe.parent() {
+            // target/{profile}/novywave -> add sibling backend
+            candidates.push(parent.join("../backend"));
+            candidates.push(parent.join("../../backend"));
+            // AppImage style: ../lib/NovyWave/_up_/target/{profile}/backend
+            candidates.push(parent.join("../lib/NovyWave/_up_/target/release/backend"));
+            candidates.push(parent.join("../lib/NovyWave/_up_/target/debug/backend"));
+        }
+    }
+
+    let backend_path = candidates
+        .into_iter()
+        .find(|p| p.exists())
+        .ok_or("backend binary not found in resources or target paths".to_string())?;
+
+    println!("Starting embedded backend from: {}", backend_path.display());
+
+    // Prefer running from the `_up_` root so the bundled `public/` assets are found.
+    let mut command = Command::new(&backend_path);
+    if let Some(up_root) = backend_path
+        .ancestors()
+        .find(|p| p.file_name().map(|n| n == "_up_").unwrap_or(false))
+    {
+        command.current_dir(up_root);
+    } else if let Ok(dir) = resolver.resource_dir() {
+        command.current_dir(dir);
+    } else if let Some(parent) = backend_path.parent() {
+        command.current_dir(parent);
+    }
+
+    let child = command
+        .spawn()
+        .map_err(|e| format!("failed to spawn backend: {}", e))?;
+
+    // Stash handle for clean shutdown
+    let cell = BACKEND_CHILD.get_or_init(|| Mutex::new(None));
+    if let Ok(mut slot) = cell.lock() {
+        *slot = Some(child);
+    }
+
+    Ok(())
 }
 
 fn updates_configured(app: &tauri::AppHandle) -> bool {
@@ -102,6 +185,17 @@ async fn check_for_updates(app: tauri::AppHandle) {
         }
         Err(e) => {
             println!("Updater not available: {}", e);
+        }
+    }
+}
+
+fn stop_backend() {
+    if let Some(cell) = BACKEND_CHILD.get() {
+        if let Ok(mut slot) = cell.lock() {
+            if let Some(mut child) = slot.take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
         }
     }
 }

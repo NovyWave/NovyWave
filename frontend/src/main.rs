@@ -241,15 +241,32 @@ extern "C" {
 #[wasm_bindgen::prelude::wasm_bindgen(inline_js = r#"
 export function ensure_reconnecting_event_source() {
   if (typeof window === 'undefined') return;
-  // Force a no-op stub to avoid EventSource network errors in desktop builds.
-  window.ReconnectingEventSource = function(_url) {
-    this.url = _url;
-    this.close = function() {};
-    this.addEventListener = function() {};
-    this.removeEventListener = function() {};
-    this.dispatchEvent = function() { return true; };
+  const ORIGIN = 'http://127.0.0.1:8080';
+
+  // Patch fetch to hit the embedded backend instead of tauri://localhost
+  const origFetch = window.fetch.bind(window);
+  window.fetch = (input, init) => {
+    try {
+      if (typeof input === 'string' && input.startsWith('/_api')) {
+        input = ORIGIN + input;
+      } else if (input && input.url && input.url.startsWith && input.url.startsWith('/_api')) {
+        const cloned = new Request(ORIGIN + input.url, input);
+        return origFetch(cloned, init);
+      }
+    } catch (_e) {
+      // fall through to original fetch
+    }
+    return origFetch(input, init);
   };
-  window.EventSource = window.ReconnectingEventSource;
+
+  // Redirect EventSource (and ReconnectingEventSource) to the embedded backend
+  const NativeEventSource = window.EventSource;
+  const makeES = function(url, opts) {
+    // Avoid infinite recursion by calling the saved native EventSource
+    return new NativeEventSource(ORIGIN + url, opts);
+  };
+  window.ReconnectingEventSource = makeES;
+  window.EventSource = makeES;
 }
 "#)]
 extern "C" {
