@@ -41,6 +41,13 @@ jobs:
             .
             src-tauri
 
+      - name: Create MoonZoon build directories
+        run: |
+          # MoonZoon expects these directories to exist for build ID tracking
+          # They are gitignored so don't exist in fresh CI checkout
+          mkdir -p backend/private
+          mkdir -p frontend_dist/_api/pkg
+
       - name: Build Tauri app (same as local)
         run: makers tauri-build
 
