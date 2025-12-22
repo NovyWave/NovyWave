@@ -8,14 +8,7 @@
   },
   "app": {
     "withGlobalTauri": true,
-    "windows": [
-      {
-        "title": "NovyWave",
-        "width": 800,
-        "height": 600,
-        "devtools": true
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
     }
@@ -26,7 +19,11 @@
   "resources": [
     "../target/release/backend",
     "../target/debug/backend",
-    "../public"
+    "../public",
+    "../frontend_dist",
+    "../frontend/pkg",
+    "../_api",
+    "../plugins/dist"
   ],
     "icon": [
       "icons/32x32.png",

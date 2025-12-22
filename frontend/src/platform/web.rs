@@ -65,10 +65,12 @@ pub fn server_is_ready() -> bool {
 
 impl Platform for WebPlatform {
     async fn send_message(msg: UpMsg) -> Result<(), String> {
+        zoon::println!("platform(web): send_message {:?}", msg);
         match (&*CONNECTION).get_cloned() {
             Some(connection) => {
                 if matches!(msg, UpMsg::LoadConfig) {
                     let _ = connection.send_up_msg(UpMsg::LoadConfig).await;
+                    zoon::println!("platform(web): sent LoadConfig");
                     return Ok(());
                 }
 
@@ -79,14 +81,19 @@ impl Platform for WebPlatform {
                     UpMsg::LoadConfig | UpMsg::SelectWorkspace { .. } | UpMsg::LoadWaveformFile(_)
                 );
                 if !SERVER_ALIVE.get() && !is_critical {
+                    zoon::println!("platform(web): suppressing {:?}, server not alive", msg);
                     return Ok(());
                 }
 
-                connection
+                let res = connection
                     .send_up_msg(msg)
                     .await
                     .map(|_| ())
-                    .map_err(|e| format!("{:?}", e))
+                    .map_err(|e| format!("{:?}", e));
+                if res.is_err() {
+                    zoon::println!("platform(web): send_up_msg error {:?}", res);
+                }
+                res
             }
             None => Err("No platform connection available".to_string()),
         }

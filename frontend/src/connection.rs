@@ -47,6 +47,7 @@ impl ConnectionAdapter {
         );
 
         let ready = crate::platform::server_is_ready();
+        zoon::println!("connection: send_up_msg {:?}, critical={}, ready={}", up_msg, is_critical, ready);
         if !ready && !is_critical {
             return;
         }

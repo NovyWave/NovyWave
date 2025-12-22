@@ -27,6 +27,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_log::Builder::new().level(log::LevelFilter::Info).build())
         .invoke_handler(tauri::generate_handler![
             greet,
             commands::load_config,
@@ -46,6 +47,22 @@ pub fn run() {
             if let Err(e) = spawn_backend_if_needed(app) {
                 println!("⚠️ Failed to spawn embedded backend: {}", e);
             }
+
+            // Create the main window pointing directly at the embedded backend.
+            let target: tauri::Url = "http://127.0.0.1:8080".parse().unwrap();
+            tauri::WebviewWindowBuilder::new(
+                app,
+                "main".to_string(),
+                tauri::WebviewUrl::External(target),
+            )
+            .title("NovyWave")
+            .inner_size(1200.0, 800.0)
+            .devtools(true)
+            .build()
+            .map_err(|e| {
+                println!("⚠️ Failed to create main window: {e}");
+                e
+            })?;
 
             // Check for updates in background only when configured with a real endpoint & pubkey
             let handle = app.handle();
@@ -112,15 +129,59 @@ fn spawn_backend_if_needed(app: &tauri::App) -> Result<(), String> {
 
     // Prefer running from the `_up_` root so the bundled `public/` assets are found.
     let mut command = Command::new(&backend_path);
-    if let Some(up_root) = backend_path
+    let mut up_root_opt = backend_path
         .ancestors()
         .find(|p| p.file_name().map(|n| n == "_up_").unwrap_or(false))
-    {
+        .map(|p| p.to_path_buf());
+    if up_root_opt.is_none() {
+        if let Ok(dir) = resolver.resource_dir() {
+            up_root_opt = Some(dir);
+        }
+    }
+    if up_root_opt.is_none() {
+        up_root_opt = backend_path.parent().map(|p| p.to_path_buf());
+    }
+    if let Some(up_root) = &up_root_opt {
+        let dist_dir = up_root.join("frontend_dist");
         command.current_dir(up_root);
-    } else if let Ok(dir) = resolver.resource_dir() {
-        command.current_dir(dir);
-    } else if let Some(parent) = backend_path.parent() {
-        command.current_dir(parent);
+        command.env("FRONTEND_DIST_DIR", dist_dir);
+    }
+    if let Some(cwd) = command.get_current_dir() {
+        println!("spawn backend cwd {}", cwd.display());
+    }
+    let env_snapshot: Vec<(std::ffi::OsString, Option<std::ffi::OsString>)> = command
+        .get_envs()
+        .map(|(k, v)| (k.to_os_string(), v.map(|s| s.to_os_string())))
+        .collect();
+    let dist_env = env_snapshot
+        .iter()
+        .find(|(k, _)| k == "FRONTEND_DIST_DIR")
+        .and_then(|(_, v)| v.clone());
+    let compressed_env = env_snapshot
+        .iter()
+        .find(|(k, _)| k == "COMPRESSED_PKG")
+        .and_then(|(_, v)| v.clone());
+
+    println!(
+        "spawn backend env FRONTEND_DIST_DIR={:?} COMPRESSED_PKG={:?}",
+        dist_env, compressed_env
+    );
+
+    let dist_env = {
+        let env_snapshot: Vec<(std::ffi::OsString, Option<std::ffi::OsString>)> = command
+            .get_envs()
+            .map(|(k, v)| (k.to_os_string(), v.map(|s| s.to_os_string())))
+            .collect();
+        env_snapshot
+            .iter()
+            .find(|(k, _)| k == "FRONTEND_DIST_DIR")
+            .and_then(|(_, v)| v.clone())
+    };
+    // Force backend to serve uncompressed pkg and built frontend_dist for desktop bundle.
+    command.env("COMPRESSED_PKG", "false");
+    command.env("FRONTEND_DIST", "true");
+    if let Some(dist) = dist_env.clone() {
+        command.env("MOON_ASSETS_DIR", dist);
     }
 
     let child = command

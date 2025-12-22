@@ -241,36 +241,73 @@ extern "C" {
 #[wasm_bindgen::prelude::wasm_bindgen(inline_js = r#"
 export function ensure_reconnecting_event_source() {
   if (typeof window === 'undefined') return;
+  if (typeof window.EventSource === 'undefined') return;
+
   const ORIGIN = 'http://127.0.0.1:8080';
 
-  // Patch fetch to hit the embedded backend instead of tauri://localhost
-  const origFetch = window.fetch.bind(window);
-  window.fetch = (input, init) => {
+  const rewriteApi = (urlStr) => {
     try {
-      if (typeof input === 'string' && input.startsWith('/')) {
-        input = ORIGIN + input;
-      } else if (input && input.url && input.url.startsWith && input.url.startsWith('/')) {
-        const cloned = new Request(ORIGIN + input.url, input);
-        return origFetch(cloned, init);
-      }
+      const url = new URL(urlStr, ORIGIN);
+      const path = url.pathname;
+      const is_api =
+        path.startsWith('/_api/message') ||
+        path.startsWith('/_api/message_sse') ||
+        path.startsWith('/_api/load') ||
+        path.startsWith('/_api/browse');
+      if (!is_api) return urlStr;
+      url.protocol = 'http:';
+      url.host = '127.0.0.1:8080';
+      return url.toString();
     } catch (_e) {
-      // fall through to original fetch
+      return urlStr;
     }
-    return origFetch(input, init);
   };
 
-  // Redirect EventSource (and ReconnectingEventSource) to the embedded backend
-  const NativeEventSource = window.EventSource;
-  const makeES = function(url, opts) {
-    const target =
-      typeof url === 'string' && url.startsWith('/')
-        ? ORIGIN + url
-        : url;
-    // Avoid infinite recursion by calling the saved native EventSource
-    return new NativeEventSource(target, opts);
+  // Log all fetch calls to trace UpMsg POSTs.
+  const origFetch = window.fetch.bind(window);
+  window.fetch = (input, init) => {
+    console.log("[fetch] request", input, init);
+    try {
+      if (typeof input === 'string') {
+        const rewritten = rewriteApi(input);
+        if (rewritten !== input) {
+          input = rewritten;
+          console.log("[fetch] rewritten ->", input);
+        }
+      } else if (input && input.url) {
+        const rewritten = rewriteApi(input.url);
+        if (rewritten !== input.url) {
+          input = new Request(rewritten, input);
+          console.log("[fetch] rewritten Request ->", rewritten);
+        }
+      }
+    } catch (e) {
+      console.log("[fetch] rewrite error", e);
+    }
+    return origFetch(input, init)
+      .then((resp) => {
+        console.log("[fetch] response", resp.url, resp.status);
+        return resp;
+      })
+      .catch((err) => {
+        console.log("[fetch] error", err);
+        throw err;
+      });
   };
-  window.ReconnectingEventSource = makeES;
-  window.EventSource = makeES;
+
+  const NativeEventSource = window.EventSource;
+  window.EventSource = function(url, opts) {
+    const rewritten = rewriteApi(url);
+    console.log("[ES] constructing EventSource", url, "->", rewritten);
+    const es = new NativeEventSource(rewritten, opts);
+    es.addEventListener('open', () => console.log("[ES] open", url));
+    es.addEventListener('error', (e) => console.log("[ES] error", url, e));
+    return es;
+  };
+  window.EventSource.prototype = NativeEventSource.prototype;
+
+  // Provide ReconnectingEventSource symbol (no reconnection logic needed here)
+  window.ReconnectingEventSource = window.EventSource;
 }
 "#)]
 extern "C" {

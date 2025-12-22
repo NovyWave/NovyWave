@@ -17,7 +17,7 @@ use std::time::Instant;
 use tokio::time::{Duration, sleep};
 
 // ===== CENTRALIZED DEBUG FLAGS =====
-const DEBUG_BACKEND: bool = false; // Backend request/response debugging
+const DEBUG_BACKEND: bool = true; // Backend request/response debugging
 const DEBUG_PARSE: bool = false; // File parsing debugging
 const DEBUG_SIGNAL_CACHE: bool = false; // Signal cache hit/miss debugging
 const DEBUG_CURSOR: bool = false; // Cursor value computation debugging
@@ -746,10 +746,9 @@ async fn up_msg_handler(req: UpMsgRequest<UpMsg>) {
     let (session_id, cor_id) = (req.session_id, req.cor_id);
 
     // Log all incoming requests for debugging - with error handling wrapper
-    debug_log!(
-        DEBUG_BACKEND,
-        "🔍 BACKEND: Received request type: {:?}",
-        std::mem::discriminant(&req.up_msg)
+    println!(
+        "🔍 BACKEND: Received {:?} (session={}, cor={})",
+        req.up_msg, session_id, cor_id
     );
 
     match &req.up_msg {
@@ -787,9 +786,11 @@ async fn up_msg_handler(req: UpMsgRequest<UpMsg>) {
             debug_log!(DEBUG_BACKEND, "🛰️ FRONTEND TRACE [{target}]: {message}");
         }
         UpMsg::BrowseDirectory(dir_path) => {
+            debug_log!(DEBUG_BACKEND, "🔍 BACKEND: enqueue BrowseDirectory {}", dir_path);
             browse_directory(dir_path.clone(), session_id, cor_id).await;
         }
         UpMsg::BrowseDirectories(dir_paths) => {
+            debug_log!(DEBUG_BACKEND, "🔍 BACKEND: enqueue BrowseDirectories batch {}", dir_paths.len());
             browse_directories_batch(dir_paths.clone(), session_id, cor_id).await;
         }
         UpMsg::QuerySignalValues { file_path, queries } => {
@@ -2943,6 +2944,7 @@ fn cleanup_parsing_session(file_id: &str) {
 }
 
 async fn browse_directory(dir_path: String, session_id: SessionId, cor_id: CorId) {
+    println!("🗂️ browse_directory request path='{}'", dir_path);
     debug_log!(
         DEBUG_BACKEND,
         "🔍 BACKEND: browse_directory called for path: {}",
@@ -3139,6 +3141,7 @@ async fn browse_directory(dir_path: String, session_id: SessionId, cor_id: CorId
 }
 
 async fn browse_directories_batch(dir_paths: Vec<String>, session_id: SessionId, cor_id: CorId) {
+    println!("🗂️ browse_directories batch {:?} (len={})", dir_paths, dir_paths.len());
     // Use jwalk's parallel processing capabilities for batch directory scanning
     let mut results = HashMap::new();
 
@@ -4571,6 +4574,11 @@ async fn main() -> std::io::Result<()> {
     // Set panic hook to log panics succinctly and throttle duplicates
     static PANIC_THROTTLE: Lazy<Mutex<HashMap<String, Instant>>> =
         Lazy::new(|| Mutex::new(HashMap::new()));
+
+    if let Ok(dir) = std::env::current_dir() {
+        println!("🔍 BACKEND cwd = {}", dir.display());
+    }
+
     std::panic::set_hook(Box::new(|panic_info| {
         let loc_str = if let Some(loc) = panic_info.location() {
             format!("{}:{}", loc.file(), loc.line())

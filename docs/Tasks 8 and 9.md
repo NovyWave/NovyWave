@@ -14,6 +14,8 @@ This task prepares NovyWave for release across Linux, Windows, and macOS by ensu
 
 ## 8b. Finalize bundling, versioning, signing, releasing
 
+WIP
+
 ## 8c. Set up an automated release pipeline with e.g. Woodpecker.
 
 ## 8d. Configure and integrate an auto-updater system
@@ -26,7 +28,11 @@ This task is dedicated to providing thorough documentation, sample projects, and
 
 ## 9a. Polish & launch the beta release for early adopters
 
+WIP
+
 ## 9b. Develop example projects for multiple HDLs
 
 ## 9c. Create comprehensive documentation (user guides, API docs, tutorials, internal notes)
+
+WIP
 

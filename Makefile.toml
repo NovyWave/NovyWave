@@ -135,6 +135,24 @@ env = { NOVYWAVE_PLATFORM = "TAURI" }
 script = '''
 # Build frontend for TAURI in debug (no -r) to keep devtools and symbols
 NOVYWAVE_PLATFORM=TAURI ./mzoon/bin/mzoon build -f
+# Duplicate hashed pkg files to deterministic names for embedded backend lookup
+BUILD_ID_FILE=frontend_dist/_api/pkg/build_id
+if [ -f "$BUILD_ID_FILE" ]; then
+  BUILD_ID=$(cat "$BUILD_ID_FILE")
+  cp "frontend_dist/_api/pkg/frontend_${BUILD_ID}.js" "frontend_dist/_api/pkg/frontend_0.js"
+  cp "frontend_dist/_api/pkg/frontend_bg_${BUILD_ID}.wasm" "frontend_dist/_api/pkg/frontend_bg_0.wasm"
+  mkdir -p frontend/pkg
+  cp "frontend_dist/_api/pkg/frontend_${BUILD_ID}.js" "frontend/pkg/frontend_0.js"
+  cp "frontend_dist/_api/pkg/frontend_bg_${BUILD_ID}.wasm" "frontend/pkg/frontend_bg_0.wasm"
+  # Also copy hashed files with deterministic name the backend looks for
+  cp "frontend_dist/_api/pkg/frontend_${BUILD_ID}.js" "frontend_dist/_api/pkg/frontend.js"
+  cp "frontend_dist/_api/pkg/frontend_bg_${BUILD_ID}.wasm" "frontend_dist/_api/pkg/frontend_bg.wasm"
+
+  # Flatten _api for runtime lookup (/_api/... relative to backend cwd)
+  rm -rf _api
+  mkdir -p _api
+  cp -r frontend_dist/_api/* _api/
+fi
 
 # Bundle debug Tauri app; limit to appimage to speed things up
 cd src-tauri && NOVYWAVE_PLATFORM=TAURI cargo tauri build --debug --bundles appimage --config tauri.conf.json

@@ -193,9 +193,19 @@ impl ConnectionMessageActor {
                                 config_saved_relay_clone.send(());
                             }
                             DownMsg::DirectoryContents { path, items } => {
+                                zoon::println!(
+                                    "frontend: DirectoryContents path='{}' items={}",
+                                    path,
+                                    items.len()
+                                );
                                 directory_contents_relay_clone.send((path, items));
                             }
                             DownMsg::DirectoryError { path, error } => {
+                                zoon::println!(
+                                    "frontend: DirectoryError path='{}' err={}",
+                                    path,
+                                    error
+                                );
                                 directory_error_relay_clone.send((path, error));
                             }
                             DownMsg::FileLoaded { file_id, hierarchy } => {
@@ -910,6 +920,7 @@ impl NovyWaveApp {
         let connection = Connection::new({
             let sender = down_msg_sender; // Move sender explicitly before closure
             move |down_msg, _| {
+                zoon::println!("connection: received DownMsg {:?}", down_msg);
                 // Mark server alive on any DownMsg
                 crate::platform::notify_server_alive();
                 // Log the received message

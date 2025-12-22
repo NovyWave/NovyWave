@@ -441,6 +441,7 @@ impl FilePickerDomain {
                                     for request_path in pending_requests.iter() {
                                         if !current_cache.contains_key(request_path) {
                                             let path_for_request = request_path.clone();
+                                            zoon::println!("frontend: sending BrowseDirectory {path_for_request}");
                                             let _ = connection_clone
                                                 .send_up_msg(shared::UpMsg::BrowseDirectory(path_for_request))
                                                 .await;
@@ -460,6 +461,7 @@ impl FilePickerDomain {
                                 let current_cache = directory_cache_for_sender.signal().to_stream().next().await.unwrap_or_default();
 
                                 if is_ready && !current_cache.contains_key(&dir_path) {
+                                    zoon::println!("frontend: expansion BrowseDirectory {dir_path}");
                                     let _ = connection_clone
                                         .send_up_msg(shared::UpMsg::BrowseDirectory(dir_path))
                                         .await;
@@ -487,6 +489,7 @@ impl FilePickerDomain {
                                     .unwrap_or_default();
                                 for request_path in pending_requests.iter() {
                                     if !current_cache.contains_key(request_path) {
+                                        zoon::println!("frontend: ready flush BrowseDirectory {request_path}");
                                         let _ = connection_clone
                                             .send_up_msg(shared::UpMsg::BrowseDirectory(request_path.clone()))
                                             .await;
