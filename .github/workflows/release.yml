@@ -67,6 +67,12 @@ jobs:
           name: linux-deb
           path: target/release/bundle/deb/*.deb
 
+      - name: Upload RPM
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-rpm
+          path: target/release/bundle/rpm/*.rpm
+
   # TODO: Enable macOS build
   # build-macos:
   #   runs-on: macos-14
@@ -190,10 +196,12 @@ jobs:
             |----------|------|
             | Linux (AppImage) | `NovyWave_${{ steps.version.outputs.version }}_amd64.AppImage` |
             | Linux (Deb) | `novywave_${{ steps.version.outputs.version }}_amd64.deb` |
+            | Linux (RPM) | `novywave-${{ steps.version.outputs.version }}-1.x86_64.rpm` |
           draft: true
           prerelease: false
           files: |
             artifacts/**/*.AppImage
             artifacts/**/*.deb
+            artifacts/**/*.rpm
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
