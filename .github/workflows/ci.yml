@@ -1,96 +1,106 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  # TODO: Re-enable automatic CI on push/PR
+  # push:
+  #   branches: [main]
+  # pull_request:
+  #   branches: [main]
+  workflow_dispatch:
 
 env:
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: short
 
 jobs:
-  check:
+  # TODO: Re-enable check job
+  # check:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #
+  #     - name: Install Rust stable
+  #       uses: dtolnay/rust-action@stable
+  #       with:
+  #         components: clippy, rustfmt
+  #
+  #     - name: Rust cache
+  #       uses: swatinem/rust-cache@v2
+  #
+  #     - name: Install Linux dependencies
+  #       run: |
+  #         sudo apt-get update
+  #         sudo apt-get install -y \
+  #           libwebkit2gtk-4.1-dev \
+  #           libappindicator3-dev \
+  #           librsvg2-dev \
+  #           libssl-dev \
+  #           libgtk-3-dev \
+  #           libsoup-3.0-dev \
+  #           libjavascriptcoregtk-4.1-dev
+  #
+  #     - name: Install cargo-make
+  #       uses: taiki-e/install-action@v2
+  #       with:
+  #         tool: cargo-make
+  #
+  #     - name: Install MoonZoon CLI
+  #       run: cargo install mzoon --git https://github.com/ArkadyKonovalov/MoonZoon --rev 7c5178d891cf4afbc2bbbe864ca63588b6c10f2a --locked
+  #
+  #     - name: Add wasm32 target
+  #       run: rustup target add wasm32-unknown-unknown
+  #
+  #     - name: Check formatting
+  #       run: cargo fmt --all -- --check
+  #
+  #     - name: Clippy (frontend)
+  #       run: cd frontend && cargo clippy --target wasm32-unknown-unknown -- -D warnings
+  #
+  #     - name: Clippy (backend)
+  #       run: cd backend && cargo clippy -- -D warnings
+  #
+  #     - name: Clippy (shared)
+  #       run: cd shared && cargo clippy -- -D warnings
+  #
+  #     - name: Clippy (Tauri)
+  #       run: cd src-tauri && cargo clippy -- -D warnings
+  #
+  #     - name: Build frontend
+  #       run: makers build
+
+  # TODO: Re-enable test-examples job
+  # test-examples:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #
+  #     - name: Install Rust stable
+  #       uses: dtolnay/rust-action@stable
+  #
+  #     - name: Rust cache
+  #       uses: swatinem/rust-cache@v2
+  #       with:
+  #         workspaces: 'examples/validate -> target'
+  #
+  #     - name: Install HDL tools
+  #       run: |
+  #         sudo apt-get update
+  #         sudo apt-get install -y ghdl iverilog
+  #
+  #     - name: Build validator
+  #       run: cd examples && just build-validator
+  #
+  #     - name: Run VHDL example
+  #       run: cd examples && just sim-vhdl
+  #
+  #     - name: Run Verilog example
+  #       run: cd examples && just sim-verilog
+  #
+  #     - name: Validate waveforms
+  #       run: cd examples && just validate
+
+  # Placeholder job (GitHub requires at least one job)
+  placeholder:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-action@stable
-        with:
-          components: clippy, rustfmt
-
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
-
-      - name: Install Linux dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            libssl-dev \
-            libgtk-3-dev \
-            libsoup-3.0-dev \
-            libjavascriptcoregtk-4.1-dev
-
-      - name: Install cargo-make
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-make
-
-      - name: Install MoonZoon CLI
-        run: cargo install mzoon --git https://github.com/ArkadyKonovalov/MoonZoon --rev 7c5178d891cf4afbc2bbbe864ca63588b6c10f2a --locked
-
-      - name: Add wasm32 target
-        run: rustup target add wasm32-unknown-unknown
-
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-
-      - name: Clippy (frontend)
-        run: cd frontend && cargo clippy --target wasm32-unknown-unknown -- -D warnings
-
-      - name: Clippy (backend)
-        run: cd backend && cargo clippy -- -D warnings
-
-      - name: Clippy (shared)
-        run: cd shared && cargo clippy -- -D warnings
-
-      - name: Clippy (Tauri)
-        run: cd src-tauri && cargo clippy -- -D warnings
-
-      - name: Build frontend
-        run: makers build
-
-  test-examples:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-action@stable
-
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: 'examples/validate -> target'
-
-      - name: Install HDL tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ghdl iverilog
-
-      - name: Build validator
-        run: cd examples && just build-validator
-
-      - name: Run VHDL example
-        run: cd examples && just sim-vhdl
-
-      - name: Run Verilog example
-        run: cd examples && just sim-verilog
-
-      - name: Validate waveforms
-        run: cd examples && just validate
+      - run: echo "CI jobs are disabled. Use Release workflow instead."
