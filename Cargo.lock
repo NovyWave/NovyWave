@@ -8205,6 +8205,7 @@ dependencies = [
 [[package]]
 name = "wellen"
 version = "0.16.1"
+source = "git+https://github.com/MartinKavik/wellen?rev=75de70c7e737432feacf91f8e803bfd62dccd39c#75de70c7e737432feacf91f8e803bfd62dccd39c"
 dependencies = [
  "fst-reader",
  "leb128",

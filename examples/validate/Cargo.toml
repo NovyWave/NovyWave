@@ -11,5 +11,5 @@ name = "validate-waveforms"
 path = "src/main.rs"
 
 [dependencies]
-wellen = { path = "/home/martinkavik/repos/wellen/wellen" }
+wellen = { git = "https://github.com/MartinKavik/wellen", rev = "75de70c7e737432feacf91f8e803bfd62dccd39c" }
 colored = "2"
