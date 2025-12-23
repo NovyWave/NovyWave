@@ -1,0 +1,10 @@
+{
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "http://localhost:8888/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQ3ODhBRUEzNDI4QkQ0NzcKUldSMzFJdENvNjZJMXlwRXliTzF0eHQ5cy8vcW1jdm9Ld2tYTndXZElCakpUVkZUVndrblNham8K"
+    }
+  }
+}

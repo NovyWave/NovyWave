@@ -1,0 +1,4 @@
+untrusted comment: signature from rsign secret key
+RUR31ItCo66I160CXiiuUHtes/1Kply/2ytU270oI2tIo8CM56aSiEWbdwQXvsJkf44EbEo1LGMMGFW1UXqz+dfUJWyR2P8xBgg=
+trusted comment: timestamp:1766465973	file:/home/martinkavik/repos/NovyWave/target/release/bundle/appimage/NovyWave_0.1.0_amd64.AppImage	prehashed
+PnkHCIihmp6WhWtip3ZAIfjMW7xFK7hG0U99hZX6JySFl03pivdtAYz9Hd8hs46cz+8IJY6KXOn0S/kM3k5KAw==

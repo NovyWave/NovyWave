@@ -74,47 +74,6 @@ jobs:
           echo "=== RPM ==="
           ls -la target/release/bundle/rpm/ || true
 
-      - name: Generate latest.json for updater
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-
-          # Find the tar.gz file (created by createUpdaterArtifacts)
-          TARBALL_PATH=$(find target/release/bundle/appimage/ -name "*.tar.gz" -type f | head -1)
-
-          if [ -z "$TARBALL_PATH" ]; then
-            echo "Warning: No .tar.gz found - updater artifacts may not be enabled"
-            exit 0
-          fi
-
-          TARBALL=$(basename "$TARBALL_PATH")
-          SIG_PATH="${TARBALL_PATH}.sig"
-
-          if [ ! -f "$SIG_PATH" ]; then
-            echo "Warning: No signature file found at $SIG_PATH"
-            exit 0
-          fi
-
-          # Read the signature
-          SIGNATURE=$(cat "$SIG_PATH")
-
-          # Create latest.json
-          cat > target/release/bundle/latest.json << EOF
-          {
-            "version": "${VERSION}",
-            "notes": "See release notes on GitHub",
-            "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "platforms": {
-              "linux-x86_64": {
-                "url": "https://github.com/NovyWave/NovyWave/releases/download/v${VERSION}/${TARBALL}",
-                "signature": "${SIGNATURE}"
-              }
-            }
-          }
-          EOF
-
-          echo "Generated latest.json:"
-          cat target/release/bundle/latest.json
-
       - name: Upload AppImage
         uses: actions/upload-artifact@v4
         with:
@@ -141,102 +100,184 @@ jobs:
             target/release/bundle/appimage/*.tar.gz
             target/release/bundle/appimage/*.tar.gz.sig
 
-      - name: Upload latest.json
+  build-macos-arm:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,wasm32-unknown-unknown
+
+      - name: Install cargo-make
+        run: cargo install cargo-make
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            src-tauri
+
+      - name: Create MoonZoon build directories
+        run: |
+          mkdir -p backend/private
+          mkdir -p frontend_dist/_api/pkg
+
+      - name: Build Tauri app
+        run: makers tauri-build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: List built artifacts
+        run: |
+          echo "=== Bundle directory ==="
+          ls -la target/release/bundle/ || true
+          echo "=== DMG ==="
+          ls -la target/release/bundle/dmg/ || true
+          echo "=== macOS app ==="
+          ls -la target/release/bundle/macos/ || true
+
+      - name: Upload DMG (ARM)
         uses: actions/upload-artifact@v4
         with:
-          name: latest-json
-          path: target/release/bundle/latest.json
+          name: macos-dmg-arm
+          path: target/release/bundle/dmg/*.dmg
 
-  # TODO: Enable macOS build
-  # build-macos:
-  #   runs-on: macos-14
-  #
-  #   steps:
-  #     - name: Checkout
-  #       uses: actions/checkout@v4
-  #
-  #     - name: Install Rust toolchain
-  #       uses: dtolnay/rust-toolchain@stable
-  #       with:
-  #         targets: aarch64-apple-darwin,x86_64-apple-darwin,wasm32-unknown-unknown
-  #
-  #     - name: Install cargo-make
-  #       run: cargo install cargo-make
-  #
-  #     - name: Rust cache
-  #       uses: Swatinem/rust-cache@v2
-  #       with:
-  #         workspaces: |
-  #           .
-  #           src-tauri
-  #
-  #     - name: Build Tauri app
-  #       run: makers tauri-build
-  #
-  #     - name: List built artifacts
-  #       run: |
-  #         echo "=== Bundle directory ==="
-  #         ls -la target/release/bundle/ || true
-  #         echo "=== DMG ==="
-  #         ls -la target/release/bundle/dmg/ || true
-  #         echo "=== macOS app ==="
-  #         ls -la target/release/bundle/macos/ || true
-  #
-  #     - name: Upload DMG
-  #       uses: actions/upload-artifact@v4
-  #       with:
-  #         name: macos-dmg
-  #         path: target/release/bundle/dmg/*.dmg
+      - name: Upload Updater artifacts (ARM)
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-updater-arm
+          path: |
+            target/release/bundle/macos/*.tar.gz
+            target/release/bundle/macos/*.tar.gz.sig
 
-  # TODO: Enable Windows build
-  # build-windows:
-  #   runs-on: windows-2022
-  #
-  #   steps:
-  #     - name: Checkout
-  #       uses: actions/checkout@v4
-  #
-  #     - name: Install Rust toolchain
-  #       uses: dtolnay/rust-toolchain@stable
-  #       with:
-  #         targets: x86_64-pc-windows-msvc,wasm32-unknown-unknown
-  #
-  #     - name: Install cargo-make
-  #       run: cargo install cargo-make
-  #
-  #     - name: Rust cache
-  #       uses: Swatinem/rust-cache@v2
-  #       with:
-  #         workspaces: |
-  #           .
-  #           src-tauri
-  #
-  #     - name: Build Tauri app
-  #       run: makers tauri-build
-  #
-  #     - name: List built artifacts
-  #       run: |
-  #         echo "=== Bundle directory ==="
-  #         dir target\release\bundle\ 2>nul || echo "No bundle dir"
-  #         echo "=== MSI ==="
-  #         dir target\release\bundle\msi\ 2>nul || echo "No msi dir"
-  #         echo "=== NSIS ==="
-  #         dir target\release\bundle\nsis\ 2>nul || echo "No nsis dir"
-  #
-  #     - name: Upload MSI
-  #       uses: actions/upload-artifact@v4
-  #       with:
-  #         name: windows-msi
-  #         path: target/release/bundle/msi/*.msi
-  #
-  #     - name: Upload NSIS installer
-  #       uses: actions/upload-artifact@v4
-  #       with:
-  #         name: windows-nsis
-  #         path: target/release/bundle/nsis/*.exe
+  build-macos-x64:
+    runs-on: macos-13
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin,wasm32-unknown-unknown
+
+      - name: Install cargo-make
+        run: cargo install cargo-make
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            src-tauri
+
+      - name: Create MoonZoon build directories
+        run: |
+          mkdir -p backend/private
+          mkdir -p frontend_dist/_api/pkg
+
+      - name: Build Tauri app
+        run: makers tauri-build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: List built artifacts
+        run: |
+          echo "=== Bundle directory ==="
+          ls -la target/release/bundle/ || true
+          echo "=== DMG ==="
+          ls -la target/release/bundle/dmg/ || true
+          echo "=== macOS app ==="
+          ls -la target/release/bundle/macos/ || true
+
+      - name: Upload DMG (x64)
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg-x64
+          path: target/release/bundle/dmg/*.dmg
+
+      - name: Upload Updater artifacts (x64)
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-updater-x64
+          path: |
+            target/release/bundle/macos/*.tar.gz
+            target/release/bundle/macos/*.tar.gz.sig
+
+  build-windows:
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc,wasm32-unknown-unknown
+
+      - name: Install cargo-make
+        run: cargo install cargo-make
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            src-tauri
+
+      - name: Create MoonZoon build directories
+        run: |
+          New-Item -ItemType Directory -Force -Path backend\private
+          New-Item -ItemType Directory -Force -Path frontend_dist\_api\pkg
+
+      - name: Build Tauri app
+        run: makers tauri-build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: List built artifacts
+        run: |
+          echo "=== Bundle directory ==="
+          dir target\release\bundle\ 2>nul || echo "No bundle dir"
+          echo "=== MSI ==="
+          dir target\release\bundle\msi\ 2>nul || echo "No msi dir"
+          echo "=== NSIS ==="
+          dir target\release\bundle\nsis\ 2>nul || echo "No nsis dir"
+
+      - name: Upload MSI
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-msi
+          path: target/release/bundle/msi/*.msi
+
+      - name: Upload NSIS installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-nsis
+          path: target/release/bundle/nsis/*.exe
+
+      - name: Upload Updater artifacts (Windows)
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-updater
+          path: |
+            target/release/bundle/msi/*.msi.zip
+            target/release/bundle/msi/*.msi.zip.sig
+            target/release/bundle/nsis/*.nsis.zip
+            target/release/bundle/nsis/*.nsis.zip.sig
 
   create-release:
-    needs: [build-linux]
+    needs: [build-linux, build-macos-arm, build-macos-x64, build-windows]
     runs-on: ubuntu-latest
 
     steps:
@@ -258,6 +299,66 @@ jobs:
             echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
           fi
 
+      - name: Generate unified latest.json for updater
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          PUB_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          # Initialize platforms JSON
+          PLATFORMS="{}"
+
+          # Linux x86_64 (AppImage)
+          LINUX_SIG=$(find artifacts/linux-updater -name "*.tar.gz.sig" -type f | head -1)
+          LINUX_TARBALL=$(find artifacts/linux-updater -name "*.tar.gz" ! -name "*.sig" -type f | head -1)
+          if [ -n "$LINUX_SIG" ] && [ -n "$LINUX_TARBALL" ]; then
+            LINUX_SIG_CONTENT=$(cat "$LINUX_SIG")
+            LINUX_FILENAME=$(basename "$LINUX_TARBALL")
+            PLATFORMS=$(echo "$PLATFORMS" | jq --arg sig "$LINUX_SIG_CONTENT" --arg url "https://github.com/NovyWave/NovyWave/releases/download/v${VERSION}/${LINUX_FILENAME}" '. + {"linux-x86_64": {"signature": $sig, "url": $url}}')
+          fi
+
+          # macOS ARM (aarch64)
+          MACOS_ARM_SIG=$(find artifacts/macos-updater-arm -name "*.tar.gz.sig" -type f 2>/dev/null | head -1)
+          MACOS_ARM_TARBALL=$(find artifacts/macos-updater-arm -name "*.tar.gz" ! -name "*.sig" -type f 2>/dev/null | head -1)
+          if [ -n "$MACOS_ARM_SIG" ] && [ -n "$MACOS_ARM_TARBALL" ]; then
+            MACOS_ARM_SIG_CONTENT=$(cat "$MACOS_ARM_SIG")
+            MACOS_ARM_FILENAME=$(basename "$MACOS_ARM_TARBALL")
+            PLATFORMS=$(echo "$PLATFORMS" | jq --arg sig "$MACOS_ARM_SIG_CONTENT" --arg url "https://github.com/NovyWave/NovyWave/releases/download/v${VERSION}/${MACOS_ARM_FILENAME}" '. + {"darwin-aarch64": {"signature": $sig, "url": $url}}')
+          fi
+
+          # macOS x64
+          MACOS_X64_SIG=$(find artifacts/macos-updater-x64 -name "*.tar.gz.sig" -type f 2>/dev/null | head -1)
+          MACOS_X64_TARBALL=$(find artifacts/macos-updater-x64 -name "*.tar.gz" ! -name "*.sig" -type f 2>/dev/null | head -1)
+          if [ -n "$MACOS_X64_SIG" ] && [ -n "$MACOS_X64_TARBALL" ]; then
+            MACOS_X64_SIG_CONTENT=$(cat "$MACOS_X64_SIG")
+            MACOS_X64_FILENAME=$(basename "$MACOS_X64_TARBALL")
+            PLATFORMS=$(echo "$PLATFORMS" | jq --arg sig "$MACOS_X64_SIG_CONTENT" --arg url "https://github.com/NovyWave/NovyWave/releases/download/v${VERSION}/${MACOS_X64_FILENAME}" '. + {"darwin-x86_64": {"signature": $sig, "url": $url}}')
+          fi
+
+          # Windows x64 (NSIS preferred, fall back to MSI)
+          WINDOWS_SIG=$(find artifacts/windows-updater -name "*.nsis.zip.sig" -type f 2>/dev/null | head -1)
+          WINDOWS_BUNDLE=$(find artifacts/windows-updater -name "*.nsis.zip" ! -name "*.sig" -type f 2>/dev/null | head -1)
+          if [ -z "$WINDOWS_SIG" ]; then
+            WINDOWS_SIG=$(find artifacts/windows-updater -name "*.msi.zip.sig" -type f 2>/dev/null | head -1)
+            WINDOWS_BUNDLE=$(find artifacts/windows-updater -name "*.msi.zip" ! -name "*.sig" -type f 2>/dev/null | head -1)
+          fi
+          if [ -n "$WINDOWS_SIG" ] && [ -n "$WINDOWS_BUNDLE" ]; then
+            WINDOWS_SIG_CONTENT=$(cat "$WINDOWS_SIG")
+            WINDOWS_FILENAME=$(basename "$WINDOWS_BUNDLE")
+            PLATFORMS=$(echo "$PLATFORMS" | jq --arg sig "$WINDOWS_SIG_CONTENT" --arg url "https://github.com/NovyWave/NovyWave/releases/download/v${VERSION}/${WINDOWS_FILENAME}" '. + {"windows-x86_64": {"signature": $sig, "url": $url}}')
+          fi
+
+          # Create unified latest.json
+          jq -n \
+            --arg version "$VERSION" \
+            --arg notes "See release notes on GitHub" \
+            --arg pub_date "$PUB_DATE" \
+            --argjson platforms "$PLATFORMS" \
+            '{version: $version, notes: $notes, pub_date: $pub_date, platforms: $platforms}' \
+            > artifacts/latest.json
+
+          echo "Generated latest.json:"
+          cat artifacts/latest.json
+
       - name: Create or update release
         uses: softprops/action-gh-release@v2
         with:
@@ -268,17 +369,33 @@ jobs:
 
             | Platform | File |
             |----------|------|
-            | Linux (AppImage) | `NovyWave_${{ steps.version.outputs.version }}_amd64.AppImage` |
-            | Linux (Deb) | `novywave_${{ steps.version.outputs.version }}_amd64.deb` |
-            | Linux (RPM) | `novywave-${{ steps.version.outputs.version }}-1.x86_64.rpm` |
+            | **Linux** | |
+            | AppImage | `NovyWave_${{ steps.version.outputs.version }}_amd64.AppImage` |
+            | Debian/Ubuntu | `novywave_${{ steps.version.outputs.version }}_amd64.deb` |
+            | Fedora/RHEL | `novywave-${{ steps.version.outputs.version }}-1.x86_64.rpm` |
+            | **macOS** | |
+            | Apple Silicon (M1/M2/M3) | `NovyWave_${{ steps.version.outputs.version }}_aarch64.dmg` |
+            | Intel | `NovyWave_${{ steps.version.outputs.version }}_x64.dmg` |
+            | **Windows** | |
+            | Installer (NSIS) | `NovyWave_${{ steps.version.outputs.version }}_x64-setup.exe` |
+            | MSI | `NovyWave_${{ steps.version.outputs.version }}_x64_en-US.msi` |
+
+            ## Auto-Update
+
+            Existing NovyWave installations will automatically detect this update.
           draft: true
           prerelease: false
           files: |
             artifacts/**/*.AppImage
             artifacts/**/*.deb
             artifacts/**/*.rpm
+            artifacts/**/*.dmg
+            artifacts/**/*.msi
+            artifacts/**/*.exe
             artifacts/**/*.tar.gz
             artifacts/**/*.tar.gz.sig
-            artifacts/**/latest.json
+            artifacts/**/*.zip
+            artifacts/**/*.zip.sig
+            artifacts/latest.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

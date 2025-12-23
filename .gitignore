@@ -22,6 +22,9 @@ frontend_dist/_api
 frontend_dist/index.html
 mzoon
 
+# MoonZoon/Tauri build output (duplicate of frontend_dist/_api for Tauri bundling)
+_api/
+
 # Development server PID file
 .novywave.pid
 dev_server.lock
@@ -59,6 +62,9 @@ test_files/performance_test.vcd
 test_files/wave_27.fst
 test_files/nested_dir/wave_27.fst
 test_files/extreme_test.vcd
+
+# Test update artifacts (large bundles for local updater testing)
+test_files/update-test-artifacts/
 
 # Claude Code temporary/runtime files
 .claude/hooks.log
