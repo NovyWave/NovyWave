@@ -293,4 +293,4 @@ script = [
 [tasks.install_tauri_cli]
 description = "Install Tauri CLI"
 command = "cargo"
-args = ["install", "tauri-cli@^2.0.3"]
+args = ["install", "tauri-cli@^2.9"]

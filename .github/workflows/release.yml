@@ -102,13 +102,13 @@ jobs:
           name: linux-rpm
           path: target/release/bundle/rpm/*.rpm
 
-      - name: Upload Updater artifacts (tar.gz + signature)
+      - name: Upload Updater artifacts (AppImage + signature)
         uses: actions/upload-artifact@v4
         with:
           name: linux-updater
           path: |
-            target/release/bundle/appimage/*.tar.gz
-            target/release/bundle/appimage/*.tar.gz.sig
+            target/release/bundle/appimage/*.AppImage
+            target/release/bundle/appimage/*.AppImage.sig
 
   build-macos-arm:
     runs-on: macos-15
@@ -347,12 +347,12 @@ jobs:
           # Initialize platforms JSON
           PLATFORMS="{}"
 
-          # Linux x86_64 (AppImage)
-          LINUX_SIG=$(find artifacts/linux-updater -name "*.tar.gz.sig" -type f | head -1)
-          LINUX_TARBALL=$(find artifacts/linux-updater -name "*.tar.gz" ! -name "*.sig" -type f | head -1)
-          if [ -n "$LINUX_SIG" ] && [ -n "$LINUX_TARBALL" ]; then
+          # Linux x86_64 (AppImage) - Tauri v2 uses AppImage directly with .sig
+          LINUX_SIG=$(find artifacts/linux-updater -name "*.AppImage.sig" -type f | head -1)
+          LINUX_APPIMAGE=$(find artifacts/linux-updater -name "*.AppImage" ! -name "*.sig" -type f | head -1)
+          if [ -n "$LINUX_SIG" ] && [ -n "$LINUX_APPIMAGE" ]; then
             LINUX_SIG_CONTENT=$(cat "$LINUX_SIG")
-            LINUX_FILENAME=$(basename "$LINUX_TARBALL")
+            LINUX_FILENAME=$(basename "$LINUX_APPIMAGE")
             PLATFORMS=$(echo "$PLATFORMS" | jq --arg sig "$LINUX_SIG_CONTENT" --arg url "https://github.com/NovyWave/NovyWave/releases/download/v${VERSION}/${LINUX_FILENAME}" '. + {"linux-x86_64": {"signature": $sig, "url": $url}}')
           fi
 
@@ -427,6 +427,7 @@ jobs:
           prerelease: false
           files: |
             artifacts/**/*.AppImage
+            artifacts/**/*.AppImage.sig
             artifacts/**/*.deb
             artifacts/**/*.rpm
             artifacts/**/*.dmg
