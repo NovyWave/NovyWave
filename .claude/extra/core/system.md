@@ -251,6 +251,8 @@ Before using Read/Glob/Grep tools, ask: "Could a subagent research this instead?
   - This is a permanent rule - do not add under any circumstances
 
 ### Git Safety Rules
+- **CRITICAL: NEVER commit or push autonomously** - Always let the user handle commits themselves
+- **CRITICAL: Use `jj` (Jujutsu) instead of raw git** - This project uses Jujutsu for version control
 - **CRITICAL: NEVER perform destructive git operations (reset, rebase, force push, branch deletion, stash drop) without explicit user confirmation**
 - **User lost hours of work from uncommitted changes - always confirm before any operation that could lose data**
 - Never use git commands with `-i` flag (interactive not supported)
