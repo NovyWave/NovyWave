@@ -41,6 +41,16 @@ jobs:
             .
             src-tauri
 
+      - name: Determine version from tag
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          fi
+          echo "Build version: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version || '${GITHUB_REF#refs/tags/v}' }}"
+
       - name: Create MoonZoon build directories
         run: |
           # MoonZoon expects these directories to exist for build ID tracking
@@ -63,15 +73,7 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-
-      - name: Determine version for artifacts
-        id: version
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
-          else
-            echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-          fi
+          TAURI_BUILD_VERSION: ${{ steps.version.outputs.version }}
 
       - name: List built artifacts
         run: |
@@ -137,6 +139,16 @@ jobs:
           mkdir -p backend/private
           mkdir -p frontend_dist/_api/pkg
 
+      - name: Determine version from tag
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          fi
+          echo "Build version: $(cat $GITHUB_OUTPUT | grep version | cut -d= -f2)"
+
       - name: Check signing key availability
         run: |
           if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
@@ -152,6 +164,7 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_BUILD_VERSION: ${{ steps.version.outputs.version }}
 
       - name: List built artifacts
         run: |
@@ -214,6 +227,16 @@ jobs:
           mkdir -p backend/private
           mkdir -p frontend_dist/_api/pkg
 
+      - name: Determine version from tag
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          fi
+          echo "Build version: $(cat $GITHUB_OUTPUT | grep version | cut -d= -f2)"
+
       - name: Check signing key availability
         run: |
           if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
@@ -229,6 +252,7 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_BUILD_VERSION: ${{ steps.version.outputs.version }}
 
       - name: List built artifacts
         run: |
@@ -292,6 +316,17 @@ jobs:
           mkdir -p backend/private
           mkdir -p frontend_dist/_api/pkg
 
+      - name: Determine version from tag
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          fi
+          echo "Build version: $(cat $GITHUB_OUTPUT | grep version | cut -d= -f2)"
+
       - name: Check signing key availability
         shell: bash
         run: |
@@ -309,6 +344,7 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_BUILD_VERSION: ${{ steps.version.outputs.version }}
 
       - name: Debug - Check build artifacts exist
         shell: bash

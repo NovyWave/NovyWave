@@ -193,7 +193,14 @@ fi
 # Bundle release Tauri app
 echo "Starting Tauri build..."
 cd src-tauri
-cargo tauri build
+
+# If TAURI_BUILD_VERSION is set (from CI), override the version in tauri.conf.json
+if [ -n "$TAURI_BUILD_VERSION" ]; then
+    echo "[OK] Using version from CI: $TAURI_BUILD_VERSION"
+    cargo tauri build --config "{\"version\": \"$TAURI_BUILD_VERSION\"}"
+else
+    cargo tauri build
+fi
 '''
 
 [tasks.tauri-build-bundle-windows]
@@ -267,7 +274,15 @@ if (Test-Path $BuildIdFile) {
 # Bundle release Tauri app
 Write-Host "Starting Tauri build..."
 Set-Location "src-tauri"
-cargo tauri build
+
+# If TAURI_BUILD_VERSION is set (from CI), override the version in tauri.conf.json
+$buildVersion = $env:TAURI_BUILD_VERSION
+if ($buildVersion) {
+    Write-Host "[OK] Using version from CI: $buildVersion"
+    cargo tauri build --config "{`"version`": `"$buildVersion`"}"
+} else {
+    cargo tauri build
+}
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
