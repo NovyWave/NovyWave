@@ -143,7 +143,7 @@ mkdir -p plugins/dist
 
 # Verify backend binary was built by mzoon
 if [ -f "target/release/backend" ]; then
-    echo "✓ Backend binary found: target/release/backend"
+    echo "[OK] Backend binary found: target/release/backend"
 else
     echo "ERROR: Backend binary not found at target/release/backend"
     echo "The mzoon build may have failed silently."
@@ -163,7 +163,7 @@ if [ -f "$BUILD_ID_FILE" ]; then
     JS_DST="frontend/pkg/frontend_${BUILD_ID}.js"
     if [ -f "$JS_SRC" ]; then
         cp "$JS_SRC" "$JS_DST"
-        echo "✓ Copied JS file"
+        echo "[OK] Copied JS file"
     fi
 
     # Copy WASM file
@@ -171,7 +171,7 @@ if [ -f "$BUILD_ID_FILE" ]; then
     WASM_DST="frontend/pkg/frontend_bg_${BUILD_ID}.wasm"
     if [ -f "$WASM_SRC" ]; then
         cp "$WASM_SRC" "$WASM_DST"
-        echo "✓ Copied WASM file"
+        echo "[OK] Copied WASM file"
     fi
 
     # Copy snippets directory if exists
@@ -179,13 +179,13 @@ if [ -f "$BUILD_ID_FILE" ]; then
     SNIPPETS_DST="frontend/pkg/snippets_${BUILD_ID}"
     if [ -d "$SNIPPETS_DIR" ]; then
         cp -r "$SNIPPETS_DIR" "$SNIPPETS_DST"
-        echo "✓ Copied snippets directory"
+        echo "[OK] Copied snippets directory"
     fi
 
     # Flatten _api for runtime lookup
     rm -rf _api
     cp -r frontend_dist/_api _api
-    echo "✓ Copied _api directory"
+    echo "[OK] Copied _api directory"
 else
     echo "WARNING: Build ID file not found at $BUILD_ID_FILE"
 fi
@@ -211,7 +211,7 @@ New-Item -ItemType Directory -Force -Path "plugins/dist" | Out-Null
 
 # Verify backend binary was built by mzoon
 if (Test-Path "target/release/backend.exe") {
-    Write-Host "✓ Backend binary found: target/release/backend.exe"
+    Write-Host "[OK] Backend binary found: target/release/backend.exe"
 } else {
     Write-Host "ERROR: Backend binary not found at target/release/backend.exe"
     Write-Host "The mzoon build may have failed silently."
@@ -235,7 +235,7 @@ if (Test-Path $BuildIdFile) {
     $JsDst = "frontend/pkg/frontend_$BuildId.js"
     if (Test-Path $JsSrc) {
         Copy-Item $JsSrc $JsDst -Force
-        Write-Host "✓ Copied JS file"
+        Write-Host "[OK] Copied JS file"
     }
 
     # Copy WASM file
@@ -243,7 +243,7 @@ if (Test-Path $BuildIdFile) {
     $WasmDst = "frontend/pkg/frontend_bg_$BuildId.wasm"
     if (Test-Path $WasmSrc) {
         Copy-Item $WasmSrc $WasmDst -Force
-        Write-Host "✓ Copied WASM file"
+        Write-Host "[OK] Copied WASM file"
     }
 
     # Copy snippets directory if exists
@@ -251,7 +251,7 @@ if (Test-Path $BuildIdFile) {
     $SnippetsDst = "frontend/pkg/snippets_$BuildId"
     if (Test-Path $SnippetsDir) {
         Copy-Item $SnippetsDir $SnippetsDst -Recurse -Force
-        Write-Host "✓ Copied snippets directory"
+        Write-Host "[OK] Copied snippets directory"
     }
 
     # Flatten _api for runtime lookup
@@ -259,7 +259,7 @@ if (Test-Path $BuildIdFile) {
         Remove-Item "_api" -Recurse -Force
     }
     Copy-Item "frontend_dist/_api" "_api" -Recurse -Force
-    Write-Host "✓ Copied _api directory"
+    Write-Host "[OK] Copied _api directory"
 } else {
     Write-Host "WARNING: Build ID file not found at $BuildIdFile"
 }
