@@ -162,6 +162,17 @@ jobs:
           echo "=== macOS app ==="
           ls -la target/release/bundle/macos/ || true
 
+      - name: Rename updater artifacts with architecture suffix
+        run: |
+          cd target/release/bundle/macos
+          for f in *.tar.gz; do
+            [ -f "$f" ] && mv "$f" "${f%.tar.gz}_aarch64.tar.gz"
+          done
+          for f in *.tar.gz.sig; do
+            [ -f "$f" ] && mv "$f" "${f%.tar.gz.sig}_aarch64.tar.gz.sig"
+          done
+          ls -la
+
       - name: Upload DMG (ARM)
         uses: actions/upload-artifact@v4
         with:
@@ -228,6 +239,17 @@ jobs:
           echo "=== macOS app ==="
           ls -la target/release/bundle/macos/ || true
 
+      - name: Rename updater artifacts with architecture suffix
+        run: |
+          cd target/release/bundle/macos
+          for f in *.tar.gz; do
+            [ -f "$f" ] && mv "$f" "${f%.tar.gz}_x64.tar.gz"
+          done
+          for f in *.tar.gz.sig; do
+            [ -f "$f" ] && mv "$f" "${f%.tar.gz.sig}_x64.tar.gz.sig"
+          done
+          ls -la
+
       - name: Upload DMG (x64)
         uses: actions/upload-artifact@v4
         with:
@@ -282,10 +304,24 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
 
       - name: Build Tauri app
+        shell: bash
         run: makers tauri-build
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: Debug - Check build artifacts exist
+        shell: bash
+        run: |
+          echo "=== Checking frontend_dist ==="
+          ls -la frontend_dist/ || echo "No frontend_dist"
+          ls -la frontend_dist/_api/ || echo "No frontend_dist/_api"
+          echo "=== Checking _api copy ==="
+          ls -la _api/ || echo "No _api dir"
+          echo "=== Checking frontend/pkg ==="
+          ls -la frontend/pkg/ || echo "No frontend/pkg"
+          echo "=== Checking src-tauri/target ==="
+          ls -la src-tauri/target/release/ 2>/dev/null | head -20 || echo "No src-tauri/target/release"
 
       - name: List built artifacts
         shell: bash
@@ -429,17 +465,20 @@ jobs:
           draft: true
           prerelease: false
           files: |
-            artifacts/**/*.AppImage
-            artifacts/**/*.AppImage.sig
-            artifacts/**/*.deb
-            artifacts/**/*.rpm
-            artifacts/**/*.dmg
-            artifacts/**/*.msi
-            artifacts/**/*.exe
-            artifacts/**/*.tar.gz
-            artifacts/**/*.tar.gz.sig
-            artifacts/**/*.zip
-            artifacts/**/*.zip.sig
+            artifacts/linux-appimage/*.AppImage
+            artifacts/linux-updater/*.AppImage.sig
+            artifacts/linux-deb/*.deb
+            artifacts/linux-rpm/*.rpm
+            artifacts/macos-dmg-arm/*.dmg
+            artifacts/macos-dmg-x64/*.dmg
+            artifacts/macos-updater-arm/*.tar.gz
+            artifacts/macos-updater-arm/*.tar.gz.sig
+            artifacts/macos-updater-x64/*.tar.gz
+            artifacts/macos-updater-x64/*.tar.gz.sig
+            artifacts/windows-msi/*.msi
+            artifacts/windows-nsis/*.exe
+            artifacts/windows-updater/*.zip
+            artifacts/windows-updater/*.zip.sig
             artifacts/latest.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

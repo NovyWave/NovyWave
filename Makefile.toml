@@ -125,46 +125,70 @@ cd src-tauri && cargo tauri dev --config tauri.dev.conf.json >> ../dev_tauri.log
 description = "Build Tauri desktop app with embedded backend"
 dependencies = ["install", "install_tauri_cli", "build-tauri"]
 env = { NOVYWAVE_PLATFORM = "TAURI" }
-script_runner = "@duckscript"
+script_runner = "bash"
 script = '''
+set -e  # Exit on any error
+
 # Create directories that Tauri resources require
-mkdir frontend/pkg
-mkdir plugins/dist
+mkdir -p frontend/pkg
+mkdir -p plugins/dist
+
+# Verify backend binary was built by mzoon
+# On Windows it's backend.exe, on Unix it's backend
+if [ -f "target/release/backend" ]; then
+    echo "✓ Backend binary found: target/release/backend"
+elif [ -f "target/release/backend.exe" ]; then
+    echo "✓ Backend binary found: target/release/backend.exe"
+else
+    echo "ERROR: Backend binary not found at target/release/backend"
+    echo "The mzoon build may have failed silently."
+    echo "Contents of target/release/:"
+    ls -la target/release/ 2>/dev/null | head -20 || echo "Directory does not exist"
+    exit 1
+fi
 
 # Copy frontend pkg files for embedded backend lookup
-build_id_file = set "frontend_dist/_api/pkg/build_id"
-if is_path_exists ${build_id_file}
-    build_id = readfile ${build_id_file}
-    build_id = trim ${build_id}
+BUILD_ID_FILE="frontend_dist/_api/pkg/build_id"
+if [ -f "$BUILD_ID_FILE" ]; then
+    BUILD_ID=$(cat "$BUILD_ID_FILE" | tr -d '[:space:]')
+    echo "Build ID: $BUILD_ID"
 
     # Copy JS file
-    js_src = set "frontend_dist/_api/pkg/frontend_${build_id}.js"
-    js_dst = set "frontend/pkg/frontend_${build_id}.js"
-    if is_path_exists ${js_src}
-        cp ${js_src} ${js_dst}
-    end
+    JS_SRC="frontend_dist/_api/pkg/frontend_${BUILD_ID}.js"
+    JS_DST="frontend/pkg/frontend_${BUILD_ID}.js"
+    if [ -f "$JS_SRC" ]; then
+        cp "$JS_SRC" "$JS_DST"
+        echo "✓ Copied JS file"
+    fi
 
     # Copy WASM file
-    wasm_src = set "frontend_dist/_api/pkg/frontend_bg_${build_id}.wasm"
-    wasm_dst = set "frontend/pkg/frontend_bg_${build_id}.wasm"
-    if is_path_exists ${wasm_src}
-        cp ${wasm_src} ${wasm_dst}
-    end
+    WASM_SRC="frontend_dist/_api/pkg/frontend_bg_${BUILD_ID}.wasm"
+    WASM_DST="frontend/pkg/frontend_bg_${BUILD_ID}.wasm"
+    if [ -f "$WASM_SRC" ]; then
+        cp "$WASM_SRC" "$WASM_DST"
+        echo "✓ Copied WASM file"
+    fi
 
     # Copy snippets directory if exists
-    snippets_dir = set "frontend_dist/_api/pkg/snippets_${build_id}"
-    snippets_dst = set "frontend/pkg/snippets_${build_id}"
-    if is_path_exists ${snippets_dir}
-        cp ${snippets_dir} ${snippets_dst}
-    end
+    SNIPPETS_DIR="frontend_dist/_api/pkg/snippets_${BUILD_ID}"
+    SNIPPETS_DST="frontend/pkg/snippets_${BUILD_ID}"
+    if [ -d "$SNIPPETS_DIR" ]; then
+        cp -r "$SNIPPETS_DIR" "$SNIPPETS_DST"
+        echo "✓ Copied snippets directory"
+    fi
 
-    # Flatten _api for runtime lookup (don't mkdir first - let cp create it)
-    cp frontend_dist/_api _api
-end
+    # Flatten _api for runtime lookup
+    rm -rf _api
+    cp -r frontend_dist/_api _api
+    echo "✓ Copied _api directory"
+else
+    echo "WARNING: Build ID file not found at $BUILD_ID_FILE"
+fi
 
 # Bundle release Tauri app
+echo "Starting Tauri build..."
 cd src-tauri
-exec cargo tauri build
+cargo tauri build
 '''
 
 [tasks.tauri-build-debug]

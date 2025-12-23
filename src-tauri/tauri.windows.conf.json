@@ -1,0 +1,13 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "resources": [
+      "../target/release/backend.exe",
+      "../public",
+      "../frontend_dist",
+      "../frontend/pkg",
+      "../_api",
+      "../plugins/dist"
+    ]
+  }
+}
