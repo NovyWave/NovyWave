@@ -265,17 +265,19 @@ jobs:
             src-tauri
 
       - name: Create MoonZoon build directories
+        shell: bash
         run: |
-          New-Item -ItemType Directory -Force -Path backend\private
-          New-Item -ItemType Directory -Force -Path frontend_dist\_api\pkg
+          mkdir -p backend/private
+          mkdir -p frontend_dist/_api/pkg
 
       - name: Check signing key availability
+        shell: bash
         run: |
-          if ($env:TAURI_SIGNING_PRIVATE_KEY) {
-            Write-Host "✅ TAURI_SIGNING_PRIVATE_KEY is set (length: $($env:TAURI_SIGNING_PRIVATE_KEY.Length) chars)"
-          } else {
-            Write-Host "⚠️ TAURI_SIGNING_PRIVATE_KEY is NOT set - updater artifacts will NOT be created"
-          }
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "✅ TAURI_SIGNING_PRIVATE_KEY is set (length: ${#TAURI_SIGNING_PRIVATE_KEY} chars)"
+          else
+            echo "⚠️ TAURI_SIGNING_PRIVATE_KEY is NOT set - updater artifacts will NOT be created"
+          fi
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
 
@@ -286,13 +288,14 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       - name: List built artifacts
+        shell: bash
         run: |
           echo "=== Bundle directory ==="
-          dir target\release\bundle\ 2>nul || echo "No bundle dir"
+          ls -la target/release/bundle/ || echo "No bundle dir"
           echo "=== MSI ==="
-          dir target\release\bundle\msi\ 2>nul || echo "No msi dir"
+          ls -la target/release/bundle/msi/ || echo "No msi dir"
           echo "=== NSIS ==="
-          dir target\release\bundle\nsis\ 2>nul || echo "No nsis dir"
+          ls -la target/release/bundle/nsis/ || echo "No nsis dir"
 
       - name: Upload MSI
         uses: actions/upload-artifact@v4
