@@ -279,8 +279,13 @@ Set-Location "src-tauri"
 $buildVersion = $env:TAURI_BUILD_VERSION
 if ($buildVersion) {
     Write-Host "[OK] Using version from CI: $buildVersion"
-    $configJson = '{"version": "' + $buildVersion + '"}'
-    cargo tauri build --config $configJson
+    # Write config to temp file to avoid PowerShell quote escaping issues
+    $tempConfig = Join-Path $env:TEMP "tauri-version-override.json"
+    @{version = $buildVersion} | ConvertTo-Json -Compress | Set-Content $tempConfig -NoNewline
+    Write-Host "Config file: $tempConfig"
+    Get-Content $tempConfig
+    cargo tauri build --config $tempConfig
+    Remove-Item $tempConfig -ErrorAction SilentlyContinue
 } else {
     cargo tauri build
 }
