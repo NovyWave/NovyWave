@@ -50,6 +50,18 @@ jobs:
 
       - name: Build Tauri app (same as local)
         run: makers tauri-build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: Determine version for artifacts
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          fi
 
       - name: List built artifacts
         run: |
@@ -61,6 +73,47 @@ jobs:
           ls -la target/release/bundle/deb/ || true
           echo "=== RPM ==="
           ls -la target/release/bundle/rpm/ || true
+
+      - name: Generate latest.json for updater
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+
+          # Find the tar.gz file (created by createUpdaterArtifacts)
+          TARBALL_PATH=$(find target/release/bundle/appimage/ -name "*.tar.gz" -type f | head -1)
+
+          if [ -z "$TARBALL_PATH" ]; then
+            echo "Warning: No .tar.gz found - updater artifacts may not be enabled"
+            exit 0
+          fi
+
+          TARBALL=$(basename "$TARBALL_PATH")
+          SIG_PATH="${TARBALL_PATH}.sig"
+
+          if [ ! -f "$SIG_PATH" ]; then
+            echo "Warning: No signature file found at $SIG_PATH"
+            exit 0
+          fi
+
+          # Read the signature
+          SIGNATURE=$(cat "$SIG_PATH")
+
+          # Create latest.json
+          cat > target/release/bundle/latest.json << EOF
+          {
+            "version": "${VERSION}",
+            "notes": "See release notes on GitHub",
+            "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "platforms": {
+              "linux-x86_64": {
+                "url": "https://github.com/NovyWave/NovyWave/releases/download/v${VERSION}/${TARBALL}",
+                "signature": "${SIGNATURE}"
+              }
+            }
+          }
+          EOF
+
+          echo "Generated latest.json:"
+          cat target/release/bundle/latest.json
 
       - name: Upload AppImage
         uses: actions/upload-artifact@v4
@@ -79,6 +132,20 @@ jobs:
         with:
           name: linux-rpm
           path: target/release/bundle/rpm/*.rpm
+
+      - name: Upload Updater artifacts (tar.gz + signature)
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-updater
+          path: |
+            target/release/bundle/appimage/*.tar.gz
+            target/release/bundle/appimage/*.tar.gz.sig
+
+      - name: Upload latest.json
+        uses: actions/upload-artifact@v4
+        with:
+          name: latest-json
+          path: target/release/bundle/latest.json
 
   # TODO: Enable macOS build
   # build-macos:
@@ -210,5 +277,8 @@ jobs:
             artifacts/**/*.AppImage
             artifacts/**/*.deb
             artifacts/**/*.rpm
+            artifacts/**/*.tar.gz
+            artifacts/**/*.tar.gz.sig
+            artifacts/**/latest.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

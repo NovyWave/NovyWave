@@ -323,3 +323,104 @@ pub async fn get_parsing_progress(_file_id: String) -> Result<(), String> {
     // for active file parsing operations
     Ok(())
 }
+
+/// Request update download - triggers the updater to download the update
+#[tauri::command]
+pub async fn request_update_download(app_handle: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_updater::UpdaterExt;
+
+    println!("📥 Update download requested");
+
+    // Get the updater and check for updates
+    let updater = app_handle
+        .updater()
+        .map_err(|e| format!("Failed to get updater: {:?}", e))?;
+
+    match updater.check().await {
+        Ok(Some(update)) => {
+            println!(
+                "📥 Downloading update: {} -> {}",
+                update.current_version, update.version
+            );
+
+            let app_handle_for_progress = app_handle.clone();
+            let new_version = update.version.clone();
+
+            // Download with progress callback
+            let download_result = update
+                .download_and_install(
+                    move |downloaded, total| {
+                        let progress = if let Some(total) = total {
+                            if total > 0 {
+                                (downloaded as f32 / total as f32) * 100.0
+                            } else {
+                                0.0
+                            }
+                        } else {
+                            0.0
+                        };
+                        println!("📥 Download progress: {:.1}%", progress);
+                        // Emit progress event to frontend
+                        let _ = app_handle_for_progress.emit(
+                            "update_download_progress",
+                            serde_json::json!({
+                                "progress": progress,
+                                "downloaded": downloaded,
+                                "total": total
+                            }),
+                        );
+                    },
+                    || {
+                        println!("📥 Download complete, ready to restart");
+                    },
+                )
+                .await;
+
+            match download_result {
+                Ok(()) => {
+                    println!("✅ Update installed successfully");
+                    // Emit update ready event
+                    app_handle
+                        .emit(
+                            "update_ready",
+                            serde_json::json!({
+                                "version": new_version.to_string()
+                            }),
+                        )
+                        .map_err(|e| format!("Failed to emit update_ready: {:?}", e))?;
+                    Ok(())
+                }
+                Err(e) => {
+                    let error_msg = format!("Failed to download/install update: {:?}", e);
+                    println!("❌ {}", error_msg);
+                    app_handle
+                        .emit(
+                            "update_error",
+                            serde_json::json!({
+                                "error": error_msg
+                            }),
+                        )
+                        .map_err(|e| format!("Failed to emit update_error: {:?}", e))?;
+                    Err(error_msg)
+                }
+            }
+        }
+        Ok(None) => {
+            println!("ℹ️ No update available");
+            Err("No update available".to_string())
+        }
+        Err(e) => {
+            let error_msg = format!("Failed to check for updates: {:?}", e);
+            println!("❌ {}", error_msg);
+            Err(error_msg)
+        }
+    }
+}
+
+/// Request app restart to complete update installation
+#[tauri::command]
+pub async fn request_app_restart(app_handle: tauri::AppHandle) -> Result<(), String> {
+    println!("🔄 App restart requested to complete update");
+    // Use Tauri's process restart API
+    app_handle.restart();
+}

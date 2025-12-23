@@ -39,7 +39,9 @@ pub fn run() {
             commands::browse_directories,
             commands::query_signal_values,
             commands::query_signal_transitions,
-            commands::get_parsing_progress
+            commands::get_parsing_progress,
+            commands::request_update_download,
+            commands::request_app_restart
         ])
         .setup(|app| {
             println!("=== Tauri app setup completed ===");
@@ -219,6 +221,7 @@ fn updates_configured(app: &tauri::AppHandle) -> bool {
 }
 
 async fn check_for_updates(app: tauri::AppHandle) {
+    use tauri::Emitter;
     use tauri_plugin_updater::UpdaterExt;
 
     // Wait a bit before checking for updates to not slow down startup
@@ -229,23 +232,32 @@ async fn check_for_updates(app: tauri::AppHandle) {
             match updater.check().await {
                 Ok(Some(update)) => {
                     println!(
-                        "Update available: {} -> {}",
+                        "✨ Update available: {} -> {}",
                         update.current_version, update.version
                     );
-                    // For now, just log. In the future, prompt user via frontend
-                    // update.download_and_install(|_, _| {}, || {}).await.ok();
+                    // Emit event to frontend instead of auto-downloading
+                    // Frontend will show a notification with a "Download" button
+                    if let Err(e) = app.emit(
+                        "update_available",
+                        serde_json::json!({
+                            "current_version": update.current_version.to_string(),
+                            "new_version": update.version.to_string()
+                        }),
+                    ) {
+                        println!("❌ Failed to emit update_available event: {:?}", e);
+                    }
                 }
                 Ok(None) => {
-                    println!("App is up to date");
+                    println!("✅ App is up to date");
                 }
                 Err(e) => {
                     // Update check failed - not critical, just log
-                    println!("Update check failed: {}", e);
+                    println!("⚠️ Update check failed: {}", e);
                 }
             }
         }
         Err(e) => {
-            println!("Updater not available: {}", e);
+            println!("⚠️ Updater not available: {}", e);
         }
     }
 }

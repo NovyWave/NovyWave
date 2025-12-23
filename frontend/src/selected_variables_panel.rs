@@ -65,10 +65,23 @@ fn selected_variables_panel_header(
                 .child("Selected Variables"),
         )
         .item(
+            // Center section with version and dock button
             Row::new()
                 .s(Width::fill())
                 .s(Align::new().center_y())
+                .s(Gap::new().x(SPACING_8))
                 .item(El::new().s(Width::growable()))
+                .item(
+                    // Version display with less contrast
+                    El::new()
+                        .s(Font::new().no_wrap().color_signal(neutral_8()))
+                        .child_signal(
+                            signal::from_future(Box::pin(crate::platform::get_app_version()))
+                                .map(|version| {
+                                    version.map(|v| format!("v{}", v))
+                                }),
+                        ),
+                )
                 .item(crate::action_buttons::dock_toggle_button(app_config))
                 .item(El::new().s(Width::growable())),
         )

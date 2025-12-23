@@ -2,6 +2,23 @@ use futures::StreamExt;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use zoon::*;
 
+/// Notification variant for styling different types of toasts
+#[derive(Debug, Clone, PartialEq, Copy)]
+pub enum NotificationVariant {
+    /// Red styling for errors
+    Error,
+    /// Blue styling for informational messages
+    Info,
+    /// Green styling for success messages
+    Success,
+}
+
+impl Default for NotificationVariant {
+    fn default() -> Self {
+        Self::Error
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ErrorAlert {
     pub id: String,
@@ -9,6 +26,12 @@ pub struct ErrorAlert {
     pub message: String,
     pub technical_error: String, // Raw technical error for console logging
     pub auto_dismiss_ms: u64,
+    /// Notification variant for styling (defaults to Error for backwards compatibility)
+    pub variant: NotificationVariant,
+    /// Optional action button label
+    pub action_label: Option<String>,
+    /// Optional progress percentage (0-100) for download progress, None = use timer-based progress
+    pub progress: Option<f32>,
 }
 
 impl ErrorAlert {
@@ -19,7 +42,10 @@ impl ErrorAlert {
             title: "File Loading Error".to_string(),
             message: format!("{}: {}", filename, user_friendly_message),
             technical_error: format!("Error parsing file {}: {}", file_id, error),
-            auto_dismiss_ms: 5000, // Default 5s, will be overridden by config in error_display
+            auto_dismiss_ms: 5000,
+            variant: NotificationVariant::Error,
+            action_label: None,
+            progress: None,
         }
     }
 
@@ -30,7 +56,10 @@ impl ErrorAlert {
             title: "Directory Access Error".to_string(),
             message: format!("Cannot access {}: {}", path, user_friendly_message),
             technical_error: format!("Error browsing directory {}: {}", path, error),
-            auto_dismiss_ms: 5000, // Default 5s, will be overridden by config in error_display
+            auto_dismiss_ms: 5000,
+            variant: NotificationVariant::Error,
+            action_label: None,
+            progress: None,
         }
     }
 
@@ -41,7 +70,10 @@ impl ErrorAlert {
             title: "Connection Error".to_string(),
             message: user_friendly_message,
             technical_error: format!("Connection error: {}", error),
-            auto_dismiss_ms: 5000, // Default 5s, will be overridden by config in error_display
+            auto_dismiss_ms: 5000,
+            variant: NotificationVariant::Error,
+            action_label: None,
+            progress: None,
         }
     }
 
@@ -51,7 +83,66 @@ impl ErrorAlert {
             title: "Clipboard Error".to_string(),
             message: "Failed to copy to clipboard. Your browser may not support clipboard access or you may need to use HTTPS.".to_string(),
             technical_error: format!("Clipboard operation failed: {}", error),
-            auto_dismiss_ms: 5000, // Default 5s, will be overridden by config in error_display
+            auto_dismiss_ms: 5000,
+            variant: NotificationVariant::Error,
+            action_label: None,
+            progress: None,
+        }
+    }
+
+    /// Create an update available notification
+    pub fn new_update_available(current_version: String, new_version: String) -> Self {
+        Self {
+            id: "update_available".to_string(),
+            title: "Update Available".to_string(),
+            message: format!("v{} → v{}", current_version, new_version),
+            technical_error: format!("Update available: {} -> {}", current_version, new_version),
+            auto_dismiss_ms: 0, // No auto-dismiss for update notifications
+            variant: NotificationVariant::Info,
+            action_label: Some("Download".to_string()),
+            progress: None,
+        }
+    }
+
+    /// Create an update downloading notification with progress
+    pub fn new_update_downloading(progress_percent: f32) -> Self {
+        Self {
+            id: "update_downloading".to_string(),
+            title: "Downloading Update".to_string(),
+            message: format!("{:.0}%", progress_percent),
+            technical_error: format!("Downloading update: {}%", progress_percent),
+            auto_dismiss_ms: 0, // No auto-dismiss while downloading
+            variant: NotificationVariant::Info,
+            action_label: None,
+            progress: Some(progress_percent),
+        }
+    }
+
+    /// Create an update ready notification
+    pub fn new_update_ready(new_version: String) -> Self {
+        Self {
+            id: "update_ready".to_string(),
+            title: "Update Ready".to_string(),
+            message: format!("v{} is ready to install", new_version),
+            technical_error: format!("Update {} ready to install", new_version),
+            auto_dismiss_ms: 0, // No auto-dismiss, user must click restart
+            variant: NotificationVariant::Success,
+            action_label: Some("Restart".to_string()),
+            progress: None,
+        }
+    }
+
+    /// Create an update error notification
+    pub fn new_update_error(error: String) -> Self {
+        Self {
+            id: format!("update_error_{}", js_sys::Date::now() as u64),
+            title: "Update Failed".to_string(),
+            message: make_error_user_friendly(&error),
+            technical_error: format!("Update error: {}", error),
+            auto_dismiss_ms: 8000,
+            variant: NotificationVariant::Error,
+            action_label: None,
+            progress: None,
         }
     }
 }

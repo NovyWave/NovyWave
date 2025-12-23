@@ -844,6 +844,9 @@ impl NovyWaveApp {
 
         Self::setup_app_coordination(&selected_variables, &config).await;
 
+        // Setup Tauri update event listeners (desktop only - no-op on web)
+        crate::platform::setup_update_event_listeners(config.error_display.clone());
+
         NovyWaveApp {
             tracked_files,
             selected_variables,

@@ -61,6 +61,26 @@ pub fn server_is_ready() -> bool {
     SERVER_ALIVE.get()
 }
 
+/// Request update download - no-op on web platform (updates only work on desktop)
+pub fn request_update_download() {
+    zoon::println!("platform(web): request_update_download - no-op (desktop only)");
+}
+
+/// Request app restart to complete update - no-op on web platform
+pub fn request_app_restart() {
+    zoon::println!("platform(web): request_app_restart - no-op (desktop only)");
+}
+
+/// Set up update event listeners - no-op on web platform (updates only work on desktop)
+pub fn setup_update_event_listeners(_error_display: crate::error_display::ErrorDisplay) {
+    zoon::println!("platform(web): setup_update_event_listeners - no-op (desktop only)");
+}
+
+/// Get the application version - returns compile-time version on web
+pub async fn get_app_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
 // removed explicit wait_until_handler_ready; rely on DownMsg to flip readiness
 
 impl Platform for WebPlatform {

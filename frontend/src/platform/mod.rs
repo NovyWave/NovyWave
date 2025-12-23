@@ -23,16 +23,18 @@ pub trait Platform {
 pub mod web;
 #[cfg(NOVYWAVE_PLATFORM = "WEB")]
 pub use web::{
-    WebPlatform as CurrentPlatform, notify_server_alive, server_is_ready, server_ready_signal,
-    set_platform_connection,
+    WebPlatform as CurrentPlatform, get_app_version, notify_server_alive, request_app_restart,
+    request_update_download, server_is_ready, server_ready_signal, set_platform_connection,
+    setup_update_event_listeners,
 };
 
 #[cfg(NOVYWAVE_PLATFORM = "TAURI")]
 pub mod tauri;
 #[cfg(NOVYWAVE_PLATFORM = "TAURI")]
 pub use tauri::{
-    TauriPlatform as CurrentPlatform, notify_server_alive, server_is_ready, server_ready_signal,
-    set_platform_connection,
+    TauriPlatform as CurrentPlatform, get_app_version, notify_server_alive, request_app_restart,
+    request_update_download, server_is_ready, server_ready_signal, set_platform_connection,
+    setup_update_event_listeners,
 };
 
 // Fallback to web platform if no platform specified
@@ -40,6 +42,7 @@ pub use tauri::{
 pub mod web;
 #[cfg(not(any(NOVYWAVE_PLATFORM = "WEB", NOVYWAVE_PLATFORM = "TAURI")))]
 pub use web::{
-    WebPlatform as CurrentPlatform, notify_server_alive, server_is_ready, server_ready_signal,
-    set_platform_connection,
+    WebPlatform as CurrentPlatform, get_app_version, notify_server_alive, request_app_restart,
+    request_update_download, server_is_ready, server_ready_signal, set_platform_connection,
+    setup_update_event_listeners,
 };

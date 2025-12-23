@@ -6,6 +6,7 @@
   "permissions": [
     "core:default",
     "opener:default",
-    "http:default"
+    "http:default",
+    "updater:default"
   ]
 }

@@ -16,6 +16,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
   "resources": [
     "../target/release/backend",
     "../public",
@@ -37,7 +38,7 @@
       "endpoints": [
         "https://github.com/NovyWave/NovyWave/releases/latest/download/latest.json"
       ],
-      "pubkey": "REPLACE_WITH_PUBLIC_KEY"
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEUyODNFNUM0MTJCREJGNTQKUldSVXY3MFN4T1dENGpaYm01cGFKdE9WZlNDWVlaL0d5NDNKVXVHdjEzZ3BnSzZSZndrTEU2SXoK"
     }
   }
 }
