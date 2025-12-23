@@ -129,7 +129,6 @@ script_runner = "@duckscript"
 script = '''
 # Create directories that Tauri resources require
 mkdir frontend/pkg
-mkdir _api
 mkdir plugins/dist
 
 # Copy frontend pkg files for embedded backend lookup
@@ -138,26 +137,29 @@ if is_path_exists ${build_id_file}
     build_id = readfile ${build_id_file}
     build_id = trim ${build_id}
 
-    # Copy JS and WASM files
+    # Copy JS file
     js_src = set "frontend_dist/_api/pkg/frontend_${build_id}.js"
-    wasm_src = set "frontend_dist/_api/pkg/frontend_bg_${build_id}.wasm"
-
+    js_dst = set "frontend/pkg/frontend_${build_id}.js"
     if is_path_exists ${js_src}
-        cp ${js_src} frontend/pkg/
+        cp ${js_src} ${js_dst}
     end
 
+    # Copy WASM file
+    wasm_src = set "frontend_dist/_api/pkg/frontend_bg_${build_id}.wasm"
+    wasm_dst = set "frontend/pkg/frontend_bg_${build_id}.wasm"
     if is_path_exists ${wasm_src}
-        cp ${wasm_src} frontend/pkg/
+        cp ${wasm_src} ${wasm_dst}
     end
 
     # Copy snippets directory if exists
     snippets_dir = set "frontend_dist/_api/pkg/snippets_${build_id}"
+    snippets_dst = set "frontend/pkg/snippets_${build_id}"
     if is_path_exists ${snippets_dir}
-        cp ${snippets_dir} frontend/pkg/
+        cp ${snippets_dir} ${snippets_dst}
     end
 
-    # Flatten _api for runtime lookup
-    glob_cp "frontend_dist/_api/**/*" _api/
+    # Flatten _api for runtime lookup (don't mkdir first - let cp create it)
+    cp frontend_dist/_api _api
 end
 
 # Bundle release Tauri app
