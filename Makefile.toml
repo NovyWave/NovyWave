@@ -125,6 +125,7 @@ cd src-tauri && cargo tauri dev --config tauri.dev.conf.json >> ../dev_tauri.log
 description = "Build Tauri desktop app with embedded backend"
 dependencies = ["install", "install_tauri_cli", "build-tauri"]
 env = { NOVYWAVE_PLATFORM = "TAURI" }
+script_runner = "bash"
 script = '''
 # Create directories that Tauri resources require
 mkdir -p frontend/pkg

@@ -48,6 +48,16 @@ jobs:
           mkdir -p backend/private
           mkdir -p frontend_dist/_api/pkg
 
+      - name: Check signing key availability
+        run: |
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "✅ TAURI_SIGNING_PRIVATE_KEY is set (length: ${#TAURI_SIGNING_PRIVATE_KEY} chars)"
+          else
+            echo "⚠️ TAURI_SIGNING_PRIVATE_KEY is NOT set - updater artifacts will NOT be created"
+          fi
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+
       - name: Build Tauri app (same as local)
         run: makers tauri-build
         env:
@@ -127,6 +137,16 @@ jobs:
           mkdir -p backend/private
           mkdir -p frontend_dist/_api/pkg
 
+      - name: Check signing key availability
+        run: |
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "✅ TAURI_SIGNING_PRIVATE_KEY is set (length: ${#TAURI_SIGNING_PRIVATE_KEY} chars)"
+          else
+            echo "⚠️ TAURI_SIGNING_PRIVATE_KEY is NOT set - updater artifacts will NOT be created"
+          fi
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+
       - name: Build Tauri app
         run: makers tauri-build
         env:
@@ -183,6 +203,16 @@ jobs:
           mkdir -p backend/private
           mkdir -p frontend_dist/_api/pkg
 
+      - name: Check signing key availability
+        run: |
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "✅ TAURI_SIGNING_PRIVATE_KEY is set (length: ${#TAURI_SIGNING_PRIVATE_KEY} chars)"
+          else
+            echo "⚠️ TAURI_SIGNING_PRIVATE_KEY is NOT set - updater artifacts will NOT be created"
+          fi
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+
       - name: Build Tauri app
         run: makers tauri-build
         env:
@@ -238,6 +268,16 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path backend\private
           New-Item -ItemType Directory -Force -Path frontend_dist\_api\pkg
+
+      - name: Check signing key availability
+        run: |
+          if ($env:TAURI_SIGNING_PRIVATE_KEY) {
+            Write-Host "✅ TAURI_SIGNING_PRIVATE_KEY is set (length: $($env:TAURI_SIGNING_PRIVATE_KEY.Length) chars)"
+          } else {
+            Write-Host "⚠️ TAURI_SIGNING_PRIVATE_KEY is NOT set - updater artifacts will NOT be created"
+          }
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
 
       - name: Build Tauri app
         run: makers tauri-build
