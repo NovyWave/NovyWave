@@ -350,10 +350,8 @@ jobs:
         with:
           name: windows-updater
           path: |
-            target/release/bundle/msi/*.msi.zip
-            target/release/bundle/msi/*.msi.zip.sig
-            target/release/bundle/nsis/*.nsis.zip
-            target/release/bundle/nsis/*.nsis.zip.sig
+            target/release/bundle/nsis/*-setup.exe.sig
+            target/release/bundle/msi/*.msi.sig
 
   create-release:
     needs: [build-linux, build-macos-arm, build-macos-x64, build-windows]
@@ -414,11 +412,12 @@ jobs:
           fi
 
           # Windows x64 (NSIS preferred, fall back to MSI)
-          WINDOWS_SIG=$(find artifacts/windows-updater -name "*.nsis.zip.sig" -type f 2>/dev/null | head -1)
-          WINDOWS_BUNDLE=$(find artifacts/windows-updater -name "*.nsis.zip" ! -name "*.sig" -type f 2>/dev/null | head -1)
+          # Tauri v2: Uses installer directly with .sig file (not zipped)
+          WINDOWS_SIG=$(find artifacts/windows-updater -name "*-setup.exe.sig" -type f 2>/dev/null | head -1)
+          WINDOWS_BUNDLE=$(find artifacts/windows-nsis -name "*-setup.exe" -type f 2>/dev/null | head -1)
           if [ -z "$WINDOWS_SIG" ]; then
-            WINDOWS_SIG=$(find artifacts/windows-updater -name "*.msi.zip.sig" -type f 2>/dev/null | head -1)
-            WINDOWS_BUNDLE=$(find artifacts/windows-updater -name "*.msi.zip" ! -name "*.sig" -type f 2>/dev/null | head -1)
+            WINDOWS_SIG=$(find artifacts/windows-updater -name "*.msi.sig" -type f 2>/dev/null | head -1)
+            WINDOWS_BUNDLE=$(find artifacts/windows-msi -name "*.msi" -type f 2>/dev/null | head -1)
           fi
           if [ -n "$WINDOWS_SIG" ] && [ -n "$WINDOWS_BUNDLE" ]; then
             WINDOWS_SIG_CONTENT=$(cat "$WINDOWS_SIG")
@@ -477,8 +476,7 @@ jobs:
             artifacts/macos-updater-x64/*.tar.gz.sig
             artifacts/windows-msi/*.msi
             artifacts/windows-nsis/*.exe
-            artifacts/windows-updater/*.zip
-            artifacts/windows-updater/*.zip.sig
+            artifacts/windows-updater/*.sig
             artifacts/latest.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
