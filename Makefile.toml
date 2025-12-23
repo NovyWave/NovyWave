@@ -123,6 +123,12 @@ cd src-tauri && cargo tauri dev --config tauri.dev.conf.json >> ../dev_tauri.log
 
 [tasks.tauri-build]
 description = "Build Tauri desktop app with embedded backend"
+linux_alias = "tauri-build-unix"
+mac_alias = "tauri-build-unix"
+windows_alias = "tauri-build-windows"
+
+[tasks.tauri-build-unix]
+description = "Build Tauri desktop app (Unix)"
 dependencies = ["install", "install_tauri_cli", "build-tauri"]
 env = { NOVYWAVE_PLATFORM = "TAURI" }
 script_runner = "bash"
@@ -150,6 +156,50 @@ fi
 
 # Bundle release Tauri app
 cd src-tauri && cargo tauri build
+'''
+
+[tasks.tauri-build-windows]
+description = "Build Tauri desktop app (Windows)"
+dependencies = ["install", "install_tauri_cli", "build-tauri"]
+env = { NOVYWAVE_PLATFORM = "TAURI" }
+script_runner = "powershell"
+script = '''
+# Create directories that Tauri resources require
+New-Item -ItemType Directory -Force -Path frontend/pkg | Out-Null
+New-Item -ItemType Directory -Force -Path _api | Out-Null
+New-Item -ItemType Directory -Force -Path plugins/dist | Out-Null
+
+# Copy frontend pkg files for embedded backend lookup
+$BuildIdFile = "frontend_dist/_api/pkg/build_id"
+if (Test-Path $BuildIdFile) {
+  $BuildId = Get-Content $BuildIdFile -Raw
+  $BuildId = $BuildId.Trim()
+
+  # Copy JS file
+  $JsFile = "frontend_dist/_api/pkg/frontend_$BuildId.js"
+  if (Test-Path $JsFile) {
+    Copy-Item $JsFile "frontend/pkg/" -ErrorAction SilentlyContinue
+  }
+
+  # Copy WASM file
+  $WasmFile = "frontend_dist/_api/pkg/frontend_bg_$BuildId.wasm"
+  if (Test-Path $WasmFile) {
+    Copy-Item $WasmFile "frontend/pkg/" -ErrorAction SilentlyContinue
+  }
+
+  # Copy snippets directory if it exists
+  $SnippetsDir = "frontend_dist/_api/pkg/snippets_$BuildId"
+  if (Test-Path $SnippetsDir) {
+    Copy-Item $SnippetsDir "frontend/pkg/" -Recurse -ErrorAction SilentlyContinue
+  }
+
+  # Flatten _api for runtime lookup
+  Copy-Item "frontend_dist/_api/*" "_api/" -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# Bundle release Tauri app
+Set-Location src-tauri
+cargo tauri build
 '''
 
 [tasks.tauri-build-debug]
