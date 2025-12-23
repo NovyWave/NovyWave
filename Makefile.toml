@@ -279,7 +279,8 @@ Set-Location "src-tauri"
 $buildVersion = $env:TAURI_BUILD_VERSION
 if ($buildVersion) {
     Write-Host "[OK] Using version from CI: $buildVersion"
-    cargo tauri build --config "{`"version`": `"$buildVersion`"}"
+    $configJson = '{"version": "' + $buildVersion + '"}'
+    cargo tauri build --config $configJson
 } else {
     cargo tauri build
 }
