@@ -643,3 +643,118 @@ let user_cleared = Actor::new(false, async move |cleared_handle| {
 - **Solution**: Complete removal - none were actually needed
 
 **Key Lesson:** If an Actor never handles events, it's expensive static storage. Either connect proper event streams or remove entirely.
+
+## ✅ Working Patterns (Proven Solutions)
+
+### Checkbox State Synchronization
+
+```rust
+// ❌ Wrong: Static checkbox state
+CheckboxBuilder::new()
+    .checked(false) // Always unchecked
+
+// ✅ Correct: Reactive checkbox state with label_signal
+.label_signal(selected_items.signal_ref({
+    let item_id = item_id.clone();
+    move |selected| {
+        CheckboxBuilder::new()
+            .size(CheckboxSize::Small)
+            .checked(selected.contains(&item_id))
+            .build()
+    }
+}))
+```
+
+### One-Shot Configuration Loading
+
+**Prevents circular dependencies during initialization:**
+
+```rust
+// ✅ One-time initialization that doesn't create loops
+fn sync_file_management_from_config() {
+    let file_paths = config_store().session.lock_ref().opened_files.lock_ref().to_vec();
+
+    if !file_paths.is_empty() {
+        let current_files = TRACKED_FILES.lock_ref().to_vec();
+        let mut new_tracked_files = Vec::new();
+
+        for file_path in file_paths {
+            // ✅ Preserve existing file states (prevents reset loops)
+            if let Some(existing_file) = current_files.iter().find(|f| f.path == file_path) {
+                new_tracked_files.push(existing_file.clone());
+            } else {
+                let new_file = create_tracked_file(file_path.clone(), FileState::Loading(LoadingStatus::Starting));
+                new_tracked_files.push(new_file);
+                // Send backend message for new files only
+            }
+        }
+
+        // ✅ Only update if actually different
+        let current_paths: Vec<String> = current_files.iter().map(|f| f.path.clone()).collect();
+        let new_paths: Vec<String> = new_tracked_files.iter().map(|f| f.path.clone()).collect();
+
+        if current_paths != new_paths {
+            TRACKED_FILES.lock_mut().replace_cloned(new_tracked_files);
+        }
+    }
+}
+```
+
+### Debugging Workflow (Systematic Process)
+
+1. **Identify the Loop Source**
+   - Look for excessive console logging patterns
+   - Add render counters to suspicious signal chains
+   - Use browser dev tools to pause on repeated operations
+
+2. **Trace Signal Dependencies**
+   - Map out which signals trigger which updates
+   - Look for circular dependencies (A→B→A)
+   - Identify missing signal dependencies
+
+3. **Check State Mutation Patterns**
+   - Ensure derived signals don't modify their source
+   - Look for bidirectional reactive flows
+   - Verify state preservation during updates
+
+4. **Test Initialization Order**
+   - Check if issues only occur on app start
+   - Verify config loading completes before UI rendering
+   - Ensure all required signal dependencies are present
+
+### Unidirectional Data Flow (Prevents Loops)
+
+```rust
+// ✅ Recommended: One-way data flow prevents loops
+// Config → State → UI (one direction only)
+
+// Config loads once
+async fn initialize_from_config() {
+    let config = load_config().await;
+    setup_state_from_config_once(config);
+    setup_state_to_config_persistence(); // Only state → config, not config → state
+}
+
+// State changes persist to config (NOT bidirectional)
+fn setup_state_to_config_persistence() {
+    Task::start(TRACKED_FILES.signal_vec_cloned().for_each(|files| async move {
+        let paths: Vec<String> = files.iter().map(|f| f.path.clone()).collect();
+        config_store().session.lock_mut().opened_files.lock_mut().replace_cloned(paths);
+        save_config_to_backend();
+    }));
+}
+```
+
+### Performance Optimization Patterns
+
+```rust
+// Deduplication to prevent unnecessary updates
+TIMELINE_CURSOR_POSITION.signal().dedupe().for_each_sync(|pos| expensive_update(pos));
+
+// Compare-before-update optimization
+let current = STATE.lock_ref();
+if *current != new_value {
+    drop(current);
+    STATE.set_neq(new_value); // Only trigger if different
+}
+```

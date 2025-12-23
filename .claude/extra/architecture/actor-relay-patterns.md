@@ -702,39 +702,13 @@ struct PanelConfig {
 
 **Key Rule: Avoid bundling data just for "organization" - use proper domain modeling instead.**
 
-### 5. Atom for Local UI State (MANDATORY)
+### 5. Atom for Local UI State
 
-**CRITICAL: Use Atom for local view state, Actor+Relay for domain state**
+> See "Atom for Local UI State" section above for examples.
 
-```rust
-// ✅ CORRECT: Atom for local UI concerns
-struct DialogState {
-    pub is_open: Atom<bool>,              // Local UI state
-    pub filter_text: Atom<String>,        // Local UI state
-    pub hover_index: Atom<Option<usize>>, // Local UI state
-}
+**Use Atom for:** Dialog visibility, hover effects, search filters, animation states, form inputs (before submission).
 
-// ✅ CORRECT: Actor+Relay for domain concerns
-struct TrackedFiles {
-    pub files: ActorVec<TrackedFile>,     // Domain data
-    pub file_dropped_relay: Relay<Vec<PathBuf>>,  // Domain events
-}
-
-// ✅ CORRECT: Usage pattern
-let dialog_state = DialogState::default();
-dialog_state.is_open.set(true);  // Direct Atom usage
-
-tracked_files.file_dropped_relay.send(files);  // Direct Relay usage
-```
-
-**Local UI State Examples:**
-- Dialog visibility, panel collapse state
-- Hover effects, focus states  
-- Search filters, sort order
-- Animation states, loading spinners
-- Form input values (before submission)
-
-### 5. NO Temporary Code Rule
+### 6. NO Temporary Code Rule
 
 **CRITICAL: Never create temporary solutions or bridge code**
 
@@ -804,85 +778,7 @@ pub fn get_variables_from_tracked_files(scope_id: &str) -> Vec<VariableWithConte
 
 ## Advanced Implementation Patterns
 
-### Event-Source Relay Naming (MANDATORY)
-
-**CRITICAL RULE: Relay names must identify the source of events, not the destination or purpose**
-
-**Pattern:** `{specific_source}_{event}_relay`
-
-**✅ CORRECT - Source identification:**
-```rust
-// User interactions - identify WHO initiated the event
-theme_button_clicked_relay: Relay,           // Theme button clicked
-dock_button_clicked_relay: Relay,            // Dock mode button clicked  
-file_drop_area_dropped_relay: Relay<Vec<PathBuf>>, // Files dropped on drop area
-search_input_changed_relay: Relay<String>,   // Search input text changed
-variable_tree_item_clicked_relay: Relay<String>, // Tree item clicked
-
-// System events - identify WHAT system component triggered
-file_parser_completed_relay: Relay<ParseResult>, // File parser finished
-network_error_occurred_relay: Relay<String>,     // Network component errored
-config_loader_finished_relay: Relay<Config>,     // Config loader completed
-
-// UI component events - identify WHICH component
-main_dialog_opened_relay: Relay,             // Main dialog opened
-timeline_panel_resized_relay: Relay<(f32, f32)>, // Timeline panel resized
-```
-
-**❌ PROHIBITED - Vague or command-like naming:**
-```rust
-// ❌ Generic "request" - doesn't identify source
-theme_toggle_requested_relay: Relay,         // WHO requested? Button? Keyboard? API?
-file_add_requested_relay: Relay<PathBuf>,    // WHERE did the request come from?
-
-// ❌ Command-like naming
-add_file: Relay<PathBuf>,                    // Sounds like imperative command
-remove_item: Relay<String>,                  // Action-oriented
-set_theme: Relay<Theme>,                     // Imperative verb
-update_config: Relay<Config>,                // Generic command
-```
-
-**Key Principle: Single Source, Multiple Subscribers**
-- **One source location** can send events through a relay (e.g., only theme button sends theme_button_clicked events)
-- **Multiple subscribers** can listen to the same relay (UI updates, config saving, logging, etc.)
-- **Source identification** in the name makes debugging and code navigation easy
-
-### Cache Current Values Pattern (DETAILED)
-
-**⚠️ MANDATORY: This is the ONLY acceptable place to cache values in Actor+Relay architecture**
-
-The "Cache Current Values" pattern is used **EXCLUSIVELY inside Actor processing loops** to maintain current state values for use when responding to events.
-
-```rust
-// ✅ CORRECT: Cache values ONLY inside Actor loops for event response
-let actor = ActorVec::new(vec![], async move |state| {
-    // Cache current values as they flow through streams
-    let mut current_filter = String::new();
-    let mut selected_items = Vec::new();
-    
-    loop {
-        select! {
-            // Update cached values when they change
-            Some(filter) = filter_stream.next() => {
-                current_filter = filter;
-            }
-            Some(items) = selection_stream.next() => {
-                selected_items = items;
-            }
-            // Use cached values when responding to events
-            Some(()) = action_button_stream.next() => {
-                process_selection(&current_filter, &selected_items);
-            }
-        }
-    }
-});
-```
-
-**Key Rules:**
-- **ONLY cache inside Actor loops** - never in UI components or globally
-- **Use caching for event response** - when you need multiple values at once
-- **Otherwise use signals** - for all other state access
-- **Never use raw Mutables for caching** - defeats the architecture
+> See "Core Architectural Rules" section above for Event-Source Relay Naming and Cache Current Values patterns.
 
 ### CRITICAL ANTIPATTERN: State Access Outside Actor Loops
 
@@ -1161,104 +1057,25 @@ let zoom_actor = Actor::new(ZoomState::default(), {
 
 ## State Management Migration Patterns
 
-### Bool → Unit Event Transition Pattern
-
-**When to use `Relay` (unit events) instead of `Relay<bool>`:**
-
-For **one-time lifecycle events** like initialization, deinitialization, or completion events:
-
+### Bool → Unit Event Transition
+For one-time lifecycle events, use `Relay` (unit) instead of `Relay<bool>`:
 ```rust
-// ❌ UNNECESSARY: Boolean payload for one-way events
-let (initialized_relay, mut stream) = relay::<bool>();
-initialization_relay.send(true); // Always sends true
-
-// ✅ CLEAN: Unit event for "initialization happened"
-let (initialized_relay, mut stream) = relay();
-initialization_relay.send(()); // Event occurrence is the signal
-
-let actor = Actor::new(false, async move |state| {
-    while let Some(()) = stream.next().await {
-        state.set_neq(true); // Event = state change
-    }
-});
+// ❌ let (init_relay, _) = relay::<bool>(); init_relay.send(true);
+// ✅ let (init_relay, _) = relay(); init_relay.send(()); // Event = signal
 ```
 
-**Key principle:** Use **event occurrence** rather than **event payload** for one-way state transitions.
-
-### Atom → Actor Encapsulation Pattern
-
-**Problem with public Atoms - external mutation exposure:**
-
+### Atom → Actor Encapsulation
+Public Atoms allow external `.set()` calls that bypass domain logic. Use Actor for encapsulation:
 ```rust
-// ❌ ANTIPATTERN: Public Atom breaks encapsulation
-pub struct Domain {
-    pub status: Atom<bool>, // External code can call .set()!
-}
-
-// External code can corrupt domain state:
-domain.status.set(true); // ❌ Bypasses domain logic
+// ❌ pub status: Atom<bool> // External code can corrupt state
+// ✅ pub status_actor: Actor<bool> // Read-only signal access only
 ```
 
-**Solution with Actor - controlled access:**
-
+### Complex Type Elimination
+If you have `Atom<Option<Rc<RefCell<T>>>>`, use `Actor<()>` with inline state variables instead:
 ```rust
-// ✅ CORRECT: Actor provides encapsulated state
-pub struct Domain {
-    pub status_actor: Actor<bool>, // Only provides signal access
-    status_changed_relay: Relay,   // Internal event relay
-}
-
-// External code gets read-only access:
-domain.status_actor.signal(); // ✅ Read-only signal
-// domain.status_actor.set(); // ❌ No public set method
-
-// Internal domain controls all changes:
-status_changed_relay.send(()); // ✅ Proper event-driven updates
+// ❌ Multiple indirection layers fighting ownership system
+// ✅ Actor::new((), async move |_| { let mut renderer = None; loop { ... } })
 ```
 
-**Key benefit:** Actor encapsulation prevents external state corruption while providing reactive signal access.
-
-### Complex Type Elimination Pattern
-
-**Antipattern recognition - fighting Rust's ownership system:**
-
-```rust
-// ❌ ANTIPATTERN: Multiple indirection layers indicate design issues
-pub renderer: Atom<Option<Rc<RefCell<WaveformRenderer>>>>,
-//            ^^^^  ^^^^^^ ^^  ^^^^^^^
-//            |     |      |   Interior mutability (fighting borrow checker)
-//            |     |      Reference counting (shared ownership confusion)
-//            |     Maybe pattern (uninitialized state management)
-//            Reactive wrapper (attempting reactivity on complex type)
-```
-
-**Clean Actor-based solution:**
-
-```rust
-// ✅ CORRECT: Direct ownership with Actor-managed state
-let canvas_actor = Actor::new((), async move |_state_handle| {
-    // State as local variables - no Clone/RefCell complexity
-    let mut renderer: Option<WaveformRenderer> = None; // Direct ownership
-    let mut initialized = false;
-    
-    loop {
-        select! {
-            // Handle events using local state - no borrowing conflicts
-            canvas_ready = canvas_stream.next() => {
-                renderer = Some(WaveformRenderer::new().await);
-                initialized = true;
-            }
-        }
-    }
-});
-```
-
-**Architecture rule:** If you need `Rc<RefCell<T>>` in reactive code, consider Actor<()> with inline state variables instead.
-
-**Recognition patterns for this antipattern:**
-- Multiple angle brackets: `Type<Option<Rc<RefCell<T>>>>`
-- Defensive RefCell programming: `if let Ok(mut x) = y.try_borrow_mut() { ... }`
-- Manual Clone implementations that discard fields
-- Fighting Rust's ownership system instead of working with it
-
-This comprehensive guide provides everything needed to implement proper Actor+Relay architecture in NovyWave.
+**Recognition patterns:** Multiple angle brackets, defensive `try_borrow_mut()`, manual Clone implementations.

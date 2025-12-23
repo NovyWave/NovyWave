@@ -282,6 +282,89 @@ impl NovyWaveApp {
 6. **Test Incrementally**: Ensure functionality preserved
 7. **Optimize**: Remove unused parameters or context fields
 
+## Clone! Macro Pattern for Lifetime Resolution
+
+**CRITICAL**: The `clone!` macro solves complex Rust lifetime issues when threading dependencies through closures and async contexts.
+
+### Macro Syntax
+
+```rust
+clone!(variable1, variable2, variable3 => move |parameters| {
+    // Use variable1, variable2, variable3 without lifetime issues
+})
+
+// Equivalent to:
+{
+    let variable1 = variable1.clone();
+    let variable2 = variable2.clone();
+    let variable3 = variable3.clone();
+    move |parameters| {
+        // Use cloned variables
+    }
+}
+```
+
+### Before/After Examples
+
+```rust
+// ❌ BEFORE: Complex manual cloning for each closure
+.on_press({
+    let app_config_for_press = app_config.clone();
+    let tracked_files_for_press = tracked_files.clone();
+    let selected_variables_for_press = selected_variables.clone();
+    move || {
+        request_load_waveform_files(
+            &app_config_for_press,
+            &tracked_files_for_press,
+            &selected_variables_for_press
+        );
+    }
+})
+
+// ✅ AFTER: Clean clone! macro
+.on_press(clone!(app_config, tracked_files, selected_variables => move |_| {
+    request_load_waveform_files(&app_config, &tracked_files, &selected_variables);
+}))
+```
+
+### When to Use Clone! Macro
+
+1. **Global State Elimination**: Threading dependencies during migration
+2. **Reactive Signal Chains**: Multiple dependencies in `map_ref!` or `child_signal`
+3. **Event Handlers**: Button clicks, input changes with domain dependencies
+4. **Async Tasks**: Background processing with domain state access
+
+### Performance Considerations
+
+**✅ Acceptable Cloning:**
+```rust
+// Actor/Relay structures are designed for cheap cloning (Arc-wrapped internally)
+struct AppConfig { ... }
+struct TrackedFiles { ... }
+struct SelectedVariables { ... }
+```
+
+**⚠️ Avoid for Heavy Data:**
+```rust
+// Don't use clone! for actual data payloads
+let large_file_contents = vec![0u8; 1_000_000];
+// Don't: clone!(large_file_contents => move |_| { ... })
+// Do: Pass by reference or use Arc<T> explicitly
+```
+
+### Macro Implementation
+
+```rust
+macro_rules! clone {
+    ($($var:ident),+ => $body:expr) => {{
+        $(let $var = $var.clone();)+
+        $body
+    }};
+}
+```
+
+**Key Insight**: The clone! macro was essential for successfully eliminating global APP_CONFIG state. Without it, the complexity of manual cloning and lifetime management would have made the migration significantly more difficult.
+
 ## Key Insights from NovyWave Experience
 
 **The parameter threading approach was successful for NovyWave because:**

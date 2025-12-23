@@ -115,6 +115,74 @@ pub fn active_divider_signal(&self) -> impl Signal<Item = Option<DividerType>> {
 
 **Key Lesson:** During complex architectural transformations, prefer Rust idioms (derive macros, Copy semantics) over manual implementations to reduce cognitive overhead and eliminate performance issues.
 
+### Modern Rust Formatting Syntax (MANDATORY)
+
+Use modern Rust formatting macros with inline expressions:
+
+**✅ Modern (Recommended):**
+```rust
+// Variables directly in format strings
+println!("{my_var}");
+zoon::println!("{value}");
+format!("{name} is {age} years old");
+
+// Debug formatting
+println!("{my_var:?}");
+zoon::println!("{data:?}");
+
+// Other format specifiers
+println!("{value:02}");        // Zero-padded
+println!("{value:.2}");        // Decimal places
+println!("{value:#x}");        // Hexadecimal
+```
+
+**❌ Verbose (Avoid):**
+```rust
+println!("{}", my_var);
+zoon::println!("{}", value);
+format!("{} is {} years old", name, age);
+```
+
+**Key Benefits:**
+- More readable and concise
+- Less error-prone (no argument position mismatches)
+- Consistent with modern Rust style
+- Works with `println!`, `format!`, `zoon::println!`, `eprintln!`, etc.
+
+### Rust Edition 2024: Explicit Capture Bounds with use<T>
+
+**Understanding `+ use<T>` syntax for fixing lifetime issues:**
+
+```rust
+// ✅ CORRECT: Atom.signal() already has proper capture bounds
+pub fn signal(&self) -> impl Signal<Item = T> + use<T> {
+    self.actor.signal()
+}
+
+// This means local atoms should work in signal chains:
+let progress_atom = Atom::new(100.0);
+.s(Width::percent_signal(progress_atom.signal().map(|p| p as f32)))
+```
+
+**What `+ use<T>` does:**
+- **Explicit capture bounds** - Only captures the specified generic parameters
+- **Prevents overcapturing** - Doesn't automatically capture all lifetimes in scope
+- **Enables `'static` usage** - Signal doesn't depend on local lifetimes when not needed
+- **Rust Edition 2024 feature** - Gives precise control over `impl Trait` captures
+
+**Why it solves lifetime errors:**
+```rust
+// OLD: Overcaptures lifetimes, requires 'static
+fn old_signal<'a>(data: &'a str) -> impl Signal<Item = String> {
+    // Implicitly captures 'a even if not used
+}
+
+// NEW: Explicit control over what gets captured
+fn new_signal<'a>(data: &'a str) -> impl Signal<Item = String> + use<> {
+    // use<> = capture nothing, works in 'static contexts
+}
+```
+
 ### Compilation Error Verification (CRITICAL)
 
 **MANDATORY: Always verify ALL compilation errors are actually resolved before claiming success**
@@ -355,10 +423,6 @@ fn button_component() -> impl Element {
 - **Preserve API boundaries** - Internal implementation changes only, no public interface modifications  
 - **Use existing patterns** - Work within current Actor+Relay constraints rather than extending API
 
-## Code Style & Patterns
-
-> **📖 Detailed Coding Patterns:** See @.claude/extra/technical/coding-patterns.md for comprehensive coding patterns, architectural rules, and best practices including Actor+Relay patterns, WASM error handling, modern Rust formatting, and antipattern prevention.
-
 ## Refactoring Rules
 
 **ATOMIC CODE MOVEMENT - NEVER BREAK COMPILATION:**
@@ -435,17 +499,25 @@ Once I understand these details clearly, I'll implement all the improvements eff
 - **Example**: File browsing uses `UpMsg::BrowseDirectory` → backend filesystem operations → `DownMsg::DirectoryContents`
 - **Why this matters**: WASM runs on browser main thread - any blocking operation freezes the entire tab
 
-### Log Monitoring Patterns
-```bash
-# Check for compilation errors
-tail -100 dev_server.log | grep -i "error"
+### WASM Error Handling & Logging
 
-# Monitor for successful compilation
-tail -f dev_server.log | grep -i "compilation complete"
+**Quick Reference:**
+```rust
+// ✅ WASM-specific methods (provide proper stack traces)
+value.expect_throw("descriptive error message");  // Better than expect()
+value.unwrap_throw();                              // Better than unwrap()
+zoon::println!("info");   // console.log()
+zoon::eprintln!("error"); // console.error()
+// Note: std::println!() does nothing in WASM
 
-# Debug patterns
-rg "println!" --type rust  # Find debug statements to clean up
+// ❌ Never silently swallow errors
+let _ = result;  // Silent failure - use if let Err(e) or expect_throw
+
+// ✅ Use Connection.exchange_message for request-response (not manual channels)
+let config = connection.exchange_message(UpMsg::LoadConfig).await?;
 ```
+
+**Never log large structs**: `{:?}` on WaveformFile = 970kb+ output blocking browser. Log only IDs and counts.
 
 ## Testing & Verification Protocols
 
@@ -485,130 +557,15 @@ mcp__browsermcp__browser_screenshot  # Full page or element-specific screenshots
 
 ## Reactive Code Development & Review
 
-### Reactive Code Review Checklist
+> **📖 Complete Reference:** See `.claude/extra/technical/reactive-antipatterns.md` for comprehensive reactive patterns, antipatterns, debugging methodology, and testing patterns.
 
-**Before Writing Reactive Code:**
-- [ ] Identify all signals that should trigger updates
-- [ ] Check for potential circular dependencies (A→B→A)
-- [ ] Plan initialization order (config load → state setup → UI render)
-- [ ] Consider state preservation during updates
+**Quick Checklist:**
+- Use `map_ref!` for combining signals; add `_tracked_files` for file dependencies
+- Use `saturating_sub()` for counts; `.into_element()` for type unification
+- Never let derived signals modify source data (causes infinite loops)
+- Check console for 30+ renders in <300ms (over-rendering symptom)
 
-**Signal Chain Design:**
-- [ ] Use `map_ref!` for combining multiple signals
-- [ ] Add `_tracked_files` pattern for file loading dependencies
-- [ ] Convert `SignalVec` with `.to_signal_cloned()` before use in `map_ref!`
-- [ ] Use `.into_element()` for type unification in conditional signals
-
-**Common Pitfall Prevention:**
-- [ ] Derived signals don't modify their source data
-- [ ] Use `saturating_sub()` instead of `-` for count calculations  
-- [ ] Dynamic UI elements use `label_signal` or `child_signal` patterns
-- [ ] One-shot initialization preserves existing states
-- [ ] Compare values before updating (`if current != new`)
-
-### Step-by-Step Reactive Debugging
-
-**1. Identify the Issue Type:**
-```bash
-# Check console for infinite loop patterns
-grep -i "rendering\|computing\|processing" console.log | wc -l
-# If >1000 lines, likely infinite loop
-```
-
-**2. Trace Signal Dependencies:**
-```rust
-// Add temporary debug logging
-zoon::println!("🔍 Signal {} triggered", signal_name);
-```
-
-**3. Check for Common Issues:**
-- Missing signal dependencies (UI doesn't update)
-- Circular signal chains (infinite loops)  
-- Bidirectional reactive flows (config ↔ state)
-- Integer overflow in calculations
-- Signal type mismatches (`Clone` errors)
-
-**4. Apply Systematic Fixes:**
-- Add missing dependencies to signal chains
-- Break circular dependencies with one-shot patterns
-- Use state preservation during updates
-- Convert signal types properly
-- Test incrementally after each fix
-
-### Over-Rendering Recognition
-**Symptoms:** 30+ identical render logs in <300ms, UI flickering, browser lag
-**Common pattern:** `TRACKED_FILES → SMART_LABELS → child_signal(map_ref!)`
-**Fix approach:** Remove intermediate signals, direct computation, add signal deduplication
-
-### Reactive Antipatterns to Avoid
-
-**❌ Circular Signal Dependencies:**
-```rust
-// Bad: Derived signal modifies its source
-SMART_LABELS.signal().for_each_sync(|labels| {
-    TRACKED_FILES.lock_mut().update_labels(labels); // Triggers SMART_LABELS again!
-});
-```
-
-**❌ Missing Signal Dependencies:**
-```rust  
-// Bad: Variables panel won't update when files load
-map_ref! {
-    let scope_id = SELECTED_SCOPE_ID.signal_ref(|id| id.clone()) =>
-    get_variables_from_files(&scope_id) // Missing file loading dependency
-}
-```
-
-**❌ Static State in Dynamic UI:**
-```rust
-// Bad: Checkbox always unchecked regardless of selection
-CheckboxBuilder::new().checked(false)
-```
-
-**❌ Bidirectional Reactive Flow:**
-```rust
-// Bad: Config and state both trigger each other
-config_changes.for_each_sync(|config| update_state(config));
-state_changes.for_each_sync(|state| update_config(state)); // Creates loop!
-```
-
-### Reactive Testing Patterns
-
-**Manual Signal Testing:**
-```rust
-#[cfg(debug_assertions)]
-static SIGNAL_FIRE_COUNT: Lazy<Mutable<u32>> = Lazy::new(|| Mutable::new(0));
-
-// In signal chain:
-let count = SIGNAL_FIRE_COUNT.get() + 1;
-SIGNAL_FIRE_COUNT.set(count);
-if count > 100 {
-    zoon::println!("⚠️ POTENTIAL INFINITE LOOP: {} fires", count);
-}
-```
-
-**Integration Testing:**
-```rust
-// Test initialization doesn't cause loops
-async fn test_config_load_stability() {
-    initialize_from_config().await;
-    
-    // Wait for signals to stabilize
-    Timer::sleep(1000).await;
-    
-    // Check no excessive signal firing occurred
-    assert!(SIGNAL_FIRE_COUNT.get() < 50);
-}
-```
-
-**See `.claude/extra/technical/reactive-patterns.md` for comprehensive patterns and examples.**
-
-**See system.md for complete task management protocols.**
-
-**See system.md for git workflows and safety rules.**
-
-
-**See system.md for complete subagent delegation strategies.**
+**See system.md for task management, git workflows, and subagent delegation.**
 
 ## Architectural Migration Best Practices
 
@@ -672,142 +629,30 @@ impl NovyWaveApp {
 
 **MANDATORY RULE: Never hardcode any values that should be dynamic - you'll forget it and then debugging will be hell**
 
-### The Hardcoded Mock Data Nightmare
-
-**Real Example from NovyWave:** Signal formatting appeared completely broken across the entire frontend - all format options (Bin, Hex, Oct, etc.) showed wrong values. Hours of debugging frontend formatting logic, signal chains, and UI components revealed the real issue was hardcoded mock data in the backend:
+### Quick Reference
 
 ```rust
-// ❌ DISASTER: Hardcoded formatted values instead of raw data
-SignalTransition {
-    time_ns: 0,
-    value: "a".to_string(),        // Should be "1010" (binary) not "a" (formatted hex)
-},
-SignalTransition {
-    time_ns: 50_000_000_000,
-    value: "3".to_string(),        // Should be "11" (binary) not "3" (formatted decimal)
-},
-SignalTransition {
-    time_ns: 0,
-    value: "c".to_string(),        // Should be "1100" (binary) not "c" (formatted hex)
-},
-```
+// ❌ PROHIBITED: Any hardcoded values in data processing
+value: "a".to_string(),           // Hardcoded formatted output
+let canvas_width = 800.0;         // Hardcoded dimension
+let timeout_ms = 5000;            // Hardcoded constant
 
-### Why This Is Catastrophic
-
-1. **Debugging Misdirection**: Spend hours debugging complex frontend logic when the issue is trivial backend mock data
-2. **False Architectural Problems**: Assume signal formatting systems are broken when they work correctly
-3. **Wasted Development Time**: Multiple attempted fixes in wrong codebase areas
-4. **User Frustration**: Broken functionality with no apparent cause
-
-### Prevention Rules
-
-**✅ CORRECT: Dynamic data or clearly marked test data**
-```rust
-// ✅ GOOD: Use actual waveform parsing
+// ✅ CORRECT: Use actual data sources
 let value = waveform_signal.to_bit_string();  // Dynamic from real data
-
-// ✅ GOOD: If must use test data, make it obvious and correct
-SignalTransition {
-    time_ns: 0,
-    value: "1010".to_string(),    // ✅ Raw binary that frontend expects
-    // TODO: Replace with actual waveform parsing
-},
+let canvas_width = current_canvas_width();    // From DOM/signals
+let timeout_ms = app_config().network_timeout_ms;  // From config
 ```
 
-**❌ NEVER: Hidden hardcoded values**
-```rust
-// ❌ EVIL: Looks like real data but is hardcoded formatted output
-value: format_signal_for_display(&signal),  // Hardcoded result, not dynamic
-value: "calculated_result".to_string(),     // Fake "calculated" result
-value: some_complex_function_that_returns_hardcoded_value(), // Hidden hardcoding
-```
+### Prevention Strategy
 
-### Enforcement Strategy
+1. **Search for suspicious patterns**: `rg '"[^"]*"\.to_string\(\)'` in data code
+2. **Question every value**: Is this computed or just hardcoded?
+3. **Mark test data**: Always add `TODO: Replace with real data`
+4. **Trace data flow**: Follow values from UI back to source
 
-1. **Search for hardcoded strings**: `rg '"[^"]*"\.to_string\(\)'` in data processing code
-2. **Question every "example" value**: Is this actually computed or just hardcoded?
-3. **Mark temporary test data**: Always add `TODO: Replace with real data` comments
-4. **Trace data flow**: Follow values from UI back to source - are they actually dynamic?
+**Exception**: Debug-only hardcodes with explicit TODO comments explaining why and when to remove.
 
-**Remember: Hardcoded values that look dynamic are debugging time bombs that will waste hours of your life.**
-
-### CRITICAL: NEVER Use Numeric Hardcoded Values
-
-**❌ ABSOLUTELY PROHIBITED: Numeric constants in business logic**
-```rust
-// ❌ DISASTER: Hardcoded numeric values create maintenance nightmares
-let stable_viewport_range_ns = 250_000_000_000_u64; // Hardcoded 250 seconds
-let default_canvas_width = 800.0; // Hardcoded canvas size
-let timeout_ms = 5000; // Hardcoded timeout
-
-// ❌ Even with "good" variable names, still hardcoded
-let TIMELINE_DURATION_NS = 250_000_000_000_u64; // Still hardcoded!
-```
-
-**✅ CORRECT: Use proper data sources**
-```rust
-// ✅ Get actual viewport range from Actor state
-let viewport_range_ns = viewport_actor.signal().map(|v| v.end.nanos() - v.start.nanos());
-
-// ✅ Get actual canvas dimensions from DOM/signals
-let canvas_width = current_canvas_width();
-
-// ✅ Get timeouts from configuration
-let timeout_ms = app_config().network_timeout_ms;
-```
-
-**ONLY Exception: Debug/temporary fixes with explicit TODO**
-```rust
-// TODO: REMOVE DEBUG HARDCODED VALUE once viewport actor signal access is fixed
-// CRITICAL: This 250s hardcode prevents viewport corruption during resize,
-// but must be replaced with proper viewport_actor.signal() access
-let stable_viewport_range_ns = 250_000_000_000_u64; // 250 seconds - DEBUG ONLY
-```
-
-**Why numeric hardcoding is catastrophic:**
-- **Data changes**: Real timelines aren't always 250s - FST files can be microseconds to hours
-- **Configuration drift**: Hardcoded values become stale when configs change
-- **Testing issues**: Unit tests with different data sizes break with hardcoded assumptions
-- **Maintenance hell**: Finding and updating scattered numeric constants across codebase
-
-### Conditional Logging Antipattern
-
-**❌ CRITICAL ANTIPATTERN: Hardcoded conditional logging thresholds**
-
-```rust
-// ❌ DISASTER: Hardcoded magic numbers in logging conditions
-if width > 520.0 || height > 100.0 {
-    zoon::println!("🔧 CANVAS: Resized to {}x{} px", width, height);
-}
-
-// ❌ Future debugging nightmare: What are 520.0 and 100.0?
-// - Are these canvas sizes? Screen dimensions? Arbitrary thresholds?
-// - Will break when debugging smaller screens or different layouts
-// - No context for why these specific numbers were chosen
-```
-
-**Why this is catastrophic:**
-- **Debugging blindness**: Silent failures when values fall below arbitrary thresholds
-- **Future developer confusion**: No context for why these specific numbers exist
-- **Layout dependency**: Breaks when UI layout changes (responsive design, different screen sizes)
-- **False debugging assumptions**: Developer assumes logging covers all cases
-
-**✅ CORRECT approaches:**
-```rust
-// Option 1: Log everything (if performance allows)
-zoon::println!("🔧 CANVAS: Resized to {}x{} px", width, height);
-
-// Option 2: Conditional logging with clear semantic meaning
-const CANVAS_MIN_LOGGABLE_SIZE: f32 = 100.0; // Document why this threshold exists
-if width >= CANVAS_MIN_LOGGABLE_SIZE {
-    zoon::println!("🔧 CANVAS: Resized to {}x{} px", width, height);
-}
-
-// Option 3: Remove logging entirely if it's not essential
-// (Often the best choice for frequent events like resize)
-```
-
-**Key principle:** If logging is causing performance issues, reduce by removing entire log categories, not by adding mysterious conditional thresholds.
+**Impact**: Hardcoded values cause debugging misdirection - spending hours in frontend when issue is trivial backend mock data.
 
 ## Work Integrity & Problem-Solving Ethics
 
@@ -1022,210 +867,31 @@ timeline/
 
 ### Autonomous Sustained Work Pattern
 
-When users request extended autonomous work (e.g. "I won't be here, work as long as possible"), use this proven pattern for sustained productivity:
-
-**Setup for Extended Sessions:**
-1. **Create comprehensive todo lists** - Break complex problems into 40+ specific actionable todos
-2. **Use TodoWrite proactively** - Track all progress in real-time, mark completed immediately 
-3. **Systematic problem-solving** - Use subagents for parallel analysis and implementation
-4. **Continuous progress validation** - Test fixes incrementally, never claim completion without verification
-
-**Key Success Factors:**
-- **Detailed planning prevents getting stuck** - Comprehensive todos provide clear next steps
-- **Real-time progress tracking** - TodoWrite keeps work organized and prevents losing focus
-- **Subagent delegation** - Extends effective working time by using separate context spaces
-- **Systematic approach** - Complete one issue fully before moving to next
-
-**Example Pattern from Successful Signal Loop Fix:**
-```
-1. Create 40+ todos covering: root cause analysis, systematic fixes, testing, verification
-2. Work through each systematically: investigate → fix → test → verify → mark complete
-3. Use subagents for: codebase analysis, pattern searching, comprehensive audits
-4. Continuous testing: browser console monitoring, compilation verification, UI testing
-5. Result: 14+ reactive antipatterns eliminated over extended session
-```
-
-This pattern enables sustained autonomous work while maintaining quality and preventing getting lost in complex problems.
+For extended autonomous work: Create comprehensive TodoWrite lists (40+ items), mark completed immediately, use subagents for parallel analysis, test fixes incrementally, never claim completion without verification. Work systematically: investigate → fix → test → verify → mark complete.
 
 ### Planning Guidelines
 
-#### User Planning Preference (MANDATORY)
-**CRITICAL: When user uses keyword "PLAN" (e.g., "PLAN to clean this file from antipatterns") - always present comprehensive plan before making ANY changes.**
+**When user uses "PLAN" keyword**: Present comprehensive plan using TodoWrite before making ANY changes. Wait for approval before implementation.
 
-Recognition patterns:
-- "PLAN to [action]" - Direct planning request
-- "Prepare plan and then tell me before any changes" - Explicit planning requirement
-- Any request implying planning should happen first
-
-Required response:
-- Create and present detailed plan using TodoWrite
-- Wait for user approval before starting implementation  
-- Don't begin coding/changes until user confirms the plan
-- Apply this even when not explicitly in plan mode
-
-#### Tool Usage
-- Use the Task tool when you are in plan mode
-- Only use exit_plan_mode tool when planning implementation steps for code writing tasks
-- For research tasks (gathering information, searching, reading), do NOT use exit_plan_mode
+**Tool Usage**: Use Task tool in plan mode. Only use exit_plan_mode for implementation planning, NOT for research tasks.
 
 ## Systematic Multi-Session Task Methodology
 
-### When to Use This Methodology
+**Use for:** Architecture migrations, multi-session refactors, large-scale cleanups (10+ files), tasks with high regression risk.
 
-**Apply this systematic approach for:**
-- **Complex tasks spanning multiple sessions** - Architecture migrations, major refactors, large-scale cleanups
-- **Tasks with high regression risk** - Changes that could introduce new antipatterns
-- **Warning/error resolution campaigns** - Systematic elimination of compiler warnings or errors
-- **Large codebase updates** - Changes affecting 10+ files or multiple domains
-- **Quality improvement initiatives** - Code cleanup, performance optimization, architectural compliance
+### 5-Phase Safety Pattern
 
-**Pattern Recognition:** If a task requires more than 2-3 sessions or affects critical architecture, use this methodology.
+1. **Preparation**: Read antipattern docs, review patterns, check current system state, create TodoWrite plan
+2. **Implementation**: Single focus area, 10-15 changes max, file-by-file, verify after each change
+3. **Verification**: Check for new antipatterns, confirm compilation, test critical functionality
+4. **Documentation**: Update docs with resolved issues, commit with descriptive messages
+5. **Monitoring**: Weekly health checks, review commits for antipattern introduction
 
-### 5-Phase Safety Methodology
+### Key Principles
 
-**Critical Success Pattern: Preparation → Implementation → Verification → Monitoring → Documentation**
-
-#### Phase 1: Foundation Reading (MANDATORY)
-
-**Before touching any code:**
-```
-[ ] Read relevant antipattern documentation
-[ ] Study correct pattern examples (e.g., chat_example.md)
-[ ] Review architectural rules (CLAUDE.md + .claude/extra/)
-[ ] Check current system state (logs, warnings, errors)
-[ ] Identify specific target scope for this session
-[ ] Create TodoWrite plan with specific verification checkpoints
-```
-
-**Key Principle:** Never start implementation without understanding the correct patterns and current system state.
-
-#### Phase 2: Systematic Implementation
-
-**Session Scope Rules:**
-- **Single focus area** - Never work on multiple architectural domains simultaneously
-- **Limited scope** - Maximum 10-15 related changes per session
-- **TodoWrite tracking** - Every step tracked with intermediate verification
-- **File-by-file approach** - Complete and verify each file before moving to next
-- **Frequent compilation checks** - Verify after each significant change
-
-#### Phase 3: Anti-Regression Verification (CRITICAL)
-
-**After each session, verify no new antipatterns introduced:**
-```
-[ ] Check for new antipattern indicators (grep/rg commands)
-[ ] Verify architectural compliance (Actor+Relay, no raw mutables, etc.)
-[ ] Confirm compilation success
-[ ] Document change impact (warning counts, error elimination)
-[ ] Test critical functionality if applicable
-```
-
-**🚨 REGRESSION INDICATORS - STOP AND FIX:**
-- **Error/warning count increased** - New problems introduced
-- **New antipattern code patterns** - Architectural violations
-- **Compilation failures** - Fix immediately before continuing
-
-#### Phase 4: Documentation Maintenance
-
-**Keep documentation synchronized:**
-```
-[ ] Update relevant documentation with resolved issues
-[ ] Mark completed patterns with ✅ RESOLVED
-[ ] Update success metrics and baselines
-[ ] Document new antipatterns discovered
-[ ] Commit documentation changes with descriptive messages
-```
-
-#### Phase 5: Ongoing Monitoring
-
-**Prevent regression and architectural drift:**
-```
-[ ] Weekly/bi-weekly system health checks
-[ ] Monitor trending metrics (warnings, errors, performance)
-[ ] Review recent commits for antipattern introduction
-[ ] Update methodology based on lessons learned
-```
-
-### Session Workflow Template
-
-**Copy this template for complex multi-session tasks:**
-
-```
-## Multi-Session Task: [Task Name] - Session [X] - [Date]
-
-### Preparation Phase
-[ ] Current system state: [warnings/errors count, compilation status]
-[ ] Target scope: [specific area/domain/files]
-[ ] Re-read relevant antipatterns documentation
-[ ] Review correct patterns for this domain
-[ ] Plan specific changes for this session
-
-### Implementation Phase
-[ ] Change 1: [specific change] - [file/location]
-[ ] Change 2: [specific change] - [file/location]
-[ ] Change 3: [specific change] - [file/location]
-[ ] Compilation check after each change
-[ ] Progress metric check after each change
-
-### Verification Phase  
-[ ] NO new antipatterns introduced: [specific checks]
-[ ] Compilation success: [status]
-[ ] Target metrics improvement: [before → after counts]
-[ ] Critical functionality verification: [if needed]
-
-### Documentation Phase
-[ ] Update relevant docs with progress
-[ ] Mark resolved items
-[ ] Update success metrics
-[ ] Commit with descriptive message
-
-### Session Results
-- **Changes Made:** [summary]
-- **Files Modified:** [list]
-- **Metrics Impact:** [before → after]
-- **Verification Status:** ✅ PASS / ❌ FAIL
-- **Next Session Plan:** [what to tackle next]
-```
-
-### Emergency Recovery Pattern
-
-**If verification reveals new problems:**
-1. **STOP** all implementation work immediately
-2. **Revert** to last known-good state: `git reset --hard <commit>`
-3. **Re-read** documentation to understand what went wrong
-4. **Re-plan** with smaller, safer scope
-5. **Use TodoWrite** to track micro-steps
-6. **Get verification** at each tiny step before proceeding
-
-### Success Indicators
-
-**✅ METHODOLOGY WORKING:**
-- **Steady progress** - Target metrics improving over sessions
-- **No regressions** - New problems not introduced during fixes
-- **Sustainable pace** - Can work consistently without burnout or confusion
-- **Clear direction** - Always know what to do next
-- **Quality maintained** - Compilation success and functionality preserved
-
-**❌ METHODOLOGY FAILING:**
-- **Chaos symptoms** - Lost track of what was changed or needs changing
-- **Regression introduction** - New problems appearing during "fixes"
-- **Overwhelming scope** - Trying to change too much at once
-- **Verification skipping** - Not checking after each step
-
-**Recovery:** Return to Phase 1 (Foundation Reading) and restart with smaller scope.
-
-### Multi-Session Coordination
-
-**Between sessions:**
-- **Commit all changes** with descriptive messages
-- **Document session results** using template above
-- **Update tracking documents** (like hunt_warnings.md)
-- **Plan next session scope** based on current progress
-
-**Session startup checklist:**
-- **Review previous session results**
-- **Check current system state** (may have changed)
-- **Confirm no regressions** since last session
-- **Plan current session scope** (small, focused)
-
-This methodology ensures systematic progress on complex tasks while preventing the introduction of new problems during the resolution process.
+- **Never skip verification** after each step
+- **Revert immediately** if error/warning count increases or new antipatterns appear
+- **Single focus area** per session - never multiple architectural domains simultaneously
+- **Commit between sessions** with session results documented
+- If methodology failing (chaos, regressions): Return to Phase 1 with smaller scope
 

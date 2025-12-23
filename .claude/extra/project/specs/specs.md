@@ -46,88 +46,7 @@ Open Workspace dialog state (recent workspaces, last selection, tree view scroll
 
 ## Configuration Format
 
-The configuration is stored as TOML format with the following structure:
-
-```toml
-[workspace]
-dock_mode = "Bottom" # "Right" or "Bottom"
-theme = "Dark" # "Dark" or "Light"
-
-[files]
-tracked_files = ["/path/to/file1.vcd", "/path/to/file2.fst"]
-
-[scope]
-selected_scope_id = "file1.vcd|TOP|cpu"
-expanded_scopes = ["file1.vcd|TOP", "file2.fst|testbench"]
-
-[variables]
-selected_variables = [
-    {id = "file1.vcd|TOP|cpu|clk", formatter = "Bin"},
-    {id = "file1.vcd|TOP|cpu|data", formatter = "Hex"}
-]
-variable_filter = ""
-
-[panels]
-[panels.right_mode]
-files_panel_width = 300
-variables_panel_width = 400
-timeline_panel_height = 600
-variables_name_column_width = 150
-variables_value_column_width = 100
-
-[panels.bottom_mode]
-files_panel_width = 300
-files_panel_height = 350
-variables_panel_width = 400
-variables_name_column_width = 150
-variables_value_column_width = 100
-
-[timeline]
-cursor_position_ns = 125000000 # nanoseconds
-zoom_center_ns = 0
-zoom_level = 1.0
-visible_range_start_ns = 0
-visible_range_end_ns = 250000000
-
-[dialogs]
-[dialogs.file_picker]
-scroll_position = 0
-expanded_directories = ["/home/user", "/home/user/projects"]
-
-[global.workspace_history]
-last_selected = "/home/user/repos/NovyWave"
-recent_paths = [
-  "/home/user/repos/NovyWave",
-  "/home/user/projects/example"
-]
-
-[global.workspace_history.tree_state."/home/user/repos/NovyWave"]
-scroll_top = 128.0
-expanded_paths = [
-  "/home/user/repos/NovyWave/hardware",
-  "/home/user/repos/NovyWave/test_files"
-]
-
-[errors]
-toast_auto_dismiss_ms = 5000
-```
-
-## Auto-Save Behavior
-
-Configuration is automatically saved to disk with proper debouncing to prevent excessive file writes:
-
-- **Panel resizing**: 500ms debounce after drag operation completes
-- **Variable selection**: Immediate save on selection change
-- **Timeline navigation**: 1000ms debounce for cursor/zoom changes
-- **Dialog interactions**: Immediate save for expand/collapse states
-- **Theme/dock changes**: Immediate save
-
-## Error Handling
-
-When configuration file cannot be read:
-- Display error message: "Configuration file is corrupted: '[specific error]'. Please fix the file or remove '[absolute path]' to reset settings."
-- Fall back to default configuration values
-- Do not retry loading automatically - user must fix or remove corrupted file
+Configuration is stored as TOML format. For full format specification including all sections, auto-save behavior, and error handling, see `config-format.md`.
 
 # Files & Scopes Panel
 
@@ -477,212 +396,11 @@ When there are no data - timeline cursor points outside of the timespan where no
 
 # Special Signal States
 
-Digital waveform files contain special signal states that represent various conditions beyond simple 0/1 logic levels. NovyWave handles these states consistently across the interface.
-
-## Supported Special States
-
-### High-Impedance State (Z)
-- **Display symbol**: `Z`
-- **Usage**: Tri-state buffers, disconnected signals, floating buses
-- **Visual**: Bright contrasting color block
-- **Tooltip**: "High-impedance state - Signal is disconnected or floating"
-
-### Unknown State (X)
-- **Display symbol**: `X`
-- **Usage**: Uninitialized signals, timing violations, conflicting drivers
-- **Visual**: Bright contrasting color block
-- **Tooltip**: "Unknown state - Signal value cannot be determined"
-
-### Uninitialized State (U)
-- **Display symbol**: `U`
-- **Usage**: Signals before initialization, power-up sequences
-- **Visual**: Bright contrasting color block
-- **Tooltip**: "Uninitialized state - Signal has not been assigned a value"
-
-### No Data Available (N/A)
-- **Display symbol**: `N/A`
-- **Usage**: Timeline cursor outside file's time range
-- **Visual**: Low-contrasting placeholder text
-- **Tooltip**: "No data available - Timeline position is outside this file's range"
-
-## Display Consistency
-
-### Value Column
-Special states are displayed as plain text with contrasting colors:
-```
-Variable A: [Z] [Hex ▼] [📋]
-Variable B: [X] [Bin ▼] [📋]
-Variable C: [N/A] [Hex ▼] [📋]
-```
-
-### Wave Column (Canvas)
-Special states are rendered as colored blocks in the timeline:
-- **Z state**: Gray/yellow block at mid-level
-- **X state**: Red block spanning full signal height
-- **U state**: Red block (same as X)
-- **N/A**: No block rendered (gap in timeline)
-
-## Formatter Behavior
-
-### Binary Formatter
-- Z → `Z`
-- X → `X`
-- U → `U`
-- N/A → `N/A`
-
-### Hexadecimal Formatter
-- Z → `Z`
-- X → `X`
-- U → `?`
-- N/A → `N/A`
-
-### Decimal/Integer Formatters
-- Z → `-`
-- X → `-`
-- U → `-`
-- N/A → `N/A`
-
-### ASCII Formatter
-- Z → `.`
-- X → `.`
-- U → `.`
-- N/A → `N/A`
-
-## Educational Tooltips
-
-When user hovers over special state values in the Value Column, educational tooltips appear:
-
-```html
-<!-- Z State -->
-<div class="tooltip">
-  <strong>High-Impedance (Z)</strong><br>
-  Signal is disconnected or floating.<br>
-  Common in tri-state buses and disabled outputs.
-</div>
-
-<!-- X State -->
-<div class="tooltip">
-  <strong>Unknown (X)</strong><br>
-  Signal value cannot be determined.<br>
-  Often caused by timing violations or uninitialized logic.
-</div>
-
-<!-- U State -->
-<div class="tooltip">
-  <strong>Uninitialized (U)</strong><br>
-  Signal has not been assigned a value.<br>
-  Typically seen during power-up or before reset.
-</div>
-
-<!-- N/A State -->
-<div class="tooltip">
-  <strong>No Data Available</strong><br>
-  Timeline cursor is outside this file's simulation range.<br>
-  Try moving cursor within the file's timespan.
-</div>
-```
-
-## Common Occurrence Scenarios
-
-### During Simulation Startup
-- Signals show `U` (uninitialized) before reset
-- After reset, proper logic levels appear
-
-### Tri-State Bus Operations
-- Multiple drivers on bus show `Z` when disabled
-- Only active driver shows actual data (0/1)
-
-### Timing Violations
-- Setup/hold violations create `X` states
-- Metastability results in unknown values
-
-### Multi-File Scenarios
-- Short file ends → remaining timeline shows `N/A`
-- Different file timespans create `N/A` gaps
+Digital waveform files contain special signal states (Z, X, U, N/A) that represent conditions beyond simple 0/1 logic levels. For detailed state definitions, display behavior, formatter behavior, and common occurrence scenarios, see `signal-states.md`.
 
 # Keyboard Shortcuts
 
-NovyWave provides comprehensive keyboard shortcuts for efficient waveform navigation and analysis.
-
-## Global Shortcuts
-
-### Theme and Layout
-- **Ctrl+T**: Toggle between dark and light theme
-- **Ctrl+D**: Toggle dock mode (Right ↔ Bottom)
-
-### Timeline Navigation
-- **Z**: Move zoom center to position 0 (timeline start)
-- **R**: Reset to default state (zoom center to 0, cursor to center, full timeline visible)
-
-### Zoom Controls
-- **W**: Zoom in (centered on zoom center position)
-- **Shift+W**: Zoom in faster (accelerated zoom)
-- **S**: Zoom out (centered on zoom center position)
-- **Shift+S**: Zoom out faster (accelerated zoom)
-
-### Cursor Movement
-- **Q**: Move timeline cursor left continuously
-- **Shift+Q**: Jump cursor to previous signal transition
-- **E**: Move timeline cursor right continuously
-- **Shift+E**: Jump cursor to next signal transition
-
-### Viewport Panning
-- **A**: Pan timeline view left
-- **Shift+A**: Pan timeline view left faster
-- **D**: Pan timeline view right
-- **Shift+D**: Pan timeline view right faster
-
-## Modal Dialog Shortcuts
-
-### File Selection Dialog
-- **Enter**: Confirm selection and load files (equivalent to "Load N Files" button)
-- **Escape**: Close dialog without changes (equivalent to Cancel button)
-
-## Focus-Based Behavior
-
-### Input Focus Handling
-- **When variable filter input is focused**: All navigation shortcuts are disabled
-- **When no input has focus**: All shortcuts are active and responsive
-- **Focus indication**: Input fields show clear focus outline when active
-
-### Modal Dialog Behavior
-- **Dialog open**: Theme toggle (Ctrl+T) remains active for user convenience
-- **Dialog open**: Dock mode toggle (Ctrl+D) remains active
-- **Dialog open**: Timeline navigation shortcuts remain functional
-- **Rationale**: Allows theme switching and quick navigation even during file selection
-
-## Shortcut Customization
-
-- **Initial implementation**: No shortcut customization available
-- **Fixed shortcuts**: All shortcuts use predefined key combinations
-- **Future consideration**: Customization may be added based on user feedback
-
-## Smooth Interaction Requirements
-
-### Continuous Movement
-- **Holding Q/E keys**: Smooth cursor movement across timeline
-- **Holding A/D keys**: Smooth viewport panning left/right
-- **Performance target**: Responsive feel with mixed timescales (simple.vcd + wave_27.fst)
-
-### Accelerated Actions
-- **Shift modifiers**: Provide faster movement/zoom for power users
-- **Zoom acceleration**: 3-5x faster zoom speed with Shift+W/S
-- **Pan acceleration**: 2-3x faster panning with Shift+A/D
-- **Cursor jump**: Jump to exact transition points with Shift+Q/E
-
-## Tooltip Documentation
-
-### Footer Tooltips
-Navigation keys display helpful tooltips when hovered:
-
-- **[Z]**: "Press Z to move zoom center to 0"
-- **[W]**: "Press W to zoom in. Press Shift+W to zoom in faster."
-- **[S]**: "Press S to zoom out. Press Shift+S to zoom out faster."
-- **[R]**: "Press R to reset to default zoom center, zoom and cursor position."
-- **[Q]**: "Press Q to move cursor left. Press Shift+Q to jump to the previous transition."
-- **[E]**: "Press E to move cursor right. Press Shift+E to jump to the next transition."
-- **[A]**: "Press A to pan left. Press Shift+A to pan faster."
-- **[D]**: "Press D to pan right. Press Shift+D to pan faster."
+NovyWave provides comprehensive keyboard shortcuts for efficient waveform navigation. For the complete reference including global shortcuts, modal dialog shortcuts, focus-based behavior, and tooltip documentation, see `keyboard-shortcuts.md`.
 
 Before rendering, minimum and maximum timeline span boundaries have to be determined. First, gather set of waveform files that have at least one variable currently selected. Then, get their spans and units (it should be already cached somwhere because we need these data in Files & Scopes panel to show spans of all loaded files). From those span extract the left (minimum) boundary (typically just 0) and right boundary (maximum) (e.g. 16ns or 250s). These values determine also default/reset state, examples:
 A) 0-16ns => minimum 0ns, maximum 16ns, cursor position 8ns (in the center), zoom center 0, visible timeline part: 0-16ns;
@@ -757,37 +475,14 @@ Critical errors appear as toast popups stacked from the top right corner:
 
 ### Toast Auto-Dismiss Behavior
 
-#### Progress Indicator
-- **Progress bar**: Thin bar integrated to bottom edge of toast
-- **Animation**: Starts fully filled, empties leftward over time
-- **Duration**: Configurable in `.novywave` file (`toast_auto_dismiss_ms`)
-- **Default**: 5000ms (5 seconds)
-
-#### Interactive Controls
-- **Click to pause**: Clicking toast pauses auto-dismiss timer
-- **Click to resume**: Clicking paused toast resumes timer countdown
-- **Manual close**: X button immediately dismisses toast
-- **Tooltip help**: "Click to pause/resume auto-dismiss" shown on hover
+Progress bar at bottom edge empties over time (default: 5000ms, configurable via `toast_auto_dismiss_ms`). Click to pause/resume, X to dismiss immediately.
 
 ### No-Retry Policy
 
-#### File Loading Errors
-- **No automatic retry**: Failed file loads do not retry automatically
-- **User action required**: User must manually attempt to load files again
-- **Clear messaging**: Error messages indicate specific failure reason
-- **Rationale**: Prevents masking configuration or permission issues
-
-#### Configuration Errors
-- **No fallback retry**: Corrupted config files are not automatically fixed
-- **Explicit error message**: "Configuration file is corrupted: '[specific error]'. Please fix the file or remove '[absolute path]' to reset settings."
-- **User decision**: User must choose to fix or delete corrupted configuration
-- **Default fallback**: Only after user removes corrupted file
-
-#### Network/Backend Errors
-- **Single attempt**: Backend communication errors reported immediately
-- **User notification**: Clear error message about connection or parsing failure
-- **Manual recovery**: User can attempt operation again if desired
-- **No background retry**: Prevents resource waste and confusion
+**No automatic retries for any error type** - prevents masking underlying issues:
+- **File Loading**: User must retry manually; error messages indicate specific failure reason
+- **Configuration**: "Configuration file is corrupted: '[error]'. Please fix or remove '[path]' to reset."
+- **Network/Backend**: Single attempt, clear error message, manual recovery option
 
 ### Error Recovery Guidelines
 
@@ -806,27 +501,7 @@ Critical errors appear as toast popups stacked from the top right corner:
 
 ### Error Message Format
 
-#### Standard Error Structure
-```
-[Component]: [Specific Issue]
-Details: [Technical explanation]
-Solution: [User action needed]
-```
-
-#### Examples
-```
-File Loading Error
-corrupted.vcd: Unsupported file format
-Only VCD, FST and GHW files are supported.
-
-Directory Access Error
-/root: Permission denied
-Try selecting a directory you have access to.
-
-Configuration Error
-.novywave: Invalid TOML syntax at line 15
-Fix the syntax error or delete the file to reset settings.
-```
+Format: `[Component]: [Issue]` + Details + Solution. Example: `"corrupted.vcd: Unsupported file format. Only VCD, FST and GHW files are supported."`
 
 # Implementation Notes
 
@@ -849,31 +524,7 @@ Technical guidelines and considerations for implementing NovyWave according to t
 
 ## Peak-Preserving Decimation Algorithm
 
-### Implementation Strategy
-Use min/max decimation to ensure no signal transitions are lost:
-
-```rust
-struct DecimatedPoint {
-    time_ns: u64,
-    min_value: String,
-    max_value: String,
-    first_transition: u64,
-    last_transition: u64,
-}
-
-fn decimate_signal(
-    transitions: Vec<SignalTransition>,
-    start_ns: u64,
-    end_ns: u64,
-    pixel_count: u32,
-) -> Vec<DecimatedPoint> {
-    let ns_per_pixel = (end_ns - start_ns) / pixel_count as u64;
-
-    // Group transitions into pixel-aligned buckets
-    // For each bucket, preserve min/max values and critical timing
-    // Ensure single-pixel pulses remain visible
-}
-```
+Use min/max decimation with DecimatedPoint struct containing: time_ns, min/max values, first/last transition times. Group transitions into pixel-aligned buckets (ns_per_pixel = range / pixel_count) and preserve critical timing.
 
 ### Critical Preservation Rules
 1. **Single-pixel pulses**: Always show as minimum 1px wide block
@@ -883,65 +534,13 @@ fn decimate_signal(
 
 ## Theme System Implementation
 
-### Theme Structure
-```rust
-#[derive(Clone, Debug)]
-pub enum Theme {
-    Dark,
-    Light,
-}
+Two themes: Dark (default) and Light. ColorPalette includes: background (primary/secondary/tertiary), text (primary/secondary/disabled), accent (primary/error/warning), and signal state colors (Z/X/U/N/A).
 
-#[derive(Clone, Debug)]
-pub struct ColorPalette {
-    // Background colors
-    pub background_primary: Color,
-    pub background_secondary: Color,
-    pub background_tertiary: Color,
-
-    // Text colors
-    pub text_primary: Color,
-    pub text_secondary: Color,
-    pub text_disabled: Color,
-
-    // Accent colors
-    pub accent_primary: Color,
-    pub accent_error: Color,
-    pub accent_warning: Color,
-
-    // Special signal states
-    pub signal_high_impedance: Color,  // Z state
-    pub signal_unknown: Color,         // X state
-    pub signal_uninitialized: Color,  // U state
-    pub signal_missing: Color,         // N/A state
-}
-```
-
-### Theme Application
-- **CSS custom properties**: Use CSS variables for dynamic theme switching
-- **Canvas rendering**: Apply theme colors to Fast2D graphics
-- **Component consistency**: All UI components must respect current theme
-- **No customization**: Fixed dark/light themes only initially
+**Theme Application:** CSS custom properties for switching, Fast2D canvas colors, consistent component theming, fixed dark/light only (no customization).
 
 ## Architecture Guidelines
 
-### Frontend-Backend Communication
-```rust
-// Request format
-#[derive(Serialize)]
-struct TimelineDataRequest {
-    canvas_width_px: u32,
-    time_range: TimeRange,
-    variables: Vec<VariableRequest>,
-}
-
-// Response format
-#[derive(Deserialize)]
-struct TimelineDataResponse {
-    variable_data: HashMap<String, Vec<SignalTransition>>,
-    range_bounds: (u64, u64),
-    decimation_applied: bool,
-}
-```
+**Frontend-Backend Communication:** TimelineDataRequest contains canvas_width_px, time_range, and variables. TimelineDataResponse contains variable_data map, range_bounds, and decimation_applied flag.
 
 ### State Management
 - **Reactive architecture**: Use signal-based state updates throughout
@@ -988,3 +587,7 @@ struct TimelineDataResponse {
 - **Save debouncing**: Balance responsiveness with I/O efficiency
 - **File size**: Keep configuration files under 1MB for large projects
 - **Recovery time**: Fast fallback to defaults when configuration corrupted
+
+## Related Specifications
+
+- **Plugin Architecture**: See `plugins.md` for WebAssembly plugin system specification, plugin API design, and extensibility guidelines. (Not loaded at startup - read on demand when working on plugin features.)
