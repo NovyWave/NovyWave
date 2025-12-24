@@ -381,13 +381,38 @@ jobs:
           name: windows-nsis
           path: target/release/bundle/nsis/*.exe
 
+      - name: Verify updater signature files exist
+        shell: bash
+        run: |
+          echo "=== Checking for signature files ==="
+          NSIS_SIG=$(find target/release/bundle/nsis -name "*.sig" 2>/dev/null | head -1)
+          MSI_SIG=$(find target/release/bundle/msi -name "*.sig" 2>/dev/null | head -1)
+
+          if [ -n "$NSIS_SIG" ]; then
+            echo "✅ NSIS signature found: $NSIS_SIG"
+            ls -la target/release/bundle/nsis/*.sig
+          else
+            echo "❌ NO NSIS signature file found!"
+            echo "This means TAURI_SIGNING_PRIVATE_KEY may not have been passed correctly"
+            echo "Contents of nsis directory:"
+            ls -la target/release/bundle/nsis/ || echo "Directory not found"
+          fi
+
+          if [ -n "$MSI_SIG" ]; then
+            echo "✅ MSI signature found: $MSI_SIG"
+            ls -la target/release/bundle/msi/*.sig
+          else
+            echo "⚠️ No MSI signature file found (may be expected if only NSIS is used)"
+          fi
+
       - name: Upload Updater artifacts (Windows)
         uses: actions/upload-artifact@v4
         with:
           name: windows-updater
+          if-no-files-found: warn
           path: |
-            target/release/bundle/nsis/*-setup.exe.sig
-            target/release/bundle/msi/*.msi.sig
+            target/release/bundle/nsis/*.sig
+            target/release/bundle/msi/*.sig
 
   create-release:
     needs: [build-linux, build-macos-arm, build-macos-x64, build-windows]
@@ -449,16 +474,35 @@ jobs:
 
           # Windows x64 (NSIS preferred, fall back to MSI)
           # Tauri v2: Uses installer directly with .sig file (not zipped)
-          WINDOWS_SIG=$(find artifacts/windows-updater -name "*-setup.exe.sig" -type f 2>/dev/null | head -1)
+          echo "=== Windows updater artifact check ==="
+          echo "Contents of windows-updater artifact:"
+          ls -la artifacts/windows-updater/ 2>/dev/null || echo "No windows-updater directory"
+
+          # Look for any .sig file in windows-updater
+          WINDOWS_SIG=$(find artifacts/windows-updater -name "*.sig" -type f 2>/dev/null | head -1)
           WINDOWS_BUNDLE=$(find artifacts/windows-nsis -name "*-setup.exe" -type f 2>/dev/null | head -1)
+
+          # If no NSIS sig, try MSI
           if [ -z "$WINDOWS_SIG" ]; then
-            WINDOWS_SIG=$(find artifacts/windows-updater -name "*.msi.sig" -type f 2>/dev/null | head -1)
-            WINDOWS_BUNDLE=$(find artifacts/windows-msi -name "*.msi" -type f 2>/dev/null | head -1)
+            echo "No NSIS signature found, checking for MSI..."
+            WINDOWS_SIG=$(find artifacts/windows-msi -name "*.sig" -type f 2>/dev/null | head -1)
+            if [ -n "$WINDOWS_SIG" ]; then
+              WINDOWS_BUNDLE=$(find artifacts/windows-msi -name "*.msi" -type f 2>/dev/null | head -1)
+            fi
           fi
+
           if [ -n "$WINDOWS_SIG" ] && [ -n "$WINDOWS_BUNDLE" ]; then
+            echo "✅ Windows updater: Found signature and bundle"
+            echo "  Signature: $WINDOWS_SIG"
+            echo "  Bundle: $WINDOWS_BUNDLE"
             WINDOWS_SIG_CONTENT=$(cat "$WINDOWS_SIG")
             WINDOWS_FILENAME=$(basename "$WINDOWS_BUNDLE")
             PLATFORMS=$(echo "$PLATFORMS" | jq --arg sig "$WINDOWS_SIG_CONTENT" --arg url "https://github.com/NovyWave/NovyWave/releases/download/v${VERSION}/${WINDOWS_FILENAME}" '. + {"windows-x86_64": {"signature": $sig, "url": $url}}')
+          else
+            echo "❌ Windows updater: Missing signature or bundle"
+            echo "  WINDOWS_SIG: ${WINDOWS_SIG:-NOT FOUND}"
+            echo "  WINDOWS_BUNDLE: ${WINDOWS_BUNDLE:-NOT FOUND}"
+            echo "  This means Windows auto-update will NOT work!"
           fi
 
           # Create unified latest.json
