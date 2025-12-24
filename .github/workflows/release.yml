@@ -356,8 +356,12 @@ jobs:
           ls -la _api/ || echo "No _api dir"
           echo "=== Checking frontend/pkg ==="
           ls -la frontend/pkg/ || echo "No frontend/pkg"
-          echo "=== Checking src-tauri/target ==="
-          ls -la src-tauri/target/release/ 2>/dev/null | head -20 || echo "No src-tauri/target/release"
+          echo "=== Checking bundle output (correct path) ==="
+          ls -la target/release/bundle/ 2>/dev/null || echo "No target/release/bundle"
+          echo "=== NSIS output ==="
+          ls -la target/release/bundle/nsis/ 2>/dev/null || echo "No NSIS bundle"
+          echo "=== MSI output ==="
+          ls -la target/release/bundle/msi/ 2>/dev/null || echo "No MSI bundle"
 
       - name: List built artifacts
         shell: bash
@@ -556,7 +560,7 @@ jobs:
             artifacts/macos-updater-x64/*.tar.gz.sig
             artifacts/windows-msi/*.msi
             artifacts/windows-nsis/*.exe
-            artifacts/windows-updater/*.sig
+            artifacts/windows-updater/**/*.sig
             artifacts/latest.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
