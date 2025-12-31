@@ -16,16 +16,9 @@
     }
   },
   "bundle": {
-    "active": true,
+    "active": false,
     "targets": "all",
-  "resources": [
-    "../target/debug/backend",
-    "../public",
-    "../frontend_dist",
-    "../frontend/pkg",
-    "../_api",
-    "../plugins/dist"
-  ],
+  "resources": [],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png", 

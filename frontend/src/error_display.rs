@@ -289,3 +289,56 @@ pub fn active_toasts_signal_vec(
 ) -> impl zoon::SignalVec<Item = ErrorAlert> {
     app_config.error_display.active_toasts.signal_vec()
 }
+
+/// Trigger test notifications to demonstrate the notification system.
+/// Shows one notification of each variant type (Error, Info, Success).
+pub async fn trigger_test_notifications(app_config: &crate::config::AppConfig) {
+    zoon::println!("🔔 Triggering test notifications...");
+
+    // Test Error notification
+    let error_alert = ErrorAlert {
+        id: format!("test_error_{}", js_sys::Date::now() as u64),
+        title: "Test Error Notification".to_string(),
+        message: "This is a sample error message to demonstrate red styling.".to_string(),
+        technical_error: "Test error for demonstration".to_string(),
+        auto_dismiss_ms: 5000,
+        variant: NotificationVariant::Error,
+        action_label: None,
+        progress: None,
+    };
+    add_error_alert(error_alert, app_config).await;
+
+    // Small delay between notifications so they stack nicely
+    zoon::Timer::sleep(300).await;
+
+    // Test Info notification (like update available)
+    let info_alert = ErrorAlert {
+        id: format!("test_info_{}", js_sys::Date::now() as u64),
+        title: "Test Info Notification".to_string(),
+        message: "This is a sample info message with blue styling.".to_string(),
+        technical_error: "Test info for demonstration".to_string(),
+        auto_dismiss_ms: 5000,
+        variant: NotificationVariant::Info,
+        action_label: Some("Action".to_string()),
+        progress: None,
+    };
+    add_error_alert(info_alert, app_config).await;
+
+    // Small delay between notifications
+    zoon::Timer::sleep(300).await;
+
+    // Test Success notification (like update ready)
+    let success_alert = ErrorAlert {
+        id: format!("test_success_{}", js_sys::Date::now() as u64),
+        title: "Test Success Notification".to_string(),
+        message: "This is a sample success message with green styling.".to_string(),
+        technical_error: "Test success for demonstration".to_string(),
+        auto_dismiss_ms: 5000,
+        variant: NotificationVariant::Success,
+        action_label: Some("Confirm".to_string()),
+        progress: None,
+    };
+    add_error_alert(success_alert, app_config).await;
+
+    zoon::println!("✅ Test notifications triggered!");
+}

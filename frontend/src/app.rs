@@ -73,6 +73,9 @@ pub struct ConnectionMessageActor {
     pub unified_signal_response_relay: Relay<UnifiedSignalResponseEvent>,
     pub unified_signal_error_relay: Relay<(String, String)>,
 
+    // Debug: Test notification relay for mock server testing
+    pub test_notification_relay: Relay<(String, String, String)>, // (variant, title, message)
+
     // Actor handles message processing
     _message_actor: Actor<()>,
 }
@@ -143,6 +146,7 @@ impl ConnectionMessageActor {
         let (batch_signal_values_relay, _) = relay::<Vec<(String, SignalValue)>>();
         let (unified_signal_response_relay, _) = relay::<UnifiedSignalResponseEvent>();
         let (unified_signal_error_relay, _) = relay::<(String, String)>();
+        let (test_notification_relay, _) = relay::<(String, String, String)>();
 
         // Clone relays for use in Actor closure
         let config_loaded_relay_clone = config_loaded_relay.clone();
@@ -156,6 +160,7 @@ impl ConnectionMessageActor {
         let batch_signal_values_relay_clone = batch_signal_values_relay.clone();
         let unified_signal_response_relay_clone = unified_signal_response_relay.clone();
         let unified_signal_error_relay_clone = unified_signal_error_relay.clone();
+        let test_notification_relay_clone = test_notification_relay.clone();
         let tracked_files_for_reload = tracked_files_for_reload.clone();
 
         // Actor processes DownMsg stream and routes to appropriate relays
@@ -287,6 +292,10 @@ impl ConnectionMessageActor {
                                     tracked_files_for_reload.load_new_paths(file_paths);
                                 }
                             }
+                            DownMsg::TestNotification { variant, title, message } => {
+                                zoon::println!("🔔 FRONTEND: Received test notification: {} - {}", variant, title);
+                                test_notification_relay_clone.send((variant, title, message));
+                            }
                             _ => {
                                 // Other message types can be added as needed
                             }
@@ -311,6 +320,7 @@ impl ConnectionMessageActor {
             batch_signal_values_relay,
             unified_signal_response_relay,
             unified_signal_error_relay,
+            test_notification_relay,
             _message_actor: message_actor,
         }
     }
@@ -1020,8 +1030,10 @@ impl NovyWaveApp {
                 let tooltip_toggle = timeline.tooltip_toggle_requested_relay.clone();
                 let dragging_system_for_events = dragging_system.clone();
                 let key_repeat_handles = self.key_repeat_handles.clone();
+                let app_config_for_notifications = self.config.clone();
 
                 move |raw_el| {
+                    let app_config_for_n_key = app_config_for_notifications.clone();
                     let repeat_handles_for_down = key_repeat_handles.clone();
                     let repeat_handles_for_up = key_repeat_handles.clone();
                     let raw_el = raw_el.global_event_handler_with_options(
@@ -1182,6 +1194,15 @@ impl NovyWaveApp {
                                     "t" | "T" => {
                                         event.prevent_default();
                                         tooltip_toggle.send(());
+                                    }
+
+                                    // Debug: Trigger test notifications
+                                    "n" | "N" => {
+                                        event.prevent_default();
+                                        let app_config = app_config_for_n_key.clone();
+                                        zoon::Task::start(async move {
+                                            crate::error_display::trigger_test_notifications(&app_config).await;
+                                        });
                                     }
 
                                     _ => {}

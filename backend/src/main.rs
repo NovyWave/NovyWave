@@ -892,6 +892,53 @@ async fn up_msg_handler(req: UpMsgRequest<UpMsg>) {
                 request_id
             );
         }
+        UpMsg::TriggerTestNotifications => {
+            println!("🧪 BACKEND: TriggerTestNotifications received - sending test notifications");
+
+            // Send test error notification
+            send_down_msg(
+                DownMsg::TestNotification {
+                    variant: "error".to_string(),
+                    title: "Mock Server Error".to_string(),
+                    message: "This is a test error from the backend server.".to_string(),
+                },
+                session_id,
+                cor_id,
+            )
+            .await;
+
+            // Small delay between notifications
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+            // Send test info notification
+            send_down_msg(
+                DownMsg::TestNotification {
+                    variant: "info".to_string(),
+                    title: "Mock Server Info".to_string(),
+                    message: "This is a test info message from the backend server.".to_string(),
+                },
+                session_id,
+                cor_id,
+            )
+            .await;
+
+            // Small delay between notifications
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+            // Send test success notification
+            send_down_msg(
+                DownMsg::TestNotification {
+                    variant: "success".to_string(),
+                    title: "Mock Server Success".to_string(),
+                    message: "This is a test success message from the backend server.".to_string(),
+                },
+                session_id,
+                cor_id,
+            )
+            .await;
+
+            println!("✅ BACKEND: Test notifications sent");
+        }
     }
 }
 

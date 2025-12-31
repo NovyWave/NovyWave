@@ -43,6 +43,8 @@ pub enum UpMsg {
         cursor_time_ns: Option<u64>,
         request_id: String, // For deduplication and tracking
     },
+    /// Debug: Trigger test notifications to demonstrate notification system
+    TriggerTestNotifications,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -119,6 +121,12 @@ pub enum DownMsg {
     UnifiedSignalError {
         request_id: String,
         error: String,
+    },
+    /// Debug: Test notification from backend
+    TestNotification {
+        variant: String, // "error", "info", "success"
+        title: String,
+        message: String,
     },
 }
 

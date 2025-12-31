@@ -8,7 +8,7 @@ Enable testing the Tauri auto-updater with valid signatures without needing real
 
 ## Files
 
-- `novywave-dev.key` - Private key (passwordless) for signing test bundles
+- `novywave-dev.key` - Private key (password: `devkey`) for signing test bundles
 - `novywave-dev.key.pub` - Public key (already embedded in `tauri.dev.updater.conf.json`)
 
 ## Usage

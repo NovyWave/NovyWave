@@ -34,7 +34,7 @@ load_files_expanded_directories = [
     "/home/martinkavik/repos/NovyWave",
 ]
 selected_scope_id = "scope_/home/martinkavik/repos/super_counter_rust/hardware/build/super_counter.fst|TOP"
-load_files_scroll_position = 1003
+load_files_scroll_position = 994
 
 [workspace.docked_bottom_dimensions]
 files_and_scopes_panel_width = 400.0
@@ -55,7 +55,7 @@ unique_id = "/home/martinkavik/repos/super_counter_rust/hardware/build/super_cou
 cursor_position_ps = 102578299500
 visible_range_start_ps = 0
 visible_range_end_ps = 205156599000
-zoom_center_ps = 19977796157
+zoom_center_ps = 147107821919
 tooltip_enabled = false
 
 [plugins]

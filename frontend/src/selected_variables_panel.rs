@@ -77,8 +77,9 @@ fn selected_variables_panel_header(
                         .s(Font::new().no_wrap().color_signal(neutral_8()))
                         .child_signal(
                             signal::from_future(Box::pin(crate::platform::get_app_version()))
-                                .map(|version| {
-                                    version.map(|v| format!("v{}", v))
+                                .map(|version| match version {
+                                    Some(v) => format!("v{}", v),
+                                    None => "...".to_string(),
                                 }),
                         ),
                 )

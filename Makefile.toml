@@ -121,6 +121,62 @@ echo "✓ Tauri logs will be written to dev_tauri.log"
 cd src-tauri && cargo tauri dev --config tauri.dev.conf.json >> ../dev_tauri.log 2>&1
 '''
 
+[tasks.tauri-test-updater]
+description = "Start Tauri with dev updater config (uses localhost:8888 mock server)"
+dependencies = ["install", "install_tauri_cli"]
+env = { NOVYWAVE_PLATFORM = "TAURI" }
+script = '''
+echo "=== Tauri Update Test Mode ==="
+echo "Make sure mock update server is running on localhost:8888"
+echo ""
+
+# Kill any existing mzoon dev server (it might be running with WEB mode)
+pkill -f "mzoon start" 2>/dev/null || true
+sleep 1
+
+# Build frontend with TAURI platform first
+echo "Building frontend with TAURI platform..."
+NOVYWAVE_PLATFORM=TAURI ./mzoon/bin/mzoon build -f
+echo "✓ Frontend built with TAURI platform"
+
+# Start mzoon dev server with TAURI platform in background
+echo "Starting mzoon dev server with TAURI platform..."
+> dev_server.log
+NOVYWAVE_PLATFORM=TAURI ./mzoon/bin/mzoon start >> dev_server.log 2>&1 &
+MZOON_PID=$!
+
+# Wait for dev server to be ready
+echo "Waiting for dev server to be ready on port 8080..."
+for i in {1..60}; do
+    if curl -s http://localhost:8080 >/dev/null 2>&1; then
+        echo "✓ Dev server ready on port 8080"
+        break
+    fi
+    if ! kill -0 $MZOON_PID 2>/dev/null; then
+        echo "ERROR: mzoon dev server died unexpectedly"
+        cat dev_server.log
+        exit 1
+    fi
+    sleep 1
+done
+
+if ! curl -s http://localhost:8080 >/dev/null 2>&1; then
+    echo "ERROR: Dev server failed to start within 60 seconds"
+    cat dev_server.log
+    exit 1
+fi
+
+echo ""
+echo "✓ Starting Tauri with updater pointing to localhost:8888..."
+echo "  (Update check will run 5 seconds after startup)"
+echo ""
+
+cd src-tauri && NOVYWAVE_PLATFORM=TAURI cargo tauri dev --config tauri.dev.conf.json --config tauri.dev.updater.conf.json
+
+# Cleanup: Kill mzoon when tauri exits
+kill $MZOON_PID 2>/dev/null || true
+'''
+
 [tasks.tauri-build]
 description = "Build Tauri desktop app with embedded backend"
 dependencies = ["install", "install_tauri_cli", "build-tauri", "tauri-build-bundle"]
@@ -132,7 +188,7 @@ dependencies = ["tauri-build-bundle-unix", "tauri-build-bundle-windows"]
 [tasks.tauri-build-bundle-unix]
 description = "Bundle Tauri app on Unix (Linux/macOS)"
 condition = { platforms = ["linux", "mac"] }
-env = { NOVYWAVE_PLATFORM = "TAURI" }
+env = { NOVYWAVE_PLATFORM = "TAURI", TAURI_SIGNING_PRIVATE_KEY = "dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWduIGVuY3J5cHRlZCBzZWNyZXQga2V5ClJXUlRZMEl5M2ROZnNZUDJMeTRiVUcxTzdpYjhMMmRSM1JYVGx1dEh3N1JsMTlVamtHWUFBQkFBQUFBQUFBQUFBQUlBQUFBQXJrTjVNSklsd3puMk5SaE1nM1NKaitnUEVBeDN0QWN5ZDVCZ2tFbjZ6UUE2Mk5QRkdVSkovNEc4MVg0Zm5TVnkxOUUvRytGWUFPdWhSRVQ3MnczTmd0bWhBdFNrOXJPbEg4SldLakF4YVBqYnU1ZUdUdjFSVk44NDRpTXZEbVpCNkhjd3RLVlVPc1E9Cg==", TAURI_SIGNING_PRIVATE_KEY_PASSWORD = "devkey" }
 script_runner = "bash"
 script = '''
 set -e  # Exit on any error
@@ -206,7 +262,7 @@ fi
 [tasks.tauri-build-bundle-windows]
 description = "Bundle Tauri app on Windows"
 condition = { platforms = ["windows"] }
-env = { NOVYWAVE_PLATFORM = "TAURI" }
+env = { NOVYWAVE_PLATFORM = "TAURI", TAURI_SIGNING_PRIVATE_KEY = "dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWduIGVuY3J5cHRlZCBzZWNyZXQga2V5ClJXUlRZMEl5M2ROZnNZUDJMeTRiVUcxTzdpYjhMMmRSM1JYVGx1dEh3N1JsMTlVamtHWUFBQkFBQUFBQUFBQUFBQUlBQUFBQXJrTjVNSklsd3puMk5SaE1nM1NKaitnUEVBeDN0QWN5ZDVCZ2tFbjZ6UUE2Mk5QRkdVSkovNEc4MVg0Zm5TVnkxOUUvRytGWUFPdWhSRVQ3MnczTmd0bWhBdFNrOXJPbEg4SldLakF4YVBqYnU1ZUdUdjFSVk44NDRpTXZEbVpCNkhjd3RLVlVPc1E9Cg==", TAURI_SIGNING_PRIVATE_KEY_PASSWORD = "devkey" }
 script_runner = "powershell"
 script_extension = "ps1"
 script = '''
@@ -297,7 +353,7 @@ if ($LASTEXITCODE -ne 0) {
 [tasks.tauri-build-debug]
 description = "Build Tauri desktop app in debug profile (AppImage only, devtools on)"
 dependencies = ["install", "install_tauri_cli"]
-env = { NOVYWAVE_PLATFORM = "TAURI" }
+env = { NOVYWAVE_PLATFORM = "TAURI", TAURI_SIGNING_PRIVATE_KEY = "dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWduIGVuY3J5cHRlZCBzZWNyZXQga2V5ClJXUlRZMEl5M2ROZnNZUDJMeTRiVUcxTzdpYjhMMmRSM1JYVGx1dEh3N1JsMTlVamtHWUFBQkFBQUFBQUFBQUFBQUlBQUFBQXJrTjVNSklsd3puMk5SaE1nM1NKaitnUEVBeDN0QWN5ZDVCZ2tFbjZ6UUE2Mk5QRkdVSkovNEc4MVg0Zm5TVnkxOUUvRytGWUFPdWhSRVQ3MnczTmd0bWhBdFNrOXJPbEg4SldLakF4YVBqYnU1ZUdUdjFSVk44NDRpTXZEbVpCNkhjd3RLVlVPc1E9Cg==", TAURI_SIGNING_PRIVATE_KEY_PASSWORD = "devkey" }
 script = '''
 # Build frontend for TAURI in debug (no -r) to keep devtools and symbols
 NOVYWAVE_PLATFORM=TAURI ./mzoon/bin/mzoon build -f
