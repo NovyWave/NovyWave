@@ -141,7 +141,6 @@ fn toast_element(alert: ErrorAlert, app_config: crate::config::AppConfig) -> imp
     let custom_progress = alert.progress.unwrap_or(0.0);
     let variant = alert.variant;
     let action_label = alert.action_label.clone();
-    let has_action = action_label.is_some();
 
     let error_display = app_config.error_display.clone();
     let alert_id = alert.id.clone();
@@ -150,7 +149,7 @@ fn toast_element(alert: ErrorAlert, app_config: crate::config::AppConfig) -> imp
     let colors = VariantColors::new(variant);
 
     let toast_actor = if has_custom_progress {
-        Actor::new(custom_progress as Progress, async move |state_handle| {
+        Actor::new(custom_progress as Progress, async move |_state_handle| {
             loop {
                 select! {
                     event = dismiss_button_clicked_stream.next() => {
@@ -365,7 +364,7 @@ fn toast_element(alert: ErrorAlert, app_config: crate::config::AppConfig) -> imp
 }
 
 /// Handle notification action button clicks based on alert ID
-fn handle_notification_action(alert_id: &str, app_config: &crate::config::AppConfig) {
+fn handle_notification_action(alert_id: &str, _app_config: &crate::config::AppConfig) {
     match alert_id {
         "update_available" => {
             crate::platform::request_update_download();

@@ -580,6 +580,8 @@ impl WaveformTimeline {
     }
 
     pub fn cursor_values_actor(&self) -> Actor<BTreeMap<String, SignalValue>> {
+        let current_count = self.cursor_values.state.lock_ref().len();
+        zoon::println!("[TIMELINE] cursor_values_actor() called - current map has {} entries", current_count);
         self.cursor_values.clone()
     }
 
@@ -1141,7 +1143,7 @@ impl WaveformTimeline {
                     clamped_end = bounds_start.saturating_add(bounds_span);
                 }
 
-                self.viewport.state.set(Viewport::new(
+                self.viewport.state.set_neq(Viewport::new(
                     TimePs::from_picoseconds(clamped_start),
                     TimePs::from_picoseconds(clamped_end),
                 ));
@@ -1183,7 +1185,7 @@ impl WaveformTimeline {
             for variable in &variables {
                 values_map
                     .entry(variable.unique_id.clone())
-                    .or_insert(SignalValue::Missing);
+                    .or_insert(SignalValue::Loading);
             }
         }
 
@@ -1294,6 +1296,7 @@ impl WaveformTimeline {
             {
                 let mut values_map = timeline.cursor_values.state.lock_mut();
                 let needs_update = match values_map.get(&unique_id_for_closure) {
+                    Some(SignalValue::Present(_)) => false,
                     Some(SignalValue::Loading) => false,
                     _ => true,
                 };
@@ -1354,6 +1357,8 @@ impl WaveformTimeline {
             .state
             .get_cloned();
 
+        zoon::println!("[TIMELINE] send_request: {} variables", variables.len());
+
         if variables.is_empty() {
             self.series_map.state.lock_mut().clear();
             self.cursor_values.state.lock_mut().clear();
@@ -1366,7 +1371,9 @@ impl WaveformTimeline {
         let viewport = self.viewport.state.get_cloned();
         let start_ps = viewport.start.picoseconds();
         let end_ps = viewport.end.picoseconds();
+        zoon::println!("[TIMELINE] viewport: start_ps={} end_ps={}", start_ps, end_ps);
         if end_ps <= start_ps {
+            zoon::println!("[TIMELINE] SKIPPING: viewport invalid (end <= start)");
             return;
         }
 
@@ -1504,7 +1511,13 @@ impl WaveformTimeline {
         }
 
         if requests.is_empty() {
+            zoon::println!("[TIMELINE] SKIPPING: no requests to send");
             return;
+        }
+
+        zoon::println!("[TIMELINE] Sending {} requests:", requests.len());
+        for req in &requests {
+            zoon::println!("[TIMELINE]   - {}|{}|{}", req.file_path, req.scope_path, req.variable_name);
         }
 
         for unique_id in loading_candidates {
@@ -1522,6 +1535,8 @@ impl WaveformTimeline {
         context.latest_request_started_ms = Some(Date::now());
         context.latest_request_windows = request_windows;
         self.request_state.state.set(context);
+
+        zoon::println!("[TIMELINE] Sending request_id={}", request_id);
 
         let connection = self.connection.clone();
         Task::start(async move {
@@ -1541,6 +1556,12 @@ impl WaveformTimeline {
         signal_data: Vec<UnifiedSignalData>,
         cursor_values: BTreeMap<String, SignalValue>,
     ) {
+        zoon::println!("[TIMELINE] apply_unified_signal_response: request_id={} signal_data={} cursor_values={}",
+            request_id, signal_data.len(), cursor_values.len());
+        for (k, v) in &cursor_values {
+            zoon::println!("[TIMELINE]   cursor: {} = {:?}", k, v);
+        }
+
         let mut current_request = self.request_state.state.get_cloned();
         if current_request
             .latest_request_id
@@ -1548,6 +1569,8 @@ impl WaveformTimeline {
             .map(|id| id != request_id)
             .unwrap_or(true)
         {
+            zoon::println!("[TIMELINE] SKIPPING response: request_id mismatch (expected {:?}, got {})",
+                current_request.latest_request_id, request_id);
             return;
         }
 
@@ -1677,6 +1700,7 @@ impl WaveformTimeline {
                 values_map.insert(unique_id.clone(), value);
                 self.cancel_cursor_loading_indicator(&unique_id);
             }
+            zoon::println!("[TIMELINE] After cursor_values insertion, map has {} entries", values_map.len());
         }
 
         self.update_render_state();
@@ -1693,6 +1717,7 @@ impl WaveformTimeline {
 
         current_request.latest_request_windows = request_windows;
         self.request_state.state.set(current_request);
+        zoon::println!("[TIMELINE] apply_unified_signal_response: COMPLETED for request_id");
     }
 
     fn sync_state_to_config(&self) {
@@ -2608,5 +2633,133 @@ impl WaveformTimeline {
                 timeline.schedule_config_save();
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn test_cursor_values_actor_signal_propagation() {
+        let cursor_values: Actor<BTreeMap<String, SignalValue>> =
+            Actor::new(BTreeMap::new(), |_state| async move {});
+
+        let unique_id = "/path/to/file.vcd|scope|clk".to_string();
+
+        {
+            let mut map = cursor_values.state.lock_mut();
+            map.insert(unique_id.clone(), SignalValue::Present("1".to_string()));
+        }
+
+        let map = cursor_values.state.lock_ref();
+        let value = map.get(&unique_id).cloned();
+
+        assert_eq!(
+            value,
+            Some(SignalValue::Present("1".to_string())),
+            "Cursor value should be retrievable after insertion via lock_mut()"
+        );
+    }
+
+    #[test]
+    fn test_cursor_values_map_lookup_format() {
+        let mut map: BTreeMap<String, SignalValue> = BTreeMap::new();
+
+        let unique_id_inserted =
+            "/home/user/file.vcd|counter_tb|clk".to_string();
+        let unique_id_queried =
+            "/home/user/file.vcd|counter_tb|clk".to_string();
+
+        map.insert(unique_id_inserted, SignalValue::Present("0".to_string()));
+
+        let result = map.get(&unique_id_queried).cloned();
+        assert_eq!(
+            result,
+            Some(SignalValue::Present("0".to_string())),
+            "Map lookup should find value when key format matches exactly"
+        );
+    }
+
+    #[test]
+    fn test_cursor_values_signal_cloned_map_access() {
+        let cursor_values: Actor<BTreeMap<String, SignalValue>> =
+            Actor::new(BTreeMap::new(), |_state| async move {});
+
+        let unique_id = "/path/to/file.vcd|scope|var".to_string();
+        let unique_id_for_lookup = unique_id.clone();
+
+        {
+            let mut map = cursor_values.state.lock_mut();
+            map.insert(unique_id.clone(), SignalValue::Present("test_value".to_string()));
+        }
+
+        let map_snapshot = cursor_values.state.get_cloned();
+        let value_from_snapshot = map_snapshot.get(&unique_id_for_lookup).cloned();
+
+        assert_eq!(
+            value_from_snapshot,
+            Some(SignalValue::Present("test_value".to_string())),
+            "Value should be accessible from cloned map snapshot"
+        );
+    }
+
+    #[test]
+    fn test_cursor_values_none_for_missing_key() {
+        let cursor_values: Actor<BTreeMap<String, SignalValue>> =
+            Actor::new(BTreeMap::new(), |_state| async move {});
+
+        {
+            let mut map = cursor_values.state.lock_mut();
+            map.insert(
+                "/file.vcd|scope|existing_var".to_string(),
+                SignalValue::Present("1".to_string()),
+            );
+        }
+
+        let map_snapshot = cursor_values.state.get_cloned();
+        let value = map_snapshot.get("/file.vcd|scope|missing_var").cloned();
+
+        assert_eq!(
+            value, None,
+            "Missing key should return None, not panic or return wrong value"
+        );
+    }
+
+    #[test]
+    fn test_cursor_values_overwrite() {
+        let cursor_values: Actor<BTreeMap<String, SignalValue>> =
+            Actor::new(BTreeMap::new(), |_state| async move {});
+
+        let unique_id = "/file.vcd|scope|var".to_string();
+
+        {
+            let mut map = cursor_values.state.lock_mut();
+            map.insert(unique_id.clone(), SignalValue::Loading);
+        }
+
+        {
+            let map = cursor_values.state.lock_ref();
+            assert_eq!(
+                map.get(&unique_id).cloned(),
+                Some(SignalValue::Loading),
+                "Initial value should be Loading"
+            );
+        }
+
+        {
+            let mut map = cursor_values.state.lock_mut();
+            map.insert(unique_id.clone(), SignalValue::Present("42".to_string()));
+        }
+
+        {
+            let map = cursor_values.state.lock_ref();
+            assert_eq!(
+                map.get(&unique_id).cloned(),
+                Some(SignalValue::Present("42".to_string())),
+                "Value should be overwritten from Loading to Present"
+            );
+        }
     }
 }

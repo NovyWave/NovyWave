@@ -194,7 +194,6 @@ pub struct FilePickerDomain {
     pub directory_cache_actor:
         Actor<std::collections::HashMap<String, Vec<shared::FileSystemItem>>>,
     pub directory_errors_actor: Actor<std::collections::HashMap<String, String>>,
-    pub directory_loading_actor: Actor<std::collections::HashSet<String>>,
     pub backend_sender_actor: Actor<()>,
     pub selected_files: crate::dataflow::ActorVec<String>,
     pub selected_files_vec_signal: zoon::Mutable<Vec<String>>,
@@ -211,14 +210,15 @@ pub struct FilePickerDomain {
     pub file_deselected_relay: Relay<String>,
     pub clear_selection_relay: Relay,
 
-    // Internal relays for async operations (replaces zoon::Task)
-    pub directory_load_requested_relay: Relay<String>,
-
     // Tree rendering timing coordination
     pub tree_rendering_relay: Relay,
 
     // Directory loading timeout - fires when directory load takes too long
     pub directory_loading_timeout_relay: Relay<String>,
+
+    // Phase-based initialization flag - gates relay processing
+    // When false, backend_sender_actor skips processing to prevent initialization races
+    pub initialized: Mutable<bool>,
 }
 
 impl FilePickerDomain {
@@ -233,10 +233,12 @@ impl FilePickerDomain {
         let (directory_collapsed_relay, mut directory_collapsed_stream) = relay::<String>();
         let (expanded_state_relay, _expanded_state_stream) = relay::<Vec<String>>();
         let (scroll_position_changed_relay, scroll_position_changed_stream) = relay::<i32>();
-        let (directory_load_requested_relay, directory_load_requested_stream) = relay::<String>();
         let (tree_rendering_relay, _tree_rendering_stream) = relay();
         let (directory_loading_timeout_relay, mut directory_loading_timeout_stream) =
             relay::<String>();
+
+        // Phase-based initialization flag - starts false, set to true after config restoration
+        let initialized = Mutable::new(false);
 
         // File selection relays for load files dialog
         let (file_selected_relay, mut file_selected_stream) = relay::<String>();
@@ -407,79 +409,29 @@ impl FilePickerDomain {
             }
         });
 
-        // ✅ ACTOR+RELAY FIX: Add directory loading Actor to handle load requests
-        // Since connection can't be used directly in Actor (Send trait issues), we use a different approach:
-        // The Actor tracks loading requests and the UI layer polls for pending requests
-        let directory_loading_actor = Actor::new(std::collections::HashSet::<String>::new(), {
-            let mut load_stream = directory_load_requested_stream.fuse();
-            async move |state| loop {
-                futures::select! {
-                    requested_path = load_stream.next() => {
-                        if let Some(path) = requested_path {
-                            let mut pending_requests = state.get_cloned();
-                            pending_requests.insert(path);
-                            state.set_neq(pending_requests);
-                        }
-                    }
-                    complete => break,
-                }
-            }
-        });
-
-        // ✅ ACTOR+RELAY PATTERN: Backend request sender using nested Actor pattern
+        // ✅ SIMPLIFIED: Backend request sender - single path for directory loading
+        // All directory loads go through directory_expanded_relay
         let backend_sender_actor = {
             let connection_clone = connection.clone();
             let directory_cache_for_sender = directory_cache_actor.clone();
-            let directory_loading_for_sender = directory_loading_actor.clone();
-            // ✅ FIX: Create separate stream subscription for directory expansion events
             let mut directory_expanded_stream_for_sender = directory_expanded_relay.subscribe();
             let timeout_relay_for_sender = directory_loading_timeout_relay.clone();
+            let initialized_for_sender = initialized.clone();
 
             Actor::new((), async move |_state| {
-                let mut directory_loading_stream =
-                    directory_loading_for_sender.signal().to_stream().fuse();
-                // Use global platform readiness which flips on first DownMsg
                 let mut ready_stream = crate::platform::server_ready_signal().to_stream().fuse();
                 let mut is_ready = crate::platform::server_is_ready();
-                // Store watchdog handles to keep them alive across loop iterations
                 let mut watchdog_handles: Vec<zoon::TaskHandle> = vec![];
 
                 loop {
                     futures::select! {
-                        // Handle directory loading requests (existing logic)
-                        pending_requests = directory_loading_stream.next() => {
-                            if let Some(pending_requests) = pending_requests {
-
-                                // Check cache to avoid sending requests for directories that already have data
-                                let current_cache = directory_cache_for_sender.signal().to_stream().next().await.unwrap_or_default();
-
-                                if is_ready {
-                                    for request_path in pending_requests.iter() {
-                                        if !current_cache.contains_key(request_path) {
-                                            let path_for_request = request_path.clone();
-                                            zoon::println!("frontend: sending BrowseDirectory {path_for_request}");
-                                            let _ = connection_clone
-                                                .send_up_msg(shared::UpMsg::BrowseDirectory(path_for_request.clone()))
-                                                .await;
-                                            // Start timeout watchdog (10 seconds for directory loading)
-                                            let timeout_relay = timeout_relay_for_sender.clone();
-                                            let path_for_timeout = path_for_request.clone();
-                                            let handle = Task::start_droppable(async move {
-                                                Timer::sleep(10_000).await;
-                                                timeout_relay.send(path_for_timeout);
-                                            });
-                                            watchdog_handles.push(handle);
-                                        }
-                                    }
-                                }
-                            } else {
-                                // Stream ended
-                                break;
-                            }
-                        }
-                        // ✅ NEW: Handle directory expansion events (auto-browse expanded directories)
+                        // Handle directory expansion events (single path for all directory loading)
                         expanded_dir = directory_expanded_stream_for_sender.next() => {
                             if let Some(dir_path) = expanded_dir {
+                                // Phase-based init: skip processing until initialized
+                                if !initialized_for_sender.get() {
+                                    continue;
+                                }
 
                                 // Check cache to avoid duplicate requests
                                 let current_cache = directory_cache_for_sender.signal().to_stream().next().await.unwrap_or_default();
@@ -500,41 +452,10 @@ impl FilePickerDomain {
                                 }
                             }
                         }
-                        // Flush pending directory requests when backend becomes ready
+                        // Track when backend becomes ready
                         ready = ready_stream.next() => {
                             if let Some(ready_now) = ready {
                                 is_ready = ready_now;
-                            }
-                            if is_ready {
-                                // Re-check current pending set and cache, then send
-                                let pending_requests = directory_loading_for_sender
-                                    .signal()
-                                    .to_stream()
-                                    .next()
-                                    .await
-                                    .unwrap_or_default();
-                                let current_cache = directory_cache_for_sender
-                                    .signal()
-                                    .to_stream()
-                                    .next()
-                                    .await
-                                    .unwrap_or_default();
-                                for request_path in pending_requests.iter() {
-                                    if !current_cache.contains_key(request_path) {
-                                        zoon::println!("frontend: ready flush BrowseDirectory {request_path}");
-                                        let _ = connection_clone
-                                            .send_up_msg(shared::UpMsg::BrowseDirectory(request_path.clone()))
-                                            .await;
-                                        // Start timeout watchdog (10 seconds for directory loading)
-                                        let timeout_relay = timeout_relay_for_sender.clone();
-                                        let path_for_timeout = request_path.clone();
-                                        let handle = Task::start_droppable(async move {
-                                            Timer::sleep(10_000).await;
-                                            timeout_relay.send(path_for_timeout);
-                                        });
-                                        watchdog_handles.push(handle);
-                                    }
-                                }
                             }
                         }
                         complete => {
@@ -593,7 +514,6 @@ impl FilePickerDomain {
             scroll_position_actor,
             directory_cache_actor,
             directory_errors_actor,
-            directory_loading_actor,
             backend_sender_actor,
             selected_files,
             selected_files_vec_signal,
@@ -605,9 +525,9 @@ impl FilePickerDomain {
             file_selected_relay,
             file_deselected_relay,
             clear_selection_relay,
-            directory_load_requested_relay,
             tree_rendering_relay,
             directory_loading_timeout_relay,
+            initialized,
         }
     }
 
@@ -630,12 +550,6 @@ impl FilePickerDomain {
         &self,
     ) -> impl Signal<Item = std::collections::HashMap<String, String>> {
         self.directory_errors_actor.signal()
-    }
-
-    pub fn pending_directory_loads_signal(
-        &self,
-    ) -> impl Signal<Item = std::collections::HashSet<String>> {
-        self.directory_loading_actor.signal()
     }
 }
 
@@ -698,8 +612,15 @@ pub struct AppConfig {
     _save_trigger_actor: Actor<()>,
     _config_save_debouncer_actor: Actor<()>,
     _workspace_history_actor: Actor<()>,
-    _config_loaded_actor: Actor<()>,
     pub config_loaded_flag: Mutable<bool>,
+
+    // Internal state for dock-specific column widths (needed by restore_config)
+    dock_mode_state: Mutable<DockMode>,
+    name_column_width_bottom_state: Mutable<f32>,
+    name_column_width_right_state: Mutable<f32>,
+    value_column_width_bottom_state: Mutable<f32>,
+    value_column_width_right_state: Mutable<f32>,
+
     _treeview_sync_actor: Actor<()>,
     _tracked_files_sync_actor: Actor<()>,
     _variables_filter_bridge_actor: Actor<()>,
@@ -1619,215 +1540,6 @@ impl AppConfig {
 
         let error_display = crate::error_display::ErrorDisplay::new().await;
 
-        // ✅ ACTOR+RELAY: Subscribe to config_loaded_relay from ConnectionMessageActor
-        let config_loaded_actor = {
-            let config_loaded_stream = connection_message_actor.config_loaded_relay.subscribe();
-            let theme_relay = theme_changed_relay.clone();
-            let dock_relay = dock_mode_changed_relay.clone();
-            let file_picker_domain_clone = file_picker_domain.clone();
-            let tracked_files_for_config = tracked_files.clone();
-            let files_expanded_scopes_for_config = files_expanded_scopes.clone();
-            let files_selected_scope_for_config = files_selected_scope.clone();
-            let selected_variables_for_config = selected_variables.clone();
-            let session_state_relay_for_config = session_state_changed_relay.clone();
-            let config_loaded_flag_for_actor = config_loaded_flag.clone();
-            let dock_mode_state_for_config = dock_mode_state.clone();
-            let name_column_width_bottom_state_clone = name_column_width_bottom_state.clone();
-            let name_column_width_right_state_clone = name_column_width_right_state.clone();
-            let value_column_width_bottom_state_clone = value_column_width_bottom_state.clone();
-            let value_column_width_right_state_clone = value_column_width_right_state.clone();
-            let files_width_right_relay = files_width_right_changed_relay.clone();
-            let files_height_right_relay = files_height_right_changed_relay.clone();
-            let files_width_bottom_relay = files_width_bottom_changed_relay.clone();
-            let files_height_bottom_relay = files_height_bottom_changed_relay.clone();
-            let name_column_width_relay = name_column_width_changed_relay.clone();
-            let value_column_width_relay = value_column_width_changed_relay.clone();
-            let timeline_state_relay = timeline_state_changed_relay.clone();
-            let timeline_state_restore_relay = timeline_state_restore_relay.clone();
-            let plugins_state_clone = plugins_state.clone();
-            let workspace_history_state_clone = workspace_history_state.clone();
-
-            Actor::new((), async move |_state| {
-                let mut config_stream = config_loaded_stream;
-
-                while let Some(loaded_config) = config_stream.next().await {
-                    plugins_state_clone.set(loaded_config.plugins.clone());
-                    workspace_history_state_clone
-                        .set_neq(loaded_config.global.workspace_history.clone());
-                    dock_mode_state_for_config.set(loaded_config.workspace.dock_mode.clone());
-
-                    let loaded_files_width_right = loaded_config
-                        .workspace
-                        .docked_right_dimensions
-                        .files_and_scopes_panel_width
-                        as f32;
-                    let loaded_files_height_right = loaded_config
-                        .workspace
-                        .docked_right_dimensions
-                        .files_and_scopes_panel_height
-                        as f32;
-                    let loaded_files_width_bottom = loaded_config
-                        .workspace
-                        .docked_bottom_dimensions
-                        .files_and_scopes_panel_width
-                        as f32;
-                    let loaded_files_height_bottom = loaded_config
-                        .workspace
-                        .docked_bottom_dimensions
-                        .files_and_scopes_panel_height
-                        as f32;
-
-                    files_width_right_relay.send(loaded_files_width_right);
-                    files_height_right_relay.send(loaded_files_height_right);
-                    files_width_bottom_relay.send(loaded_files_width_bottom);
-                    files_height_bottom_relay.send(loaded_files_height_bottom);
-
-                    let loaded_name_bottom = loaded_config
-                        .workspace
-                        .docked_bottom_dimensions
-                        .selected_variables_panel_name_column_width
-                        .unwrap_or(DEFAULT_NAME_COLUMN_WIDTH as f64)
-                        as f32;
-                    let loaded_name_right = loaded_config
-                        .workspace
-                        .docked_right_dimensions
-                        .selected_variables_panel_name_column_width
-                        .unwrap_or(DEFAULT_NAME_COLUMN_WIDTH as f64)
-                        as f32;
-                    name_column_width_bottom_state_clone.set(loaded_name_bottom);
-                    name_column_width_right_state_clone.set(loaded_name_right);
-
-                    let loaded_value_bottom = loaded_config
-                        .workspace
-                        .docked_bottom_dimensions
-                        .selected_variables_panel_value_column_width
-                        .unwrap_or(DEFAULT_VALUE_COLUMN_WIDTH as f64)
-                        as f32;
-                    let loaded_value_right = loaded_config
-                        .workspace
-                        .docked_right_dimensions
-                        .selected_variables_panel_value_column_width
-                        .unwrap_or(DEFAULT_VALUE_COLUMN_WIDTH as f64)
-                        as f32;
-                    value_column_width_bottom_state_clone.set(loaded_value_bottom);
-                    value_column_width_right_state_clone.set(loaded_value_right);
-
-                    let current_name_width = match loaded_config.workspace.dock_mode {
-                        DockMode::Right => loaded_name_right,
-                        DockMode::Bottom => loaded_name_bottom,
-                    };
-                    name_column_width_relay.send(current_name_width);
-
-                    let current_value_width = match loaded_config.workspace.dock_mode {
-                        DockMode::Right => loaded_value_right,
-                        DockMode::Bottom => loaded_value_bottom,
-                    };
-                    value_column_width_relay.send(current_value_width);
-
-                    let timeline_cfg = &loaded_config.workspace.timeline;
-
-                    let visible_start_ps = timeline_cfg.visible_range_start_ps;
-                    let mut visible_end_ps = timeline_cfg.visible_range_end_ps;
-                    if visible_end_ps <= visible_start_ps {
-                        visible_end_ps = visible_start_ps + 1;
-                    }
-
-                    let mut cursor_position_ps = timeline_cfg.cursor_position_ps;
-                    if cursor_position_ps < visible_start_ps || cursor_position_ps > visible_end_ps
-                    {
-                        cursor_position_ps = visible_start_ps;
-                    }
-
-                    let mut zoom_center_ps = timeline_cfg.zoom_center_ps;
-                    if zoom_center_ps < visible_start_ps || zoom_center_ps > visible_end_ps {
-                        zoom_center_ps = visible_start_ps;
-                    }
-
-                    let visible_range = TimeRange {
-                        start: TimePs::from_picoseconds(visible_start_ps),
-                        end: TimePs::from_picoseconds(visible_end_ps),
-                    };
-
-                    let timeline_state = TimelineState {
-                        cursor_position: Some(TimePs::from_picoseconds(cursor_position_ps)),
-                        visible_range: Some(visible_range),
-                        zoom_center: Some(TimePs::from_picoseconds(zoom_center_ps)),
-                        tooltip_enabled: timeline_cfg.tooltip_enabled,
-                    };
-
-                    timeline_state_relay.send(timeline_state.clone());
-                    timeline_state_restore_relay.send(timeline_state);
-
-                    // Update theme using proper relay
-                    theme_relay.send(loaded_config.ui.theme);
-
-                    // Update dock mode using proper relay
-                    dock_relay.send(loaded_config.workspace.dock_mode);
-
-                    // Update expanded directories using FilePickerDomain
-                    for dir in &loaded_config.workspace.load_files_expanded_directories {
-                        file_picker_domain_clone
-                            .directory_expanded_relay
-                            .send(dir.clone());
-                    }
-
-                    // Update scroll position using FilePickerDomain relay
-                    file_picker_domain_clone
-                        .scroll_position_changed_relay
-                        .send(loaded_config.workspace.load_files_scroll_position);
-
-                    // Restore tracked files from config or clear when empty
-                    if loaded_config.workspace.opened_files.is_empty() {
-                        tracked_files_for_config.all_files_cleared_relay.send(());
-                    } else {
-                        tracked_files_for_config
-                            .config_files_loaded_relay
-                            .send(loaded_config.workspace.opened_files.clone());
-                    }
-
-                    // Synchronize session state with loaded config data
-                    session_state_relay_for_config.send(SessionState {
-                        opened_files: loaded_config.workspace.opened_files.clone(),
-                        expanded_scopes: loaded_config.workspace.expanded_scopes.clone(),
-                        selected_scope_id: loaded_config.workspace.selected_scope_id.clone(),
-                        variables_search_filter: loaded_config
-                            .workspace
-                            .variables_search_filter
-                            .clone(),
-                        file_picker_scroll_position: loaded_config
-                            .workspace
-                            .load_files_scroll_position,
-                        file_picker_expanded_directories: loaded_config
-                            .workspace
-                            .load_files_expanded_directories
-                            .clone(),
-                    });
-
-                    // Restore selected variables into domain state
-                    selected_variables_for_config
-                        .variables_restored_relay
-                        .send(loaded_config.workspace.selected_variables.clone());
-
-                    // IMPORTANT: Restore expanded scopes AFTER files are sent
-                    // Add a small delay to ensure files are processed first
-                    zoon::Timer::sleep(100).await;
-
-                    // Now restore expanded scopes in TreeView
-                    let expanded_set: indexmap::IndexSet<String> =
-                        loaded_config.workspace.expanded_scopes.iter().cloned().collect();
-                    files_expanded_scopes_for_config.set(expanded_set);
-
-                    // Restore selected scope in TreeView
-                    if let Some(scope_id) = loaded_config.workspace.selected_scope_id.clone() {
-                        files_selected_scope_for_config.lock_mut().clear();
-                        files_selected_scope_for_config.lock_mut().push_cloned(scope_id);
-                    }
-
-                    config_loaded_flag_for_actor.set(true);
-                }
-            })
-        };
-
         Self {
             theme_actor,
             dock_mode_actor,
@@ -1882,8 +1594,12 @@ impl AppConfig {
             _save_trigger_actor: save_trigger_actor,
             _config_save_debouncer_actor: config_save_debouncer_actor,
             _workspace_history_actor: workspace_history_actor,
-            _config_loaded_actor: config_loaded_actor,
             config_loaded_flag,
+            dock_mode_state,
+            name_column_width_bottom_state,
+            name_column_width_right_state,
+            value_column_width_bottom_state,
+            value_column_width_right_state,
             _connection_message_actor: connection_message_actor,
             _treeview_sync_actor: treeview_sync_actor,
             _tracked_files_sync_actor: tracked_files_sync_actor,
@@ -1911,22 +1627,248 @@ impl AppConfig {
         self.workspace_history_state
             .set_neq(loaded_config.global.workspace_history.clone());
 
-        // Update expanded directories using FilePickerDomain
-        let mut expanded_set = indexmap::IndexSet::new();
-        for dir in &loaded_config.workspace.load_files_expanded_directories {
-            expanded_set.insert(dir.clone());
+        // Update expanded directories directly (bypass relay to avoid feedback loop)
+        {
+            let mut expanded = self
+                .file_picker_domain
+                .expanded_directories_actor
+                .state
+                .lock_mut();
+            for dir in &loaded_config.workspace.load_files_expanded_directories {
+                expanded.insert(dir.clone());
+            }
         }
-        // Use FilePickerDomain relays to update expanded directories
-        for dir in &expanded_set {
-            self.file_picker_domain
-                .directory_expanded_relay
-                .send(dir.clone());
+        // Request directory contents for uncached directories
+        // NOTE: We must send directly here because treeview_to_domain_sync skips its first
+        // sync (is_first_sync), so relying on it for initial config restoration doesn't work.
+        {
+            let cache = self.file_picker_domain.directory_cache_actor.state.lock_ref();
+            for dir in &loaded_config.workspace.load_files_expanded_directories {
+                if !cache.contains_key(dir) {
+                    self.file_picker_domain
+                        .directory_expanded_relay
+                        .send(dir.clone());
+                }
+            }
         }
 
         // Update scroll position using FilePickerDomain relay
         self.file_picker_domain
             .scroll_position_changed_relay
             .send(loaded_config.workspace.load_files_scroll_position);
+    }
+
+    /// Restore all config state from loaded backend data (replaces config_loaded_actor)
+    /// Called directly by ConnectionMessageActor when ConfigLoaded arrives.
+    /// Phase 3: Direct state updates only - file loading happens in complete_initialization()
+    pub fn restore_config(
+        &self,
+        loaded_config: shared::AppConfig,
+        selected_variables: &crate::selected_variables::SelectedVariables,
+    ) {
+        // Update global state
+        self.plugins_state.set(loaded_config.plugins.clone());
+        self.workspace_history_state
+            .set_neq(loaded_config.global.workspace_history.clone());
+        self.dock_mode_state
+            .set(loaded_config.workspace.dock_mode.clone());
+
+        // Update dimension states for both dock modes
+        let loaded_files_width_right = loaded_config
+            .workspace
+            .docked_right_dimensions
+            .files_and_scopes_panel_width as f32;
+        let loaded_files_height_right = loaded_config
+            .workspace
+            .docked_right_dimensions
+            .files_and_scopes_panel_height as f32;
+        let loaded_files_width_bottom = loaded_config
+            .workspace
+            .docked_bottom_dimensions
+            .files_and_scopes_panel_width as f32;
+        let loaded_files_height_bottom = loaded_config
+            .workspace
+            .docked_bottom_dimensions
+            .files_and_scopes_panel_height as f32;
+
+        self.files_width_right_changed_relay
+            .send(loaded_files_width_right);
+        self.files_height_right_changed_relay
+            .send(loaded_files_height_right);
+        self.files_width_bottom_changed_relay
+            .send(loaded_files_width_bottom);
+        self.files_height_bottom_changed_relay
+            .send(loaded_files_height_bottom);
+
+        // Update column width states
+        let loaded_name_bottom = loaded_config
+            .workspace
+            .docked_bottom_dimensions
+            .selected_variables_panel_name_column_width
+            .unwrap_or(DEFAULT_NAME_COLUMN_WIDTH as f64) as f32;
+        let loaded_name_right = loaded_config
+            .workspace
+            .docked_right_dimensions
+            .selected_variables_panel_name_column_width
+            .unwrap_or(DEFAULT_NAME_COLUMN_WIDTH as f64) as f32;
+        self.name_column_width_bottom_state.set(loaded_name_bottom);
+        self.name_column_width_right_state.set(loaded_name_right);
+
+        let loaded_value_bottom = loaded_config
+            .workspace
+            .docked_bottom_dimensions
+            .selected_variables_panel_value_column_width
+            .unwrap_or(DEFAULT_VALUE_COLUMN_WIDTH as f64) as f32;
+        let loaded_value_right = loaded_config
+            .workspace
+            .docked_right_dimensions
+            .selected_variables_panel_value_column_width
+            .unwrap_or(DEFAULT_VALUE_COLUMN_WIDTH as f64) as f32;
+        self.value_column_width_bottom_state.set(loaded_value_bottom);
+        self.value_column_width_right_state.set(loaded_value_right);
+
+        // Send current dock mode's column widths
+        let current_name_width = match loaded_config.workspace.dock_mode {
+            DockMode::Right => loaded_name_right,
+            DockMode::Bottom => loaded_name_bottom,
+        };
+        self.name_column_width_changed_relay.send(current_name_width);
+
+        let current_value_width = match loaded_config.workspace.dock_mode {
+            DockMode::Right => loaded_value_right,
+            DockMode::Bottom => loaded_value_bottom,
+        };
+        self.value_column_width_changed_relay.send(current_value_width);
+
+        // Restore timeline state
+        let timeline_cfg = &loaded_config.workspace.timeline;
+        let visible_start_ps = timeline_cfg.visible_range_start_ps;
+        let mut visible_end_ps = timeline_cfg.visible_range_end_ps;
+        if visible_end_ps <= visible_start_ps {
+            visible_end_ps = visible_start_ps + 1;
+        }
+
+        let mut cursor_position_ps = timeline_cfg.cursor_position_ps;
+        if cursor_position_ps < visible_start_ps || cursor_position_ps > visible_end_ps {
+            cursor_position_ps = visible_start_ps;
+        }
+
+        let mut zoom_center_ps = timeline_cfg.zoom_center_ps;
+        if zoom_center_ps < visible_start_ps || zoom_center_ps > visible_end_ps {
+            zoom_center_ps = visible_start_ps;
+        }
+
+        let visible_range = TimeRange {
+            start: TimePs::from_picoseconds(visible_start_ps),
+            end: TimePs::from_picoseconds(visible_end_ps),
+        };
+
+        let timeline_state = TimelineState {
+            cursor_position: Some(TimePs::from_picoseconds(cursor_position_ps)),
+            visible_range: Some(visible_range),
+            zoom_center: Some(TimePs::from_picoseconds(zoom_center_ps)),
+            tooltip_enabled: timeline_cfg.tooltip_enabled,
+        };
+
+        self.timeline_state_changed_relay.send(timeline_state.clone());
+        self.timeline_state_restore_relay.send(timeline_state);
+
+        // Update theme and dock mode via relays
+        self.theme_changed_relay.send(loaded_config.ui.theme);
+        self.dock_mode_changed_relay
+            .send(loaded_config.workspace.dock_mode);
+
+        // Phase 3: Update FilePickerDomain expanded directories directly (no relay sends)
+        // The actual directory loading requests will be sent in complete_initialization()
+        {
+            let mut expanded = self
+                .file_picker_domain
+                .expanded_directories_actor
+                .state
+                .lock_mut();
+            expanded.clear();
+            for dir in &loaded_config.workspace.load_files_expanded_directories {
+                expanded.insert(dir.clone());
+            }
+        }
+
+        // Update scroll position directly
+        self.file_picker_domain
+            .scroll_position_actor
+            .state
+            .set_neq(loaded_config.workspace.load_files_scroll_position);
+
+        // Synchronize session state
+        self.session_state_changed_relay.send(SessionState {
+            opened_files: loaded_config.workspace.opened_files.clone(),
+            expanded_scopes: loaded_config.workspace.expanded_scopes.clone(),
+            selected_scope_id: loaded_config.workspace.selected_scope_id.clone(),
+            variables_search_filter: loaded_config.workspace.variables_search_filter.clone(),
+            file_picker_scroll_position: loaded_config.workspace.load_files_scroll_position,
+            file_picker_expanded_directories: loaded_config
+                .workspace
+                .load_files_expanded_directories
+                .clone(),
+        });
+
+        // Restore selected variables
+        selected_variables
+            .variables_restored_relay
+            .send(loaded_config.workspace.selected_variables.clone());
+
+        // Restore expanded scopes and selected scope (no delay needed with direct calls)
+        let expanded_set: indexmap::IndexSet<String> = loaded_config
+            .workspace
+            .expanded_scopes
+            .iter()
+            .cloned()
+            .collect();
+        self.files_expanded_scopes.set(expanded_set);
+
+        if let Some(scope_id) = loaded_config.workspace.selected_scope_id.clone() {
+            self.files_selected_scope.lock_mut().clear();
+            self.files_selected_scope.lock_mut().push_cloned(scope_id);
+        }
+
+        self.config_loaded_flag.set(true);
+    }
+
+    /// Phase 4: Complete initialization by triggering actual loading via relays.
+    /// Called after restore_config() has set all direct state.
+    /// This method sets the initialized flag and triggers directory and file loading.
+    pub fn complete_initialization(
+        &self,
+        tracked_files: &crate::tracked_files::TrackedFiles,
+        opened_files: Vec<CanonicalPathPayload>,
+        expanded_directories: Vec<String>,
+    ) {
+        // Set initialized flag to enable relay processing in backend_sender_actor
+        self.file_picker_domain.initialized.set(true);
+        zoon::println!("[CONFIG] complete_initialization: initialized=true");
+
+        // Send directory load requests for uncached expanded directories
+        {
+            let cache = self.file_picker_domain.directory_cache_actor.state.lock_ref();
+            for dir in &expanded_directories {
+                if !cache.contains_key(dir) {
+                    zoon::println!("[CONFIG] complete_initialization: requesting directory {dir}");
+                    self.file_picker_domain
+                        .directory_expanded_relay
+                        .send(dir.clone());
+                }
+            }
+        }
+
+        // Send file load requests
+        if opened_files.is_empty() {
+            zoon::println!("[CONFIG] complete_initialization: no files to load, clearing");
+            tracked_files.all_files_cleared_relay.send(());
+        } else {
+            zoon::println!("[CONFIG] complete_initialization: loading {} files", opened_files.len());
+            tracked_files
+                .config_files_loaded_relay
+                .send(opened_files);
+        }
     }
 
     pub fn record_workspace_selection(&self, path: &str) {

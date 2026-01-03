@@ -67,6 +67,7 @@ impl TrackedFiles {
                 select! {
                     file_paths = config_files_loaded_stream.next() => {
                         if let Some(file_payloads) = file_paths {
+                            zoon::println!("[TRACKED_FILES] config_files_loaded received: {} files", file_payloads.len());
                             let mut seen = HashSet::new();
                             let tracked_files: Vec<TrackedFile> = file_payloads
                                 .into_iter()
@@ -95,21 +96,38 @@ impl TrackedFiles {
                             files_vec_signal_for_actor.set_neq(cached_files.clone());
 
                             // Send parse requests for config-loaded files
+                            zoon::println!("[TRACKED_FILES] sending parse requests for {} files", tracked_files.len());
                             for file in &tracked_files {
                                 let load_path = if file.path.is_empty() {
                                     file.canonical_path.clone()
                                 } else {
                                     file.path.clone()
                                 };
-                                send_parse_request_to_backend(load_path.clone()).await;
-                                // Start timeout watchdog for this file
-                                let timeout_relay = file_loading_timeout_relay_for_actor.clone();
-                                let file_id = file.id.clone();
-                                let handle = Task::start_droppable(async move {
-                                    Timer::sleep(60_000).await;
-                                    timeout_relay.send(file_id);
-                                });
-                                watchdog_handles.push(handle);
+                                zoon::println!("[TRACKED_FILES] sending parse request: {}", load_path);
+                                if let Err(error) = send_parse_request_to_backend(load_path.clone()).await {
+                                    // Update file state to Failed immediately on error
+                                    if let Some(f) = cached_files.iter_mut().find(|f| f.id == file.id) {
+                                        f.state = FileState::Failed(shared::FileError::IoError {
+                                            path: load_path,
+                                            error,
+                                        });
+                                    }
+                                    files_vec_signal_for_actor.set_neq(cached_files.clone());
+                                    {
+                                        let mut vec = files_vec.lock_mut();
+                                        vec.clear();
+                                        vec.extend(cached_files.clone());
+                                    }
+                                } else {
+                                    // Start timeout watchdog only on success
+                                    let timeout_relay = file_loading_timeout_relay_for_actor.clone();
+                                    let file_id = file.id.clone();
+                                    let handle = Task::start_droppable(async move {
+                                        Timer::sleep(60_000).await;
+                                        timeout_relay.send(file_id);
+                                    });
+                                    watchdog_handles.push(handle);
+                                }
                             }
                         }
                     }
@@ -133,19 +151,33 @@ impl TrackedFiles {
                                     cached_files.push(new_file.clone());
                                     files_vec.lock_mut().push_cloned(new_file.clone());
                                     // Update dedicated Vec signal
-                                    let new_files_vec = cached_files.clone();
-                                    files_vec_signal_for_actor.set_neq(new_files_vec.clone());
+                                    files_vec_signal_for_actor.set_neq(cached_files.clone());
 
                                     // Send parse request to backend for the new file
-                                    send_parse_request_to_backend(new_file.path.clone()).await;
-                                    // Start timeout watchdog for this file
-                                    let timeout_relay = file_loading_timeout_relay_for_actor.clone();
-                                    let file_id = new_file.id.clone();
-                                    let handle = Task::start_droppable(async move {
-                                        Timer::sleep(60_000).await;
-                                        timeout_relay.send(file_id);
-                                    });
-                                    watchdog_handles.push(handle);
+                                    if let Err(error) = send_parse_request_to_backend(new_file.path.clone()).await {
+                                        // Update file state to Failed immediately on error
+                                        if let Some(f) = cached_files.iter_mut().find(|f| f.id == new_file.id) {
+                                            f.state = FileState::Failed(shared::FileError::IoError {
+                                                path: new_file.path.clone(),
+                                                error,
+                                            });
+                                        }
+                                        files_vec_signal_for_actor.set_neq(cached_files.clone());
+                                        {
+                                            let mut vec = files_vec.lock_mut();
+                                            vec.clear();
+                                            vec.extend(cached_files.clone());
+                                        }
+                                    } else {
+                                        // Start timeout watchdog only on success
+                                        let timeout_relay = file_loading_timeout_relay_for_actor.clone();
+                                        let file_id = new_file.id.clone();
+                                        let handle = Task::start_droppable(async move {
+                                            Timer::sleep(60_000).await;
+                                            timeout_relay.send(file_id);
+                                        });
+                                        watchdog_handles.push(handle);
+                                    }
                                 }
                             }
                         }
@@ -192,15 +224,30 @@ impl TrackedFiles {
                             }
                             files_vec_signal_for_actor.set_neq(cached_files.clone());
 
-                            send_parse_request_to_backend(canonical_key.clone()).await;
-                            // Start timeout watchdog for this file
-                            let timeout_relay = file_loading_timeout_relay_for_actor.clone();
-                            let file_id = new_file.id.clone();
-                            let handle = Task::start_droppable(async move {
-                                Timer::sleep(60_000).await;
-                                timeout_relay.send(file_id);
-                            });
-                            watchdog_handles.push(handle);
+                            if let Err(error) = send_parse_request_to_backend(canonical_key.clone()).await {
+                                // Update file state to Failed immediately on error
+                                if let Some(f) = cached_files.iter_mut().find(|f| f.id == new_file.id) {
+                                    f.state = FileState::Failed(shared::FileError::IoError {
+                                        path: canonical_key.clone(),
+                                        error,
+                                    });
+                                }
+                                files_vec_signal_for_actor.set_neq(cached_files.clone());
+                                {
+                                    let mut vec = files_vec.lock_mut();
+                                    vec.clear();
+                                    vec.extend(cached_files.clone());
+                                }
+                            } else {
+                                // Start timeout watchdog only on success
+                                let timeout_relay = file_loading_timeout_relay_for_actor.clone();
+                                let file_id = new_file.id.clone();
+                                let handle = Task::start_droppable(async move {
+                                    Timer::sleep(60_000).await;
+                                    timeout_relay.send(file_id);
+                                });
+                                watchdog_handles.push(handle);
+                            }
                         }
                     }
                     load_result = file_load_completed_stream.next() => {
@@ -304,8 +351,19 @@ impl TrackedFiles {
                     }
                     file_path = file_parse_requested_stream.next() => {
                         if let Some(file_path) = file_path {
-                            // ✅ CORRECT: Direct async call within Actor - NO zoon::Task needed!
-                            send_parse_request_to_backend(file_path).await;
+                            if let Err(error) = send_parse_request_to_backend(file_path.clone()).await {
+                                // Try to find file and update state to Failed
+                                if let Some(f) = cached_files.iter_mut().find(|f| f.path == file_path || f.canonical_path == file_path) {
+                                    f.state = FileState::Failed(shared::FileError::IoError {
+                                        path: file_path,
+                                        error,
+                                    });
+                                    files_vec_signal_for_actor.set_neq(cached_files.clone());
+                                    let mut vec = files_vec.lock_mut();
+                                    vec.clear();
+                                    vec.extend(cached_files.clone());
+                                }
+                            }
                         }
                     }
                     file_id = file_loading_timeout_stream.next() => {
@@ -379,18 +437,16 @@ impl TrackedFiles {
     }
 }
 
-async fn send_parse_request_to_backend(file_path: String) {
+async fn send_parse_request_to_backend(file_path: String) -> Result<(), String> {
     use crate::platform::{CurrentPlatform, Platform};
     use shared::UpMsg;
 
     match CurrentPlatform::send_message(UpMsg::LoadWaveformFile(file_path.clone())).await {
-        Ok(()) => {}
+        Ok(()) => Ok(()),
         Err(e) => {
-            zoon::eprintln!(
-                "🚨 TrackedFiles: Failed to send parse request for {}: {}",
-                file_path,
-                e
-            );
+            let error_msg = format!("Failed to send parse request: {e}");
+            zoon::eprintln!("🚨 TrackedFiles: {error_msg} for {file_path}");
+            Err(error_msg)
         }
     }
 }

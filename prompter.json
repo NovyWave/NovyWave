@@ -4,9 +4,11 @@
   "command": [
     "cl"
   ],
-  "supervisor_prompt": "Fix permanent \"Loading workspace...\" and \"Loading directory contents...\".",
+  "supervisor_prompt": "Finish plan.",
   "completion_condition": "+completed+",
-  "completion_command": null,
-  "protected_patterns": [],
+  "completion_command": "./scripts/test_loading_fix.sh",
+  "protected_patterns": [
+    "scripts/test_loading_fix.sh"
+  ],
   "command_timeout_mins": 10
 }

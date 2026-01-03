@@ -165,8 +165,12 @@ where
         }
 
         if let Ok(mut subscribers) = self.subscribers.lock() {
+            let count_before = subscribers.len();
             subscribers.retain(|sender| sender.unbounded_send(value.clone()).is_ok());
-            // Debug trace disabled to avoid log spam during high-frequency UI events.
+            let count_after = subscribers.len();
+            if count_before != count_after {
+                zoon::println!("[RELAY] Subscriber dropped: {} -> {}", count_before, count_after);
+            }
         }
     }
 

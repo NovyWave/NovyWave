@@ -243,7 +243,9 @@ pub fn create_format_dropdown(
                         .item(El::new().s(Width::growable()).child_signal(
                             value_signal_for_display.map({
                                 let latest_value = latest_value.clone();
+                                let unique_id_for_debug = unique_id.clone();
                                 move |maybe_value| {
+                                    zoon::println!("[FORMAT] Querying unique_id={} got={:?}", unique_id_for_debug, maybe_value);
                                     let signal_value = maybe_value.unwrap_or(SignalValue::Loading);
                                     latest_value.set(signal_value.clone());
 

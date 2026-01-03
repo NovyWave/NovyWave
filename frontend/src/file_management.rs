@@ -228,7 +228,7 @@ pub fn render_tracked_file_as_tree_item_with_label_and_expanded_state(
             let children = file_data
                 .scopes
                 .iter()
-                .map(|scope| convert_scope_to_tree_data(scope))
+                .filter_map(|scope| convert_scope_to_tree_data(scope))
                 .collect();
             vec![
                 TreeViewItemData::new(tracked_file.id.clone(), display_name.clone())
@@ -321,11 +321,37 @@ pub fn compute_smart_label_for_file(
             if let (Some(min_ns), Some(max_ns)) =
                 (waveform_file.min_time_ns, waveform_file.max_time_ns)
             {
+                if min_ns == max_ns && min_ns == 0 {
+                    return base_name;
+                }
+
                 let min_seconds = min_ns as f64 / 1_000_000_000.0;
                 let max_seconds = max_ns as f64 / 1_000_000_000.0;
 
-                let time_range = if max_seconds < 1.0 {
-                    format!("{:.0}–{:.0}ms", min_seconds * 1000.0, max_seconds * 1000.0)
+                let time_range = if max_seconds < 0.000_001 {
+                    let max_ns_f = max_ns as f64;
+                    let min_ns_f = min_ns as f64;
+                    if (min_ns_f - max_ns_f).abs() < 0.5 {
+                        format!("{:.0}ns", max_ns_f)
+                    } else {
+                        format!("{:.0}–{:.0}ns", min_ns_f, max_ns_f)
+                    }
+                } else if max_seconds < 0.001 {
+                    let min_us = min_seconds * 1_000_000.0;
+                    let max_us = max_seconds * 1_000_000.0;
+                    if (min_us - max_us).abs() < 0.5 {
+                        format!("{:.0}µs", max_us)
+                    } else {
+                        format!("{:.0}–{:.0}µs", min_us, max_us)
+                    }
+                } else if max_seconds < 1.0 {
+                    let min_ms = min_seconds * 1000.0;
+                    let max_ms = max_seconds * 1000.0;
+                    if (min_ms - max_ms).abs() < 0.5 {
+                        format!("{:.0}ms", max_ms)
+                    } else {
+                        format!("{:.0}–{:.0}ms", min_ms, max_ms)
+                    }
                 } else if max_seconds < 60.0 {
                     if max_seconds.fract() == 0.0 && min_seconds.fract() == 0.0 {
                         format!("{:.0}–{:.0}s", min_seconds, max_seconds)
@@ -335,7 +361,12 @@ pub fn compute_smart_label_for_file(
                 } else {
                     let min_minutes = min_seconds / 60.0;
                     let max_minutes = max_seconds / 60.0;
-                    format!("{:.1}–{:.1}min", min_minutes, max_minutes)
+                    let both_whole = min_minutes.fract() == 0.0 && max_minutes.fract() == 0.0;
+                    if both_whole {
+                        format!("{:.0}–{:.0}min", min_minutes, max_minutes)
+                    } else {
+                        format!("{:.1}–{:.1}min", min_minutes, max_minutes)
+                    }
                 };
 
                 format!("{} ({})", base_name, time_range)
@@ -364,22 +395,36 @@ pub fn compute_smart_label_for_file(
     }
 }
 
+fn is_library_scope(scope: &ScopeData) -> bool {
+    match scope.scope_type.as_deref() {
+        Some("VhdlPackage") | Some("GhwGeneric") => true,
+        _ => false,
+    }
+}
+
 /// Convert scope data to tree view item data
-pub fn convert_scope_to_tree_data(scope: &ScopeData) -> TreeViewItemData {
+/// Returns None for library scopes (VhdlPackage, GhwGeneric) which should be filtered out
+pub fn convert_scope_to_tree_data(scope: &ScopeData) -> Option<TreeViewItemData> {
+    if is_library_scope(scope) {
+        return None;
+    }
+
     let mut children = Vec::new();
 
     let mut child_refs: Vec<&ScopeData> = scope.children.iter().collect();
     child_refs.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
 
     for child_scope in child_refs {
-        children.push(convert_scope_to_tree_data(child_scope));
+        if let Some(child_tree) = convert_scope_to_tree_data(child_scope) {
+            children.push(child_tree);
+        }
     }
 
     let scope_tree_id = format!("scope_{}", scope.id);
 
-    TreeViewItemData::new(scope_tree_id, scope.name.clone())
+    Some(TreeViewItemData::new(scope_tree_id, scope.name.clone())
         .item_type(TreeViewItemType::Folder)
-        .with_children(children)
+        .with_children(children))
 }
 
 /// Create enhanced file remove handler with proper cleanup

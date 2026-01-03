@@ -79,6 +79,8 @@ impl TreeViewSyncActors {
         });
 
         // TreeView → Domain sync
+        // Note: is_first_sync hack removed - phase-based initialization + cache checks
+        // in backend_sender_actor prevent duplicate directory loading requests
         let treeview_to_domain_sync = Actor::new((), {
             let domain_for_expansion = domain.clone();
             let external_expanded_for_expansion = external_expanded.clone();
@@ -86,21 +88,12 @@ impl TreeViewSyncActors {
                 let mut previous_expanded: IndexSet<String> = IndexSet::new();
                 let mut external_signal_stream =
                     external_expanded_for_expansion.signal_cloned().to_stream();
-                let mut is_first_sync = true;
 
                 while let Some(current_expanded) = external_signal_stream.next().await {
                     crate::app::emit_trace(
                         "treeview_sync_external",
                         format!("incoming={current_expanded:?} previous={previous_expanded:?}"),
                     );
-                    // Don't send events on first sync to avoid clearing config
-                    if is_first_sync {
-                        is_first_sync = false;
-                        // Don't send events on first sync to avoid clearing config
-                        // Just update previous_expanded to track state
-                        previous_expanded = current_expanded;
-                        continue;
-                    }
 
                     for path in current_expanded.iter() {
                         if !previous_expanded.contains(path) {
@@ -108,11 +101,9 @@ impl TreeViewSyncActors {
                                 "workspace_picker_expand_request",
                                 format!("path={path}"),
                             );
+                            // Single path for directory loading via directory_expanded_relay
                             domain_for_expansion
                                 .directory_expanded_relay
-                                .send(path.clone());
-                            domain_for_expansion
-                                .directory_load_requested_relay
                                 .send(path.clone());
                         }
                     }
@@ -228,7 +219,7 @@ pub fn initialize_directories_and_request_contents(
 
         if !cache.contains_key("/") {
             domain_clone
-                .directory_load_requested_relay
+                .directory_expanded_relay
                 .send("/".to_string());
         }
 
@@ -241,15 +232,17 @@ pub fn initialize_directories_and_request_contents(
                 {
                     domain_clone.directory_expanded_relay.send("/".to_string());
                     domain_clone.directory_expanded_relay.send(home_dir.clone());
-                    domain_clone.directory_load_requested_relay.send(home_dir);
                 } else {
                     domain_clone.directory_expanded_relay.send("/".to_string());
                 }
             } else {
+                // Request contents only for directories not already in cache
                 for directory in &expanded {
-                    domain_clone
-                        .directory_load_requested_relay
-                        .send(directory.clone());
+                    if !cache.contains_key(directory) {
+                        domain_clone
+                            .directory_expanded_relay
+                            .send(directory.clone());
+                    }
                 }
             }
         }

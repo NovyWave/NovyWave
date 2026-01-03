@@ -9,18 +9,9 @@ theme = "dark"
 toast_dismiss_ms = 10000
 
 [workspace]
-opened_files = [
-    "spade/counter/counter.vcd",
-    "spinalhdl/counter/counter.vcd",
-    "verilog/counter/counter.vcd",
-    "vhdl/counter/counter.ghw",
-]
+opened_files = []
 dock_mode = "right"
-expanded_scopes = [
-    "scope_spade/counter/counter.vcd|counter_tb",
-    "scope_spade/counter/counter.vcd|counter_tb.dut",
-    "/home/martinkavik/repos/NovyWave/examples/verilog/counter/counter.vcd",
-]
+expanded_scopes = ["/home/martinkavik/repos/NovyWave/examples/vhdl/counter/counter.ghw"]
 load_files_expanded_directories = [
     "/",
     "/home",
@@ -52,13 +43,25 @@ selected_variables_panel_name_column_width = 190.0
 selected_variables_panel_value_column_width = 220.0
 
 [[workspace.selected_variables]]
-unique_id = "verilog/counter/counter.vcd|counter_tb|clk"
+unique_id = "spade/counter/counter.vcd|counter_tb|clk"
+
+[[workspace.selected_variables]]
+unique_id = "spade/counter/counter.vcd|counter_tb|count"
+
+[[workspace.selected_variables]]
+unique_id = "spade/counter/counter.vcd|counter_tb|output_packed"
+
+[[workspace.selected_variables]]
+unique_id = "spade/counter/counter.vcd|counter_tb|overflow"
+
+[[workspace.selected_variables]]
+unique_id = "spade/counter/counter.vcd|counter_tb|rst"
 
 [workspace.timeline]
-cursor_position_ps = 1914500
+cursor_position_ps = 795764
 visible_range_start_ps = 0
-visible_range_end_ps = 3829000
-zoom_center_ps = 0
+visible_range_end_ps = 1705000
+zoom_center_ps = 927406
 tooltip_enabled = true
 
 [plugins]

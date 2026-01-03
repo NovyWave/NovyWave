@@ -19,10 +19,10 @@ use tokio::time::{Duration, sleep};
 // ===== CENTRALIZED DEBUG FLAGS =====
 const DEBUG_BACKEND: bool = true; // Backend request/response debugging
 const DEBUG_PARSE: bool = true; // File parsing debugging
-const DEBUG_SIGNAL_CACHE: bool = false; // Signal cache hit/miss debugging
-const DEBUG_CURSOR: bool = false; // Cursor value computation debugging
-const DEBUG_WAVEFORM_STORE: bool = false; // Waveform data storage debugging
-const DEBUG_EXTRACT: bool = false; // Signal transition extraction debugging
+const DEBUG_SIGNAL_CACHE: bool = true; // Signal cache hit/miss debugging
+const DEBUG_CURSOR: bool = true; // Cursor value computation debugging
+const DEBUG_WAVEFORM_STORE: bool = true; // Waveform data storage debugging
+const DEBUG_EXTRACT: bool = true; // Signal transition extraction debugging
 
 // Debug macro for easy toggling
 macro_rules! debug_log {
@@ -2177,12 +2177,15 @@ fn extract_scope_data_with_file_path(
         .collect();
     children.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
 
+    let scope_type_str = format!("{:?}", scope.scope_type());
+
     ScopeData {
         id: format!("{}|{}", file_path, scope.full_name(hierarchy)), // Use full file path + | separator + scope path for unique ID
         name: scope.name(hierarchy).to_string(),
         full_name: scope.full_name(hierarchy),
         children,
         variables,
+        scope_type: Some(scope_type_str),
     }
 }
 

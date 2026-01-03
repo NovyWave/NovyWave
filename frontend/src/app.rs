@@ -76,8 +76,11 @@ pub struct ConnectionMessageActor {
     // Debug: Test notification relay for mock server testing
     pub test_notification_relay: Relay<(String, String, String)>, // (variant, title, message)
 
-    // Actor handles message processing
-    _message_actor: Actor<()>,
+    // Actor handles message processing (None until start() is called)
+    _message_actor: Option<Actor<()>>,
+
+    // TrackedFiles reference for reload handling
+    _tracked_files: TrackedFiles,
 }
 
 pub(crate) fn emit_trace(_target: &str, _message: impl Into<String>) {
@@ -129,11 +132,10 @@ fn apply_scrollbar_colors(
 }
 
 impl ConnectionMessageActor {
-    /// Create ConnectionMessageActor with DownMsg stream from connection
-    pub async fn new(
-        down_msg_stream: impl futures::stream::Stream<Item = DownMsg> + Unpin + 'static,
-        tracked_files_for_reload: TrackedFiles,
-    ) -> Self {
+    /// Create ConnectionMessageActor with relays only - NO message processing yet.
+    /// This allows subscribers to set up BEFORE any messages are processed.
+    /// Call `start()` after all subscribers are ready.
+    pub fn new_pending(tracked_files: TrackedFiles) -> Self {
         // Create all message-specific relays
         let (config_loaded_relay, _) = relay();
         let (workspace_loaded_relay, _) = relay();
@@ -148,50 +150,91 @@ impl ConnectionMessageActor {
         let (unified_signal_error_relay, _) = relay::<(String, String)>();
         let (test_notification_relay, _) = relay::<(String, String, String)>();
 
-        // Clone relays for use in Actor closure
-        let config_loaded_relay_clone = config_loaded_relay.clone();
-        let workspace_loaded_relay_clone = workspace_loaded_relay.clone();
-        let config_error_relay_clone = config_error_relay.clone();
-        let config_saved_relay_clone = config_saved_relay.clone();
-        let directory_contents_relay_clone = directory_contents_relay.clone();
-        let directory_error_relay_clone = directory_error_relay.clone();
-        let file_loaded_relay_clone = file_loaded_relay.clone();
-        let parsing_started_relay_clone = parsing_started_relay.clone();
-        let batch_signal_values_relay_clone = batch_signal_values_relay.clone();
-        let unified_signal_response_relay_clone = unified_signal_response_relay.clone();
-        let unified_signal_error_relay_clone = unified_signal_error_relay.clone();
-        let test_notification_relay_clone = test_notification_relay.clone();
-        let tracked_files_for_reload = tracked_files_for_reload.clone();
+        Self {
+            config_loaded_relay,
+            workspace_loaded_relay,
+            config_error_relay,
+            config_saved_relay,
+            directory_contents_relay,
+            directory_error_relay,
+            file_loaded_relay,
+            parsing_started_relay,
+            batch_signal_values_relay,
+            unified_signal_response_relay,
+            unified_signal_error_relay,
+            test_notification_relay,
+            _message_actor: None,
+            _tracked_files: tracked_files,
+        }
+    }
 
-        // Actor processes DownMsg stream and routes to appropriate relays
+    /// Start message processing with DIRECT method calls.
+    /// This eliminates timing dependencies - no need to wait for subscribers.
+    pub fn start(
+        &mut self,
+        down_msg_stream: impl futures::stream::Stream<Item = DownMsg> + Unpin + 'static,
+        workspace_path: Mutable<Option<String>>,
+        workspace_loading: Mutable<bool>,
+        default_workspace_path: Mutable<Option<String>>,
+        tracked_files: TrackedFiles,
+        selected_variables: crate::selected_variables::SelectedVariables,
+        waveform_timeline: crate::visualizer::timeline::WaveformTimeline,
+        config: crate::config::AppConfig,
+    ) {
+        let config_loaded_relay_clone = self.config_loaded_relay.clone();
+        let workspace_loaded_relay_clone = self.workspace_loaded_relay.clone();
+        let config_error_relay_clone = self.config_error_relay.clone();
+        let config_saved_relay_clone = self.config_saved_relay.clone();
+        let directory_contents_relay_clone = self.directory_contents_relay.clone();
+        let directory_error_relay_clone = self.directory_error_relay.clone();
+        let file_loaded_relay_clone = self.file_loaded_relay.clone();
+        let parsing_started_relay_clone = self.parsing_started_relay.clone();
+        let test_notification_relay_clone = self.test_notification_relay.clone();
+        let tracked_files_for_reload = self._tracked_files.clone();
 
         let message_actor = Actor::new((), async move |_state| {
             let mut stream = down_msg_stream;
             loop {
                 match stream.next().await {
                     Some(down_msg) => {
-                        // Route each message type to its specific relay
                         match down_msg {
-                            DownMsg::ConfigLoaded(config) => {
-                                config_loaded_relay_clone.send(config);
+                            DownMsg::ConfigLoaded(loaded_config) => {
+                                workspace_loading.set(false);
+                                // Phase 3: Apply config directly to state
+                                config.restore_config(
+                                    loaded_config.clone(),
+                                    &selected_variables,
+                                );
+                                // Phase 4: Trigger actual loading via relays
+                                config.complete_initialization(
+                                    &tracked_files,
+                                    loaded_config.workspace.opened_files.clone(),
+                                    loaded_config.workspace.load_files_expanded_directories.clone(),
+                                );
+                                config_loaded_relay_clone.send(loaded_config);
                             }
                             DownMsg::WorkspaceLoaded {
                                 root,
                                 default_root,
-                                config,
+                                config: workspace_config,
                             } => {
-                                // Trace to dev_server.log to aid validation
                                 emit_trace(
                                     "workspace_loaded_event",
-                                    format!("root={} default_root={}", root, default_root),
+                                    format!("root={root} default_root={default_root}"),
                                 );
+                                workspace_loading.set(false);
+                                workspace_path.set(Some(root.clone()));
+                                default_workspace_path.set(Some(default_root.clone()));
+                                tracked_files.all_files_cleared_relay.send(());
+                                selected_variables.selection_cleared_relay.send(());
                                 workspace_loaded_relay_clone.send(WorkspaceLoadedEvent {
                                     root,
                                     default_root,
-                                    config,
+                                    config: workspace_config,
                                 });
                             }
                             DownMsg::ConfigError(error) => {
+                                workspace_loading.set(false);
                                 config_error_relay_clone.send(error);
                             }
                             DownMsg::ConfigSaved => {
@@ -259,28 +302,25 @@ impl ConnectionMessageActor {
                                 }
 
                                 if !values.is_empty() {
-                                    batch_signal_values_relay_clone.send(values);
+                                    waveform_timeline.apply_cursor_values(values);
                                 }
                             }
                             DownMsg::UnifiedSignalResponse {
                                 request_id,
                                 signal_data,
                                 cursor_values,
-                                cached_time_range_ns,
-                                statistics,
+                                ..
                             } => {
-                                unified_signal_response_relay_clone.send(
-                                    UnifiedSignalResponseEvent {
-                                        request_id,
-                                        signal_data,
-                                        cursor_values,
-                                        cached_time_range_ns,
-                                        statistics,
-                                    },
+                                zoon::println!("[CONN] UnifiedSignalResponse: request_id={request_id} signal_data={} cursor_values={}",
+                                    signal_data.len(), cursor_values.len());
+                                waveform_timeline.apply_unified_signal_response(
+                                    &request_id,
+                                    signal_data,
+                                    cursor_values,
                                 );
                             }
                             DownMsg::UnifiedSignalError { request_id, error } => {
-                                unified_signal_error_relay_clone.send((request_id, error));
+                                waveform_timeline.handle_unified_signal_error(&request_id, &error);
                             }
                             DownMsg::ReloadWaveformFiles { file_paths } => {
                                 if !file_paths.is_empty() {
@@ -293,12 +333,10 @@ impl ConnectionMessageActor {
                                 }
                             }
                             DownMsg::TestNotification { variant, title, message } => {
-                                zoon::println!("🔔 FRONTEND: Received test notification: {} - {}", variant, title);
+                                zoon::println!("🔔 FRONTEND: Received test notification: {variant} - {title}");
                                 test_notification_relay_clone.send((variant, title, message));
                             }
-                            _ => {
-                                // Other message types can be added as needed
-                            }
+                            _ => {}
                         }
                     }
                     None => {
@@ -308,21 +346,7 @@ impl ConnectionMessageActor {
             }
         });
 
-        Self {
-            config_loaded_relay,
-            workspace_loaded_relay,
-            config_error_relay,
-            config_saved_relay,
-            directory_contents_relay,
-            directory_error_relay,
-            file_loaded_relay,
-            parsing_started_relay,
-            batch_signal_values_relay,
-            unified_signal_response_relay,
-            unified_signal_error_relay,
-            test_notification_relay,
-            _message_actor: message_actor,
-        }
+        self._message_actor = Some(message_actor);
     }
 }
 
@@ -358,15 +382,10 @@ pub struct NovyWaveApp {
 
     /// Message routing actor (keeps relays alive)
     _connection_message_actor: ConnectionMessageActor,
-    _workspace_event_actor: Actor<()>,
-    _config_loaded_actor: Actor<()>,
-    _config_error_actor: Actor<()>,
 
     /// Synchronizes Files panel scope selection into SelectedVariables domain
     _scope_selection_sync_actor: Actor<()>,
 
-    /// Bridges connection message relays into the timeline domain
-    _timeline_message_bridge_actor: Actor<()>,
     _workspace_history_selection_actor: Actor<()>,
     _workspace_history_expanded_actor: Actor<()>,
     _workspace_history_scroll_actor: Actor<()>,
@@ -436,61 +455,16 @@ impl NovyWaveApp {
         let tracked_files = TrackedFiles::new().await;
         let selected_variables = SelectedVariables::new().await;
 
-        // ✅ ACTOR+RELAY: Use working connection with message actor integration
-        let (connection, connection_message_actor) = Self::create_connection_with_message_actor(
-            tracked_files.clone(),
-            selected_variables.clone(),
-        )
-        .await;
+        // ✅ STEP 1: Create connection and PENDING actor (relays only, no processing)
+        // The mpsc channel buffers messages until actor.start() is called
+        let (connection, mut connection_message_actor, down_msg_receiver) =
+            Self::create_connection_and_pending_actor(tracked_files.clone());
 
         let workspace_path = Mutable::new(None);
         // Start in loading state until WorkspaceLoaded/ConfigLoaded arrives
         let workspace_loading = Mutable::new(true);
         let default_workspace_path = Mutable::new(None);
         let workspace_picker_visible = Atom::new(false);
-
-        let workspace_event_actor = {
-            let mut workspace_stream = connection_message_actor.workspace_loaded_relay.subscribe();
-            let workspace_path = workspace_path.clone();
-            let workspace_loading = workspace_loading.clone();
-            let default_workspace_path = default_workspace_path.clone();
-            let tracked_files_on_workspace = tracked_files.clone();
-            let selected_variables_on_workspace = selected_variables.clone();
-
-            Actor::new((), async move |_state| {
-                while let Some(event) = workspace_stream.next().await {
-                    workspace_loading.set(false);
-                    workspace_path.set(Some(event.root.clone()));
-                    default_workspace_path.set(Some(event.default_root.clone()));
-                    // Always clear file list and selection when a workspace is confirmed.
-                    tracked_files_on_workspace.all_files_cleared_relay.send(());
-                    selected_variables_on_workspace
-                        .selection_cleared_relay
-                        .send(());
-                }
-            })
-        };
-
-        let config_loaded_actor = {
-            let mut config_stream = connection_message_actor.config_loaded_relay.subscribe();
-            let workspace_loading = workspace_loading.clone();
-            Actor::new((), async move |_state| {
-                while config_stream.next().await.is_some() {
-                    workspace_loading.set(false);
-                }
-            })
-        };
-
-        let config_error_actor = {
-            let mut error_stream = connection_message_actor.config_error_relay.subscribe();
-            let workspace_loading = workspace_loading.clone();
-
-            Actor::new((), async move |_state| {
-                while let Some(_error) = error_stream.next().await {
-                    workspace_loading.set(false);
-                }
-            })
-        };
 
         // Initialize platform layer with the working connection
         let connection_arc = std::sync::Arc::new(connection);
@@ -790,56 +764,16 @@ impl NovyWaveApp {
             })
         };
 
-        let timeline_message_bridge_actor = {
-            let unified_signal_response_stream = connection_message_actor
-                .unified_signal_response_relay
-                .subscribe()
-                .fuse();
-            let unified_signal_error_stream = connection_message_actor
-                .unified_signal_error_relay
-                .subscribe()
-                .fuse();
-            let batch_signal_values_stream = connection_message_actor
-                .batch_signal_values_relay
-                .subscribe()
-                .fuse();
-
-            let timeline_for_responses = waveform_timeline.clone();
-            let timeline_for_errors = waveform_timeline.clone();
-            let timeline_for_values = waveform_timeline.clone();
-
-            Actor::new((), async move |_state| {
-                let mut response_stream = unified_signal_response_stream;
-                let response_timeline = timeline_for_responses.clone();
-                let _task = Task::start_droppable(async move {
-                    while let Some(event) = response_stream.next().await {
-                        response_timeline.apply_unified_signal_response(
-                            &event.request_id,
-                            event.signal_data,
-                            event.cursor_values,
-                        );
-                    }
-                });
-
-                let mut error_stream = unified_signal_error_stream;
-                let error_timeline = timeline_for_errors.clone();
-                let _task = Task::start_droppable(async move {
-                    while let Some((request_id, error)) = error_stream.next().await {
-                        error_timeline.handle_unified_signal_error(&request_id, &error);
-                    }
-                });
-
-                let mut cursor_values_stream = batch_signal_values_stream;
-                let cursor_timeline = timeline_for_values.clone();
-                let _task = Task::start_droppable(async move {
-                    while let Some(values) = cursor_values_stream.next().await {
-                        cursor_timeline.apply_cursor_values(values);
-                    }
-                });
-
-                futures::future::pending::<()>().await;
-            })
-        };
+        connection_message_actor.start(
+            down_msg_receiver,
+            workspace_path.clone(),
+            workspace_loading.clone(),
+            default_workspace_path.clone(),
+            tracked_files.clone(),
+            selected_variables.clone(),
+            waveform_timeline.clone(),
+            config.clone(),
+        );
 
         // Request config loading once; the Web platform gate handles
         // readiness probes, single-flight, and quiet retry during dev-server swaps.
@@ -865,11 +799,7 @@ impl NovyWaveApp {
             dragging_system,
             connection: connection_arc,
             _connection_message_actor: connection_message_actor,
-            _workspace_event_actor: workspace_event_actor,
-            _config_loaded_actor: config_loaded_actor,
-            _config_error_actor: config_error_actor,
             _scope_selection_sync_actor: scope_selection_sync_actor,
-            _timeline_message_bridge_actor: timeline_message_bridge_actor,
             file_dialog_visible,
             workspace_picker_visible,
             workspace_path,
@@ -909,34 +839,38 @@ impl NovyWaveApp {
         }
     }
 
-    /// Create connection with ConnectionMessageActor integration
-    /// Returns both connection and message actor for proper Actor+Relay architecture
-    async fn create_connection_with_message_actor(
+    /// Create connection and message actor with PROPER ordering to avoid race conditions.
+    /// Returns: (connection, pending_actor, mpsc_receiver)
+    ///
+    /// Usage:
+    /// 1. Call this to get connection and pending actor
+    /// 2. Subscribe to actor's relays
+    /// 3. Call actor.start(receiver) to begin processing
+    ///
+    /// The mpsc channel buffers messages until start() is called.
+    fn create_connection_and_pending_actor(
         tracked_files: TrackedFiles,
-        _selected_variables: SelectedVariables,
     ) -> (
         SendWrapper<Connection<UpMsg, DownMsg>>,
         ConnectionMessageActor,
+        futures::channel::mpsc::UnboundedReceiver<DownMsg>,
     ) {
         use futures::channel::mpsc;
 
         let (down_msg_sender, down_msg_receiver) = mpsc::unbounded::<DownMsg>();
         let tf_relay = tracked_files.file_load_completed_relay.clone();
 
-        // Create ConnectionMessageActor with the message stream
-        // ✅ FIX: Move receiver into closure to prevent reference capture after Send bounds removal
-        let connection_message_actor =
-            ConnectionMessageActor::new(down_msg_receiver, tracked_files.clone()).await;
+        // Create actor with relays only - NO processing yet
+        let connection_message_actor = ConnectionMessageActor::new_pending(tracked_files.clone());
 
-        // Create connection that sends to the stream
+        // Connection sends directly to mpsc channel (channel buffers messages)
         let connection = Connection::new({
-            let sender = down_msg_sender; // Move sender explicitly before closure
+            let sender = down_msg_sender;
             move |down_msg, _| {
                 zoon::println!("connection: received DownMsg {:?}", down_msg);
-                // Mark server alive on any DownMsg
                 crate::platform::notify_server_alive();
-                // Log the received message
-                // Handle TrackedFiles messages directly (not routed through ConnectionMessageActor)
+
+                // Handle file state updates immediately (these go to TrackedFiles relay)
                 match &down_msg {
                     DownMsg::FileLoaded { file_id, hierarchy } => {
                         if let Some(loaded_file) = hierarchy.files.first() {
@@ -946,8 +880,6 @@ impl NovyWaveApp {
                             ));
                         }
                     }
-                    DownMsg::ConfigLoaded(_config_loaded) => {}
-                    DownMsg::WorkspaceLoaded { .. } => {}
                     DownMsg::ParsingStarted { file_id, .. } => {
                         tf_relay.send((
                             file_id.clone(),
@@ -962,17 +894,15 @@ impl NovyWaveApp {
                             }),
                         ));
                     }
-                    _ => {
-                        // All other messages go to ConnectionMessageActor for routing
-                    }
+                    _ => {}
                 }
 
-                // Send all messages to ConnectionMessageActor for domain routing
+                // Send to mpsc channel (buffered until actor.start() is called)
                 let _ = sender.unbounded_send(down_msg);
             }
         });
 
-        (SendWrapper::new(connection), connection_message_actor)
+        (SendWrapper::new(connection), connection_message_actor, down_msg_receiver)
     }
 
     /// Setup app-level coordination

@@ -14,7 +14,8 @@ sim:
 	@echo "VCD file generated in: simWorkspace/Counter/test/"
 	@if [ -f simWorkspace/Counter/test/wave.vcd ]; then \
 		cp simWorkspace/Counter/test/wave.vcd counter.vcd; \
-		echo "Copied to: counter.vcd"; \
+		sed -i 's/\$$timescale 1s/\$$timescale 1ns/' counter.vcd; \
+		echo "Copied to: counter.vcd (timescale fixed to 1ns)"; \
 	fi
 
 # Generate Verilog RTL

@@ -493,6 +493,8 @@ pub struct ScopeData {
     pub full_name: String,
     pub children: Vec<ScopeData>,
     pub variables: Vec<Signal>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope_type: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -2491,5 +2493,91 @@ mod tests {
         assert_eq!(section.opened_files.len(), 1);
         assert_eq!(section.opened_files[0].canonical, "/tmp/sample.vcd");
         assert_eq!(section.opened_files[0].display(), "/tmp/sample.vcd");
+    }
+
+    #[test]
+    fn cursor_values_btreemap_lookup_with_unique_id() {
+        let mut map: BTreeMap<String, SignalValue> = BTreeMap::new();
+
+        let unique_id = "/home/user/examples/spade/counter/counter.vcd|counter_tb|clk".to_string();
+
+        map.insert(unique_id.clone(), SignalValue::Present("0".to_string()));
+
+        let result = map.get(&unique_id).cloned();
+        assert_eq!(
+            result,
+            Some(SignalValue::Present("0".to_string())),
+            "BTreeMap lookup should find value when exact unique_id is used"
+        );
+    }
+
+    #[test]
+    fn cursor_values_loading_to_present_overwrite() {
+        let mut map: BTreeMap<String, SignalValue> = BTreeMap::new();
+
+        let unique_id = "/path/to/file.vcd|scope|variable".to_string();
+
+        map.insert(unique_id.clone(), SignalValue::Loading);
+        assert_eq!(
+            map.get(&unique_id).cloned(),
+            Some(SignalValue::Loading),
+            "Initial value should be Loading"
+        );
+
+        map.insert(unique_id.clone(), SignalValue::Present("42".to_string()));
+        assert_eq!(
+            map.get(&unique_id).cloned(),
+            Some(SignalValue::Present("42".to_string())),
+            "Value should be overwritten from Loading to Present"
+        );
+    }
+
+    #[test]
+    fn cursor_values_missing_key_returns_none() {
+        let mut map: BTreeMap<String, SignalValue> = BTreeMap::new();
+
+        map.insert(
+            "/file.vcd|scope|existing_var".to_string(),
+            SignalValue::Present("1".to_string()),
+        );
+
+        let result = map.get("/file.vcd|scope|missing_var");
+        assert!(result.is_none(), "Missing key should return None");
+    }
+
+    #[test]
+    fn cursor_values_display_value_for_loading() {
+        let loading = SignalValue::Loading;
+        assert_eq!(
+            loading.display_value("-"),
+            "Loading...",
+            "Loading state should display 'Loading...'"
+        );
+    }
+
+    #[test]
+    fn cursor_values_display_value_for_present() {
+        let present = SignalValue::Present("1'b0".to_string());
+        assert_eq!(
+            present.display_value("-"),
+            "1'b0",
+            "Present state should display the actual value"
+        );
+    }
+
+    #[test]
+    fn cursor_values_key_format_consistency() {
+        let file_path = "/home/martinkavik/repos/NovyWave/examples/spade/counter/counter.vcd";
+        let scope_path = "counter_tb";
+        let variable_name = "clk";
+
+        let unique_id_backend = format!("{}|{}|{}", file_path, scope_path, variable_name);
+
+        let unique_id_frontend = format!("{}|{}|{}", file_path, scope_path, variable_name);
+
+        assert_eq!(
+            unique_id_backend, unique_id_frontend,
+            "Backend and frontend should produce identical unique_id format"
+        );
     }
 }

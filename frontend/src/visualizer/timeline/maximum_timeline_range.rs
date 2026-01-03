@@ -49,7 +49,7 @@ impl MaximumTimelineRange {
                             Some(files) => {
                                 latest_files = files;
                                 let range = Self::compute_range(&latest_files, &latest_selection);
-                                state.set(range);
+                                state.set_neq(range);
                             }
                             None => break,
                         }
@@ -59,7 +59,7 @@ impl MaximumTimelineRange {
                             Some(selection) => {
                                 latest_selection = selection;
                                 let range = Self::compute_range(&latest_files, &latest_selection);
-                                state.set(range);
+                                state.set_neq(range);
                             }
                             None => break,
                         }
