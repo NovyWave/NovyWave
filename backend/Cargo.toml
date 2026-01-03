@@ -19,3 +19,7 @@ plugin_host = { path = "crates/plugin_host" }
 notify = "6"
 notify-debouncer-mini = "0.4"
 ignore = "0.4"
+
+[[bin]]
+name = "test_vcd_parse"
+path = "src/bin/test_vcd_parse.rs"

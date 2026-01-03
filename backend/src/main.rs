@@ -18,7 +18,7 @@ use tokio::time::{Duration, sleep};
 
 // ===== CENTRALIZED DEBUG FLAGS =====
 const DEBUG_BACKEND: bool = true; // Backend request/response debugging
-const DEBUG_PARSE: bool = false; // File parsing debugging
+const DEBUG_PARSE: bool = true; // File parsing debugging
 const DEBUG_SIGNAL_CACHE: bool = false; // Signal cache hit/miss debugging
 const DEBUG_CURSOR: bool = false; // Cursor value computation debugging
 const DEBUG_WAVEFORM_STORE: bool = false; // Waveform data storage debugging
@@ -1065,17 +1065,21 @@ async fn parse_waveform_file(
     let options = wellen::LoadOptions::default();
 
     // Catch panics from wellen parsing to prevent crashes
+    // CRITICAL: Use spawn_blocking to avoid blocking the async runtime
     debug_log!(
         DEBUG_PARSE,
         "🔍 PARSE: Calling wellen::viewers::read_header_from_file for '{}'",
         file_path
     );
-    let parse_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        wellen::viewers::read_header_from_file(&file_path, &options)
-    }));
+    let file_path_clone = file_path.clone();
+    let parse_result = tokio::task::spawn_blocking(move || {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            wellen::viewers::read_header_from_file(&file_path_clone, &options)
+        }))
+    }).await;
 
     let header_result = match parse_result {
-        Ok(Ok(header)) => {
+        Ok(Ok(Ok(header))) => {
             debug_log!(
                 DEBUG_PARSE,
                 "🔍 PARSE: Header parsing SUCCESS for '{}'",
@@ -1083,7 +1087,7 @@ async fn parse_waveform_file(
             );
             header
         }
-        Ok(Err(e)) => {
+        Ok(Ok(Err(e))) => {
             debug_log!(
                 DEBUG_PARSE,
                 "🔍 PARSE: Header parsing ERROR for '{}': {}",
@@ -1094,13 +1098,27 @@ async fn parse_waveform_file(
             send_structured_parsing_error(file_id, filename, file_error, session_id, cor_id).await;
             return;
         }
-        Err(_panic) => {
+        Ok(Err(_panic)) => {
             debug_log!(
                 DEBUG_PARSE,
                 "🔍 PARSE: Header parsing PANIC for '{}'",
                 file_path
             );
             let file_error = convert_panic_to_file_error(&file_path);
+            send_structured_parsing_error(file_id, filename, file_error, session_id, cor_id).await;
+            return;
+        }
+        Err(join_error) => {
+            debug_log!(
+                DEBUG_PARSE,
+                "🔍 PARSE: Blocking task failed for '{}': {}",
+                file_path,
+                join_error
+            );
+            let file_error = FileError::IoError {
+                path: file_path.clone(),
+                error: format!("Blocking task failed: {}", join_error),
+            };
             send_structured_parsing_error(file_id, filename, file_error, session_id, cor_id).await;
             return;
         }
