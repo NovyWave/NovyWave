@@ -1,10 +1,10 @@
 {
-  "instance_label": null,
+  "instance_label": "NovyWave",
   "port": 4570,
   "command": [
     "cl"
   ],
-  "supervisor_prompt": "",
+  "supervisor_prompt": "Fix permanent \"Loading workspace...\" and \"Loading directory contents...\".",
   "completion_condition": "+completed+",
   "completion_command": null,
   "protected_patterns": [],

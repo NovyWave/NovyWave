@@ -81,6 +81,7 @@ Never use `Timer::sleep()` for timing coordination. Use `Task::next_macro_tick()
 
 ## Dev Server Management
 
+- **Kill zombie processes**: `makers kill` - use this to kill stale/hung dev server processes
 - **NEVER run dev server commands** - read `dev_server.log` only
 - Backend compilation takes DOZENS OF SECONDS TO MINUTES - wait for it
 - Monitor: `tail -f dev_server.log`

@@ -39,55 +39,57 @@ description = "Stop all development processes"
 script = '''
 PORT=$(grep "^port = " MoonZoon.toml | head -1 | cut -d' ' -f3 || echo "8080")
 KILLED_ANY=false
+PROJECT_DIR=$(pwd)
 
-echo "Stopping development processes on port $PORT..."
+echo "Stopping NovyWave development processes (port $PORT, dir $PROJECT_DIR)..."
 
-# Kill process on configured port
-PID=$(lsof -ti:$PORT 2>/dev/null || true)
-if [ -n "$PID" ]; then
-    if kill -TERM $PID 2>/dev/null; then
-        echo "Sent TERM signal to process on port $PORT"
-        KILLED_ANY=true
-    fi
-fi
+# Kill process if its cwd matches our project directory
+kill_by_cwd() {
+    local sig=$1
+    local pattern=$2
+    local name=$3
 
-# Kill makers processes
-if pkill -TERM -f "makers start" 2>/dev/null; then
-    echo "Sent TERM signal to makers process"
-    KILLED_ANY=true
-fi
+    for PID in $(pgrep -f "$pattern" 2>/dev/null); do
+        # Check if process cwd matches our project
+        local CWD=$(readlink /proc/$PID/cwd 2>/dev/null || true)
+        if [ "$CWD" = "$PROJECT_DIR" ]; then
+            kill $sig $PID 2>/dev/null && echo "Sent $sig to $name (PID $PID)" && KILLED_ANY=true
+        fi
+    done
+}
 
-# Kill mzoon processes  
-if pkill -TERM -f "mzoon" 2>/dev/null; then
-    echo "Sent TERM signal to mzoon process"
-    KILLED_ANY=true
-fi
+# Kill server on port only if its cwd matches our project
+kill_port_server() {
+    local sig=$1
+    for PID in $(lsof -ti:$PORT 2>/dev/null); do
+        local CMD=$(ps -p $PID -o comm= 2>/dev/null || true)
+        local CWD=$(readlink /proc/$PID/cwd 2>/dev/null || true)
+        # Only kill if it's our dev process (backend/mzoon) AND cwd matches
+        if echo "$CMD" | grep -qE "(backend|mzoon)" && [ "$CWD" = "$PROJECT_DIR" ]; then
+            kill $sig $PID 2>/dev/null && echo "Sent $sig to $CMD on port $PORT (PID $PID)" && KILLED_ANY=true
+        fi
+    done
+}
 
-# Kill Tauri processes
-if pkill -TERM -f "cargo tauri" 2>/dev/null; then
-    echo "Sent TERM signal to Tauri process"
-    KILLED_ANY=true
-fi
+# Try graceful shutdown
+kill_port_server -TERM
+kill_by_cwd -TERM "mzoon" "mzoon"
+kill_by_cwd -TERM "backend" "backend"
+kill_by_cwd -TERM "cargo tauri" "Tauri"
 
 if [ "$KILLED_ANY" = "true" ]; then
     echo "Waiting 2 seconds for graceful shutdown..."
     sleep 2
-    
+
     # Force kill if still running
-    PID=$(lsof -ti:$PORT 2>/dev/null || true)
-    if [ -n "$PID" ]; then
-        if kill -KILL $PID 2>/dev/null; then
-            echo "Force killed process on port $PORT"
-        fi
-    fi
-    
-    pkill -KILL -f "makers start" 2>/dev/null && echo "Force killed makers process" || true
-    pkill -KILL -f "mzoon" 2>/dev/null && echo "Force killed mzoon process" || true
-    pkill -KILL -f "cargo tauri" 2>/dev/null && echo "Force killed Tauri process" || true
-    
+    kill_port_server -KILL
+    kill_by_cwd -KILL "mzoon" "mzoon"
+    kill_by_cwd -KILL "backend" "backend"
+    kill_by_cwd -KILL "cargo tauri" "Tauri"
+
     echo "✓ Development processes terminated"
 else
-    echo "No development processes found to kill"
+    echo "No NovyWave development processes found for this project"
 fi
 
 > dev_server.log

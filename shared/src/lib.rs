@@ -891,6 +891,11 @@ pub enum FileError {
         expected_format: String,
         reason: String,
     },
+    /// Loading timed out
+    Timeout {
+        path: String,
+        timeout_seconds: u64,
+    },
 }
 
 impl FileError {
@@ -939,6 +944,9 @@ impl FileError {
             } => {
                 format!("Invalid {} file: {} ({})", expected_format, path, reason)
             }
+            FileError::Timeout { path, timeout_seconds } => {
+                format!("Loading timed out after {}s: {}", timeout_seconds, path)
+            }
         }
     }
 
@@ -952,6 +960,7 @@ impl FileError {
             FileError::FileTooLarge { .. } => "circle-alert",
             FileError::IoError { .. } => "triangle-alert",
             FileError::InvalidFormat { .. } => "circle-help",
+            FileError::Timeout { .. } => "clock",
         }
     }
 
@@ -966,6 +975,7 @@ impl FileError {
             FileError::FileTooLarge { .. } => "FileTooLarge",
             FileError::IoError { .. } => "IoError",
             FileError::InvalidFormat { .. } => "InvalidFormat",
+            FileError::Timeout { .. } => "Timeout",
         }
     }
 
@@ -980,6 +990,7 @@ impl FileError {
             FileError::FileTooLarge { path, .. } => path,
             FileError::IoError { path, .. } => path,
             FileError::InvalidFormat { path, .. } => path,
+            FileError::Timeout { path, .. } => path,
         }
     }
 }

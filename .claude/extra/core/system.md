@@ -55,7 +55,7 @@ Concise, direct. Explain non-trivial bash commands. Output is CLI-rendered markd
 
 - **NEVER add Claude attribution** to commits
 - **NEVER commit/push autonomously** - user handles commits
-- **Use `jj` (Jujutsu)** instead of raw git
+- **ONLY use `jj` (Jujutsu)** - NEVER use raw `git` commands
 - **NEVER destructive ops** (reset, force push, branch delete) without confirmation
 - No `-i` flag (interactive not supported)
 

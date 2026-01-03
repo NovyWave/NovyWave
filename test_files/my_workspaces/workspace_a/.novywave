@@ -9,10 +9,7 @@ theme = "dark"
 toast_dismiss_ms = 10000
 
 [workspace]
-opened_files = [
-    "/home/martinkavik/repos/NovyWave/examples/spade/counter/counter.vcd",
-    "/home/martinkavik/repos/NovyWave/examples/verilog/counter/counter.vcd",
-]
+opened_files = []
 dock_mode = "bottom"
 expanded_scopes = [
     "scope_/home/martinkavik/repos/NovyWave/test_files/simple_reload_test.vcd|simple_tb",
@@ -45,7 +42,6 @@ load_files_expanded_directories = [
     "/home/martinkavik/repos/NovyWave/examples/spade",
     "/home/martinkavik/repos/NovyWave/examples/spade/counter",
 ]
-selected_scope_id = "scope_/home/martinkavik/repos/NovyWave/examples/verilog/counter/counter.vcd|counter_tb"
 load_files_scroll_position = 1188
 selected_variables = []
 

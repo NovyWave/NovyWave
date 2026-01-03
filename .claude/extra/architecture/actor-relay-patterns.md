@@ -141,8 +141,74 @@ impl TrackedFiles {
 ```
 Default to `pub` fields unless specific reason for privacy.
 
-### 3. zoon::Task Prohibition
-Use Actors for event handling. zoon::Task only for one-off operations.
+### 3. zoon::Task Prohibition (CRITICAL)
+
+**NEVER use `zoon::Task::start` - use Actors or `Task::start_droppable` instead**
+
+```rust
+// ❌ PROHIBITED: Task::start leaks memory if task runs forever or holds references
+zoon::Task::start(async move {
+    signal.for_each(|v| { process(v); async {} }).await;
+});
+
+// ✅ CORRECT: Actor for event handling
+Actor::new((), async move |_| {
+    loop { select! { Some(v) = stream.next() => process(v) } }
+});
+
+// ✅ CORRECT: Task::start_droppable for bounded one-off operations
+let _handle = Task::start_droppable(async move {
+    Timer::sleep(5000).await;
+    one_time_operation();
+});
+```
+
+**Rules**:
+- **Event handling**: Use Actor, never Task
+- **One-off bounded operations**: Use `Task::start_droppable`, store handle if cancellation needed
+- **Fire-and-forget bounded ops** (completes within seconds): `Task::start_droppable` acceptable without storing handle
+
+**CRITICAL: TaskHandles MUST be stored to keep tasks alive!**
+```rust
+// ❌ PROHIBITED: Immediately drops handle, killing the task!
+let _ = Task::start_droppable(async move { ... });
+
+// ❌ STILL WRONG: Handle dropped at end of select! branch, killing task!
+loop {
+    select! {
+        Some(file) = file_stream.next() => {
+            let _handle = Task::start_droppable(async move {
+                Timer::sleep(60_000).await;  // Never reaches here
+                timeout_relay.send(file_id);
+            });
+        }  // _handle dropped here!
+    }
+}
+
+// ✅ CORRECT: Store handles in collection inside Actor loop
+let actor = ActorVec::new(vec![], async move |state| {
+    let mut watchdog_handles: Vec<zoon::TaskHandle> = vec![];  // Persists across iterations
+    loop {
+        select! {
+            Some(file) = file_stream.next() => {
+                let handle = Task::start_droppable(async move {
+                    Timer::sleep(60_000).await;
+                    timeout_relay.send(file_id);
+                });
+                watchdog_handles.push(handle);  // Keep alive!
+            }
+        }
+    }
+});
+
+// ✅ CORRECT: Store as struct field for struct lifetime
+struct MyDomain {
+    _watchdog_task: zoon::TaskHandle,  // Lives with struct
+}
+```
+
+**Key insight:** `let _handle =` only keeps the handle alive until the end of that scope (e.g., the select! branch).
+For long-running watchdogs, collect handles in a Vec that persists across loop iterations.
 
 **Internal Relay Pattern** (eliminates zoon::Task):
 ```rust

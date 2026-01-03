@@ -506,7 +506,7 @@ impl NovyWaveApp {
         )
         .await;
 
-        Task::start(async move { while workspace_picker_save_stream.next().await.is_some() {} });
+        let _task = Task::start_droppable(async move { while workspace_picker_save_stream.next().await.is_some() {} });
 
         // Create main config with proper connection and message routing
         let config = AppConfig::new(
@@ -811,20 +811,19 @@ impl NovyWaveApp {
             Actor::new((), async move |_state| {
                 let mut response_stream = unified_signal_response_stream;
                 let response_timeline = timeline_for_responses.clone();
-                Task::start(async move {
+                let _task = Task::start_droppable(async move {
                     while let Some(event) = response_stream.next().await {
                         response_timeline.apply_unified_signal_response(
                             &event.request_id,
                             event.signal_data,
                             event.cursor_values,
                         );
-                        // TODO: incorporate cached_time_range_ns & statistics into cache controller.
                     }
                 });
 
                 let mut error_stream = unified_signal_error_stream;
                 let error_timeline = timeline_for_errors.clone();
-                Task::start(async move {
+                let _task = Task::start_droppable(async move {
                     while let Some((request_id, error)) = error_stream.next().await {
                         error_timeline.handle_unified_signal_error(&request_id, &error);
                     }
@@ -832,7 +831,7 @@ impl NovyWaveApp {
 
                 let mut cursor_values_stream = batch_signal_values_stream;
                 let cursor_timeline = timeline_for_values.clone();
-                Task::start(async move {
+                let _task = Task::start_droppable(async move {
                     while let Some(values) = cursor_values_stream.next().await {
                         cursor_timeline.apply_cursor_values(values);
                     }
@@ -1200,7 +1199,7 @@ impl NovyWaveApp {
                                     "n" | "N" => {
                                         event.prevent_default();
                                         let app_config = app_config_for_n_key.clone();
-                                        zoon::Task::start(async move {
+                                        let _task = Task::start_droppable(async move {
                                             crate::error_display::trigger_test_notifications(&app_config).await;
                                         });
                                     }
@@ -1362,7 +1361,7 @@ impl NovyWaveApp {
                         format!("Default ({})", default_path)
                     } else if !*server_ready || *loading {
                         String::from("Loading workspace…")
-                    } else { String::from("Loading workspace…") }
+                    } else { String::from("No workspace") }
                 }
             }
         };
@@ -1460,7 +1459,7 @@ impl NovyWaveApp {
         // Optimistic update: reflect the user's choice immediately in the input.
         workspace_path.set(Some(trimmed.clone()));
 
-        Task::start({
+        let _task = Task::start_droppable({
             let request_path = trimmed.clone();
             let workspace_loading = workspace_loading.clone();
             let workspace_path_for_revert = workspace_path.clone();
@@ -1492,8 +1491,8 @@ impl NovyWaveApp {
                 let loading_flag = workspace_loading.clone();
                 let expected = request_path.clone();
                 let visible_path = workspace_path_for_revert.clone();
-                zoon::Task::start(async move {
-                    zoon::Timer::sleep(6000).await;
+                let _task = Task::start_droppable(async move {
+                    Timer::sleep(6000).await;
                     let still_loading = *loading_flag.lock_ref();
                     let current = visible_path.lock_ref().clone();
                     if still_loading && current.as_ref().map(|p| p == &expected).unwrap_or(false) {
@@ -2195,7 +2194,7 @@ fn workspace_picker_dialog(
                                     let scroll_position_actor =
                                         workspace_picker_domain.scroll_position_actor.clone();
                             move |_element| {
-                                Task::start({
+                                let _task = Task::start_droppable({
                                     let scroll_position_actor = scroll_position_actor.clone();
                                     async move {
                                         Task::next_macro_tick().await;
@@ -2384,7 +2383,7 @@ fn workspace_picker_tree(
                         .s(Width::fill())
                         .after_insert(move |_element| {
                             tree_rendering_relay.send(());
-                            Task::start({
+                            let _task = Task::start_droppable({
                                 let scroll_position_actor = scroll_position_actor.clone();
                                 async move {
                                     Task::next_macro_tick().await;

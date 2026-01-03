@@ -216,6 +216,9 @@ pub struct FilePickerDomain {
 
     // Tree rendering timing coordination
     pub tree_rendering_relay: Relay,
+
+    // Directory loading timeout - fires when directory load takes too long
+    pub directory_loading_timeout_relay: Relay<String>,
 }
 
 impl FilePickerDomain {
@@ -232,6 +235,8 @@ impl FilePickerDomain {
         let (scroll_position_changed_relay, scroll_position_changed_stream) = relay::<i32>();
         let (directory_load_requested_relay, directory_load_requested_stream) = relay::<String>();
         let (tree_rendering_relay, _tree_rendering_stream) = relay();
+        let (directory_loading_timeout_relay, mut directory_loading_timeout_stream) =
+            relay::<String>();
 
         // File selection relays for load files dialog
         let (file_selected_relay, mut file_selected_stream) = relay::<String>();
@@ -389,6 +394,14 @@ impl FilePickerDomain {
                             state.set_neq(errors);
                         }
                     }
+                    timeout_path = directory_loading_timeout_stream.next() => {
+                        if let Some(path) = timeout_path {
+                            let mut errors = state.get_cloned();
+                            errors.insert(path.clone(), "Directory loading timed out".to_string());
+                            state.set_neq(errors);
+                            zoon::println!("Directory loading timeout for: {path}");
+                        }
+                    }
                     complete => break,
                 }
             }
@@ -420,6 +433,7 @@ impl FilePickerDomain {
             let directory_loading_for_sender = directory_loading_actor.clone();
             // ✅ FIX: Create separate stream subscription for directory expansion events
             let mut directory_expanded_stream_for_sender = directory_expanded_relay.subscribe();
+            let timeout_relay_for_sender = directory_loading_timeout_relay.clone();
 
             Actor::new((), async move |_state| {
                 let mut directory_loading_stream =
@@ -427,6 +441,8 @@ impl FilePickerDomain {
                 // Use global platform readiness which flips on first DownMsg
                 let mut ready_stream = crate::platform::server_ready_signal().to_stream().fuse();
                 let mut is_ready = crate::platform::server_is_ready();
+                // Store watchdog handles to keep them alive across loop iterations
+                let mut watchdog_handles: Vec<zoon::TaskHandle> = vec![];
 
                 loop {
                     futures::select! {
@@ -443,8 +459,16 @@ impl FilePickerDomain {
                                             let path_for_request = request_path.clone();
                                             zoon::println!("frontend: sending BrowseDirectory {path_for_request}");
                                             let _ = connection_clone
-                                                .send_up_msg(shared::UpMsg::BrowseDirectory(path_for_request))
+                                                .send_up_msg(shared::UpMsg::BrowseDirectory(path_for_request.clone()))
                                                 .await;
+                                            // Start timeout watchdog (10 seconds for directory loading)
+                                            let timeout_relay = timeout_relay_for_sender.clone();
+                                            let path_for_timeout = path_for_request.clone();
+                                            let handle = Task::start_droppable(async move {
+                                                Timer::sleep(10_000).await;
+                                                timeout_relay.send(path_for_timeout);
+                                            });
+                                            watchdog_handles.push(handle);
                                         }
                                     }
                                 }
@@ -463,8 +487,16 @@ impl FilePickerDomain {
                                 if is_ready && !current_cache.contains_key(&dir_path) {
                                     zoon::println!("frontend: expansion BrowseDirectory {dir_path}");
                                     let _ = connection_clone
-                                        .send_up_msg(shared::UpMsg::BrowseDirectory(dir_path))
+                                        .send_up_msg(shared::UpMsg::BrowseDirectory(dir_path.clone()))
                                         .await;
+                                    // Start timeout watchdog (10 seconds for directory loading)
+                                    let timeout_relay = timeout_relay_for_sender.clone();
+                                    let path_for_timeout = dir_path.clone();
+                                    let handle = Task::start_droppable(async move {
+                                        Timer::sleep(10_000).await;
+                                        timeout_relay.send(path_for_timeout);
+                                    });
+                                    watchdog_handles.push(handle);
                                 }
                             }
                         }
@@ -493,6 +525,14 @@ impl FilePickerDomain {
                                         let _ = connection_clone
                                             .send_up_msg(shared::UpMsg::BrowseDirectory(request_path.clone()))
                                             .await;
+                                        // Start timeout watchdog (10 seconds for directory loading)
+                                        let timeout_relay = timeout_relay_for_sender.clone();
+                                        let path_for_timeout = request_path.clone();
+                                        let handle = Task::start_droppable(async move {
+                                            Timer::sleep(10_000).await;
+                                            timeout_relay.send(path_for_timeout);
+                                        });
+                                        watchdog_handles.push(handle);
                                     }
                                 }
                             }
@@ -571,6 +611,7 @@ impl FilePickerDomain {
             clear_selection_relay,
             directory_load_requested_relay,
             tree_rendering_relay,
+            directory_loading_timeout_relay,
         }
     }
 
@@ -1773,29 +1814,18 @@ impl AppConfig {
 
                     // IMPORTANT: Restore expanded scopes AFTER files are sent
                     // Add a small delay to ensure files are processed first
-                    let expanded_scopes_to_restore =
-                        loaded_config.workspace.expanded_scopes.clone();
-                    let selected_scope_to_restore =
-                        loaded_config.workspace.selected_scope_id.clone();
-                    let files_expanded_for_delay = files_expanded_scopes_for_config.clone();
-                    let files_selected_for_delay = files_selected_scope_for_config.clone();
+                    zoon::Timer::sleep(100).await;
 
-                    zoon::Task::start(async move {
-                        // Wait for files to be processed
-                        zoon::Timer::sleep(100).await;
+                    // Now restore expanded scopes in TreeView
+                    let expanded_set: indexmap::IndexSet<String> =
+                        loaded_config.workspace.expanded_scopes.iter().cloned().collect();
+                    files_expanded_scopes_for_config.set(expanded_set);
 
-                        // Now restore expanded scopes in TreeView
-                        let expanded_set: indexmap::IndexSet<String> =
-                            expanded_scopes_to_restore.iter().cloned().collect();
-
-                        files_expanded_for_delay.set(expanded_set);
-
-                        // Restore selected scope in TreeView
-                        if let Some(scope_id) = selected_scope_to_restore {
-                            files_selected_for_delay.lock_mut().clear();
-                            files_selected_for_delay.lock_mut().push_cloned(scope_id);
-                        }
-                    });
+                    // Restore selected scope in TreeView
+                    if let Some(scope_id) = loaded_config.workspace.selected_scope_id.clone() {
+                        files_selected_scope_for_config.lock_mut().clear();
+                        files_selected_scope_for_config.lock_mut().push_cloned(scope_id);
+                    }
 
                     config_loaded_flag_for_actor.set(true);
                 }
