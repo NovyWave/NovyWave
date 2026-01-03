@@ -1,0 +1,12 @@
+{
+  "instance_label": null,
+  "port": 4570,
+  "command": [
+    "cl"
+  ],
+  "supervisor_prompt": "",
+  "completion_condition": "+completed+",
+  "completion_command": null,
+  "protected_patterns": [],
+  "command_timeout_mins": 10
+}

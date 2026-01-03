@@ -2,28 +2,24 @@
 
 Core guidance for Claude Code when working with NovyWave.
 
-<!-- Core System Layer -->
+<!-- Core (always loaded) -->
 @.claude/extra/core/system.md
 @.claude/extra/core/development.md
 
-<!-- Project Configuration -->
+<!-- Project (always loaded) -->
 @.claude/extra/project/patterns.md
 @.claude/extra/project/domain_map.md
 @.claude/extra/project/task_execution.md
 
-<!-- Project Specifications -->
-@.claude/extra/project/specs/specs.md
-
-<!-- Technical Reference -->
+<!-- Technical (always loaded) -->
 @.claude/extra/technical/reference.md
 @.claude/extra/technical/performance-debugging.md
-@.claude/extra/technical/reactive-antipatterns.md
-@.claude/extra/technical/lessons.md
 
-<!-- Architecture Patterns -->
+<!-- Architecture (always loaded) -->
 @.claude/extra/architecture/actor-relay-patterns.md
-@.claude/extra/architecture/connection-message-actor-pattern.md
-@.claude/extra/architecture/dependency-injection-patterns.md
+
+<!-- ON-DEMAND: Load when working on UI/UX features -->
+<!-- @.claude/extra/project/specs/specs.md -->
 
 ## Actor+Relay Architecture (MANDATORY)
 
@@ -133,7 +129,7 @@ See `docs/actors_relays/novywave/migration_strategy.md` for complete migration p
 
 ## ReactiveTreeView & Signal Performance Lessons
 
-**CRITICAL: Review `.claude/extra/technical/reactive-antipatterns.md` for comprehensive signal stability patterns**
+**CRITICAL: Review `.claude/extra/core/development.md` for comprehensive signal stability patterns**
 
 ### Key Antipatterns Discovered
 
