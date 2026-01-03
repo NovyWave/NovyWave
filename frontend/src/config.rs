@@ -557,18 +557,14 @@ impl FilePickerDomain {
                         file_path = file_selected_stream.next() => {
                             if let Some(file_path) = file_path {
                                 let mut files = files_vec.lock_mut();
-                                let already_selected = files.len() == 1
-                                    && files.iter().any(|path| path == &file_path);
-                                if already_selected {
+                                // Multi-select: add if not already selected
+                                if !files.iter().any(|path| path == &file_path) {
+                                    files.push_cloned(file_path.clone());
+                                    let current_files = files.to_vec();
                                     drop(files);
-                                    continue;
+                                    zoon::println!("config.rs:selected added {file_path}, total={}", current_files.len());
+                                    selected_files_vec_signal_clone.set_neq(current_files);
                                 }
-                                files.clear();
-                                files.push_cloned(file_path.clone());
-                                drop(files);
-                                zoon::println!("config.rs:selected push single={file_path}");
-                                selected_files_vec_signal_clone
-                                    .set_neq(vec![file_path]);
                             }
                         }
                         file_path = file_deselected_stream.next() => {

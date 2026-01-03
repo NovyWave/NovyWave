@@ -1,0 +1,66 @@
+# NovyWave User Configuration
+# This file stores your application preferences and workspace state
+
+[app]
+version = "1.0.0"
+
+[ui]
+theme = "dark"
+toast_dismiss_ms = 10000
+
+[workspace]
+opened_files = [
+    "spade/counter/counter.vcd",
+    "spinalhdl/counter/counter.vcd",
+    "verilog/counter/counter.vcd",
+    "vhdl/counter/counter.ghw",
+]
+dock_mode = "right"
+expanded_scopes = [
+    "scope_spade/counter/counter.vcd|counter_tb",
+    "scope_spade/counter/counter.vcd|counter_tb.dut",
+    "/home/martinkavik/repos/NovyWave/examples/verilog/counter/counter.vcd",
+]
+load_files_expanded_directories = [
+    "/",
+    "/home",
+    "/home/martinkavik",
+    "/home/martinkavik/repos",
+    "/home/martinkavik/repos/NovyWave",
+    "",
+    "spade",
+    "spinalhdl",
+    "spade/counter",
+    "spinalhdl/counter",
+    "verilog",
+    "verilog/counter",
+    "vhdl",
+    "vhdl/counter",
+]
+load_files_scroll_position = 1165
+
+[workspace.docked_bottom_dimensions]
+files_and_scopes_panel_width = 1400.0
+files_and_scopes_panel_height = 600.0
+selected_variables_panel_name_column_width = 190.0
+selected_variables_panel_value_column_width = 220.0
+
+[workspace.docked_right_dimensions]
+files_and_scopes_panel_width = 400.0
+files_and_scopes_panel_height = 441.0
+selected_variables_panel_name_column_width = 190.0
+selected_variables_panel_value_column_width = 220.0
+
+[[workspace.selected_variables]]
+unique_id = "verilog/counter/counter.vcd|counter_tb|clk"
+
+[workspace.timeline]
+cursor_position_ps = 1914500
+visible_range_start_ps = 0
+visible_range_end_ps = 3829000
+zoom_center_ps = 0
+tooltip_enabled = true
+
+[plugins]
+schema_version = 1
+entries = []
