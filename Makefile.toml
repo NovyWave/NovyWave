@@ -21,18 +21,12 @@ alias = "start-web"
 description = "Start in web mode (MoonZoon SSE)"
 dependencies = ["install"]
 env = { NOVYWAVE_PLATFORM = "WEB" }
-script = '''
-> dev_server.log
-./mzoon/bin/mzoon start ${@} >> dev_server.log 2>&1
-'''
+script = './mzoon/bin/mzoon start ${@}'
 
 [tasks.open]
 description = "Start in browser mode and open browser"
 dependencies = ["install"]
-script = '''
-> dev_server.log
-./mzoon/bin/mzoon start --open ${@} >> dev_server.log 2>&1
-'''
+script = './mzoon/bin/mzoon start --open ${@}'
 
 [tasks.kill]
 description = "Stop all development processes"
@@ -91,9 +85,6 @@ if [ "$KILLED_ANY" = "true" ]; then
 else
     echo "No NovyWave development processes found for this project"
 fi
-
-> dev_server.log
-> dev_tauri.log
 '''
 
 # Tauri-specific tasks
@@ -117,10 +108,8 @@ fi
 
 echo "✓ Dev server detected on port 8080"
 echo "✓ Starting Tauri with shared dev server..."
-echo "✓ Tauri logs will be written to dev_tauri.log"
 
-> dev_tauri.log
-cd src-tauri && cargo tauri dev --config tauri.dev.conf.json >> ../dev_tauri.log 2>&1
+cd src-tauri && cargo tauri dev --config tauri.dev.conf.json
 '''
 
 [tasks.tauri-test-updater]
@@ -143,8 +132,7 @@ echo "✓ Frontend built with TAURI platform"
 
 # Start mzoon dev server with TAURI platform in background
 echo "Starting mzoon dev server with TAURI platform..."
-> dev_server.log
-NOVYWAVE_PLATFORM=TAURI ./mzoon/bin/mzoon start >> dev_server.log 2>&1 &
+NOVYWAVE_PLATFORM=TAURI ./mzoon/bin/mzoon start &
 MZOON_PID=$!
 
 # Wait for dev server to be ready
@@ -156,7 +144,6 @@ for i in {1..60}; do
     fi
     if ! kill -0 $MZOON_PID 2>/dev/null; then
         echo "ERROR: mzoon dev server died unexpectedly"
-        cat dev_server.log
         exit 1
     fi
     sleep 1
@@ -164,7 +151,6 @@ done
 
 if ! curl -s http://localhost:8080 >/dev/null 2>&1; then
     echo "ERROR: Dev server failed to start within 60 seconds"
-    cat dev_server.log
     exit 1
 fi
 
@@ -485,9 +471,8 @@ description = "Watch plugin sources and rebuild components"
 script_runner = "bash"
 script = [
     "set -eu",
-    "> dev_plugins.log",
-    "echo '[watch_plugins] watching plugins/**' >> dev_plugins.log",
-    "cargo watch -w plugins -i 'plugins/dist/**' -s 'makers build_plugins' >> dev_plugins.log 2>&1"
+    "echo '[watch_plugins] watching plugins/**'",
+    "cargo watch -w plugins -i 'plugins/dist/**' -s 'makers build_plugins'"
 ]
 
 [tasks.install_tauri_cli]

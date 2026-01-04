@@ -45,11 +45,9 @@ Concise, direct. Explain non-trivial bash commands. Output is CLI-rendered markd
 
 ## Subagent Workflow
 
-**Implementor agents:** Code changes + check dev_server.log. NEVER run build commands or browser MCP.
+**Implementor agents:** Code changes + verify mzoon output + browser MCP for visual verification.
 
-**Validator agents:** 4-phase validation (Compilation→Visual→Functional→Console). ONLY browser MCP, no code changes.
-
-**Pattern:** Implementor → Main Session → Validator → Decision
+**Pattern:** Make changes → Verify compilation → Browser MCP check
 
 ## Git Rules
 

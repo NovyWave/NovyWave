@@ -33,9 +33,8 @@ Use `Option<T>`, custom enums (`NotMeasured | Ready { width }`) or `Result<Optio
 
 ## Compilation Verification (CRITICAL)
 
-```bash
-tail -100 dev_server.log | grep -E "error\[E[0-9]+\]" | wc -l  # Must be 0
-```
+Run `makers start` and check mzoon output directly for errors. Use browser MCP to verify app works.
+
 **Never report success without verification.** Even 1 error = task incomplete.
 
 ## Critical Reactive Antipatterns
@@ -247,9 +246,8 @@ signal.dedupe_cloned().for_each_sync(|v| expensive_work(v));
 ## Dev Server Management
 
 - **Kill zombie processes**: `makers kill` - use this to kill stale/hung dev server processes
-- **NEVER run dev server commands** - read `dev_server.log` only
+- **Run dev server**: `makers start` - output appears directly, watch for compilation errors
 - Backend compilation takes DOZENS OF SECONDS TO MINUTES - wait for it
-- Monitor: `tail -f dev_server.log`
 
 ## Verification Requirements
 

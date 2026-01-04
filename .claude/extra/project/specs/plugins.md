@@ -268,7 +268,7 @@ record discovery-payload {
   - Watch subscriptions wrap the existing notify-based watcher service so we reuse debouncing/backoff code.
 - **Error handling**:
   - Convert Wasmtime traps into `PluginError::RuntimeTrap` and surface them through `plugin_status_relay`.
-  - Record structured errors (including backtraces when available) to `dev_server.log` with plugin ids for debugging.
+  - Log structured errors (including backtraces when available) to terminal output with plugin ids for debugging.
 - **Hot reload flow**:
   1. Config toggle arrives via UI → config actor persists `.novywave` → `plugins_config_replay_relay`.
   2. Manager compares current handles, unloads disabled ones, spawns new handles for enabled entries.

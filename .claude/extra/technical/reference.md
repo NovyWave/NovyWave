@@ -8,7 +8,7 @@ Quick reference for NovyWave development patterns and solutions.
 
 **Browser MCP limits:** No F12/F5, no drag/scroll. Use `browser_get_console_logs` and `browser_navigate` instead.
 
-**Build:** Never use `cargo build/check` - only mzoon handles WASM properly. Monitor via `tail -f dev_server.log`.
+**Build:** Never use `cargo build/check` - only mzoon handles WASM properly. Run `makers start` and watch output directly.
 
 ## Zoon/NovyUI Patterns
 
@@ -86,7 +86,7 @@ _ = Timer::sleep(1000).fuse() => ...
 ## Quick Troubleshooting
 
 ### Compilation
-- WASM changes not visible: Check `tail -100 dev_server.log | grep -i "error"`
+- WASM changes not visible: Check mzoon output for errors, or use browser MCP
 - Only trust mzoon output for WASM status
 
 ### Layout
