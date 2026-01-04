@@ -4,11 +4,12 @@
   "command": [
     "cl"
   ],
-  "supervisor_prompt": "Finish plan to get rid of actors. Then make sure the app still work and test_loading_fix.sh passes (update the test/write new one to make sure app actually still run after refactor). If there are still problems, focus also on backend side if there are any problems causing problems with loading data into frontend. Also make sure you test with correct mzoon instance and wasm is the latest, you can start chromium, there should be extension Claude in Chrome for your testing. Check that there are no actors, no barriers, no flags, no relays both on frontend and backend - idiomtic Rust only. Also make sure all Task::start are replaced with Task::start_dropable with their TaskHandles properly stored to prevent dropping. Ideally try to use Tasks as little as possible.",
+  "supervisor_prompt": "Fix loading workspace, waveform files and selected variables. Assume issues in both backend and frontend, think about data racing and how to fixed them properly.",
   "completion_condition": "+completed+",
-  "completion_command": "./scripts/test_loading_fix.sh",
+  "completion_command": "makers verify-app",
   "protected_patterns": [
-    "scripts/test_loading_fix.sh"
+    "novywave-mcp/src/verify/*.rs",
+    "tests/workspace_restore/.novywave"
   ],
   "command_timeout_mins": 10
 }
