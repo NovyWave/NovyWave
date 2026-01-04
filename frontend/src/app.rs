@@ -423,9 +423,8 @@ impl NovyWaveApp {
             let config_clone = config.clone();
             let domain_clone = workspace_picker_domain.clone();
             let target_clone = workspace_picker_target.clone();
-            Arc::new(Task::start_droppable(async move {
-                let mut selection_stream = selected_signal.signal_cloned().to_stream().fuse();
-                while let Some(selection) = selection_stream.next().await {
+            Arc::new(Task::start_droppable(
+                selected_signal.signal_cloned().for_each_sync(move |selection| {
                     emit_trace("workspace_picker_selection", format!("paths={selection:?}"));
                     if let Some(path) = selection.first().cloned() {
                         target_clone.set_neq(Some(path.clone()));
@@ -438,8 +437,7 @@ impl NovyWaveApp {
                             .cloned()
                             .collect::<Vec<String>>();
                         let expanded_vec_for_log = expanded_vec.clone();
-                        let scroll_current =
-                            *domain_clone.scroll_position.lock_ref() as f64;
+                        let scroll_current = *domain_clone.scroll_position.lock_ref() as f64;
                         emit_trace(
                             "workspace_picker_selection",
                             format!(
@@ -453,8 +451,8 @@ impl NovyWaveApp {
                             Some(expanded_vec_for_log),
                         );
                     }
-                }
-            }))
+                }),
+            ))
         };
 
         let workspace_history_expanded_task = {
@@ -462,90 +460,58 @@ impl NovyWaveApp {
             let config_clone = config.clone();
             let restoring_flag = workspace_picker_restoring.clone();
             let visible_atom = workspace_picker_visible.clone();
-            Arc::new(Task::start_droppable(async move {
-                use futures::{StreamExt, select};
-                // Listen to expanded_directories signal instead of relay
-                let mut expanded_stream = domain_clone.expanded_directories_signal().to_stream().fuse();
-                let mut visibility_stream = visible_atom.signal().to_stream().fuse();
-                let mut is_visible = visible_atom.get_cloned();
-                // Skip initial value to avoid persisting on startup
-                let _ = expanded_stream.next().await;
-                loop {
-                    select! {
-                        expanded = expanded_stream.next() => {
-                            if let Some(expanded_set) = expanded {
-                                let expanded_vec: Vec<String> = expanded_set.iter().cloned().collect();
-                                let restoring = restoring_flag.get_cloned();
-                                emit_trace(
-                                    "workspace_history_expanded_actor",
-                                    format!(
-                                        "paths={expanded_vec:?} restoring={restoring} visible={is_visible}"
-                                    ),
-                                );
-                                // Ignore teardown-driven empty updates when the dialog is no longer visible
-                                if !is_visible && expanded_vec.is_empty() {
-                                    emit_trace(
-                                        "workspace_history_expanded_actor",
-                                        "skip_empty_invisible".to_string(),
-                                    );
-                                    continue;
-                                }
-                                if restoring {
-                                    emit_trace(
-                                        "workspace_history_expanded_actor",
-                                        "skip_restoring".to_string(),
-                                    );
-                                    continue;
-                                }
-                                // Only persist picker expanded paths; do not touch per-workspace state here
-                                config_clone.update_workspace_picker_tree_state(expanded_vec.clone());
-                            } else {
-                                break;
-                            }
-                        }
-                        visible = visibility_stream.next() => {
-                            if let Some(visible) = visible {
-                                is_visible = visible;
-                                emit_trace(
-                                    "workspace_history_expanded_actor_visibility",
-                                    format!("visible={visible}"),
-                                );
-                            } else {
-                                break;
-                            }
-                        }
+            let is_first = std::cell::Cell::new(true);
+            Arc::new(Task::start_droppable(
+                domain_clone.expanded_directories_signal().for_each_sync(move |expanded_set| {
+                    // Skip initial value to avoid persisting on startup
+                    if is_first.get() {
+                        is_first.set(false);
+                        return;
                     }
-                }
-            }))
+                    let expanded_vec: Vec<String> = expanded_set.iter().cloned().collect();
+                    let is_visible = visible_atom.get();
+                    let restoring = restoring_flag.get();
+                    emit_trace(
+                        "workspace_history_expanded_actor",
+                        format!("paths={expanded_vec:?} restoring={restoring} visible={is_visible}"),
+                    );
+                    // Ignore teardown-driven empty updates when the dialog is no longer visible
+                    if !is_visible && expanded_vec.is_empty() {
+                        emit_trace(
+                            "workspace_history_expanded_actor",
+                            "skip_empty_invisible".to_string(),
+                        );
+                        return;
+                    }
+                    if restoring {
+                        emit_trace(
+                            "workspace_history_expanded_actor",
+                            "skip_restoring".to_string(),
+                        );
+                        return;
+                    }
+                    config_clone.update_workspace_picker_tree_state(expanded_vec.clone());
+                }),
+            ))
         };
 
         let workspace_history_scroll_task = {
             let domain_clone = workspace_picker_domain.clone();
-            let _target_clone = workspace_picker_target.clone();
             let config_clone = config.clone();
             let restoring_flag = workspace_picker_restoring.clone();
-            Arc::new(Task::start_droppable(async move {
-                let mut scroll_stream = domain_clone
-                    .scroll_position
-                    .signal()
-                    .to_stream()
-                    .fuse();
-                // No injection here; picker_tree_state is restored before tree builds
-
-                while let Some(position) = scroll_stream.next().await {
+            Arc::new(Task::start_droppable(
+                domain_clone.scroll_position.signal().for_each_sync(move |position| {
                     if restoring_flag.get_cloned() {
-                        continue;
+                        return;
                     }
-
                     let scroll_value = position as f64;
                     emit_trace(
                         "workspace_picker_scroll",
                         format!("scroll_top={scroll_value}"),
                     );
-                    // Mirror Load Files dialog: update picker scroll via config; snapshot happens via saver
                     config_clone.update_workspace_picker_scroll(scroll_value);
-                }
-            }))
+                }),
+            ))
         };
 
         // Removed scroll polling; rely on the same event-driven logic as Load Files dialog
@@ -663,25 +629,17 @@ impl NovyWaveApp {
             let selected_variables_for_scope = selected_variables.clone();
             let files_selected_scope = config.files_selected_scope.clone();
 
-            Arc::new(Task::start_droppable(async move {
-                // Emit initial selection once
-                let initial = files_selected_scope.lock_ref().to_vec();
-                NovyWaveApp::propagate_scope_selection(initial, &selected_variables_for_scope);
-
-                // Subscribe to vector snapshots
-                let mut selection_stream = files_selected_scope
+            Arc::new(Task::start_droppable(
+                files_selected_scope
                     .signal_vec_cloned()
                     .to_signal_cloned()
-                    .to_stream()
-                    .fuse();
-
-                while let Some(current_selection) = selection_stream.next().await {
-                    NovyWaveApp::propagate_scope_selection(
-                        current_selection,
-                        &selected_variables_for_scope,
-                    );
-                }
-            }))
+                    .for_each_sync(move |selection| {
+                        NovyWaveApp::propagate_scope_selection(
+                            selection,
+                            &selected_variables_for_scope,
+                        );
+                    }),
+            ))
         };
 
         connection_message_actor.start(
@@ -1556,23 +1514,19 @@ fn workspace_picker_dialog(
 
     // Keep a local recent-paths mirror that only updates when the list actually changes.
     let recent_paths_vec = MutableVec::<String>::new();
-    let recent_paths_task = Arc::new(Task::start_droppable({
-        let history_state = app_config.workspace_history_state.clone();
-        let recent_paths_vec = recent_paths_vec.clone();
-        async move {
-            use futures::StreamExt;
-            let mut stream = history_state.signal_cloned().to_stream();
-            let mut prev: Option<Vec<String>> = None;
-            while let Some(history) = stream.next().await {
-                let recents = history.recent_paths.clone();
-                if prev.as_ref().map(|p| p == &recents).unwrap_or(false) {
-                    continue;
+    let recent_paths_task = Arc::new(Task::start_droppable(
+        app_config
+            .workspace_history_state
+            .signal_cloned()
+            .map(|h| h.recent_paths.clone())
+            .dedupe_cloned()
+            .for_each_sync({
+                let recent_paths_vec = recent_paths_vec.clone();
+                move |recents| {
+                    recent_paths_vec.lock_mut().replace_cloned(recents);
                 }
-                prev = Some(recents.clone());
-                recent_paths_vec.lock_mut().replace_cloned(recents);
-            }
-        }
-    }));
+            }),
+    ));
 
     El::new()
         .s(Background::new().color_signal(theme().map(|t| match t {
@@ -2193,15 +2147,13 @@ fn workspace_picker_tree(
     use crate::file_picker::initialize_directories_and_request_contents;
     use moonzoon_novyui::tokens::color::neutral_8;
 
-    let initialization_actor = initialize_directories_and_request_contents(&domain);
+    // Initialize directories synchronously - no async needed for Mutable reads
+    initialize_directories_and_request_contents(&domain);
     let cache_signal = domain.directory_cache_signal();
 
     El::new()
         .s(Height::fill())
         .s(Width::fill())
-        .after_remove(move |_| {
-            drop(initialization_actor);
-        })
         .child_signal({
             let domain_for_treeview = domain.clone();
             let app_config_for_tree = app_config.clone();
@@ -2218,18 +2170,15 @@ fn workspace_picker_tree(
                     let persist_task = Arc::new(Task::start_droppable({
                         let external_for_persist = external_expanded.clone();
                         let config_for_persist = app_config_for_tree.clone();
-                        async move {
-                            let mut is_first = true;
-                            let mut stream = external_for_persist.signal_cloned().to_stream();
-                            while let Some(set) = stream.next().await {
-                                let vec = set.iter().cloned().collect::<Vec<String>>();
-                                if is_first {
-                                    is_first = false;
-                                    continue;
-                                }
-                                config_for_persist.update_workspace_picker_tree_state(vec.clone());
+                        let is_first = std::cell::Cell::new(true);
+                        external_for_persist.signal_cloned().for_each_sync(move |set| {
+                            if is_first.get() {
+                                is_first.set(false);
+                                return;
                             }
-                        }
+                            let vec = set.iter().cloned().collect::<Vec<String>>();
+                            config_for_persist.update_workspace_picker_tree_state(vec.clone());
+                        })
                     }));
 
                     let scroll_task_handle: std::sync::Arc<std::sync::Mutex<Option<zoon::TaskHandle>>> =

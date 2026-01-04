@@ -2232,55 +2232,50 @@ impl WaveformTimeline {
 
     fn spawn_selected_variables_listener(&self) -> Arc<TaskHandle> {
         let timeline = self.clone();
-        Arc::new(Task::start_droppable(async move {
-            let mut stream = timeline
+        Arc::new(Task::start_droppable(
+            timeline
                 .selected_variables
                 .variables_vec_actor
                 .signal_cloned()
-                .to_stream()
-                .fuse();
-
-            while let Some(variables) = stream.next().await {
-                timeline.on_selected_variables_updated(variables);
-            }
-        }))
+                .for_each_sync(move |variables| {
+                    timeline.on_selected_variables_updated(variables);
+                }),
+        ))
     }
 
     fn spawn_file_reload_listener(&self, tracked_files: TrackedFiles) -> Arc<TaskHandle> {
         let timeline = self.clone();
-        Arc::new(Task::start_droppable(async move {
-            let mut reload_stream = tracked_files.file_reload_started_signal().to_stream().fuse();
-
-            while let Some(maybe_path) = reload_stream.next().await {
-                if let Some(path) = maybe_path {
-                    timeline.handle_file_reload_requested(&path);
-                }
-            }
-        }))
+        Arc::new(Task::start_droppable(
+            tracked_files
+                .file_reload_started_signal()
+                .for_each_sync(move |maybe_path| {
+                    if let Some(path) = maybe_path {
+                        timeline.handle_file_reload_requested(&path);
+                    }
+                }),
+        ))
     }
 
     fn spawn_file_reload_completion_listener(&self, tracked_files: TrackedFiles) -> Arc<TaskHandle> {
         let timeline = self.clone();
-        Arc::new(Task::start_droppable(async move {
-            let mut stream = tracked_files.file_reload_completed_signal().to_stream().fuse();
-
-            while let Some(maybe_file_id) = stream.next().await {
-                if let Some(file_id) = maybe_file_id {
-                    timeline.handle_file_reload_completed(&file_id);
-                }
-            }
-        }))
+        Arc::new(Task::start_droppable(
+            tracked_files
+                .file_reload_completed_signal()
+                .for_each_sync(move |maybe_file_id| {
+                    if let Some(file_id) = maybe_file_id {
+                        timeline.handle_file_reload_completed(&file_id);
+                    }
+                }),
+        ))
     }
 
     fn spawn_bounds_listener(&self) -> Arc<TaskHandle> {
         let timeline = self.clone();
-        Arc::new(Task::start_droppable(async move {
-            let mut stream = timeline.maximum_range.range.signal().to_stream().fuse();
-
-            while let Some(maybe_range) = stream.next().await {
+        Arc::new(Task::start_droppable(
+            timeline.maximum_range.range.signal().for_each_sync(move |maybe_range| {
                 if let Some((start, end)) = maybe_range {
                     if timeline.has_active_reload() || timeline.reload_restore_pending.get() {
-                        continue;
+                        return;
                     }
                     let bounds = TimelineBounds { start, end };
                     timeline.bounds_state.set(Some(bounds.clone()));
@@ -2311,7 +2306,7 @@ impl WaveformTimeline {
                     }
                 } else {
                     if timeline.has_active_reload() || timeline.reload_restore_pending.get() {
-                        continue;
+                        return;
                     }
                     timeline.bounds_state.set(None);
 
@@ -2322,7 +2317,7 @@ impl WaveformTimeline {
                         .is_empty();
 
                     if timeline.config_restored.get_cloned() && has_variables {
-                        continue;
+                        return;
                     }
 
                     timeline.viewport.set(Viewport::new(
@@ -2337,30 +2332,28 @@ impl WaveformTimeline {
                         timeline.config_restored.set_neq(false);
                     }
                 }
-            }
-        }))
+            }),
+        ))
     }
 
     fn spawn_request_triggers(&self) -> Vec<Arc<TaskHandle>> {
         let timeline = self.clone();
-        let viewport_handle = Arc::new(Task::start_droppable(async move {
-            let mut viewport_stream = timeline.viewport.signal_cloned().to_stream().fuse();
-            while viewport_stream.next().await.is_some() {
+        let viewport_handle = Arc::new(Task::start_droppable(
+            timeline.viewport.signal_cloned().for_each_sync(move |_| {
                 timeline.ensure_viewport_within_bounds();
                 timeline.schedule_request();
                 timeline.schedule_config_save();
-            }
-        }));
+            }),
+        ));
 
         let timeline = self.clone();
-        let width_handle = Arc::new(Task::start_droppable(async move {
-            let mut width_stream = timeline.canvas_width.signal_cloned().to_stream().fuse();
-            while width_stream.next().await.is_some() {
+        let width_handle = Arc::new(Task::start_droppable(
+            timeline.canvas_width.signal_cloned().for_each_sync(move |_| {
                 timeline.update_render_state();
                 timeline.schedule_request();
                 timeline.schedule_config_save();
-            }
-        }));
+            }),
+        ));
 
         vec![viewport_handle, width_handle]
     }

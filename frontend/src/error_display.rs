@@ -221,23 +221,14 @@ impl Default for ErrorDisplay {
 }
 
 #[allow(dead_code)]
-pub async fn add_error_alert(mut alert: ErrorAlert, app_config: &crate::config::AppConfig) {
+pub fn add_error_alert(mut alert: ErrorAlert, app_config: &crate::config::AppConfig) {
     zoon::println!("Error: {}", alert.technical_error);
 
     let toast_id = TOAST_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
     alert.id = format!("toast_{}", toast_id);
 
-    if let Some(dismiss_ms) = app_config
-        .toast_dismiss_ms
-        .signal()
-        .to_stream()
-        .next()
-        .await
-    {
-        alert.auto_dismiss_ms = dismiss_ms as u64;
-    } else {
-        alert.auto_dismiss_ms = 5000;
-    }
+    // Read current value directly - no async needed for Mutable
+    alert.auto_dismiss_ms = app_config.toast_dismiss_ms.get() as u64;
 
     app_config.error_display.add_toast(alert);
 }
@@ -271,7 +262,7 @@ pub async fn trigger_test_notifications(app_config: &crate::config::AppConfig) {
         action_label: None,
         progress: None,
     };
-    add_error_alert(error_alert, app_config).await;
+    add_error_alert(error_alert, app_config);
 
     zoon::Timer::sleep(300).await;
 
@@ -285,7 +276,7 @@ pub async fn trigger_test_notifications(app_config: &crate::config::AppConfig) {
         action_label: Some("Action".to_string()),
         progress: None,
     };
-    add_error_alert(info_alert, app_config).await;
+    add_error_alert(info_alert, app_config);
 
     zoon::Timer::sleep(300).await;
 
@@ -299,7 +290,7 @@ pub async fn trigger_test_notifications(app_config: &crate::config::AppConfig) {
         action_label: Some("Confirm".to_string()),
         progress: None,
     };
-    add_error_alert(success_alert, app_config).await;
+    add_error_alert(success_alert, app_config);
 
     zoon::println!("✅ Test notifications triggered!");
 }

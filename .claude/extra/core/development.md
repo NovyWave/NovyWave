@@ -102,6 +102,69 @@ self.handles.push(handle);  // Store in collection
 - **NEVER** use `let _ = Task::start_droppable(...)` - immediate abort!
 - **NEVER** use `let _task = Task::start_droppable(...)` at function scope end - aborted when scope ends!
 
+### 9. Signal-to-Stream Antipattern (CRITICAL)
+
+**NEVER convert signals to streams for sync work:**
+
+```rust
+// ❌ ANTIPATTERN: Async machinery for sync work
+Arc::new(Task::start_droppable(async move {
+    let mut stream = signal.to_stream().fuse();
+    while let Some(v) = stream.next().await {
+        mutable.set_neq(v);  // This is sync!
+    }
+}))
+
+// ✅ CORRECT: Native signal binding
+Arc::new(Task::start_droppable(
+    signal.for_each_sync(|v| mutable.set_neq(v))
+))
+
+// ✅ CORRECT: Combine multiple signals with map_ref!
+Arc::new(Task::start_droppable(
+    map_ref! {
+        let a = signal_a,
+        let b = signal_b => compute(a, b)
+    }.for_each_sync(|result| state.set_neq(result))
+))
+```
+
+**When `.to_stream()` IS appropriate:**
+- `select!` macro with genuine async work (network I/O, timers, DOM timing)
+- Backend message loops (unbounded MPSC receiver streams)
+- Canvas rendering coordination with multiple async sources
+
+**When `.to_stream()` is WRONG:**
+- Endless loops that only call sync methods
+- Reading one value via `.next().await` (signals emit initial value on subscribe)
+- Combining signals that could use `map_ref!`
+- Manual deduplication that `.dedupe_cloned()` handles
+
+### 10. SignalVec to Signal Conversion (AVOID)
+
+**Delay `.to_signal_cloned()` as long as possible - it clones the ENTIRE Vec on every change:**
+
+```rust
+// ❌ EXPENSIVE: Clones Vec<TrackedFile> (large structs) on every change
+tracked_files.signal_vec_cloned()
+    .to_signal_cloned()  // Full Vec clone here!
+    .map(|files| compute_range(&files))
+
+// ✅ CHEAPER: Map to small data first, then convert
+tracked_files.signal_vec_cloned()
+    .map(|file| (file.path.clone(), file.time_range()))  // Extract only needed data
+    .to_signal_cloned()  // Now cloning Vec<(String, Option<Range>)> - much smaller
+    .map(|ranges| aggregate_ranges(&ranges))
+
+// ✅ BEST: Avoid .to_signal_cloned() entirely if possible
+// Use items_signal_vec() in UI, or fold/reduce patterns
+```
+
+**Rules:**
+- **Map before converting**: Extract only needed fields before `.to_signal_cloned()`
+- **Avoid large struct clones**: `TrackedFile`, `WaveformFile` are expensive to clone
+- **Question the need**: Do you really need Signal<Vec> or can you use SignalVec directly?
+
 ## WASM Constraints (CRITICAL)
 
 - **All I/O on backend** - WASM filesystem blocks main thread, freezes browser

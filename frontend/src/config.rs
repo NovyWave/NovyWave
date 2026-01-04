@@ -698,48 +698,45 @@ impl AppConfig {
         );
 
         // Sync TreeView state changes to session state
-        let _treeview_sync_task = {
+        // Split into two independent listeners - no need for select!
+        let _treeview_expanded_sync = {
             let expanded_scopes_for_sync = files_expanded_scopes.clone();
+            let session_sender = session_state_sender.clone();
+            let session_state_for_sync = session_state.clone();
+            Arc::new(Task::start_droppable(
+                expanded_scopes_for_sync.signal_cloned().for_each_sync(move |expanded_set| {
+                    let current_session = session_state_for_sync.get_cloned();
+                    let updated_session = SessionState {
+                        expanded_scopes: expanded_set.iter().cloned().collect(),
+                        ..current_session
+                    };
+                    let _ = session_sender.unbounded_send(updated_session);
+                }),
+            ))
+        };
+        let _treeview_selected_sync = {
             let selected_scope_for_sync = files_selected_scope.clone();
-            let session_sender_for_treeview = session_state_sender.clone();
-            let session_state_for_treeview = session_state.clone();
-            Arc::new(Task::start_droppable(async move {
-                let mut expanded_stream = expanded_scopes_for_sync.signal_cloned().to_stream().fuse();
-                let mut selected_stream = selected_scope_for_sync
+            let session_sender = session_state_sender.clone();
+            let session_state_for_sync = session_state.clone();
+            Arc::new(Task::start_droppable(
+                selected_scope_for_sync
                     .signal_vec_cloned()
                     .to_signal_cloned()
-                    .to_stream()
-                    .fuse();
-
-                loop {
-                    select! {
-                        expanded = expanded_stream.next() => {
-                            if let Some(expanded_set) = expanded {
-                                let current_session = session_state_for_treeview.signal_cloned().to_stream().next().await.unwrap_or_default();
-                                let updated_session = SessionState {
-                                    expanded_scopes: expanded_set.iter().cloned().collect(),
-                                    ..current_session
-                                };
-                                let _ = session_sender_for_treeview.unbounded_send(updated_session);
-                            }
-                        }
-                        selected = selected_stream.next() => {
-                            if let Some(selected_vec) = selected {
-                                let scope_sel = selected_vec.iter().find(|id| id.starts_with("scope_")).cloned();
-                                let current_session = session_state_for_treeview.signal_cloned().to_stream().next().await.unwrap_or_default();
-                                let updated_session = SessionState {
-                                    selected_scope_id: scope_sel,
-                                    ..current_session
-                                };
-                                let _ = session_sender_for_treeview.unbounded_send(updated_session);
-                            }
-                        }
-                    }
-                }
-            }))
+                    .for_each_sync(move |selected_vec| {
+                        let scope_sel = selected_vec.iter().find(|id| id.starts_with("scope_")).cloned();
+                        let current_session = session_state_for_sync.get_cloned();
+                        let updated_session = SessionState {
+                            selected_scope_id: scope_sel,
+                            ..current_session
+                        };
+                        let _ = session_sender.unbounded_send(updated_session);
+                    }),
+            ))
         };
+        let _treeview_sync_task = (_treeview_expanded_sync, _treeview_selected_sync);
 
-        // Create sync task for TrackedFiles to update opened_files
+        // Sync TrackedFiles changes to session state (opened_files)
+        // Signals emit initial value on subscribe, so no separate initial sync needed
         let _tracked_files_sync_task = {
             let session_state_for_files = session_state.clone();
             let files_signal = tracked_files.files_vec_signal.clone();
@@ -747,38 +744,8 @@ impl AppConfig {
             let files_expanded_for_sync = files_expanded_scopes.clone();
             let files_selected_for_sync = files_selected_scope.clone();
 
-            Arc::new(Task::start_droppable(async move {
-                // Force initial sync with current value
-                let initial_files = files_signal.get_cloned();
-                if !initial_files.is_empty() {
-                    let file_paths: Vec<CanonicalPathPayload> = initial_files
-                        .iter()
-                        .map(|tracked_file| {
-                            CanonicalPathPayload::new(tracked_file.canonical_path.clone())
-                        })
-                        .collect();
-
-                    let mut current_session = session_state_for_files
-                        .signal_cloned()
-                        .to_stream()
-                        .next()
-                        .await
-                        .unwrap_or_default();
-                    current_session.opened_files = file_paths;
-
-                    // Preserve expanded scopes and selected scope from TreeView Mutables
-                    let current_expanded = files_expanded_for_sync.get_cloned();
-                    current_session.expanded_scopes = current_expanded.into_iter().collect();
-
-                    let current_selected = files_selected_for_sync.lock_ref();
-                    current_session.selected_scope_id = current_selected.first().cloned();
-
-                    let _ = session_sender_for_files.unbounded_send(current_session);
-                }
-
-                let mut stream = files_signal.signal_cloned().to_stream();
-                while let Some(files) = stream.next().await {
-                    // Extract file paths from TrackedFile structs
+            Arc::new(Task::start_droppable(
+                files_signal.signal_cloned().for_each_sync(move |files| {
                     let file_paths: Vec<CanonicalPathPayload> = files
                         .iter()
                         .map(|tracked_file| {
@@ -786,71 +753,52 @@ impl AppConfig {
                         })
                         .collect();
 
-                    // Update session state - preserve other fields
-                    let mut current_session = session_state_for_files
-                        .signal_cloned()
-                        .to_stream()
-                        .next()
-                        .await
-                        .unwrap_or_default();
-                    current_session.opened_files = file_paths.clone();
+                    let mut current_session = session_state_for_files.get_cloned();
+                    current_session.opened_files = file_paths;
 
-                    // CRITICAL: Read expanded_scopes from TreeView Mutables, not from stale session
                     let current_expanded = files_expanded_for_sync.get_cloned();
                     current_session.expanded_scopes = current_expanded.into_iter().collect();
 
                     let current_selected = files_selected_for_sync.lock_ref();
                     current_session.selected_scope_id = current_selected.first().cloned();
 
-                    // Trigger save
                     let _ = session_sender_for_files.unbounded_send(current_session);
-                }
-            }))
+                }),
+            ))
         };
 
         // Bridge variables search filter between SelectedVariables domain and SessionState
-        let _variables_filter_bridge_task = {
+        // Split into two one-way handlers with dedupe to break potential cycles
+        let _variables_filter_from_session = {
+            let session_state_for_bridge = session_state.clone();
+            let selected_variables_for_bridge = selected_variables.clone();
+            Arc::new(Task::start_droppable(
+                session_state_for_bridge
+                    .signal_cloned()
+                    .map(|s| s.variables_search_filter)
+                    .dedupe_cloned()
+                    .for_each_sync(move |filter| {
+                        selected_variables_for_bridge.set_search_filter(filter);
+                    }),
+            ))
+        };
+        let _variables_filter_to_session = {
             let session_state_for_bridge = session_state.clone();
             let session_sender_for_bridge = session_state_sender.clone();
             let selected_variables_for_bridge = selected_variables.clone();
-
-            Arc::new(Task::start_droppable(async move {
-                let mut session_state_stream =
-                    session_state_for_bridge.signal_cloned().to_stream().fuse();
-                let mut filter_signal_stream = selected_variables_for_bridge.search_filter.signal_cloned().to_stream().fuse();
-
-                let mut current_session = session_state_stream.next().await.unwrap_or_default();
-                let mut current_filter = current_session.variables_search_filter.clone();
-
-                loop {
-                    select! {
-                        session = session_state_stream.next() => {
-                            if let Some(session_state) = session {
-                                if current_filter != session_state.variables_search_filter {
-                                    current_filter = session_state.variables_search_filter.clone();
-                                    selected_variables_for_bridge.set_search_filter(current_filter.clone());
-                                }
-                                current_session = session_state;
-                            } else {
-                                break;
-                            }
-                        }
-                        filter = filter_signal_stream.next() => {
-                            if let Some(filter_text) = filter {
-                                if current_filter == filter_text {
-                                    continue;
-                                }
-                                current_filter = filter_text.clone();
-                                current_session.variables_search_filter = filter_text;
-                                let _ = session_sender_for_bridge.unbounded_send(current_session.clone());
-                            } else {
-                                break;
-                            }
-                        }
-                    }
-                }
-            }))
+            Arc::new(Task::start_droppable(
+                selected_variables_for_bridge
+                    .search_filter
+                    .signal_cloned()
+                    .dedupe_cloned()
+                    .for_each_sync(move |filter| {
+                        let mut current = session_state_for_bridge.get_cloned();
+                        current.variables_search_filter = filter;
+                        let _ = session_sender_for_bridge.unbounded_send(current);
+                    }),
+            ))
         };
+        let _variables_filter_bridge_task = (_variables_filter_from_session, _variables_filter_to_session);
 
         // Track SelectedVariables changes to trigger config saves with latest snapshot
         let selected_variables_snapshot = Mutable::new(Vec::<shared::SelectedVariable>::new());
@@ -859,24 +807,15 @@ impl AppConfig {
             let selected_variables_for_snapshot = selected_variables.clone();
             let save_sender_for_snapshot = save_sender.clone();
 
-            Arc::new(Task::start_droppable(async move {
-                let mut variables_stream = selected_variables_for_snapshot
+            Arc::new(Task::start_droppable(
+                selected_variables_for_snapshot
                     .variables_signal()
-                    .to_stream()
-                    .fuse();
-
-                while let Some(vars) = variables_stream.next().await {
-                    let should_update = {
-                        let current = state.lock_ref();
-                        *current != vars
-                    };
-
-                    if should_update {
+                    .dedupe_cloned()
+                    .for_each_sync(move |vars| {
                         state.set_neq(vars.clone());
                         let _ = save_sender_for_snapshot.unbounded_send(());
-                    }
-                }
-            }))
+                    }),
+            ))
         };
 
         // File picker changes now trigger config save through FilePickerDomain

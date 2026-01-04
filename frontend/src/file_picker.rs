@@ -42,44 +42,33 @@ fn apply_scrollbar_colors(
 /// Initialize directories on first use and when restored from config
 pub fn initialize_directories_and_request_contents(
     file_picker_domain: &crate::config::FilePickerDomain,
-) -> Arc<TaskHandle> {
-    let domain_clone = file_picker_domain.clone();
-    Arc::new(Task::start_droppable(async move {
-        // Read current cache once and only request roots that are not loaded.
-        let cache = domain_clone
-            .directory_cache
-            .signal_cloned()
-            .to_stream()
-            .next()
-            .await
-            .unwrap_or_default();
+) {
+    // Read current state directly - no async needed for Mutable reads
+    let cache = file_picker_domain.directory_cache.get_cloned();
+    let expanded = file_picker_domain.expanded_directories.get_cloned();
 
-        if !cache.contains_key("/") {
-            domain_clone.expand_directory("/".to_string());
+    if !cache.contains_key("/") {
+        file_picker_domain.expand_directory("/".to_string());
+    }
+
+    if expanded.is_empty() {
+        if let Some(home_dir) = std::env::var("HOME")
+            .ok()
+            .or_else(|| std::env::var("USERPROFILE").ok())
+        {
+            file_picker_domain.expand_directory("/".to_string());
+            file_picker_domain.expand_directory(home_dir.clone());
+        } else {
+            file_picker_domain.expand_directory("/".to_string());
         }
-
-        let mut current_expanded = domain_clone.expanded_directories.signal_cloned().to_stream();
-        if let Some(expanded) = current_expanded.next().await {
-            if expanded.is_empty() {
-                if let Some(home_dir) = std::env::var("HOME")
-                    .ok()
-                    .or_else(|| std::env::var("USERPROFILE").ok())
-                {
-                    domain_clone.expand_directory("/".to_string());
-                    domain_clone.expand_directory(home_dir.clone());
-                } else {
-                    domain_clone.expand_directory("/".to_string());
-                }
-            } else {
-                // Request contents only for directories not already in cache
-                for directory in &expanded {
-                    if !cache.contains_key(directory) {
-                        domain_clone.expand_directory(directory.clone());
-                    }
-                }
+    } else {
+        // Request contents only for directories not already in cache
+        for directory in &expanded {
+            if !cache.contains_key(directory) {
+                file_picker_domain.expand_directory(directory.clone());
             }
         }
-    }))
+    }
 }
 
 /// Build tree data for TreeView component using Actor signals
@@ -492,8 +481,7 @@ pub fn file_picker_tree(
     _connection: crate::connection::ConnectionAdapter,
 ) -> impl Element {
     // Initialize directories and request contents for expanded directories from config
-    let initialization_actor =
-        initialize_directories_and_request_contents(&app_config.file_picker_domain);
+    initialize_directories_and_request_contents(&app_config.file_picker_domain);
 
     let domain_for_treeview = app_config.file_picker_domain.clone();
     let cache_signal = app_config.file_picker_domain.directory_cache_signal();
