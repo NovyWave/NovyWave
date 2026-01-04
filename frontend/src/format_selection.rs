@@ -1,4 +1,3 @@
-use crate::dataflow::Atom;
 use moonzoon_novyui::components::icon::{IconColor, IconName, IconSize, icon};
 use moonzoon_novyui::tokens::color::{
     neutral_1, neutral_2, neutral_3, neutral_4, neutral_8, neutral_11, primary_6,
@@ -98,8 +97,8 @@ pub fn create_format_dropdown(
     let unique_id = variable_unique_id.to_string();
     let trigger_id = format!("format-dropdown-trigger-{}", sanitize_dom_id(&unique_id));
 
-    let is_open = Atom::new(false);
-    let latest_value = Atom::new(SignalValue::Loading);
+    let is_open = Mutable::new(false);
+    let latest_value = Mutable::new(SignalValue::Loading);
     let app_config_for_copy = app_config.clone();
 
     let chevron_icon = El::new().child_signal(is_open.signal().map(|open| {
@@ -143,10 +142,9 @@ pub fn create_format_dropdown(
         }
     };
 
-    let cursor_values_actor_for_dropdown = waveform_timeline.cursor_values_actor();
+    let cursor_values_mutable_for_dropdown = waveform_timeline.cursor_values_actor();
     let unique_id_for_dropdown = unique_id.clone();
-    let value_signal_for_dropdown = cursor_values_actor_for_dropdown
-        .state
+    let value_signal_for_dropdown = cursor_values_mutable_for_dropdown
         .signal_cloned()
         .map(move |map| map.get(&unique_id_for_dropdown).cloned());
 
@@ -161,10 +159,9 @@ pub fn create_format_dropdown(
         }
     };
 
-    let cursor_values_actor_for_display = waveform_timeline.cursor_values_actor();
+    let cursor_values_mutable_for_display = waveform_timeline.cursor_values_actor();
     let unique_id_for_display = unique_id.clone();
-    let value_signal_for_display = cursor_values_actor_for_display
-        .state
+    let value_signal_for_display = cursor_values_mutable_for_display
         .signal_cloned()
         .map(move |map| map.get(&unique_id_for_display).cloned());
 
@@ -385,7 +382,7 @@ pub fn create_smart_dropdown(
     current_format: VarFormat,
     selected_variables: crate::selected_variables::SelectedVariables,
     waveform_timeline: crate::visualizer::timeline::timeline_actor::WaveformTimeline,
-    is_open: Atom<bool>,
+    is_open: Mutable<bool>,
     trigger_id: String,
     unique_id: String,
 ) -> impl Element {
@@ -681,11 +678,6 @@ pub fn update_variable_format(
     selected_variables: &crate::selected_variables::SelectedVariables,
     waveform_timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline,
 ) {
-    selected_variables
-        .variable_format_changed_relay
-        .send((unique_id.to_string(), new_format));
-
-    waveform_timeline
-        .variable_format_updated_relay
-        .send((unique_id.to_string(), new_format));
+    selected_variables.change_variable_format(unique_id.to_string(), new_format);
+    waveform_timeline.on_variable_format_updated(unique_id.to_string(), new_format);
 }

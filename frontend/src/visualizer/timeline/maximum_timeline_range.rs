@@ -4,38 +4,39 @@
 //! scattered computation and provide single source of truth for timeline bounds.
 
 use super::time_domain::TimePs;
-use crate::dataflow::Actor;
 use futures::{StreamExt, select};
 #[cfg(debug_assertions)]
 use shared::FileFormat;
 use shared::{FileState, SelectedVariable, TrackedFile};
 use std::collections::HashSet;
-use zoon::{SignalExt, SignalVecExt};
+use std::sync::Arc;
+use zoon::{Mutable, SignalExt, SignalVecExt, Task, TaskHandle};
 
 /// Maximum Timeline Range actor - stores computed timeline range for efficient access
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct MaximumTimelineRange {
-    pub range: Actor<Option<(TimePs, TimePs)>>,
+    pub range: Mutable<Option<(TimePs, TimePs)>>,
+    _range_task: Arc<TaskHandle>,
 }
 
 impl MaximumTimelineRange {
-    pub async fn new(
+    pub fn new(
         tracked_files: crate::tracked_files::TrackedFiles,
         selected_variables: crate::selected_variables::SelectedVariables,
     ) -> Self {
-        let tracked_files_clone = tracked_files.clone();
-        let selected_variables_clone = selected_variables.clone();
+        let range = Mutable::new(None);
+        let range_clone = range.clone();
 
-        let range = Actor::new(None, async move |state| {
-            let mut files_stream = tracked_files_clone
+        let _range_task = Arc::new(Task::start_droppable(async move {
+            let mut files_stream = tracked_files
                 .files
-                .signal_vec()
+                .signal_vec_cloned()
                 .to_signal_cloned()
                 .to_stream()
                 .fuse();
-            let mut selection_stream = selected_variables_clone
+            let mut selection_stream = selected_variables
                 .variables_vec_actor
-                .signal()
+                .signal_cloned()
                 .to_stream()
                 .fuse();
 
@@ -48,8 +49,8 @@ impl MaximumTimelineRange {
                         match files {
                             Some(files) => {
                                 latest_files = files;
-                                let range = Self::compute_range(&latest_files, &latest_selection);
-                                state.set_neq(range);
+                                let computed_range = Self::compute_range(&latest_files, &latest_selection);
+                                range_clone.set_neq(computed_range);
                             }
                             None => break,
                         }
@@ -58,17 +59,17 @@ impl MaximumTimelineRange {
                         match selection {
                             Some(selection) => {
                                 latest_selection = selection;
-                                let range = Self::compute_range(&latest_files, &latest_selection);
-                                state.set_neq(range);
+                                let computed_range = Self::compute_range(&latest_files, &latest_selection);
+                                range_clone.set_neq(computed_range);
                             }
                             None => break,
                         }
                     }
                 }
             }
-        });
+        }));
 
-        Self { range }
+        Self { range, _range_task }
     }
 
     /// Pure function to compute maximum range from file vector

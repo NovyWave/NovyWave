@@ -1,13 +1,16 @@
 //! NovyWave Main Entry Point
 
+use std::sync::OnceLock;
 use zoon::*;
+
+/// Stores the main application task handle to prevent it from being dropped.
+static MAIN_TASK: OnceLock<TaskHandle> = OnceLock::new();
 
 // Core modules
 mod app;
 mod clipboard;
 mod config;
 mod connection;
-mod dataflow;
 mod error_display;
 mod error_ui;
 mod platform;
@@ -39,13 +42,13 @@ pub fn main_layout(
     app_config: &crate::config::AppConfig,
     dragging_system: &crate::dragging::DraggingSystem,
     waveform_canvas: &crate::visualizer::canvas::waveform_canvas::WaveformCanvas,
-    file_dialog_visible: &crate::dataflow::atom::Atom<bool>,
+    file_dialog_visible: &zoon::Mutable<bool>,
 ) -> impl Element {
     use crate::file_management::files_panel_with_dialog;
     use crate::variable_selection_ui::variables_panel_with_fill;
 
     El::new().s(Width::fill()).s(Height::fill()).child_signal(
-        app_config.dock_mode_actor.signal().map({
+        app_config.dock_mode.signal_cloned().map({
             let tracked_files = tracked_files.clone();
             let selected_variables = selected_variables.clone();
             let waveform_timeline = waveform_timeline.clone();
@@ -206,11 +209,12 @@ pub fn main() {
     // Provide a minimal shim so zoon's Connection can initialize without crashing.
     ensure_reconnecting_event_source();
 
-    Task::start(async {
+    let handle = Task::start_droppable(async {
         let app = crate::app::NovyWaveApp::new().await;
         let root_element = app.root();
         start_app("app", move || root_element);
     });
+    let _ = MAIN_TASK.set(handle);
 }
 
 #[cfg(not(NOVYWAVE_PLATFORM = "TAURI"))]

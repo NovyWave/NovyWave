@@ -50,8 +50,8 @@ pub fn variables_panel(
     let selected_variables = selected_variables.clone();
     let _waveform_timeline = waveform_timeline.clone();
 
-    let search_filter_relay = selected_variables.search_filter_changed_relay.clone();
-    let search_focus_relay = selected_variables.search_focus_changed_relay.clone();
+    let sv_for_filter = selected_variables.clone();
+    let sv_for_focus = selected_variables.clone();
     El::new()
         .s(Height::fill())
         .s(Width::fill())
@@ -80,9 +80,9 @@ pub fn variables_panel(
                         .child(
                             input()
                                 .placeholder("variable_name")
-                                .value_signal(selected_variables.search_filter.signal())
+                                .value_signal(selected_variables.search_filter.signal_cloned())
                                 .left_icon(IconName::Search)
-                                .right_icon_signal(selected_variables.search_filter.signal().map(
+                                .right_icon_signal(selected_variables.search_filter.signal_cloned().map(
                                     |text| {
                                         if text.is_empty() {
                                             None
@@ -92,24 +92,24 @@ pub fn variables_panel(
                                     },
                                 ))
                                 .on_right_icon_click({
-                                    let relay = search_filter_relay.clone();
-                                    move || relay.send(String::new())
+                                    let sv = sv_for_filter.clone();
+                                    move || sv.set_search_filter(String::new())
                                 })
                                 .size(InputSize::Small)
                                 .on_change({
-                                    let relay = search_filter_relay.clone();
-                                    move |text| relay.send(text)
+                                    let sv = sv_for_filter.clone();
+                                    move |text| sv.set_search_filter(text)
                                 })
                                 .on_focus({
-                                    let relay = search_focus_relay.clone();
-                                    move || relay.send(true)
+                                    let sv = sv_for_focus.clone();
+                                    move || sv.set_search_focus(true)
                                 })
                                 .on_blur({
-                                    let relay = search_focus_relay.clone();
-                                    move || relay.send(false)
+                                    let sv = sv_for_focus.clone();
+                                    move || sv.set_search_focus(false)
                                 })
                                 .on_key_down_event({
-                                    let focus_relay = search_focus_relay.clone();
+                                    let sv = sv_for_focus.clone();
                                     move |event| {
                                         if event.key() == &Key::Escape {
                                             event.pass_to_parent(false);
@@ -134,7 +134,7 @@ pub fn variables_panel(
                                                 }
                                             }
 
-                                            focus_relay.send(false);
+                                            sv.set_search_focus(false);
                                         }
                                     }
                                 })
@@ -163,7 +163,7 @@ pub fn variables_panel_with_fill(
         .s(Width::fill())
         .s(Height::fill())
         .s(Scrollbars::both())
-        .child_signal(app_config.dock_mode_actor.signal().map(move |dock_mode| {
+        .child_signal(app_config.dock_mode.signal_cloned().map(move |dock_mode| {
             let is_docked = matches!(dock_mode, shared::DockMode::Bottom);
             if is_docked {
                 El::new()
@@ -264,9 +264,9 @@ pub fn variables_loading_signal(
     selected_variables: crate::selected_variables::SelectedVariables,
     app_config: crate::config::AppConfig,
 ) -> impl Signal<Item = Vec<VariableWithContext>> {
-    let files_signal = tracked_files.files.signal_vec().to_signal_cloned();
+    let files_signal = tracked_files.files.signal_vec_cloned().to_signal_cloned();
     // Merge SelectedVariables.selected_scope with TreeView selection snapshot from AppConfig
-    let selected_scope_from_sv = selected_variables.selected_scope.signal();
+    let selected_scope_from_sv = selected_variables.selected_scope.signal_cloned();
     let selected_scope_from_tree = app_config
         .files_selected_scope
         .signal_vec_cloned()
@@ -301,7 +301,7 @@ pub fn variables_display_signal(
 ) -> impl Signal<Item = Vec<VariableWithContext>> {
     map_ref! {
         let variables = variables_loading_signal(tracked_files.clone(), selected_variables.clone(), app_config.clone()),
-        let search_filter = selected_variables.search_filter.signal() => {
+        let search_filter = selected_variables.search_filter.signal_cloned() => {
             filter_variables_with_context(&variables, &search_filter)
         }
     }
@@ -314,14 +314,14 @@ pub fn variables_display_context_signal(
     app_config: crate::config::AppConfig,
 ) -> impl Signal<Item = VariableDisplayContext> {
     map_ref! {
-        let selected_scope_sv = selected_variables.selected_scope.signal(),
+        let selected_scope_sv = selected_variables.selected_scope.signal_cloned(),
         let selected_scope_tree = app_config.files_selected_scope
             .signal_vec_cloned()
             .to_signal_cloned()
             .map(|vec| vec.into_iter().rev().find(|id| id.starts_with("scope_")).clone())
             .map(|opt| opt.and_then(|raw| raw.strip_prefix("scope_").map(|s| s.to_string()))),
         let unfiltered_variables = variables_loading_signal(tracked_files.clone(), selected_variables.clone(), app_config.clone()),
-        let search_filter = selected_variables.search_filter.signal() => {
+        let search_filter = selected_variables.search_filter.signal_cloned() => {
             let selected_scope_id = selected_scope_sv.clone().or_else(|| selected_scope_tree.clone());
             // Debug-only: variables panel context (silenced by default)
             // Determine the appropriate context based on state

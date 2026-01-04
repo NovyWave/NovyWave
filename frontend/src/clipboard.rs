@@ -1,6 +1,6 @@
-/// Copy text to clipboard using Actor+Relay architecture
+/// Copy text to clipboard using direct method call
 pub fn copy_to_clipboard(text: String, app_config: &crate::config::AppConfig) {
-    app_config.clipboard_copy_requested_relay.send(text);
+    app_config.copy_to_clipboard(text);
 }
 
 /// User-facing convenience function for copying variable values

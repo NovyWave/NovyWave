@@ -150,7 +150,7 @@ pub fn rust_virtual_variables_list_with_signal(
 
     // ===== COORDINATED TASK: Pool Management + Updates =====
     // OPTIMIZATION: Single task handles height changes, pool resizing, and batched DOM updates
-    Task::start({
+    let _pool_management_task = Task::start_droppable({
         let height_signal = height_signal.clone();
         let visible_count = visible_count.clone();
         let element_pool = element_pool.clone();
@@ -217,7 +217,7 @@ pub fn rust_virtual_variables_list_with_signal(
 
     // ===== OPTIMIZED POOL UPDATE TASK WITH DOM BATCHING =====
     // Update pool elements when visible range OR selection state changes
-    Task::start({
+    let _pool_update_task = Task::start_droppable({
         let variables = variables.clone();
         let element_pool = element_pool.clone();
         let visible_start = visible_start.clone();
@@ -227,7 +227,7 @@ pub fn rust_virtual_variables_list_with_signal(
             map_ref! {
                 let start = visible_start.signal(),
                 let end = visible_end.signal(),
-                let selected_vars = selected_variables.variables_vec_actor.signal() => (*start, *end, selected_vars.clone())
+                let selected_vars = selected_variables.variables_vec_actor.signal_cloned() => (*start, *end, selected_vars.clone())
             }.for_each(move |(start, end, selected_vars)| {
                 let element_pool = element_pool.clone();
                 let variables = variables.clone();
@@ -374,7 +374,13 @@ pub fn rust_virtual_variables_list_with_signal(
 
     // Selection state updates are now handled in the optimized pool update task above
 
-    Column::new().item(
+    Column::new()
+        .after_remove(move |_| {
+            // Keep task handles alive until element is removed from DOM
+            drop(_pool_management_task);
+            drop(_pool_update_task);
+        })
+        .item(
         // ===== SCROLL CONTAINER WITH SIGNAL HEIGHT =====
         // CRITICAL: Uses Height::exact_signal() instead of Height::exact()
         El::new()
@@ -679,9 +685,7 @@ fn create_stable_variable_element_hybrid(
                         variable, &file_id, &scope_id,
                     ) {
                         let selected_variables = &selected_variables_for_click;
-                        selected_variables
-                            .variable_clicked_relay
-                            .send(selected_var.unique_id.clone());
+                        selected_variables.add_variable(selected_var.unique_id.clone());
                     } else {
                     }
                 } else {
@@ -801,9 +805,8 @@ fn create_variable_name_display(
                                             let file_id = file_id_signal.get_cloned();
                                             let scope_id = scope_id_signal.get_cloned();
                                             if let Some(variable) = variable_signal.get_cloned() {
-                                                // ✅ ACTOR+RELAY MIGRATION: Use SelectedVariables domain events
                                                 if let Some(selected_var) = crate::selected_variables::create_selected_variable(variable, &file_id, &scope_id) {
-                                                    selected_variables_clone.variable_clicked_relay.send(selected_var.unique_id.clone());
+                                                    selected_variables_clone.add_variable(selected_var.unique_id.clone());
                                                 }
                                             } else {
                                             }
@@ -824,9 +827,8 @@ fn create_variable_name_display(
                                             let file_id = file_id_signal.get_cloned();
                                             let scope_id = scope_id_signal.get_cloned();
                                             if let Some(variable) = variable_signal.get_cloned() {
-                                                // ✅ ACTOR+RELAY MIGRATION: Use SelectedVariables domain events
                                                 if let Some(selected_var) = crate::selected_variables::create_selected_variable(variable, &file_id, &scope_id) {
-                                                    selected_variables_clone.variable_clicked_relay.send(selected_var.unique_id.clone());
+                                                    selected_variables_clone.add_variable(selected_var.unique_id.clone());
                                                 }
                                             } else {
                                             }
@@ -849,9 +851,8 @@ fn create_variable_name_display(
                                         let file_id = file_id_signal.get_cloned();
                                         let scope_id = scope_id_signal.get_cloned();
                                         if let Some(variable) = variable_signal.get_cloned() {
-                                            // ✅ ACTOR+RELAY MIGRATION: Use SelectedVariables domain events
                                             if let Some(selected_var) = crate::selected_variables::create_selected_variable(variable, &file_id, &scope_id) {
-                                                selected_variables_clone.variable_clicked_relay.send(selected_var.unique_id);
+                                                selected_variables_clone.add_variable(selected_var.unique_id);
                                             }
                                         } else {
                                         }

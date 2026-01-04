@@ -15,117 +15,47 @@ Core guidance for Claude Code when working with NovyWave.
 @.claude/extra/technical/reference.md
 @.claude/extra/technical/performance-debugging.md
 
-<!-- Architecture (always loaded) -->
-@.claude/extra/architecture/actor-relay-patterns.md
-
 <!-- ON-DEMAND: Load when working on UI/UX features -->
 <!-- @.claude/extra/project/specs/specs.md -->
 
-## Actor+Relay Architecture (MANDATORY)
+## State Management
 
-**CRITICAL: NovyWave uses Actor+Relay architecture - NO raw Mutables allowed**
+**Use standard Zoon primitives for state management:**
 
-> **📖 Complete API Reference:** See `frontend/src/dataflow/` for full API specification with all methods and the critical "Cache Current Values" pattern. See `docs/actors_relays/actor_relay_architecture.md` for conceptual guidance and architectural patterns.
+```rust
+// Local/shared mutable state
+let dialog_visible = Mutable::new(false);
+let selected_files = MutableVec::new();
 
-### Core Architectural Rules
+// Async communication between components
+let (sender, receiver) = futures::channel::mpsc::unbounded::<Message>();
+```
 
-1. **NO RAW MUTABLES:** All state must use Actor+Relay or Atom
+### Core Rules
+
+1. **ABSOLUTELY NO FALLBACKS (CRITICAL):**
    ```rust
-   // ❌ PROHIBITED: Raw global mutables
-   static TRACKED_FILES: Lazy<MutableVec<TrackedFile>> = lazy::default();
-   static DIALOG_OPEN: Lazy<Mutable<bool>> = lazy::default();
-   
-   // ✅ REQUIRED: Domain-driven Actors
-   struct TrackedFiles {
-       files: ActorVec<TrackedFile>,
-       file_dropped_relay: Relay<Vec<PathBuf>>,
-   }
-   
-   // ✅ REQUIRED: Atom for local UI
-   let dialog_open = Atom::new(false);
-   ```
-
-2. **Event-Source Relay Naming (MANDATORY):**
-   ```rust
-   // ✅ CORRECT: Describe what happened, not what to do
-   button_clicked_relay: Relay,              // User clicked button
-   file_loaded_relay: Relay<PathBuf>,        // File finished loading
-   input_changed_relay: Relay<String>,       // Input text changed
-   error_occurred_relay: Relay<String>,      // System error happened
-   
-   // ❌ PROHIBITED: Command-like naming
-   add_file: Relay<PathBuf>,                 // Sounds like command
-   remove_item: Relay<String>,               // Imperative style
-   set_theme: Relay<Theme>,                  // Action-oriented
-   ```
-
-3. **Domain-Driven Design (MANDATORY):**
-   ```rust
-   // ✅ REQUIRED: Model what it IS, not what it manages
-   struct TrackedFiles { ... }              // Collection of files
-   struct WaveformTimeline { ... }          // The timeline itself
-   struct SelectedVariables { ... }         // Selected variables
-   
-   // ❌ PROHIBITED: Enterprise abstractions
-   struct FileManager { ... }               // Artificial "manager"
-   struct TimelineService { ... }           // Unnecessary "service"
-   struct DataController { ... }            // Vague "controller"
-   ```
-
-4. **Cache Current Values Pattern (CRITICAL):**
-   ```rust
-   // ✅ ONLY inside Actor loops for event response
-   let actor = ActorVec::new(vec![], async move |state| {
-       let mut cached_username = String::new();  // Cache values
-       let mut cached_message = String::new();
-       
-       loop {
-           select! {
-               Some(username) = username_stream.next() => cached_username = username,
-               Some(message) = message_stream.next() => cached_message = message,
-               Some(()) = send_button_stream.next() => {
-                   // Use cached values when responding to events
-                   send_message(&cached_username, &cached_message);
-               }
-           }
-       }
-   });
-   
-   // ❌ NEVER cache values anywhere else - use signals instead
-   ```
-
-5. **ABSOLUTELY NO FALLBACKS (CRITICAL):**
-   **NEVER return fallback values, defaults, or emergency ranges:**
-   
-   ```rust
-   // ❌ ABSOLUTELY PROHIBITED: Any kind of fallback values
+   // ❌ PROHIBITED: Any kind of fallback values
    if no_data_available {
        return (0.0, 1.0);  // NO! Even "minimal" fallbacks are forbidden
-       return (0.0, 10.0); // NO! Emergency ranges are forbidden
-       return SomeDefault::reasonable(); // NO! No fallbacks ever
    }
-   
+
    // ✅ CORRECT: Show explicit loading state or return None
    if no_data_available {
        return None; // Let caller handle appropriately
-       // OR show placeholder UI: "Loading..." / "No data available"
-       // OR return empty result and let UI show proper state
    }
    ```
-   
-   **Why NO fallbacks:**
-   - User directive: "NO FALBACKKS!! just show placeholder text or error or whatever but NOOOO FALLBACKs ever"
-   - Fallbacks mask real data loading issues and create timing bugs
-   - Better to show explicit loading states than wrong data
-   - Fallbacks interfere with proper reactive data flow
 
-### Migration Status: 74+ Mutables → Actor+Relay
-See `docs/actors_relays/novywave/migration_strategy.md` for complete migration plan.
+2. **Domain-Driven Design:**
+   ```rust
+   // ✅ Model what it IS
+   struct TrackedFiles { ... }
+   struct WaveformTimeline { ... }
 
-**Phase 1 Targets:**
-- TrackedFiles domain (13 mutables → 1 Actor+Relay struct)
-- SelectedVariables domain (8 mutables → 1 Actor+Relay struct) 
-- WaveformTimeline domain (25 mutables → 1 Actor+Relay struct)
+   // ❌ PROHIBITED: Enterprise abstractions
+   struct FileManager { ... }
+   struct TimelineService { ... }
+   ```
 
 ## ReactiveTreeView & Signal Performance Lessons
 
@@ -137,7 +67,7 @@ See `docs/actors_relays/novywave/migration_strategy.md` for complete migration p
    ```rust
    // ❌ CAUSES 20+ renders from single change
    TRACKED_FILES.signal_vec_cloned().to_signal_cloned().map(|files| {...})
-   
+
    // ✅ USE items_signal_vec instead
    .items_signal_vec(TRACKED_FILES.signal_vec_cloned().map(|item| render(item)))
    ```
@@ -145,18 +75,16 @@ See `docs/actors_relays/novywave/migration_strategy.md` for complete migration p
 2. **Downstream Deduplication Fallacy:** Cannot fix signal instability by filtering downstream - fix at source
 
 3. **Zoon Framework Gotchas:**
-   - `Text::new().s()` doesn't work - wrap in `El::new().s().child(Text::new())`  
+   - `Text::new().s()` doesn't work - wrap in `El::new().s().child(Text::new())`
    - Event handlers: `.on_click(|| {})` not `.on_click(|event| {})`
    - Height inheritance: Every container needs `.s(Height::fill())`
 
 ### Performance Debugging Success Pattern
 1. Add strategic logging (not spam)
-2. Count actual data changes vs UI renders  
+2. Count actual data changes vs UI renders
 3. Use browser MCP for real performance validation
 4. Fix root causes, not symptoms
 5. Test incrementally with side-by-side comparison
-
-**ReactiveTreeView Achievement:** Working prototype with proper signal architecture, 100% performance improvement over broken signal conversion patterns.
 
 ## Command Execution Protocol
 

@@ -1,6 +1,5 @@
 use super::rendering::{RenderingParameters, VariableRenderSnapshot, WaveformRenderer};
 use crate::config::AppConfig;
-use crate::dataflow::*;
 use crate::visualizer::timeline::timeline_actor::{
     TimelinePointerHover, TimelineRenderState, TimelineTooltipData, TooltipVerticalAlignment,
     WaveformTimeline,
@@ -16,86 +15,51 @@ use zoon::*;
 
 #[derive(Clone)]
 pub struct WaveformCanvas {
-    pub canvas_actor: Actor,
-    pub canvas_initialized_relay: Relay,
-    pub redraw_requested_relay: Relay,
-    pub canvas_dimensions_changed_relay: Relay<(f32, f32)>,
-    pub theme_changed_relay: Relay<Theme>,
-    pub initialization_status_actor: Actor<bool>,
+    _canvas_task: Arc<TaskHandle>,
+    pub initialization_status: Mutable<bool>,
     render_state_store: Mutable<Option<TimelineRenderState>>,
     current_theme: Mutable<Theme>,
     canvas_element_store: Mutable<Option<HtmlCanvasElement>>,
-    _render_state_forwarder: Actor<()>,
-    _theme_forwarder: Actor<()>,
-    _resize_forwarder: Actor<()>,
+    canvas_dimensions: Mutable<(f32, f32)>,
+    canvas_ready: Mutable<bool>,
 }
 
 impl WaveformCanvas {
     pub async fn new(waveform_timeline: WaveformTimeline, app_config: AppConfig) -> Self {
-        let (canvas_initialized_relay, mut canvas_initialized_stream) = relay();
-        let (redraw_requested_relay, mut redraw_stream) = relay();
-        let (canvas_dimensions_changed_relay, mut dimensions_stream) = relay::<(f32, f32)>();
-        let (theme_changed_relay, mut theme_stream) = relay::<Theme>();
-        let (initialization_status_changed_relay, mut initialization_status_stream) = relay();
-        let initialization_status_actor = Actor::new(false, async move |state_handle| {
-            while let Some(()) = initialization_status_stream.next().await {
-                state_handle.set_neq(true);
-            }
-        });
-
+        let initialization_status = Mutable::new(false);
         let render_state_store = Mutable::new(None);
-        let current_theme = Mutable::new(app_config.theme_actor.state.get_cloned());
-        let canvas_element_store = Mutable::new(None);
+        let current_theme = Mutable::new(app_config.theme.get_cloned());
+        let canvas_element_store: Mutable<Option<HtmlCanvasElement>> = Mutable::new(None);
+        let canvas_dimensions = Mutable::new((0.0f32, 0.0f32));
+        let canvas_ready = Mutable::new(false);
 
-        let (render_state_relay, mut render_state_stream) = relay::<TimelineRenderState>();
-        let render_state_forwarder = {
-            let timeline = waveform_timeline.clone();
-            let relay = render_state_relay.clone();
-            Actor::new((), async move |_state| {
-                let mut stream = timeline.render_state_actor().signal().to_stream().fuse();
-                while let Some(state) = stream.next().await {
-                    relay.send(state);
-                }
-            })
-        };
-
-        let theme_forwarder = {
-            let relay = theme_changed_relay.clone();
-            Actor::new((), async move |_state| {
-                let mut stream = app_config.theme_actor.signal().to_stream().fuse();
-                while let Some(theme) = stream.next().await {
-                    relay.send(theme);
-                }
-            })
-        };
-
-        let resize_forwarder = {
-            let mut stream = canvas_dimensions_changed_relay.subscribe().fuse();
-            let timeline = waveform_timeline.clone();
-            Actor::new((), async move |_state| {
-                while let Some((width, height)) = stream.next().await {
-                    timeline.canvas_resized_relay.send((width, height));
-                }
-            })
-        };
-
-        let canvas_actor = {
+        let canvas_task = Arc::new(Task::start_droppable({
             let render_state_store = render_state_store.clone();
-            let current_theme = current_theme.clone();
-            let canvas_element_store_actor = canvas_element_store.clone();
+            let current_theme_store = current_theme.clone();
+            let canvas_element_store_task = canvas_element_store.clone();
+            let canvas_dimensions_task = canvas_dimensions.clone();
+            let canvas_ready_task = canvas_ready.clone();
+            let initialization_status_task = initialization_status.clone();
             let timeline = waveform_timeline.clone();
-            Actor::new((), async move |_state_handle| {
+            let app_config_task = app_config.clone();
+            async move {
                 let mut renderer: Option<WaveformRenderer> = None;
                 let mut initialized = false;
-                let mut active_theme = current_theme.get_cloned();
+                let mut active_theme = current_theme_store.get_cloned();
+                let mut cached_dimensions = (0.0f32, 0.0f32);
+
+                let mut render_state_stream = timeline.render_state_actor().signal_cloned().to_stream().fuse();
+                let mut theme_stream = app_config_task.theme.signal().to_stream().fuse();
+                let mut dimensions_stream = canvas_dimensions_task.signal().dedupe().to_stream().fuse();
+                let mut canvas_ready_stream = canvas_ready_task.signal().dedupe().to_stream().fuse();
 
                 loop {
                     select! {
-                        canvas_init = canvas_initialized_stream.next() => {
-                            if let Some(()) = canvas_init {
-                                if let Some(canvas_element) = canvas_element_store_actor.get_cloned() {
+                        canvas_is_ready = canvas_ready_stream.next() => {
+                            if let Some(true) = canvas_is_ready {
+                                if let Some(canvas_element) = canvas_element_store_task.get_cloned() {
                                     if !initialized {
-                                        let mut new_renderer = WaveformRenderer::new().await;
+                                        let mut new_renderer = WaveformRenderer::new();
                                         let fast_canvas = fast2d::CanvasWrapper::new_with_canvas(canvas_element)
                                             .await;
                                         new_renderer.set_canvas(fast_canvas);
@@ -110,7 +74,7 @@ impl WaveformCanvas {
                                         }
                                         renderer = Some(new_renderer);
                                         initialized = true;
-                                        initialization_status_changed_relay.send(());
+                                        initialization_status_task.set_neq(true);
                                     } else if let Some(ref mut renderer) = renderer {
                                         let fast_canvas = fast2d::CanvasWrapper::new_with_canvas(canvas_element)
                                             .await;
@@ -128,33 +92,22 @@ impl WaveformCanvas {
                                 }
                             }
                         }
-                        redraw_request = redraw_stream.next() => {
-                            if let Some(()) = redraw_request {
-                                if let (Some(ref mut renderer), Some(render_state)) =
-                                    (renderer.as_mut(), render_state_store.get_cloned())
-                                {
-                                    let params = Self::render_params_from_state(
-                                        &render_state,
-                                        active_theme,
-                                    );
-                                    if let Some(duration_ms) = renderer.render_frame(params) {
-                                        timeline.record_render_duration(duration_ms as f64);
-                                    }
-                                }
-                            }
-                        }
                         dimensions_change = dimensions_stream.next() => {
                             if let Some((width, height)) = dimensions_change {
-                                if let (Some(ref mut renderer), Some(render_state)) =
-                                    (renderer.as_mut(), render_state_store.get_cloned())
-                                {
-                                    let params = Self::render_params_from_state(
-                                        &render_state,
-                                        active_theme,
-                                    );
-                                    renderer.set_dimensions(width, height);
-                                    if let Some(duration_ms) = renderer.render_frame(params) {
-                                        timeline.record_render_duration(duration_ms as f64);
+                                if (width, height) != cached_dimensions && width > 0.0 && height > 0.0 {
+                                    cached_dimensions = (width, height);
+                                    timeline.set_canvas_dimensions(width, height);
+                                    if let (Some(ref mut renderer), Some(render_state)) =
+                                        (renderer.as_mut(), render_state_store.get_cloned())
+                                    {
+                                        let params = Self::render_params_from_state(
+                                            &render_state,
+                                            active_theme,
+                                        );
+                                        renderer.set_dimensions(width, height);
+                                        if let Some(duration_ms) = renderer.render_frame(params) {
+                                            timeline.record_render_duration(duration_ms as f64);
+                                        }
                                     }
                                 }
                             }
@@ -162,7 +115,7 @@ impl WaveformCanvas {
                         theme_change = theme_stream.next() => {
                             if let Some(theme) = theme_change {
                                 active_theme = theme;
-                                current_theme.set(theme);
+                                current_theme_store.set(theme);
                                 if let (Some(ref mut renderer), Some(render_state)) =
                                     (renderer.as_mut(), render_state_store.get_cloned())
                                 {
@@ -193,27 +146,30 @@ impl WaveformCanvas {
                         }
                     }
                 }
-            })
-        };
+            }
+        }));
 
         Self {
-            canvas_actor,
-            canvas_initialized_relay,
-            redraw_requested_relay,
-            canvas_dimensions_changed_relay,
-            theme_changed_relay,
-            initialization_status_actor,
+            _canvas_task: canvas_task,
+            initialization_status,
             render_state_store,
             current_theme,
             canvas_element_store,
-            _render_state_forwarder: render_state_forwarder,
-            _theme_forwarder: theme_forwarder,
-            _resize_forwarder: resize_forwarder,
+            canvas_dimensions,
+            canvas_ready,
         }
     }
 
     pub fn initialized_signal(&self) -> impl Signal<Item = bool> {
-        self.initialization_status_actor.signal()
+        self.initialization_status.signal()
+    }
+
+    pub fn notify_dimensions(&self, width: f32, height: f32) {
+        self.canvas_dimensions.set_neq((width, height));
+    }
+
+    pub fn notify_canvas_ready(&self) {
+        self.canvas_ready.set_neq(true);
     }
 
     fn render_params_from_state(state: &TimelineRenderState, theme: Theme) -> RenderingParameters {
@@ -250,22 +206,17 @@ pub fn waveform_canvas(
     waveform_canvas: &WaveformCanvas,
     waveform_timeline: &WaveformTimeline,
 ) -> impl Element {
-    let canvas_dimensions_relay = waveform_canvas.canvas_dimensions_changed_relay.clone();
-    let canvas_initialized_relay = waveform_canvas.canvas_initialized_relay.clone();
-    let redraw_relay = waveform_canvas.redraw_requested_relay.clone();
-    let theme_relay = waveform_canvas.theme_changed_relay.clone();
+    let canvas_ref = waveform_canvas.clone();
+    let canvas_ref_for_resize = waveform_canvas.clone();
     let render_state_store_click = waveform_canvas.render_state_store.clone();
     let render_state_store_move = waveform_canvas.render_state_store.clone();
     let timeline_for_click = waveform_timeline.clone();
     let timeline_for_hover = waveform_timeline.clone();
-    let pointer_hover_relay_for_click = waveform_timeline.pointer_hover_relay.clone();
-    let pointer_hover_relay_for_move = waveform_timeline.pointer_hover_relay.clone();
-    let pointer_hover_relay_for_leave = waveform_timeline.pointer_hover_relay.clone();
+    let timeline_for_click_hover = waveform_timeline.clone();
+    let timeline_for_move_hover = waveform_timeline.clone();
+    let timeline_for_leave = waveform_timeline.clone();
     let canvas_element_store = waveform_canvas.canvas_element_store.clone();
     let canvas_element_store_for_insert = canvas_element_store.clone();
-
-    let initial_theme = waveform_canvas.current_theme.get_cloned();
-    theme_relay.send(initial_theme);
 
     let theme_signal_for_tooltip = waveform_canvas.current_theme.signal_cloned();
 
@@ -275,22 +226,24 @@ pub fn waveform_canvas(
         .s(Width::fill())
         .s(Height::fill())
         .update_raw_el({
-            let canvas_dimensions_relay = canvas_dimensions_relay.clone();
             let render_state_store_click = render_state_store_click.clone();
             let render_state_store_move = render_state_store_move.clone();
             let timeline_for_click = timeline_for_click.clone();
             let timeline_for_hover = timeline_for_hover.clone();
             move |raw_el| {
                 let raw_el = raw_el
-                    .on_resize(move |width, height| {
-                        if width > 0 && height > 0 {
-                            canvas_dimensions_relay.send((width as f32, height as f32));
+                    .on_resize({
+                        let canvas_ref = canvas_ref_for_resize.clone();
+                        move |width, height| {
+                            if width > 0 && height > 0 {
+                                canvas_ref.notify_dimensions(width as f32, height as f32);
+                            }
                         }
                     })
                     .event_handler({
                         let render_state_store_click = render_state_store_click.clone();
                         let timeline_for_click = timeline_for_click.clone();
-                        let pointer_hover_relay = pointer_hover_relay_for_click.clone();
+                        let timeline_for_hover = timeline_for_click_hover.clone();
                         move |event: PointerDown| {
                             if let Some(state) = render_state_store_click.get_cloned() {
                                 let width = state.canvas_width_px.max(1) as f64;
@@ -311,8 +264,8 @@ pub fn waveform_canvas(
                                 let time = crate::visualizer::timeline::time_domain::TimePs::from_picoseconds(
                                     time_ps,
                                 );
-                                timeline_for_click.cursor_clicked_relay.send(time);
-                                pointer_hover_relay.send(Some(TimelinePointerHover {
+                                timeline_for_click.set_cursor_clamped(time);
+                                timeline_for_hover.set_pointer_hover(Some(TimelinePointerHover {
                                     normalized_x,
                                     normalized_y,
                                 }));
@@ -321,8 +274,7 @@ pub fn waveform_canvas(
                     })
                     .event_handler({
                         let render_state_store_move = render_state_store_move.clone();
-                        let timeline_for_hover = timeline_for_hover.clone();
-                        let pointer_hover_relay = pointer_hover_relay_for_move.clone();
+                        let timeline_for_hover = timeline_for_move_hover.clone();
                         move |event: PointerMove| {
                             if let Some(state) = render_state_store_move.get_cloned() {
                                 let width = state.canvas_width_px.max(1) as f64;
@@ -344,10 +296,8 @@ pub fn waveform_canvas(
                                     time_ps,
                                 );
 
-                                timeline_for_hover
-                                    .zoom_center_follow_mouse_relay
-                                    .send(Some(time));
-                                pointer_hover_relay.send(Some(TimelinePointerHover {
+                                timeline_for_hover.set_zoom_center_follow(Some(time));
+                                timeline_for_hover.set_pointer_hover(Some(TimelinePointerHover {
                                     normalized_x,
                                     normalized_y,
                                 }));
@@ -355,11 +305,10 @@ pub fn waveform_canvas(
                         }
                     })
                     .event_handler({
-                        let timeline_for_hover = timeline_for_hover.clone();
-                        let pointer_hover_relay = pointer_hover_relay_for_leave.clone();
+                        let timeline_for_leave = timeline_for_leave.clone();
                         move |_: PointerLeave| {
-                            timeline_for_hover.zoom_center_follow_mouse_relay.send(None);
-                            pointer_hover_relay.send(None);
+                            timeline_for_leave.set_zoom_center_follow(None);
+                            timeline_for_leave.set_pointer_hover(None);
                         }
                     });
                 raw_el
@@ -367,26 +316,24 @@ pub fn waveform_canvas(
         })
         .after_insert({
             let canvas_element_store = canvas_element_store_for_insert.clone();
+            let canvas_ref = canvas_ref.clone();
             move |canvas: HtmlCanvasElement| {
                 let width = canvas.client_width() as f32;
                 let height = canvas.client_height() as f32;
                 if width > 0.0 && height > 0.0 {
-                    canvas_dimensions_relay.send((width, height));
+                    canvas_ref.notify_dimensions(width, height);
                 }
                 canvas_element_store.set(Some(canvas));
-                canvas_initialized_relay.send(());
+                canvas_ref.notify_canvas_ready();
             }
-        })
-        .after_remove(move |_| {
-            redraw_relay.send(());
         })
         .unify();
 
     let tooltip_signal = {
-        let tooltip_actor = waveform_timeline.tooltip_actor();
+        let tooltip_mutable = waveform_timeline.tooltip_actor();
         let theme_signal = theme_signal_for_tooltip;
         map_ref! {
-            let tooltip = tooltip_actor.state.signal_cloned(),
+            let tooltip = tooltip_mutable.signal_cloned(),
             let theme = theme_signal => {
                 tooltip.clone().map(|data| (data, *theme))
             }

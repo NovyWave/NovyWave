@@ -89,7 +89,9 @@ impl Platform for WebPlatform {
         match (&*CONNECTION).get_cloned() {
             Some(connection) => {
                 if matches!(msg, UpMsg::LoadConfig) {
-                    let _ = connection.send_up_msg(UpMsg::LoadConfig).await;
+                    if let Err(e) = connection.send_up_msg(UpMsg::LoadConfig).await {
+                        zoon::println!("ERROR: Failed to send LoadConfig: {:?}", e);
+                    }
                     zoon::println!("platform(web): sent LoadConfig");
                     return Ok(());
                 }
@@ -163,7 +165,7 @@ fn ensure_flusher() {
         return;
     }
     FLUSHING.set(true);
-    zoon::Task::start(async move {
+    let _ = zoon::Task::start_droppable(async move {
         // First, try to verify handler readiness.
         let ready = wait_until_server_ready().await;
 
@@ -172,7 +174,9 @@ fn ensure_flusher() {
             while let Some(next_msg) = { PENDING_QUEUE.lock_mut().pop_front() } {
                 if let Some(connection) = (&*CONNECTION).get_cloned() {
                     let is_load_config = matches!(next_msg, UpMsg::LoadConfig);
-                    let _ = connection.send_up_msg(next_msg).await;
+                    if let Err(e) = connection.send_up_msg(next_msg).await {
+                        zoon::println!("ERROR: Failed to send queued message: {:?}", e);
+                    }
                     if is_load_config {
                         LOADCONFIG_INFLIGHT.set(false);
                     }

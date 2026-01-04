@@ -108,7 +108,7 @@ fn selected_variables_panel_content(
         .s(Height::exact_signal(
             selected_variables_for_height
                 .variables
-                .signal_vec()
+                .signal_vec_cloned()
                 .to_signal_cloned()
                 .map(|vars| {
                     let rows = if vars.is_empty() { 2 } else { vars.len() + 1 };
@@ -126,7 +126,7 @@ fn selected_variables_panel_content(
             let waveform_canvas = waveform_canvas.clone();
             selected_variables_for_height
                 .variables
-                .signal_vec()
+                .signal_vec_cloned()
                 .to_signal_cloned()
                 .map(move |vars| {
                     if vars.is_empty() {
@@ -195,7 +195,7 @@ fn selected_variables_name_column(
             let tracked_files_for_items = tracked_files.clone();
             selected_variables
                 .variables
-                .signal_vec()
+                .signal_vec_cloned()
                 .map(move |selected_var| {
                     name_column_variable_row(
                         selected_var,
@@ -220,7 +220,7 @@ fn name_column_variable_row(
     let selected_variables_for_remove = selected_variables.clone();
     let tracked_files_broadcaster = tracked_files
         .files
-        .signal_vec()
+        .signal_vec_cloned()
         .to_signal_cloned()
         .broadcast();
 
@@ -237,9 +237,9 @@ fn name_column_variable_row(
                 .size(ButtonSize::Small)
                 .custom_padding(2, 2)
                 .on_press({
-                    let remove_relay = selected_variables_for_remove.variable_removed_relay.clone();
+                    let sv = selected_variables_for_remove.clone();
                     move || {
-                        remove_relay.send(unique_id.clone());
+                        sv.remove_variable(unique_id.clone());
                     }
                 })
                 .build()
@@ -375,9 +375,9 @@ fn name_column_footer(
                         .item(
                             El::new()
                                 .on_click({
-                                    let relay = waveform_timeline.reset_zoom_pressed_relay.clone();
+                                    let timeline = waveform_timeline.clone();
                                     move || {
-                                        relay.send(());
+                                        timeline.reset_zoom();
                                     }
                                 })
                                 .child(
@@ -420,7 +420,7 @@ fn selected_variables_value_column(
             let timeline_for_rows = waveform_timeline_for_values.clone();
             selected_variables
                 .variables
-                .signal_vec()
+                .signal_vec_cloned()
                 .map(move |selected_var| {
                     value_column_variable_row(
                         selected_var,

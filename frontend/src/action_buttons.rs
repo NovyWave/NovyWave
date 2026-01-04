@@ -1,4 +1,3 @@
-use crate::dataflow::atom::Atom;
 use moonzoon_novyui::tokens::theme::Theme;
 use moonzoon_novyui::*;
 use zoon::*;
@@ -9,14 +8,14 @@ pub fn load_files_button_with_progress(
     variant: ButtonVariant,
     size: ButtonSize,
     icon: Option<IconName>,
-    file_dialog_visible: Atom<bool>,
+    file_dialog_visible: Mutable<bool>,
 ) -> impl Element {
     // Count files that are actually in loading state
-    // Use files.signal_vec().to_signal_cloned() as per TrackedFiles architecture
+    // Use files.signal_vec_cloned() for non-Copy types
     let loading_count_signal =
         tracked_files
             .files
-            .signal_vec()
+            .signal_vec_cloned()
             .to_signal_cloned()
             .map(move |files| {
                 files
@@ -83,7 +82,7 @@ pub fn clear_all_variables_button(
         .variant(ButtonVariant::DestructiveGhost)
         .size(ButtonSize::Small)
         .on_press(move || {
-            selected_variables_clone.selection_cleared_relay.send(());
+            selected_variables_clone.clear_selection();
         })
         .build()
 }
@@ -92,6 +91,7 @@ pub fn clear_all_variables_button(
 pub fn theme_toggle_button(app_config: &crate::config::AppConfig) -> impl Element {
     let app_config = app_config.clone();
     El::new().child_signal(theme().map(move |current_theme| {
+        let app_config_for_press = app_config.clone();
         button()
             .left_icon(match current_theme {
                 Theme::Light => IconName::Moon,
@@ -99,10 +99,7 @@ pub fn theme_toggle_button(app_config: &crate::config::AppConfig) -> impl Elemen
             })
             .variant(ButtonVariant::Outline)
             .size(ButtonSize::Small)
-            .on_press({
-                let theme_relay = app_config.theme_button_clicked_relay.clone();
-                move || theme_relay.send(())
-            })
+            .on_press(move || app_config_for_press.toggle_theme())
             .build()
             .into_element()
     }))
@@ -111,7 +108,7 @@ pub fn theme_toggle_button(app_config: &crate::config::AppConfig) -> impl Elemen
 /// Dock mode toggle button
 pub fn dock_toggle_button(app_config: &crate::config::AppConfig) -> impl Element {
     let app_config = app_config.clone();
-    El::new().child_signal(app_config.dock_mode_actor.signal().map(move |dock_mode| {
+    El::new().child_signal(app_config.dock_mode.signal_cloned().map(move |dock_mode| {
         let app_config_for_icon = app_config.clone();
         let app_config_for_press = app_config.clone();
         let is_docked = matches!(dock_mode, shared::DockMode::Bottom);
@@ -125,8 +122,8 @@ pub fn dock_toggle_button(app_config: &crate::config::AppConfig) -> impl Element
                 El::new()
                     .child_signal(
                         app_config_for_icon
-                            .dock_mode_actor
-                            .signal()
+                            .dock_mode
+                            .signal_cloned()
                             .map(|dock_mode| {
                                 let is_docked = matches!(dock_mode, shared::DockMode::Bottom);
                                 let icon_el = icon(IconName::ArrowDownToLine)
@@ -147,12 +144,7 @@ pub fn dock_toggle_button(app_config: &crate::config::AppConfig) -> impl Element
             })
             .variant(ButtonVariant::Outline)
             .size(ButtonSize::Small)
-            .on_press({
-                let dock_relay = app_config_for_press.dock_mode_button_clicked_relay.clone();
-                move || {
-                    dock_relay.send(());
-                }
-            })
+            .on_press(move || app_config_for_press.toggle_dock_mode())
             .align(Align::center())
             .build()
             .into_element()

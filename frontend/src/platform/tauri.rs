@@ -107,7 +107,7 @@ pub fn setup_update_event_listeners(error_display: crate::error_display::ErrorDi
 
                 zoon::println!("platform(tauri): update available {} -> {}", current_version, new_version);
                 let alert = crate::error_display::ErrorAlert::new_update_available(current_version, new_version);
-                error_display.toast_added_relay.send(alert);
+                error_display.add_toast(alert);
             }
         });
         let _ = tauri_listen("update_available", &closure);
@@ -127,11 +127,11 @@ pub fn setup_update_event_listeners(error_display: crate::error_display::ErrorDi
                 zoon::println!("platform(tauri): download progress {:.1}%", progress);
 
                 // First remove any existing downloading toast, then add the new one
-                error_display.toast_dismissed_relay.send("update_downloading".to_string());
-                error_display.toast_dismissed_relay.send("update_available".to_string());
+                error_display.dismiss_toast("update_downloading");
+                error_display.dismiss_toast("update_available");
 
                 let alert = crate::error_display::ErrorAlert::new_update_downloading(progress);
-                error_display.toast_added_relay.send(alert);
+                error_display.add_toast(alert);
             }
         });
         let _ = tauri_listen("update_download_progress", &closure);
@@ -150,10 +150,10 @@ pub fn setup_update_event_listeners(error_display: crate::error_display::ErrorDi
                     .unwrap_or_else(|| "unknown".to_string());
 
                 // Remove downloading toast and show ready toast
-                error_display.toast_dismissed_relay.send("update_downloading".to_string());
+                error_display.dismiss_toast("update_downloading");
 
                 let alert = crate::error_display::ErrorAlert::new_update_ready(version);
-                error_display.toast_added_relay.send(alert);
+                error_display.add_toast(alert);
             }
         });
         let _ = tauri_listen("update_ready", &closure);
@@ -172,11 +172,11 @@ pub fn setup_update_event_listeners(error_display: crate::error_display::ErrorDi
                     .unwrap_or_else(|| "Unknown error".to_string());
 
                 // Remove downloading toast and show error toast
-                error_display.toast_dismissed_relay.send("update_downloading".to_string());
-                error_display.toast_dismissed_relay.send("update_available".to_string());
+                error_display.dismiss_toast("update_downloading");
+                error_display.dismiss_toast("update_available");
 
                 let alert = crate::error_display::ErrorAlert::new_update_error(error);
-                error_display.toast_added_relay.send(alert);
+                error_display.add_toast(alert);
             }
         });
         let _ = tauri_listen("update_error", &closure);

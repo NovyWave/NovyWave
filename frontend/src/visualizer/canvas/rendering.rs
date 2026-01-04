@@ -1,5 +1,5 @@
-use crate::dataflow::Actor;
 use crate::visualizer::timeline::time_domain::{PS_PER_MS, PS_PER_NS, PS_PER_SECOND, PS_PER_US};
+use zoon::Mutable;
 use fast2d::{CanvasWrapper as Fast2DCanvas, Family, Object2d, Rectangle, Text};
 use moonzoon_novyui::tokens::theme::Theme as NovyUITheme;
 use shared::{SignalTransition, SignalValue, VarFormat};
@@ -74,7 +74,7 @@ pub struct RenderingParameters {
 }
 
 pub struct WaveformRenderer {
-    rendering_state: Actor<RenderingState>,
+    rendering_state: Mutable<RenderingState>,
     canvas: Option<Fast2DCanvas>,
 }
 
@@ -160,8 +160,8 @@ pub struct RenderResult {
 }
 
 impl WaveformRenderer {
-    pub async fn new() -> Self {
-        let rendering_state = Actor::new(RenderingState::default(), async move |_state| {});
+    pub fn new() -> Self {
+        let rendering_state = Mutable::new(RenderingState::default());
 
         Self {
             rendering_state,
@@ -194,7 +194,7 @@ impl WaveformRenderer {
             let theme_colors = Self::get_theme_colors(params.theme);
             let overlay_objects = Self::build_overlay_objects(&params, &theme_colors);
 
-            let mut state = self.rendering_state.state.lock_mut();
+            let mut state = self.rendering_state.lock_mut();
             let static_key = StaticRenderKey::from_params(&params);
             let mut static_count = state
                 .static_cache

@@ -1,4 +1,4 @@
-use crate::dataflow::{Actor, atom::Atom};
+use zoon::Mutable;
 use crate::file_operations::extract_filename;
 use futures::StreamExt;
 use indexmap::IndexSet;
@@ -11,24 +11,22 @@ use moonzoon_novyui::tokens::theme::Theme;
 use moonzoon_novyui::*;
 use shared::FileSystemItem;
 use std::collections::HashMap;
+use std::sync::Arc;
 use wasm_bindgen::JsCast;
 use zoon::events::{Click, KeyDown};
 use zoon::map_ref;
 use zoon::*;
 
-/// TreeView sync actors to handle bi-directional sync between FilePickerDomain and TreeView
-/// Replaces zoon::Task pattern with proper Actor+Relay architecture
+/// TreeView sync tasks to handle bi-directional sync between FilePickerDomain and TreeView
 pub struct TreeViewSyncActors {
-    // Keep actors alive by storing them in the struct
-    _domain_to_treeview_sync: Actor<()>,
-    _treeview_to_domain_sync: Actor<()>,
+    _domain_to_treeview_sync: Arc<TaskHandle>,
+    _treeview_to_domain_sync: Arc<TaskHandle>,
 }
 
-/// Selected files sync actors to handle bi-directional sync between FilePickerDomain and TreeView
-/// Similar to expanded directories sync but for file selections
+/// Selected files sync tasks to handle bi-directional sync between FilePickerDomain and TreeView
 pub struct SelectedFilesSyncActors {
-    _domain_to_treeview_sync: Actor<()>,
-    _treeview_to_domain_sync: Actor<()>,
+    _domain_to_treeview_sync: Arc<TaskHandle>,
+    _treeview_to_domain_sync: Arc<TaskHandle>,
 }
 
 #[cfg(NOVYWAVE_PLATFORM = "WEB")]
@@ -56,10 +54,10 @@ impl TreeViewSyncActors {
         external_expanded: zoon::Mutable<IndexSet<String>>,
     ) -> Self {
         // Domain → TreeView sync with immediate initial sync
-        let domain_to_treeview_sync = Actor::new((), {
+        let domain_to_treeview_sync = Arc::new(Task::start_droppable({
             let external_expanded_sync = external_expanded.clone();
             let domain_clone = domain.clone();
-            async move |_state| {
+            async move {
                 // Immediately sync the current value on initialization
                 let initial_value = domain_clone
                     .expanded_directories_signal()
@@ -76,15 +74,15 @@ impl TreeViewSyncActors {
                     external_expanded_sync.set_neq(index_set);
                 }
             }
-        });
+        }));
 
         // TreeView → Domain sync
         // Note: is_first_sync hack removed - phase-based initialization + cache checks
         // in backend_sender_actor prevent duplicate directory loading requests
-        let treeview_to_domain_sync = Actor::new((), {
+        let treeview_to_domain_sync = Arc::new(Task::start_droppable({
             let domain_for_expansion = domain.clone();
             let external_expanded_for_expansion = external_expanded.clone();
-            async move |_state| {
+            async move {
                 let mut previous_expanded: IndexSet<String> = IndexSet::new();
                 let mut external_signal_stream =
                     external_expanded_for_expansion.signal_cloned().to_stream();
@@ -101,10 +99,7 @@ impl TreeViewSyncActors {
                                 "workspace_picker_expand_request",
                                 format!("path={path}"),
                             );
-                            // Single path for directory loading via directory_expanded_relay
-                            domain_for_expansion
-                                .directory_expanded_relay
-                                .send(path.clone());
+                            domain_for_expansion.expand_directory(path.clone());
                         }
                     }
 
@@ -114,16 +109,14 @@ impl TreeViewSyncActors {
                                 "workspace_picker_collapse_request",
                                 format!("path={path}"),
                             );
-                            domain_for_expansion
-                                .directory_collapsed_relay
-                                .send(path.clone());
+                            domain_for_expansion.collapse_directory(path.clone());
                         }
                     }
 
                     previous_expanded = current_expanded;
                 }
             }
-        });
+        }));
 
         Self {
             _domain_to_treeview_sync: domain_to_treeview_sync,
@@ -138,10 +131,10 @@ impl SelectedFilesSyncActors {
         selected_files_mutable: zoon::MutableVec<String>,
     ) -> Self {
         // Domain → TreeView sync using differential updates
-        let domain_to_treeview_sync = Actor::new((), {
+        let domain_to_treeview_sync = Arc::new(Task::start_droppable({
             let selected_files_sync = selected_files_mutable.clone();
             let domain_clone = domain.clone();
-            async move |_state| {
+            async move {
                 let mut signal_stream = domain_clone
                     .selected_files_vec_signal
                     .signal_cloned()
@@ -150,13 +143,13 @@ impl SelectedFilesSyncActors {
                     selected_files_sync.lock_mut().replace_cloned(files_vec);
                 }
             }
-        });
+        }));
 
         // TreeView → Domain sync with manual diff detection
-        let treeview_to_domain_sync = Actor::new((), {
+        let treeview_to_domain_sync = Arc::new(Task::start_droppable({
             let domain_for_selection = domain.clone();
             let selected_files_for_selection = selected_files_mutable.clone();
-            async move |_state| {
+            async move {
                 let mut previous_files: Vec<String> = Vec::new();
                 let mut mutable_signal_stream = selected_files_for_selection
                     .signal_vec_cloned()
@@ -172,28 +165,23 @@ impl SelectedFilesSyncActors {
                     }
                     is_first_sync = false;
 
-                    // Send file selected events for new files
+                    // Sync file selections using direct methods
                     for file_path in current_files.iter() {
                         if !previous_files.contains(file_path) {
-                            domain_for_selection
-                                .file_selected_relay
-                                .send(file_path.clone());
+                            domain_for_selection.select_file(file_path.clone());
                         }
                     }
 
-                    // Send file deselected events for removed files
                     for file_path in previous_files.iter() {
                         if !current_files.contains(file_path) {
-                            domain_for_selection
-                                .file_deselected_relay
-                                .send(file_path.clone());
+                            domain_for_selection.deselect_file(file_path.clone());
                         }
                     }
 
                     previous_files = current_files;
                 }
             }
-        });
+        }));
 
         Self {
             _domain_to_treeview_sync: domain_to_treeview_sync,
@@ -205,50 +193,44 @@ impl SelectedFilesSyncActors {
 /// Initialize directories on first use and when restored from config
 pub fn initialize_directories_and_request_contents(
     file_picker_domain: &crate::config::FilePickerDomain,
-) -> crate::dataflow::Actor<()> {
+) -> Arc<TaskHandle> {
     let domain_clone = file_picker_domain.clone();
-    crate::dataflow::Actor::new((), async move |state_handle| {
+    Arc::new(Task::start_droppable(async move {
         // Read current cache once and only request roots that are not loaded.
         let cache = domain_clone
-            .directory_cache_actor
-            .signal()
+            .directory_cache
+            .signal_cloned()
             .to_stream()
             .next()
             .await
             .unwrap_or_default();
 
         if !cache.contains_key("/") {
-            domain_clone
-                .directory_expanded_relay
-                .send("/".to_string());
+            domain_clone.expand_directory("/".to_string());
         }
 
-        let mut current_expanded = domain_clone.expanded_directories_actor.signal().to_stream();
+        let mut current_expanded = domain_clone.expanded_directories.signal_cloned().to_stream();
         if let Some(expanded) = current_expanded.next().await {
             if expanded.is_empty() {
                 if let Some(home_dir) = std::env::var("HOME")
                     .ok()
                     .or_else(|| std::env::var("USERPROFILE").ok())
                 {
-                    domain_clone.directory_expanded_relay.send("/".to_string());
-                    domain_clone.directory_expanded_relay.send(home_dir.clone());
+                    domain_clone.expand_directory("/".to_string());
+                    domain_clone.expand_directory(home_dir.clone());
                 } else {
-                    domain_clone.directory_expanded_relay.send("/".to_string());
+                    domain_clone.expand_directory("/".to_string());
                 }
             } else {
                 // Request contents only for directories not already in cache
                 for directory in &expanded {
                     if !cache.contains_key(directory) {
-                        domain_clone
-                            .directory_expanded_relay
-                            .send(directory.clone());
+                        domain_clone.expand_directory(directory.clone());
                     }
                 }
             }
         }
-
-        state_handle.set(());
-    })
+    }))
 }
 
 /// Build tree data for TreeView component using Actor signals
@@ -327,13 +309,13 @@ pub fn file_paths_dialog(
     tracked_files: crate::tracked_files::TrackedFiles,
     _selected_variables: crate::selected_variables::SelectedVariables,
     app_config: crate::config::AppConfig,
-    file_dialog_visible: Atom<bool>,
+    file_dialog_visible: Mutable<bool>,
     connection: crate::connection::ConnectionAdapter,
 ) -> impl Element {
     // Count files that are actually in loading state, not total files
     let loading_count_broadcaster = tracked_files
         .files
-        .signal_vec()
+        .signal_vec_cloned()
         .to_signal_cloned()
         .map(move |files| {
             files
@@ -401,7 +383,7 @@ pub fn file_paths_dialog(
                                         file_dialog_visible_for_enter.clone()
                                     );
                                     // Clear the selection after loading files so dialog is ready for next selection
-                                    file_picker_domain_for_enter.clear_selection_relay.send(());
+                                    file_picker_domain_for_enter.clear_file_selection();
                                 }
                             }
                         }
@@ -465,7 +447,7 @@ pub fn file_paths_dialog(
                                 .child_signal({
                                     let file_picker_domain_for_len = file_picker_domain.clone();
                                     let file_picker_domain_for_tags = file_picker_domain.clone();
-                                    file_picker_domain_for_len.selected_files.signal_vec().len().map(move |selected_count| {
+                                    file_picker_domain_for_len.selected_files.signal_vec_cloned().len().map(move |selected_count| {
                                         if selected_count == 0 {
                                             El::new()
                                                 .s(Font::new().italic().color_signal(neutral_8()))
@@ -511,7 +493,7 @@ pub fn file_paths_dialog(
                                                                                     let path = path.to_string();
                                                                                     move || {
                                                                                         zoon::println!("🗑️ Badge X clicked for: {}", path);
-                                                                                        file_picker_domain_for_tag.file_deselected_relay.send(path.clone());
+                                                                                        file_picker_domain_for_tag.deselect_file(path.clone());
                                                                                     }
                                                                                 })
                                                                         )
@@ -542,7 +524,7 @@ pub fn file_paths_dialog(
                                             let file_picker_domain_for_button = file_picker_domain.clone();
                                             map_ref! {
                                                 let loading_count = loading_count_broadcaster.signal(),
-                                                let selected_count = file_picker_domain_for_button.selected_files.signal_vec().len() =>
+                                                let selected_count = file_picker_domain_for_button.selected_files.signal_vec_cloned().len() =>
                                                 move {
                                                     let is_loading = *loading_count > 0;
                                                     if is_loading {
@@ -559,7 +541,7 @@ pub fn file_paths_dialog(
                                             let file_picker_domain_for_disabled = file_picker_domain.clone();
                                             map_ref! {
                                                 let loading_count = loading_count_broadcaster.signal(),
-                                                let selected_count = file_picker_domain_for_disabled.selected_files.signal_vec().len() => {
+                                                let selected_count = file_picker_domain_for_disabled.selected_files.signal_vec_cloned().len() => {
                                                 let is_loading = *loading_count > 0;
                                                 is_loading || *selected_count == 0
                                                 }
@@ -579,7 +561,7 @@ pub fn file_paths_dialog(
                                                     file_dialog_visible_for_press.clone()
                                                 );
                                                 // Clear the selection after loading files so dialog is ready for next selection
-                                                file_picker_domain_for_press.clear_selection_relay.send(());
+                                                file_picker_domain_for_press.clear_file_selection();
                                             }
                                         })
                                         .variant(ButtonVariant::Primary)
@@ -604,8 +586,6 @@ pub fn file_picker_content(
     let selected_files_sync =
         SelectedFilesSyncActors::new(file_picker_domain.clone(), selected_files_vec.clone());
 
-    let _tree_rendering_stream = file_picker_domain.tree_rendering_relay.subscribe();
-
     El::new()
         .s(Height::fill())
         .s(Scrollbars::both())
@@ -615,7 +595,7 @@ pub fn file_picker_content(
         })
         // Scroll position restoration with tree rendering coordination
         .viewport_y_signal({
-            let scroll_position_actor = file_picker_domain.scroll_position_actor.clone();
+            let scroll_position_actor = file_picker_domain.scroll_position.clone();
 
             // Use map_ref! for simpler signal coordination without complex async block
             zoon::map_ref! {
@@ -626,7 +606,7 @@ pub fn file_picker_content(
         })
         // Scroll position saving with raw DOM event handling
         .update_raw_el({
-            let scroll_relay = file_picker_domain.scroll_position_changed_relay.clone();
+            let domain = file_picker_domain.clone();
             move |raw_el| {
                 // Use the same pattern as virtual_list.rs for raw DOM scroll events
                 let html_el = raw_el.dom_element();
@@ -635,7 +615,7 @@ pub fn file_picker_content(
                         if let Some(target) = _event.current_target() {
                             if let Ok(element) = target.dyn_into::<web_sys::Element>() {
                                 let scroll_top = element.scroll_top();
-                                scroll_relay.send(scroll_top);
+                                domain.set_scroll_position(scroll_top);
                             }
                         }
                     }
@@ -725,18 +705,14 @@ pub fn file_picker_tree(
                                 drop(sync_actors);
                                 drop(_initialization_actor);
                             })
-                            // Signal tree rendering completion for scroll position coordination
+                            // Restore scroll position after tree is rendered
                             .after_insert({
-                                let tree_rendering_relay =
-                                    domain_for_treeview.tree_rendering_relay.clone();
                                 let scroll_position_actor =
-                                    domain_for_treeview.scroll_position_actor.clone();
+                                    domain_for_treeview.scroll_position.clone();
                                 move |_element| {
-                                    tree_rendering_relay.send(());
-
-                                    // CRITICAL: Trigger scroll restoration after tree is rendered
+                                    // Trigger scroll restoration after tree is rendered
                                     let position_actor = scroll_position_actor.clone();
-                                    zoon::Task::start(async move {
+                                    let _ = zoon::Task::start_droppable(async move {
                                         // Wait for DOM to fully settle
                                         zoon::Task::next_macro_tick().await;
 

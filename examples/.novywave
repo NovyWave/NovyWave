@@ -29,6 +29,7 @@ load_files_expanded_directories = [
     "vhdl/counter",
 ]
 load_files_scroll_position = 1165
+selected_variables = []
 
 [workspace.docked_bottom_dimensions]
 files_and_scopes_panel_width = 1400.0
@@ -41,21 +42,6 @@ files_and_scopes_panel_width = 400.0
 files_and_scopes_panel_height = 441.0
 selected_variables_panel_name_column_width = 190.0
 selected_variables_panel_value_column_width = 220.0
-
-[[workspace.selected_variables]]
-unique_id = "spade/counter/counter.vcd|counter_tb|clk"
-
-[[workspace.selected_variables]]
-unique_id = "spade/counter/counter.vcd|counter_tb|count"
-
-[[workspace.selected_variables]]
-unique_id = "spade/counter/counter.vcd|counter_tb|output_packed"
-
-[[workspace.selected_variables]]
-unique_id = "spade/counter/counter.vcd|counter_tb|overflow"
-
-[[workspace.selected_variables]]
-unique_id = "spade/counter/counter.vcd|counter_tb|rst"
 
 [workspace.timeline]
 cursor_position_ps = 795764

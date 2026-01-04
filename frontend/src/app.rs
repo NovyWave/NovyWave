@@ -15,8 +15,7 @@ use zoon::events_extra;
 use zoon::{EventOptions, *};
 
 use crate::config::AppConfig;
-use crate::dataflow::atom::Atom;
-use crate::dataflow::{Actor, Relay, relay};
+use std::sync::Arc;
 // use crate::platform::CurrentPlatform; // not needed after silencing emit_trace
 use crate::selected_variables::SelectedVariables;
 use crate::tracked_files::TrackedFiles;
@@ -56,28 +55,12 @@ enum KeyAction {
     ZoomOut,
 }
 
-/// Actor+Relay replacement for global message routing
-/// Transforms DownMsg stream into domain-specific relay streams
+/// Message router for backend DownMsg handling
+/// Uses direct method calls instead of relay pub/sub
 #[derive(Clone)]
 pub struct ConnectionMessageActor {
-    // Message-specific relays that domains can subscribe to
-    pub config_loaded_relay: Relay<shared::AppConfig>,
-    pub workspace_loaded_relay: Relay<WorkspaceLoadedEvent>,
-    pub config_error_relay: Relay<String>,
-    pub config_saved_relay: Relay<()>,
-    pub directory_contents_relay: Relay<(String, Vec<shared::FileSystemItem>)>,
-    pub directory_error_relay: Relay<(String, String)>,
-    pub file_loaded_relay: Relay<(String, shared::FileState)>,
-    pub parsing_started_relay: Relay<(String, String)>,
-    pub batch_signal_values_relay: Relay<Vec<(String, SignalValue)>>,
-    pub unified_signal_response_relay: Relay<UnifiedSignalResponseEvent>,
-    pub unified_signal_error_relay: Relay<(String, String)>,
-
-    // Debug: Test notification relay for mock server testing
-    pub test_notification_relay: Relay<(String, String, String)>, // (variant, title, message)
-
-    // Actor handles message processing (None until start() is called)
-    _message_actor: Option<Actor<()>>,
+    // Task handles message processing (None until start() is called)
+    _message_task: Option<Arc<TaskHandle>>,
 
     // TrackedFiles reference for reload handling
     _tracked_files: TrackedFiles,
@@ -132,38 +115,11 @@ fn apply_scrollbar_colors(
 }
 
 impl ConnectionMessageActor {
-    /// Create ConnectionMessageActor with relays only - NO message processing yet.
-    /// This allows subscribers to set up BEFORE any messages are processed.
-    /// Call `start()` after all subscribers are ready.
+    /// Create ConnectionMessageActor - NO message processing yet.
+    /// Call `start()` after all domains are ready.
     pub fn new_pending(tracked_files: TrackedFiles) -> Self {
-        // Create all message-specific relays
-        let (config_loaded_relay, _) = relay();
-        let (workspace_loaded_relay, _) = relay();
-        let (config_error_relay, _) = relay();
-        let (config_saved_relay, _) = relay();
-        let (directory_contents_relay, _) = relay();
-        let (directory_error_relay, _) = relay();
-        let (file_loaded_relay, _) = relay();
-        let (parsing_started_relay, _) = relay();
-        let (batch_signal_values_relay, _) = relay::<Vec<(String, SignalValue)>>();
-        let (unified_signal_response_relay, _) = relay::<UnifiedSignalResponseEvent>();
-        let (unified_signal_error_relay, _) = relay::<(String, String)>();
-        let (test_notification_relay, _) = relay::<(String, String, String)>();
-
         Self {
-            config_loaded_relay,
-            workspace_loaded_relay,
-            config_error_relay,
-            config_saved_relay,
-            directory_contents_relay,
-            directory_error_relay,
-            file_loaded_relay,
-            parsing_started_relay,
-            batch_signal_values_relay,
-            unified_signal_response_relay,
-            unified_signal_error_relay,
-            test_notification_relay,
-            _message_actor: None,
+            _message_task: None,
             _tracked_files: tracked_files,
         }
     }
@@ -180,19 +136,12 @@ impl ConnectionMessageActor {
         selected_variables: crate::selected_variables::SelectedVariables,
         waveform_timeline: crate::visualizer::timeline::WaveformTimeline,
         config: crate::config::AppConfig,
+        connection: std::sync::Arc<SendWrapper<Connection<UpMsg, DownMsg>>>,
     ) {
-        let config_loaded_relay_clone = self.config_loaded_relay.clone();
-        let workspace_loaded_relay_clone = self.workspace_loaded_relay.clone();
-        let config_error_relay_clone = self.config_error_relay.clone();
-        let config_saved_relay_clone = self.config_saved_relay.clone();
-        let directory_contents_relay_clone = self.directory_contents_relay.clone();
-        let directory_error_relay_clone = self.directory_error_relay.clone();
-        let file_loaded_relay_clone = self.file_loaded_relay.clone();
-        let parsing_started_relay_clone = self.parsing_started_relay.clone();
-        let test_notification_relay_clone = self.test_notification_relay.clone();
         let tracked_files_for_reload = self._tracked_files.clone();
 
-        let message_actor = Actor::new((), async move |_state| {
+        let connection_for_init = connection.clone();
+        let message_task = Arc::new(Task::start_droppable(async move {
             let mut stream = down_msg_stream;
             loop {
                 match stream.next().await {
@@ -205,13 +154,14 @@ impl ConnectionMessageActor {
                                     loaded_config.clone(),
                                     &selected_variables,
                                 );
-                                // Phase 4: Trigger actual loading via relays
+                                // Phase 4: Trigger actual loading DIRECTLY to backend (no relays!)
                                 config.complete_initialization(
+                                    &connection_for_init,
                                     &tracked_files,
+                                    &selected_variables,
                                     loaded_config.workspace.opened_files.clone(),
                                     loaded_config.workspace.load_files_expanded_directories.clone(),
-                                );
-                                config_loaded_relay_clone.send(loaded_config);
+                                ).await;
                             }
                             DownMsg::WorkspaceLoaded {
                                 root,
@@ -225,20 +175,17 @@ impl ConnectionMessageActor {
                                 workspace_loading.set(false);
                                 workspace_path.set(Some(root.clone()));
                                 default_workspace_path.set(Some(default_root.clone()));
-                                tracked_files.all_files_cleared_relay.send(());
-                                selected_variables.selection_cleared_relay.send(());
-                                workspace_loaded_relay_clone.send(WorkspaceLoadedEvent {
-                                    root,
-                                    default_root,
-                                    config: workspace_config,
-                                });
+                                tracked_files.clear_all_files();
+                                selected_variables.clear_selection();
+                                // Apply workspace config
+                                config.restore_config(workspace_config, &selected_variables);
                             }
                             DownMsg::ConfigError(error) => {
                                 workspace_loading.set(false);
-                                config_error_relay_clone.send(error);
+                                zoon::println!("Config error: {error}");
                             }
                             DownMsg::ConfigSaved => {
-                                config_saved_relay_clone.send(());
+                                // Config saved successfully - no action needed
                             }
                             DownMsg::DirectoryContents { path, items } => {
                                 zoon::println!(
@@ -246,7 +193,7 @@ impl ConnectionMessageActor {
                                     path,
                                     items.len()
                                 );
-                                directory_contents_relay_clone.send((path, items));
+                                config.file_picker_domain.on_directory_contents(path, items);
                             }
                             DownMsg::DirectoryError { path, error } => {
                                 zoon::println!(
@@ -254,29 +201,10 @@ impl ConnectionMessageActor {
                                     path,
                                     error
                                 );
-                                directory_error_relay_clone.send((path, error));
+                                config.file_picker_domain.on_directory_error(path, error);
                             }
-                            DownMsg::FileLoaded { file_id, hierarchy } => {
-                                if let Some(loaded_file) = hierarchy.files.first() {
-                                    file_loaded_relay_clone.send((
-                                        file_id,
-                                        shared::FileState::Loaded(loaded_file.clone()),
-                                    ));
-                                }
-                            }
-                            DownMsg::ParsingError { file_id, error } => {
-                                let failed_path = file_id.clone();
-                                file_loaded_relay_clone.send((
-                                    failed_path.clone(),
-                                    shared::FileState::Failed(shared::FileError::IoError {
-                                        path: failed_path,
-                                        error: error.clone(),
-                                    }),
-                                ));
-                            }
-                            DownMsg::ParsingStarted { file_id, filename } => {
-                                parsing_started_relay_clone.send((file_id, filename));
-                            }
+                            // FileLoaded, ParsingError, ParsingStarted are handled directly
+                            // in the Connection callback via tf.update_file_state()
                             DownMsg::BatchSignalValues { file_results, .. } => {
                                 let mut values = Vec::new();
 
@@ -333,8 +261,7 @@ impl ConnectionMessageActor {
                                 }
                             }
                             DownMsg::TestNotification { variant, title, message } => {
-                                zoon::println!("🔔 FRONTEND: Received test notification: {variant} - {title}");
-                                test_notification_relay_clone.send((variant, title, message));
+                                zoon::println!("🔔 FRONTEND: Received test notification: {variant} - {title}: {message}");
                             }
                             _ => {}
                         }
@@ -344,9 +271,9 @@ impl ConnectionMessageActor {
                     }
                 }
             }
-        });
+        }));
 
-        self._message_actor = Some(message_actor);
+        self._message_task = Some(message_task);
     }
 }
 
@@ -378,23 +305,23 @@ pub struct NovyWaveApp {
     /// Dedicated file-picker style domain for workspace selection tree
     pub workspace_picker_domain: crate::config::FilePickerDomain,
     pub workspace_picker_target: Mutable<Option<String>>,
-    _workspace_picker_restoring: Atom<bool>,
+    _workspace_picker_restoring: Mutable<bool>,
 
     /// Message routing actor (keeps relays alive)
     _connection_message_actor: ConnectionMessageActor,
 
     /// Synchronizes Files panel scope selection into SelectedVariables domain
-    _scope_selection_sync_actor: Actor<()>,
+    _scope_selection_sync_task: Arc<TaskHandle>,
 
-    _workspace_history_selection_actor: Actor<()>,
-    _workspace_history_expanded_actor: Actor<()>,
-    _workspace_history_scroll_actor: Actor<()>,
-    _workspace_history_restore_actor: Actor<()>,
+    _workspace_history_selection_task: Arc<TaskHandle>,
+    _workspace_history_expanded_task: Arc<TaskHandle>,
+    _workspace_history_scroll_task: Arc<TaskHandle>,
+    _workspace_history_restore_task: Arc<TaskHandle>,
 
-    // === UI STATE (Atom pattern for local UI concerns) ===
+    // === UI STATE ===
     /// File picker dialog visibility
-    pub file_dialog_visible: Atom<bool>,
-    pub workspace_picker_visible: Atom<bool>,
+    pub file_dialog_visible: Mutable<bool>,
+    pub workspace_picker_visible: Mutable<bool>,
 
     pub workspace_path: Mutable<Option<String>>,
     pub workspace_loading: Mutable<bool>,
@@ -429,18 +356,14 @@ impl NovyWaveApp {
 
         match last_scope {
             Some(cleaned_scope) => {
-                selected_variables
-                    .scope_selected_relay
-                    .send(Some(cleaned_scope));
+                selected_variables.select_scope(Some(cleaned_scope));
             }
             None => {
-                selected_variables.scope_selected_relay.send(None);
+                selected_variables.select_scope(None);
             }
         }
 
-        selected_variables
-            .tree_selection_changed_relay
-            .send(selection_set);
+        selected_variables.set_tree_selection(selection_set);
     }
 
     /// Create new NovyWaveApp with proper async initialization
@@ -452,8 +375,8 @@ impl NovyWaveApp {
         // Load fonts first
         Self::load_and_register_fonts().await;
 
-        let tracked_files = TrackedFiles::new().await;
-        let selected_variables = SelectedVariables::new().await;
+        let tracked_files = TrackedFiles::new();
+        let selected_variables = SelectedVariables::new();
 
         // ✅ STEP 1: Create connection and PENDING actor (relays only, no processing)
         // The mpsc channel buffers messages until actor.start() is called
@@ -464,23 +387,22 @@ impl NovyWaveApp {
         // Start in loading state until WorkspaceLoaded/ConfigLoaded arrives
         let workspace_loading = Mutable::new(true);
         let default_workspace_path = Mutable::new(None);
-        let workspace_picker_visible = Atom::new(false);
+        let workspace_picker_visible = Mutable::new(false);
 
         // Initialize platform layer with the working connection
         let connection_arc = std::sync::Arc::new(connection);
         crate::platform::set_platform_connection(connection_arc.clone());
 
-        let (workspace_picker_save_relay, mut workspace_picker_save_stream) = relay();
+        let (workspace_picker_save_sender, mut workspace_picker_save_receiver) = futures::channel::mpsc::unbounded::<()>();
         let workspace_picker_domain = crate::config::FilePickerDomain::new(
             IndexSet::new(),
             0,
-            workspace_picker_save_relay.clone(),
+            workspace_picker_save_sender,
             connection_arc.clone(),
             connection_message_actor.clone(),
-        )
-        .await;
+        );
 
-        let _task = Task::start_droppable(async move { while workspace_picker_save_stream.next().await.is_some() {} });
+        let _task = Task::start_droppable(async move { while workspace_picker_save_receiver.next().await.is_some() {} });
 
         // Create main config with proper connection and message routing
         let config = AppConfig::new(
@@ -493,14 +415,14 @@ impl NovyWaveApp {
 
         let initial_history = config.workspace_history_state.get_cloned();
         let workspace_picker_target = Mutable::new(initial_history.last_selected.clone());
-        let workspace_picker_restoring = Atom::new(false);
+        let workspace_picker_restoring = Mutable::new(false);
 
-        let workspace_history_selection_actor = {
+        let workspace_history_selection_task = {
             let selected_signal = workspace_picker_domain.selected_files_vec_signal.clone();
             let config_clone = config.clone();
             let domain_clone = workspace_picker_domain.clone();
             let target_clone = workspace_picker_target.clone();
-            Actor::new((), async move |_state| {
+            Arc::new(Task::start_droppable(async move {
                 let mut selection_stream = selected_signal.signal_cloned().to_stream().fuse();
                 while let Some(selection) = selection_stream.next().await {
                     emit_trace("workspace_picker_selection", format!("paths={selection:?}"));
@@ -509,15 +431,14 @@ impl NovyWaveApp {
                         config_clone.record_workspace_selection(&path);
 
                         let expanded_vec = domain_clone
-                            .expanded_directories_actor
-                            .state
+                            .expanded_directories
                             .lock_ref()
                             .iter()
                             .cloned()
                             .collect::<Vec<String>>();
                         let expanded_vec_for_log = expanded_vec.clone();
                         let scroll_current =
-                            *domain_clone.scroll_position_actor.state.lock_ref() as f64;
+                            *domain_clone.scroll_position.lock_ref() as f64;
                         emit_trace(
                             "workspace_picker_selection",
                             format!(
@@ -532,24 +453,27 @@ impl NovyWaveApp {
                         );
                     }
                 }
-            })
+            }))
         };
 
-        let workspace_history_expanded_actor = {
+        let workspace_history_expanded_task = {
             let domain_clone = workspace_picker_domain.clone();
-            let _target_clone = workspace_picker_target.clone();
             let config_clone = config.clone();
             let restoring_flag = workspace_picker_restoring.clone();
             let visible_atom = workspace_picker_visible.clone();
-            Actor::new((), async move |_state| {
+            Arc::new(Task::start_droppable(async move {
                 use futures::{StreamExt, select};
-                let mut expanded_stream = domain_clone.expanded_state_relay.subscribe().fuse();
+                // Listen to expanded_directories signal instead of relay
+                let mut expanded_stream = domain_clone.expanded_directories_signal().to_stream().fuse();
                 let mut visibility_stream = visible_atom.signal().to_stream().fuse();
                 let mut is_visible = visible_atom.get_cloned();
+                // Skip initial value to avoid persisting on startup
+                let _ = expanded_stream.next().await;
                 loop {
                     select! {
                         expanded = expanded_stream.next() => {
-                            if let Some(expanded_vec) = expanded {
+                            if let Some(expanded_set) = expanded {
+                                let expanded_vec: Vec<String> = expanded_set.iter().cloned().collect();
                                 let restoring = restoring_flag.get_cloned();
                                 emit_trace(
                                     "workspace_history_expanded_actor",
@@ -591,17 +515,17 @@ impl NovyWaveApp {
                         }
                     }
                 }
-            })
+            }))
         };
 
-        let workspace_history_scroll_actor = {
+        let workspace_history_scroll_task = {
             let domain_clone = workspace_picker_domain.clone();
             let _target_clone = workspace_picker_target.clone();
             let config_clone = config.clone();
             let restoring_flag = workspace_picker_restoring.clone();
-            Actor::new((), async move |_state| {
+            Arc::new(Task::start_droppable(async move {
                 let mut scroll_stream = domain_clone
-                    .scroll_position_actor
+                    .scroll_position
                     .signal()
                     .to_stream()
                     .fuse();
@@ -620,19 +544,19 @@ impl NovyWaveApp {
                     // Mirror Load Files dialog: update picker scroll via config; snapshot happens via saver
                     config_clone.update_workspace_picker_scroll(scroll_value);
                 }
-            })
+            }))
         };
 
         // Removed scroll polling; rely on the same event-driven logic as Load Files dialog
 
-        let workspace_history_restore_actor = {
+        let workspace_history_restore_task = {
             let history_state = config.workspace_history_state.clone();
             let domain_clone = workspace_picker_domain.clone();
             let visible_atom = workspace_picker_visible.clone();
             let target_clone = workspace_picker_target.clone();
             let config_clone = config.clone();
             let restoring_flag = workspace_picker_restoring.clone();
-            Actor::new((), async move |_state| {
+            Arc::new(Task::start_droppable(async move {
                 let mut visibility_stream = visible_atom.signal().to_stream().fuse();
                 while let Some(visible) = visibility_stream.next().await {
                     if visible {
@@ -642,10 +566,9 @@ impl NovyWaveApp {
                             "workspace_picker_restore",
                             format!("stage=apply history={:?}", history.picker_tree_state),
                         );
-                        Self::apply_workspace_picker_tree_state(&history, &domain_clone);
+                        NovyWaveApp::apply_workspace_picker_tree_state(&history, &domain_clone);
                         let applied_state = domain_clone
-                            .expanded_directories_actor
-                            .state
+                            .expanded_directories
                             .lock_ref()
                             .iter()
                             .cloned()
@@ -657,8 +580,7 @@ impl NovyWaveApp {
                             format!("stage=post_apply expanded_paths={applied_state:?}"),
                         );
                         let pre_clear_state = domain_clone
-                            .expanded_directories_actor
-                            .state
+                            .expanded_directories
                             .lock_ref()
                             .iter()
                             .cloned()
@@ -669,11 +591,10 @@ impl NovyWaveApp {
                         );
                         target_clone.set_neq(None);
                         domain_clone.selected_files_vec_signal.set_neq(Vec::new());
-                        domain_clone.clear_selection_relay.send(());
+                        domain_clone.clear_file_selection();
                         // Do not publish a snapshot on open; wait for user interaction
                         let post_snapshot_state = domain_clone
-                            .expanded_directories_actor
-                            .state
+                            .expanded_directories
                             .lock_ref()
                             .iter()
                             .cloned()
@@ -687,8 +608,7 @@ impl NovyWaveApp {
                             format!(
                                 "stage=final expanded_paths={:?}",
                                 domain_clone
-                                    .expanded_directories_actor
-                                    .state
+                                    .expanded_directories
                                     .lock_ref()
                                     .iter()
                                     .cloned()
@@ -707,15 +627,14 @@ impl NovyWaveApp {
                         restoring_flag.set(false);
                     }
                 }
-            })
+            }))
         };
 
         // Create MaximumTimelineRange standalone actor for centralized range computation
         let maximum_timeline_range = crate::visualizer::timeline::MaximumTimelineRange::new(
             tracked_files.clone(),
             selected_variables.clone(),
-        )
-        .await;
+        );
 
         let connection_adapter =
             crate::connection::ConnectionAdapter::from_arc(connection_arc.clone());
@@ -737,16 +656,16 @@ impl NovyWaveApp {
         .await;
 
         // Initialize dragging system after config is ready
-        let dragging_system = crate::dragging::DraggingSystem::new(config.clone()).await;
+        let dragging_system = crate::dragging::DraggingSystem::new(config.clone());
 
-        let scope_selection_sync_actor = {
+        let scope_selection_sync_task = {
             let selected_variables_for_scope = selected_variables.clone();
             let files_selected_scope = config.files_selected_scope.clone();
 
-            Actor::new((), async move |_state| {
+            Arc::new(Task::start_droppable(async move {
                 // Emit initial selection once
                 let initial = files_selected_scope.lock_ref().to_vec();
-                Self::propagate_scope_selection(initial, &selected_variables_for_scope);
+                NovyWaveApp::propagate_scope_selection(initial, &selected_variables_for_scope);
 
                 // Subscribe to vector snapshots
                 let mut selection_stream = files_selected_scope
@@ -756,12 +675,12 @@ impl NovyWaveApp {
                     .fuse();
 
                 while let Some(current_selection) = selection_stream.next().await {
-                    Self::propagate_scope_selection(
+                    NovyWaveApp::propagate_scope_selection(
                         current_selection,
                         &selected_variables_for_scope,
                     );
                 }
-            })
+            }))
         };
 
         connection_message_actor.start(
@@ -773,6 +692,7 @@ impl NovyWaveApp {
             selected_variables.clone(),
             waveform_timeline.clone(),
             config.clone(),
+            connection_arc.clone(),
         );
 
         // Request config loading once; the Web platform gate handles
@@ -782,7 +702,7 @@ impl NovyWaveApp {
         )
         .await;
 
-        let file_dialog_visible = Atom::new(false);
+        let file_dialog_visible = Mutable::new(false);
         let key_repeat_handles = Rc::new(RefCell::new(HashMap::new()));
 
         Self::setup_app_coordination(&selected_variables, &config).await;
@@ -799,7 +719,7 @@ impl NovyWaveApp {
             dragging_system,
             connection: connection_arc,
             _connection_message_actor: connection_message_actor,
-            _scope_selection_sync_actor: scope_selection_sync_actor,
+            _scope_selection_sync_task: scope_selection_sync_task,
             file_dialog_visible,
             workspace_picker_visible,
             workspace_path,
@@ -809,10 +729,10 @@ impl NovyWaveApp {
             workspace_picker_target,
             _workspace_picker_restoring: workspace_picker_restoring,
             key_repeat_handles,
-            _workspace_history_selection_actor: workspace_history_selection_actor,
-            _workspace_history_expanded_actor: workspace_history_expanded_actor,
-            _workspace_history_scroll_actor: workspace_history_scroll_actor,
-            _workspace_history_restore_actor: workspace_history_restore_actor,
+            _workspace_history_selection_task: workspace_history_selection_task,
+            _workspace_history_expanded_task: workspace_history_expanded_task,
+            _workspace_history_scroll_task: workspace_history_scroll_task,
+            _workspace_history_restore_task: workspace_history_restore_task,
         }
     }
 
@@ -858,7 +778,7 @@ impl NovyWaveApp {
         use futures::channel::mpsc;
 
         let (down_msg_sender, down_msg_receiver) = mpsc::unbounded::<DownMsg>();
-        let tf_relay = tracked_files.file_load_completed_relay.clone();
+        let tf = tracked_files.clone();
 
         // Create actor with relays only - NO processing yet
         let connection_message_actor = ConnectionMessageActor::new_pending(tracked_files.clone());
@@ -870,29 +790,29 @@ impl NovyWaveApp {
                 zoon::println!("connection: received DownMsg {:?}", down_msg);
                 crate::platform::notify_server_alive();
 
-                // Handle file state updates immediately (these go to TrackedFiles relay)
+                // Handle file state updates immediately via direct method calls
                 match &down_msg {
                     DownMsg::FileLoaded { file_id, hierarchy } => {
                         if let Some(loaded_file) = hierarchy.files.first() {
-                            tf_relay.send((
+                            tf.update_file_state(
                                 file_id.clone(),
                                 shared::FileState::Loaded(loaded_file.clone()),
-                            ));
+                            );
                         }
                     }
                     DownMsg::ParsingStarted { file_id, .. } => {
-                        tf_relay.send((
+                        tf.update_file_state(
                             file_id.clone(),
                             shared::FileState::Loading(shared::LoadingStatus::Parsing),
-                        ));
+                        );
                     }
                     DownMsg::ParsingError { file_id, error: _ } => {
-                        tf_relay.send((
+                        tf.update_file_state(
                             file_id.clone(),
                             shared::FileState::Failed(shared::FileError::FileNotFound {
                                 path: file_id.clone(),
                             }),
-                        ));
+                        );
                     }
                     _ => {}
                 }
@@ -909,9 +829,7 @@ impl NovyWaveApp {
     async fn setup_app_coordination(selected_variables: &SelectedVariables, config: &AppConfig) {
         // Restore selected variables from config
         if !config.loaded_selected_variables.is_empty() {
-            selected_variables
-                .variables_restored_relay
-                .send(config.loaded_selected_variables.clone());
+            selected_variables.restore_variables(config.loaded_selected_variables.clone());
         }
     }
 
@@ -924,7 +842,7 @@ impl NovyWaveApp {
             .s(Height::screen())
             .s(Width::fill())
             .s(
-                Background::new().color_signal(self.config.theme_actor.signal().map(|theme| {
+                Background::new().color_signal(self.config.theme.signal().map(|theme| {
                     match theme {
                         shared::Theme::Light => "rgb(255, 255, 255)",
                         shared::Theme::Dark => "rgb(13, 13, 13)",
@@ -939,79 +857,57 @@ impl NovyWaveApp {
                 FontFamily::SansSerif,
             ]))
             .update_raw_el({
-                let theme_relay = self.config.theme_button_clicked_relay.clone();
-                let dock_relay = self.config.dock_mode_button_clicked_relay.clone();
-
-                // Timeline navigation relays
+                let app_config = self.config.clone();
                 let timeline = self.waveform_timeline.clone();
-                let left_key_pressed = timeline.left_key_pressed_relay.clone();
-                let right_key_pressed = timeline.right_key_pressed_relay.clone();
-                let zoom_in_pressed = timeline.zoom_in_pressed_relay.clone();
-                let zoom_out_pressed = timeline.zoom_out_pressed_relay.clone();
-                let pan_left_pressed = timeline.pan_left_pressed_relay.clone();
-                let pan_right_pressed = timeline.pan_right_pressed_relay.clone();
-                let jump_to_previous = timeline.jump_to_previous_pressed_relay.clone();
-                let jump_to_next = timeline.jump_to_next_pressed_relay.clone();
-                let reset_zoom_center = timeline.reset_zoom_center_pressed_relay.clone();
-                let reset_zoom = timeline.reset_zoom_pressed_relay.clone();
-                let shift_key_pressed = timeline.shift_key_pressed_relay.clone();
-                let shift_key_released = timeline.shift_key_released_relay.clone();
-                let tooltip_toggle = timeline.tooltip_toggle_requested_relay.clone();
                 let dragging_system_for_events = dragging_system.clone();
                 let key_repeat_handles = self.key_repeat_handles.clone();
-                let app_config_for_notifications = self.config.clone();
 
                 move |raw_el| {
-                    let app_config_for_n_key = app_config_for_notifications.clone();
+                    let app_config_for_keydown = app_config.clone();
                     let repeat_handles_for_down = key_repeat_handles.clone();
                     let repeat_handles_for_up = key_repeat_handles.clone();
+                    let timeline_for_keydown = timeline.clone();
+                    let timeline_for_keyup = timeline.clone();
                     let raw_el = raw_el.global_event_handler_with_options(
                         EventOptions::new().preventable(),
                         move |event: KeyDown| {
-                            // Check if the active element is an input/textarea to disable shortcuts
-                            // This prevents conflicts when user is typing in input fields
                             let should_handle_shortcuts = if let Some(window) = web_sys::window() {
                                 if let Some(document) = window.document() {
                                     if let Some(active_element) = document.active_element() {
                                         let tag_name = active_element.tag_name().to_lowercase();
-                                        // Disable shortcuts when input fields are focused
                                         !matches!(tag_name.as_str(), "input" | "textarea")
                                     } else {
-                                        true // No active element, allow shortcuts
+                                        true
                                     }
                                 } else {
-                                    true // No document, allow shortcuts
+                                    true
                                 }
                             } else {
-                                true // No window, allow shortcuts
+                                true
                             };
 
                             if !should_handle_shortcuts {
                                 return;
                             }
 
-                            // Handle Shift key tracking
                             if event.shift_key() {
-                                shift_key_pressed.send(());
+                                timeline_for_keydown.set_shift_active(true);
                             }
 
-                            // Handle keyboard shortcuts
                             if event.ctrl_key() {
                                 match event.key().as_str() {
                                     "t" | "T" => {
                                         event.prevent_default();
-                                        theme_relay.send(());
+                                        app_config_for_keydown.toggle_theme();
                                     }
                                     "d" | "D" => {
                                         event.prevent_default();
-                                        dock_relay.send(());
+                                        app_config_for_keydown.toggle_dock_mode();
                                     }
                                     _ => {}
                                 }
                             } else {
-                                // Timeline navigation shortcuts (without Ctrl)
                                 match event.key().as_str() {
-                                    // Cursor Movement
                                     "q" | "Q" => {
                                         event.prevent_default();
                                         if event.shift_key() {
@@ -1019,16 +915,16 @@ impl NovyWaveApp {
                                                 &repeat_handles_for_down,
                                                 KeyAction::CursorLeft,
                                             );
-                                            jump_to_previous.send(());
+                                            timeline_for_keydown.jump_to_previous_transition();
                                         } else {
-                                            left_key_pressed.send(());
+                                            timeline_for_keydown.move_cursor_left();
                                             if !event.repeat() {
-                                                let relay = left_key_pressed.clone();
+                                                let tl = timeline_for_keydown.clone();
                                                 start_key_repeat(
                                                     &repeat_handles_for_down,
                                                     KeyAction::CursorLeft,
                                                     KEY_REPEAT_INTERVAL_MS,
-                                                    move || relay.send(()),
+                                                    move || tl.move_cursor_left(),
                                                 );
                                             }
                                         }
@@ -1040,45 +936,52 @@ impl NovyWaveApp {
                                                 &repeat_handles_for_down,
                                                 KeyAction::CursorRight,
                                             );
-                                            jump_to_next.send(());
+                                            timeline_for_keydown.jump_to_next_transition();
                                         } else {
-                                            right_key_pressed.send(());
+                                            timeline_for_keydown.move_cursor_right();
                                             if !event.repeat() {
-                                                let relay = right_key_pressed.clone();
+                                                let tl = timeline_for_keydown.clone();
                                                 start_key_repeat(
                                                     &repeat_handles_for_down,
                                                     KeyAction::CursorRight,
                                                     KEY_REPEAT_INTERVAL_MS,
-                                                    move || relay.send(()),
+                                                    move || tl.move_cursor_right(),
                                                 );
                                             }
                                         }
                                     }
 
-                                    // Viewport Panning
                                     "a" | "A" => {
                                         event.prevent_default();
-                                        pan_left_pressed.send(());
+                                        let faster = timeline_for_keydown.shift_active.get_cloned();
+                                        timeline_for_keydown.pan_left(faster);
                                         if !event.repeat() {
-                                            let relay = pan_left_pressed.clone();
+                                            let tl = timeline_for_keydown.clone();
                                             start_key_repeat(
                                                 &repeat_handles_for_down,
                                                 KeyAction::PanLeft,
                                                 KEY_REPEAT_INTERVAL_MS,
-                                                move || relay.send(()),
+                                                move || {
+                                                    let faster = tl.shift_active.get_cloned();
+                                                    tl.pan_left(faster);
+                                                },
                                             );
                                         }
                                     }
                                     "d" | "D" => {
                                         event.prevent_default();
-                                        pan_right_pressed.send(());
+                                        let faster = timeline_for_keydown.shift_active.get_cloned();
+                                        timeline_for_keydown.pan_right(faster);
                                         if !event.repeat() {
-                                            let relay = pan_right_pressed.clone();
+                                            let tl = timeline_for_keydown.clone();
                                             start_key_repeat(
                                                 &repeat_handles_for_down,
                                                 KeyAction::PanRight,
                                                 KEY_REPEAT_INTERVAL_MS,
-                                                move || relay.send(()),
+                                                move || {
+                                                    let faster = tl.shift_active.get_cloned();
+                                                    tl.pan_right(faster);
+                                                },
                                             );
                                         }
                                     }
@@ -1086,27 +989,35 @@ impl NovyWaveApp {
                                     // Zoom Controls
                                     "w" | "W" => {
                                         event.prevent_default();
-                                        zoom_in_pressed.send(());
+                                        let faster = timeline_for_keydown.shift_active.get_cloned();
+                                        timeline_for_keydown.zoom_in(faster);
                                         if !event.repeat() {
-                                            let relay = zoom_in_pressed.clone();
+                                            let tl = timeline_for_keydown.clone();
                                             start_key_repeat(
                                                 &repeat_handles_for_down,
                                                 KeyAction::ZoomIn,
                                                 KEY_REPEAT_INTERVAL_MS,
-                                                move || relay.send(()),
+                                                move || {
+                                                    let faster = tl.shift_active.get_cloned();
+                                                    tl.zoom_in(faster);
+                                                },
                                             );
                                         }
                                     }
                                     "s" | "S" => {
                                         event.prevent_default();
-                                        zoom_out_pressed.send(());
+                                        let faster = timeline_for_keydown.shift_active.get_cloned();
+                                        timeline_for_keydown.zoom_out(faster);
                                         if !event.repeat() {
-                                            let relay = zoom_out_pressed.clone();
+                                            let tl = timeline_for_keydown.clone();
                                             start_key_repeat(
                                                 &repeat_handles_for_down,
                                                 KeyAction::ZoomOut,
                                                 KEY_REPEAT_INTERVAL_MS,
-                                                move || relay.send(()),
+                                                move || {
+                                                    let faster = tl.shift_active.get_cloned();
+                                                    tl.zoom_out(faster);
+                                                },
                                             );
                                         }
                                     }
@@ -1114,23 +1025,23 @@ impl NovyWaveApp {
                                     // Reset Controls
                                     "z" | "Z" => {
                                         event.prevent_default();
-                                        reset_zoom_center.send(());
+                                        timeline_for_keydown.reset_zoom_center();
                                     }
                                     "r" | "R" => {
                                         event.prevent_default();
-                                        reset_zoom.send(());
+                                        timeline_for_keydown.reset_zoom();
                                     }
                                     "t" | "T" => {
                                         event.prevent_default();
-                                        tooltip_toggle.send(());
+                                        timeline_for_keydown.toggle_tooltip();
                                     }
 
                                     // Debug: Trigger test notifications
                                     "n" | "N" => {
                                         event.prevent_default();
-                                        let app_config = app_config_for_n_key.clone();
+                                        let config = app_config_for_keydown.clone();
                                         let _task = Task::start_droppable(async move {
-                                            crate::error_display::trigger_test_notifications(&app_config).await;
+                                            crate::error_display::trigger_test_notifications(&config).await;
                                         });
                                     }
 
@@ -1144,7 +1055,7 @@ impl NovyWaveApp {
                         EventOptions::new().preventable(),
                         move |event: KeyUp| match event.key().as_str() {
                             "Shift" | "ShiftLeft" | "ShiftRight" => {
-                                shift_key_released.send(());
+                                timeline_for_keyup.set_shift_active(false);
                             }
                             "q" | "Q" => {
                                 stop_key_repeat(&repeat_handles_for_up, KeyAction::CursorLeft);
@@ -1264,12 +1175,12 @@ impl NovyWaveApp {
         use moonzoon_novyui::tokens::color::{neutral_8, neutral_12};
         use moonzoon_novyui::tokens::typography::font_mono;
 
-        let background_color_signal = self.config.theme_actor.signal().map(|theme| match theme {
+        let background_color_signal = self.config.theme.signal().map(|theme| match theme {
             shared::Theme::Light => Some("oklch(96% 0.015 255)"),
             shared::Theme::Dark => Some("oklch(26% 0.02 255)"),
         });
 
-        let divider_color_signal = self.config.theme_actor.signal().map(|theme| match theme {
+        let divider_color_signal = self.config.theme.signal().map(|theme| match theme {
             shared::Theme::Light => Border::new().width(1).color("oklch(82% 0.015 255)"),
             shared::Theme::Dark => Border::new().width(1).color("oklch(40% 0.02 255)"),
         });
@@ -1418,17 +1329,14 @@ impl NovyWaveApp {
                     }
                 }
                 // Watchdog: if no WorkspaceLoaded arrives within 6s, clear loading so UI doesn't get stuck.
-                let loading_flag = workspace_loading.clone();
-                let expected = request_path.clone();
-                let visible_path = workspace_path_for_revert.clone();
-                let _task = Task::start_droppable(async move {
-                    Timer::sleep(6000).await;
-                    let still_loading = *loading_flag.lock_ref();
-                    let current = visible_path.lock_ref().clone();
-                    if still_loading && current.as_ref().map(|p| p == &expected).unwrap_or(false) {
-                        loading_flag.set(false);
-                    }
-                });
+                // NOTE: We await directly here instead of spawning a separate task that would be dropped.
+                Timer::sleep(6000).await;
+                let still_loading = *workspace_loading.lock_ref();
+                let current = workspace_path_for_revert.lock_ref().clone();
+                if still_loading && current.as_ref().map(|p| p == &request_path).unwrap_or(false) {
+                    zoon::println!("ERROR: Workspace load timeout after 6s for: {}", request_path);
+                    workspace_loading.set(false);
+                }
             }
         });
     }
@@ -1452,10 +1360,9 @@ impl NovyWaveApp {
         }
 
         domain
-            .expanded_directories_actor
-            .state
+            .expanded_directories
             .set_neq(expanded_set);
-        domain.scroll_position_actor.state.set_neq(scroll_value);
+        domain.scroll_position.set_neq(scroll_value);
     }
 
     fn apply_workspace_picker_tree_state(
@@ -1471,10 +1378,9 @@ impl NovyWaveApp {
             let scroll_value = scroll_clamped.clamp(0.0, i32::MAX as f64) as i32;
 
             domain
-                .expanded_directories_actor
-                .state
+                .expanded_directories
                 .set_neq(expanded_set);
-            domain.scroll_position_actor.state.set_neq(scroll_value);
+            domain.scroll_position.set_neq(scroll_value);
         }
     }
 
@@ -1486,8 +1392,7 @@ impl NovyWaveApp {
     ) {
         let expanded_vec = known_expanded.unwrap_or_else(|| {
             domain
-                .expanded_directories_actor
-                .state
+                .expanded_directories
                 .lock_ref()
                 .iter()
                 .cloned()
@@ -1559,7 +1464,7 @@ fn dragging_overlay_element(
 }
 
 fn workspace_picker_dialog(
-    workspace_picker_visible: Atom<bool>,
+    workspace_picker_visible: Mutable<bool>,
     workspace_loading: Mutable<bool>,
     workspace_path: Mutable<Option<String>>,
     tracked_files: TrackedFiles,
@@ -1577,7 +1482,7 @@ fn workspace_picker_dialog(
 
     // Reset any stale selection when the dialog opens so the user
     // can pick a new workspace immediately.
-    workspace_picker_domain.clear_selection_relay.send(());
+    workspace_picker_domain.clear_file_selection();
     workspace_picker_target.set_neq(None);
 
     // Apply saved picker tree state (expanded paths + scroll) before building the tree
@@ -1634,10 +1539,10 @@ fn workspace_picker_dialog(
 
     // Keep a local recent-paths mirror that only updates when the list actually changes.
     let recent_paths_vec = MutableVec::<String>::new();
-    let recent_paths_actor = Actor::new((), {
+    let recent_paths_task = Arc::new(Task::start_droppable({
         let history_state = app_config.workspace_history_state.clone();
         let recent_paths_vec = recent_paths_vec.clone();
-        async move |_state| {
+        async move {
             use futures::StreamExt;
             let mut stream = history_state.signal_cloned().to_stream();
             let mut prev: Option<Vec<String>> = None;
@@ -1650,7 +1555,7 @@ fn workspace_picker_dialog(
                 recent_paths_vec.lock_mut().replace_cloned(recents);
             }
         }
-    });
+    }));
 
     El::new()
         .s(Background::new().color_signal(theme().map(|t| match t {
@@ -1661,7 +1566,7 @@ fn workspace_picker_dialog(
         .s(Height::fill())
         .s(Align::center())
         .s(Padding::all(40))
-        .after_remove(move |_| { drop(recent_paths_actor); })
+        .after_remove(move |_| { drop(recent_paths_task); })
         .update_raw_el(|raw_el| {
             raw_el
                 .style("display", "flex")
@@ -1821,8 +1726,8 @@ fn workspace_picker_dialog(
                                                             workspace_picker_target.set_neq(Some(action_path.clone()));
                                                             let history = app_config.workspace_history_state.get_cloned();
                                                             NovyWaveApp::apply_workspace_history_state(&history, &action_path, &workspace_picker_domain);
-                                                            workspace_picker_domain.clear_selection_relay.send(());
-                                                            workspace_picker_domain.file_selected_relay.send(action_path.clone());
+                                                            workspace_picker_domain.clear_file_selection();
+                                                            workspace_picker_domain.select_file(action_path.clone());
                                                             NovyWaveApp::start_workspace_switch(
                                                                 workspace_loading.clone(),
                                                                 workspace_path.clone(),
@@ -1946,8 +1851,8 @@ fn workspace_picker_dialog(
                                                                                 workspace_picker_target_sel.set_neq(Some(first_path_sel.clone()));
                                                                                 let history_snapshot = app_config_sel.workspace_history_state.get_cloned();
                                                                                 NovyWaveApp::apply_workspace_history_state(&history_snapshot, &first_path_sel, &workspace_picker_domain_sel);
-                                                                                workspace_picker_domain_sel.clear_selection_relay.send(());
-                                                                                workspace_picker_domain_sel.file_selected_relay.send(first_path_sel.clone());
+                                                                                workspace_picker_domain_sel.clear_file_selection();
+                                                                                workspace_picker_domain_sel.select_file(first_path_sel.clone());
                                                                                 NovyWaveApp::start_workspace_switch(
                                                                                     workspace_loading_sel.clone(),
                                                                                     workspace_path_sel.clone(),
@@ -2012,8 +1917,8 @@ fn workspace_picker_dialog(
                                                                                 workspace_picker_target_sel.set_neq(Some(path_sel.clone()));
                                                                                 let history_snapshot = app_config_sel.workspace_history_state.get_cloned();
                                                                                 NovyWaveApp::apply_workspace_history_state(&history_snapshot, &path_sel, &workspace_picker_domain_sel);
-                                                                                workspace_picker_domain_sel.clear_selection_relay.send(());
-                                                                                workspace_picker_domain_sel.file_selected_relay.send(path_sel.clone());
+                                                                                workspace_picker_domain_sel.clear_file_selection();
+                                                                                workspace_picker_domain_sel.select_file(path_sel.clone());
                                                                                 NovyWaveApp::start_workspace_switch(
                                                                                     workspace_loading_sel.clone(),
                                                                                     workspace_path_sel.clone(),
@@ -2059,7 +1964,7 @@ fn workspace_picker_dialog(
                                 .s(Scrollbars::both())
                                 .viewport_y_signal({
                                     let scroll_position_actor =
-                                        workspace_picker_domain.scroll_position_actor.clone();
+                                        workspace_picker_domain.scroll_position.clone();
                                     zoon::map_ref! {
                                         let position = scroll_position_actor.signal() => {
                                             *position
@@ -2067,19 +1972,14 @@ fn workspace_picker_dialog(
                                     }
                                 })
                                 .update_raw_el({
-                                    let scroll_relay =
-                                        workspace_picker_domain.scroll_position_changed_relay.clone();
+                                    let domain_for_scroll = workspace_picker_domain.clone();
                                     let app_config_for_scroll = app_config.clone();
-                                    let target_for_scroll = workspace_picker_target.clone();
                                     move |raw_el| {
                                         let dom_element = raw_el.dom_element();
                                         dom_element
                                             .set_attribute("data-scroll-container", "workspace-picker")
                                             .unwrap();
                                         // Attach scroll listener like in Load Files dialog
-                                        let relay_for_event = scroll_relay.clone();
-                                        let app_config_for_event = app_config_for_scroll.clone();
-                                        let _target_for_event = target_for_scroll.clone();
                                         let scroll_closure = Closure::wrap(Box::new(move |event: web_sys::Event| {
                                             if let Some(target) = event.current_target() {
                                                 if let Ok(element) = target.dyn_into::<web_sys::Element>() {
@@ -2088,9 +1988,10 @@ fn workspace_picker_dialog(
                                                         "workspace_picker_dom_scroll",
                                                         format!("top={}", top),
                                                     );
-                                                    relay_for_event.send(top);
-                                                    // Persist picker scroll immediately; debounced in workspace_history_actor
-                                                    app_config_for_event.update_workspace_picker_scroll(top as f64);
+                                                    // Direct method call instead of relay
+                                                    domain_for_scroll.set_scroll_position(top);
+                                                    // Persist picker scroll immediately
+                                                    app_config_for_scroll.update_workspace_picker_scroll(top as f64);
                                                 } else {
                                                     crate::app::emit_trace(
                                                         "workspace_picker_dom_scroll",
@@ -2121,14 +2022,14 @@ fn workspace_picker_dialog(
                                     }
                                 })
                                 .after_insert({
-                                    let scroll_position_actor =
-                                        workspace_picker_domain.scroll_position_actor.clone();
+                                    let scroll_position_mutable =
+                                        workspace_picker_domain.scroll_position.clone();
                             move |_element| {
                                 let _task = Task::start_droppable({
-                                    let scroll_position_actor = scroll_position_actor.clone();
+                                    let scroll_position_mutable = scroll_position_mutable.clone();
                                     async move {
                                         Task::next_macro_tick().await;
-                                        let position = *scroll_position_actor.state.lock_ref();
+                                        let position = scroll_position_mutable.get();
                                         if let Some(window) = web_sys::window() {
                                             if let Some(document) = window.document() {
                                                 if let Ok(Some(element)) = document
@@ -2283,17 +2184,16 @@ fn workspace_picker_tree(
                         domain_for_treeview.clone(),
                         external_expanded.clone(),
                     );
-                    let tree_rendering_relay = domain_for_treeview.tree_rendering_relay.clone();
-                    let scroll_position_actor = domain_for_treeview.scroll_position_actor.clone();
+                    let scroll_position_actor = domain_for_treeview.scroll_position.clone();
 
                     // Persist expanded paths to global history whenever they change.
                     // Skip the very first sync to avoid writing initial state.
-                    let persist_actor = Actor::new((), {
+                    let persist_task = Arc::new(Task::start_droppable({
                         let _domain_for_persist = domain_for_treeview.clone();
                         let external_for_persist = external_expanded.clone();
                         let config_for_persist = app_config_for_tree.clone();
                         let _target_for_persist = target_for_tree.clone();
-                        async move |_state| {
+                        async move {
                             let mut is_first = true;
                             let mut stream = external_for_persist.signal_cloned().to_stream();
                             while let Some(set) = stream.next().await {
@@ -2306,18 +2206,18 @@ fn workspace_picker_tree(
                                 config_for_persist.update_workspace_picker_tree_state(vec.clone());
                             }
                         }
-                    });
+                    }));
 
                     El::new()
                         .s(Height::fill())
                         .s(Width::fill())
                         .after_insert(move |_element| {
-                            tree_rendering_relay.send(());
+                            // Restore scroll position after tree renders
                             let _task = Task::start_droppable({
-                                let scroll_position_actor = scroll_position_actor.clone();
+                                let scroll_position_mutable = scroll_position_actor.clone();
                                 async move {
                                     Task::next_macro_tick().await;
-                                    let position = *scroll_position_actor.state.lock_ref();
+                                    let position = scroll_position_mutable.get();
                                     if position > 0 {
                                         if let Some(window) = web_sys::window() {
                                             if let Some(document) = window.document() {
@@ -2334,7 +2234,7 @@ fn workspace_picker_tree(
                         })
                         .after_remove(move |_| {
                             drop(sync_actors);
-                            drop(persist_actor);
+                            drop(persist_task);
                         })
                         .child(
                             tree_view()

@@ -1,4 +1,3 @@
-use crate::dataflow::atom::Atom;
 use moonzoon_novyui::tokens::color::neutral_8;
 use moonzoon_novyui::*;
 use shared::{ScopeData, TrackedFile, generate_smart_labels};
@@ -10,10 +9,10 @@ use zoon::*;
 pub fn files_panel_with_dialog(
     tracked_files: crate::tracked_files::TrackedFiles,
     selected_variables: crate::selected_variables::SelectedVariables,
-    file_dialog_visible: Atom<bool>,
+    file_dialog_visible: Mutable<bool>,
     app_config: crate::config::AppConfig,
 ) -> impl Element {
-    let file_count_broadcaster = tracked_files.files.signal_vec().len().broadcast();
+    let file_count_broadcaster = tracked_files.files.signal_vec_cloned().len().broadcast();
     El::new()
         .s(Height::fill())
         .s(Width::fill())
@@ -441,7 +440,7 @@ pub fn create_enhanced_file_remove_handler(
             &selected_variables,
         );
 
-        tracked_files.file_removed_relay.send(id.to_string());
+        tracked_files.remove_file(id.to_string());
     }
 }
 

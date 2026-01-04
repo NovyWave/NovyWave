@@ -43,7 +43,10 @@ impl ConnectionAdapter {
         // noisy ERR_EMPTY_RESPONSE during dev-server startup/hot-swap.
         let is_critical = matches!(
             up_msg,
-            UpMsg::LoadConfig | UpMsg::SelectWorkspace { .. } | UpMsg::LoadWaveformFile(_)
+            UpMsg::LoadConfig
+                | UpMsg::SelectWorkspace { .. }
+                | UpMsg::LoadWaveformFile(_)
+                | UpMsg::BrowseDirectory(_)
         );
 
         let ready = crate::platform::server_is_ready();
