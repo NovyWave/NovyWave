@@ -946,14 +946,10 @@ async fn load_waveform_file(file_path: String, session_id: SessionId, cor_id: Co
     let path = Path::new(&file_path);
     if !path.exists() {
         let error_msg = format!("File not found: {}", file_path);
-        send_down_msg(
-            DownMsg::ParsingError {
-                file_id: file_path.clone(), // Use full path to match frontend TrackedFile IDs
-                error: error_msg.clone(),
-            },
-            session_id,
-            cor_id,
-        )
+        broadcast_down_msg(DownMsg::ParsingError {
+            file_id: file_path.clone(), // Use full path to match frontend TrackedFile IDs
+            error: error_msg.clone(),
+        })
         .await;
         return;
     }
@@ -985,14 +981,10 @@ async fn load_waveform_file(file_path: String, session_id: SessionId, cor_id: Co
         }
     }
 
-    send_down_msg(
-        DownMsg::ParsingStarted {
-            file_id: file_path.clone(), // Use full path to match frontend TrackedFile IDs
-            filename: filename.clone(),
-        },
-        session_id,
-        cor_id,
-    )
+    broadcast_down_msg(DownMsg::ParsingStarted {
+        file_id: file_path.clone(), // Use full path to match frontend TrackedFile IDs
+        filename: filename.clone(),
+    })
     .await;
 
     // Use wellen's automatic file format detection instead of extension-based detection
@@ -1011,12 +1003,12 @@ async fn send_parsing_error(
     file_id: String,
     filename: String,
     error: String,
-    session_id: SessionId,
-    cor_id: CorId,
+    _session_id: SessionId,
+    _cor_id: CorId,
 ) {
     println!("Parsing error for {}: {}", filename, error);
 
-    send_down_msg(DownMsg::ParsingError { file_id, error }, session_id, cor_id).await;
+    broadcast_down_msg(DownMsg::ParsingError { file_id, error }).await;
 }
 
 /// Enhanced error sending with structured FileError - provides better error context
@@ -1024,8 +1016,8 @@ async fn send_structured_parsing_error(
     file_id: String,
     filename: String,
     file_error: FileError,
-    session_id: SessionId,
-    cor_id: CorId,
+    _session_id: SessionId,
+    _cor_id: CorId,
 ) {
     // Log the error with structured context for debugging
     println!(
@@ -1036,14 +1028,10 @@ async fn send_structured_parsing_error(
     );
 
     // Send the user-friendly message to maintain compatibility with existing frontend
-    send_down_msg(
-        DownMsg::ParsingError {
-            file_id,
-            error: file_error.user_friendly_message(),
-        },
-        session_id,
-        cor_id,
-    )
+    broadcast_down_msg(DownMsg::ParsingError {
+        file_id,
+        error: file_error.user_friendly_message(),
+    })
     .await;
 }
 
@@ -1155,14 +1143,10 @@ async fn parse_waveform_file(
             let time_bounds_result = match extract_fst_time_bounds_fast(&file_path) {
                 Ok(result) => result,
                 Err(e) => {
-                    send_down_msg(
-                        DownMsg::ParsingError {
-                            file_id: file_path.clone(),
-                            error: format!("Failed to extract FST time bounds: {}", e),
-                        },
-                        session_id,
-                        cor_id,
-                    )
+                    broadcast_down_msg(DownMsg::ParsingError {
+                        file_id: file_path.clone(),
+                        error: format!("Failed to extract FST time bounds: {}", e),
+                    })
                     .await;
                     return;
                 }
@@ -1195,14 +1179,10 @@ async fn parse_waveform_file(
                         TimescaleUnit::Unknown => {
                             // NO FALLBACKS: Cannot determine timescale
                             let error_msg = "Unknown timescale unit in FST file";
-                            send_down_msg(
-                                DownMsg::ParsingError {
-                                    file_id: file_path.clone(),
-                                    error: error_msg.to_string(),
-                                },
-                                session_id,
-                                cor_id,
-                            )
+                            broadcast_down_msg(DownMsg::ParsingError {
+                                file_id: file_path.clone(),
+                                error: error_msg.to_string(),
+                            })
                             .await;
                             return;
                         }
@@ -1212,14 +1192,10 @@ async fn parse_waveform_file(
                 None => {
                     // NO FALLBACKS: Cannot proceed without timescale
                     let error_msg = "No timescale information in FST file";
-                    send_down_msg(
-                        DownMsg::ParsingError {
-                            file_id: file_path.clone(),
-                            error: error_msg.to_string(),
-                        },
-                        session_id,
-                        cor_id,
-                    )
+                    broadcast_down_msg(DownMsg::ParsingError {
+                        file_id: file_path.clone(),
+                        error: error_msg.to_string(),
+                    })
                     .await;
                     return;
                 }
@@ -1247,26 +1223,18 @@ async fn parse_waveform_file(
                         })) {
                             Ok(Ok(body)) => body,
                             Ok(Err(e)) => {
-                                send_down_msg(
-                                    DownMsg::ParsingError {
-                                        file_id: file_path.clone(),
-                                        error: format!("Failed to parse FST body: {}", e),
-                                    },
-                                    session_id,
-                                    cor_id,
-                                )
+                                broadcast_down_msg(DownMsg::ParsingError {
+                                    file_id: file_path.clone(),
+                                    error: format!("Failed to parse FST body: {}", e),
+                                })
                                 .await;
                                 return;
                             }
                             Err(_) => {
-                                send_down_msg(
-                                    DownMsg::ParsingError {
-                                        file_id: file_path.clone(),
-                                        error: "Critical error parsing FST body".to_string(),
-                                    },
-                                    session_id,
-                                    cor_id,
-                                )
+                                broadcast_down_msg(DownMsg::ParsingError {
+                                    file_id: file_path.clone(),
+                                    error: "Critical error parsing FST body".to_string(),
+                                })
                                 .await;
                                 return;
                             }
@@ -1310,14 +1278,10 @@ async fn parse_waveform_file(
 
                         (min_seconds, max_seconds, inferred_timescale)
                     } else {
-                        send_down_msg(
-                            DownMsg::ParsingError {
-                                file_id: file_path.clone(),
-                                error: "FST file has no time data".to_string(),
-                            },
-                            session_id,
-                            cor_id,
-                        )
+                        broadcast_down_msg(DownMsg::ParsingError {
+                            file_id: file_path.clone(),
+                            error: "FST file has no time data".to_string(),
+                        })
                         .await;
                         return;
                     }
@@ -1420,14 +1384,10 @@ async fn parse_waveform_file(
             }
             send_progress_update(file_id.clone(), 1.0, session_id, cor_id).await;
 
-            send_down_msg(
-                DownMsg::FileLoaded {
-                    file_id: file_id.clone(),
-                    hierarchy: file_hierarchy,
-                },
-                session_id,
-                cor_id,
-            )
+            broadcast_down_msg(DownMsg::FileLoaded {
+                file_id: file_id.clone(),
+                hierarchy: file_hierarchy,
+            })
             .await;
 
             cleanup_parsing_session(&file_id);
@@ -1452,14 +1412,10 @@ async fn parse_waveform_file(
                                 TimescaleUnit::Unknown => {
                                     // NO FALLBACKS: Cannot determine timescale
                                     let error_msg = "Unknown timescale unit in VCD file";
-                                    send_down_msg(
-                                        DownMsg::ParsingError {
-                                            file_id: file_path.clone(),
-                                            error: error_msg.to_string(),
-                                        },
-                                        session_id,
-                                        cor_id,
-                                    )
+                                    broadcast_down_msg(DownMsg::ParsingError {
+                                        file_id: file_path.clone(),
+                                        error: error_msg.to_string(),
+                                    })
                                     .await;
                                     return;
                                 }
@@ -1468,14 +1424,10 @@ async fn parse_waveform_file(
                         None => {
                             // NO FALLBACKS: Cannot proceed without timescale
                             let error_msg = "No timescale information in VCD file";
-                            send_down_msg(
-                                DownMsg::ParsingError {
-                                    file_id: file_path.clone(),
-                                    error: error_msg.to_string(),
-                                },
-                                session_id,
-                                cor_id,
-                            )
+                            broadcast_down_msg(DownMsg::ParsingError {
+                                file_id: file_path.clone(),
+                                error: error_msg.to_string(),
+                            })
                             .await;
                             return;
                         }
@@ -1578,14 +1530,10 @@ async fn parse_waveform_file(
                         TimescaleUnit::Unknown => {
                             // NO FALLBACKS: Cannot determine timescale
                             let error_msg = "Unknown timescale unit in VCD file";
-                            send_down_msg(
-                                DownMsg::ParsingError {
-                                    file_id: file_path.clone(),
-                                    error: error_msg.to_string(),
-                                },
-                                session_id,
-                                cor_id,
-                            )
+                            broadcast_down_msg(DownMsg::ParsingError {
+                                file_id: file_path.clone(),
+                                error: error_msg.to_string(),
+                            })
                             .await;
                             return;
                         }
@@ -1594,14 +1542,10 @@ async fn parse_waveform_file(
                 None => {
                     // NO FALLBACKS: Cannot proceed without timescale
                     let error_msg = "No timescale information in VCD file";
-                    send_down_msg(
-                        DownMsg::ParsingError {
-                            file_id: file_path.clone(),
-                            error: error_msg.to_string(),
-                        },
-                        session_id,
-                        cor_id,
-                    )
+                    broadcast_down_msg(DownMsg::ParsingError {
+                        file_id: file_path.clone(),
+                        error: error_msg.to_string(),
+                    })
                     .await;
                     return;
                 }
@@ -1643,14 +1587,10 @@ async fn parse_waveform_file(
                 }
             }
 
-            send_down_msg(
-                DownMsg::FileLoaded {
-                    file_id: file_id.clone(),
-                    hierarchy: file_hierarchy,
-                },
-                session_id,
-                cor_id,
-            )
+            broadcast_down_msg(DownMsg::FileLoaded {
+                file_id: file_id.clone(),
+                hierarchy: file_hierarchy,
+            })
             .await;
 
             cleanup_parsing_session(&file_id);
@@ -1676,14 +1616,10 @@ async fn parse_waveform_file(
                         TimescaleUnit::Seconds => ts.factor as f64,
                         TimescaleUnit::Unknown => {
                             let error_msg = "Unknown timescale unit in GHW file";
-                            send_down_msg(
-                                DownMsg::ParsingError {
-                                    file_id: file_path.clone(),
-                                    error: error_msg.to_string(),
-                                },
-                                session_id,
-                                cor_id,
-                            )
+                            broadcast_down_msg(DownMsg::ParsingError {
+                                file_id: file_path.clone(),
+                                error: error_msg.to_string(),
+                            })
                             .await;
                             return;
                         }
@@ -1691,14 +1627,10 @@ async fn parse_waveform_file(
                 }
                 None => {
                     let error_msg = "No timescale information in GHW file";
-                    send_down_msg(
-                        DownMsg::ParsingError {
-                            file_id: file_path.clone(),
-                            error: error_msg.to_string(),
-                        },
-                        session_id,
-                        cor_id,
-                    )
+                    broadcast_down_msg(DownMsg::ParsingError {
+                        file_id: file_path.clone(),
+                        error: error_msg.to_string(),
+                    })
                     .await;
                     return;
                 }
@@ -1710,26 +1642,18 @@ async fn parse_waveform_file(
             })) {
                 Ok(Ok(body)) => body,
                 Ok(Err(e)) => {
-                    send_down_msg(
-                        DownMsg::ParsingError {
-                            file_id: file_path.clone(),
-                            error: format!("Failed to parse GHW body: {}", e),
-                        },
-                        session_id,
-                        cor_id,
-                    )
+                    broadcast_down_msg(DownMsg::ParsingError {
+                        file_id: file_path.clone(),
+                        error: format!("Failed to parse GHW body: {}", e),
+                    })
                     .await;
                     return;
                 }
                 Err(_) => {
-                    send_down_msg(
-                        DownMsg::ParsingError {
-                            file_id: file_path.clone(),
-                            error: "Critical error parsing GHW body".to_string(),
-                        },
-                        session_id,
-                        cor_id,
-                    )
+                    broadcast_down_msg(DownMsg::ParsingError {
+                        file_id: file_path.clone(),
+                        error: "Critical error parsing GHW body".to_string(),
+                    })
                     .await;
                     return;
                 }
@@ -1752,14 +1676,10 @@ async fn parse_waveform_file(
                 );
                 (min_seconds, max_seconds)
             } else {
-                send_down_msg(
-                    DownMsg::ParsingError {
-                        file_id: file_path.clone(),
-                        error: "GHW file has no time data".to_string(),
-                    },
-                    session_id,
-                    cor_id,
-                )
+                broadcast_down_msg(DownMsg::ParsingError {
+                    file_id: file_path.clone(),
+                    error: "GHW file has no time data".to_string(),
+                })
                 .await;
                 return;
             };
@@ -1833,14 +1753,10 @@ async fn parse_waveform_file(
             }
             send_progress_update(file_id.clone(), 1.0, session_id, cor_id).await;
 
-            send_down_msg(
-                DownMsg::FileLoaded {
-                    file_id: file_id.clone(),
-                    hierarchy: file_hierarchy,
-                },
-                session_id,
-                cor_id,
-            )
+            broadcast_down_msg(DownMsg::FileLoaded {
+                file_id: file_id.clone(),
+                hierarchy: file_hierarchy,
+            })
             .await;
 
             cleanup_parsing_session(&file_id);
@@ -2213,15 +2129,10 @@ async fn send_parsing_progress(file_id: String, session_id: SessionId, cor_id: C
 async fn send_progress_update(
     file_id: String,
     progress: f32,
-    session_id: SessionId,
-    cor_id: CorId,
+    _session_id: SessionId,
+    _cor_id: CorId,
 ) {
-    send_down_msg(
-        DownMsg::ParsingProgress { file_id, progress },
-        session_id,
-        cor_id,
-    )
-    .await;
+    broadcast_down_msg(DownMsg::ParsingProgress { file_id, progress }).await;
 }
 
 async fn send_down_msg(msg: DownMsg, session_id: SessionId, cor_id: CorId) {
@@ -2229,6 +2140,10 @@ async fn send_down_msg(msg: DownMsg, session_id: SessionId, cor_id: CorId) {
         session.send_down_msg(&msg, cor_id).await;
     } else {
     }
+}
+
+async fn broadcast_down_msg(msg: DownMsg) {
+    sessions::broadcast_down_msg(&msg, CorId::new()).await;
 }
 
 const CONFIG_FILENAME: &str = ".novywave";
@@ -2744,8 +2659,8 @@ fn spawn_directory_preload(expanded_dirs: Vec<String>) {
 
 async fn handle_loaded_config(
     config: AppConfig,
-    session_id: SessionId,
-    cor_id: CorId,
+    _session_id: SessionId,
+    _cor_id: CorId,
     workspace_event_root: Option<String>,
 ) {
     let config_for_messages = config;
@@ -2799,15 +2714,11 @@ async fn handle_loaded_config(
 
     if let Some(root) = workspace_event_root {
         let default_root_display = INITIAL_CWD.to_string_lossy().to_string();
-        send_down_msg(
-            DownMsg::WorkspaceLoaded {
-                root,
-                default_root: default_root_display,
-                config: config_for_messages.clone(),
-            },
-            session_id,
-            cor_id,
-        )
+        broadcast_down_msg(DownMsg::WorkspaceLoaded {
+            root,
+            default_root: default_root_display,
+            config: config_for_messages.clone(),
+        })
         .await;
     }
 
@@ -2819,12 +2730,7 @@ async fn handle_loaded_config(
             .len()
     );
 
-    send_down_msg(
-        DownMsg::ConfigLoaded(config_for_messages),
-        session_id,
-        cor_id,
-    )
-    .await;
+    broadcast_down_msg(DownMsg::ConfigLoaded(config_for_messages)).await;
 }
 
 async fn load_config(session_id: SessionId, cor_id: CorId) {
@@ -2861,12 +2767,12 @@ async fn load_config(session_id: SessionId, cor_id: CorId) {
             handle_loaded_config(config, session_id, cor_id, Some(root_display)).await;
         }
         Err(message) => {
-            send_down_msg(DownMsg::ConfigError(message), session_id, cor_id).await;
+            broadcast_down_msg(DownMsg::ConfigError(message)).await;
         }
     }
 }
 
-async fn save_config(config: AppConfig, session_id: SessionId, cor_id: CorId) {
+async fn save_config(config: AppConfig, _session_id: SessionId, _cor_id: CorId) {
     let mut runtime_config = config.clone();
     expand_config_paths(&mut runtime_config);
 
@@ -2910,15 +2816,11 @@ async fn save_config(config: AppConfig, session_id: SessionId, cor_id: CorId) {
 
     match save_config_to_file(&runtime_config) {
         Ok(()) => {
-            send_down_msg(DownMsg::ConfigSaved, session_id, cor_id).await;
+            broadcast_down_msg(DownMsg::ConfigSaved).await;
         }
         Err(e) => {
-            send_down_msg(
-                DownMsg::ConfigError(format!("Failed to save config: {}", e)),
-                session_id,
-                cor_id,
-            )
-            .await;
+            broadcast_down_msg(DownMsg::ConfigError(format!("Failed to save config: {}", e)))
+                .await;
         }
     }
 }
