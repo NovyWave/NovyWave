@@ -4,9 +4,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
-use std::sync::Arc;
 
-use crate::ws_server::{self, Command, Response, ServerState};
+use crate::verify;
+use crate::ws_server::{self, Command, Response};
 use tools::get_tools;
 
 #[derive(Debug, Deserialize)]
@@ -35,7 +35,7 @@ struct McpError {
     message: String,
 }
 
-fn find_extension_dir() -> Option<PathBuf> {
+pub fn find_extension_dir() -> Option<PathBuf> {
     let cwd_paths = [
         PathBuf::from("novywave-mcp/extension"),
         PathBuf::from("extension"),
@@ -68,30 +68,7 @@ pub async fn run_mcp_server(ws_port: u16) {
     let stdin = io::stdin();
     let mut stdout = io::stdout();
 
-    log::info!("NovyWave MCP server starting (ws_port: {})...", ws_port);
-
-    let extension_dir = find_extension_dir();
-    if let Some(ref dir) = extension_dir {
-        log::info!("Found extension directory: {}", dir.display());
-    } else {
-        log::warn!("Extension directory not found");
-    }
-
-    let state = ServerState::new();
-    let state_clone = state.clone();
-    let watch_path = extension_dir.clone();
-
-    tokio::spawn(async move {
-        log::info!("Starting WebSocket server on port {}...", ws_port);
-        if let Err(e) =
-            ws_server::start_server(ws_port, state_clone, watch_path.as_deref()).await
-        {
-            log::error!("WebSocket server error: {}", e);
-        }
-    });
-
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-    log::info!("WebSocket server started, ready for browser connections");
+    log::info!("NovyWave MCP server starting (connecting to WS server on port {})...", ws_port);
 
     for line in stdin.lock().lines() {
         let line = match line {
@@ -116,7 +93,7 @@ pub async fn run_mcp_server(ws_port: u16) {
             }
         };
 
-        let response = handle_request(request, &state).await;
+        let response = handle_request(request, ws_port).await;
 
         let response_json = serde_json::to_string(&response).unwrap();
         log::debug!("Sending: {}", response_json);
@@ -126,7 +103,7 @@ pub async fn run_mcp_server(ws_port: u16) {
     }
 }
 
-async fn handle_request(request: McpRequest, state: &Arc<ServerState>) -> McpResponse {
+async fn handle_request(request: McpRequest, ws_port: u16) -> McpResponse {
     let id = request.id.unwrap_or(Value::Null);
 
     match request.method.as_str() {
@@ -169,7 +146,7 @@ async fn handle_request(request: McpRequest, state: &Arc<ServerState>) -> McpRes
                 .cloned()
                 .unwrap_or(json!({}));
 
-            match call_tool(tool_name, arguments, state).await {
+            match call_tool(tool_name, arguments, ws_port).await {
                 Ok(result) => McpResponse {
                     jsonrpc: "2.0".into(),
                     id,
@@ -212,38 +189,39 @@ async fn handle_request(request: McpRequest, state: &Arc<ServerState>) -> McpRes
     }
 }
 
-async fn call_tool(name: &str, args: Value, state: &Arc<ServerState>) -> Result<String, String> {
+async fn send_cmd(port: u16, command: Command) -> Result<Response, String> {
+    ws_server::send_command_to_server(port, command)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+async fn call_tool(name: &str, args: Value, ws_port: u16) -> Result<String, String> {
     match name {
         "novywave_status" => {
-            let connected = state.is_connected().await;
-            if connected {
-                match state.send_command(Command::GetStatus).await {
-                    Ok(Response::Status {
-                        connected,
-                        page_url,
-                        app_ready,
-                    }) => Ok(format!(
-                        "Connected: {}\nPage URL: {}\nApp Ready: {}",
-                        connected,
-                        page_url.unwrap_or_else(|| "N/A".into()),
-                        app_ready
-                    )),
-                    Ok(r) => Ok(format!("Connected: true\nResponse: {:?}", r)),
-                    Err(e) => Err(format!("Status check failed: {}", e)),
-                }
-            } else {
-                Ok("Extension not connected. Run novywave_launch_browser first.".into())
+            match send_cmd(ws_port, Command::GetStatus).await {
+                Ok(Response::Status {
+                    connected,
+                    page_url,
+                    app_ready,
+                }) => Ok(format!(
+                    "Connected: {}\nPage URL: {}\nApp Ready: {}",
+                    connected,
+                    page_url.unwrap_or_else(|| "N/A".into()),
+                    app_ready
+                )),
+                Ok(r) => Ok(format!("Response: {:?}", r)),
+                Err(e) => Err(format!("WS server not running or extension not connected: {}", e)),
             }
         }
 
-        "novywave_screenshot" => match state.send_command(Command::Screenshot).await {
+        "novywave_screenshot" => match send_cmd(ws_port,Command::Screenshot).await {
             Ok(Response::ScreenshotFile { filepath }) => Ok(format!("Screenshot saved: {}", filepath)),
             Ok(Response::Screenshot { .. }) => Ok("Screenshot captured".into()),
             Ok(r) => Err(format!("Unexpected response: {:?}", r)),
             Err(e) => Err(e.to_string()),
         },
 
-        "novywave_screenshot_canvas" => match state.send_command(Command::ScreenshotCanvas).await {
+        "novywave_screenshot_canvas" => match send_cmd(ws_port,Command::ScreenshotCanvas).await {
             Ok(Response::ScreenshotFile { filepath }) => Ok(format!("Canvas screenshot saved: {}", filepath)),
             Ok(r) => Err(format!("Unexpected response: {:?}", r)),
             Err(e) => Err(e.to_string()),
@@ -257,7 +235,7 @@ async fn call_tool(name: &str, args: Value, state: &Arc<ServerState>) -> Result<
                 .unwrap_or("all");
             let pattern = args.get("pattern").and_then(|v| v.as_str());
 
-            match state.send_command(Command::GetConsole).await {
+            match send_cmd(ws_port,Command::GetConsole).await {
                 Ok(Response::Console { messages }) => {
                     let filtered: Vec<_> = messages
                         .into_iter()
@@ -272,20 +250,19 @@ async fn call_tool(name: &str, args: Value, state: &Arc<ServerState>) -> Result<
             }
         }
 
-        "novywave_refresh" => match state.send_command(Command::Refresh).await {
+        "novywave_refresh" => match send_cmd(ws_port,Command::Refresh).await {
             Ok(_) => Ok("Page refreshed".into()),
             Err(e) => Err(e.to_string()),
         },
 
-        "novywave_detach" => match state.send_command(Command::Detach).await {
+        "novywave_detach" => match send_cmd(ws_port,Command::Detach).await {
             Ok(_) => Ok("Debugger detached".into()),
             Err(e) => Err(e.to_string()),
         },
 
         "novywave_timeline_zoom_in" => {
             let faster = args.get("faster").and_then(|v| v.as_bool()).unwrap_or(false);
-            match state
-                .send_command(Command::PressKey {
+            match send_cmd(ws_port,Command::PressKey {
                     key: "w".into(),
                     shift: faster,
                 })
@@ -298,8 +275,7 @@ async fn call_tool(name: &str, args: Value, state: &Arc<ServerState>) -> Result<
 
         "novywave_timeline_zoom_out" => {
             let faster = args.get("faster").and_then(|v| v.as_bool()).unwrap_or(false);
-            match state
-                .send_command(Command::PressKey {
+            match send_cmd(ws_port,Command::PressKey {
                     key: "s".into(),
                     shift: faster,
                 })
@@ -312,8 +288,7 @@ async fn call_tool(name: &str, args: Value, state: &Arc<ServerState>) -> Result<
 
         "novywave_timeline_pan_left" => {
             let faster = args.get("faster").and_then(|v| v.as_bool()).unwrap_or(false);
-            match state
-                .send_command(Command::PressKey {
+            match send_cmd(ws_port,Command::PressKey {
                     key: "a".into(),
                     shift: faster,
                 })
@@ -326,8 +301,7 @@ async fn call_tool(name: &str, args: Value, state: &Arc<ServerState>) -> Result<
 
         "novywave_timeline_pan_right" => {
             let faster = args.get("faster").and_then(|v| v.as_bool()).unwrap_or(false);
-            match state
-                .send_command(Command::PressKey {
+            match send_cmd(ws_port,Command::PressKey {
                     key: "d".into(),
                     shift: faster,
                 })
@@ -338,8 +312,7 @@ async fn call_tool(name: &str, args: Value, state: &Arc<ServerState>) -> Result<
             }
         }
 
-        "novywave_timeline_reset" => match state
-            .send_command(Command::PressKey {
+        "novywave_timeline_reset" => match send_cmd(ws_port,Command::PressKey {
                 key: "r".into(),
                 shift: false,
             })
@@ -351,8 +324,7 @@ async fn call_tool(name: &str, args: Value, state: &Arc<ServerState>) -> Result<
 
         "novywave_cursor_left" => {
             let faster = args.get("faster").and_then(|v| v.as_bool()).unwrap_or(false);
-            match state
-                .send_command(Command::PressKey {
+            match send_cmd(ws_port,Command::PressKey {
                     key: "q".into(),
                     shift: faster,
                 })
@@ -368,8 +340,7 @@ async fn call_tool(name: &str, args: Value, state: &Arc<ServerState>) -> Result<
 
         "novywave_cursor_right" => {
             let faster = args.get("faster").and_then(|v| v.as_bool()).unwrap_or(false);
-            match state
-                .send_command(Command::PressKey {
+            match send_cmd(ws_port,Command::PressKey {
                     key: "e".into(),
                     shift: faster,
                 })
@@ -383,7 +354,7 @@ async fn call_tool(name: &str, args: Value, state: &Arc<ServerState>) -> Result<
             }
         }
 
-        "novywave_get_timeline_state" => match state.send_command(Command::GetTimelineState).await {
+        "novywave_get_timeline_state" => match send_cmd(ws_port,Command::GetTimelineState).await {
             Ok(Response::TimelineState {
                 viewport_start_ps,
                 viewport_end_ps,
@@ -398,7 +369,7 @@ async fn call_tool(name: &str, args: Value, state: &Arc<ServerState>) -> Result<
             Err(e) => Err(e.to_string()),
         },
 
-        "novywave_get_cursor_values" => match state.send_command(Command::GetCursorValues).await {
+        "novywave_get_cursor_values" => match send_cmd(ws_port,Command::GetCursorValues).await {
             Ok(Response::CursorValues { values }) => Ok(serde_json::to_string_pretty(&values).unwrap()),
             Ok(Response::JsResult { result }) => Ok(serde_json::to_string_pretty(&result).unwrap()),
             Ok(r) => Err(format!("Unexpected response: {:?}", r)),
@@ -406,7 +377,7 @@ async fn call_tool(name: &str, args: Value, state: &Arc<ServerState>) -> Result<
         },
 
         "novywave_get_selected_variables" => {
-            match state.send_command(Command::GetSelectedVariables).await {
+            match send_cmd(ws_port,Command::GetSelectedVariables).await {
                 Ok(Response::SelectedVariables { variables }) => {
                     Ok(serde_json::to_string_pretty(&variables).unwrap())
                 }
@@ -416,7 +387,7 @@ async fn call_tool(name: &str, args: Value, state: &Arc<ServerState>) -> Result<
             }
         }
 
-        "novywave_get_loaded_files" => match state.send_command(Command::GetLoadedFiles).await {
+        "novywave_get_loaded_files" => match send_cmd(ws_port,Command::GetLoadedFiles).await {
             Ok(Response::LoadedFiles { files }) => Ok(serde_json::to_string_pretty(&files).unwrap()),
             Ok(Response::JsResult { result }) => Ok(serde_json::to_string_pretty(&result).unwrap()),
             Ok(r) => Err(format!("Unexpected response: {:?}", r)),
@@ -430,8 +401,7 @@ async fn call_tool(name: &str, args: Value, state: &Arc<ServerState>) -> Result<
                 .ok_or("text parameter required")?;
             let exact = args.get("exact").and_then(|v| v.as_bool()).unwrap_or(false);
 
-            match state
-                .send_command(Command::ClickText {
+            match send_cmd(ws_port,Command::ClickText {
                     text: text.into(),
                     exact,
                 })
@@ -449,8 +419,7 @@ async fn call_tool(name: &str, args: Value, state: &Arc<ServerState>) -> Result<
                 .ok_or("text parameter required")?;
             let exact = args.get("exact").and_then(|v| v.as_bool()).unwrap_or(false);
 
-            match state
-                .send_command(Command::FindText {
+            match send_cmd(ws_port,Command::FindText {
                     text: text.into(),
                     exact,
                 })
@@ -464,7 +433,7 @@ async fn call_tool(name: &str, args: Value, state: &Arc<ServerState>) -> Result<
             }
         }
 
-        "novywave_get_page_text" => match state.send_command(Command::GetPageText).await {
+        "novywave_get_page_text" => match send_cmd(ws_port,Command::GetPageText).await {
             Ok(Response::PageText { text }) => Ok(text),
             Ok(r) => Err(format!("Unexpected response: {:?}", r)),
             Err(e) => Err(e.to_string()),
@@ -476,8 +445,7 @@ async fn call_tool(name: &str, args: Value, state: &Arc<ServerState>) -> Result<
                 .and_then(|v| v.as_str())
                 .ok_or("text parameter required")?;
 
-            match state
-                .send_command(Command::TypeText { text: text.into() })
+            match send_cmd(ws_port,Command::TypeText { text: text.into() })
                 .await
             {
                 Ok(_) => Ok(format!("Typed: {}", text)),
@@ -491,8 +459,7 @@ async fn call_tool(name: &str, args: Value, state: &Arc<ServerState>) -> Result<
                 .and_then(|v| v.as_str())
                 .ok_or("key parameter required")?;
 
-            match state
-                .send_command(Command::PressKey {
+            match send_cmd(ws_port,Command::PressKey {
                     key: key.into(),
                     shift: false,
                 })
@@ -505,7 +472,20 @@ async fn call_tool(name: &str, args: Value, state: &Arc<ServerState>) -> Result<
 
         "novywave_launch_browser" => {
             let headless = args.get("headless").and_then(|v| v.as_bool()).unwrap_or(false);
-            launch_browser(headless, state).await
+            launch_browser(headless, ws_port).await
+        }
+
+        "novywave_verify" => {
+            let workspace = args
+                .get("workspace")
+                .and_then(|v| v.as_str())
+                .ok_or("workspace parameter required")?;
+            let timeout_ms = args
+                .get("timeout")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(15000);
+
+            run_verify_tests(workspace, timeout_ms, ws_port).await
         }
 
         _ => Err(format!("Unknown tool: {}", name)),
@@ -562,8 +542,8 @@ fn find_chromium_binary() -> Option<PathBuf> {
     None
 }
 
-async fn launch_browser(headless: bool, state: &Arc<ServerState>) -> Result<String, String> {
-    if state.is_connected().await {
+async fn launch_browser(headless: bool, ws_port: u16) -> Result<String, String> {
+    if send_cmd(ws_port, Command::GetStatus).await.is_ok() {
         return Ok("Browser already connected. Use novywave_refresh to reload the page.".into());
     }
 
@@ -614,7 +594,7 @@ async fn launch_browser(headless: bool, state: &Arc<ServerState>) -> Result<Stri
 
     for _ in 0..30 {
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-        if state.is_connected().await {
+        if send_cmd(ws_port, Command::GetStatus).await.is_ok() {
             return Ok(format!(
                 "Browser launched (PID: {}).\nExtension connected.\nExtension: {}\nProfile: {}",
                 pid,
@@ -631,4 +611,104 @@ async fn launch_browser(headless: bool, state: &Arc<ServerState>) -> Result<Stri
         extension_dir.display(),
         profile_dir.display()
     ))
+}
+
+async fn run_verify_tests(
+    workspace: &str,
+    timeout_ms: u64,
+    ws_port: u16,
+) -> Result<String, String> {
+    use std::path::Path;
+
+    let runner = verify::CommandRunner::Remote { port: ws_port };
+
+    if !runner.is_connected().await {
+        return Err("Extension not connected. Run novywave_launch_browser first.".into());
+    }
+
+    let workspace_path = Path::new(workspace);
+    let config_path = workspace_path.join(".novywave");
+
+    let config = if config_path.exists() {
+        match verify::config::load_config(&config_path) {
+            Ok(cfg) => Some(cfg),
+            Err(e) => return Err(format!("Failed to load .novywave config: {}", e)),
+        }
+    } else {
+        None
+    };
+
+    let mut results = Vec::new();
+    let mut passed = 0;
+    let mut failed = 0;
+    let mut skipped = 0;
+
+    let result = verify::tests::test_no_loading_stuck_runner(&runner, timeout_ms).await;
+    match &result {
+        verify::TestResult::Pass => {
+            results.push("✅ No stuck 'Loading workspace...'".to_string());
+            passed += 1;
+        }
+        verify::TestResult::Fail(msg) => {
+            results.push(format!("❌ No stuck 'Loading workspace...': {}", msg));
+            failed += 1;
+        }
+        verify::TestResult::Skip(msg) => {
+            results.push(format!("⏭️  No stuck 'Loading workspace...' (skipped: {})", msg));
+            skipped += 1;
+        }
+    }
+
+    if let Some(ref cfg) = config {
+        let result = verify::tests::test_files_restored_runner(&runner, cfg, timeout_ms).await;
+        match &result {
+            verify::TestResult::Pass => {
+                results.push("✅ Files restored in Files & Scopes".to_string());
+                passed += 1;
+            }
+            verify::TestResult::Fail(msg) => {
+                results.push(format!("❌ Files restored: {}", msg));
+                failed += 1;
+            }
+            verify::TestResult::Skip(msg) => {
+                results.push(format!("⏭️  Files restored (skipped: {})", msg));
+                skipped += 1;
+            }
+        }
+
+        let result = verify::tests::test_variables_restored_runner(&runner, cfg, timeout_ms).await;
+        match &result {
+            verify::TestResult::Pass => {
+                results.push("✅ Selected variables restored".to_string());
+                passed += 1;
+            }
+            verify::TestResult::Fail(msg) => {
+                results.push(format!("❌ Variables restored: {}", msg));
+                failed += 1;
+            }
+            verify::TestResult::Skip(msg) => {
+                results.push(format!("⏭️  Variables restored (skipped: {})", msg));
+                skipped += 1;
+            }
+        }
+    } else {
+        results.push("⏭️  Files/variables tests skipped (no .novywave config)".to_string());
+        skipped += 2;
+    }
+
+    let summary = format!(
+        "\n═══════════════════════════════\nResults: {} passed, {} failed, {} skipped\n{}",
+        passed,
+        failed,
+        skipped,
+        if failed > 0 { "❌ VERIFICATION FAILED" } else { "✅ VERIFICATION PASSED" }
+    );
+
+    results.push(summary);
+
+    if failed > 0 {
+        Err(results.join("\n"))
+    } else {
+        Ok(results.join("\n"))
+    }
 }

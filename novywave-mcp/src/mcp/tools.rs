@@ -243,5 +243,17 @@ pub fn get_tools() -> Vec<Tool> {
                 "required": []
             }),
         },
+        Tool {
+            name: "novywave_verify".into(),
+            description: "Run workspace verification tests. Tests: no stuck 'Loading workspace...', files restored, variables restored.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "workspace": { "type": "string", "description": "Path to workspace with .novywave config" },
+                    "timeout": { "type": "integer", "description": "Timeout in ms (default: 15000)" }
+                },
+                "required": ["workspace"]
+            }),
+        },
     ]
 }

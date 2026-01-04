@@ -1,0 +1,18 @@
+[app]
+version = "1.0.0"
+
+[workspace]
+opened_files = [
+    "/home/martinkavik/repos/NovyWave/examples/verilog/counter/counter.vcd"
+]
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/examples/verilog/counter/counter.vcd|counter_tb|clk"
+formatter = "Binary"
+
+[[workspace.selected_variables]]
+unique_id = "/home/martinkavik/repos/NovyWave/examples/verilog/counter/counter.vcd|counter_tb|count"
+formatter = "Hexadecimal"
+
+[ui]
+theme = "dark"

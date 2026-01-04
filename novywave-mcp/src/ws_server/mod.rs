@@ -9,7 +9,7 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, RwLock};
-use tokio_tungstenite::{accept_async, tungstenite::Message};
+use tokio_tungstenite::{accept_async, connect_async, tungstenite::Message};
 
 pub use protocol::*;
 
@@ -116,6 +116,24 @@ impl ServerState {
     }
 }
 
+pub async fn run_server_daemon(port: u16) {
+    use crate::mcp::find_extension_dir;
+
+    log::info!("Starting NovyWave WebSocket server daemon on port {}...", port);
+
+    let extension_dir = find_extension_dir();
+    if let Some(ref dir) = extension_dir {
+        log::info!("Extension directory: {}", dir.display());
+    }
+
+    let state = ServerState::new();
+
+    if let Err(e) = start_server(port, state, extension_dir.as_deref()).await {
+        log::error!("Server error: {}", e);
+        std::process::exit(1);
+    }
+}
+
 pub async fn start_server(
     port: u16,
     state: Arc<ServerState>,
@@ -146,13 +164,111 @@ pub async fn start_server(
 
 async fn handle_connection(stream: TcpStream, state: Arc<ServerState>) -> Result<()> {
     let ws_stream = accept_async(stream).await?;
-    let (mut ws_tx, mut ws_rx) = ws_stream.split();
+    let (ws_tx, mut ws_rx) = ws_stream.split();
 
-    let (tx, mut rx) = mpsc::channel::<String>(32);
+    // Peek first message to determine connection type
+    if let Some(msg) = ws_rx.next().await {
+        match msg {
+            Ok(Message::Text(text)) => {
+                // Try to parse as Request (CLI client), ExtensionHello, or ResponseMessage
+                if let Ok(request) = serde_json::from_str::<Request>(&text) {
+                    // This is a CLI client connection
+                    log::debug!("CLI connection, forwarding command");
+                    handle_cli_connection(request, ws_tx, ws_rx, &state).await?;
+                } else if let Ok(hello) = serde_json::from_str::<ExtensionHello>(&text) {
+                    // Extension sent hello message
+                    log::info!("Extension connected (clientType: {})", hello.client_type);
+                    let (tx, rx) = mpsc::channel::<String>(32);
+                    *state.extension_tx.write().await = Some(tx);
+                    handle_extension_loop(ws_tx, ws_rx, rx, &state).await?;
+                } else if let Ok(response_msg) = serde_json::from_str::<ResponseMessage>(&text) {
+                    // First message is a response - treat as extension
+                    log::info!("Extension connected");
+                    handle_extension_connection_with_first_msg(
+                        response_msg,
+                        ws_tx,
+                        ws_rx,
+                        &state,
+                    )
+                    .await?;
+                } else {
+                    // Unknown message format, assume extension
+                    log::warn!("Unknown first message format, assuming extension: {}", text);
+                    let (tx, rx) = mpsc::channel::<String>(32);
+                    *state.extension_tx.write().await = Some(tx);
+                    handle_extension_loop(ws_tx, ws_rx, rx, &state).await?;
+                }
+            }
+            Ok(Message::Close(_)) => {
+                return Ok(());
+            }
+            Err(e) => {
+                anyhow::bail!("WebSocket error on first message: {}", e);
+            }
+            _ => {
+                // Binary or other message, treat as extension
+                log::info!("Extension connected");
+                let (tx, rx) = mpsc::channel::<String>(32);
+                *state.extension_tx.write().await = Some(tx);
+                handle_extension_loop(ws_tx, ws_rx, rx, &state).await?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn handle_cli_connection(
+    request: Request,
+    mut ws_tx: futures_util::stream::SplitSink<
+        tokio_tungstenite::WebSocketStream<TcpStream>,
+        Message,
+    >,
+    _ws_rx: futures_util::stream::SplitStream<tokio_tungstenite::WebSocketStream<TcpStream>>,
+    state: &Arc<ServerState>,
+) -> Result<()> {
+    // Forward command to extension and get response
+    let response = state.send_command(request.command).await?;
+    let response_msg = ResponseMessage {
+        id: request.id,
+        response,
+    };
+    let json = serde_json::to_string(&response_msg)?;
+    ws_tx.send(Message::Text(json.into())).await?;
+    log::debug!("CLI command completed");
+    Ok(())
+}
+
+async fn handle_extension_connection_with_first_msg(
+    first_response: ResponseMessage,
+    ws_tx: futures_util::stream::SplitSink<
+        tokio_tungstenite::WebSocketStream<TcpStream>,
+        Message,
+    >,
+    ws_rx: futures_util::stream::SplitStream<tokio_tungstenite::WebSocketStream<TcpStream>>,
+    state: &Arc<ServerState>,
+) -> Result<()> {
+    // Handle the first response
+    if let Some(tx) = state.pending_requests.write().await.remove(&first_response.id) {
+        let _ = tx.send(first_response.response);
+    }
+
+    // Set up extension channel
+    let (tx, rx) = mpsc::channel::<String>(32);
     *state.extension_tx.write().await = Some(tx);
 
-    log::info!("Extension connected");
+    handle_extension_loop(ws_tx, ws_rx, rx, state).await
+}
 
+async fn handle_extension_loop(
+    mut ws_tx: futures_util::stream::SplitSink<
+        tokio_tungstenite::WebSocketStream<TcpStream>,
+        Message,
+    >,
+    mut ws_rx: futures_util::stream::SplitStream<tokio_tungstenite::WebSocketStream<TcpStream>>,
+    mut rx: mpsc::Receiver<String>,
+    state: &Arc<ServerState>,
+) -> Result<()> {
     loop {
         tokio::select! {
             Some(msg) = rx.recv() => {
@@ -235,4 +351,36 @@ fn setup_file_watcher(path: &Path, state: Arc<ServerState>) -> Result<Recommende
 
     watcher.watch(path, RecursiveMode::Recursive)?;
     Ok(watcher)
+}
+
+/// CLI client to connect to the server and send commands
+pub async fn send_command_to_server(port: u16, command: Command) -> Result<Response> {
+    let url = format!("ws://127.0.0.1:{}", port);
+    let (ws_stream, _) = connect_async(&url)
+        .await
+        .context(format!("Failed to connect to server at {}", url))?;
+
+    let (mut ws_tx, mut ws_rx) = ws_stream.split();
+
+    let request = Request { id: 1, command };
+    let json = serde_json::to_string(&request)?;
+    ws_tx.send(Message::Text(json.into())).await?;
+
+    while let Some(msg) = ws_rx.next().await {
+        match msg {
+            Ok(Message::Text(text)) => {
+                let response: ResponseMessage = serde_json::from_str(&text)?;
+                return Ok(response.response);
+            }
+            Ok(Message::Close(_)) => {
+                anyhow::bail!("Connection closed before response");
+            }
+            Err(e) => {
+                anyhow::bail!("WebSocket error: {}", e);
+            }
+            _ => {}
+        }
+    }
+
+    anyhow::bail!("No response received")
 }

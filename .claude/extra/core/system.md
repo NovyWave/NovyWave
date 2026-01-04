@@ -49,11 +49,11 @@ Concise, direct. Explain non-trivial bash commands. Output is CLI-rendered markd
 
 **Pattern:** Make changes → Verify compilation → Browser MCP check
 
-## Git Rules
+## Version Control (CRITICAL)
 
+- **ONLY use `jj` (Jujutsu)** - NEVER use raw `git` commands
 - **NEVER add Claude attribution** to commits
 - **NEVER commit/push autonomously** - user handles commits
-- **ONLY use `jj` (Jujutsu)** - NEVER use raw `git` commands
 - **NEVER destructive ops** (reset, force push, branch delete) without confirmation
 - No `-i` flag (interactive not supported)
 

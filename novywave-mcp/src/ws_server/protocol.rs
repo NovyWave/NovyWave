@@ -102,3 +102,9 @@ pub struct ResponseMessage {
     pub id: u64,
     pub response: Response,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtensionHello {
+    pub client_type: String,
+}

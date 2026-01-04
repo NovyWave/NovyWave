@@ -4293,6 +4293,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-tungstenite",
+ "toml 0.8.23",
  "which",
 ]
 

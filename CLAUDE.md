@@ -2,6 +2,25 @@
 
 Core guidance for Claude Code when working with NovyWave.
 
+## Version Control (CRITICAL)
+
+**ONLY use `jj` (Jujutsu) - NEVER use raw `git` commands!**
+
+```bash
+# ✅ CORRECT
+jj status
+jj diff
+jj log
+jj new -m "message"
+jj describe -m "message"
+
+# ❌ PROHIBITED - NEVER USE
+git status
+git diff
+git commit
+git add
+```
+
 <!-- Core (always loaded) -->
 @.claude/extra/core/system.md
 @.claude/extra/core/development.md

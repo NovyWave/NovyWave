@@ -18,10 +18,27 @@ description = "Start in browser mode with auto-reload"
 alias = "start-web"
 
 [tasks.start-web]
-description = "Start in web mode (MoonZoon SSE)"
+description = "Start in web mode (MoonZoon SSE) with WS server for browser extension"
 dependencies = ["install"]
 env = { NOVYWAVE_PLATFORM = "WEB" }
-script = 'exec ./mzoon/bin/mzoon start ${@}'
+script = '''
+# Build novywave-mcp if needed
+cargo build --release -p novywave-mcp 2>/dev/null || cargo build --release -p novywave-mcp
+
+# Start WS server daemon in background (for browser extension connection)
+./target/release/novywave-mcp server &
+WS_PID=$!
+echo "Started WS server daemon (PID $WS_PID) on port 9225"
+
+# Cleanup WS server when mzoon exits
+cleanup() {
+    kill $WS_PID 2>/dev/null && echo "Stopped WS server daemon"
+}
+trap cleanup EXIT
+
+# Start mzoon dev server
+./mzoon/bin/mzoon start ${@}
+'''
 
 [tasks.open]
 description = "Start in browser mode and open browser"
@@ -70,6 +87,7 @@ kill_port_server -TERM
 kill_by_cwd -TERM "mzoon" "mzoon"
 kill_by_cwd -TERM "backend" "backend"
 kill_by_cwd -TERM "cargo tauri" "Tauri"
+kill_by_cwd -TERM "novywave-mcp server" "WS server"
 
 if [ "$KILLED_ANY" = "true" ]; then
     echo "Waiting 2 seconds for graceful shutdown..."
@@ -80,6 +98,7 @@ if [ "$KILLED_ANY" = "true" ]; then
     kill_by_cwd -KILL "mzoon" "mzoon"
     kill_by_cwd -KILL "backend" "backend"
     kill_by_cwd -KILL "cargo tauri" "Tauri"
+    kill_by_cwd -KILL "novywave-mcp server" "WS server"
 
     echo "✓ Development processes terminated"
 else
@@ -479,3 +498,23 @@ script = [
 description = "Install Tauri CLI"
 command = "cargo"
 args = ["install", "tauri-cli@^2.9"]
+
+[tasks.verify-app]
+description = "Run NovyWave app verification tests"
+script = '''
+# Ensure dev server is running (which also starts WS server)
+if ! curl -s http://localhost:8080 >/dev/null 2>&1; then
+    echo "ERROR: Dev server not running on port 8080"
+    echo "Start it with: makers start"
+    exit 1
+fi
+
+# Build novywave-mcp if needed (in case run separately from makers start)
+cargo build --release -p novywave-mcp 2>/dev/null || cargo build --release -p novywave-mcp
+
+# Find workspace to test (default: tests/workspace_restore)
+WORKSPACE="${1:-tests/workspace_restore}"
+
+# Run verify command (connects to WS server on port 9225)
+./target/release/novywave-mcp verify --workspace "$WORKSPACE" --timeout 15000
+'''
