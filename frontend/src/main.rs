@@ -15,6 +15,7 @@ mod error_display;
 mod error_ui;
 mod platform;
 mod selected_variables;
+mod test_api;
 mod tracked_files;
 mod virtual_list;
 mod visualizer;
@@ -211,6 +212,15 @@ pub fn main() {
 
     let handle = Task::start_droppable(async {
         let app = crate::app::NovyWaveApp::new().await;
+
+        // Store components for test API access
+        test_api::store_test_api_state(
+            app.tracked_files.clone(),
+            app.selected_variables.clone(),
+            app.waveform_timeline.clone(),
+        );
+        test_api::expose_novywave_test_api();
+
         let root_element = app.root();
         start_app("app", move || root_element);
     });

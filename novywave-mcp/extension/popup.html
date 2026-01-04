@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    body {
+      width: 280px;
+      padding: 12px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 13px;
+      background: #1a1a2e;
+      color: #e0e0e0;
+    }
+    h1 {
+      margin: 0 0 12px 0;
+      font-size: 16px;
+      color: #4ecdc4;
+    }
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px;
+      background: #16213e;
+      border-radius: 6px;
+      margin-bottom: 8px;
+    }
+    .indicator {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #ff6b6b;
+    }
+    .indicator.connected {
+      background: #4ecdc4;
+    }
+    .label {
+      color: #8a8a9a;
+      font-size: 11px;
+    }
+    .value {
+      font-weight: 500;
+    }
+    .info {
+      margin-top: 12px;
+      padding: 8px;
+      background: #16213e;
+      border-radius: 6px;
+      font-size: 11px;
+      color: #8a8a9a;
+    }
+  </style>
+</head>
+<body>
+  <h1>NovyWave Browser Control</h1>
+
+  <div class="status">
+    <div class="indicator" id="wsIndicator"></div>
+    <div>
+      <div class="label">WebSocket</div>
+      <div class="value" id="wsStatus">Checking...</div>
+    </div>
+  </div>
+
+  <div class="status">
+    <div class="indicator" id="tabIndicator"></div>
+    <div>
+      <div class="label">NovyWave Tab</div>
+      <div class="value" id="tabStatus">Checking...</div>
+    </div>
+  </div>
+
+  <div class="status">
+    <div class="indicator" id="apiIndicator"></div>
+    <div>
+      <div class="label">Test API</div>
+      <div class="value" id="apiStatus">Checking...</div>
+    </div>
+  </div>
+
+  <div class="info">
+    MCP Server: ws://127.0.0.1:9225<br>
+    Target: http://localhost:8080
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

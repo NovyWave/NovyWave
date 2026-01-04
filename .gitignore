@@ -94,3 +94,6 @@ docs/book/book/
 frontend/.claude/
 backend/.claude/
 */.claude/
+
+# NovyWave MCP browser profile (isolated Chrome data for automation)
+novywave-mcp/.chrome-profile/

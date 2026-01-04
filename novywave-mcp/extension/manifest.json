@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "NovyWave Browser Control",
+  "version": "1.1.0",
+  "description": "Browser automation for NovyWave waveform viewer",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "tabs",
+    "alarms",
+    "debugger"
+  ],
+  "host_permissions": [
+    "http://localhost:8080/*",
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "NovyWave Browser Control"
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "web_accessible_resources": [{
+    "resources": ["console-capture.js"],
+    "matches": ["http://localhost:8080/*"]
+  }]
+}

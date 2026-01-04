@@ -1,14 +1,8 @@
 {
   "mcpServers": {
-    "browsermcp": {
-      "type": "stdio",
-      "command": "npx",
-      "args": [
-        "@browsermcp/mcp@latest"
-      ],
-      "env": {
-        "TERM": "dumb"
-      }
+    "novywave": {
+      "command": "./target/release/novywave-mcp",
+      "args": ["mcp"]
     }
   }
 }

@@ -1,0 +1,24 @@
+[package]
+name = "novywave-mcp"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "MCP server for NovyWave browser automation"
+
+[[bin]]
+name = "novywave-mcp"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio-tungstenite = "0.24"
+futures-util = "0.3"
+anyhow = "1"
+base64 = "0.22"
+clap = { version = "4", features = ["derive"] }
+log = "0.4"
+env_logger = "0.11"
+which = "7"
+notify = "7"

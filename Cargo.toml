@@ -9,6 +9,7 @@ members = [
     "plugins/hello_world",
     "plugins/reload_watcher",
     "plugins/files_discovery",
+    "novywave-mcp",
 ]
 
 [workspace.package]

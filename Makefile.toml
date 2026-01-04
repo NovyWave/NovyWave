@@ -21,12 +21,12 @@ alias = "start-web"
 description = "Start in web mode (MoonZoon SSE)"
 dependencies = ["install"]
 env = { NOVYWAVE_PLATFORM = "WEB" }
-script = './mzoon/bin/mzoon start ${@}'
+script = 'exec ./mzoon/bin/mzoon start ${@}'
 
 [tasks.open]
 description = "Start in browser mode and open browser"
 dependencies = ["install"]
-script = './mzoon/bin/mzoon start --open ${@}'
+script = 'exec ./mzoon/bin/mzoon start --open ${@}'
 
 [tasks.kill]
 description = "Stop all development processes"
