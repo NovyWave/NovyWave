@@ -31,29 +31,32 @@ impl MaximumTimelineRange {
         let range = Mutable::new(None);
         let range_clone = range.clone();
 
+        let files_signal = tracked_files.files.signal_vec_cloned()
+            .map(|file| FileRangeData {
+                path: file.path.clone(),
+                time_range: match &file.state {
+                    FileState::Loaded(wf) => match (wf.min_time_ns, wf.max_time_ns) {
+                        (Some(min), Some(max)) => Some((min, max)),
+                        _ => None,
+                    },
+                    _ => None,
+                },
+            })
+            .to_signal_cloned();
+
+        let vars_signal = selected_variables.variables_vec_actor.signal_cloned()
+            .map(|vars| vars.iter().filter_map(|v| v.file_path()).collect::<HashSet<_>>());
+
         let _range_task = Arc::new(Task::start_droppable(
             map_ref! {
-                // Map to minimal data BEFORE .to_signal_cloned() - avoid cloning large TrackedFile structs
-                let file_ranges = tracked_files.files.signal_vec_cloned()
-                    .map(|file| FileRangeData {
-                        path: file.path.clone(),
-                        time_range: match &file.state {
-                            FileState::Loaded(wf) => match (wf.min_time_ns, wf.max_time_ns) {
-                                (Some(min), Some(max)) => Some((min, max)),
-                                _ => None,
-                            },
-                            _ => None,
-                        },
-                    })
-                    .to_signal_cloned(),
-                // Extract just file paths from selected variables
-                let file_filter = selected_variables.variables_vec_actor.signal_cloned()
-                    .map(|vars| vars.iter().filter_map(|v| v.file_path()).collect::<HashSet<_>>())
+                let file_ranges = files_signal,
+                let file_filter = vars_signal
                     =>
                 Self::compute_range(&file_ranges, &file_filter)
             }
-            .for_each_sync(move |computed| {
+            .for_each(move |computed| {
                 range_clone.set_neq(computed);
+                async {}
             }),
         ));
 

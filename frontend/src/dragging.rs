@@ -122,7 +122,7 @@ impl DraggingSystem {
                         self.app_config.variables_value_column_width.set_neq(new_value);
                     }
                 }
-                self.app_config.request_config_save();
+                // Config save is handled automatically by the pure signal debouncer
             }
         }
     }

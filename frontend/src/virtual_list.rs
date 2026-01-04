@@ -156,7 +156,7 @@ pub fn rust_virtual_variables_list_with_signal(
         let scroll_velocity = scroll_velocity.clone();
         let visible_start = visible_start.clone();
         let visible_end = visible_end.clone();
-        height_signal.signal().for_each_sync(move |height| {
+        height_signal.signal().dedupe().for_each_sync(move |height| {
             let new_visible_count =
                 ((height as f64 / item_height).ceil() as usize + 5).min(total_items);
             visible_count.set_neq(new_visible_count);

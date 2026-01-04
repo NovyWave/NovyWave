@@ -6,7 +6,6 @@ use crate::visualizer::timeline::maximum_timeline_range::MaximumTimelineRange;
 use crate::visualizer::timeline::time_domain::{
     FS_PER_PS, MIN_CURSOR_STEP_NS, PS_PER_NS, TimePerPixel, TimePs, Viewport,
 };
-use futures::StreamExt;
 use gloo_timers::callback::Timeout;
 use js_sys::Date;
 use shared::{
@@ -22,7 +21,6 @@ use zoon::TaskHandle;
 
 const REQUEST_DEBOUNCE_MS: u32 = 75;
 const CURSOR_LOADING_DELAY_MS: u32 = 500;
-const CONFIG_SAVE_DEBOUNCE_MS: u32 = 1_000;
 const ZOOM_CENTER_MIN_INTERVAL_MS: f64 = 16.0;
 const MIN_DURATION_PS: u64 = 1;
 const MIN_TIME_PER_PIXEL_FS: u64 = 200;
@@ -334,7 +332,6 @@ pub struct WaveformTimeline {
     request_counter: Arc<AtomicU64>,
     bounds_state: Mutable<Option<TimelineBounds>>,
     request_debounce: Rc<RefCell<Option<Timeout>>>,
-    config_debounce: Rc<RefCell<Option<Timeout>>>,
     viewport_initialized: Mutable<bool>,
     restoring_from_config: Rc<Cell<bool>>,
     pointer_hover_snapshot: Mutable<Option<PointerHoverSnapshot>>,
@@ -423,7 +420,6 @@ impl WaveformTimeline {
 
         let bounds_state = Mutable::new(None);
         let request_debounce = Rc::new(RefCell::new(None));
-        let config_debounce = Rc::new(RefCell::new(None));
         let viewport_initialized = Mutable::new(false);
         let pointer_hover_snapshot = Mutable::new(None);
         let restoring_from_config = Rc::new(Cell::new(false));
@@ -456,7 +452,6 @@ impl WaveformTimeline {
             request_counter: Arc::new(AtomicU64::new(1)),
             bounds_state,
             request_debounce,
-            config_debounce,
             viewport_initialized,
             restoring_from_config: restoring_from_config.clone(),
             pointer_hover_snapshot: pointer_hover_snapshot.clone(),
@@ -469,21 +464,10 @@ impl WaveformTimeline {
             _listener_handles: Vec::new(),
         };
 
-        timeline.initialize_from_config().await;
-
-        let mut handles = Vec::new();
-        handles.push(timeline.spawn_config_restore_listener());
-        handles.push(timeline.spawn_selected_variables_listener());
-        handles.push(timeline.spawn_bounds_listener());
-        let tracked_files_for_reload = tracked_files.clone();
-        handles.push(timeline.spawn_file_reload_listener(tracked_files_for_reload));
-        handles.push(timeline.spawn_file_reload_completion_listener(tracked_files));
-        let request_handles = timeline.spawn_request_triggers();
-        handles.extend(request_handles);
+        timeline.initialize_from_config();
 
         let mut timeline = timeline;
-        timeline._listener_handles = handles;
-
+        timeline.init_listeners(tracked_files);
         timeline.schedule_request();
 
         timeline
@@ -671,7 +655,6 @@ impl WaveformTimeline {
         self.refresh_cursor_values_from_series();
         self.update_render_state();
         self.schedule_request();
-        self.schedule_config_save();
     }
 
     pub fn move_cursor_left(&self) {
@@ -852,7 +835,6 @@ impl WaveformTimeline {
         self.clear_zoom_anchor_ratio();
         self.set_zoom_center(TimePs::ZERO);
         self.update_render_state();
-        self.schedule_config_save();
     }
 
     pub fn reset_zoom_center(&self) {
@@ -921,7 +903,6 @@ impl WaveformTimeline {
         } else {
             self.tooltip_state.set_neq(None);
         }
-        self.schedule_config_save();
     }
 
     fn set_zoom_center(&self, time: TimePs) {
@@ -937,7 +918,6 @@ impl WaveformTimeline {
         self.zoom_center.set_neq(clamped);
         *self.zoom_center_last_update_ms.borrow_mut() = Date::now();
         self.update_zoom_center_only(clamped);
-        self.schedule_config_save();
     }
 
     fn update_zoom_anchor_ratio(&self, anchor_time: TimePs) {
@@ -1111,7 +1091,6 @@ impl WaveformTimeline {
         self.ensure_cursor_within_viewport();
         self.refresh_cursor_values_from_series();
         self.update_render_state();
-        self.schedule_config_save();
     }
 
     fn ensure_viewport_within_bounds(&self) {
@@ -1141,7 +1120,6 @@ impl WaveformTimeline {
         self.ensure_cursor_within_viewport();
         self.refresh_cursor_values_from_series();
         self.update_render_state();
-        self.schedule_config_save();
     }
 
     fn ensure_cursor_within_viewport(&self) {
@@ -1187,7 +1165,6 @@ impl WaveformTimeline {
 
         self.update_render_state();
         self.schedule_request();
-        self.schedule_config_save();
     }
 
     fn schedule_request(&self) {
@@ -1223,23 +1200,6 @@ impl WaveformTimeline {
         } else {
             self.send_request();
         }
-    }
-
-    fn schedule_config_save(&self) {
-        if self.restoring_from_config.get() {
-            return;
-        }
-        if let Some(timer) = self.config_debounce.borrow_mut().take() {
-            timer.cancel();
-        }
-
-        let debounce_slot = self.config_debounce.clone();
-        let timeline = self.clone();
-        let timeout = Timeout::new(CONFIG_SAVE_DEBOUNCE_MS, move || {
-            *debounce_slot.borrow_mut() = None;
-            timeline.sync_state_to_config();
-        });
-        *self.config_debounce.borrow_mut() = Some(timeout);
     }
 
     fn schedule_zoom_center_update(&self, delay_ms: u32) {
@@ -1968,34 +1928,137 @@ impl WaveformTimeline {
         }
     }
 
-    async fn initialize_from_config(&self) {
-        let initial_state = self
-            .app_config
-            .timeline_state
-            .signal_cloned()
-            .to_stream()
-            .next()
-            .await
-            .unwrap_or_default();
-
+    fn initialize_from_config(&self) {
+        let initial_state = self.app_config.timeline_state.get_cloned();
         self.apply_config_state(&initial_state, true);
     }
 
-    fn spawn_config_restore_listener(&self) -> Arc<TaskHandle> {
-        let timeline = self.clone();
-        let receiver = timeline
-            .app_config
-            .timeline_restore_receiver
-            .borrow_mut()
-            .take();
-        Arc::new(Task::start_droppable(async move {
-            if let Some(receiver) = receiver {
-                let mut stream = receiver.fuse();
-                while let Some(state) = stream.next().await {
-                    timeline.apply_config_state(&state, false);
+    fn init_listeners(&mut self, tracked_files: TrackedFiles) {
+        let t = self.clone();
+
+        self._listener_handles = vec![
+            // Config restore (signal-based)
+            Arc::new(Task::start_droppable({
+                let t = t.clone();
+                t.app_config.timeline_state_to_restore.signal_cloned().for_each_sync(move |maybe_state| {
+                    if let Some(state) = maybe_state {
+                        t.apply_config_state(&state, false);
+                        t.app_config.timeline_state_to_restore.set(None);
+                    }
+                })
+            })),
+            // Selected variables
+            Arc::new(Task::start_droppable({
+                let t = t.clone();
+                t.selected_variables
+                    .variables_vec_actor
+                    .signal_cloned()
+                    .for_each_sync(move |variables| {
+                        t.on_selected_variables_updated(variables);
+                    })
+            })),
+            // Bounds changes
+            Arc::new(Task::start_droppable({
+                let t = t.clone();
+                t.maximum_range.range.signal().dedupe_cloned().for_each_sync(move |maybe_range| {
+                    if let Some((start, end)) = maybe_range {
+                        if t.has_active_reload() || t.reload_restore_pending.get() {
+                            return;
+                        }
+                        let bounds = TimelineBounds { start, end };
+                        t.bounds_state.set(Some(bounds.clone()));
+
+                        if !t.viewport_initialized.get() {
+                            t.viewport.set(Viewport::new(bounds.start, bounds.end));
+
+                            let start_ps = bounds.start.picoseconds();
+                            let end_ps = bounds.end.picoseconds();
+                            let midpoint_ps = if end_ps > start_ps {
+                                start_ps.saturating_add((end_ps - start_ps) / 2)
+                            } else {
+                                start_ps
+                            };
+
+                            t.cursor.set_neq(TimePs::from_picoseconds(midpoint_ps));
+                            t.zoom_center.set_neq(bounds.start);
+                            t.viewport_initialized.set(true);
+                        } else {
+                            t.ensure_viewport_within_bounds();
+                        }
+                    } else {
+                        if t.has_active_reload() || t.reload_restore_pending.get() {
+                            return;
+                        }
+                        t.bounds_state.set(None);
+
+                        let has_variables =
+                            !t.selected_variables.variables_vec_actor.get_cloned().is_empty();
+
+                        if t.config_restored.get_cloned() && has_variables {
+                            return;
+                        }
+
+                        t.viewport
+                            .set(Viewport::new(TimePs::ZERO, TimePs::from_nanos(1_000_000_000)));
+                        t.viewport_initialized.set(false);
+                        if !has_variables {
+                            t.config_restored.set_neq(false);
+                        }
+                    }
+                })
+            })),
+            // File reload started
+            Arc::new(Task::start_droppable({
+                let t = t.clone();
+                let reload_started = tracked_files.file_reload_started.clone();
+                reload_started.signal_cloned().dedupe_cloned().for_each_sync(move |maybe_path| {
+                    if let Some(path) = maybe_path {
+                        t.handle_file_reload_requested(&path);
+                    }
+                })
+            })),
+            // File reload completed
+            Arc::new(Task::start_droppable({
+                let t = t.clone();
+                let reload_completed = tracked_files.file_reload_completed.clone();
+                reload_completed.signal_cloned().dedupe_cloned()
+                    .for_each_sync(move |maybe_file_id| {
+                        if let Some(file_id) = maybe_file_id {
+                            t.handle_file_reload_completed(&file_id);
+                        }
+                    })
+            })),
+            // Viewport + Canvas + Cursor changes → update render state and request data
+            Arc::new(Task::start_droppable({
+                let t = t.clone();
+                map_ref! {
+                    let _viewport = t.viewport.signal_cloned(),
+                    let _canvas_width = t.canvas_width.signal_cloned(),
+                    let _canvas_height = t.canvas_height.signal_cloned(),
+                    let _cursor = t.cursor.signal_cloned() => {}
                 }
-            }
-        }))
+                .for_each_sync(move |_| {
+                    t.ensure_viewport_within_bounds();
+                    t.update_render_state();
+                    t.schedule_request();
+                })
+            })),
+            // Config-relevant state changes → sync to config (config module handles debouncing)
+            Arc::new(Task::start_droppable({
+                let t = t.clone();
+                map_ref! {
+                    let _viewport = t.viewport.signal_cloned(),
+                    let _cursor = t.cursor.signal_cloned(),
+                    let _zoom_center = t.zoom_center.signal_cloned(),
+                    let _tooltip = t.tooltip_enabled.signal_cloned() => {}
+                }
+                .for_each_sync(move |_| {
+                    if !t.restoring_from_config.get() {
+                        t.sync_state_to_config();
+                    }
+                })
+            })),
+        ];
     }
 
     fn apply_config_state(&self, state: &TimelineState, is_initial: bool) {
@@ -2070,19 +2133,11 @@ impl WaveformTimeline {
             self.config_restored.set_neq(true);
         }
 
-        if viewport_changed {
-            self.ensure_cursor_within_viewport();
-        }
         if viewport_changed || cursor_changed {
             self.refresh_cursor_values_from_series();
         }
-        if viewport_changed || cursor_changed || zoom_changed {
+        if zoom_changed && !viewport_changed && !cursor_changed {
             self.update_render_state();
-        }
-        if viewport_changed {
-            self.schedule_request();
-        } else if cursor_changed {
-            self.schedule_request();
         }
 
         if previous_tooltip_enabled != state.tooltip_enabled {
@@ -2228,134 +2283,6 @@ impl WaveformTimeline {
 
     fn has_active_reload(&self) -> bool {
         !self.reload_in_progress.borrow().is_empty()
-    }
-
-    fn spawn_selected_variables_listener(&self) -> Arc<TaskHandle> {
-        let timeline = self.clone();
-        Arc::new(Task::start_droppable(
-            timeline
-                .selected_variables
-                .variables_vec_actor
-                .signal_cloned()
-                .for_each_sync(move |variables| {
-                    timeline.on_selected_variables_updated(variables);
-                }),
-        ))
-    }
-
-    fn spawn_file_reload_listener(&self, tracked_files: TrackedFiles) -> Arc<TaskHandle> {
-        let timeline = self.clone();
-        Arc::new(Task::start_droppable(
-            tracked_files
-                .file_reload_started_signal()
-                .for_each_sync(move |maybe_path| {
-                    if let Some(path) = maybe_path {
-                        timeline.handle_file_reload_requested(&path);
-                    }
-                }),
-        ))
-    }
-
-    fn spawn_file_reload_completion_listener(&self, tracked_files: TrackedFiles) -> Arc<TaskHandle> {
-        let timeline = self.clone();
-        Arc::new(Task::start_droppable(
-            tracked_files
-                .file_reload_completed_signal()
-                .for_each_sync(move |maybe_file_id| {
-                    if let Some(file_id) = maybe_file_id {
-                        timeline.handle_file_reload_completed(&file_id);
-                    }
-                }),
-        ))
-    }
-
-    fn spawn_bounds_listener(&self) -> Arc<TaskHandle> {
-        let timeline = self.clone();
-        Arc::new(Task::start_droppable(
-            timeline.maximum_range.range.signal().for_each_sync(move |maybe_range| {
-                if let Some((start, end)) = maybe_range {
-                    if timeline.has_active_reload() || timeline.reload_restore_pending.get() {
-                        return;
-                    }
-                    let bounds = TimelineBounds { start, end };
-                    timeline.bounds_state.set(Some(bounds.clone()));
-
-                    if !timeline.viewport_initialized.get() {
-                        timeline
-                            .viewport
-                            .set(Viewport::new(bounds.start, bounds.end));
-
-                        let start_ps = bounds.start.picoseconds();
-                        let end_ps = bounds.end.picoseconds();
-                        let midpoint_ps = if end_ps > start_ps {
-                            start_ps.saturating_add((end_ps - start_ps) / 2)
-                        } else {
-                            start_ps
-                        };
-
-                        timeline
-                            .cursor
-                            .set_neq(TimePs::from_picoseconds(midpoint_ps));
-                        timeline.zoom_center.set_neq(bounds.start);
-                        timeline.viewport_initialized.set(true);
-                        timeline.update_render_state();
-                        timeline.schedule_request();
-                        timeline.schedule_config_save();
-                    } else {
-                        timeline.ensure_viewport_within_bounds();
-                    }
-                } else {
-                    if timeline.has_active_reload() || timeline.reload_restore_pending.get() {
-                        return;
-                    }
-                    timeline.bounds_state.set(None);
-
-                    let has_variables = !timeline
-                        .selected_variables
-                        .variables_vec_actor
-                        .get_cloned()
-                        .is_empty();
-
-                    if timeline.config_restored.get_cloned() && has_variables {
-                        return;
-                    }
-
-                    timeline.viewport.set(Viewport::new(
-                        TimePs::ZERO,
-                        TimePs::from_nanos(1_000_000_000),
-                    ));
-                    timeline.update_render_state();
-                    timeline.schedule_request();
-                    timeline.schedule_config_save();
-                    timeline.viewport_initialized.set(false);
-                    if !has_variables {
-                        timeline.config_restored.set_neq(false);
-                    }
-                }
-            }),
-        ))
-    }
-
-    fn spawn_request_triggers(&self) -> Vec<Arc<TaskHandle>> {
-        let timeline = self.clone();
-        let viewport_handle = Arc::new(Task::start_droppable(
-            timeline.viewport.signal_cloned().for_each_sync(move |_| {
-                timeline.ensure_viewport_within_bounds();
-                timeline.schedule_request();
-                timeline.schedule_config_save();
-            }),
-        ));
-
-        let timeline = self.clone();
-        let width_handle = Arc::new(Task::start_droppable(
-            timeline.canvas_width.signal_cloned().for_each_sync(move |_| {
-                timeline.update_render_state();
-                timeline.schedule_request();
-                timeline.schedule_config_save();
-            }),
-        ));
-
-        vec![viewport_handle, width_handle]
     }
 }
 

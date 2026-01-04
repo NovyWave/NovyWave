@@ -1,6 +1,6 @@
 use crate::platform::{CurrentPlatform, Platform};
 use crate::visualizer::timeline::TimePs;
-use futures::{FutureExt, StreamExt, select};
+use futures::{select, FutureExt, StreamExt};
 use moonzoon_novyui::tokens::theme;
 use serde::{Deserialize, Serialize};
 use shared::UpMsg;
@@ -19,7 +19,6 @@ pub struct TimeRange {
 fn compose_shared_app_config(
     theme: &Mutable<SharedTheme>,
     dock_mode: &Mutable<DockMode>,
-    session: &Mutable<SessionState>,
     toast_dismiss_ms: &Mutable<u32>,
     file_picker_domain: &FilePickerDomain,
     selected_variables_snapshot: &Mutable<Vec<shared::SelectedVariable>>,
@@ -34,10 +33,13 @@ fn compose_shared_app_config(
     timeline_state: &Mutable<TimelineState>,
     workspace_history_state: &Mutable<shared::WorkspaceHistory>,
     plugins_state: &Mutable<shared::PluginsSection>,
+    files_expanded_scopes: &Mutable<indexmap::IndexSet<String>>,
+    files_selected_scope: &MutableVec<String>,
+    files_vec_signal: &Mutable<Vec<shared::TrackedFile>>,
+    variables_search_filter: &Mutable<String>,
 ) -> Option<shared::AppConfig> {
     let theme = theme.get();
     let dock_mode = dock_mode.get_cloned();
-    let session = session.get_cloned();
     let toast_dismiss_ms = toast_dismiss_ms.get();
 
     let expanded_directories_set = file_picker_domain.expanded_directories.get_cloned();
@@ -87,10 +89,19 @@ fn compose_shared_app_config(
     let mut workspace_history = workspace_history_state.get_cloned();
     workspace_history.clamp_to_limit(shared::WORKSPACE_HISTORY_MAX_RECENTS);
 
+    let opened_files: Vec<CanonicalPathPayload> = files_vec_signal
+        .get_cloned()
+        .iter()
+        .map(|f| CanonicalPathPayload::new(f.canonical_path.clone()))
+        .collect();
+    let expanded_scopes: Vec<String> = files_expanded_scopes.get_cloned().into_iter().collect();
+    let selected_scope_id = files_selected_scope.lock_ref().first().cloned();
+    let variables_search_filter = variables_search_filter.get_cloned();
+
     Some(shared::AppConfig {
         app: shared::AppSection::default(),
         workspace: shared::WorkspaceSection {
-            opened_files: session.opened_files.clone(),
+            opened_files,
             docked_bottom_dimensions: shared::DockedBottomDimensions {
                 files_and_scopes_panel_width: files_width_bottom as f64,
                 files_and_scopes_panel_height: files_height_bottom as f64,
@@ -104,11 +115,11 @@ fn compose_shared_app_config(
                 selected_variables_panel_value_column_width: Some(value_column_width_right as f64),
             },
             dock_mode,
-            expanded_scopes: session.expanded_scopes.clone(),
+            expanded_scopes,
             load_files_expanded_directories: expanded_directories,
-            selected_scope_id: session.selected_scope_id.clone(),
+            selected_scope_id,
             load_files_scroll_position: scroll_position,
-            variables_search_filter: session.variables_search_filter.clone(),
+            variables_search_filter,
             selected_variables: selected_variables_snapshot,
             timeline: timeline_config,
             ..shared::WorkspaceSection::default()
@@ -120,29 +131,6 @@ fn compose_shared_app_config(
         global: shared::GlobalSection { workspace_history },
         plugins: plugins_state.get_cloned(),
     })
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct SessionState {
-    pub opened_files: Vec<CanonicalPathPayload>,
-    pub expanded_scopes: Vec<String>,
-    pub selected_scope_id: Option<String>,
-    pub variables_search_filter: String,
-    pub file_picker_scroll_position: i32,
-    pub file_picker_expanded_directories: Vec<String>,
-}
-
-impl Default for SessionState {
-    fn default() -> Self {
-        Self {
-            opened_files: Vec::new(),
-            expanded_scopes: Vec::new(),
-            selected_scope_id: None,
-            variables_search_filter: String::new(),
-            file_picker_scroll_position: 0,
-            file_picker_expanded_directories: Vec::new(),
-        }
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -179,8 +167,6 @@ pub struct FilePickerDomain {
     pub selected_files: MutableVec<String>,
     pub selected_files_vec_signal: zoon::Mutable<Vec<String>>,
 
-    save_sender: futures::channel::mpsc::UnboundedSender<()>,
-    browse_request_sender: futures::channel::mpsc::UnboundedSender<String>,
     _browse_task: Arc<TaskHandle>,
     _expansion_detection_task: Arc<TaskHandle>,
     _selection_detection_task: Arc<TaskHandle>,
@@ -190,7 +176,6 @@ impl FilePickerDomain {
     pub fn new(
         initial_expanded: indexmap::IndexSet<String>,
         initial_scroll: i32,
-        save_sender: futures::channel::mpsc::UnboundedSender<()>,
         connection: std::sync::Arc<SendWrapper<Connection<shared::UpMsg, shared::DownMsg>>>,
         _connection_message_actor: crate::app::ConnectionMessageActor,
     ) -> Self {
@@ -217,23 +202,20 @@ impl FilePickerDomain {
         let expanded_directories = Mutable::new(initial_expanded);
         let directory_cache = Mutable::new(std::collections::HashMap::new());
 
+        // Expansion detection: trigger directory browsing for newly expanded paths
+        // Config save is handled by the pure signal debouncer observing source Mutables directly
         let _expansion_detection_task = {
             let expanded = expanded_directories.clone();
             let cache = directory_cache.clone();
             let browse_sender = browse_request_sender.clone();
-            let save_sender_clone = save_sender.clone();
             Arc::new(Task::start_droppable({
                 let previous = Mutable::new(indexmap::IndexSet::<String>::new());
-                expanded.signal_cloned().for_each_sync(move |current| {
+                expanded.signal_cloned().dedupe_cloned().for_each_sync(move |current| {
                     let prev = previous.get_cloned();
                     for path in current.difference(&prev) {
                         if !cache.get_cloned().contains_key(path) && crate::platform::server_is_ready() {
                             let _ = browse_sender.unbounded_send(path.clone());
                         }
-                        let _ = save_sender_clone.unbounded_send(());
-                    }
-                    for _path in prev.difference(&current) {
-                        let _ = save_sender_clone.unbounded_send(());
                     }
                     previous.set_neq(current);
                 })
@@ -247,11 +229,29 @@ impl FilePickerDomain {
         let _selection_detection_task = {
             let selected = selected_files.clone();
             let vec_signal = selected_files_vec_signal.clone();
-            Arc::new(Task::start_droppable({
-                selected.signal_vec_cloned().to_signal_cloned().for_each_sync(move |current| {
-                    vec_signal.set_neq(current);
-                })
-            }))
+            let current_vec = std::cell::RefCell::new(Vec::<String>::new());
+            Arc::new(Task::start_droppable(
+                selected.signal_vec_cloned().for_each(move |diff| {
+                    {
+                        let mut v = current_vec.borrow_mut();
+                        match diff {
+                            VecDiff::Replace { values } => *v = values,
+                            VecDiff::InsertAt { index, value } => v.insert(index, value),
+                            VecDiff::UpdateAt { index, value } => v[index] = value,
+                            VecDiff::RemoveAt { index } => { v.remove(index); }
+                            VecDiff::Move { old_index, new_index } => {
+                                let item = v.remove(old_index);
+                                v.insert(new_index, item);
+                            }
+                            VecDiff::Push { value } => v.push(value),
+                            VecDiff::Pop {} => { v.pop(); }
+                            VecDiff::Clear {} => v.clear(),
+                        }
+                    }
+                    vec_signal.set(current_vec.borrow().clone());
+                    async {}
+                }),
+            ))
         };
 
         Self {
@@ -261,8 +261,6 @@ impl FilePickerDomain {
             directory_errors: errors,
             selected_files,
             selected_files_vec_signal,
-            save_sender,
-            browse_request_sender,
             _browse_task,
             _expansion_detection_task,
             _selection_detection_task,
@@ -316,10 +314,9 @@ impl FilePickerDomain {
         }
     }
 
-    /// Set scroll position
+    /// Set scroll position - config save handled by pure signal debouncer
     pub fn set_scroll_position(&self, position: i32) {
         self.scroll_position.set_neq(position);
-        let _ = self.save_sender.unbounded_send(());
     }
 
     /// Select a file - updates state only; detection task handles vec_signal sync
@@ -360,7 +357,6 @@ pub struct AppConfig {
     pub variables_name_column_width: Mutable<f32>,
     pub variables_value_column_width: Mutable<f32>,
 
-    pub session_state: Mutable<SessionState>,
     pub toast_dismiss_ms: Mutable<u32>,
     pub plugins_state: Mutable<shared::PluginsSection>,
     pub workspace_history_state: Mutable<shared::WorkspaceHistory>,
@@ -374,12 +370,8 @@ pub struct AppConfig {
 
     pub loaded_selected_variables: Vec<shared::SelectedVariable>,
 
-    pub timeline_restore_sender: futures::channel::mpsc::UnboundedSender<TimelineState>,
-    pub timeline_restore_receiver: std::rc::Rc<std::cell::RefCell<Option<futures::channel::mpsc::UnboundedReceiver<TimelineState>>>>,
+    pub timeline_state_to_restore: Mutable<Option<TimelineState>>,
     pub timeline_state: Mutable<TimelineState>,
-    pub session_state_sender: futures::channel::mpsc::UnboundedSender<SessionState>,
-
-    pub save_sender: futures::channel::mpsc::UnboundedSender<()>,
 
     pub error_display: crate::error_display::ErrorDisplay,
     // TreeView state - Mutables required for TreeView external state API
@@ -397,13 +389,8 @@ pub struct AppConfig {
     pub selected_variables_snapshot: Mutable<Vec<shared::SelectedVariable>>,
 
     // Task handles to keep processors alive
-    _session_state_task: Arc<TaskHandle>,
-    _scroll_sync_task: Arc<TaskHandle>,
     _config_save_debouncer_task: Arc<TaskHandle>,
     _workspace_history_task: Arc<TaskHandle>,
-    _treeview_sync_task: Arc<TaskHandle>,
-    _tracked_files_sync_task: Arc<TaskHandle>,
-    _variables_filter_bridge_task: Arc<TaskHandle>,
     _selected_variables_snapshot_task: Arc<TaskHandle>,
     _clipboard_task: Arc<TaskHandle>,
     clipboard_sender: futures::channel::mpsc::UnboundedSender<String>,
@@ -420,6 +407,7 @@ impl AppConfig {
         connection_message_actor: crate::app::ConnectionMessageActor,
         tracked_files: crate::tracked_files::TrackedFiles,
         selected_variables: crate::selected_variables::SelectedVariables,
+        files_selected_scope: zoon::MutableVec<String>,
     ) -> Self {
         let config = Self::load_config_from_backend()
             .await
@@ -547,12 +535,7 @@ impl AppConfig {
             }))
         };
 
-        let (session_state_sender, session_state_receiver) =
-            futures::channel::mpsc::unbounded::<SessionState>();
-        let (save_sender, save_receiver) = futures::channel::mpsc::unbounded::<()>();
-        let (timeline_restore_sender, timeline_restore_receiver) =
-            futures::channel::mpsc::unbounded::<TimelineState>();
-
+        let timeline_state_to_restore = Mutable::new(None);
         let timeline_state = Mutable::new(TimelineState::default());
 
         // Track dock mode and per-mode column widths for Selected Variables panel
@@ -639,33 +622,8 @@ impl AppConfig {
         let variables_panel_width = Mutable::new(DEFAULT_PANEL_WIDTH);
         let timeline_panel_height = Mutable::new(DEFAULT_TIMELINE_HEIGHT);
 
-        let session_state = Mutable::new(SessionState {
-            opened_files: Vec::new(),
-            expanded_scopes: Vec::new(),
-            selected_scope_id: None,
-            variables_search_filter: config.workspace.variables_search_filter.clone(),
-            file_picker_scroll_position: config.workspace.load_files_scroll_position,
-            file_picker_expanded_directories: config
-                .workspace
-                .load_files_expanded_directories
-                .clone(),
-        });
-        let _session_state_task = {
-            let state = session_state.clone();
-            let save_sender_for_session = save_sender.clone();
-            let mut session_stream = session_state_receiver.fuse();
-            Arc::new(Task::start_droppable(async move {
-                while let Some(new_session) = session_stream.next().await {
-                    state.set_neq(new_session);
-                    let _ = save_sender_for_session.unbounded_send(());
-                }
-            }))
-        };
-
         let toast_dismiss_ms = Mutable::new(config.ui.toast_dismiss_ms as u32);
 
-        // Clone the sender for struct return since it will be moved into Task
-        let save_sender_for_struct = save_sender.clone();
 
         // Create FilePickerDomain with proper Actor+Relay architecture
         let initial_expanded_set = {
@@ -679,7 +637,6 @@ impl AppConfig {
         let file_picker_domain = FilePickerDomain::new(
             initial_expanded_set.clone(),
             config.workspace.load_files_scroll_position,
-            save_sender.clone(),
             connection,
             connection_message_actor.clone(),
         );
@@ -688,142 +645,30 @@ impl AppConfig {
         let files_expanded_scopes = zoon::Mutable::new(indexmap::IndexSet::from_iter(
             config.workspace.expanded_scopes.iter().cloned(),
         ));
-        let files_selected_scope = zoon::MutableVec::new_with_values(
-            config
-                .workspace
-                .selected_scope_id
-                .clone()
-                .into_iter()
-                .collect(),
-        );
+        // files_selected_scope is passed in from app.rs (shared with SelectedVariables domain)
 
-        // Sync TreeView state changes to session state
-        // Split into two independent listeners - no need for select!
-        let _treeview_expanded_sync = {
-            let expanded_scopes_for_sync = files_expanded_scopes.clone();
-            let session_sender = session_state_sender.clone();
-            let session_state_for_sync = session_state.clone();
-            Arc::new(Task::start_droppable(
-                expanded_scopes_for_sync.signal_cloned().for_each_sync(move |expanded_set| {
-                    let current_session = session_state_for_sync.get_cloned();
-                    let updated_session = SessionState {
-                        expanded_scopes: expanded_set.iter().cloned().collect(),
-                        ..current_session
-                    };
-                    let _ = session_sender.unbounded_send(updated_session);
-                }),
-            ))
-        };
-        let _treeview_selected_sync = {
-            let selected_scope_for_sync = files_selected_scope.clone();
-            let session_sender = session_state_sender.clone();
-            let session_state_for_sync = session_state.clone();
-            Arc::new(Task::start_droppable(
-                selected_scope_for_sync
-                    .signal_vec_cloned()
-                    .to_signal_cloned()
-                    .for_each_sync(move |selected_vec| {
-                        let scope_sel = selected_vec.iter().find(|id| id.starts_with("scope_")).cloned();
-                        let current_session = session_state_for_sync.get_cloned();
-                        let updated_session = SessionState {
-                            selected_scope_id: scope_sel,
-                            ..current_session
-                        };
-                        let _ = session_sender.unbounded_send(updated_session);
-                    }),
-            ))
-        };
-        let _treeview_sync_task = (_treeview_expanded_sync, _treeview_selected_sync);
-
-        // Sync TrackedFiles changes to session state (opened_files)
-        // Signals emit initial value on subscribe, so no separate initial sync needed
-        let _tracked_files_sync_task = {
-            let session_state_for_files = session_state.clone();
-            let files_signal = tracked_files.files_vec_signal.clone();
-            let session_sender_for_files = session_state_sender.clone();
-            let files_expanded_for_sync = files_expanded_scopes.clone();
-            let files_selected_for_sync = files_selected_scope.clone();
-
-            Arc::new(Task::start_droppable(
-                files_signal.signal_cloned().for_each_sync(move |files| {
-                    let file_paths: Vec<CanonicalPathPayload> = files
-                        .iter()
-                        .map(|tracked_file| {
-                            CanonicalPathPayload::new(tracked_file.canonical_path.clone())
-                        })
-                        .collect();
-
-                    let mut current_session = session_state_for_files.get_cloned();
-                    current_session.opened_files = file_paths;
-
-                    let current_expanded = files_expanded_for_sync.get_cloned();
-                    current_session.expanded_scopes = current_expanded.into_iter().collect();
-
-                    let current_selected = files_selected_for_sync.lock_ref();
-                    current_session.selected_scope_id = current_selected.first().cloned();
-
-                    let _ = session_sender_for_files.unbounded_send(current_session);
-                }),
-            ))
-        };
-
-        // Bridge variables search filter between SelectedVariables domain and SessionState
-        // Split into two one-way handlers with dedupe to break potential cycles
-        let _variables_filter_from_session = {
-            let session_state_for_bridge = session_state.clone();
-            let selected_variables_for_bridge = selected_variables.clone();
-            Arc::new(Task::start_droppable(
-                session_state_for_bridge
-                    .signal_cloned()
-                    .map(|s| s.variables_search_filter)
-                    .dedupe_cloned()
-                    .for_each_sync(move |filter| {
-                        selected_variables_for_bridge.set_search_filter(filter);
-                    }),
-            ))
-        };
-        let _variables_filter_to_session = {
-            let session_state_for_bridge = session_state.clone();
-            let session_sender_for_bridge = session_state_sender.clone();
-            let selected_variables_for_bridge = selected_variables.clone();
-            Arc::new(Task::start_droppable(
-                selected_variables_for_bridge
-                    .search_filter
-                    .signal_cloned()
-                    .dedupe_cloned()
-                    .for_each_sync(move |filter| {
-                        let mut current = session_state_for_bridge.get_cloned();
-                        current.variables_search_filter = filter;
-                        let _ = session_sender_for_bridge.unbounded_send(current);
-                    }),
-            ))
-        };
-        let _variables_filter_bridge_task = (_variables_filter_from_session, _variables_filter_to_session);
-
-        // Track SelectedVariables changes to trigger config saves with latest snapshot
+        // Track SelectedVariables changes - snapshot for config saves
+        // Config save is handled automatically by the pure signal debouncer
         let selected_variables_snapshot = Mutable::new(Vec::<shared::SelectedVariable>::new());
         let _selected_variables_snapshot_task = {
             let state = selected_variables_snapshot.clone();
-            let selected_variables_for_snapshot = selected_variables.clone();
-            let save_sender_for_snapshot = save_sender.clone();
+            let variables_mutable = selected_variables.variables_vec_actor.clone();
 
             Arc::new(Task::start_droppable(
-                selected_variables_for_snapshot
-                    .variables_signal()
+                variables_mutable
+                    .signal_cloned()
                     .dedupe_cloned()
                     .for_each_sync(move |vars| {
                         state.set_neq(vars.clone());
-                        let _ = save_sender_for_snapshot.unbounded_send(());
                     }),
             ))
         };
 
-        // File picker changes now trigger config save through FilePickerDomain
-        // Use nested Task pattern for debouncing
+        // Pure signal observation for config saves - no channels needed
+        // The debouncer observes all source Mutables directly (no intermediate SessionState)
         let _config_save_debouncer_task = {
             let theme_clone = theme.clone();
             let dock_mode_clone = dock_mode.clone();
-            let session_clone = session_state.clone();
             let toast_clone = toast_dismiss_ms.clone();
             let timeline_state_clone = timeline_state.clone();
             let file_picker_domain_clone = file_picker_domain.clone();
@@ -839,9 +684,62 @@ impl AppConfig {
             let value_column_width_right_state_clone = value_column_width_right_state.clone();
             let plugins_state_clone = plugins_state.clone();
             let workspace_history_state_clone_for_save = workspace_history_state.clone();
+            let files_expanded_scopes_clone = files_expanded_scopes.clone();
+            let files_selected_scope_clone = files_selected_scope.clone();
+            let files_vec_signal_clone = tracked_files.files_vec_signal.clone();
+            let variables_search_filter_clone = selected_variables.search_filter.clone();
+
+            // Clone references for the combined signal
+            let theme_for_signal = theme.clone();
+            let dock_mode_for_signal = dock_mode.clone();
+            let toast_for_signal = toast_dismiss_ms.clone();
+            let timeline_for_signal = timeline_state.clone();
+            let files_width_right_for_signal = files_panel_width_right.clone();
+            let files_height_right_for_signal = files_panel_height_right.clone();
+            let files_width_bottom_for_signal = files_panel_width_bottom.clone();
+            let files_height_bottom_for_signal = files_panel_height_bottom.clone();
+            let name_col_bottom_for_signal = name_column_width_bottom_state.clone();
+            let name_col_right_for_signal = name_column_width_right_state.clone();
+            let value_col_bottom_for_signal = value_column_width_bottom_state.clone();
+            let value_col_right_for_signal = value_column_width_right_state.clone();
+            let plugins_for_signal = plugins_state.clone();
+            let workspace_history_for_signal = workspace_history_state.clone();
+            let selected_vars_for_signal = selected_variables_snapshot.clone();
+            let files_expanded_for_signal = files_expanded_scopes.clone();
+            let files_selected_for_signal = files_selected_scope.clone();
+            let files_vec_for_signal = tracked_files.files_vec_signal.clone();
+            let vars_filter_for_signal = selected_variables.search_filter.clone();
+            let picker_scroll_for_signal = file_picker_domain.scroll_position.clone();
+            let picker_expanded_for_signal = file_picker_domain.expanded_directories.clone();
 
             Arc::new(Task::start_droppable(async move {
-                let mut save_stream = save_receiver.fuse();
+                // Combine all config-relevant signals into one trigger signal
+                let config_changed = map_ref! {
+                    let _ = theme_for_signal.signal(),
+                    let _ = dock_mode_for_signal.signal_cloned(),
+                    let _ = toast_for_signal.signal(),
+                    let _ = timeline_for_signal.signal_cloned(),
+                    let _ = files_width_right_for_signal.signal(),
+                    let _ = files_height_right_for_signal.signal(),
+                    let _ = files_width_bottom_for_signal.signal(),
+                    let _ = files_height_bottom_for_signal.signal(),
+                    let _ = name_col_bottom_for_signal.signal(),
+                    let _ = name_col_right_for_signal.signal(),
+                    let _ = value_col_bottom_for_signal.signal(),
+                    let _ = value_col_right_for_signal.signal(),
+                    let _ = plugins_for_signal.signal_cloned(),
+                    let _ = workspace_history_for_signal.signal_cloned(),
+                    let _ = selected_vars_for_signal.signal_cloned(),
+                    let _ = files_expanded_for_signal.signal_cloned(),
+                    let _ = files_selected_for_signal.signal_vec_cloned().map(|_| ()).to_signal_cloned(),
+                    let _ = files_vec_for_signal.signal_cloned(),
+                    let _ = vars_filter_for_signal.signal_cloned(),
+                    let _ = picker_scroll_for_signal.signal(),
+                    let _ = picker_expanded_for_signal.signal_cloned()
+                    => ()
+                };
+
+                let mut config_stream = config_changed.to_stream().fuse();
                 let mut config_loaded_stream =
                     config_loaded_flag_for_saver.signal().to_stream().fuse();
                 let mut config_ready = false;
@@ -857,14 +755,14 @@ impl AppConfig {
                         }
                     }
                     select! {
-                        result = save_stream.next() => {
-                            if let Some(()) = result {
-                                // Debounce loop - wait for quiet period, cancelling if new request arrives
+                        result = config_stream.next() => {
+                            if result.is_some() {
+                                // Debounce loop - wait for quiet period, cancelling if new change arrives
                                 loop {
                                     select! {
-                                        // New save request cancels timer
-                                        result = save_stream.next() => {
-                                            if let Some(()) = result {
+                                        // New config change cancels timer
+                                        result = config_stream.next() => {
+                                            if result.is_some() {
                                                 continue; // Restart timer
                                             }
                                         }
@@ -874,7 +772,6 @@ impl AppConfig {
                                                 if let Some(shared_config) = compose_shared_app_config(
                                                     &theme_clone,
                                                     &dock_mode_clone,
-                                                    &session_clone,
                                                     &toast_clone,
                                                     &file_picker_domain_clone,
                                                     &selected_variables_snapshot_clone,
@@ -889,6 +786,10 @@ impl AppConfig {
                                                     &timeline_state_clone,
                                                     &workspace_history_state_clone_for_save,
                                                     &plugins_state_clone,
+                                                    &files_expanded_scopes_clone,
+                                                    &files_selected_scope_clone,
+                                                    &files_vec_signal_clone,
+                                                    &variables_search_filter_clone,
                                                 ) {
                                                     if let Err(e) = CurrentPlatform::send_message(UpMsg::SaveConfig(shared_config)).await {
                                                         zoon::println!("ERROR: Failed to send SaveConfig: {e}");
@@ -915,24 +816,6 @@ impl AppConfig {
                     }
                 }
             }))
-        };
-
-        // Complex bridge pattern removed - using direct FilePickerDomain events
-
-        let _scroll_sync_task = {
-            let session_scroll_sync = session_state.clone();
-            let session_sender_for_scroll = session_state_sender.clone();
-
-            Arc::new(Task::start_droppable(
-                file_picker_domain.scroll_position.signal().for_each_sync(move |scroll_position| {
-                    let current_session = session_scroll_sync.get_cloned();
-                    let updated_session = SessionState {
-                        file_picker_scroll_position: scroll_position,
-                        ..current_session
-                    };
-                    let _ = session_sender_for_scroll.unbounded_send(updated_session);
-                }),
-            ))
         };
 
         let error_display = crate::error_display::ErrorDisplay::new();
@@ -977,7 +860,6 @@ impl AppConfig {
             timeline_panel_height,
             variables_name_column_width,
             variables_value_column_width,
-            session_state,
             toast_dismiss_ms,
             plugins_state,
             workspace_history_state,
@@ -987,11 +869,8 @@ impl AppConfig {
 
             loaded_selected_variables: config.workspace.selected_variables.clone(),
 
-            timeline_restore_sender,
-            timeline_restore_receiver: std::rc::Rc::new(std::cell::RefCell::new(Some(timeline_restore_receiver))),
+            timeline_state_to_restore,
             timeline_state,
-            session_state_sender,
-            save_sender: save_sender_for_struct,
 
             error_display,
             files_expanded_scopes,
@@ -1003,13 +882,8 @@ impl AppConfig {
             value_column_width_bottom_state,
             value_column_width_right_state,
             selected_variables_snapshot,
-            _session_state_task,
-            _scroll_sync_task,
             _config_save_debouncer_task,
             _workspace_history_task,
-            _treeview_sync_task,
-            _tracked_files_sync_task,
-            _variables_filter_bridge_task,
             _selected_variables_snapshot_task,
             _clipboard_task,
             clipboard_sender,
@@ -1023,18 +897,13 @@ impl AppConfig {
         self.config_loaded_flag.set(false);
     }
 
-    /// Request config to be saved (debounced internally)
-    pub fn request_config_save(&self) {
-        let _ = self.save_sender.unbounded_send(());
-    }
-
-    /// Update timeline state directly and trigger config save
+    /// Update timeline state - config save handled by pure signal debouncer
     pub fn update_timeline_state(&self, new_state: TimelineState) {
         self.timeline_state.set(new_state);
-        let _ = self.save_sender.unbounded_send(());
     }
 
     /// Toggle theme between light and dark
+    /// Config save is handled automatically by the pure signal debouncer
     pub fn toggle_theme(&self) {
         let current = self.theme.get();
         let new_theme = match current {
@@ -1042,7 +911,6 @@ impl AppConfig {
             SharedTheme::Dark => SharedTheme::Light,
         };
         self.set_theme(new_theme);
-        self.request_config_save();
     }
 
     /// Set theme to specific value (for config loading)
@@ -1056,6 +924,7 @@ impl AppConfig {
     }
 
     /// Toggle dock mode between right and bottom
+    /// Config save is handled automatically by the pure signal debouncer
     pub fn toggle_dock_mode(&self) {
         let current = self.dock_mode.get();
         let new_mode = match current {
@@ -1063,7 +932,6 @@ impl AppConfig {
             DockMode::Bottom => DockMode::Right,
         };
         self.set_dock_mode(new_mode);
-        self.request_config_save();
     }
 
     /// Set dock mode to specific value (for config loading)
@@ -1253,7 +1121,7 @@ impl AppConfig {
         };
 
         self.update_timeline_state(timeline_state.clone());
-        let _ = self.timeline_restore_sender.unbounded_send(timeline_state);
+        self.timeline_state_to_restore.set(Some(timeline_state));
 
         // Update theme and dock mode directly
         self.set_theme(loaded_config.ui.theme);
@@ -1277,18 +1145,8 @@ impl AppConfig {
             .scroll_position
             .set_neq(loaded_config.workspace.load_files_scroll_position);
 
-        // Synchronize session state
-        let _ = self.session_state_sender.unbounded_send(SessionState {
-            opened_files: loaded_config.workspace.opened_files.clone(),
-            expanded_scopes: loaded_config.workspace.expanded_scopes.clone(),
-            selected_scope_id: loaded_config.workspace.selected_scope_id.clone(),
-            variables_search_filter: loaded_config.workspace.variables_search_filter.clone(),
-            file_picker_scroll_position: loaded_config.workspace.load_files_scroll_position,
-            file_picker_expanded_directories: loaded_config
-                .workspace
-                .load_files_expanded_directories
-                .clone(),
-        });
+        // Restore variables search filter
+        selected_variables.set_search_filter(loaded_config.workspace.variables_search_filter.clone());
 
         // Restore selected variables ONLY if there are files to load
         // (prevents orphan variables showing "Loading..." when files aren't loaded)
@@ -1488,5 +1346,206 @@ impl AppConfig {
     /// Copy text to clipboard via channel (processed by stored clipboard task)
     pub fn copy_to_clipboard(&self, text: String) {
         let _ = self.clipboard_sender.unbounded_send(text);
+    }
+}
+
+/// Handles workspace picker state persistence using pure signal observation.
+/// Encapsulates all coordination logic (selection, expanded, scroll, visibility restore).
+pub struct WorkspacePickerPersistence {
+    _selection_observer: Arc<TaskHandle>,
+    _expanded_observer: Arc<TaskHandle>,
+    _scroll_observer: Arc<TaskHandle>,
+    _visibility_observer: Arc<TaskHandle>,
+}
+
+impl WorkspacePickerPersistence {
+    pub fn new(
+        workspace_picker_domain: FilePickerDomain,
+        workspace_picker_visible: Mutable<bool>,
+        workspace_picker_target: Mutable<Option<String>>,
+        config: AppConfig,
+    ) -> Self {
+        let restoring_flag = Mutable::new(false);
+
+        // Selection observer - updates target and records workspace selection
+        let _selection_observer = {
+            let selected_signal = workspace_picker_domain.selected_files_vec_signal.clone();
+            let config_clone = config.clone();
+            let domain_clone = workspace_picker_domain.clone();
+            let target_clone = workspace_picker_target.clone();
+            Arc::new(Task::start_droppable(
+                selected_signal.signal_cloned().dedupe_cloned().for_each_sync(move |selection| {
+                    crate::app::emit_trace("workspace_picker_selection", format!("paths={selection:?}"));
+                    if let Some(path) = selection.first().cloned() {
+                        target_clone.set_neq(Some(path.clone()));
+                        config_clone.record_workspace_selection(&path);
+
+                        let expanded_vec: Vec<String> = domain_clone
+                            .expanded_directories
+                            .lock_ref()
+                            .iter()
+                            .cloned()
+                            .collect();
+                        crate::app::emit_trace(
+                            "workspace_picker_selection",
+                            format!("selection={selection:?} expanded_paths={expanded_vec:?}"),
+                        );
+                        Self::publish_snapshot(&config_clone, &domain_clone, Some(expanded_vec));
+                    }
+                }),
+            ))
+        };
+
+        // Expanded observer - updates tree state in config
+        let _expanded_observer = {
+            let expanded_dirs = workspace_picker_domain.expanded_directories.clone();
+            let config_clone = config.clone();
+            let restoring_flag_clone = restoring_flag.clone();
+            let visible_clone = workspace_picker_visible.clone();
+            let is_first = std::cell::Cell::new(true);
+            Arc::new(Task::start_droppable(
+                expanded_dirs.signal_cloned().dedupe_cloned().for_each_sync(move |expanded_set| {
+                    // Skip initial value to avoid persisting on startup
+                    if is_first.get() {
+                        is_first.set(false);
+                        return;
+                    }
+                    let expanded_vec: Vec<String> = expanded_set.iter().cloned().collect();
+                    let is_visible = visible_clone.get();
+                    let restoring = restoring_flag_clone.get();
+                    crate::app::emit_trace(
+                        "workspace_history_expanded_actor",
+                        format!("paths={expanded_vec:?} restoring={restoring} visible={is_visible}"),
+                    );
+                    // Ignore teardown-driven empty updates when dialog is no longer visible
+                    if !is_visible && expanded_vec.is_empty() {
+                        crate::app::emit_trace(
+                            "workspace_history_expanded_actor",
+                            "skip_empty_invisible".to_string(),
+                        );
+                        return;
+                    }
+                    if restoring {
+                        crate::app::emit_trace(
+                            "workspace_history_expanded_actor",
+                            "skip_restoring".to_string(),
+                        );
+                        return;
+                    }
+                    config_clone.update_workspace_picker_tree_state(expanded_vec);
+                }),
+            ))
+        };
+
+        // Scroll observer - updates scroll position in config
+        let _scroll_observer = {
+            let domain_clone = workspace_picker_domain.clone();
+            let config_clone = config.clone();
+            let restoring_flag_clone = restoring_flag.clone();
+            Arc::new(Task::start_droppable(
+                domain_clone.scroll_position.signal().dedupe().for_each_sync(move |position| {
+                    if restoring_flag_clone.get() {
+                        return;
+                    }
+                    let scroll_value = position as f64;
+                    crate::app::emit_trace(
+                        "workspace_picker_scroll",
+                        format!("scroll_top={scroll_value}"),
+                    );
+                    config_clone.update_workspace_picker_scroll(scroll_value);
+                }),
+            ))
+        };
+
+        // Visibility observer - restores state when visible, publishes snapshot when closing
+        let _visibility_observer = {
+            let history_state = config.workspace_history_state.clone();
+            let domain_clone = workspace_picker_domain.clone();
+            let visible_clone = workspace_picker_visible.clone();
+            let target_clone = workspace_picker_target.clone();
+            let config_clone = config.clone();
+            let restoring_flag_clone = restoring_flag.clone();
+            Arc::new(Task::start_droppable(
+                visible_clone.signal().dedupe().for_each_sync(move |visible| {
+                    if visible {
+                        restoring_flag_clone.set(true);
+                        let history = history_state.get_cloned();
+                        crate::app::emit_trace(
+                            "workspace_picker_restore",
+                            format!("stage=apply history={:?}", history.picker_tree_state),
+                        );
+                        Self::apply_tree_state(&history, &domain_clone);
+                        let applied_state: Vec<String> = domain_clone
+                            .expanded_directories
+                            .lock_ref()
+                            .iter()
+                            .cloned()
+                            .collect();
+                        // Sync applied expansions into history state
+                        config_clone.update_workspace_picker_tree_state(applied_state.clone());
+                        crate::app::emit_trace(
+                            "workspace_picker_restore",
+                            format!("stage=post_apply expanded_paths={applied_state:?}"),
+                        );
+                        target_clone.set_neq(None);
+                        domain_clone.selected_files_vec_signal.set_neq(Vec::new());
+                        domain_clone.clear_file_selection();
+                        restoring_flag_clone.set(false);
+                    } else {
+                        // Dialog is closing: publish final snapshot
+                        Self::publish_snapshot(&config_clone, &domain_clone, None);
+                        restoring_flag_clone.set(false);
+                    }
+                }),
+            ))
+        };
+
+        Self {
+            _selection_observer,
+            _expanded_observer,
+            _scroll_observer,
+            _visibility_observer,
+        }
+    }
+
+    fn apply_tree_state(history: &shared::WorkspaceHistory, domain: &FilePickerDomain) {
+        if let Some(tree_state) = history.picker_tree_state.as_ref() {
+            let mut expanded_set = indexmap::IndexSet::new();
+            for entry in &tree_state.expanded_paths {
+                expanded_set.insert(entry.clone());
+            }
+            let scroll_clamped = tree_state.scroll_top.max(0.0).round();
+            let scroll_value = scroll_clamped.clamp(0.0, i32::MAX as f64) as i32;
+
+            domain.expanded_directories.set_neq(expanded_set);
+            domain.scroll_position.set_neq(scroll_value);
+        }
+    }
+
+    fn publish_snapshot(
+        config: &AppConfig,
+        domain: &FilePickerDomain,
+        known_expanded: Option<Vec<String>>,
+    ) {
+        let expanded_vec = known_expanded.unwrap_or_else(|| {
+            domain
+                .expanded_directories
+                .lock_ref()
+                .iter()
+                .cloned()
+                .collect()
+        });
+        if expanded_vec.is_empty() {
+            crate::app::emit_trace(
+                "workspace_picker_snapshot",
+                "skipped empty expanded_paths".to_string(),
+            );
+            return;
+        }
+        crate::app::emit_trace(
+            "workspace_picker_snapshot",
+            format!("expanded_paths={expanded_vec:?}"),
+        );
+        config.update_workspace_picker_tree_state(expanded_vec);
     }
 }

@@ -1,10 +1,14 @@
 //! SelectedVariables domain - simple state with direct methods
+//!
+//! Uses pure reactive dataflow: external state changes are observed via signals,
+//! internal state is updated reactively.
 
 #![allow(dead_code)] // API not yet fully integrated
 
 use indexmap::IndexSet;
 use shared::SelectedVariable;
-use zoon::{Mutable, MutableVec, MutableExt, SignalExt};
+use std::sync::Arc;
+use zoon::{Mutable, MutableVec, MutableExt, SignalExt, SignalVecExt, Task, TaskHandle, VecDiff};
 
 #[derive(Clone)]
 pub struct SelectedVariables {
@@ -15,19 +19,83 @@ pub struct SelectedVariables {
     pub expanded_scopes: Mutable<IndexSet<String>>,
     pub search_filter: Mutable<String>,
     pub search_focused: Mutable<bool>,
+    _scope_selection_observer: Arc<TaskHandle>,
 }
 
 impl SelectedVariables {
-    pub fn new() -> Self {
+    pub fn new(files_selected_scope: MutableVec<String>) -> Self {
+        let tree_selection = Mutable::new(IndexSet::new());
+        let selected_scope = Mutable::new(None);
+
+        // Pure dataflow: observe files_selected_scope and update internal state
+        let _scope_selection_observer = {
+            let tree_selection_clone = tree_selection.clone();
+            let selected_scope_clone = selected_scope.clone();
+            let current_selection = std::cell::RefCell::new(Vec::<String>::new());
+            Arc::new(Task::start_droppable(
+                files_selected_scope
+                    .signal_vec_cloned()
+                    .for_each(move |diff| {
+                        {
+                            let mut v = current_selection.borrow_mut();
+                            match diff {
+                                VecDiff::Replace { values } => *v = values,
+                                VecDiff::InsertAt { index, value } => v.insert(index, value),
+                                VecDiff::UpdateAt { index, value } => v[index] = value,
+                                VecDiff::RemoveAt { index } => { v.remove(index); }
+                                VecDiff::Move { old_index, new_index } => {
+                                    let item = v.remove(old_index);
+                                    v.insert(new_index, item);
+                                }
+                                VecDiff::Push { value } => v.push(value),
+                                VecDiff::Pop {} => { v.pop(); }
+                                VecDiff::Clear {} => v.clear(),
+                            }
+                        }
+                        Self::handle_scope_selection(
+                            current_selection.borrow().clone(),
+                            &tree_selection_clone,
+                            &selected_scope_clone,
+                        );
+                        async {}
+                    }),
+            ))
+        };
+
         Self {
             variables: MutableVec::new(),
             variables_vec_actor: Mutable::new(vec![]),
-            selected_scope: Mutable::new(None),
-            tree_selection: Mutable::new(IndexSet::new()),
+            selected_scope,
+            tree_selection,
             expanded_scopes: Mutable::new(IndexSet::new()),
             search_filter: Mutable::new(String::new()),
             search_focused: Mutable::new(false),
+            _scope_selection_observer,
         }
+    }
+
+    fn handle_scope_selection(
+        selected_ids: Vec<String>,
+        tree_selection: &Mutable<IndexSet<String>>,
+        selected_scope: &Mutable<Option<String>>,
+    ) {
+        let mut selection_set = IndexSet::new();
+        let mut last_scope: Option<String> = None;
+
+        for raw_id in selected_ids.into_iter() {
+            if !raw_id.starts_with("scope_") {
+                continue;
+            }
+            let cleaned = raw_id
+                .strip_prefix("scope_")
+                .unwrap_or(raw_id.as_str())
+                .to_string();
+            last_scope = Some(cleaned);
+            selection_set.insert(raw_id);
+        }
+
+        selected_scope.set(last_scope);
+        tree_selection.set(selection_set);
     }
 
     pub fn add_variable(&self, variable_id: String) {

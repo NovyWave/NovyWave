@@ -34,14 +34,34 @@ Import from `shared/` - never duplicate types:
 use shared::{LoadingFile, WaveformFile, UpMsg, DownMsg, AppConfig};
 ```
 
-## Actor+Relay Architecture
+## Pure Reactive Dataflow
 
-> **📖 Complete Reference:** See `actor-relay-patterns.md` for all patterns.
+**State change IS the event** - no separate channels or relays needed.
+
+**Core Primitives:**
+- `Mutable<T>` - State container, `.set_neq()` triggers signals
+- `Signal` - Reactive observation via `.signal()` / `.signal_cloned()`
+- `map_ref!` - Derived state from multiple signals
+- `for_each_sync()` - Synchronous side effects on signal changes
 
 **Quick Rules:**
-- NO raw Mutables - use Actor+Relay or Atom
-- Event-source naming: `button_clicked_relay` not `add_file`
+- External code sets Mutables, domains observe signals
+- NO mpsc channels for state - use `Mutable<Option<T>>` instead
 - Domain-driven: `TrackedFiles` not `FileManager`
+
+```rust
+// ✅ Pure dataflow - external code sets, domain observes
+timeline.inputs.cursor_move_request.set(Some(CursorMoveRequest { ... }));
+
+// Domain observes and reacts
+inputs.cursor_move_request.signal()
+    .for_each_sync(|maybe_req| {
+        if let Some(req) = maybe_req {
+            handle_cursor_move(req);
+            inputs.cursor_move_request.set(None);  // Clear after handling
+        }
+    });
+```
 
 ## Zoon Framework Patterns
 

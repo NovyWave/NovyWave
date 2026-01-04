@@ -264,7 +264,7 @@ pub fn variables_loading_signal(
     selected_variables: crate::selected_variables::SelectedVariables,
     app_config: crate::config::AppConfig,
 ) -> impl Signal<Item = Vec<VariableWithContext>> {
-    let files_signal = tracked_files.files.signal_vec_cloned().to_signal_cloned();
+    let files_signal = tracked_files.files_vec_signal.signal_cloned();
     // Merge SelectedVariables.selected_scope with TreeView selection snapshot from AppConfig
     let selected_scope_from_sv = selected_variables.selected_scope.signal_cloned();
     let selected_scope_from_tree = app_config

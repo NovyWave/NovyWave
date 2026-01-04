@@ -211,7 +211,6 @@ pub fn waveform_canvas(
     let render_state_store_click = waveform_canvas.render_state_store.clone();
     let render_state_store_move = waveform_canvas.render_state_store.clone();
     let timeline_for_click = waveform_timeline.clone();
-    let timeline_for_hover = waveform_timeline.clone();
     let timeline_for_click_hover = waveform_timeline.clone();
     let timeline_for_move_hover = waveform_timeline.clone();
     let timeline_for_leave = waveform_timeline.clone();
@@ -229,7 +228,6 @@ pub fn waveform_canvas(
             let render_state_store_click = render_state_store_click.clone();
             let render_state_store_move = render_state_store_move.clone();
             let timeline_for_click = timeline_for_click.clone();
-            let timeline_for_hover = timeline_for_hover.clone();
             move |raw_el| {
                 let raw_el = raw_el
                     .on_resize({

@@ -1,6 +1,5 @@
 use zoon::Mutable;
 use crate::file_operations::extract_filename;
-use futures::StreamExt;
 use moonzoon_novyui::tokens::color::{
     neutral_1, neutral_2, neutral_4, neutral_8, neutral_11, neutral_12,
 };
@@ -10,7 +9,6 @@ use moonzoon_novyui::tokens::theme::Theme;
 use moonzoon_novyui::*;
 use shared::FileSystemItem;
 use std::collections::HashMap;
-use std::sync::Arc;
 use wasm_bindgen::JsCast;
 use zoon::events::{Click, KeyDown};
 use zoon::map_ref;
@@ -497,7 +495,6 @@ pub fn file_picker_tree(
                 .apply(|raw_el| apply_scrollbar_colors(raw_el))
         })
         .child_signal({
-            let initialization_actor_for_closure = initialization_actor.clone();
             cache_signal.map(move |cache| {
                 if cache.contains_key("/") {
                     // Root directory loaded - show tree
@@ -508,9 +505,6 @@ pub fn file_picker_tree(
                         // Detection task in FilePickerDomain handles browse/save side effects
                         let external_expanded = domain_for_treeview.expanded_directories.clone();
 
-                        // Store initialization actor for proper lifecycle management
-                        let _initialization_actor = initialization_actor_for_closure.clone();
-
                         let scroll_task_handle: std::sync::Arc<std::sync::Mutex<Option<zoon::TaskHandle>>> =
                             std::sync::Arc::new(std::sync::Mutex::new(None));
                         let scroll_task_handle_for_insert = scroll_task_handle.clone();
@@ -520,7 +514,6 @@ pub fn file_picker_tree(
                             .s(Height::fill())
                             .s(Width::fill())
                             .after_remove(move |_| {
-                                drop(_initialization_actor);
                                 drop(scroll_task_handle_for_remove.lock().unwrap().take());
                             })
                             // Restore scroll position after tree is rendered

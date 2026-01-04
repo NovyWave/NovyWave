@@ -1,24 +1,46 @@
 //! TrackedFiles domain - file loading and management
 //!
-//! Uses MutableVec with direct methods for state management.
+//! Uses pure reactive dataflow: Backend messages are set as Mutables,
+//! TrackedFiles observes these signals and updates state reactively.
 
 use futures::StreamExt;
-use shared::{CanonicalPathPayload, FileState, LoadingStatus, TrackedFile, create_tracked_file};
+use shared::{CanonicalPathPayload, FileState, LoadingStatus, TrackedFile, WaveformFile, create_tracked_file};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use zoon::*;
+
+/// Backend messages as Mutables - connection callback sets these,
+/// TrackedFiles observes the signals reactively.
+#[derive(Clone)]
+pub struct BackendMessages {
+    pub file_loaded: Mutable<Option<(String, WaveformFile)>>,
+    pub parsing_started: Mutable<Option<String>>,
+    pub parsing_error: Mutable<Option<(String, String)>>,
+}
+
+impl BackendMessages {
+    pub fn new() -> Self {
+        Self {
+            file_loaded: Mutable::new(None),
+            parsing_started: Mutable::new(None),
+            parsing_error: Mutable::new(None),
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct TrackedFiles {
     pub files: MutableVec<TrackedFile>,
     pub files_vec_signal: Mutable<Vec<TrackedFile>>,
     loading_start_times: Mutable<HashMap<String, f64>>,
-    file_reload_completed: Mutable<Option<String>>,
-    file_reload_started: Mutable<Option<String>>,
+    pub file_reload_completed: Mutable<Option<String>>,
+    pub file_reload_started: Mutable<Option<String>>,
+    pub backend_messages: BackendMessages,
     parse_request_sender: futures::channel::mpsc::UnboundedSender<(String, String)>,
     _parse_task: Arc<TaskHandle>,
     _global_watchdog_task: Arc<TaskHandle>,
+    _backend_observer_task: Arc<TaskHandle>,
 }
 
 impl TrackedFiles {
@@ -110,15 +132,90 @@ impl TrackedFiles {
             }
         }));
 
+        // Backend messages - connection sets these, we observe
+        let backend_messages = BackendMessages::new();
+        let file_reload_completed = Mutable::new(None);
+
+        // Consolidated observer for all backend messages (file_loaded, parsing_started, parsing_error)
+        let _backend_observer_task = {
+            let files_clone = files.clone();
+            let files_vec_clone = files_vec_signal.clone();
+            let reload_completed_clone = file_reload_completed.clone();
+            let loading_times_clone = loading_start_times.clone();
+            let file_loaded_signal = backend_messages.file_loaded.clone();
+            let parsing_started_signal = backend_messages.parsing_started.clone();
+            let parsing_error_signal = backend_messages.parsing_error.clone();
+
+            Arc::new(Task::start_droppable(
+                map_ref! {
+                    let loaded = file_loaded_signal.signal_cloned(),
+                    let started = parsing_started_signal.signal_cloned(),
+                    let error = parsing_error_signal.signal_cloned()
+                        => (loaded.clone(), started.clone(), error.clone())
+                }
+                .for_each(move |(loaded, started, error)| {
+                    let mut current = files_vec_clone.get_cloned();
+                    let mut changed = false;
+
+                    if let Some(file_id) = started {
+                        if let Some(index) = current.iter().position(|tracked| {
+                            tracked.canonical_path == file_id || tracked.path == file_id
+                        }) {
+                            current[index].state = FileState::Loading(LoadingStatus::Parsing);
+                            changed = true;
+                        }
+                    }
+
+                    if let Some((file_id, waveform_file)) = loaded {
+                        if let Some(index) = current.iter().position(|tracked| {
+                            tracked.canonical_path == file_id || tracked.path == file_id
+                        }) {
+                            current[index].id = file_id.clone();
+                            current[index].canonical_path = file_id.clone();
+                            current[index].state = FileState::Loaded(waveform_file);
+                            changed = true;
+                            reload_completed_clone.set(Some(file_id.clone()));
+                            loading_times_clone.lock_mut().remove(&file_id);
+                        }
+                    }
+
+                    if let Some((file_id, _error)) = error {
+                        if let Some(index) = current.iter().position(|tracked| {
+                            tracked.canonical_path == file_id || tracked.path == file_id
+                        }) {
+                            current[index].id = file_id.clone();
+                            current[index].canonical_path = file_id.clone();
+                            current[index].state = FileState::Failed(shared::FileError::FileNotFound {
+                                path: file_id.clone(),
+                            });
+                            changed = true;
+                            reload_completed_clone.set(Some(file_id.clone()));
+                            loading_times_clone.lock_mut().remove(&file_id);
+                        }
+                    }
+
+                    if changed {
+                        let mut vec = files_clone.lock_mut();
+                        vec.clear();
+                        vec.extend(current.clone());
+                        files_vec_clone.set_neq(current);
+                    }
+                    async {}
+                }),
+            ))
+        };
+
         Self {
             files,
             files_vec_signal,
             loading_start_times,
-            file_reload_completed: Mutable::new(None),
+            file_reload_completed,
             file_reload_started: Mutable::new(None),
+            backend_messages,
             parse_request_sender,
             _parse_task,
             _global_watchdog_task,
+            _backend_observer_task,
         }
     }
 
@@ -323,7 +420,7 @@ impl TrackedFiles {
     }
 
     pub fn files_signal(&self) -> impl zoon::Signal<Item = Vec<TrackedFile>> {
-        self.files.signal_vec_cloned().to_signal_cloned()
+        self.files_vec_signal.signal_cloned()
     }
 
     pub fn get_current_files(&self) -> Vec<TrackedFile> {

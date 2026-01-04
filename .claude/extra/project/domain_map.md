@@ -4,13 +4,14 @@
 
 ## Core Foundation
 
-### Dataflow (`frontend/src/dataflow/`)
-- **Relay<T>** - Event streaming, event-source naming
-- **Actor<T>** - State management, NO `.get()`, signal-only
-- **ActorVec<T>** - Reactive collections (VecDiff)
-- **Atom<T>** - Local UI state only
+### Pure Reactive Dataflow
+- **Mutable<T>** - State container, state change IS the event
+- **Signal** - Reactive observation via `.signal()` / `.signal_cloned()`
+- **map_ref!** - Derived state from multiple signals
+- **for_each_sync()** - Synchronous side effects on signal changes
+- **MutableVec<T>** - Reactive collections with `signal_vec_cloned()`
 
-**Critical:** "Cache Current Values" ONLY inside Actor loops
+**Critical:** State changes propagate via signals - NO imperative method calls between domains
 
 ### App Structure (`frontend/src/app.rs`)
 ```rust
@@ -42,9 +43,10 @@ pub struct NovyWaveApp {
 ### 3. Timeline Visualization
 **Files:** `visualizer/timeline/` (8 files)
 
-- `timeline_actors.rs` - 30+ relays
-- `zoom_controller.rs`, `canvas_state.rs`, `panning_controller.rs`
-- TimeNs/DurationNs precision, Cache Current Values pattern
+- `timeline_actor.rs` - WaveformTimeline with TimelineInputs (pure dataflow)
+- `TimelineInputs` - Mutables for keyboard/canvas/format events
+- External code sets `timeline.inputs.*`, Timeline observes and reacts
+- TimePs precision, viewport/cursor state via Mutables
 
 ### 4. Canvas Rendering
 **Files:** `visualizer/canvas/` (5 files) - Fast2D graphics
@@ -63,13 +65,14 @@ pub struct NovyWaveApp {
 | From | To | Mechanism |
 |------|-----|-----------|
 | Files | Variables | File loading → variable extraction |
-| Variables | Timeline | Format changes → `format_updated_relay` |
-| Timeline | Canvas | TimelineContext bridges state |
-| All | Config | Domain changes → ConfigSaver |
-| All | Dragging | Panel dimensions via DraggingSystem |
+| Variables | Timeline | `timeline.inputs.format_update.set(...)` |
+| Keyboard | Timeline | `timeline.inputs.cursor_move_request.set(...)` |
+| Canvas | Timeline | `timeline.inputs.canvas_dimensions.set(...)` |
+| Connection | TrackedFiles | `backend_messages.file_loaded.set(...)` |
+| All | Config | ConfigSaver observes domain Mutables via `map_ref!` |
 
 ## Rules (MANDATORY)
 
-✅ NO raw Mutables ✅ Event-source naming ✅ Domain-driven design ✅ Public fields
+✅ Pure signal dataflow ✅ Mutable<T> for state ✅ Domain-driven design ✅ Public fields
 
-❌ Manager/Service/Controller ❌ SignalVec→Signal ❌ zoon::Task for events ❌ Data bundling
+❌ Imperative method calls between domains ❌ SignalVec→Signal conversion ❌ mpsc channels for state

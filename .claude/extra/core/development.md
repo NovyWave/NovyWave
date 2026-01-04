@@ -40,6 +40,18 @@ tail -100 dev_server.log | grep -E "error\[E[0-9]+\]" | wc -l  # Must be 0
 
 ## Critical Reactive Antipatterns
 
+### Core Principle: Signals vs Streams
+
+**This codebase uses SIGNALS, not STREAMS.**
+
+| Signals | Streams |
+|---------|---------|
+| Broadcast - all observers get every value | Consumed - only one consumer gets each value |
+| Use `.for_each_sync()` or `map_ref!` | Use only for mpsc receivers (backend connection) |
+| `.to_stream()` almost always WRONG | Appropriate for genuine async message passing |
+
+**If you see `.to_stream()` on a signal, it's almost always wrong.**
+
 ### 1. SignalVec → Signal Conversion (NEVER USE)
 ```rust
 // ❌ Causes 20+ renders from single change
@@ -59,8 +71,8 @@ No `.get()` method by design. Use: `.signal().to_stream().next().await` or `map_
 ```rust
 // ❌ UI caching state
 pub fn toggle_theme() { let current = theme_now(); /* toggle */ }
-// ✅ UI emits events only
-pub fn toggle_theme_requested() { app_config().theme_toggle_requested_relay.send(()); }
+// ✅ UI sets input Mutable, domain observes
+pub fn toggle_theme_requested() { app_config().inputs.theme_toggle.set(true); }
 ```
 
 ### 5. TreeView with child_signal (NEVER)
@@ -165,6 +177,67 @@ tracked_files.signal_vec_cloned()
 - **Avoid large struct clones**: `TrackedFile`, `WaveformFile` are expensive to clone
 - **Question the need**: Do you really need Signal<Vec> or can you use SignalVec directly?
 
+### 11. Dual Stream Consumers (CRITICAL BUG)
+
+**Multiple tasks consuming same signal as stream = only ONE gets the value!**
+
+```rust
+// ❌ CRITICAL BUG: Two tasks, same signal as stream
+let mut stream_a = flag.signal().to_stream().fuse();  // Task A
+let mut stream_b = flag.signal().to_stream().fuse();  // Task B
+
+// When flag changes: Task A gets value, Task B waits FOREVER!
+```
+
+**Fix:** Each observer should use its own signal subscription:
+```rust
+// ✅ CORRECT: Each task observes signal directly
+flag.signal().for_each_sync(|v| { /* Task A logic */ });
+flag.signal().for_each_sync(|v| { /* Task B logic */ });
+```
+
+### 12. Multiple Streams in select! (MISS UPDATES)
+
+```rust
+// ❌ Can miss updates when multiple signals change together
+let mut stream_a = signal_a.to_stream().fuse();
+let mut stream_b = signal_b.to_stream().fuse();
+loop {
+    select! {
+        a = stream_a.next() => { ... }
+        b = stream_b.next() => { ... }  // May miss if both change!
+    }
+}
+
+// ✅ CORRECT: Combine signals first
+map_ref! {
+    let a = signal_a,
+    let b = signal_b => (a.clone(), b.clone())
+}.for_each_sync(|(a, b)| { ... })
+```
+
+### 13. Flag-Based Async Coordination (FRAGILE)
+
+```rust
+// ❌ FRAGILE: Mutable<bool> flags for async coordination
+let config_loaded_flag = Mutable::new(false);
+// ... somewhere else checks flag.get() - race conditions!
+
+// ✅ BETTER: Use state enum or proper signal observation
+enum ConfigState { NotLoaded, Restoring, Ready }
+let config_state = Mutable::new(ConfigState::NotLoaded);
+```
+
+### 14. Missing .dedupe() (DUPLICATE WORK)
+
+```rust
+// ❌ Fires handler even when value unchanged
+signal.for_each_sync(|v| expensive_work(v));
+
+// ✅ CORRECT: Only fire when value actually changes
+signal.dedupe_cloned().for_each_sync(|v| expensive_work(v));
+```
+
 ## WASM Constraints (CRITICAL)
 
 - **All I/O on backend** - WASM filesystem blocks main thread, freezes browser
@@ -194,13 +267,29 @@ tracked_files.signal_vec_cloned()
 
 ## State Management
 
-**See actor-relay-patterns.md** for complete Actor+Relay reference.
+**Pure Reactive Dataflow** - State change IS the event.
 
 Quick rules:
-- NO raw Mutables - use Actor+Relay or Atom
-- Event-source relay naming: `button_clicked_relay` not `add_file_relay`
+- `Mutable<T>` for state, `.signal()` for observation
+- NO mpsc channels for state - use `Mutable<Option<T>>` instead
+- External code sets Mutables, domains observe signals
 - Domain-driven design: `TrackedFiles` not `FileManager`
 - NO Manager/Service/Controller patterns
+
+```rust
+// ✅ CORRECT: Pure signal observation
+inputs.some_request.signal()
+    .for_each_sync(|maybe_req| {
+        if let Some(req) = maybe_req {
+            handle(req);
+            inputs.some_request.set(None);  // Clear after handling
+        }
+    });
+
+// ❌ WRONG: mpsc channels for state sync
+let (sender, receiver) = mpsc::unbounded();
+sender.unbounded_send(state);  // Don't do this!
+```
 
 ## Dataflow API Protection
 
@@ -236,9 +325,31 @@ Ask before complex tasks:
 
 ## Quality Checklist
 
-- [ ] Event-source relay naming
-- [ ] Cache Current Values only in Actor loops
-- [ ] No raw Mutables introduced
+- [ ] Pure signal dataflow (no mpsc channels for state)
+- [ ] External sets Mutables, domains observe signals
+- [ ] No SignalVec→Signal antipatterns
+- [ ] No `.to_stream()` on signals (use `for_each_sync` or `map_ref!`)
 - [ ] Public field architecture maintained
 - [ ] Compilation successful (0 errors)
 - [ ] Browser MCP verification passed
+
+## Antipattern Search Commands
+
+Use these to audit the codebase:
+
+```bash
+# Find .to_stream() on signals (almost always wrong)
+grep -rn "signal.*\.to_stream()" frontend/src/
+
+# Find multiple .to_stream() in same file (race condition)
+grep -n "\.to_stream()" frontend/src/**/*.rs | cut -d: -f1 | sort | uniq -c | sort -rn
+
+# Find Mutable<bool> flags (fragile coordination)
+grep -n "Mutable::new(false)\|Mutable::new(true)" frontend/src/**/*.rs
+
+# Find for_each with async {} (should use for_each_sync)
+grep -B2 "async {}" frontend/src/**/*.rs
+
+# Find signal without dedupe before for_each
+grep -n "signal_cloned()\.for_each" frontend/src/**/*.rs
+```

@@ -3,7 +3,6 @@ use moonzoon_novyui::components::icon::{IconColor, IconName, IconSize, icon};
 use moonzoon_novyui::tokens::*;
 use std::cell::Cell;
 use std::rc::Rc;
-use std::sync::Arc;
 use zoon::events::Click;
 use zoon::*;
 
@@ -88,8 +87,6 @@ impl VariantColors {
     }
 }
 
-type Progress = f32;
-
 pub fn toast_notifications_container(app_config: crate::config::AppConfig) -> impl Element {
     El::new()
         .s(Width::fill())
@@ -133,19 +130,18 @@ fn toast_element(alert: ErrorAlert, app_config: crate::config::AppConfig) -> imp
     let alert_id = alert.id.clone();
     let alert_id_for_action = alert.id.clone();
     let alert_id_for_dismiss = alert.id.clone();
-    let alert_id_for_click = alert.id.clone();
 
     let colors = VariantColors::new(variant);
 
     let is_paused = Rc::new(Cell::new(false));
     let toast_progress = Mutable::new(if has_custom_progress { custom_progress } else { 100.0 });
 
-    let _toast_task: Arc<TaskHandle> = if has_auto_dismiss && !has_custom_progress {
+    let _toast_task: TaskHandle = if has_auto_dismiss && !has_custom_progress {
         let progress = toast_progress.clone();
         let error_display = error_display.clone();
         let alert_id = alert_id.clone();
         let is_paused = is_paused.clone();
-        Arc::new(Task::start_droppable(async move {
+        Task::start_droppable(async move {
             let mut elapsed_time = 0.0f32;
             let update_interval_ms = 50.0f32;
             loop {
@@ -160,9 +156,9 @@ fn toast_element(alert: ErrorAlert, app_config: crate::config::AppConfig) -> imp
                     }
                 }
             }
-        }))
+        })
     } else {
-        Arc::new(Task::start_droppable(async {}))
+        Task::start_droppable(async {})
     };
 
     let action_button = if let Some(label) = action_label {

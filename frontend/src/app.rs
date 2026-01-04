@@ -1,8 +1,5 @@
 //! NovyWaveApp - Self-contained Actor+Relay Architecture
 
-use futures::StreamExt;
-use futures_signals::signal::SignalExt;
-use futures_signals::signal_vec::SignalVecExt;
 use gloo_timers::callback::Interval;
 use indexmap::IndexSet;
 use moonzoon_novyui::components::treeview::{
@@ -20,28 +17,11 @@ use std::sync::Arc;
 use crate::selected_variables::SelectedVariables;
 use crate::tracked_files::TrackedFiles;
 use crate::visualizer::timeline::WaveformTimeline;
-use shared::{DownMsg, SignalStatistics, SignalValue, UnifiedSignalData, UpMsg};
+use shared::{DownMsg, SignalValue, UpMsg};
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::rc::Rc;
 use wasm_bindgen::{JsCast, closure::Closure};
-
-/// Event payload emitted for each `UnifiedSignalResponse` down message.
-#[derive(Clone, Debug)]
-pub struct UnifiedSignalResponseEvent {
-    pub request_id: String,
-    pub signal_data: Vec<UnifiedSignalData>,
-    pub cursor_values: BTreeMap<String, SignalValue>,
-    pub cached_time_range_ns: Option<(u64, u64)>,
-    pub statistics: Option<SignalStatistics>,
-}
-
-#[derive(Clone, Debug)]
-pub struct WorkspaceLoadedEvent {
-    pub root: String,
-    pub default_root: String,
-    pub config: shared::AppConfig,
-}
 
 const KEY_REPEAT_INTERVAL_MS: u32 = 55;
 
@@ -305,18 +285,12 @@ pub struct NovyWaveApp {
     /// Dedicated file-picker style domain for workspace selection tree
     pub workspace_picker_domain: crate::config::FilePickerDomain,
     pub workspace_picker_target: Mutable<Option<String>>,
-    _workspace_picker_restoring: Mutable<bool>,
 
     /// Message routing actor (keeps relays alive)
     _connection_message_actor: ConnectionMessageActor,
 
-    /// Synchronizes Files panel scope selection into SelectedVariables domain
-    _scope_selection_sync_task: Arc<TaskHandle>,
-
-    _workspace_history_selection_task: Arc<TaskHandle>,
-    _workspace_history_expanded_task: Arc<TaskHandle>,
-    _workspace_history_scroll_task: Arc<TaskHandle>,
-    _workspace_history_restore_task: Arc<TaskHandle>,
+    /// Workspace picker persistence (encapsulates all sync observers)
+    _workspace_picker_persistence: crate::config::WorkspacePickerPersistence,
 
     // === UI STATE ===
     /// File picker dialog visibility
@@ -335,39 +309,6 @@ pub struct NovyWaveApp {
 // Remove Default implementation - use new() method instead
 
 impl NovyWaveApp {
-    fn propagate_scope_selection(
-        selected_ids: Vec<String>,
-        selected_variables: &SelectedVariables,
-    ) {
-        let mut selection_set = IndexSet::new();
-        let mut last_scope: Option<String> = None;
-
-        for raw_id in selected_ids.into_iter() {
-            if !raw_id.starts_with("scope_") {
-                continue;
-            }
-
-            let cleaned = raw_id
-                .strip_prefix("scope_")
-                .unwrap_or(raw_id.as_str())
-                .to_string();
-            last_scope = Some(cleaned);
-
-            selection_set.insert(raw_id);
-        }
-
-        match last_scope {
-            Some(cleaned_scope) => {
-                selected_variables.select_scope(Some(cleaned_scope));
-            }
-            None => {
-                selected_variables.select_scope(None);
-            }
-        }
-
-        selected_variables.set_tree_selection(selection_set);
-    }
-
     /// Create new NovyWaveApp with proper async initialization
     ///
     /// This replaces the complex global domain initialization from main.rs
@@ -378,7 +319,9 @@ impl NovyWaveApp {
         Self::load_and_register_fonts().await;
 
         let tracked_files = TrackedFiles::new();
-        let selected_variables = SelectedVariables::new();
+        // Create shared files_selected_scope - SelectedVariables observes it internally
+        let files_selected_scope = zoon::MutableVec::new();
+        let selected_variables = SelectedVariables::new(files_selected_scope.clone());
 
         // ✅ STEP 1: Create connection and PENDING actor (relays only, no processing)
         // The mpsc channel buffers messages until actor.start() is called
@@ -395,12 +338,10 @@ impl NovyWaveApp {
         let connection_arc = std::sync::Arc::new(connection);
         crate::platform::set_platform_connection(connection_arc.clone());
 
-        // Create a dummy sender for workspace picker domain - its saves are not persisted
-        let (workspace_picker_save_sender, _workspace_picker_save_receiver) = futures::channel::mpsc::unbounded::<()>();
+        // Create workspace picker domain - config saves handled by pure signal debouncer
         let workspace_picker_domain = crate::config::FilePickerDomain::new(
             IndexSet::new(),
             0,
-            workspace_picker_save_sender,
             connection_arc.clone(),
             connection_message_actor.clone(),
         );
@@ -411,191 +352,20 @@ impl NovyWaveApp {
             connection_message_actor.clone(),
             tracked_files.clone(),
             selected_variables.clone(),
+            files_selected_scope,
         )
         .await;
 
         let initial_history = config.workspace_history_state.get_cloned();
         let workspace_picker_target = Mutable::new(initial_history.last_selected.clone());
-        let workspace_picker_restoring = Mutable::new(false);
 
-        let workspace_history_selection_task = {
-            let selected_signal = workspace_picker_domain.selected_files_vec_signal.clone();
-            let config_clone = config.clone();
-            let domain_clone = workspace_picker_domain.clone();
-            let target_clone = workspace_picker_target.clone();
-            Arc::new(Task::start_droppable(
-                selected_signal.signal_cloned().for_each_sync(move |selection| {
-                    emit_trace("workspace_picker_selection", format!("paths={selection:?}"));
-                    if let Some(path) = selection.first().cloned() {
-                        target_clone.set_neq(Some(path.clone()));
-                        config_clone.record_workspace_selection(&path);
-
-                        let expanded_vec = domain_clone
-                            .expanded_directories
-                            .lock_ref()
-                            .iter()
-                            .cloned()
-                            .collect::<Vec<String>>();
-                        let expanded_vec_for_log = expanded_vec.clone();
-                        let scroll_current = *domain_clone.scroll_position.lock_ref() as f64;
-                        emit_trace(
-                            "workspace_picker_selection",
-                            format!(
-                                "selection={selection:?} expanded_paths={expanded_vec_for_log:?} scroll={scroll_current}"
-                            ),
-                        );
-                        NovyWaveApp::publish_workspace_picker_snapshot(
-                            &config_clone,
-                            &domain_clone,
-                            &target_clone,
-                            Some(expanded_vec_for_log),
-                        );
-                    }
-                }),
-            ))
-        };
-
-        let workspace_history_expanded_task = {
-            let domain_clone = workspace_picker_domain.clone();
-            let config_clone = config.clone();
-            let restoring_flag = workspace_picker_restoring.clone();
-            let visible_atom = workspace_picker_visible.clone();
-            let is_first = std::cell::Cell::new(true);
-            Arc::new(Task::start_droppable(
-                domain_clone.expanded_directories_signal().for_each_sync(move |expanded_set| {
-                    // Skip initial value to avoid persisting on startup
-                    if is_first.get() {
-                        is_first.set(false);
-                        return;
-                    }
-                    let expanded_vec: Vec<String> = expanded_set.iter().cloned().collect();
-                    let is_visible = visible_atom.get();
-                    let restoring = restoring_flag.get();
-                    emit_trace(
-                        "workspace_history_expanded_actor",
-                        format!("paths={expanded_vec:?} restoring={restoring} visible={is_visible}"),
-                    );
-                    // Ignore teardown-driven empty updates when the dialog is no longer visible
-                    if !is_visible && expanded_vec.is_empty() {
-                        emit_trace(
-                            "workspace_history_expanded_actor",
-                            "skip_empty_invisible".to_string(),
-                        );
-                        return;
-                    }
-                    if restoring {
-                        emit_trace(
-                            "workspace_history_expanded_actor",
-                            "skip_restoring".to_string(),
-                        );
-                        return;
-                    }
-                    config_clone.update_workspace_picker_tree_state(expanded_vec.clone());
-                }),
-            ))
-        };
-
-        let workspace_history_scroll_task = {
-            let domain_clone = workspace_picker_domain.clone();
-            let config_clone = config.clone();
-            let restoring_flag = workspace_picker_restoring.clone();
-            Arc::new(Task::start_droppable(
-                domain_clone.scroll_position.signal().for_each_sync(move |position| {
-                    if restoring_flag.get_cloned() {
-                        return;
-                    }
-                    let scroll_value = position as f64;
-                    emit_trace(
-                        "workspace_picker_scroll",
-                        format!("scroll_top={scroll_value}"),
-                    );
-                    config_clone.update_workspace_picker_scroll(scroll_value);
-                }),
-            ))
-        };
-
-        // Removed scroll polling; rely on the same event-driven logic as Load Files dialog
-
-        let workspace_history_restore_task = {
-            let history_state = config.workspace_history_state.clone();
-            let domain_clone = workspace_picker_domain.clone();
-            let visible_atom = workspace_picker_visible.clone();
-            let target_clone = workspace_picker_target.clone();
-            let config_clone = config.clone();
-            let restoring_flag = workspace_picker_restoring.clone();
-            Arc::new(Task::start_droppable(async move {
-                let mut visibility_stream = visible_atom.signal().to_stream().fuse();
-                while let Some(visible) = visibility_stream.next().await {
-                    if visible {
-                        restoring_flag.set(true);
-                        let history = history_state.get_cloned();
-                        emit_trace(
-                            "workspace_picker_restore",
-                            format!("stage=apply history={:?}", history.picker_tree_state),
-                        );
-                        NovyWaveApp::apply_workspace_picker_tree_state(&history, &domain_clone);
-                        let applied_state = domain_clone
-                            .expanded_directories
-                            .lock_ref()
-                            .iter()
-                            .cloned()
-                            .collect::<Vec<String>>();
-                        // Sync applied expansions into history state so scroll writes are accepted.
-                        config_clone.update_workspace_picker_tree_state(applied_state.clone());
-                        emit_trace(
-                            "workspace_picker_restore",
-                            format!("stage=post_apply expanded_paths={applied_state:?}"),
-                        );
-                        let pre_clear_state = domain_clone
-                            .expanded_directories
-                            .lock_ref()
-                            .iter()
-                            .cloned()
-                            .collect::<Vec<String>>();
-                        emit_trace(
-                            "workspace_picker_restore",
-                            format!("stage=pre_clear expanded_paths={pre_clear_state:?}"),
-                        );
-                        target_clone.set_neq(None);
-                        domain_clone.selected_files_vec_signal.set_neq(Vec::new());
-                        domain_clone.clear_file_selection();
-                        // Do not publish a snapshot on open; wait for user interaction
-                        let post_snapshot_state = domain_clone
-                            .expanded_directories
-                            .lock_ref()
-                            .iter()
-                            .cloned()
-                            .collect::<Vec<String>>();
-                        emit_trace(
-                            "workspace_picker_restore",
-                            format!("stage=post_snapshot expanded_paths={post_snapshot_state:?}"),
-                        );
-                        emit_trace(
-                            "workspace_picker_restore",
-                            format!(
-                                "stage=final expanded_paths={:?}",
-                                domain_clone
-                                    .expanded_directories
-                                    .lock_ref()
-                                    .iter()
-                                    .cloned()
-                                    .collect::<Vec<String>>()
-                            ),
-                        );
-                        restoring_flag.set(false);
-                    } else {
-                        // Dialog is closing: publish a final snapshot so scroll-only changes persist
-                        NovyWaveApp::publish_workspace_picker_snapshot(
-                            &config_clone,
-                            &domain_clone,
-                            &target_clone,
-                            None,
-                        );
-                        restoring_flag.set(false);
-                    }
-                }
-            }))
-        };
+        // Create workspace picker persistence - encapsulates all sync observers
+        let workspace_picker_persistence = crate::config::WorkspacePickerPersistence::new(
+            workspace_picker_domain.clone(),
+            workspace_picker_visible.clone(),
+            workspace_picker_target.clone(),
+            config.clone(),
+        );
 
         // Create MaximumTimelineRange standalone actor for centralized range computation
         let maximum_timeline_range = crate::visualizer::timeline::MaximumTimelineRange::new(
@@ -625,22 +395,7 @@ impl NovyWaveApp {
         // Initialize dragging system after config is ready
         let dragging_system = crate::dragging::DraggingSystem::new(config.clone());
 
-        let scope_selection_sync_task = {
-            let selected_variables_for_scope = selected_variables.clone();
-            let files_selected_scope = config.files_selected_scope.clone();
-
-            Arc::new(Task::start_droppable(
-                files_selected_scope
-                    .signal_vec_cloned()
-                    .to_signal_cloned()
-                    .for_each_sync(move |selection| {
-                        NovyWaveApp::propagate_scope_selection(
-                            selection,
-                            &selected_variables_for_scope,
-                        );
-                    }),
-            ))
-        };
+        // scope_selection_sync removed - SelectedVariables observes files_selected_scope internally
 
         connection_message_actor.start(
             down_msg_receiver,
@@ -680,7 +435,6 @@ impl NovyWaveApp {
             dragging_system,
             connection: connection_arc,
             _connection_message_actor: connection_message_actor,
-            _scope_selection_sync_task: scope_selection_sync_task,
             file_dialog_visible,
             workspace_picker_visible,
             workspace_path,
@@ -688,14 +442,10 @@ impl NovyWaveApp {
             default_workspace_path,
             workspace_picker_domain,
             workspace_picker_target,
-            _workspace_picker_restoring: workspace_picker_restoring,
+            _workspace_picker_persistence: workspace_picker_persistence,
             key_repeat_handles,
             debug_notification_task,
             workspace_switch_task,
-            _workspace_history_selection_task: workspace_history_selection_task,
-            _workspace_history_expanded_task: workspace_history_expanded_task,
-            _workspace_history_scroll_task: workspace_history_scroll_task,
-            _workspace_history_restore_task: workspace_history_restore_task,
         }
     }
 
@@ -753,29 +503,24 @@ impl NovyWaveApp {
                 zoon::println!("connection: received DownMsg {:?}", down_msg);
                 crate::platform::notify_server_alive();
 
-                // Handle file state updates immediately via direct method calls
+                // Set backend message Mutables - TrackedFiles observes these signals
                 match &down_msg {
                     DownMsg::FileLoaded { file_id, hierarchy } => {
                         if let Some(loaded_file) = hierarchy.files.first() {
-                            tf.update_file_state(
+                            tf.backend_messages.file_loaded.set(Some((
                                 file_id.clone(),
-                                shared::FileState::Loaded(loaded_file.clone()),
-                            );
+                                loaded_file.clone(),
+                            )));
                         }
                     }
                     DownMsg::ParsingStarted { file_id, .. } => {
-                        tf.update_file_state(
-                            file_id.clone(),
-                            shared::FileState::Loading(shared::LoadingStatus::Parsing),
-                        );
+                        tf.backend_messages.parsing_started.set(Some(file_id.clone()));
                     }
                     DownMsg::ParsingError { file_id, error: _ } => {
-                        tf.update_file_state(
+                        tf.backend_messages.parsing_error.set(Some((
                             file_id.clone(),
-                            shared::FileState::Failed(shared::FileError::FileNotFound {
-                                path: file_id.clone(),
-                            }),
-                        );
+                            "Parsing error".to_string(),
+                        )));
                     }
                     _ => {}
                 }
@@ -876,11 +621,11 @@ impl NovyWaveApp {
                                     "q" | "Q" => {
                                         event.prevent_default();
                                         if event.shift_key() {
+                                            timeline_for_keydown.jump_to_previous_transition();
                                             stop_key_repeat(
                                                 &repeat_handles_for_down,
                                                 KeyAction::CursorLeft,
                                             );
-                                            timeline_for_keydown.jump_to_previous_transition();
                                         } else {
                                             timeline_for_keydown.move_cursor_left();
                                             if !event.repeat() {
@@ -897,11 +642,11 @@ impl NovyWaveApp {
                                     "e" | "E" => {
                                         event.prevent_default();
                                         if event.shift_key() {
+                                            timeline_for_keydown.jump_to_next_transition();
                                             stop_key_repeat(
                                                 &repeat_handles_for_down,
                                                 KeyAction::CursorRight,
                                             );
-                                            timeline_for_keydown.jump_to_next_transition();
                                         } else {
                                             timeline_for_keydown.move_cursor_right();
                                             if !event.repeat() {
@@ -1349,15 +1094,13 @@ impl NovyWaveApp {
             let scroll_clamped = tree_state.scroll_top.max(0.0).round();
             let scroll_value = scroll_clamped.clamp(0.0, i32::MAX as f64) as i32;
 
-            domain
-                .expanded_directories
-                .set_neq(expanded_set);
+            domain.expanded_directories.set_neq(expanded_set);
             domain.scroll_position.set_neq(scroll_value);
         }
     }
 
     fn publish_workspace_picker_snapshot(
-        config: &AppConfig,
+        config: &crate::config::AppConfig,
         domain: &crate::config::FilePickerDomain,
         _target: &Mutable<Option<String>>,
         known_expanded: Option<Vec<String>>,
@@ -1368,7 +1111,7 @@ impl NovyWaveApp {
                 .lock_ref()
                 .iter()
                 .cloned()
-                .collect::<Vec<String>>()
+                .collect()
         });
         if expanded_vec.is_empty() {
             emit_trace(
@@ -1377,12 +1120,11 @@ impl NovyWaveApp {
             );
             return;
         }
-        // Scroll persistence is event-driven via workspace_history_scroll_actor.
         emit_trace(
             "workspace_picker_snapshot",
             format!("expanded_paths={expanded_vec:?}"),
         );
-        config.update_workspace_picker_tree_state(expanded_vec.clone());
+        config.update_workspace_picker_tree_state(expanded_vec);
     }
 
     fn toast_notifications_container(&self) -> impl Element {
@@ -1514,7 +1256,7 @@ fn workspace_picker_dialog(
 
     // Keep a local recent-paths mirror that only updates when the list actually changes.
     let recent_paths_vec = MutableVec::<String>::new();
-    let recent_paths_task = Arc::new(Task::start_droppable(
+    let recent_paths_task = Task::start_droppable(
         app_config
             .workspace_history_state
             .signal_cloned()
@@ -1526,7 +1268,7 @@ fn workspace_picker_dialog(
                     recent_paths_vec.lock_mut().replace_cloned(recents);
                 }
             }),
-    ));
+    );
 
     El::new()
         .s(Background::new().color_signal(theme().map(|t| match t {
@@ -2140,8 +1882,8 @@ fn workspace_picker_dialog(
 }
 
 fn workspace_picker_tree(
-    app_config: AppConfig,
-    workspace_picker_target: Mutable<Option<String>>,
+    _app_config: AppConfig,
+    _workspace_picker_target: Mutable<Option<String>>,
     domain: crate::config::FilePickerDomain,
 ) -> impl Element {
     use crate::file_picker::initialize_directories_and_request_contents;
@@ -2156,30 +1898,13 @@ fn workspace_picker_tree(
         .s(Width::fill())
         .child_signal({
             let domain_for_treeview = domain.clone();
-            let app_config_for_tree = app_config.clone();
-            let target_for_tree = workspace_picker_target.clone();
             cache_signal.map(move |cache| {
                 if cache.contains_key("/") {
                     let tree_data = workspace_build_tree_data("/", &cache);
                     // Single Source of Truth: use domain's Mutable directly
+                    // Persistence is handled globally by WorkspacePickerPersistence
                     let external_expanded = domain_for_treeview.expanded_directories.clone();
                     let scroll_position_actor = domain_for_treeview.scroll_position.clone();
-
-                    // Persist expanded paths to global history whenever they change.
-                    // Skip the very first sync to avoid writing initial state.
-                    let persist_task = Arc::new(Task::start_droppable({
-                        let external_for_persist = external_expanded.clone();
-                        let config_for_persist = app_config_for_tree.clone();
-                        let is_first = std::cell::Cell::new(true);
-                        external_for_persist.signal_cloned().for_each_sync(move |set| {
-                            if is_first.get() {
-                                is_first.set(false);
-                                return;
-                            }
-                            let vec = set.iter().cloned().collect::<Vec<String>>();
-                            config_for_persist.update_workspace_picker_tree_state(vec.clone());
-                        })
-                    }));
 
                     let scroll_task_handle: std::sync::Arc<std::sync::Mutex<Option<zoon::TaskHandle>>> =
                         std::sync::Arc::new(std::sync::Mutex::new(None));
@@ -2212,7 +1937,6 @@ fn workspace_picker_tree(
                             *scroll_task_handle_for_insert.lock().unwrap() = Some(handle);
                         })
                         .after_remove(move |_| {
-                            drop(persist_task);
                             drop(scroll_task_handle_for_remove.lock().unwrap().take());
                         })
                         .child(
