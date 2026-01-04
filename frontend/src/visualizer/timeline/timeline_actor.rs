@@ -6,7 +6,7 @@ use crate::visualizer::timeline::maximum_timeline_range::MaximumTimelineRange;
 use crate::visualizer::timeline::time_domain::{
     FS_PER_PS, MIN_CURSOR_STEP_NS, PS_PER_NS, TimePerPixel, TimePs, Viewport,
 };
-use futures::{StreamExt, select};
+use futures::StreamExt;
 use gloo_timers::callback::Timeout;
 use js_sys::Date;
 use shared::{
@@ -343,6 +343,7 @@ pub struct WaveformTimeline {
     zoom_center_last_update_ms: Rc<RefCell<f64>>,
     zoom_center_anchor_ratio: Rc<RefCell<Option<f64>>>,
     config_restored: Mutable<bool>,
+    signal_query_task: Rc<RefCell<Option<TaskHandle>>>,
     _listener_handles: Vec<Arc<TaskHandle>>,
 }
 
@@ -464,6 +465,7 @@ impl WaveformTimeline {
             zoom_center_timer: zoom_center_timer.clone(),
             zoom_center_last_update_ms: zoom_center_last_update_ms.clone(),
             zoom_center_anchor_ratio: zoom_center_anchor_ratio.clone(),
+            signal_query_task: Rc::new(RefCell::new(None)),
             _listener_handles: Vec::new(),
         };
 
@@ -1524,7 +1526,7 @@ impl WaveformTimeline {
         zoon::println!("[TIMELINE] Sending request_id={}", request_id);
 
         let connection = self.connection.clone();
-        Task::start_droppable(async move {
+        let handle = Task::start_droppable(async move {
             connection
                 .send_up_msg(UpMsg::UnifiedSignalQuery {
                     signal_requests: requests,
@@ -1533,6 +1535,7 @@ impl WaveformTimeline {
                 })
                 .await;
         });
+        *self.signal_query_task.borrow_mut() = Some(handle);
     }
 
     pub fn apply_unified_signal_response(

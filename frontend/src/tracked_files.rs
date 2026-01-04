@@ -2,6 +2,7 @@
 //!
 //! Uses MutableVec with direct methods for state management.
 
+use futures::StreamExt;
 use shared::{CanonicalPathPayload, FileState, LoadingStatus, TrackedFile, create_tracked_file};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -12,19 +13,112 @@ use zoon::*;
 pub struct TrackedFiles {
     pub files: MutableVec<TrackedFile>,
     pub files_vec_signal: Mutable<Vec<TrackedFile>>,
-    watchdog_handles: Mutable<HashMap<String, Arc<TaskHandle>>>,
+    loading_start_times: Mutable<HashMap<String, f64>>,
     file_reload_completed: Mutable<Option<String>>,
     file_reload_started: Mutable<Option<String>>,
+    parse_request_sender: futures::channel::mpsc::UnboundedSender<(String, String)>,
+    _parse_task: Arc<TaskHandle>,
+    _global_watchdog_task: Arc<TaskHandle>,
 }
 
 impl TrackedFiles {
     pub fn new() -> Self {
+        let (parse_request_sender, mut parse_request_receiver) =
+            futures::channel::mpsc::unbounded::<(String, String)>();
+
+        let files_vec_signal: Mutable<Vec<TrackedFile>> = Mutable::new(Vec::new());
+        let files = MutableVec::new();
+        let loading_start_times: Mutable<HashMap<String, f64>> = Mutable::new(HashMap::new());
+
+        let files_vec_for_task = files_vec_signal.clone();
+        let files_for_task = files.clone();
+        let loading_start_times_for_task = loading_start_times.clone();
+
+        let _parse_task = Arc::new(Task::start_droppable(async move {
+            while let Some((file_id, file_path)) = parse_request_receiver.next().await {
+                if let Err(error) = send_parse_request_to_backend(file_path.clone()).await {
+                    let mut current = files_vec_for_task.get_cloned();
+                    if let Some(f) = current
+                        .iter_mut()
+                        .find(|f| f.id == file_id || f.path == file_path || f.canonical_path == file_path)
+                    {
+                        f.state = FileState::Failed(shared::FileError::IoError {
+                            path: file_path,
+                            error,
+                        });
+                    }
+                    files_vec_for_task.set_neq(current.clone());
+                    {
+                        let mut vec = files_for_task.lock_mut();
+                        vec.clear();
+                        vec.extend(current);
+                    }
+                } else {
+                    // Record loading start time - global watchdog will check for timeouts
+                    loading_start_times_for_task.lock_mut().insert(file_id, js_sys::Date::now());
+                }
+            }
+        }));
+
+        // Global watchdog: checks all loading files every 10 seconds
+        let files_vec_for_watchdog = files_vec_signal.clone();
+        let files_for_watchdog = files.clone();
+        let loading_start_times_for_watchdog = loading_start_times.clone();
+        let _global_watchdog_task = Arc::new(Task::start_droppable(async move {
+            const TIMEOUT_MS: f64 = 60_000.0;
+            const CHECK_INTERVAL_MS: u32 = 10_000;
+
+            loop {
+                Timer::sleep(CHECK_INTERVAL_MS).await;
+                let now = js_sys::Date::now();
+                let start_times = loading_start_times_for_watchdog.get_cloned();
+                let mut timed_out_files: Vec<String> = Vec::new();
+
+                // Check for timeouts
+                for (file_id, start_time) in &start_times {
+                    if now - start_time > TIMEOUT_MS {
+                        timed_out_files.push(file_id.clone());
+                    }
+                }
+
+                // Mark timed out files as failed
+                if !timed_out_files.is_empty() {
+                    let mut current = files_vec_for_watchdog.get_cloned();
+                    let mut changed = false;
+
+                    for file_id in &timed_out_files {
+                        if let Some(file) = current.iter_mut().find(|f| f.id == *file_id) {
+                            if matches!(file.state, FileState::Loading(_)) {
+                                zoon::println!("File loading timeout for: {file_id}");
+                                file.state = FileState::Failed(shared::FileError::Timeout {
+                                    path: file_id.clone(),
+                                    timeout_seconds: 60,
+                                });
+                                changed = true;
+                            }
+                        }
+                        loading_start_times_for_watchdog.lock_mut().remove(file_id);
+                    }
+
+                    if changed {
+                        files_vec_for_watchdog.set_neq(current.clone());
+                        let mut vec = files_for_watchdog.lock_mut();
+                        vec.clear();
+                        vec.extend(current);
+                    }
+                }
+            }
+        }));
+
         Self {
-            files: MutableVec::new(),
-            files_vec_signal: Mutable::new(Vec::new()),
-            watchdog_handles: Mutable::new(HashMap::new()),
+            files,
+            files_vec_signal,
+            loading_start_times,
             file_reload_completed: Mutable::new(None),
             file_reload_started: Mutable::new(None),
+            parse_request_sender,
+            _parse_task,
+            _global_watchdog_task,
         }
     }
 
@@ -207,26 +301,13 @@ impl TrackedFiles {
     pub fn clear_all_files(&self) {
         self.files.lock_mut().clear();
         self.files_vec_signal.set_neq(Vec::new());
-        self.watchdog_handles.lock_mut().clear();
+        self.loading_start_times.lock_mut().clear();
     }
 
     pub fn request_file_parse(&self, file_path: String) {
-        let this = self.clone();
-        let _ = Task::start_droppable(async move {
-            if let Err(error) = send_parse_request_to_backend(file_path.clone()).await {
-                let mut current = this.files_vec_signal.get_cloned();
-                if let Some(f) = current.iter_mut().find(|f| f.path == file_path || f.canonical_path == file_path) {
-                    f.state = FileState::Failed(shared::FileError::IoError {
-                        path: file_path,
-                        error,
-                    });
-                    this.files_vec_signal.set_neq(current.clone());
-                    let mut vec = this.files.lock_mut();
-                    vec.clear();
-                    vec.extend(current);
-                }
-            }
-        });
+        let _ = self
+            .parse_request_sender
+            .unbounded_send((file_path.clone(), file_path));
     }
 
     pub fn reload_existing_paths(&self, files: Vec<CanonicalPathPayload>) {
@@ -258,55 +339,11 @@ impl TrackedFiles {
     }
 
     fn send_parse_request(&self, file_id: String, file_path: String) {
-        let this = self.clone();
-        let file_id_for_watchdog = file_id.clone();
-        let _ = Task::start_droppable(async move {
-            if let Err(error) = send_parse_request_to_backend(file_path.clone()).await {
-                let mut current = this.files_vec_signal.get_cloned();
-                if let Some(f) = current.iter_mut().find(|f| f.id == file_id) {
-                    f.state = FileState::Failed(shared::FileError::IoError {
-                        path: file_path,
-                        error,
-                    });
-                }
-                this.files_vec_signal.set_neq(current.clone());
-                {
-                    let mut vec = this.files.lock_mut();
-                    vec.clear();
-                    vec.extend(current);
-                }
-            } else {
-                this.start_watchdog(file_id_for_watchdog);
-            }
-        });
-    }
-
-    fn start_watchdog(&self, file_id: String) {
-        let this = self.clone();
-        let file_id_for_timeout = file_id.clone();
-        let handle = Arc::new(Task::start_droppable(async move {
-            Timer::sleep(60_000).await;
-            let mut current = this.files_vec_signal.get_cloned();
-            if let Some(file) = current.iter_mut().find(|f| f.id == file_id_for_timeout) {
-                if matches!(file.state, FileState::Loading(_)) {
-                    zoon::println!("File loading timeout for: {file_id_for_timeout}");
-                    file.state = FileState::Failed(shared::FileError::Timeout {
-                        path: file_id_for_timeout.clone(),
-                        timeout_seconds: 60,
-                    });
-                    this.files_vec_signal.set_neq(current.clone());
-                    let mut vec = this.files.lock_mut();
-                    vec.clear();
-                    vec.extend(current);
-                }
-            }
-            this.watchdog_handles.lock_mut().remove(&file_id_for_timeout);
-        }));
-        self.watchdog_handles.lock_mut().insert(file_id, handle);
+        let _ = self.parse_request_sender.unbounded_send((file_id, file_path));
     }
 
     fn cancel_watchdog(&self, file_id: &str) {
-        self.watchdog_handles.lock_mut().remove(file_id);
+        self.loading_start_times.lock_mut().remove(file_id);
     }
 }
 

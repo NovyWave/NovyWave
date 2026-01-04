@@ -1,7 +1,6 @@
 use zoon::Mutable;
 use crate::file_operations::extract_filename;
 use futures::StreamExt;
-use indexmap::IndexSet;
 use moonzoon_novyui::tokens::color::{
     neutral_1, neutral_2, neutral_4, neutral_8, neutral_11, neutral_12,
 };
@@ -17,17 +16,7 @@ use zoon::events::{Click, KeyDown};
 use zoon::map_ref;
 use zoon::*;
 
-/// TreeView sync tasks to handle bi-directional sync between FilePickerDomain and TreeView
-pub struct TreeViewSyncActors {
-    _domain_to_treeview_sync: Arc<TaskHandle>,
-    _treeview_to_domain_sync: Arc<TaskHandle>,
-}
 
-/// Selected files sync tasks to handle bi-directional sync between FilePickerDomain and TreeView
-pub struct SelectedFilesSyncActors {
-    _domain_to_treeview_sync: Arc<TaskHandle>,
-    _treeview_to_domain_sync: Arc<TaskHandle>,
-}
 
 #[cfg(NOVYWAVE_PLATFORM = "WEB")]
 fn apply_scrollbar_colors(
@@ -48,147 +37,7 @@ fn apply_scrollbar_colors(
     raw_el
 }
 
-impl TreeViewSyncActors {
-    pub fn new(
-        domain: crate::config::FilePickerDomain,
-        external_expanded: zoon::Mutable<IndexSet<String>>,
-    ) -> Self {
-        // Domain → TreeView sync with immediate initial sync
-        let domain_to_treeview_sync = Arc::new(Task::start_droppable({
-            let external_expanded_sync = external_expanded.clone();
-            let domain_clone = domain.clone();
-            async move {
-                // Immediately sync the current value on initialization
-                let initial_value = domain_clone
-                    .expanded_directories_signal()
-                    .to_stream()
-                    .next()
-                    .await;
-                if let Some(index_set) = initial_value {
-                    external_expanded_sync.set_neq(index_set);
-                }
 
-                // Continue syncing future changes
-                let mut signal_stream = domain_clone.expanded_directories_signal().to_stream();
-                while let Some(index_set) = signal_stream.next().await {
-                    external_expanded_sync.set_neq(index_set);
-                }
-            }
-        }));
-
-        // TreeView → Domain sync
-        // Note: is_first_sync hack removed - phase-based initialization + cache checks
-        // in backend_sender_actor prevent duplicate directory loading requests
-        let treeview_to_domain_sync = Arc::new(Task::start_droppable({
-            let domain_for_expansion = domain.clone();
-            let external_expanded_for_expansion = external_expanded.clone();
-            async move {
-                let mut previous_expanded: IndexSet<String> = IndexSet::new();
-                let mut external_signal_stream =
-                    external_expanded_for_expansion.signal_cloned().to_stream();
-
-                while let Some(current_expanded) = external_signal_stream.next().await {
-                    crate::app::emit_trace(
-                        "treeview_sync_external",
-                        format!("incoming={current_expanded:?} previous={previous_expanded:?}"),
-                    );
-
-                    for path in current_expanded.iter() {
-                        if !previous_expanded.contains(path) {
-                            crate::app::emit_trace(
-                                "workspace_picker_expand_request",
-                                format!("path={path}"),
-                            );
-                            domain_for_expansion.expand_directory(path.clone());
-                        }
-                    }
-
-                    for path in previous_expanded.iter() {
-                        if !current_expanded.contains(path) {
-                            crate::app::emit_trace(
-                                "workspace_picker_collapse_request",
-                                format!("path={path}"),
-                            );
-                            domain_for_expansion.collapse_directory(path.clone());
-                        }
-                    }
-
-                    previous_expanded = current_expanded;
-                }
-            }
-        }));
-
-        Self {
-            _domain_to_treeview_sync: domain_to_treeview_sync,
-            _treeview_to_domain_sync: treeview_to_domain_sync,
-        }
-    }
-}
-
-impl SelectedFilesSyncActors {
-    pub fn new(
-        domain: crate::config::FilePickerDomain,
-        selected_files_mutable: zoon::MutableVec<String>,
-    ) -> Self {
-        // Domain → TreeView sync using differential updates
-        let domain_to_treeview_sync = Arc::new(Task::start_droppable({
-            let selected_files_sync = selected_files_mutable.clone();
-            let domain_clone = domain.clone();
-            async move {
-                let mut signal_stream = domain_clone
-                    .selected_files_vec_signal
-                    .signal_cloned()
-                    .to_stream();
-                while let Some(files_vec) = signal_stream.next().await {
-                    selected_files_sync.lock_mut().replace_cloned(files_vec);
-                }
-            }
-        }));
-
-        // TreeView → Domain sync with manual diff detection
-        let treeview_to_domain_sync = Arc::new(Task::start_droppable({
-            let domain_for_selection = domain.clone();
-            let selected_files_for_selection = selected_files_mutable.clone();
-            async move {
-                let mut previous_files: Vec<String> = Vec::new();
-                let mut mutable_signal_stream = selected_files_for_selection
-                    .signal_vec_cloned()
-                    .to_signal_cloned()
-                    .to_stream();
-                let mut is_first_sync = true;
-
-                while let Some(current_files) = mutable_signal_stream.next().await {
-                    // Skip the first sync if it's empty to prevent clearing selection on initialization
-                    if is_first_sync && current_files.is_empty() {
-                        is_first_sync = false;
-                        continue;
-                    }
-                    is_first_sync = false;
-
-                    // Sync file selections using direct methods
-                    for file_path in current_files.iter() {
-                        if !previous_files.contains(file_path) {
-                            domain_for_selection.select_file(file_path.clone());
-                        }
-                    }
-
-                    for file_path in previous_files.iter() {
-                        if !current_files.contains(file_path) {
-                            domain_for_selection.deselect_file(file_path.clone());
-                        }
-                    }
-
-                    previous_files = current_files;
-                }
-            }
-        }));
-
-        Self {
-            _domain_to_treeview_sync: domain_to_treeview_sync,
-            _treeview_to_domain_sync: treeview_to_domain_sync,
-        }
-    }
-}
 
 /// Initialize directories on first use and when restored from config
 pub fn initialize_directories_and_request_contents(
@@ -378,9 +227,9 @@ pub fn file_paths_dialog(
                                 if !selected_files_value.is_empty() {
                                     zoon::println!("🎯 Loading {} selected files via Enter key", selected_files_value.len());
                                     crate::file_operations::process_file_picker_selection(
-                                        tracked_files_for_enter.clone(),
+                                        &tracked_files_for_enter,
                                         selected_files_value,
-                                        file_dialog_visible_for_enter.clone()
+                                        &file_dialog_visible_for_enter
                                     );
                                     // Clear the selection after loading files so dialog is ready for next selection
                                     file_picker_domain_for_enter.clear_file_selection();
@@ -556,9 +405,9 @@ pub fn file_paths_dialog(
                                                 let selected_files_value = file_picker_domain_for_press.selected_files_vec_signal.get_cloned();
                                                 zoon::println!("🎯 Loading {} selected files", selected_files_value.len());
                                                 crate::file_operations::process_file_picker_selection(
-                                                    tracked_files_for_press.clone(),
+                                                    &tracked_files_for_press,
                                                     selected_files_value,
-                                                    file_dialog_visible_for_press.clone()
+                                                    &file_dialog_visible_for_press
                                                 );
                                                 // Clear the selection after loading files so dialog is ready for next selection
                                                 file_picker_domain_for_press.clear_file_selection();
@@ -577,22 +426,11 @@ pub fn file_picker_content(
     app_config: &crate::config::AppConfig,
     connection: crate::connection::ConnectionAdapter,
 ) -> impl Element {
-    // Use TreeView-compatible MutableVec that syncs one-way from Atom
-    let selected_files_vec = zoon::MutableVec::<String>::new();
-
     let file_picker_domain = app_config.file_picker_domain.clone();
-
-    // Create sync actors to connect TreeView MutableVec ↔ FilePickerDomain ActorVec
-    let selected_files_sync =
-        SelectedFilesSyncActors::new(file_picker_domain.clone(), selected_files_vec.clone());
 
     El::new()
         .s(Height::fill())
         .s(Scrollbars::both())
-        .after_remove(move |_| {
-            // Keep sync actors alive until element is removed from DOM
-            drop(selected_files_sync);
-        })
         // Scroll position restoration with tree rendering coordination
         .viewport_y_signal({
             let scroll_position_actor = file_picker_domain.scroll_position.clone();
@@ -644,7 +482,6 @@ pub fn file_picker_content(
         })
         .child(file_picker_tree(
             &app_config,
-            selected_files_vec.clone(),
             connection,
         ))
 }
@@ -652,7 +489,6 @@ pub fn file_picker_content(
 /// File picker tree using FilePickerDomain Actors
 pub fn file_picker_tree(
     app_config: &crate::config::AppConfig,
-    selected_files: zoon::MutableVec<String>,
     _connection: crate::connection::ConnectionAdapter,
 ) -> impl Element {
     // Initialize directories and request contents for expanded directories from config
@@ -680,55 +516,40 @@ pub fn file_picker_tree(
                     let tree_data = build_tree_data("/", &cache, &std::collections::HashMap::new());
 
                     {
-                        // Create Mutable and sync actors outside of TreeView to control lifecycle
-                        use indexmap::IndexSet;
-                        // Initialize external_expanded as empty - sync will populate immediately
-                        let external_expanded = zoon::Mutable::new(IndexSet::<String>::new());
-
-                        // Create sync actors for bi-directional synchronization
-                        let sync_actors = TreeViewSyncActors::new(
-                            domain_for_treeview.clone(),
-                            external_expanded.clone(),
-                        );
-
-                        // Selected files sync is already created in file_picker_content
-                        // Don't create duplicate sync actors
+                        // Single Source of Truth: TreeView uses domain's Mutable directly
+                        // Detection task in FilePickerDomain handles browse/save side effects
+                        let external_expanded = domain_for_treeview.expanded_directories.clone();
 
                         // Store initialization actor for proper lifecycle management
                         let _initialization_actor = initialization_actor_for_closure.clone();
+
+                        let scroll_task_handle: std::sync::Arc<std::sync::Mutex<Option<zoon::TaskHandle>>> =
+                            std::sync::Arc::new(std::sync::Mutex::new(None));
+                        let scroll_task_handle_for_insert = scroll_task_handle.clone();
+                        let scroll_task_handle_for_remove = scroll_task_handle.clone();
 
                         El::new()
                             .s(Height::fill())
                             .s(Width::fill())
                             .after_remove(move |_| {
-                                // Keep all actors alive until element drops
-                                drop(sync_actors);
                                 drop(_initialization_actor);
+                                drop(scroll_task_handle_for_remove.lock().unwrap().take());
                             })
                             // Restore scroll position after tree is rendered
                             .after_insert({
                                 let scroll_position_actor =
                                     domain_for_treeview.scroll_position.clone();
                                 move |_element| {
-                                    // Trigger scroll restoration after tree is rendered
-                                    let position_actor = scroll_position_actor.clone();
-                                    let _ = zoon::Task::start_droppable(async move {
-                                        // Wait for DOM to fully settle
+                                    // Use sync .get() to get current position
+                                    let position = scroll_position_actor.get();
+
+                                    // Defer scroll restoration to next macro tick
+                                    let handle = zoon::Task::start_droppable(async move {
                                         zoon::Task::next_macro_tick().await;
 
-                                        // Get current scroll position and trigger restore
-                                        let position = position_actor
-                                            .signal()
-                                            .to_stream()
-                                            .next()
-                                            .await
-                                            .unwrap_or(0);
-
-                                        // Set scroll position via DOM manipulation
                                         if position > 0 {
                                             if let Some(window) = web_sys::window() {
                                                 if let Some(document) = window.document() {
-                                                    // Use querySelector to find the scroll container
                                                     if let Ok(Some(element)) = document
                                                         .query_selector(
                                                             "[data-scroll-container='file-picker']",
@@ -740,6 +561,7 @@ pub fn file_picker_tree(
                                             }
                                         }
                                     });
+                                    *scroll_task_handle_for_insert.lock().unwrap() = Some(handle);
                                 }
                             })
                             .child(
@@ -750,7 +572,8 @@ pub fn file_picker_tree(
                                     .show_icons(true)
                                     .show_checkboxes(true)
                                     .external_expanded(external_expanded)
-                                    .external_selected_vec(selected_files.clone())
+                                    // Single Source of Truth: TreeView uses domain's MutableVec directly
+                                    .external_selected_vec(domain_for_treeview.selected_files.clone())
                                     .build()
                                     .into_raw(),
                             )

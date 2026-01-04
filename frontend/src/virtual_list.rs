@@ -151,68 +151,55 @@ pub fn rust_virtual_variables_list_with_signal(
     // ===== COORDINATED TASK: Pool Management + Updates =====
     // OPTIMIZATION: Single task handles height changes, pool resizing, and batched DOM updates
     let _pool_management_task = Task::start_droppable({
-        let height_signal = height_signal.clone();
         let visible_count = visible_count.clone();
         let element_pool = element_pool.clone();
         let scroll_velocity = scroll_velocity.clone();
         let visible_start = visible_start.clone();
         let visible_end = visible_end.clone();
-        async move {
-            height_signal
-                .signal()
-                .for_each(move |height| {
-                    let new_visible_count =
-                        ((height as f64 / item_height).ceil() as usize + 5).min(total_items);
-                    visible_count.set_neq(new_visible_count);
+        height_signal.signal().for_each_sync(move |height| {
+            let new_visible_count =
+                ((height as f64 / item_height).ceil() as usize + 5).min(total_items);
+            visible_count.set_neq(new_visible_count);
 
-                    // ===== DYNAMIC POOL RESIZING BASED ON VELOCITY =====
-                    // Calculate buffer based on current scroll velocity
-                    let current_velocity = scroll_velocity.get();
-                    let velocity_buffer = if current_velocity > 1000.0 {
-                        15 // Fast scrolling: larger buffer
-                    } else if current_velocity > 500.0 {
-                        10 // Medium scrolling: medium buffer
-                    } else {
-                        base_buffer // Slow/no scrolling: minimal buffer (5)
-                    };
+            // ===== DYNAMIC POOL RESIZING BASED ON VELOCITY =====
+            let current_velocity = scroll_velocity.get();
+            let velocity_buffer = if current_velocity > 1000.0 {
+                15
+            } else if current_velocity > 500.0 {
+                10
+            } else {
+                base_buffer
+            };
 
-                    let needed_pool_size = new_visible_count + velocity_buffer;
-                    let current_pool_size = element_pool.lock_ref().len();
+            let needed_pool_size = new_visible_count + velocity_buffer;
+            let current_pool_size = element_pool.lock_ref().len();
 
-                    if needed_pool_size > current_pool_size {
-                        // Grow pool efficiently with MutableVec
-                        let additional_elements: Vec<VirtualElementState> = (current_pool_size
-                            ..needed_pool_size)
-                            .map(|_| VirtualElementState {
-                                name_signal: Mutable::new(String::new()),
-                                type_signal: Mutable::new(String::new()),
-                                position_signal: Mutable::new(-9999),
-                                visible_signal: Mutable::new(false),
-                                previous_name_signal: Mutable::new(None),
-                                file_id_signal: Mutable::new(String::new()),
-                                scope_id_signal: Mutable::new(String::new()),
-                                variable_signal: Mutable::new(None),
-                                is_selected_signal: Mutable::new(false),
-                                absolute_index_signal: Mutable::new(0),
-                            })
-                            .collect();
+            if needed_pool_size > current_pool_size {
+                let additional_elements: Vec<VirtualElementState> = (current_pool_size
+                    ..needed_pool_size)
+                    .map(|_| VirtualElementState {
+                        name_signal: Mutable::new(String::new()),
+                        type_signal: Mutable::new(String::new()),
+                        position_signal: Mutable::new(-9999),
+                        visible_signal: Mutable::new(false),
+                        previous_name_signal: Mutable::new(None),
+                        file_id_signal: Mutable::new(String::new()),
+                        scope_id_signal: Mutable::new(String::new()),
+                        variable_signal: Mutable::new(None),
+                        is_selected_signal: Mutable::new(false),
+                        absolute_index_signal: Mutable::new(0),
+                    })
+                    .collect();
+                element_pool.lock_mut().extend(additional_elements);
+            } else if needed_pool_size < current_pool_size {
+                let min_pool_size = (new_visible_count + base_buffer).max(20);
+                element_pool.lock_mut().truncate(min_pool_size);
+            }
 
-                        element_pool.lock_mut().extend(additional_elements);
-                    } else if needed_pool_size < current_pool_size {
-                        // Shrink pool efficiently (but keep minimum buffer)
-                        let min_pool_size = (new_visible_count + base_buffer).max(20);
-                        element_pool.lock_mut().truncate(min_pool_size);
-                    }
-
-                    // ✅ OPTIMIZATION: Update visible range immediately for better coordination
-                    let current_start = visible_start.get();
-                    let new_end = (current_start + new_visible_count).min(total_items);
-                    visible_end.set_neq(new_end);
-
-                    async {}
-                })
-                .await;
-        }
+            let current_start = visible_start.get();
+            let new_end = (current_start + new_visible_count).min(total_items);
+            visible_end.set_neq(new_end);
+        })
     });
 
     // ===== OPTIMIZED POOL UPDATE TASK WITH DOM BATCHING =====

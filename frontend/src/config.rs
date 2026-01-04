@@ -8,7 +8,6 @@ use shared::{
     self, AppConfig as SharedAppConfig, CanonicalPathPayload, DockMode, Theme as SharedTheme,
 };
 use std::sync::Arc;
-use wasm_bindgen_futures::{JsFuture, spawn_local};
 use zoon::*;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
@@ -180,8 +179,11 @@ pub struct FilePickerDomain {
     pub selected_files: MutableVec<String>,
     pub selected_files_vec_signal: zoon::Mutable<Vec<String>>,
 
-    connection: std::sync::Arc<SendWrapper<Connection<shared::UpMsg, shared::DownMsg>>>,
     save_sender: futures::channel::mpsc::UnboundedSender<()>,
+    browse_request_sender: futures::channel::mpsc::UnboundedSender<String>,
+    _browse_task: Arc<TaskHandle>,
+    _expansion_detection_task: Arc<TaskHandle>,
+    _selection_detection_task: Arc<TaskHandle>,
 }
 
 impl FilePickerDomain {
@@ -192,15 +194,78 @@ impl FilePickerDomain {
         connection: std::sync::Arc<SendWrapper<Connection<shared::UpMsg, shared::DownMsg>>>,
         _connection_message_actor: crate::app::ConnectionMessageActor,
     ) -> Self {
+        let (browse_request_sender, mut browse_request_receiver) =
+            futures::channel::mpsc::unbounded::<String>();
+
+        let errors = Mutable::new(std::collections::HashMap::<String, String>::new());
+        let errors_for_task = errors.clone();
+        let connection_for_task = connection.clone();
+
+        let _browse_task = Arc::new(Task::start_droppable(async move {
+            while let Some(path) = browse_request_receiver.next().await {
+                zoon::println!("frontend: BrowseDirectory {path}");
+                if let Err(e) = connection_for_task
+                    .send_up_msg(shared::UpMsg::BrowseDirectory(path.clone()))
+                    .await
+                {
+                    zoon::println!("ERROR: BrowseDirectory failed for {path}: {:?}", e);
+                    errors_for_task.lock_mut().insert(path, format!("{:?}", e));
+                }
+            }
+        }));
+
+        let expanded_directories = Mutable::new(initial_expanded);
+        let directory_cache = Mutable::new(std::collections::HashMap::new());
+
+        let _expansion_detection_task = {
+            let expanded = expanded_directories.clone();
+            let cache = directory_cache.clone();
+            let browse_sender = browse_request_sender.clone();
+            let save_sender_clone = save_sender.clone();
+            Arc::new(Task::start_droppable({
+                let previous = Mutable::new(indexmap::IndexSet::<String>::new());
+                expanded.signal_cloned().for_each_sync(move |current| {
+                    let prev = previous.get_cloned();
+                    for path in current.difference(&prev) {
+                        if !cache.get_cloned().contains_key(path) && crate::platform::server_is_ready() {
+                            let _ = browse_sender.unbounded_send(path.clone());
+                        }
+                        let _ = save_sender_clone.unbounded_send(());
+                    }
+                    for _path in prev.difference(&current) {
+                        let _ = save_sender_clone.unbounded_send(());
+                    }
+                    previous.set_neq(current);
+                })
+            }))
+        };
+
+        let selected_files = MutableVec::new();
+        let selected_files_vec_signal = zoon::Mutable::new(Vec::new());
+
+        // Selection detection task: sync selected_files → selected_files_vec_signal
+        let _selection_detection_task = {
+            let selected = selected_files.clone();
+            let vec_signal = selected_files_vec_signal.clone();
+            Arc::new(Task::start_droppable({
+                selected.signal_vec_cloned().to_signal_cloned().for_each_sync(move |current| {
+                    vec_signal.set_neq(current);
+                })
+            }))
+        };
+
         Self {
-            expanded_directories: Mutable::new(initial_expanded),
+            expanded_directories,
             scroll_position: Mutable::new(initial_scroll),
-            directory_cache: Mutable::new(std::collections::HashMap::new()),
-            directory_errors: Mutable::new(std::collections::HashMap::new()),
-            selected_files: MutableVec::new(),
-            selected_files_vec_signal: zoon::Mutable::new(Vec::new()),
-            connection,
+            directory_cache,
+            directory_errors: errors,
+            selected_files,
+            selected_files_vec_signal,
             save_sender,
+            browse_request_sender,
+            _browse_task,
+            _expansion_detection_task,
+            _selection_detection_task,
         }
     }
 
@@ -235,36 +300,19 @@ impl FilePickerDomain {
         self.directory_errors.lock_mut().insert(path, error);
     }
 
-    /// Expand a directory - updates state and sends backend request directly
+    /// Expand a directory - updates state only; detection task handles browse/save
     pub fn expand_directory(&self, path: String) {
         let mut current = self.expanded_directories.get_cloned();
-        if current.insert(path.clone()) {
+        if current.insert(path) {
             self.expanded_directories.set_neq(current);
-            let _ = self.save_sender.unbounded_send(());
-
-            // Check cache, send backend request if not cached
-            let cache = self.directory_cache.get_cloned();
-            if !cache.contains_key(&path) && crate::platform::server_is_ready() {
-                let conn = self.connection.clone();
-                let errors = self.directory_errors.clone();
-                let path_clone = path.clone();
-                wasm_bindgen_futures::spawn_local(async move {
-                    zoon::println!("frontend: BrowseDirectory {path_clone}");
-                    if let Err(e) = conn.send_up_msg(shared::UpMsg::BrowseDirectory(path_clone.clone())).await {
-                        zoon::println!("ERROR: BrowseDirectory failed for {path_clone}: {:?}", e);
-                        errors.lock_mut().insert(path_clone, format!("{:?}", e));
-                    }
-                });
-            }
         }
     }
 
-    /// Collapse a directory
+    /// Collapse a directory - updates state only; detection task handles save
     pub fn collapse_directory(&self, path: String) {
         let mut current = self.expanded_directories.get_cloned();
         if current.shift_remove(&path) {
             self.expanded_directories.set_neq(current);
-            let _ = self.save_sender.unbounded_send(());
         }
     }
 
@@ -274,27 +322,22 @@ impl FilePickerDomain {
         let _ = self.save_sender.unbounded_send(());
     }
 
-    /// Select a file
+    /// Select a file - updates state only; detection task handles vec_signal sync
     pub fn select_file(&self, file_path: String) {
         let mut files = self.selected_files.lock_mut();
         if !files.iter().any(|p| p == &file_path) {
-            files.push_cloned(file_path.clone());
-            let current_files = files.to_vec();
-            drop(files);
-            self.selected_files_vec_signal.set_neq(current_files);
+            files.push_cloned(file_path);
         }
     }
 
-    /// Deselect a file
+    /// Deselect a file - updates state only; detection task handles vec_signal sync
     pub fn deselect_file(&self, file_path: String) {
         self.selected_files.lock_mut().retain(|f| f != &file_path);
-        self.selected_files_vec_signal.set_neq(self.selected_files.lock_ref().to_vec());
     }
 
-    /// Clear all file selections
+    /// Clear all file selections - updates state only; detection task handles vec_signal sync
     pub fn clear_file_selection(&self) {
         self.selected_files.lock_mut().clear();
-        self.selected_files_vec_signal.set_neq(Vec::new());
     }
 
     /// Get current expanded directories snapshot
@@ -362,6 +405,8 @@ pub struct AppConfig {
     _tracked_files_sync_task: Arc<TaskHandle>,
     _variables_filter_bridge_task: Arc<TaskHandle>,
     _selected_variables_snapshot_task: Arc<TaskHandle>,
+    _clipboard_task: Arc<TaskHandle>,
+    clipboard_sender: futures::channel::mpsc::UnboundedSender<String>,
 }
 
 impl AppConfig {
@@ -504,7 +549,7 @@ impl AppConfig {
 
         let (session_state_sender, session_state_receiver) =
             futures::channel::mpsc::unbounded::<SessionState>();
-        let (save_sender, mut save_receiver) = futures::channel::mpsc::unbounded::<()>();
+        let (save_sender, save_receiver) = futures::channel::mpsc::unbounded::<()>();
         let (timeline_restore_sender, timeline_restore_receiver) =
             futures::channel::mpsc::unbounded::<TimelineState>();
 
@@ -936,31 +981,51 @@ impl AppConfig {
         // Complex bridge pattern removed - using direct FilePickerDomain events
 
         let _scroll_sync_task = {
-            let scroll_position_sync = file_picker_domain.scroll_position.clone();
             let session_scroll_sync = session_state.clone();
             let session_sender_for_scroll = session_state_sender.clone();
 
-            Arc::new(Task::start_droppable(async move {
-                let mut scroll_stream = scroll_position_sync.signal().to_stream();
-
-                while let Some(scroll_position) = scroll_stream.next().await {
-                    // Create updated session with new scroll position
-                    let current_session = session_scroll_sync
-                        .signal_cloned()
-                        .to_stream()
-                        .next()
-                        .await
-                        .unwrap_or_default();
+            Arc::new(Task::start_droppable(
+                file_picker_domain.scroll_position.signal().for_each_sync(move |scroll_position| {
+                    let current_session = session_scroll_sync.get_cloned();
                     let updated_session = SessionState {
                         file_picker_scroll_position: scroll_position,
                         ..current_session
                     };
                     let _ = session_sender_for_scroll.unbounded_send(updated_session);
-                }
-            }))
+                }),
+            ))
         };
 
         let error_display = crate::error_display::ErrorDisplay::new();
+
+        // Clipboard task - processes clipboard write requests
+        let (clipboard_sender, mut clipboard_receiver) =
+            futures::channel::mpsc::unbounded::<String>();
+        let _clipboard_task = Arc::new(Task::start_droppable(async move {
+            while let Some(text) = clipboard_receiver.next().await {
+                if let Some(window) = web_sys::window() {
+                    let navigator = window.navigator();
+
+                    #[cfg(web_sys_unstable_apis)]
+                    {
+                        let clipboard = navigator.clipboard();
+                        if let Err(e) =
+                            wasm_bindgen_futures::JsFuture::from(clipboard.write_text(&text)).await
+                        {
+                            zoon::println!("ERROR: Failed to copy to clipboard: {:?}", e);
+                        }
+                    }
+
+                    #[cfg(not(web_sys_unstable_apis))]
+                    {
+                        let _ = navigator;
+                        zoon::println!(
+                            "Clipboard API not available (web_sys_unstable_apis not enabled)"
+                        );
+                    }
+                }
+            }
+        }));
 
         Self {
             theme,
@@ -1007,6 +1072,8 @@ impl AppConfig {
             _tracked_files_sync_task,
             _variables_filter_bridge_task,
             _selected_variables_snapshot_task,
+            _clipboard_task,
+            clipboard_sender,
             _connection_message_actor: connection_message_actor,
         }
     }
@@ -1479,28 +1546,8 @@ impl AppConfig {
         let _ = self.workspace_history_sender.unbounded_send(history);
     }
 
-    /// Copy text to clipboard (direct method, replaces clipboard_copy_requested_relay.send())
+    /// Copy text to clipboard via channel (processed by stored clipboard task)
     pub fn copy_to_clipboard(&self, text: String) {
-        use wasm_bindgen_futures::spawn_local;
-        use wasm_bindgen_futures::JsFuture;
-
-        spawn_local(async move {
-            if let Some(window) = web_sys::window() {
-                let navigator = window.navigator();
-
-                #[cfg(web_sys_unstable_apis)]
-                {
-                    let clipboard = navigator.clipboard();
-                    if let Err(e) = JsFuture::from(clipboard.write_text(&text)).await {
-                        zoon::println!("ERROR: Failed to copy to clipboard: {:?}", e);
-                    }
-                }
-
-                #[cfg(not(web_sys_unstable_apis))]
-                {
-                    zoon::println!("Clipboard API not available (web_sys_unstable_apis not enabled)");
-                }
-            }
-        });
+        let _ = self.clipboard_sender.unbounded_send(text);
     }
 }

@@ -1,4 +1,3 @@
-use zoon::Mutable;
 use shared::{CanonicalPathPayload, TrackedFile};
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -19,9 +18,9 @@ pub fn cleanup_file_related_state(
     selected_variables.select_scope(None);
 }
 
-/// Process file picker selection and handle new/existing files
-pub async fn process_selected_file_paths(
-    tracked_files: crate::tracked_files::TrackedFiles,
+/// Process file picker selection and handle new/existing files (synchronous)
+pub fn process_selected_file_paths(
+    tracked_files: &crate::tracked_files::TrackedFiles,
     selected_files: Vec<String>,
 ) {
     if selected_files.is_empty() {
@@ -68,23 +67,14 @@ pub async fn process_selected_file_paths(
     }
 }
 
+/// Process file picker selection (synchronous - no task spawning needed)
 pub fn process_file_picker_selection(
-    tracked_files: crate::tracked_files::TrackedFiles,
+    tracked_files: &crate::tracked_files::TrackedFiles,
     selected_files: Vec<String>,
-    file_dialog_visible: Mutable<bool>,
+    file_dialog_visible: &Mutable<bool>,
 ) {
-    let dialog_visibility = file_dialog_visible.clone();
-    let _ = Task::start_droppable({
-        let tracked_files = tracked_files.clone();
-        async move {
-            if selected_files.is_empty() {
-                dialog_visibility.set(false);
-            } else {
-                process_selected_file_paths(tracked_files, selected_files).await;
-                dialog_visibility.set(false);
-            }
-        }
-    });
+    process_selected_file_paths(tracked_files, selected_files);
+    file_dialog_visible.set(false);
 }
 
 /// Clear all files and related state

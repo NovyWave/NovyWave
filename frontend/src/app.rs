@@ -328,6 +328,8 @@ pub struct NovyWaveApp {
     pub default_workspace_path: Mutable<Option<String>>,
 
     key_repeat_handles: Rc<RefCell<HashMap<KeyAction, Interval>>>,
+    debug_notification_task: Rc<RefCell<Option<TaskHandle>>>,
+    workspace_switch_task: Rc<RefCell<Option<TaskHandle>>>,
 }
 
 // Remove Default implementation - use new() method instead
@@ -393,7 +395,8 @@ impl NovyWaveApp {
         let connection_arc = std::sync::Arc::new(connection);
         crate::platform::set_platform_connection(connection_arc.clone());
 
-        let (workspace_picker_save_sender, mut workspace_picker_save_receiver) = futures::channel::mpsc::unbounded::<()>();
+        // Create a dummy sender for workspace picker domain - its saves are not persisted
+        let (workspace_picker_save_sender, _workspace_picker_save_receiver) = futures::channel::mpsc::unbounded::<()>();
         let workspace_picker_domain = crate::config::FilePickerDomain::new(
             IndexSet::new(),
             0,
@@ -401,8 +404,6 @@ impl NovyWaveApp {
             connection_arc.clone(),
             connection_message_actor.clone(),
         );
-
-        let _task = Task::start_droppable(async move { while workspace_picker_save_receiver.next().await.is_some() {} });
 
         // Create main config with proper connection and message routing
         let config = AppConfig::new(
@@ -704,6 +705,8 @@ impl NovyWaveApp {
 
         let file_dialog_visible = Mutable::new(false);
         let key_repeat_handles = Rc::new(RefCell::new(HashMap::new()));
+        let debug_notification_task = Rc::new(RefCell::new(None));
+        let workspace_switch_task = Rc::new(RefCell::new(None));
 
         Self::setup_app_coordination(&selected_variables, &config).await;
 
@@ -729,6 +732,8 @@ impl NovyWaveApp {
             workspace_picker_target,
             _workspace_picker_restoring: workspace_picker_restoring,
             key_repeat_handles,
+            debug_notification_task,
+            workspace_switch_task,
             _workspace_history_selection_task: workspace_history_selection_task,
             _workspace_history_expanded_task: workspace_history_expanded_task,
             _workspace_history_scroll_task: workspace_history_scroll_task,
@@ -861,11 +866,13 @@ impl NovyWaveApp {
                 let timeline = self.waveform_timeline.clone();
                 let dragging_system_for_events = dragging_system.clone();
                 let key_repeat_handles = self.key_repeat_handles.clone();
+                let debug_notification_task = self.debug_notification_task.clone();
 
                 move |raw_el| {
                     let app_config_for_keydown = app_config.clone();
                     let repeat_handles_for_down = key_repeat_handles.clone();
                     let repeat_handles_for_up = key_repeat_handles.clone();
+                    let debug_notification_task_for_keydown = debug_notification_task.clone();
                     let timeline_for_keydown = timeline.clone();
                     let timeline_for_keyup = timeline.clone();
                     let raw_el = raw_el.global_event_handler_with_options(
@@ -1040,9 +1047,11 @@ impl NovyWaveApp {
                                     "n" | "N" => {
                                         event.prevent_default();
                                         let config = app_config_for_keydown.clone();
-                                        let _task = Task::start_droppable(async move {
+                                        let handle = Task::start_droppable(async move {
                                             crate::error_display::trigger_test_notifications(&config).await;
                                         });
+                                        // Store handle to cancel previous task if retriggered
+                                        *debug_notification_task_for_keydown.borrow_mut() = Some(handle);
                                     }
 
                                     _ => {}
@@ -1124,6 +1133,7 @@ impl NovyWaveApp {
                 let workspace_picker_domain = self.workspace_picker_domain.clone();
                 let config = self.config.clone();
                 let workspace_picker_target = self.workspace_picker_target.clone();
+                let workspace_switch_task = self.workspace_switch_task.clone();
                 move || {
                     workspace_picker_dialog(
                         workspace_picker_visible.clone(),
@@ -1135,6 +1145,7 @@ impl NovyWaveApp {
                         config.clone(),
                         workspace_picker_target.clone(),
                         workspace_picker_domain.clone(),
+                        workspace_switch_task.clone(),
                     )
                 }
             }))
@@ -1278,6 +1289,7 @@ impl NovyWaveApp {
         _selected_variables: SelectedVariables,
         app_config: AppConfig,
         path: String,
+        workspace_switch_task: Rc<RefCell<Option<TaskHandle>>>,
     ) {
         let trimmed = path.trim().to_string();
         if trimmed.is_empty() {
@@ -1300,7 +1312,7 @@ impl NovyWaveApp {
         // Optimistic update: reflect the user's choice immediately in the input.
         workspace_path.set(Some(trimmed.clone()));
 
-        let _task = Task::start_droppable({
+        let handle = Task::start_droppable({
             let request_path = trimmed.clone();
             let workspace_loading = workspace_loading.clone();
             let workspace_path_for_revert = workspace_path.clone();
@@ -1339,6 +1351,8 @@ impl NovyWaveApp {
                 }
             }
         });
+        // Store handle to cancel previous task if retriggered
+        *workspace_switch_task.borrow_mut() = Some(handle);
     }
 
     fn apply_workspace_history_state(
@@ -1473,6 +1487,7 @@ fn workspace_picker_dialog(
     app_config: AppConfig,
     workspace_picker_target: Mutable<Option<String>>,
     workspace_picker_domain: crate::config::FilePickerDomain,
+    workspace_switch_task: Rc<RefCell<Option<TaskHandle>>>,
 ) -> impl Element {
     use moonzoon_novyui::tokens::color::{neutral_1, neutral_2, neutral_4, neutral_8, neutral_11};
     use moonzoon_novyui::tokens::theme::{Theme, theme};
@@ -1501,6 +1516,7 @@ fn workspace_picker_dialog(
         let workspace_picker_domain = workspace_picker_domain.clone();
         let app_config_for_open = app_config.clone();
         let workspace_picker_target_for_open = workspace_picker_target.clone();
+        let workspace_switch_task_for_open = workspace_switch_task.clone();
         move || {
             if workspace_loading.lock_ref().clone() {
                 return;
@@ -1531,6 +1547,7 @@ fn workspace_picker_dialog(
                 selected_variables.clone(),
                 app_config_for_open.clone(),
                 path,
+                workspace_switch_task_for_open.clone(),
             );
             workspace_picker_visible.set(false);
         }
@@ -1687,6 +1704,7 @@ fn workspace_picker_dialog(
                                                 .unwrap_or(false)
                                         });
 
+                                    let workspace_switch_task_for_default = workspace_switch_task.clone();
                                     let default_section = Column::new()
                                         .s(Width::fill())
                                         .s(Background::new().color_signal(neutral_2()))
@@ -1735,6 +1753,7 @@ fn workspace_picker_dialog(
                                                                 selected_variables.clone(),
                                                                 app_config.clone(),
                                                                 action_path.clone(),
+                                                                workspace_switch_task_for_default.clone(),
                                                             );
                                                             workspace_picker_visible.set(false);
                                                         })
@@ -1777,6 +1796,7 @@ fn workspace_picker_dialog(
                                         let workspace_picker_target = workspace_picker_target.clone();
                                         let app_config = app_config.clone();
                                         let recent_paths_vec = recent_paths_vec.clone();
+                                        let workspace_switch_task = workspace_switch_task.clone();
                                         recent_paths_vec
                                             .signal_vec_cloned()
                                             .to_signal_cloned()
@@ -1824,6 +1844,7 @@ fn workspace_picker_dialog(
                                                     let workspace_picker_domain_first = workspace_picker_domain.clone();
                                                     let workspace_picker_target_first = workspace_picker_target.clone();
                                                     let app_config_first = app_config.clone();
+                                                    let workspace_switch_task_first = workspace_switch_task.clone();
 
                                                     let mut column = Column::new()
                                                         .s(Gap::new().y(SPACING_2))
@@ -1846,6 +1867,7 @@ fn workspace_picker_dialog(
                                                                             let tracked_files_sel = tracked_files_first.clone();
                                                                             let selected_variables_sel = selected_variables_first.clone();
                                                                             let workspace_picker_visible_sel = workspace_picker_visible_first.clone();
+                                                                            let workspace_switch_task_sel = workspace_switch_task_first.clone();
                                                                             move || {
                                                                                 app_config_sel.record_workspace_selection(&first_path_sel);
                                                                                 workspace_picker_target_sel.set_neq(Some(first_path_sel.clone()));
@@ -1860,6 +1882,7 @@ fn workspace_picker_dialog(
                                                                                     selected_variables_sel.clone(),
                                                                                     app_config_sel.clone(),
                                                                                     first_path_sel.clone(),
+                                                                                    workspace_switch_task_sel.clone(),
                                                                                 );
                                                                                 workspace_picker_visible_sel.set(false);
                                                                             }
@@ -1893,6 +1916,7 @@ fn workspace_picker_dialog(
                                                         let workspace_picker_domain = workspace_picker_domain.clone();
                                                         let workspace_picker_target = workspace_picker_target.clone();
                                                         let app_config = app_config.clone();
+                                                        let workspace_switch_task = workspace_switch_task.clone();
                                                         column = column.item(
                                                             Row::new()
                                                                 .s(Width::fill())
@@ -1912,6 +1936,7 @@ fn workspace_picker_dialog(
                                                                             let tracked_files_sel = tracked_files.clone();
                                                                             let selected_variables_sel = selected_variables.clone();
                                                                             let workspace_picker_visible_sel = workspace_picker_visible.clone();
+                                                                            let workspace_switch_task_sel = workspace_switch_task.clone();
                                                                             move || {
                                                                                 app_config_sel.record_workspace_selection(&path_sel);
                                                                                 workspace_picker_target_sel.set_neq(Some(path_sel.clone()));
@@ -1926,6 +1951,7 @@ fn workspace_picker_dialog(
                                                                                     selected_variables_sel.clone(),
                                                                                     app_config_sel.clone(),
                                                                                     path_sel.clone(),
+                                                                                    workspace_switch_task_sel.clone(),
                                                                                 );
                                                                                 workspace_picker_visible_sel.set(false);
                                                                             }
@@ -1957,6 +1983,11 @@ fn workspace_picker_dialog(
                                     })
                                 );
                             top_sections.push(recent_section.into_raw_el());
+
+                            let scroll_task_handle: std::sync::Arc<std::sync::Mutex<Option<zoon::TaskHandle>>> =
+                                std::sync::Arc::new(std::sync::Mutex::new(None));
+                            let scroll_task_handle_for_insert = scroll_task_handle.clone();
+                            let scroll_task_handle_for_remove = scroll_task_handle.clone();
 
                             let tree_scroll_container = El::new()
                                 .s(Height::fill())
@@ -2025,7 +2056,7 @@ fn workspace_picker_dialog(
                                     let scroll_position_mutable =
                                         workspace_picker_domain.scroll_position.clone();
                             move |_element| {
-                                let _task = Task::start_droppable({
+                                let handle = Task::start_droppable({
                                     let scroll_position_mutable = scroll_position_mutable.clone();
                                     async move {
                                         Task::next_macro_tick().await;
@@ -2045,8 +2076,14 @@ fn workspace_picker_dialog(
                                         }
                                     }
                                 });
+                                *scroll_task_handle_for_insert.lock().unwrap() = Some(handle);
                             }
                         })
+                                .after_remove({
+                                    move |_| {
+                                        drop(scroll_task_handle_for_remove.lock().unwrap().take());
+                                    }
+                                })
                                 .child(workspace_picker_tree(
                                     app_config.clone(),
                                     workspace_picker_target.clone(),
@@ -2153,14 +2190,9 @@ fn workspace_picker_tree(
     workspace_picker_target: Mutable<Option<String>>,
     domain: crate::config::FilePickerDomain,
 ) -> impl Element {
-    use crate::file_picker::{
-        SelectedFilesSyncActors, TreeViewSyncActors, initialize_directories_and_request_contents,
-    };
-    use indexmap::IndexSet;
+    use crate::file_picker::initialize_directories_and_request_contents;
     use moonzoon_novyui::tokens::color::neutral_8;
 
-    let selected_vec = MutableVec::<String>::new();
-    let selected_sync = SelectedFilesSyncActors::new(domain.clone(), selected_vec.clone());
     let initialization_actor = initialize_directories_and_request_contents(&domain);
     let cache_signal = domain.directory_cache_signal();
 
@@ -2168,31 +2200,24 @@ fn workspace_picker_tree(
         .s(Height::fill())
         .s(Width::fill())
         .after_remove(move |_| {
-            drop(selected_sync);
             drop(initialization_actor);
         })
         .child_signal({
             let domain_for_treeview = domain.clone();
-            let selected_vec_for_tree = selected_vec.clone();
             let app_config_for_tree = app_config.clone();
             let target_for_tree = workspace_picker_target.clone();
             cache_signal.map(move |cache| {
                 if cache.contains_key("/") {
                     let tree_data = workspace_build_tree_data("/", &cache);
-                    let external_expanded = Mutable::new(IndexSet::<String>::new());
-                    let sync_actors = TreeViewSyncActors::new(
-                        domain_for_treeview.clone(),
-                        external_expanded.clone(),
-                    );
+                    // Single Source of Truth: use domain's Mutable directly
+                    let external_expanded = domain_for_treeview.expanded_directories.clone();
                     let scroll_position_actor = domain_for_treeview.scroll_position.clone();
 
                     // Persist expanded paths to global history whenever they change.
                     // Skip the very first sync to avoid writing initial state.
                     let persist_task = Arc::new(Task::start_droppable({
-                        let _domain_for_persist = domain_for_treeview.clone();
                         let external_for_persist = external_expanded.clone();
                         let config_for_persist = app_config_for_tree.clone();
-                        let _target_for_persist = target_for_tree.clone();
                         async move {
                             let mut is_first = true;
                             let mut stream = external_for_persist.signal_cloned().to_stream();
@@ -2202,18 +2227,22 @@ fn workspace_picker_tree(
                                     is_first = false;
                                     continue;
                                 }
-                                // Only persist global picker expanded paths; scroll is updated by the scroll actor
                                 config_for_persist.update_workspace_picker_tree_state(vec.clone());
                             }
                         }
                     }));
+
+                    let scroll_task_handle: std::sync::Arc<std::sync::Mutex<Option<zoon::TaskHandle>>> =
+                        std::sync::Arc::new(std::sync::Mutex::new(None));
+                    let scroll_task_handle_for_insert = scroll_task_handle.clone();
+                    let scroll_task_handle_for_remove = scroll_task_handle.clone();
 
                     El::new()
                         .s(Height::fill())
                         .s(Width::fill())
                         .after_insert(move |_element| {
                             // Restore scroll position after tree renders
-                            let _task = Task::start_droppable({
+                            let handle = Task::start_droppable({
                                 let scroll_position_mutable = scroll_position_actor.clone();
                                 async move {
                                     Task::next_macro_tick().await;
@@ -2231,10 +2260,11 @@ fn workspace_picker_tree(
                                     }
                                 }
                             });
+                            *scroll_task_handle_for_insert.lock().unwrap() = Some(handle);
                         })
                         .after_remove(move |_| {
-                            drop(sync_actors);
                             drop(persist_task);
+                            drop(scroll_task_handle_for_remove.lock().unwrap().take());
                         })
                         .child(
                             tree_view()
@@ -2244,7 +2274,8 @@ fn workspace_picker_tree(
                                 .show_icons(true)
                                 .show_checkboxes(true)
                                 .external_expanded(external_expanded)
-                                .external_selected_vec(selected_vec_for_tree.clone())
+                                // Single Source of Truth: use domain's MutableVec directly
+                                .external_selected_vec(domain_for_treeview.selected_files.clone())
                                 .build()
                                 .into_raw(),
                         )

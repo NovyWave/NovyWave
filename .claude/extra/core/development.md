@@ -73,6 +73,35 @@ Fix: Connect proper event streams or delete.
 ### 7. Timer Workarounds
 Never use `Timer::sleep()` for timing coordination. Use `Task::next_macro_tick().await` or signal waiting.
 
+### 8. Task::start vs Task::start_droppable (CRITICAL)
+
+**When TaskHandle is dropped, it calls `abort()` on the inner AbortHandle - the future IS CANCELLED!**
+
+```rust
+// ❌ CRITICAL BUG: Handle dropped immediately → Future aborted!
+let _ = Task::start_droppable(async move { important_work().await; });
+
+// ❌ STILL WRONG: Handle dropped at end of scope → Future aborted!
+let _task = Task::start_droppable(async move { important_work().await; });
+// _task dropped here when function/block ends!
+
+// ✅ CORRECT: Fire-and-forget that MUST complete → Use Task::start()
+Task::start(async move { important_work().await; });  // No handle, runs to completion
+
+// ✅ CORRECT: Need cancellation → Store handle for lifetime needed
+struct MyDomain {
+    _background_task: TaskHandle,  // Lives with struct
+}
+let handle = Task::start_droppable(async move { ... });
+self.handles.push(handle);  // Store in collection
+```
+
+**Rules:**
+- **Fire-and-forget (must complete)**: Use `Task::start()` - no handle, cannot be cancelled
+- **Cancellable work**: Use `Task::start_droppable()` AND store handle for needed lifetime
+- **NEVER** use `let _ = Task::start_droppable(...)` - immediate abort!
+- **NEVER** use `let _task = Task::start_droppable(...)` at function scope end - aborted when scope ends!
+
 ## WASM Constraints (CRITICAL)
 
 - **All I/O on backend** - WASM filesystem blocks main thread, freezes browser
