@@ -119,3 +119,27 @@ _ = Timer::sleep(1000).fuse() => ...
 **Loading stuck:** Fast ops appearing slow = broken reactivity, not slow backend.
 
 **Duplicate connections:** Multiple Connection::new() calls cause message routing failures.
+
+## Backend Concurrency Debugging
+
+**See `.claude/extra/technical/backend-concurrency.md` for comprehensive patterns.**
+
+**Symptoms of race conditions:**
+- Same file loaded twice (check logs for duplicate "Parsing started")
+- Stale data after workspace switch (old file data persists)
+- Random parsing failures under load
+- Lock poisoning cascades (multiple panic traces)
+
+**Audit commands:**
+```bash
+# Find TOCTOU patterns
+grep -n "\.lock()" backend/src/main.rs | head -50
+
+# Find poison-vulnerable locks
+grep -n "\.lock()\.unwrap()" backend/src/main.rs
+
+# Find blocking async (missing spawn_blocking)
+grep -B5 "catch_unwind" backend/src/main.rs | grep -v "spawn_blocking"
+```
+
+**Multi-tab testing:** Open same file in 2+ browser tabs to trigger concurrent access.

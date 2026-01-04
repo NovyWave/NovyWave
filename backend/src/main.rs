@@ -14,7 +14,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
-use tokio::time::{Duration, sleep};
+use tokio::sync::Notify;
+use tokio::time::{Duration, timeout};
 
 // ===== CENTRALIZED DEBUG FLAGS =====
 const DEBUG_BACKEND: bool = true; // Backend request/response debugging
@@ -69,14 +70,55 @@ static WAVEFORM_METADATA_STORE: Lazy<Arc<Mutex<HashMap<String, WaveformMetadata>
 static VCD_LOADING_IN_PROGRESS: Lazy<Arc<Mutex<std::collections::HashSet<String>>>> =
     Lazy::new(|| Arc::new(Mutex::new(std::collections::HashSet::new())));
 
+// Async notification for load completion - replaces polling loop with event-driven waiting
+static LOADING_NOTIFIERS: Lazy<Arc<Mutex<HashMap<String, Arc<Notify>>>>> =
+    Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
+
+// Serialize config file read-modify-write operations to prevent lost updates
+// This protects global config file (workspace history) from concurrent modification
+static CONFIG_FILE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+
+/// Cleanup loading state and notify all waiters that loading is complete (success or failure)
+fn complete_loading(file_path: &str) {
+    // ATOMIC CLEANUP: Acquire both locks before modifying any state
+    // This prevents race conditions where another thread sees partial state
+    // (e.g., not loading but notifier still exists)
+    let loading_guard = VCD_LOADING_IN_PROGRESS.lock();
+    let notifiers_guard = LOADING_NOTIFIERS.lock();
+
+    // Remove from loading tracker
+    if let Ok(mut loading_in_progress) = loading_guard {
+        loading_in_progress.remove(file_path);
+    }
+    // Notify all waiters and remove the notifier
+    if let Ok(mut notifiers) = notifiers_guard {
+        if let Some(notifier) = notifiers.remove(file_path) {
+            notifier.notify_waiters();
+        }
+    }
+    // Both locks released together here
+}
+
 fn invalidate_waveform_resources(file_path: &str) {
-    if let Ok(mut store) = WAVEFORM_DATA_STORE.lock() {
+    // ATOMIC INVALIDATION: Acquire all locks before modifying any store
+    // This prevents race conditions where another thread sees partial state
+    // (e.g., data exists but metadata doesn't, or cache has stale entries)
+    let data_guard = WAVEFORM_DATA_STORE.lock();
+    let metadata_guard = WAVEFORM_METADATA_STORE.lock();
+    let cache_guard = SIGNAL_CACHE_MANAGER.transition_cache.write();
+
+    // Now perform all removals while holding all locks
+    if let Ok(mut store) = data_guard {
         store.remove(file_path);
     }
-    if let Ok(mut metadata) = WAVEFORM_METADATA_STORE.lock() {
+    if let Ok(mut metadata) = metadata_guard {
         metadata.remove(file_path);
     }
-    SIGNAL_CACHE_MANAGER.invalidate_file(file_path);
+    if let Ok(mut cache) = cache_guard {
+        let prefix = format!("{}|", file_path);
+        cache.retain(|key, _| !key.starts_with(&prefix));
+    }
+    // All locks released together here
 }
 
 // ===== UNIFIED SIGNAL CACHE MANAGER =====
@@ -107,7 +149,10 @@ impl SignalCacheManager {
 
     fn invalidate_file(&self, file_path: &str) {
         let prefix = format!("{}|", file_path);
-        let mut cache = self.transition_cache.write().unwrap();
+        let mut cache = match self.transition_cache.write() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
         cache.retain(|key, _| !key.starts_with(&prefix));
     }
 
@@ -203,10 +248,13 @@ impl SignalCacheManager {
             BTreeMap::new()
         };
 
-        // Update cache statistics
+        // Update cache statistics (poison recovery)
         let query_time = start_time.elapsed().as_millis() as u64;
         let (total_queries, cache_hits) = {
-            let mut stats = self.cache_stats.write().unwrap();
+            let mut stats = match self.cache_stats.write() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
             stats.total_queries += 1;
             (stats.total_queries, stats.cache_hits)
         };
@@ -253,9 +301,12 @@ impl SignalCacheManager {
             unique_id
         );
 
-        // Check cache first
+        // Fast path: Check cache with read lock (poison recovery)
         {
-            let cache = self.transition_cache.read().unwrap();
+            let cache = match self.transition_cache.read() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
             debug_log!(
                 DEBUG_SIGNAL_CACHE,
                 "🔍 SIGNAL_CACHE_MANAGER: Cache contains {} entries",
@@ -267,7 +318,11 @@ impl SignalCacheManager {
                     "🔍 SIGNAL_CACHE_MANAGER: Cache HIT for '{}'",
                     unique_id
                 );
-                let mut stats = self.cache_stats.write().unwrap();
+                // Update stats (poison recovery)
+                let mut stats = match self.cache_stats.write() {
+                    Ok(guard) => guard,
+                    Err(poisoned) => poisoned.into_inner(),
+                };
                 stats.cache_hits += 1;
 
                 let range_vec = self.collect_range(transitions, request.time_range_ns);
@@ -302,15 +357,59 @@ impl SignalCacheManager {
     }
 
     /// Load signal data from the waveform data store
+    /// Uses double-checked locking to prevent duplicate loads
     fn load_signal_from_waveform(
         &self,
         request: &UnifiedSignalRequest,
         unique_id: &str,
     ) -> Result<UnifiedSignalData, String> {
-        let mut stats = self.cache_stats.write().unwrap();
-        stats.cache_misses += 1;
+        // DOUBLE-CHECKED LOCKING: Re-check cache with write lock before loading
+        // Another thread may have inserted between our read check and now
+        {
+            let cache = match self.transition_cache.write() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
 
-        let waveform_store = WAVEFORM_DATA_STORE.lock().unwrap();
+            // Re-check if another thread already loaded this signal
+            if let Some(transitions) = cache.get(unique_id) {
+                debug_log!(
+                    DEBUG_SIGNAL_CACHE,
+                    "🔍 SIGNAL_CACHE_MANAGER: Cache HIT on re-check for '{}'",
+                    unique_id
+                );
+                // Update stats for this "late" cache hit (poison recovery)
+                let mut stats = match self.cache_stats.write() {
+                    Ok(guard) => guard,
+                    Err(poisoned) => poisoned.into_inner(),
+                };
+                stats.cache_hits += 1;
+
+                let range_vec = self.collect_range(transitions, request.time_range_ns);
+                let final_transitions = if let Some(max_transitions) = request.max_transitions {
+                    self.downsample_transitions(range_vec, max_transitions)
+                } else {
+                    range_vec
+                };
+
+                return Ok(UnifiedSignalData {
+                    file_path: request.file_path.clone(),
+                    scope_path: request.scope_path.clone(),
+                    variable_name: request.variable_name.clone(),
+                    unique_id: unique_id.to_string(),
+                    transitions: final_transitions,
+                    total_transitions: transitions.len(),
+                    actual_time_range_ns: self.compute_time_range(&transitions[..]),
+                });
+            }
+            // Drop cache lock before accessing waveform store (prevents lock ordering issues)
+        }
+
+        // Load from waveform store (poison recovery)
+        let waveform_store = match WAVEFORM_DATA_STORE.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
         debug_log!(
             DEBUG_WAVEFORM_STORE,
             "🔍 WAVEFORM_STORE: Checking for file '{}' in store with {} files",
@@ -352,10 +451,20 @@ impl SignalCacheManager {
 
                 let transitions_arc: Arc<[SignalTransition]> = transitions_vec.into();
 
-                // Cache the loaded data
+                // Cache the loaded data AND update stats atomically (poison recovery)
                 {
-                    let mut cache = self.transition_cache.write().unwrap();
+                    let mut cache = match self.transition_cache.write() {
+                        Ok(guard) => guard,
+                        Err(poisoned) => poisoned.into_inner(),
+                    };
                     cache.insert(unique_id.to_string(), Arc::clone(&transitions_arc));
+
+                    // Update stats AFTER successful cache insert
+                    let mut stats = match self.cache_stats.write() {
+                        Ok(guard) => guard,
+                        Err(poisoned) => poisoned.into_inner(),
+                    };
+                    stats.cache_misses += 1;
                 }
 
                 // Filter by time range and downsample
@@ -474,7 +583,10 @@ impl SignalCacheManager {
         cursor_time: u64,
     ) -> BTreeMap<String, SignalValue> {
         let mut cursor_values = BTreeMap::new();
-        let cache_guard = self.transition_cache.read().unwrap();
+        let cache_guard = match self.transition_cache.read() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
 
         debug_log!(
             DEBUG_CURSOR,
@@ -954,6 +1066,58 @@ async fn load_waveform_file(file_path: String, session_id: SessionId, cor_id: Co
         return;
     }
 
+    // DEDUPLICATION: Check if this file is already being loaded
+    // If so, wait for the existing load to complete rather than starting a duplicate
+    {
+        let mut loading = match VCD_LOADING_IN_PROGRESS.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+
+        if loading.contains(&file_path) {
+            // Another load is in progress - get notifier and wait
+            let notifier = {
+                let mut notifiers = match LOADING_NOTIFIERS.lock() {
+                    Ok(n) => n,
+                    Err(poisoned) => poisoned.into_inner(),
+                };
+                notifiers
+                    .entry(file_path.clone())
+                    .or_insert_with(|| Arc::new(Notify::new()))
+                    .clone()
+            };
+            drop(loading);
+
+            debug_log!(
+                DEBUG_PARSE,
+                "🔍 PARSE: File '{}' already loading, waiting for completion",
+                file_path
+            );
+
+            // Wait for the existing load to complete (with timeout)
+            match timeout(Duration::from_secs(60), notifier.notified()).await {
+                Ok(()) => {
+                    debug_log!(
+                        DEBUG_PARSE,
+                        "🔍 PARSE: Existing load of '{}' completed",
+                        file_path
+                    );
+                }
+                Err(_) => {
+                    eprintln!(
+                        "⚠️ BACKEND: Timeout waiting for existing load of '{}' (60s)",
+                        file_path
+                    );
+                }
+            }
+            // The original load already sent all necessary messages (ParsingStarted, FileLoaded, etc.)
+            return;
+        }
+
+        // Mark this file as being loaded
+        loading.insert(file_path.clone());
+    }
+
     invalidate_waveform_resources(&file_path);
 
     // Let wellen handle all validation - it knows best
@@ -974,6 +1138,7 @@ async fn load_waveform_file(file_path: String, session_id: SessionId, cor_id: Co
             Err(e) => {
                 let error_msg =
                     format!("Internal error: Failed to access parsing sessions - {}", e);
+                complete_loading(&file_path); // Clean up loading state
                 send_parsing_error(file_path.clone(), filename, error_msg, session_id, cor_id)
                     .await;
                 return;
@@ -1391,6 +1556,7 @@ async fn parse_waveform_file(
             .await;
 
             cleanup_parsing_session(&file_id);
+            complete_loading(&file_path); // Notify waiting duplicate load requests
         }
         wellen::FileFormat::Vcd => {
             // VCD: Use progressive loading with quick time bounds extraction
@@ -1594,6 +1760,7 @@ async fn parse_waveform_file(
             .await;
 
             cleanup_parsing_session(&file_id);
+            complete_loading(&file_path); // Notify waiting duplicate load requests
         }
         wellen::FileFormat::Ghw => {
             // GHW: Parse body to get time bounds (GHDL files are typically smaller)
@@ -1760,10 +1927,12 @@ async fn parse_waveform_file(
             .await;
 
             cleanup_parsing_session(&file_id);
+            complete_loading(&file_path); // Notify waiting duplicate load requests
         }
         wellen::FileFormat::Unknown => {
             let error_msg = "Unknown file format - only VCD, FST, and GHW files are supported";
             send_parsing_error(file_id, filename, error_msg.to_string(), session_id, cor_id).await;
+            complete_loading(&file_path); // Notify waiting duplicate load requests (even on error)
         }
     }
 }
@@ -2289,6 +2458,13 @@ fn save_global_section(
 }
 
 fn update_workspace_history_on_select(root: &Path) -> shared::GlobalSection {
+    // ATOMIC CONFIG UPDATE: Hold lock during read-modify-write cycle
+    // This prevents lost updates when multiple sessions modify workspace history
+    let _config_guard = match CONFIG_FILE_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+
     let mut global = read_global_section();
     let path_str = root.to_string_lossy().to_string();
     global
@@ -2304,6 +2480,13 @@ fn update_workspace_history_on_select(root: &Path) -> shared::GlobalSection {
 }
 
 fn persist_global_section(global: &shared::GlobalSection) -> shared::GlobalSection {
+    // ATOMIC CONFIG UPDATE: Hold lock during read-modify-write cycle
+    // This prevents lost updates when multiple sessions modify workspace history
+    let _config_guard = match CONFIG_FILE_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+
     let existing = read_global_section();
     let incoming_history = &global.workspace_history;
     let has_incoming_updates = has_workspace_history_updates(incoming_history);
@@ -2568,19 +2751,42 @@ fn relativize_scope_identifier(scope_id: &str, context: &WorkspaceContext) -> St
 }
 
 fn reset_runtime_state_for_workspace() {
-    if let Ok(mut sessions) = PARSING_SESSIONS.lock() {
+    // ATOMIC RESET: Acquire all locks before clearing any store
+    // This prevents race conditions where concurrent operations see partial state
+    let sessions_guard = PARSING_SESSIONS.lock();
+    let store_guard = WAVEFORM_DATA_STORE.lock();
+    let metadata_guard = WAVEFORM_METADATA_STORE.lock();
+    let loading_guard = VCD_LOADING_IN_PROGRESS.lock();
+    let notifiers_guard = LOADING_NOTIFIERS.lock();
+    let cache_guard = SIGNAL_CACHE_MANAGER.transition_cache.write();
+    let stats_guard = SIGNAL_CACHE_MANAGER.cache_stats.write();
+
+    // Now perform all clears while holding all locks
+    if let Ok(mut sessions) = sessions_guard {
         sessions.clear();
     }
-    if let Ok(mut store) = WAVEFORM_DATA_STORE.lock() {
+    if let Ok(mut store) = store_guard {
         store.clear();
     }
-    if let Ok(mut metadata) = WAVEFORM_METADATA_STORE.lock() {
+    if let Ok(mut metadata) = metadata_guard {
         metadata.clear();
     }
-    if let Ok(mut loading) = VCD_LOADING_IN_PROGRESS.lock() {
+    if let Ok(mut loading) = loading_guard {
         loading.clear();
     }
-    SIGNAL_CACHE_MANAGER.reset();
+    // Notify all waiters that loading is cancelled, then clear
+    if let Ok(mut notifiers) = notifiers_guard {
+        for (_, notifier) in notifiers.drain() {
+            notifier.notify_waiters();
+        }
+    }
+    if let Ok(mut cache) = cache_guard {
+        cache.clear();
+    }
+    if let Ok(mut stats) = stats_guard {
+        *stats = CacheStats::default();
+    }
+    // All locks released together here
 }
 
 fn read_or_create_config() -> Result<AppConfig, String> {
@@ -3313,69 +3519,88 @@ fn build_signals_for_scope_recursive(
 // Handle signal value queries
 // Load VCD body data on-demand for signal value queries
 async fn ensure_waveform_body_loaded(file_path: &str) -> Result<(), String> {
-    // Check if already loaded
-    {
+    // ATOMIC CHECK: Acquire both locks before deciding what to do
+    // This prevents TOCTOU race where data is inserted between checking
+    // WAVEFORM_DATA_STORE and VCD_LOADING_IN_PROGRESS
+    enum LoadAction {
+        AlreadyLoaded,
+        WaitForOther(Arc<Notify>),
+        LoadNow,
+    }
+
+    let action = {
         let store = match WAVEFORM_DATA_STORE.lock() {
             Ok(store) => store,
             Err(_) => {
                 return Err("Internal error: Failed to access waveform data store".to_string());
             }
         };
+
+        // Check if already loaded BEFORE acquiring second lock
         if store.contains_key(file_path) {
-            return Ok(());
-        }
-    }
-
-    // Check if loading is already in progress for this file
-    {
-        let mut loading_in_progress = match VCD_LOADING_IN_PROGRESS.lock() {
-            Ok(loading) => loading,
-            Err(_) => return Err("Internal error: Failed to access loading tracker".to_string()),
-        };
-
-        if loading_in_progress.contains(file_path) {
-            drop(loading_in_progress);
-
-            loop {
-                // Check if waveform finished loading successfully
-                if WAVEFORM_DATA_STORE
-                    .lock()
-                    .map(|store| store.contains_key(file_path))
-                    .unwrap_or(false)
-                {
-                    return Ok(());
+            LoadAction::AlreadyLoaded
+        } else {
+            // Not loaded - need to check loading status
+            let mut loading_in_progress = match VCD_LOADING_IN_PROGRESS.lock() {
+                Ok(loading) => loading,
+                Err(_) => {
+                    return Err("Internal error: Failed to access loading tracker".to_string())
                 }
+            };
 
-                // If the loader cleared the in-progress flag without populating the store,
-                // treat it as a failure and bubble the error up to the caller.
-                let still_loading = VCD_LOADING_IN_PROGRESS
-                    .lock()
-                    .map(|loading| loading.contains(file_path))
-                    .unwrap_or(false);
-
-                if !still_loading {
-                    break;
-                }
-
-                sleep(Duration::from_millis(10)).await;
-            }
-
-            if WAVEFORM_DATA_STORE
-                .lock()
-                .map(|store| store.contains_key(file_path))
-                .unwrap_or(false)
-            {
-                return Ok(());
+            if loading_in_progress.contains(file_path) {
+                // Get or create notifier for this file (while holding both locks)
+                let notifier = {
+                    let mut notifiers = match LOADING_NOTIFIERS.lock() {
+                        Ok(n) => n,
+                        Err(poisoned) => poisoned.into_inner(),
+                    };
+                    notifiers
+                        .entry(file_path.to_string())
+                        .or_insert_with(|| Arc::new(Notify::new()))
+                        .clone()
+                };
+                LoadAction::WaitForOther(notifier)
             } else {
-                return Err(format!(
-                    "Waveform '{}' failed to load while waiting for existing load",
-                    file_path
-                ));
+                // Mark this file as being loaded (while holding both locks)
+                loading_in_progress.insert(file_path.to_string());
+                LoadAction::LoadNow
             }
         }
+        // All locks released here
+    };
 
-        // Mark this file as being loaded
-        loading_in_progress.insert(file_path.to_string());
+    match action {
+        LoadAction::AlreadyLoaded => return Ok(()),
+        LoadAction::WaitForOther(notifier) => {
+            // Wait for notification with timeout (30 seconds max)
+            match timeout(Duration::from_secs(30), notifier.notified()).await {
+                Ok(()) => {
+                    // Notified - check if load succeeded
+                    if WAVEFORM_DATA_STORE
+                        .lock()
+                        .map(|store| store.contains_key(file_path))
+                        .unwrap_or(false)
+                    {
+                        return Ok(());
+                    } else {
+                        return Err(format!(
+                            "Waveform '{}' failed to load while waiting for existing load",
+                            file_path
+                        ));
+                    }
+                }
+                Err(_) => {
+                    return Err(format!(
+                        "Timeout waiting for waveform '{}' to load (30s)",
+                        file_path
+                    ));
+                }
+            }
+        }
+        LoadAction::LoadNow => {
+            // Fall through to loading logic below
+        }
     }
 
     // Check if we have metadata for this file
@@ -3383,9 +3608,7 @@ async fn ensure_waveform_body_loaded(file_path: &str) -> Result<(), String> {
         let metadata_store = match WAVEFORM_METADATA_STORE.lock() {
             Ok(store) => store,
             Err(_) => {
-                if let Ok(mut loading_in_progress) = VCD_LOADING_IN_PROGRESS.lock() {
-                    loading_in_progress.remove(file_path);
-                }
+                complete_loading(file_path);
                 return Err("Internal error: Failed to access metadata store".to_string());
             }
         };
@@ -3416,15 +3639,11 @@ async fn ensure_waveform_body_loaded(file_path: &str) -> Result<(), String> {
         })) {
             Ok(Ok(header)) => header,
             Ok(Err(e)) => {
-                if let Ok(mut loading_in_progress) = VCD_LOADING_IN_PROGRESS.lock() {
-                    loading_in_progress.remove(file_path);
-                }
+                complete_loading(file_path);
                 return Err(format!("Failed to re-parse header for body loading: {}", e));
             }
             Err(_panic) => {
-                if let Ok(mut loading_in_progress) = VCD_LOADING_IN_PROGRESS.lock() {
-                    loading_in_progress.remove(file_path);
-                }
+                complete_loading(file_path);
                 return Err(format!("Critical error re-parsing header"));
             }
         };
@@ -3449,17 +3668,11 @@ async fn ensure_waveform_body_loaded(file_path: &str) -> Result<(), String> {
         })) {
             Ok(Ok(header)) => header,
             Ok(Err(e)) => {
-                // Remove from loading tracker on failure
-                if let Ok(mut loading_in_progress) = VCD_LOADING_IN_PROGRESS.lock() {
-                    loading_in_progress.remove(file_path);
-                }
+                complete_loading(file_path);
                 return Err(format!("Failed to parse header for signal queries: {}", e));
             }
             Err(_panic) => {
-                // Remove from loading tracker on panic
-                if let Ok(mut loading_in_progress) = VCD_LOADING_IN_PROGRESS.lock() {
-                    loading_in_progress.remove(file_path);
-                }
+                complete_loading(file_path);
                 return Err(format!(
                     "Critical error parsing header: Invalid waveform data"
                 ));
@@ -3478,19 +3691,13 @@ async fn ensure_waveform_body_loaded(file_path: &str) -> Result<(), String> {
                     TimescaleUnit::MilliSeconds => ts.factor as f64 * 1e-3,
                     TimescaleUnit::Seconds => ts.factor as f64,
                     TimescaleUnit::Unknown => {
-                        // NO FALLBACKS: Cannot determine timescale
-                        if let Ok(mut loading_in_progress) = VCD_LOADING_IN_PROGRESS.lock() {
-                            loading_in_progress.remove(file_path);
-                        }
+                        complete_loading(file_path);
                         return Err("Unknown timescale unit in waveform file".to_string());
                     }
                 }
             }
             None => {
-                // NO FALLBACKS: Cannot proceed without timescale
-                if let Ok(mut loading_in_progress) = VCD_LOADING_IN_PROGRESS.lock() {
-                    loading_in_progress.remove(file_path);
-                }
+                complete_loading(file_path);
                 return Err("No timescale information in waveform file".to_string());
             }
         };
@@ -3518,15 +3725,11 @@ async fn ensure_waveform_body_loaded(file_path: &str) -> Result<(), String> {
     })) {
         Ok(Ok(header)) => header,
         Ok(Err(e)) => {
-            if let Ok(mut loading_in_progress) = VCD_LOADING_IN_PROGRESS.lock() {
-                loading_in_progress.remove(file_path);
-            }
+            complete_loading(file_path);
             return Err(format!("Failed to reparse file for body loading: {}", e));
         }
         Err(_panic) => {
-            if let Ok(mut loading_in_progress) = VCD_LOADING_IN_PROGRESS.lock() {
-                loading_in_progress.remove(file_path);
-            }
+            complete_loading(file_path);
             return Err(format!("Critical error reparsing file for body loading"));
         }
     };
@@ -3537,20 +3740,14 @@ async fn ensure_waveform_body_loaded(file_path: &str) -> Result<(), String> {
     })) {
         Ok(Ok(body)) => body,
         Ok(Err(e)) => {
-            // Remove from loading tracker on failure
-            if let Ok(mut loading_in_progress) = VCD_LOADING_IN_PROGRESS.lock() {
-                loading_in_progress.remove(file_path);
-            }
+            complete_loading(file_path);
             return Err(format!(
                 "Failed to parse VCD body for signal queries: {}",
                 e
             ));
         }
         Err(_panic) => {
-            // Remove from loading tracker on panic
-            if let Ok(mut loading_in_progress) = VCD_LOADING_IN_PROGRESS.lock() {
-                loading_in_progress.remove(file_path);
-            }
+            complete_loading(file_path);
             return Err(format!(
                 "Critical error parsing VCD body: Invalid signal data"
             ));
@@ -3608,19 +3805,14 @@ async fn ensure_waveform_body_loaded(file_path: &str) -> Result<(), String> {
                 store.insert(file_path.to_string(), waveform_data);
             }
             Err(_) => {
-                // Remove from loading tracker on failure
-                if let Ok(mut loading_in_progress) = VCD_LOADING_IN_PROGRESS.lock() {
-                    loading_in_progress.remove(file_path);
-                }
+                complete_loading(file_path);
                 return Err("Internal error: Failed to store waveform data".to_string());
             }
         }
     }
 
-    // Remove from loading tracker on success
-    if let Ok(mut loading_in_progress) = VCD_LOADING_IN_PROGRESS.lock() {
-        loading_in_progress.remove(file_path);
-    }
+    // Notify all waiters that loading is complete
+    complete_loading(file_path);
 
     Ok(())
 }

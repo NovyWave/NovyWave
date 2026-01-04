@@ -31,6 +31,16 @@ let canvas_width = 0.0;                 // ❌ Misleading - is this "no data" or
 ```
 Use `Option<T>`, custom enums (`NotMeasured | Ready { width }`) or `Result<Option<T>, E>`.
 
+### Backend Concurrency (CRITICAL)
+
+**See `.claude/extra/technical/backend-concurrency.md` for comprehensive patterns.**
+
+Key rules:
+- **Atomic lock acquisition**: Acquire ALL locks before modifying ANY store
+- **Double-checked locking**: Re-check cache after upgrading to write lock
+- **spawn_blocking**: Wrap CPU-intensive parsing in `tokio::task::spawn_blocking`
+- **Poison recovery**: Use `match` + `into_inner()` instead of `.unwrap()` on locks
+
 ## Compilation Verification (CRITICAL)
 
 Run `makers start` and check mzoon output directly for errors. Use browser MCP to verify app works.

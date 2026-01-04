@@ -39,7 +39,7 @@ selected_variables_panel_value_column_width = 220.0
 
 [workspace.docked_right_dimensions]
 files_and_scopes_panel_width = 400.0
-files_and_scopes_panel_height = 441.0
+files_and_scopes_panel_height = 395.0
 selected_variables_panel_name_column_width = 190.0
 selected_variables_panel_value_column_width = 220.0
 
