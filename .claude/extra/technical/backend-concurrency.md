@@ -241,6 +241,6 @@ fn update_workspace_history_on_select(root: &Path) -> GlobalSection {
 
 These issues are documented but not critical to fix:
 
-1. **Signal source lock during I/O**: `waveform_data.signal_source.lock()` held during `load_signals()` - performance issue under high concurrency
-2. **Plugin manager lock contention**: Watcher callbacks acquire `PLUGIN_MANAGER.lock()` - may cause delays under rapid file changes
+1. **Signal source lock during I/O**: ✅ FIXED - Lock scope reduced to release immediately after `load_signals()`, processing happens outside lock
+2. **Plugin manager lock contention**: Watcher callbacks acquire `PLUGIN_MANAGER.lock()` - may cause delays under rapid file changes. Fix requires channel-based refactor (queue events for processing instead of direct lock acquisition during WASM plugin calls)
 3. **Workspace root stale read**: `WorkspaceContext::root()` can return stale value during `set_root()` - paths remain valid

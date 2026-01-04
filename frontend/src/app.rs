@@ -129,19 +129,21 @@ impl ConnectionMessageActor {
                         match down_msg {
                             DownMsg::ConfigLoaded(loaded_config) => {
                                 workspace_loading.set(false);
-                                // Phase 3: Apply config directly to state
+                                // Phase 3: Apply UI config directly to state (except variables/scopes)
                                 config.restore_config(
                                     loaded_config.clone(),
                                     &selected_variables,
                                 );
-                                // Phase 4: Trigger actual loading DIRECTLY to backend (no relays!)
+                                // Phase 4: Load files, then restore variables/scopes AFTER files start loading
                                 config.complete_initialization(
                                     &connection_for_init,
                                     &tracked_files,
                                     &selected_variables,
-                                    loaded_config.workspace.opened_files.clone(),
-                                    loaded_config.workspace.load_files_expanded_directories.clone(),
+                                    &loaded_config,
                                 ).await;
+                                // Phase 5: Enable config saves AFTER files have started loading
+                                // (prevents config saves from capturing incomplete state)
+                                config.set_config_loaded();
                             }
                             DownMsg::WorkspaceLoaded {
                                 root,
@@ -157,8 +159,17 @@ impl ConnectionMessageActor {
                                 default_workspace_path.set(Some(default_root.clone()));
                                 tracked_files.clear_all_files();
                                 selected_variables.clear_selection();
-                                // Apply workspace config
-                                config.restore_config(workspace_config, &selected_variables);
+                                // Apply workspace config (except variables/scopes)
+                                config.restore_config(workspace_config.clone(), &selected_variables);
+                                // Load files, then restore variables/scopes AFTER files start loading
+                                config.complete_initialization(
+                                    &connection_for_init,
+                                    &tracked_files,
+                                    &selected_variables,
+                                    &workspace_config,
+                                ).await;
+                                // Enable config saves
+                                config.set_config_loaded();
                             }
                             DownMsg::ConfigError(error) => {
                                 workspace_loading.set(false);
@@ -304,6 +315,7 @@ pub struct NovyWaveApp {
     key_repeat_handles: Rc<RefCell<HashMap<KeyAction, Interval>>>,
     debug_notification_task: Rc<RefCell<Option<TaskHandle>>>,
     workspace_switch_task: Rc<RefCell<Option<TaskHandle>>>,
+    workspace_switch_generation: Mutable<u64>,
 }
 
 // Remove Default implementation - use new() method instead
@@ -420,6 +432,7 @@ impl NovyWaveApp {
         let key_repeat_handles = Rc::new(RefCell::new(HashMap::new()));
         let debug_notification_task = Rc::new(RefCell::new(None));
         let workspace_switch_task = Rc::new(RefCell::new(None));
+        let workspace_switch_generation = Mutable::new(0u64);
 
         Self::setup_app_coordination(&selected_variables, &config).await;
 
@@ -446,6 +459,7 @@ impl NovyWaveApp {
             key_repeat_handles,
             debug_notification_task,
             workspace_switch_task,
+            workspace_switch_generation,
         }
     }
 
@@ -837,6 +851,7 @@ impl NovyWaveApp {
                 let config = self.config.clone();
                 let workspace_picker_target = self.workspace_picker_target.clone();
                 let workspace_switch_task = self.workspace_switch_task.clone();
+                let workspace_switch_generation = self.workspace_switch_generation.clone();
                 move || {
                     workspace_picker_dialog(
                         workspace_picker_visible.clone(),
@@ -849,6 +864,7 @@ impl NovyWaveApp {
                         workspace_picker_target.clone(),
                         workspace_picker_domain.clone(),
                         workspace_switch_task.clone(),
+                        workspace_switch_generation.clone(),
                     )
                 }
             }))
@@ -993,24 +1009,38 @@ impl NovyWaveApp {
         app_config: AppConfig,
         path: String,
         workspace_switch_task: Rc<RefCell<Option<TaskHandle>>>,
+        workspace_switch_generation: Mutable<u64>,
     ) {
         let trimmed = path.trim().to_string();
         if trimmed.is_empty() {
             return;
         }
 
-        let is_same_path = workspace_path
-            .lock_ref()
-            .as_ref()
-            .map(|current| current == &trimmed)
-            .unwrap_or(false);
+        // Atomically check same-path and increment generation under single lock scope
+        // This fixes the TOCTOU race where lock was released between check and set
+        let (is_same_path, previous_path, this_generation) = {
+            let current_path = workspace_path.lock_ref();
+            let is_same = current_path
+                .as_ref()
+                .map(|current| current == &trimmed)
+                .unwrap_or(false);
+            let previous = current_path.clone();
+            // Atomically increment generation using lock_mut()
+            let mut generation_guard = workspace_switch_generation.lock_mut();
+            *generation_guard += 1;
+            let new_generation = *generation_guard;
+            (is_same, previous, new_generation)
+        };
 
         if is_same_path {
             workspace_loading.set(false);
             return;
         }
 
-        let previous_path = workspace_path.lock_ref().clone();
+        // Clear picker state before switch to prevent stale state during transition (Issue #6 fix)
+        app_config.file_picker_domain.clear_file_selection();
+        app_config.file_picker_domain.directory_cache.lock_mut().clear();
+
         workspace_loading.set(true);
         // Optimistic update: reflect the user's choice immediately in the input.
         workspace_path.set(Some(trimmed.clone()));
@@ -1019,6 +1049,7 @@ impl NovyWaveApp {
             let request_path = trimmed.clone();
             let workspace_loading = workspace_loading.clone();
             let workspace_path_for_revert = workspace_path.clone();
+            let generation_for_watchdog = workspace_switch_generation.clone();
             // Pause config saves until new ConfigLoaded arrives
             app_config.mark_workspace_switching();
             async move {
@@ -1036,16 +1067,22 @@ impl NovyWaveApp {
                         shared::UpMsg::SelectWorkspace { root: request_path.clone() }
                     ).await;
                     if second.is_err() {
-                        // Revert optimistic input and stop loading
-                        workspace_loading.set(false);
-                        workspace_path_for_revert.set(previous_path.clone());
-                        zoon::println!("Workspace switch failed twice: {}", request_path);
+                        // Only revert if this is still the active generation
+                        if generation_for_watchdog.get() == this_generation {
+                            workspace_loading.set(false);
+                            workspace_path_for_revert.set(previous_path.clone());
+                            zoon::println!("Workspace switch failed twice: {}", request_path);
+                        }
                         return;
                     }
                 }
                 // Watchdog: if no WorkspaceLoaded arrives within 6s, clear loading so UI doesn't get stuck.
-                // NOTE: We await directly here instead of spawning a separate task that would be dropped.
+                // Only fires if this is still the active generation (prevents stale watchdog from corrupting
+                // a newer workspace switch that's in progress).
                 Timer::sleep(6000).await;
+                if generation_for_watchdog.get() != this_generation {
+                    return;
+                }
                 let still_loading = *workspace_loading.lock_ref();
                 let current = workspace_path_for_revert.lock_ref().clone();
                 if still_loading && current.as_ref().map(|p| p == &request_path).unwrap_or(false) {
@@ -1188,6 +1225,7 @@ fn workspace_picker_dialog(
     workspace_picker_target: Mutable<Option<String>>,
     workspace_picker_domain: crate::config::FilePickerDomain,
     workspace_switch_task: Rc<RefCell<Option<TaskHandle>>>,
+    workspace_switch_generation: Mutable<u64>,
 ) -> impl Element {
     use moonzoon_novyui::tokens::color::{neutral_1, neutral_2, neutral_4, neutral_8, neutral_11};
     use moonzoon_novyui::tokens::theme::{Theme, theme};
@@ -1217,6 +1255,7 @@ fn workspace_picker_dialog(
         let app_config_for_open = app_config.clone();
         let workspace_picker_target_for_open = workspace_picker_target.clone();
         let workspace_switch_task_for_open = workspace_switch_task.clone();
+        let workspace_switch_generation_for_open = workspace_switch_generation.clone();
         move || {
             if workspace_loading.lock_ref().clone() {
                 return;
@@ -1248,6 +1287,7 @@ fn workspace_picker_dialog(
                 app_config_for_open.clone(),
                 path,
                 workspace_switch_task_for_open.clone(),
+                workspace_switch_generation_for_open.clone(),
             );
             workspace_picker_visible.set(false);
         }
@@ -1401,6 +1441,7 @@ fn workspace_picker_dialog(
                                         });
 
                                     let workspace_switch_task_for_default = workspace_switch_task.clone();
+                                    let workspace_switch_generation_for_default = workspace_switch_generation.clone();
                                     let default_section = Column::new()
                                         .s(Width::fill())
                                         .s(Background::new().color_signal(neutral_2()))
@@ -1450,6 +1491,7 @@ fn workspace_picker_dialog(
                                                                 app_config.clone(),
                                                                 action_path.clone(),
                                                                 workspace_switch_task_for_default.clone(),
+                                                                workspace_switch_generation_for_default.clone(),
                                                             );
                                                             workspace_picker_visible.set(false);
                                                         })
@@ -1541,6 +1583,7 @@ fn workspace_picker_dialog(
                                                     let workspace_picker_target_first = workspace_picker_target.clone();
                                                     let app_config_first = app_config.clone();
                                                     let workspace_switch_task_first = workspace_switch_task.clone();
+                                                    let workspace_switch_generation_first = workspace_switch_generation.clone();
 
                                                     let mut column = Column::new()
                                                         .s(Gap::new().y(SPACING_2))
@@ -1564,6 +1607,7 @@ fn workspace_picker_dialog(
                                                                             let selected_variables_sel = selected_variables_first.clone();
                                                                             let workspace_picker_visible_sel = workspace_picker_visible_first.clone();
                                                                             let workspace_switch_task_sel = workspace_switch_task_first.clone();
+                                                                            let workspace_switch_generation_sel = workspace_switch_generation_first.clone();
                                                                             move || {
                                                                                 app_config_sel.record_workspace_selection(&first_path_sel);
                                                                                 workspace_picker_target_sel.set_neq(Some(first_path_sel.clone()));
@@ -1579,6 +1623,7 @@ fn workspace_picker_dialog(
                                                                                     app_config_sel.clone(),
                                                                                     first_path_sel.clone(),
                                                                                     workspace_switch_task_sel.clone(),
+                                                                                    workspace_switch_generation_sel.clone(),
                                                                                 );
                                                                                 workspace_picker_visible_sel.set(false);
                                                                             }
@@ -1613,6 +1658,7 @@ fn workspace_picker_dialog(
                                                         let workspace_picker_target = workspace_picker_target.clone();
                                                         let app_config = app_config.clone();
                                                         let workspace_switch_task = workspace_switch_task.clone();
+                                                        let workspace_switch_generation = workspace_switch_generation.clone();
                                                         column = column.item(
                                                             Row::new()
                                                                 .s(Width::fill())
@@ -1633,6 +1679,7 @@ fn workspace_picker_dialog(
                                                                             let selected_variables_sel = selected_variables.clone();
                                                                             let workspace_picker_visible_sel = workspace_picker_visible.clone();
                                                                             let workspace_switch_task_sel = workspace_switch_task.clone();
+                                                                            let workspace_switch_generation_sel = workspace_switch_generation.clone();
                                                                             move || {
                                                                                 app_config_sel.record_workspace_selection(&path_sel);
                                                                                 workspace_picker_target_sel.set_neq(Some(path_sel.clone()));
@@ -1648,6 +1695,7 @@ fn workspace_picker_dialog(
                                                                                     app_config_sel.clone(),
                                                                                     path_sel.clone(),
                                                                                     workspace_switch_task_sel.clone(),
+                                                                                    workspace_switch_generation_sel.clone(),
                                                                                 );
                                                                                 workspace_picker_visible_sel.set(false);
                                                                             }

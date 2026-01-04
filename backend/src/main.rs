@@ -1367,8 +1367,9 @@ async fn parse_waveform_file(
             };
 
             // For FST files, determine final time bounds and corrected timescale
-            let (min_seconds, max_seconds, final_timescale_factor) = match time_bounds_from_scan {
-                Some(bounds) => (bounds.0, bounds.1, timescale_factor),
+            // Return hierarchy from match to support spawn_blocking ownership pattern
+            let (min_seconds, max_seconds, final_timescale_factor, hierarchy) = match time_bounds_from_scan {
+                Some(bounds) => (bounds.0, bounds.1, timescale_factor, header_result.hierarchy),
                 None => {
                     // FST files require actual parsing to get time bounds
                     debug_log!(
@@ -1378,32 +1379,50 @@ async fn parse_waveform_file(
                     );
 
                     // Parse the FST body to get actual time bounds
-                    let body_result =
-                        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            wellen::viewers::read_body(
-                                header_result.body,
-                                &header_result.hierarchy,
-                                None,
-                            )
-                        })) {
-                            Ok(Ok(body)) => body,
-                            Ok(Err(e)) => {
-                                broadcast_down_msg(DownMsg::ParsingError {
-                                    file_id: file_path.clone(),
-                                    error: format!("Failed to parse FST body: {}", e),
-                                })
-                                .await;
-                                return;
-                            }
-                            Err(_) => {
-                                broadcast_down_msg(DownMsg::ParsingError {
-                                    file_id: file_path.clone(),
-                                    error: "Critical error parsing FST body".to_string(),
-                                })
-                                .await;
-                                return;
-                            }
-                        };
+                    // CRITICAL: Use spawn_blocking to avoid blocking the async runtime
+                    let body = header_result.body;
+                    let hierarchy = header_result.hierarchy;
+                    let file_path_for_log = file_path.clone();
+
+                    let spawn_result = tokio::task::spawn_blocking(move || {
+                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            wellen::viewers::read_body(body, &hierarchy, None)
+                        }));
+                        (result, hierarchy)
+                    })
+                    .await;
+
+                    let (body_parse_result, hierarchy) = match spawn_result {
+                        Ok(tuple) => tuple,
+                        Err(join_error) => {
+                            broadcast_down_msg(DownMsg::ParsingError {
+                                file_id: file_path.clone(),
+                                error: format!("Blocking task failed for FST body: {}", join_error),
+                            })
+                            .await;
+                            return;
+                        }
+                    };
+
+                    let body_result = match body_parse_result {
+                        Ok(Ok(body)) => body,
+                        Ok(Err(e)) => {
+                            broadcast_down_msg(DownMsg::ParsingError {
+                                file_id: file_path.clone(),
+                                error: format!("Failed to parse FST body: {}", e),
+                            })
+                            .await;
+                            return;
+                        }
+                        Err(_) => {
+                            broadcast_down_msg(DownMsg::ParsingError {
+                                file_id: file_path.clone(),
+                                error: "Critical error parsing FST body".to_string(),
+                            })
+                            .await;
+                            return;
+                        }
+                    };
 
                     // Get actual time bounds from parsed body
                     if let (Some(&min_time), Some(&max_time)) = (
@@ -1414,7 +1433,7 @@ async fn parse_waveform_file(
                         let inferred_timescale = infer_reasonable_fst_timescale(
                             &body_result,
                             timescale_factor,
-                            &file_path,
+                            &file_path_for_log,
                         );
                         debug_log!(
                             DEBUG_PARSE,
@@ -1431,9 +1450,9 @@ async fn parse_waveform_file(
                         // Store the body data for future use since we already parsed it
                         // Build signal reference map (similar to what we do when loading body on demand)
                         let mut signals: HashMap<String, wellen::SignalRef> = HashMap::new();
-                        build_signal_reference_map(&header_result.hierarchy, &mut signals);
+                        build_signal_reference_map(&hierarchy, &mut signals);
 
-                        // Note: We don't store WaveformData here because header_result.hierarchy
+                        // Note: We don't store WaveformData here because hierarchy
                         // will be moved later when creating the WaveformFile. The body will be
                         // loaded on demand when signal values are requested.
                         debug_log!(
@@ -1441,7 +1460,7 @@ async fn parse_waveform_file(
                             "🔍 PARSE: FST body parsed for time bounds, will reload on demand for signal values",
                         );
 
-                        (min_seconds, max_seconds, inferred_timescale)
+                        (min_seconds, max_seconds, inferred_timescale, hierarchy)
                     } else {
                         broadcast_down_msg(DownMsg::ParsingError {
                             file_id: file_path.clone(),
@@ -1459,8 +1478,8 @@ async fn parse_waveform_file(
                 Some((max_seconds * 1_000_000_000.0) as u64),
             );
 
-            // Extract scopes from hierarchy
-            let scopes = extract_scopes_from_hierarchy(&header_result.hierarchy, &file_path);
+            // Extract scopes from hierarchy (now owned from match result)
+            let scopes = extract_scopes_from_hierarchy(&hierarchy, &file_path);
 
             // Store minimal metadata for lazy loading
             // Do NOT parse body or build signal maps yet - that will happen on-demand
@@ -1804,9 +1823,32 @@ async fn parse_waveform_file(
             };
 
             // Parse GHW body to get time bounds
-            let body_result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                wellen::viewers::read_body(header_result.body, &header_result.hierarchy, None)
-            })) {
+            // CRITICAL: Use spawn_blocking to avoid blocking the async runtime
+            let body = header_result.body;
+            let hierarchy = header_result.hierarchy;
+            let file_format = header_result.file_format;
+
+            let spawn_result = tokio::task::spawn_blocking(move || {
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    wellen::viewers::read_body(body, &hierarchy, None)
+                }));
+                (result, hierarchy)
+            })
+            .await;
+
+            let (body_parse_result, hierarchy) = match spawn_result {
+                Ok(tuple) => tuple,
+                Err(join_error) => {
+                    broadcast_down_msg(DownMsg::ParsingError {
+                        file_id: file_path.clone(),
+                        error: format!("Blocking task failed for GHW body: {}", join_error),
+                    })
+                    .await;
+                    return;
+                }
+            };
+
+            let body_result = match body_parse_result {
                 Ok(Ok(body)) => body,
                 Ok(Err(e)) => {
                     broadcast_down_msg(DownMsg::ParsingError {
@@ -1857,13 +1899,13 @@ async fn parse_waveform_file(
                 Some((max_seconds * 1_000_000_000.0) as u64),
             );
 
-            // Extract scopes from hierarchy
-            let scopes = extract_scopes_from_hierarchy(&header_result.hierarchy, &file_path);
+            // Extract scopes from hierarchy (now owned from spawn_blocking result)
+            let scopes = extract_scopes_from_hierarchy(&hierarchy, &file_path);
 
             // Store metadata for on-demand signal loading
             let waveform_metadata = WaveformMetadata {
                 _file_path: file_path.clone(),
-                file_format: header_result.file_format,
+                file_format,
                 timescale_factor,
                 _time_bounds: (min_seconds, max_seconds),
             };
@@ -3632,19 +3674,30 @@ async fn ensure_waveform_body_loaded(file_path: &str) -> Result<(), String> {
             file_path
         );
 
-        // Re-parse the header to get hierarchy (lightweight operation)
+        // Re-parse the header to get hierarchy
+        // CRITICAL: Use spawn_blocking to avoid blocking the async runtime
         let options = wellen::LoadOptions::default();
-        let header_result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            wellen::viewers::read_header_from_file(file_path, &options)
-        })) {
-            Ok(Ok(header)) => header,
-            Ok(Err(e)) => {
+        let file_path_clone = file_path.to_string();
+        let spawn_result = tokio::task::spawn_blocking(move || {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                wellen::viewers::read_header_from_file(&file_path_clone, &options)
+            }))
+        })
+        .await;
+
+        let header_result = match spawn_result {
+            Ok(Ok(Ok(header))) => header,
+            Ok(Ok(Err(e))) => {
                 complete_loading(file_path);
                 return Err(format!("Failed to re-parse header for body loading: {}", e));
             }
-            Err(_panic) => {
+            Ok(Err(_panic)) => {
                 complete_loading(file_path);
                 return Err(format!("Critical error re-parsing header"));
+            }
+            Err(join_error) => {
+                complete_loading(file_path);
+                return Err(format!("Blocking task failed for header re-parse: {}", join_error));
             }
         };
 
@@ -3663,19 +3716,30 @@ async fn ensure_waveform_body_loaded(file_path: &str) -> Result<(), String> {
         let options = wellen::LoadOptions::default();
 
         // Catch panics from header parsing
-        let header_result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            wellen::viewers::read_header_from_file(file_path, &options)
-        })) {
-            Ok(Ok(header)) => header,
-            Ok(Err(e)) => {
+        // CRITICAL: Use spawn_blocking to avoid blocking the async runtime
+        let file_path_clone = file_path.to_string();
+        let spawn_result = tokio::task::spawn_blocking(move || {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                wellen::viewers::read_header_from_file(&file_path_clone, &options)
+            }))
+        })
+        .await;
+
+        let header_result = match spawn_result {
+            Ok(Ok(Ok(header))) => header,
+            Ok(Ok(Err(e))) => {
                 complete_loading(file_path);
                 return Err(format!("Failed to parse header for signal queries: {}", e));
             }
-            Err(_panic) => {
+            Ok(Err(_panic)) => {
                 complete_loading(file_path);
                 return Err(format!(
                     "Critical error parsing header: Invalid waveform data"
                 ));
+            }
+            Err(join_error) => {
+                complete_loading(file_path);
+                return Err(format!("Blocking task failed for header parse: {}", join_error));
             }
         };
 
@@ -3719,25 +3783,52 @@ async fn ensure_waveform_body_loaded(file_path: &str) -> Result<(), String> {
     );
 
     // Re-parse the file to get the body
+    // CRITICAL: Use spawn_blocking to avoid blocking the async runtime
     let options = wellen::LoadOptions::default();
-    let header_with_body = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        wellen::viewers::read_header_from_file(file_path, &options)
-    })) {
-        Ok(Ok(header)) => header,
-        Ok(Err(e)) => {
+    let file_path_clone = file_path.to_string();
+    let spawn_result = tokio::task::spawn_blocking(move || {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            wellen::viewers::read_header_from_file(&file_path_clone, &options)
+        }))
+    })
+    .await;
+
+    let header_with_body = match spawn_result {
+        Ok(Ok(Ok(header))) => header,
+        Ok(Ok(Err(e))) => {
             complete_loading(file_path);
             return Err(format!("Failed to reparse file for body loading: {}", e));
         }
-        Err(_panic) => {
+        Ok(Err(_panic)) => {
             complete_loading(file_path);
             return Err(format!("Critical error reparsing file for body loading"));
+        }
+        Err(join_error) => {
+            complete_loading(file_path);
+            return Err(format!("Blocking task failed for body reparse: {}", join_error));
         }
     };
 
     // Parse body (this is where the memory is used, but only on-demand)
-    let body_result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        wellen::viewers::read_body(header_with_body.body, &hierarchy, None)
-    })) {
+    // CRITICAL: Use spawn_blocking to avoid blocking the async runtime
+    let body = header_with_body.body;
+    let spawn_result = tokio::task::spawn_blocking(move || {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            wellen::viewers::read_body(body, &hierarchy, None)
+        }));
+        (result, hierarchy)
+    })
+    .await;
+
+    let (body_parse_result, hierarchy) = match spawn_result {
+        Ok(tuple) => tuple,
+        Err(join_error) => {
+            complete_loading(file_path);
+            return Err(format!("Blocking task failed for body parse: {}", join_error));
+        }
+    };
+
+    let body_result = match body_parse_result {
         Ok(Ok(body)) => body,
         Ok(Err(e)) => {
             complete_loading(file_path);
@@ -3754,7 +3845,7 @@ async fn ensure_waveform_body_loaded(file_path: &str) -> Result<(), String> {
         }
     };
 
-    // Build signal reference map
+    // Build signal reference map (hierarchy returned from spawn_blocking)
     let mut signals: HashMap<String, wellen::SignalRef> = HashMap::new();
     build_signal_reference_map(&hierarchy, &mut signals);
 
@@ -4051,22 +4142,24 @@ async fn query_signal_values(
                 };
 
                 // Load signal and get value
-                let mut signal_source = match waveform_data.signal_source.lock() {
-                    Ok(source) => source,
-                    Err(_) => {
-                        results.push(SignalValueResult {
-                            scope_path: query.scope_path,
-                            variable_name: query.variable_name,
-                            time_seconds: query.time_seconds,
-                            raw_value: Some("Error: Signal source unavailable".to_string()),
-                            formatted_value: Some("Error".to_string()),
-                            format: query.format,
-                        });
-                        continue;
-                    }
-                };
-                let loaded_signals =
-                    signal_source.load_signals(&[signal_ref], &waveform_data.hierarchy, true);
+                // PERFORMANCE: Release lock immediately after load_signals to avoid holding during processing
+                let loaded_signals = {
+                    let mut signal_source = match waveform_data.signal_source.lock() {
+                        Ok(source) => source,
+                        Err(_) => {
+                            results.push(SignalValueResult {
+                                scope_path: query.scope_path,
+                                variable_name: query.variable_name,
+                                time_seconds: query.time_seconds,
+                                raw_value: Some("Error: Signal source unavailable".to_string()),
+                                formatted_value: Some("Error".to_string()),
+                                format: query.format,
+                            });
+                            continue;
+                        }
+                    };
+                    signal_source.load_signals(&[signal_ref], &waveform_data.hierarchy, true)
+                }; // Lock released here
 
                 match loaded_signals.into_iter().next() {
                     Some((_, signal)) => {
@@ -4256,23 +4349,24 @@ async fn process_signal_value_queries_internal(
             }
         };
 
-        let mut signal_source = match waveform_data.signal_source.lock() {
-            Ok(source) => source,
-            Err(_) => {
-                results.push(SignalValueResult {
-                    scope_path: query.scope_path.clone(),
-                    variable_name: query.variable_name.clone(),
-                    time_seconds: query.time_seconds,
-                    raw_value: Some("Error: Signal source unavailable".to_string()),
-                    formatted_value: Some("Error".to_string()),
-                    format: query.format.clone(),
-                });
-                continue;
-            }
-        };
-
-        let loaded_signals =
-            signal_source.load_signals(&[signal_ref], &waveform_data.hierarchy, true);
+        // PERFORMANCE: Release lock immediately after load_signals to avoid holding during processing
+        let loaded_signals = {
+            let mut signal_source = match waveform_data.signal_source.lock() {
+                Ok(source) => source,
+                Err(_) => {
+                    results.push(SignalValueResult {
+                        scope_path: query.scope_path.clone(),
+                        variable_name: query.variable_name.clone(),
+                        time_seconds: query.time_seconds,
+                        raw_value: Some("Error: Signal source unavailable".to_string()),
+                        formatted_value: Some("Error".to_string()),
+                        format: query.format.clone(),
+                    });
+                    continue;
+                }
+            };
+            signal_source.load_signals(&[signal_ref], &waveform_data.hierarchy, true)
+        }; // Lock released here
 
         match loaded_signals.into_iter().next() {
             Some((_, signal)) => {
@@ -4468,20 +4562,22 @@ async fn query_signal_transitions(
                 }
 
                 // Load signal once for efficiency
-                let mut signal_source = match waveform_data.signal_source.lock() {
-                    Ok(source) => source,
-                    Err(_) => {
-                        // Return empty results for this query on mutex error
-                        results.push(SignalTransitionResult {
-                            scope_path: query.scope_path,
-                            variable_name: query.variable_name,
-                            transitions: vec![],
-                        });
-                        continue;
-                    }
-                };
-                let loaded_signals =
-                    signal_source.load_signals(&[signal_ref], &waveform_data.hierarchy, true);
+                // PERFORMANCE: Release lock immediately after load_signals to avoid holding during processing
+                let loaded_signals = {
+                    let mut signal_source = match waveform_data.signal_source.lock() {
+                        Ok(source) => source,
+                        Err(_) => {
+                            // Return empty results for this query on mutex error
+                            results.push(SignalTransitionResult {
+                                scope_path: query.scope_path,
+                                variable_name: query.variable_name,
+                                transitions: vec![],
+                            });
+                            continue;
+                        }
+                    };
+                    signal_source.load_signals(&[signal_ref], &waveform_data.hierarchy, true)
+                }; // Lock released here
 
                 if let Some((_, signal)) = loaded_signals.into_iter().next() {
                     let mut last_value: Option<String> = None;

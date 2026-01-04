@@ -1018,7 +1018,7 @@ impl AppConfig {
     pub fn restore_config(
         &self,
         loaded_config: shared::AppConfig,
-        selected_variables: &crate::selected_variables::SelectedVariables,
+        _selected_variables: &crate::selected_variables::SelectedVariables,
     ) {
         // Update global state
         self.plugins_state.set(loaded_config.plugins.clone());
@@ -1145,51 +1145,40 @@ impl AppConfig {
             .scroll_position
             .set_neq(loaded_config.workspace.load_files_scroll_position);
 
-        // Restore variables search filter
-        selected_variables.set_search_filter(loaded_config.workspace.variables_search_filter.clone());
+        // NOTE: Variables, scopes, and config_loaded_flag are NOT restored here.
+        // They must be restored AFTER files have started loading to prevent:
+        // 1. Variables showing "Loading..." state when files don't exist yet
+        // 2. Scope references to non-existent files
+        // 3. Config saves capturing incomplete state
+        // Caller must call complete_initialization() which handles these.
+    }
 
-        // Restore selected variables ONLY if there are files to load
-        // (prevents orphan variables showing "Loading..." when files aren't loaded)
-        if !loaded_config.workspace.opened_files.is_empty() {
-            selected_variables.restore_variables(loaded_config.workspace.selected_variables.clone());
-        } else {
-            selected_variables.clear_selection();
-        }
-
-        // Restore expanded scopes and selected scope (no delay needed with direct calls)
-        let expanded_set: indexmap::IndexSet<String> = loaded_config
-            .workspace
-            .expanded_scopes
-            .iter()
-            .cloned()
-            .collect();
-        self.files_expanded_scopes.set(expanded_set);
-
-        if let Some(scope_id) = loaded_config.workspace.selected_scope_id.clone() {
-            self.files_selected_scope.lock_mut().clear();
-            self.files_selected_scope.lock_mut().push_cloned(scope_id);
-        }
-
+    pub fn set_config_loaded(&self) {
         self.config_loaded_flag.set(true);
     }
 
     /// Phase 4: Complete initialization with DIRECT backend calls (no relays!).
     /// Called after restore_config() has set all direct state.
-    /// This method sends directory browse and file load requests directly to backend,
-    /// bypassing the relay system to avoid race conditions.
+    /// This method:
+    /// 1. Sends directory browse requests directly to backend
+    /// 2. Loads files from the config
+    /// 3. Restores variables, scopes, and search filter AFTER files start loading
+    /// This ordering prevents variables/scopes from referencing files that don't exist yet.
     pub async fn complete_initialization(
         &self,
         connection: &std::sync::Arc<SendWrapper<Connection<shared::UpMsg, shared::DownMsg>>>,
         tracked_files: &crate::tracked_files::TrackedFiles,
         selected_variables: &crate::selected_variables::SelectedVariables,
-        opened_files: Vec<CanonicalPathPayload>,
-        expanded_directories: Vec<String>,
+        loaded_config: &shared::AppConfig,
     ) {
+        let opened_files = loaded_config.workspace.opened_files.clone();
+        let expanded_directories = loaded_config.workspace.load_files_expanded_directories.clone();
+
         zoon::println!("[CONFIG] complete_initialization: DIRECT to backend (no relays)");
         zoon::println!("[CONFIG] complete_initialization: {} directories to check", expanded_directories.len());
 
         // Send directory browse requests DIRECTLY to backend (bypasses relay race condition)
-        // Collect directories to browse first (release lock before awaiting)
+        // Fire-and-forget: don't await, let files start loading immediately (Issue #7 fix)
         let dirs_to_browse: Vec<String> = {
             let cache = self.file_picker_domain.directory_cache.lock_ref();
             expanded_directories
@@ -1201,24 +1190,15 @@ impl AppConfig {
 
         zoon::println!("[CONFIG] complete_initialization: {} directories need browsing", dirs_to_browse.len());
 
-        // Send all BrowseDirectory requests - use join_all to properly await all of them
-        // (Don't use Task::start_droppable which would drop handles immediately)
-        use futures::future::join_all;
-        let connection_clone = connection.clone();
-        let browse_futures: Vec<_> = dirs_to_browse
-            .into_iter()
-            .map(|dir| {
-                let conn = connection_clone.clone();
-                async move {
-                    zoon::println!("[CONFIG] complete_initialization: sending BrowseDirectory {}", dir);
-                    if let Err(e) = conn.send_up_msg(shared::UpMsg::BrowseDirectory(dir.clone())).await {
-                        zoon::println!("ERROR: Failed to send BrowseDirectory for {}: {:?}", dir, e);
-                    }
+        // Fire-and-forget directory browses - don't block file loading
+        for dir in dirs_to_browse {
+            let conn = connection.clone();
+            Task::start(async move {
+                if let Err(e) = conn.send_up_msg(shared::UpMsg::BrowseDirectory(dir.clone())).await {
+                    zoon::println!("ERROR: Failed to send BrowseDirectory for {}: {:?}", dir, e);
                 }
-            })
-            .collect();
-
-        join_all(browse_futures).await;
+            });
+        }
 
         // Send file load requests directly (TrackedFiles processes immediately)
         if opened_files.is_empty() {
@@ -1228,6 +1208,28 @@ impl AppConfig {
         } else {
             zoon::println!("[CONFIG] complete_initialization: loading {} files via method", opened_files.len());
             tracked_files.load_config_files(opened_files);
+        }
+
+        // AFTER files have started loading, restore variables, scopes, and search filter
+        // This prevents "orphan" references to non-existent files (Issue #3, #4, #5 fixes)
+        selected_variables.set_search_filter(loaded_config.workspace.variables_search_filter.clone());
+
+        if !loaded_config.workspace.opened_files.is_empty() {
+            selected_variables.restore_variables(loaded_config.workspace.selected_variables.clone());
+        }
+
+        let expanded_set: indexmap::IndexSet<String> = loaded_config
+            .workspace
+            .expanded_scopes
+            .iter()
+            .cloned()
+            .collect();
+        self.files_expanded_scopes.set(expanded_set);
+
+        if let Some(scope_id) = loaded_config.workspace.selected_scope_id.clone() {
+            let mut scope_guard = self.files_selected_scope.lock_mut();
+            scope_guard.clear();
+            scope_guard.push_cloned(scope_id);
         }
     }
 

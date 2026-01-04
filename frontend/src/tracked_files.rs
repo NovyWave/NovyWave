@@ -399,6 +399,8 @@ impl TrackedFiles {
         self.files.lock_mut().clear();
         self.files_vec_signal.set_neq(Vec::new());
         self.loading_start_times.lock_mut().clear();
+        self.file_reload_completed.set(None);
+        self.file_reload_started.set(None);
     }
 
     pub fn request_file_parse(&self, file_path: String) {
