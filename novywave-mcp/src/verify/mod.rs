@@ -86,6 +86,29 @@ pub async fn run_verify(options: VerifyOptions) -> Result<bool> {
     println!("✅ App ready");
     println!();
 
+    // Switch to the test workspace
+    let workspace_path = std::fs::canonicalize(&options.workspace)
+        .unwrap_or_else(|_| options.workspace.clone())
+        .to_string_lossy()
+        .to_string();
+    println!("📂 Switching to workspace: {}", workspace_path);
+    match runner.send_command(Command::SelectWorkspace { path: workspace_path.clone() }).await {
+        Ok(_) => println!("✅ Workspace switch initiated"),
+        Err(e) => {
+            println!("⚠️  Failed to switch workspace: {}", e);
+        }
+    }
+
+    // Wait for workspace to load (give time for files to parse)
+    use tokio::time::{sleep, Duration};
+    println!("⏳ Waiting for workspace to load...");
+    sleep(Duration::from_millis(2000)).await;
+
+    // Wait for app to be ready again after workspace switch
+    polling::wait_for_app_ready_runner(&runner, options.timeout_ms).await?;
+    println!("✅ Workspace loaded");
+    println!();
+
     println!("Running tests...");
     println!("─────────────────");
 

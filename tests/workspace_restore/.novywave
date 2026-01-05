@@ -1,10 +1,36 @@
+# NovyWave User Configuration
+# This file stores your application preferences and workspace state
+
 [app]
 version = "1.0.0"
 
+[ui]
+theme = "dark"
+toast_dismiss_ms = 10000
+
 [workspace]
-opened_files = [
-    "/home/martinkavik/repos/NovyWave/examples/verilog/counter/counter.vcd"
+opened_files = ["/home/martinkavik/repos/NovyWave/examples/verilog/counter/counter.vcd"]
+dock_mode = "right"
+expanded_scopes = []
+load_files_expanded_directories = [
+    "/",
+    "/home",
+    "/home/martinkavik",
+    "/home/martinkavik/repos",
 ]
+load_files_scroll_position = 116
+
+[workspace.docked_bottom_dimensions]
+files_and_scopes_panel_width = 1400.0
+files_and_scopes_panel_height = 600.0
+selected_variables_panel_name_column_width = 190.0
+selected_variables_panel_value_column_width = 220.0
+
+[workspace.docked_right_dimensions]
+files_and_scopes_panel_width = 400.0
+files_and_scopes_panel_height = 300.0
+selected_variables_panel_name_column_width = 190.0
+selected_variables_panel_value_column_width = 220.0
 
 [[workspace.selected_variables]]
 unique_id = "/home/martinkavik/repos/NovyWave/examples/verilog/counter/counter.vcd|counter_tb|clk"
@@ -14,5 +40,13 @@ formatter = "Binary"
 unique_id = "/home/martinkavik/repos/NovyWave/examples/verilog/counter/counter.vcd|counter_tb|count"
 formatter = "Hexadecimal"
 
-[ui]
-theme = "dark"
+[workspace.timeline]
+cursor_position_ps = 491884
+visible_range_start_ps = 0
+visible_range_end_ps = 491884
+zoom_center_ps = 309200
+tooltip_enabled = true
+
+[plugins]
+schema_version = 1
+entries = []

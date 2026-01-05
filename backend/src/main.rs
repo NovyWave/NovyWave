@@ -2907,8 +2907,8 @@ fn spawn_directory_preload(expanded_dirs: Vec<String>) {
 
 async fn handle_loaded_config(
     config: AppConfig,
-    _session_id: SessionId,
-    _cor_id: CorId,
+    session_id: SessionId,
+    cor_id: CorId,
     workspace_event_root: Option<String>,
 ) {
     let config_for_messages = config;
@@ -2960,25 +2960,37 @@ async fn handle_loaded_config(
 
     let _ = std::panic::catch_unwind(|| plugins::flush_initial_discoveries());
 
+    // Only send one of WorkspaceLoaded or ConfigLoaded, not both.
+    // WorkspaceLoaded includes the config, so sending both causes duplicate initialization.
     if let Some(root) = workspace_event_root {
         let default_root_display = INITIAL_CWD.to_string_lossy().to_string();
-        broadcast_down_msg(DownMsg::WorkspaceLoaded {
-            root,
-            default_root: default_root_display,
-            config: config_for_messages.clone(),
-        })
+        println!(
+            "🚀 BACKEND: Sending WorkspaceLoaded to frontend with {} expanded directories",
+            config_for_messages
+                .workspace
+                .load_files_expanded_directories
+                .len()
+        );
+        send_down_msg(
+            DownMsg::WorkspaceLoaded {
+                root,
+                default_root: default_root_display,
+                config: config_for_messages,
+            },
+            session_id,
+            cor_id,
+        )
         .await;
+    } else {
+        println!(
+            "🚀 BACKEND: Sending ConfigLoaded to frontend with {} expanded directories",
+            config_for_messages
+                .workspace
+                .load_files_expanded_directories
+                .len()
+        );
+        send_down_msg(DownMsg::ConfigLoaded(config_for_messages), session_id, cor_id).await;
     }
-
-    println!(
-        "🚀 BACKEND: Sending ConfigLoaded to frontend with {} expanded directories",
-        config_for_messages
-            .workspace
-            .load_files_expanded_directories
-            .len()
-    );
-
-    broadcast_down_msg(DownMsg::ConfigLoaded(config_for_messages)).await;
 }
 
 async fn load_config(session_id: SessionId, cor_id: CorId) {

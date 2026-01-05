@@ -27,6 +27,8 @@ pub enum Command {
     GetLoadedFiles,
 
     EvaluateJs { script: String },
+
+    SelectWorkspace { path: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

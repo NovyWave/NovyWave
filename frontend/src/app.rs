@@ -39,9 +39,6 @@ enum KeyAction {
 /// Uses direct method calls instead of relay pub/sub
 #[derive(Clone)]
 pub struct ConnectionMessageActor {
-    // Task handles message processing (None until start() is called)
-    _message_task: Option<Arc<TaskHandle>>,
-
     // TrackedFiles reference for reload handling
     _tracked_files: TrackedFiles,
 }
@@ -99,7 +96,6 @@ impl ConnectionMessageActor {
     /// Call `start()` after all domains are ready.
     pub fn new_pending(tracked_files: TrackedFiles) -> Self {
         Self {
-            _message_task: None,
             _tracked_files: tracked_files,
         }
     }
@@ -121,7 +117,8 @@ impl ConnectionMessageActor {
         let tracked_files_for_reload = self._tracked_files.clone();
 
         let connection_for_init = connection.clone();
-        let message_task = Arc::new(Task::start_droppable(async move {
+        // Use Task::start (not start_droppable) so the message loop cannot be cancelled
+        Task::start(async move {
             let mut stream = down_msg_stream;
             loop {
                 match stream.next().await {
@@ -262,9 +259,7 @@ impl ConnectionMessageActor {
                     }
                 }
             }
-        }));
-
-        self._message_task = Some(message_task);
+        });
     }
 }
 
@@ -540,7 +535,9 @@ impl NovyWaveApp {
                 }
 
                 // Send to mpsc channel (buffered until actor.start() is called)
-                let _ = sender.unbounded_send(down_msg);
+                if sender.unbounded_send(down_msg).is_err() {
+                    zoon::println!("[ERROR] mpsc channel disconnected!");
+                }
             }
         });
 

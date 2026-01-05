@@ -482,6 +482,31 @@ async function handleCommand(id, command) {
           return { type: 'error', message: e.message };
         }
 
+      case 'selectWorkspace':
+        try {
+          // Use direct evaluation to trigger workspace selection via the app's existing mechanisms
+          // This sends a click to the workspace selector which will open a dialog,
+          // or we can use the test API if available
+          const result = await cdpEvaluate(tab.id, `
+            (function() {
+              // Try the test API first
+              if (window.__novywave_test_api?.selectWorkspace) {
+                return window.__novywave_test_api.selectWorkspace('${command.path.replace(/'/g, "\\'")}');
+              }
+              // Fallback: Try to access the Rust function directly
+              if (typeof window.__novywave_select_workspace === 'function') {
+                window.__novywave_select_workspace('${command.path.replace(/'/g, "\\'")}');
+                return true;
+              }
+              console.error('[NovyWave] selectWorkspace: No method available');
+              return false;
+            })()
+          `);
+          return { type: 'success', data: { path: command.path, result } };
+        } catch (e) {
+          return { type: 'error', message: e.message };
+        }
+
       default:
         return { type: 'error', message: `Unknown command: ${type}` };
     }

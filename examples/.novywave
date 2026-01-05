@@ -9,9 +9,15 @@ theme = "dark"
 toast_dismiss_ms = 10000
 
 [workspace]
-opened_files = []
+opened_files = [
+    "spade/counter/counter.vcd",
+    "spinalhdl/counter/counter.vcd",
+    "verilog/counter/counter.vcd",
+    "vhdl/counter/counter.ghw",
+    "amaranth/counter/counter.vcd",
+]
 dock_mode = "right"
-expanded_scopes = ["/home/martinkavik/repos/NovyWave/examples/vhdl/counter/counter.ghw"]
+expanded_scopes = ["/home/martinkavik/repos/NovyWave/examples/spade/counter/counter.vcd"]
 load_files_expanded_directories = [
     "/",
     "/home",
@@ -27,9 +33,11 @@ load_files_expanded_directories = [
     "verilog/counter",
     "vhdl",
     "vhdl/counter",
+    "amaranth",
+    "amaranth/counter",
 ]
-load_files_scroll_position = 1165
-selected_variables = []
+selected_scope_id = "scope_spade/counter/counter.vcd|counter_tb"
+load_files_scroll_position = 1300
 
 [workspace.docked_bottom_dimensions]
 files_and_scopes_panel_width = 1400.0
@@ -39,15 +47,33 @@ selected_variables_panel_value_column_width = 220.0
 
 [workspace.docked_right_dimensions]
 files_and_scopes_panel_width = 400.0
-files_and_scopes_panel_height = 395.0
+files_and_scopes_panel_height = 307.0
 selected_variables_panel_name_column_width = 190.0
 selected_variables_panel_value_column_width = 220.0
 
+[[workspace.selected_variables]]
+unique_id = "spade/counter/counter.vcd|counter_tb|clk"
+
+[[workspace.selected_variables]]
+unique_id = "spade/counter/counter.vcd|counter_tb|count"
+
+[[workspace.selected_variables]]
+unique_id = "spade/counter/counter.vcd|counter_tb|enable"
+
+[[workspace.selected_variables]]
+unique_id = "spade/counter/counter.vcd|counter_tb|output_packed"
+
+[[workspace.selected_variables]]
+unique_id = "spade/counter/counter.vcd|counter_tb|overflow"
+
+[[workspace.selected_variables]]
+unique_id = "spade/counter/counter.vcd|counter_tb|rst"
+
 [workspace.timeline]
-cursor_position_ps = 795764
+cursor_position_ps = 852500
 visible_range_start_ps = 0
 visible_range_end_ps = 1705000
-zoom_center_ps = 927406
+zoom_center_ps = 0
 tooltip_enabled = true
 
 [plugins]

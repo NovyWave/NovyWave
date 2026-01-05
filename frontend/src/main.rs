@@ -218,6 +218,7 @@ pub fn main() {
             app.tracked_files.clone(),
             app.selected_variables.clone(),
             app.waveform_timeline.clone(),
+            app.connection.clone(),
         );
         test_api::expose_novywave_test_api();
 
