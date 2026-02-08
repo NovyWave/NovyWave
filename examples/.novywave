@@ -56,6 +56,7 @@ unique_id = "spade/counter/counter.vcd|counter_tb|clk"
 
 [[workspace.selected_variables]]
 unique_id = "spade/counter/counter.vcd|counter_tb|count"
+formatter = "Signed"
 
 [[workspace.selected_variables]]
 unique_id = "spade/counter/counter.vcd|counter_tb|enable"
@@ -70,10 +71,10 @@ unique_id = "spade/counter/counter.vcd|counter_tb|overflow"
 unique_id = "spade/counter/counter.vcd|counter_tb|rst"
 
 [workspace.timeline]
-cursor_position_ps = 852500
+cursor_position_ps = 458431
 visible_range_start_ps = 0
 visible_range_end_ps = 1705000
-zoom_center_ps = 0
+zoom_center_ps = 535202
 tooltip_enabled = true
 
 [plugins]

@@ -73,6 +73,7 @@ See the [examples/](examples/) directory for complete projects with Makefiles.
 
 ## Documentation
 
+- **[Documentation Site](https://novywave.pages.dev)** — User guides, tutorials, and reference
 - [Installation Guide](INSTALLATION.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security Policy](SECURITY.md)
