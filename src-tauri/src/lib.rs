@@ -20,8 +20,7 @@ fn greet(name: &str) -> String {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // https://github.com/tauri-apps/tauri/issues/8462
-    // WebKit flags no longer needed - Tauri works fine without them
+    let test_updater = std::env::args().any(|a| a == "--test-updater");
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -43,36 +42,55 @@ pub fn run() {
             commands::request_update_download,
             commands::request_app_restart
         ])
-        .setup(|app| {
+        .setup(move |app| {
             println!("=== Tauri app setup completed ===");
 
-            if let Err(e) = spawn_backend_if_needed(app) {
-                println!("⚠️ Failed to spawn embedded backend: {}", e);
+            if !test_updater {
+                if let Err(e) = spawn_backend_if_needed(app) {
+                    println!("Failed to spawn embedded backend: {}", e);
+                }
+
+                let target: tauri::Url = "http://127.0.0.1:8080".parse().unwrap();
+                tauri::WebviewWindowBuilder::new(
+                    app,
+                    "main".to_string(),
+                    tauri::WebviewUrl::External(target),
+                )
+                .title("NovyWave")
+                .inner_size(1200.0, 800.0)
+                .devtools(true)
+                .build()
+                .map_err(|e| {
+                    println!("Failed to create main window: {e}");
+                    e
+                })?;
             }
 
-            // Create the main window pointing directly at the embedded backend.
-            let target: tauri::Url = "http://127.0.0.1:8080".parse().unwrap();
-            tauri::WebviewWindowBuilder::new(
-                app,
-                "main".to_string(),
-                tauri::WebviewUrl::External(target),
-            )
-            .title("NovyWave")
-            .inner_size(1200.0, 800.0)
-            .devtools(true)
-            .build()
-            .map_err(|e| {
-                println!("⚠️ Failed to create main window: {e}");
-                e
-            })?;
-
-            // Check for updates in background only when configured with a real endpoint & pubkey
             let handle = app.handle();
             if updates_configured(&handle) {
-                let handle_for_task = handle.clone();
-                tauri::async_runtime::spawn(async move {
-                    check_for_updates(handle_for_task).await;
-                });
+                if test_updater {
+                    let handle = handle.clone();
+                    tauri::async_runtime::spawn(async move {
+                        match test_update_flow(handle).await {
+                            Ok(()) => {
+                                println!("VERIFY_UPDATER: PASSED");
+                                std::process::exit(0);
+                            }
+                            Err(e) => {
+                                println!("VERIFY_UPDATER: FAILED - {e}");
+                                std::process::exit(1);
+                            }
+                        }
+                    });
+                } else {
+                    let handle_for_task = handle.clone();
+                    tauri::async_runtime::spawn(async move {
+                        check_for_updates(handle_for_task).await;
+                    });
+                }
+            } else if test_updater {
+                println!("VERIFY_UPDATER: FAILED - updater not configured");
+                std::process::exit(1);
             } else {
                 println!(
                     "Updater disabled: missing endpoints or pubkey in tauri.conf.json (local build)."
@@ -260,6 +278,62 @@ async fn check_for_updates(app: tauri::AppHandle) {
             println!("⚠️ Updater not available: {}", e);
         }
     }
+}
+
+async fn test_update_flow(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_updater::UpdaterExt;
+
+    println!("VERIFY_UPDATER: Checking for updates...");
+    let updater = app
+        .updater()
+        .map_err(|e| format!("updater init: {:?}", e))?;
+
+    let update = updater
+        .check()
+        .await
+        .map_err(|e| format!("check failed: {:?}", e))?
+        .ok_or_else(|| "No update available".to_string())?;
+
+    println!(
+        "VERIFY_UPDATER: Update found {} -> {}",
+        update.current_version, update.version
+    );
+
+    let mut total_downloaded: usize = 0;
+    let mut last_pct: i32 = -1;
+
+    let bytes = update
+        .download(
+            |chunk_len, total| {
+                total_downloaded += chunk_len;
+                if let Some(t) = total {
+                    if t > 0 {
+                        let pct = ((total_downloaded as f64 / t as f64) * 100.0) as i32;
+                        if pct / 10 > last_pct / 10 {
+                            println!("VERIFY_UPDATER: Download progress {}%", pct);
+                            last_pct = pct;
+                        }
+                    }
+                }
+            },
+            || {
+                println!("VERIFY_UPDATER: Download finished");
+            },
+        )
+        .await
+        .map_err(|e| format!("download failed: {:?}", e))?;
+
+    println!(
+        "VERIFY_UPDATER: Downloaded {} bytes successfully",
+        bytes.len()
+    );
+
+    if bytes.is_empty() {
+        return Err("Downloaded 0 bytes".to_string());
+    }
+
+    println!("VERIFY_UPDATER: Update download verified successfully");
+    Ok(())
 }
 
 fn stop_backend() {

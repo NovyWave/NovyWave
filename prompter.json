@@ -4,6 +4,7 @@
   "command": [
     "cl"
   ],
+  "store_prompts": true,
   "supervisor_prompt": "Fix loading workspace, waveform files and selected variables. Assume issues in both backend and frontend, think about data racing and how to fixed them properly.",
   "completion_condition": "+completed+",
   "completion_command": "makers verify-app",

@@ -99,7 +99,7 @@ pub fn toast_notifications_container(app_config: crate::config::AppConfig) -> im
                 .style("top", "0")
                 .style("left", "0")
                 .style("pointer-events", "none")
-                .style("z-index", "1000")
+                .style("z-index", "50000")
         })
         .child(
             Column::new()
@@ -122,7 +122,6 @@ fn toast_element(alert: ErrorAlert, app_config: crate::config::AppConfig) -> imp
     let auto_dismiss_ms = alert.auto_dismiss_ms as f32;
     let has_auto_dismiss = auto_dismiss_ms > 0.0;
     let has_custom_progress = alert.progress.is_some();
-    let custom_progress = alert.progress.unwrap_or(0.0);
     let variant = alert.variant;
     let action_label = alert.action_label.clone();
 
@@ -134,7 +133,11 @@ fn toast_element(alert: ErrorAlert, app_config: crate::config::AppConfig) -> imp
     let colors = VariantColors::new(variant);
 
     let is_paused = Rc::new(Cell::new(false));
-    let toast_progress = Mutable::new(if has_custom_progress { custom_progress } else { 100.0 });
+    let toast_progress = if has_custom_progress {
+        app_config.error_display.download_progress.clone()
+    } else {
+        Mutable::new(100.0)
+    };
 
     let _toast_task: TaskHandle = if has_auto_dismiss && !has_custom_progress {
         let progress = toast_progress.clone();
@@ -246,14 +249,23 @@ fn toast_element(alert: ErrorAlert, app_config: crate::config::AppConfig) -> imp
                                     .color_signal(colors.title()))
                                 .child(&alert.title),
                         )
-                        .item(
+                        .item(if has_custom_progress {
                             El::new()
                                 .s(Font::new()
                                     .size(FONT_SIZE_14)
                                     .color_signal(colors.message())
                                     .wrap_anywhere())
-                                .child(&alert.message),
-                        ),
+                                .child_signal(toast_progress.signal().map(|p| format!("{:.0}%", p)))
+                                .into_element()
+                        } else {
+                            El::new()
+                                .s(Font::new()
+                                    .size(FONT_SIZE_14)
+                                    .color_signal(colors.message())
+                                    .wrap_anywhere())
+                                .child(&alert.message)
+                                .into_element()
+                        }),
                 )
                 .items(action_button)
                 .item({
@@ -304,9 +316,13 @@ fn toast_element(alert: ErrorAlert, app_config: crate::config::AppConfig) -> imp
         })
 }
 
-fn handle_notification_action(alert_id: &str, _app_config: &crate::config::AppConfig) {
+fn handle_notification_action(alert_id: &str, app_config: &crate::config::AppConfig) {
     match alert_id {
         "update_available" => {
+            app_config.error_display.download_progress.set(0.0);
+            app_config.error_display.add_toast(
+                crate::error_display::ErrorAlert::new_update_downloading(0.0),
+            );
             crate::platform::request_update_download();
         }
         "update_ready" => {

@@ -144,21 +144,16 @@ echo ""
 pkill -f "mzoon start" 2>/dev/null || true
 sleep 1
 
-# Build frontend with TAURI platform first
-echo "Building frontend with TAURI platform..."
-NOVYWAVE_PLATFORM=TAURI ./mzoon/bin/mzoon build -f
-echo "✓ Frontend built with TAURI platform"
-
 # Start mzoon dev server with TAURI platform in background
 echo "Starting mzoon dev server with TAURI platform..."
 NOVYWAVE_PLATFORM=TAURI ./mzoon/bin/mzoon start &
 MZOON_PID=$!
 
-# Wait for dev server to be ready
+# Wait for dev server to be ready (backend compilation can take minutes)
 echo "Waiting for dev server to be ready on port 8080..."
-for i in {1..60}; do
+for i in {1..300}; do
     if curl -s http://localhost:8080 >/dev/null 2>&1; then
-        echo "✓ Dev server ready on port 8080"
+        echo "Dev server ready on port 8080"
         break
     fi
     if ! kill -0 $MZOON_PID 2>/dev/null; then
@@ -169,13 +164,14 @@ for i in {1..60}; do
 done
 
 if ! curl -s http://localhost:8080 >/dev/null 2>&1; then
-    echo "ERROR: Dev server failed to start within 60 seconds"
+    echo "ERROR: Dev server failed to start within 5 minutes"
+    kill $MZOON_PID 2>/dev/null
     exit 1
 fi
 
 echo ""
-echo "✓ Starting Tauri with updater pointing to localhost:8888..."
-echo "  (Update check will run 5 seconds after startup)"
+echo "Starting Tauri with updater pointing to localhost:8888..."
+echo "(Update check will run 5 seconds after startup)"
 echo ""
 
 cd src-tauri && NOVYWAVE_PLATFORM=TAURI cargo tauri dev --config tauri.dev.conf.json --config tauri.dev.updater.conf.json
@@ -498,6 +494,71 @@ script = [
 description = "Install Tauri CLI"
 command = "cargo"
 args = ["install", "tauri-cli@^2.9"]
+
+[tasks.mock-update-server]
+description = "Start mock update server for testing Tauri updater (port 8888)"
+script = '''
+echo "=== NovyWave Mock Update Server ==="
+echo "Serves test update bundle on localhost:8888"
+echo ""
+cd test_files/mock-update-server && cargo run --release -- \
+  --bundle ../update-test-artifacts/test-bundle.AppImage \
+  --signature ../update-test-artifacts/test-bundle.AppImage.sig \
+  --throttle-kbps 5000 \
+  --version 99.0.0
+'''
+
+[tasks.verify-updater]
+description = "Automated end-to-end updater verification"
+dependencies = ["install", "install_tauri_cli"]
+env = { NOVYWAVE_PLATFORM = "TAURI" }
+script = '''
+echo "=== Automated Updater Verification ==="
+
+# Start mock update server in background (no throttle for speed)
+echo "Starting mock update server..."
+(cd test_files/mock-update-server && cargo run --release -- \
+  --bundle ../update-test-artifacts/test-bundle.AppImage \
+  --signature ../update-test-artifacts/test-bundle.AppImage.sig \
+  --throttle-kbps 0 \
+  --version 99.0.0) &
+MOCK_PID=$!
+
+# Wait for mock server
+for i in {1..10}; do
+    if curl -s http://localhost:8888/latest.json >/dev/null 2>&1; then
+        echo "Mock server ready on port 8888"
+        break
+    fi
+    sleep 1
+done
+
+if ! curl -s http://localhost:8888/latest.json >/dev/null 2>&1; then
+    echo "ERROR: Mock server failed to start"
+    kill $MOCK_PID 2>/dev/null
+    exit 1
+fi
+
+# Build and run Tauri app in test mode
+echo "Building and running updater test..."
+DEV_PUBKEY=$(cat src-tauri/dev-keys/novywave-dev.key.pub | tr -d '\n')
+export TAURI_CONFIG="{\"plugins\":{\"updater\":{\"endpoints\":[\"http://localhost:8888/latest.json\"],\"pubkey\":\"$DEV_PUBKEY\"}}}"
+
+cd src-tauri && cargo run -- --test-updater
+TEST_EXIT=$?
+
+# Cleanup
+kill $MOCK_PID 2>/dev/null
+
+if [ $TEST_EXIT -eq 0 ]; then
+    echo ""
+    echo "Updater verification PASSED"
+else
+    echo ""
+    echo "Updater verification FAILED (exit code: $TEST_EXIT)"
+    exit 1
+fi
+'''
 
 [tasks.verify-app]
 description = "Run NovyWave app verification tests"

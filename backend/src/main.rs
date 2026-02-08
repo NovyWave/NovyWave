@@ -147,6 +147,7 @@ impl SignalCacheManager {
         }
     }
 
+    #[allow(dead_code)]
     fn invalidate_file(&self, file_path: &str) {
         let prefix = format!("{}|", file_path);
         let mut cache = match self.transition_cache.write() {
@@ -156,6 +157,7 @@ impl SignalCacheManager {
         cache.retain(|key, _| !key.starts_with(&prefix));
     }
 
+    #[allow(dead_code)]
     fn reset(&self) {
         if let Ok(mut cache) = self.transition_cache.write() {
             cache.clear();

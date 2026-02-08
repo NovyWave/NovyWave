@@ -12,7 +12,6 @@ use zoon::events_extra;
 use zoon::{EventOptions, *};
 
 use crate::config::AppConfig;
-use std::sync::Arc;
 // use crate::platform::CurrentPlatform; // not needed after silencing emit_trace
 use crate::selected_variables::SelectedVariables;
 use crate::tracked_files::TrackedFiles;

@@ -19,6 +19,7 @@ pub trait Platform {
 
 // Conditional compilation based on NOVYWAVE_PLATFORM
 // Compile the web module for both WEB and TAURI so TAURI can delegate to it.
+#[allow(dead_code)]
 #[cfg(any(NOVYWAVE_PLATFORM = "WEB", NOVYWAVE_PLATFORM = "TAURI"))]
 pub mod web;
 #[cfg(NOVYWAVE_PLATFORM = "WEB")]

@@ -66,13 +66,11 @@ pub fn set_platform_connection(
 
 /// Request update download via Tauri command
 pub fn request_update_download() {
-    zoon::println!("platform(tauri): request_update_download");
     tauri_invoke("request_update_download");
 }
 
 /// Request app restart to complete update via Tauri command
 pub fn request_app_restart() {
-    zoon::println!("platform(tauri): request_app_restart");
     tauri_invoke("request_app_restart");
 }
 
@@ -88,13 +86,10 @@ pub async fn get_app_version() -> String {
 
 /// Set up listeners for Tauri update events and bridge them to the notification system
 pub fn setup_update_event_listeners(error_display: crate::error_display::ErrorDisplay) {
-    zoon::println!("platform(tauri): setting up update event listeners");
-
     // Listen for update_available event
     {
         let error_display = error_display.clone();
         let closure = Closure::new(move |event: JsValue| {
-            zoon::println!("platform(tauri): received update_available event");
             if let Ok(payload) = js_sys::Reflect::get(&event, &JsValue::from_str("payload")) {
                 let current_version = js_sys::Reflect::get(&payload, &JsValue::from_str("current_version"))
                     .ok()
@@ -105,13 +100,12 @@ pub fn setup_update_event_listeners(error_display: crate::error_display::ErrorDi
                     .and_then(|v| v.as_string())
                     .unwrap_or_else(|| "unknown".to_string());
 
-                zoon::println!("platform(tauri): update available {} -> {}", current_version, new_version);
                 let alert = crate::error_display::ErrorAlert::new_update_available(current_version, new_version);
                 error_display.add_toast(alert);
             }
         });
         let _ = tauri_listen("update_available", &closure);
-        closure.forget(); // Keep closure alive
+        closure.forget();
     }
 
     // Listen for update_download_progress event
@@ -124,14 +118,8 @@ pub fn setup_update_event_listeners(error_display: crate::error_display::ErrorDi
                     .and_then(|v| v.as_f64())
                     .unwrap_or(0.0) as f32;
 
-                zoon::println!("platform(tauri): download progress {:.1}%", progress);
-
-                // First remove any existing downloading toast, then add the new one
-                error_display.dismiss_toast("update_downloading");
                 error_display.dismiss_toast("update_available");
-
-                let alert = crate::error_display::ErrorAlert::new_update_downloading(progress);
-                error_display.add_toast(alert);
+                error_display.download_progress.set_neq(progress);
             }
         });
         let _ = tauri_listen("update_download_progress", &closure);
@@ -142,14 +130,12 @@ pub fn setup_update_event_listeners(error_display: crate::error_display::ErrorDi
     {
         let error_display = error_display.clone();
         let closure = Closure::new(move |event: JsValue| {
-            zoon::println!("platform(tauri): received update_ready event");
             if let Ok(payload) = js_sys::Reflect::get(&event, &JsValue::from_str("payload")) {
                 let version = js_sys::Reflect::get(&payload, &JsValue::from_str("version"))
                     .ok()
                     .and_then(|v| v.as_string())
                     .unwrap_or_else(|| "unknown".to_string());
 
-                // Remove downloading toast and show ready toast
                 error_display.dismiss_toast("update_downloading");
 
                 let alert = crate::error_display::ErrorAlert::new_update_ready(version);
@@ -164,7 +150,6 @@ pub fn setup_update_event_listeners(error_display: crate::error_display::ErrorDi
     {
         let error_display = error_display.clone();
         let closure = Closure::new(move |event: JsValue| {
-            zoon::println!("platform(tauri): received update_error event");
             if let Ok(payload) = js_sys::Reflect::get(&event, &JsValue::from_str("payload")) {
                 let error = js_sys::Reflect::get(&payload, &JsValue::from_str("error"))
                     .ok()
@@ -183,5 +168,4 @@ pub fn setup_update_event_listeners(error_display: crate::error_display::ErrorDi
         closure.forget();
     }
 
-    zoon::println!("platform(tauri): update event listeners set up");
 }

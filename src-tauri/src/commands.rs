@@ -6,7 +6,18 @@
 use serde_json;
 use shared::{AppConfig, GlobalSection, SignalTransitionQuery, SignalValueQuery};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Emitter;
+
+static DOWNLOAD_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+
+struct DownloadGuard;
+
+impl Drop for DownloadGuard {
+    fn drop(&mut self) {
+        DOWNLOAD_IN_PROGRESS.store(false, Ordering::SeqCst);
+    }
+}
 
 /// Per-project config filename (hidden dotfile in workspace)
 const PER_PROJECT_CONFIG_FILENAME: &str = ".novywave";
@@ -254,6 +265,7 @@ pub async fn load_waveform_file(path: String, window: tauri::Window) -> Result<(
                 id: "top".to_string(),
                 name: "top".to_string(),
                 full_name: "top".to_string(),
+                scope_type: None,
                 variables: vec![],
                 children: vec![],
             }],
@@ -329,62 +341,78 @@ pub async fn get_parsing_progress(_file_id: String) -> Result<(), String> {
 pub async fn request_update_download(app_handle: tauri::AppHandle) -> Result<(), String> {
     use tauri_plugin_updater::UpdaterExt;
 
-    println!("📥 Update download requested");
+    if DOWNLOAD_IN_PROGRESS
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        let _ = app_handle.emit(
+            "update_error",
+            serde_json::json!({ "error": "Download already in progress" }),
+        );
+        return Err("Download already in progress".to_string());
+    }
+    let _guard = DownloadGuard;
 
-    // Get the updater and check for updates
     let updater = app_handle
         .updater()
         .map_err(|e| format!("Failed to get updater: {:?}", e))?;
 
     match updater.check().await {
         Ok(Some(update)) => {
-            println!(
-                "📥 Downloading update: {} -> {}",
-                update.current_version, update.version
-            );
+            let new_version = update.version.to_string();
 
-            let app_handle_for_progress = app_handle.clone();
-            let new_version = update.version.clone();
+            let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel::<f32>(1);
 
-            // Download with progress callback
-            let download_result = update
-                .download_and_install(
-                    move |downloaded, total| {
-                        let progress = if let Some(total) = total {
-                            if total > 0 {
-                                (downloaded as f32 / total as f32) * 100.0
+            let app_handle_for_emitter = app_handle.clone();
+            let emitter_task = tokio::spawn(async move {
+                while let Some(progress) = progress_rx.recv().await {
+                    let _ = app_handle_for_emitter.emit(
+                        "update_download_progress",
+                        serde_json::json!({"progress": progress}),
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                }
+            });
+
+            let mut total_downloaded: usize = 0;
+            let mut last_emitted_pct: f32 = -1.0;
+
+            let download_result = {
+                let progress_tx = progress_tx;
+                update
+                    .download_and_install(
+                        move |chunk_length, content_length| {
+                            total_downloaded += chunk_length;
+
+                            let pct = if let Some(total) = content_length {
+                                (total_downloaded as f32 / total as f32) * 100.0
                             } else {
                                 0.0
+                            };
+
+                            let should_emit = last_emitted_pct < 0.0
+                                || (pct - last_emitted_pct).abs() >= 2.0
+                                || pct >= 100.0;
+
+                            if should_emit {
+                                last_emitted_pct = pct;
+                                let _ = progress_tx.try_send(pct);
                             }
-                        } else {
-                            0.0
-                        };
-                        println!("📥 Download progress: {:.1}%", progress);
-                        // Emit progress event to frontend
-                        let _ = app_handle_for_progress.emit(
-                            "update_download_progress",
-                            serde_json::json!({
-                                "progress": progress,
-                                "downloaded": downloaded,
-                                "total": total
-                            }),
-                        );
-                    },
-                    || {
-                        println!("📥 Download complete, ready to restart");
-                    },
-                )
-                .await;
+                        },
+                        || {},
+                    )
+                    .await
+            };
+            // progress_tx dropped here (moved into closure, closure dropped after await)
+            let _ = emitter_task.await;
 
             match download_result {
                 Ok(()) => {
-                    println!("✅ Update installed successfully");
-                    // Emit update ready event
                     app_handle
                         .emit(
                             "update_ready",
                             serde_json::json!({
-                                "version": new_version.to_string()
+                                "version": new_version
                             }),
                         )
                         .map_err(|e| format!("Failed to emit update_ready: {:?}", e))?;
@@ -392,26 +420,28 @@ pub async fn request_update_download(app_handle: tauri::AppHandle) -> Result<(),
                 }
                 Err(e) => {
                     let error_msg = format!("Failed to download/install update: {:?}", e);
-                    println!("❌ {}", error_msg);
-                    app_handle
-                        .emit(
-                            "update_error",
-                            serde_json::json!({
-                                "error": error_msg
-                            }),
-                        )
-                        .map_err(|e| format!("Failed to emit update_error: {:?}", e))?;
+                    let _ = app_handle.emit(
+                        "update_error",
+                        serde_json::json!({ "error": error_msg }),
+                    );
                     Err(error_msg)
                 }
             }
         }
         Ok(None) => {
-            println!("ℹ️ No update available");
-            Err("No update available".to_string())
+            let error_msg = "No update available".to_string();
+            let _ = app_handle.emit(
+                "update_error",
+                serde_json::json!({ "error": error_msg }),
+            );
+            Err(error_msg)
         }
         Err(e) => {
             let error_msg = format!("Failed to check for updates: {:?}", e);
-            println!("❌ {}", error_msg);
+            let _ = app_handle.emit(
+                "update_error",
+                serde_json::json!({ "error": error_msg }),
+            );
             Err(error_msg)
         }
     }
@@ -420,7 +450,5 @@ pub async fn request_update_download(app_handle: tauri::AppHandle) -> Result<(),
 /// Request app restart to complete update installation
 #[tauri::command]
 pub async fn request_app_restart(app_handle: tauri::AppHandle) -> Result<(), String> {
-    println!("🔄 App restart requested to complete update");
-    // Use Tauri's process restart API
     app_handle.restart();
 }

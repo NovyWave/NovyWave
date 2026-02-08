@@ -1,6 +1,7 @@
 //! Mock update server for testing NovyWave's Tauri updater.
 //! Serves update metadata and bundles with throttled download speed.
 
+use base64::{engine::general_purpose::STANDARD, Engine};
 use clap::Parser;
 use serde::Serialize;
 use std::{
@@ -112,12 +113,14 @@ fn serve_latest_json(
 ) {
     let base_url = format!("http://127.0.0.1:{}/bundle", args.port);
 
+    let encoded_signature = STANDARD.encode(signature.trim());
+
     let mut platforms = HashMap::new();
     for platform in ["linux-x86_64", "darwin-x86_64", "darwin-aarch64", "windows-x86_64"] {
         platforms.insert(
             platform.to_string(),
             PlatformInfo {
-                signature: signature.trim().to_string(),
+                signature: encoded_signature.clone(),
                 url: base_url.clone(),
             },
         );
@@ -137,6 +140,52 @@ fn serve_latest_json(
     println!("  -> Served latest.json (v{})", args.version);
 }
 
+struct ThrottledReader {
+    data: std::io::Cursor<Vec<u8>>,
+    target_bytes_per_sec: u64,
+    total_read: u64,
+    file_size: u64,
+    last_percent: u64,
+}
+
+impl ThrottledReader {
+    fn new(data: Vec<u8>, target_bytes_per_sec: u64) -> Self {
+        let file_size = data.len() as u64;
+        Self {
+            data: std::io::Cursor::new(data),
+            target_bytes_per_sec,
+            total_read: 0,
+            file_size,
+            last_percent: 0,
+        }
+    }
+}
+
+impl Read for ThrottledReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.data.read(buf)?;
+        if n > 0 {
+            self.total_read += n as u64;
+            let percent = (self.total_read * 100) / self.file_size;
+            if percent != self.last_percent {
+                print!(
+                    "\r  -> Progress: {}% ({}/{} bytes)",
+                    percent, self.total_read, self.file_size
+                );
+                let _ = std::io::stdout().flush();
+                self.last_percent = percent;
+            }
+            if self.target_bytes_per_sec > 0 {
+                let delay_us = (n as u64 * 1_000_000) / self.target_bytes_per_sec;
+                if delay_us > 0 {
+                    thread::sleep(Duration::from_micros(delay_us));
+                }
+            }
+        }
+        Ok(n)
+    }
+}
+
 fn serve_bundle(request: tiny_http::Request, args: &Args) {
     let mut file = match fs::File::open(&args.bundle) {
         Ok(f) => f,
@@ -149,16 +198,10 @@ fn serve_bundle(request: tiny_http::Request, args: &Args) {
 
     let file_size = file.metadata().unwrap().len();
 
-    // Calculate chunk size and delay for throttling
-    let chunk_size: usize = 8192; // 8KB chunks
-    let delay_ms = if args.throttle_kbps > 0 {
-        (chunk_size as u64 * 1000) / (args.throttle_kbps as u64 * 1024)
-    } else {
-        0
-    };
+    let target_bytes_per_sec = args.throttle_kbps as u64 * 1024;
 
-    let estimated_seconds = if args.throttle_kbps > 0 {
-        file_size / (args.throttle_kbps as u64 * 1024)
+    let estimated_seconds = if target_bytes_per_sec > 0 {
+        file_size / target_bytes_per_sec
     } else {
         0
     };
@@ -168,7 +211,6 @@ fn serve_bundle(request: tiny_http::Request, args: &Args) {
         file_size, estimated_seconds, args.throttle_kbps
     );
 
-    // Read entire file into memory for streaming
     let mut file_contents = Vec::new();
     if let Err(e) = file.read_to_end(&mut file_contents) {
         eprintln!("  -> Error reading bundle: {}", e);
@@ -176,54 +218,19 @@ fn serve_bundle(request: tiny_http::Request, args: &Args) {
         return;
     }
 
-    // Create response with proper headers
     let content_type = Header::from_bytes("Content-Type", "application/octet-stream").unwrap();
-    let content_length = Header::from_bytes("Content-Length", file_size.to_string()).unwrap();
 
-    // For throttled streaming, we need to use a custom approach
-    // tiny_http doesn't support chunked streaming easily, so we'll use a slower approach
-    if args.throttle_kbps > 0 && delay_ms > 0 {
-        // Stream with throttling using raw writer
-        let mut writer = request.into_writer();
-
-        // Write HTTP response headers
-        let _ = write!(writer, "HTTP/1.1 200 OK\r\n");
-        let _ = write!(writer, "Content-Type: application/octet-stream\r\n");
-        let _ = write!(writer, "Content-Length: {}\r\n", file_size);
-        let _ = write!(writer, "\r\n");
-
-        // Stream file with throttling
-        let mut total_sent = 0u64;
-        let mut last_percent = 0;
-
-        for chunk in file_contents.chunks(chunk_size) {
-            if let Err(e) = writer.write_all(chunk) {
-                eprintln!("\n  -> Error writing chunk: {}", e);
-                return;
-            }
-            let _ = writer.flush();
-
-            total_sent += chunk.len() as u64;
-            let percent = (total_sent * 100) / file_size;
-
-            if percent != last_percent {
-                print!("\r  -> Progress: {}% ({}/{} bytes)", percent, total_sent, file_size);
-                let _ = std::io::stdout().flush();
-                last_percent = percent;
-            }
-
-            thread::sleep(Duration::from_millis(delay_ms));
-        }
-
-        println!("\n  -> Bundle transfer complete");
-    } else {
-        // Fast path: no throttling, serve directly
-        let response = Response::from_data(file_contents)
-            .with_header(content_type)
-            .with_header(content_length);
-        let _ = request.respond(response);
-        println!("  -> Bundle served (no throttling)");
-    }
+    let reader = ThrottledReader::new(file_contents, target_bytes_per_sec);
+    let response = Response::new(
+        tiny_http::StatusCode(200),
+        vec![content_type],
+        reader,
+        Some(file_size as usize),
+        None,
+    )
+    .with_chunked_threshold(file_size as usize + 1);
+    let _ = request.respond(response);
+    println!("\n  -> Bundle transfer complete");
 }
 
 fn timestamp() -> String {

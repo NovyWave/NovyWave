@@ -128,7 +128,7 @@ impl ErrorAlert {
             title: "Update Failed".to_string(),
             message: make_error_user_friendly(&error),
             technical_error: format!("Update error: {}", error),
-            auto_dismiss_ms: 8000,
+            auto_dismiss_ms: 0,
             variant: NotificationVariant::Error,
             action_label: None,
             progress: None,
@@ -194,18 +194,30 @@ static TOAST_ID_COUNTER: AtomicUsize = AtomicUsize::new(0);
 #[derive(Clone)]
 pub struct ErrorDisplay {
     pub active_toasts: MutableVec<ErrorAlert>,
+    pub download_progress: Mutable<f32>,
 }
 
 impl ErrorDisplay {
     pub fn new() -> Self {
         Self {
             active_toasts: MutableVec::new(),
+            download_progress: Mutable::new(0.0),
         }
     }
 
     /// Add a toast notification directly
     pub fn add_toast(&self, alert: ErrorAlert) {
         self.active_toasts.lock_mut().push_cloned(alert);
+    }
+
+    /// Update an existing toast in-place or add it if not found
+    pub fn update_toast(&self, alert: ErrorAlert) {
+        let mut lock = self.active_toasts.lock_mut();
+        if let Some(pos) = lock.iter().position(|a| a.id == alert.id) {
+            lock.set_cloned(pos, alert);
+        } else {
+            lock.push_cloned(alert);
+        }
     }
 
     /// Dismiss a toast by ID directly
