@@ -15,9 +15,10 @@ opened_files = [
     "verilog/counter/counter.vcd",
     "vhdl/counter/counter.ghw",
     "amaranth/counter/counter.vcd",
+    "/home/martinkavik/repos/NovyWave/test_files/wave_27.fst",
 ]
-dock_mode = "right"
-expanded_scopes = ["/home/martinkavik/repos/NovyWave/examples/spade/counter/counter.vcd"]
+dock_mode = "bottom"
+expanded_scopes = []
 load_files_expanded_directories = [
     "/",
     "/home",
@@ -25,23 +26,19 @@ load_files_expanded_directories = [
     "/home/martinkavik/repos",
     "/home/martinkavik/repos/NovyWave",
     "",
-    "spade",
-    "spinalhdl",
     "spade/counter",
     "spinalhdl/counter",
-    "verilog",
     "verilog/counter",
-    "vhdl",
     "vhdl/counter",
-    "amaranth",
     "amaranth/counter",
+    "/home/martinkavik/repos/NovyWave/test_files",
 ]
 selected_scope_id = "scope_spade/counter/counter.vcd|counter_tb"
-load_files_scroll_position = 1300
+load_files_scroll_position = 1920
 
 [workspace.docked_bottom_dimensions]
-files_and_scopes_panel_width = 1400.0
-files_and_scopes_panel_height = 600.0
+files_and_scopes_panel_width = 603.0
+files_and_scopes_panel_height = 312.0
 selected_variables_panel_name_column_width = 190.0
 selected_variables_panel_value_column_width = 220.0
 
@@ -71,10 +68,10 @@ unique_id = "spade/counter/counter.vcd|counter_tb|overflow"
 unique_id = "spade/counter/counter.vcd|counter_tb|rst"
 
 [workspace.timeline]
-cursor_position_ps = 458431
+cursor_position_ps = 279645
 visible_range_start_ps = 0
 visible_range_end_ps = 1705000
-zoom_center_ps = 535202
+zoom_center_ps = 538103
 tooltip_enabled = true
 
 [plugins]

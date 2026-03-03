@@ -75,12 +75,14 @@ fn apply_scrollbar_colors(
     raw_el: RawHtmlEl<web_sys::HtmlElement>,
 ) -> RawHtmlEl<web_sys::HtmlElement> {
     use moonzoon_novyui::tokens::color::{primary_3, primary_6};
-    raw_el.style_signal(
-        "scrollbar-color",
-        primary_6()
-            .map(|thumb| primary_3().map(move |track| format!("{} {}", thumb, track)))
-            .flatten(),
-    )
+    raw_el.update_dom_builder(|dom_builder| {
+        dom_builder.style_unchecked_signal(
+            "scrollbar-color",
+            primary_6()
+                .map(|thumb| primary_3().map(move |track| format!("{} {}", thumb, track)))
+                .flatten(),
+        )
+    })
 }
 
 #[cfg(not(NOVYWAVE_PLATFORM = "WEB"))]

@@ -20,12 +20,14 @@ use zoon::*;
 fn apply_scrollbar_colors(
     raw_el: zoon::RawHtmlEl<web_sys::HtmlElement>,
 ) -> zoon::RawHtmlEl<web_sys::HtmlElement> {
-    raw_el.style_signal(
-        "scrollbar-color",
-        primary_6()
-            .map(|thumb| primary_3().map(move |track| format!("{} {}", thumb, track)))
-            .flatten(),
-    )
+    raw_el.update_dom_builder(|dom_builder| {
+        dom_builder.style_unchecked_signal(
+            "scrollbar-color",
+            primary_6()
+                .map(|thumb| primary_3().map(move |track| format!("{} {}", thumb, track)))
+                .flatten(),
+        )
+    })
 }
 
 #[cfg(not(NOVYWAVE_PLATFORM = "WEB"))]
