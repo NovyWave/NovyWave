@@ -56,11 +56,9 @@ Thumbs.db
 .env
 .env.local
 
-# Large test waveform files
+# Large test waveform files (too big for git, download separately)
 test_files/big_3_GB.vcd
 test_files/performance_test.vcd
-test_files/wave_27.fst
-test_files/nested_dir/wave_27.fst
 test_files/extreme_test.vcd
 
 # Test update artifacts (large bundles for local updater testing)
