@@ -83,15 +83,22 @@ impl ErrorAlert {
         }
     }
 
-    pub fn new_update_available(current_version: String, new_version: String) -> Self {
+    pub fn new_update_available(
+        current_version: String,
+        new_version: String,
+        message: Option<String>,
+        action_label: Option<String>,
+    ) -> Self {
+        let message =
+            message.unwrap_or_else(|| format!("v{} -> v{}", current_version, new_version));
         Self {
             id: "update_available".to_string(),
             title: "Update Available".to_string(),
-            message: format!("v{} → v{}", current_version, new_version),
+            message,
             technical_error: format!("Update available: {} -> {}", current_version, new_version),
             auto_dismiss_ms: 0,
             variant: NotificationVariant::Info,
-            action_label: Some("Download".to_string()),
+            action_label: action_label.or_else(|| Some("Download and install".to_string())),
             progress: None,
         }
     }

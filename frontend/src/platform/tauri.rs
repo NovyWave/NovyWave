@@ -119,10 +119,19 @@ pub fn setup_update_event_listeners(error_display: crate::error_display::ErrorDi
                     .ok()
                     .and_then(|v| v.as_string())
                     .unwrap_or_else(|| "unknown".to_string());
+                let message = js_sys::Reflect::get(&payload, &JsValue::from_str("message"))
+                    .ok()
+                    .and_then(|v| v.as_string());
+                let action_label =
+                    js_sys::Reflect::get(&payload, &JsValue::from_str("action_label"))
+                        .ok()
+                        .and_then(|v| v.as_string());
 
                 let alert = crate::error_display::ErrorAlert::new_update_available(
                     current_version,
                     new_version,
+                    message,
+                    action_label,
                 );
                 error_display.add_toast(alert);
             }

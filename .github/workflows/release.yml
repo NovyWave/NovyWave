@@ -416,7 +416,6 @@ jobs:
           if-no-files-found: warn
           path: |
             target/release/bundle/nsis/*.sig
-            target/release/bundle/msi/*.sig
 
   create-release:
     needs: [build-linux, build-macos-arm, build-macos-x64, build-windows]
@@ -476,27 +475,17 @@ jobs:
             PLATFORMS=$(echo "$PLATFORMS" | jq --arg sig "$MACOS_X64_SIG_CONTENT" --arg url "https://github.com/NovyWave/NovyWave/releases/download/v${VERSION}/${MACOS_X64_FILENAME}" '. + {"darwin-x86_64": {"signature": $sig, "url": $url}}')
           fi
 
-          # Windows x64 (NSIS preferred, fall back to MSI)
-          # Tauri v2: Uses installer directly with .sig file (not zipped)
+          # Windows x64 (NSIS only)
+          # MSI stays downloadable, but NovyWave only treats NSIS installs as updater-capable.
           echo "=== Windows updater artifact check ==="
           echo "Contents of windows-updater artifact:"
           ls -la artifacts/windows-updater/ 2>/dev/null || echo "No windows-updater directory"
 
-          # Look for any .sig file in windows-updater
           WINDOWS_SIG=$(find artifacts/windows-updater -name "*.sig" -type f 2>/dev/null | head -1)
           WINDOWS_BUNDLE=$(find artifacts/windows-nsis -name "*-setup.exe" -type f 2>/dev/null | head -1)
 
-          # If no NSIS sig, try MSI
-          if [ -z "$WINDOWS_SIG" ]; then
-            echo "No NSIS signature found, checking for MSI..."
-            WINDOWS_SIG=$(find artifacts/windows-msi -name "*.sig" -type f 2>/dev/null | head -1)
-            if [ -n "$WINDOWS_SIG" ]; then
-              WINDOWS_BUNDLE=$(find artifacts/windows-msi -name "*.msi" -type f 2>/dev/null | head -1)
-            fi
-          fi
-
           if [ -n "$WINDOWS_SIG" ] && [ -n "$WINDOWS_BUNDLE" ]; then
-            echo "✅ Windows updater: Found signature and bundle"
+            echo "✅ Windows updater: Found NSIS signature and bundle"
             echo "  Signature: $WINDOWS_SIG"
             echo "  Bundle: $WINDOWS_BUNDLE"
             WINDOWS_SIG_CONTENT=$(cat "$WINDOWS_SIG")
@@ -544,7 +533,8 @@ jobs:
 
             ## Auto-Update
 
-            Existing NovyWave installations will automatically detect this update.
+            Auto-update is available for Linux AppImage, macOS app, and Windows NSIS installs.
+            Debian, RPM, and MSI installs update manually by downloading the new package from this release.
           draft: true
           prerelease: false
           files: |

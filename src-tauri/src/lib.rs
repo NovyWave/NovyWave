@@ -1,5 +1,6 @@
 mod commands;
 mod desktop_test_bridge;
+mod update_policy;
 
 use std::{
     net::{TcpListener, TcpStream},
@@ -91,6 +92,7 @@ pub fn run() {
             }
 
             let handle = app.handle();
+            let update_capability = update_policy::UpdateCapability::current(test_updater);
             if updates_configured(&handle) {
                 if test_updater {
                     let handle = handle.clone();
@@ -106,11 +108,13 @@ pub fn run() {
                             }
                         }
                     });
-                } else {
+                } else if update_capability.is_supported() {
                     let handle_for_task = handle.clone();
                     tauri::async_runtime::spawn(async move {
-                        check_for_updates(handle_for_task).await;
+                        check_for_updates(handle_for_task, update_capability).await;
                     });
+                } else if let Some(reason) = update_capability.hidden_reason() {
+                    println!("Updater hidden for this build: {reason}");
                 }
             } else if test_updater {
                 println!("VERIFY_UPDATER: FAILED - updater not configured");
@@ -294,7 +298,7 @@ fn updates_configured(app: &tauri::AppHandle) -> bool {
         .unwrap_or(false)
 }
 
-async fn check_for_updates(app: tauri::AppHandle) {
+async fn check_for_updates(app: tauri::AppHandle, capability: update_policy::UpdateCapability) {
     use tauri::Emitter;
     use tauri_plugin_updater::UpdaterExt;
 
@@ -309,13 +313,23 @@ async fn check_for_updates(app: tauri::AppHandle) {
                         "✨ Update available: {} -> {}",
                         update.current_version, update.version
                     );
+                    let message = capability
+                        .banner_message(
+                            &update.current_version.to_string(),
+                            &update.version.to_string(),
+                        )
+                        .unwrap_or_else(|| {
+                            format!("v{} -> v{}", update.current_version, update.version)
+                        });
                     // Emit event to frontend instead of auto-downloading
-                    // Frontend will show a notification with a "Download" button
+                    // Frontend will show a notification with a "Download and install" button.
                     if let Err(e) = app.emit(
                         "update_available",
                         serde_json::json!({
                             "current_version": update.current_version.to_string(),
-                            "new_version": update.version.to_string()
+                            "new_version": update.version.to_string(),
+                            "message": message,
+                            "action_label": capability.action_label().unwrap_or("Download and install")
                         }),
                     ) {
                         println!("❌ Failed to emit update_available event: {:?}", e);

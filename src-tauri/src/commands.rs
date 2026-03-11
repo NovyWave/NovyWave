@@ -341,6 +341,16 @@ pub async fn get_parsing_progress(_file_id: String) -> Result<(), String> {
 pub async fn request_update_download(app_handle: tauri::AppHandle) -> Result<(), String> {
     use tauri_plugin_updater::UpdaterExt;
 
+    let capability = crate::update_policy::UpdateCapability::current(false);
+    if !capability.is_supported() {
+        let error_msg = capability
+            .hidden_reason()
+            .unwrap_or("updates are not available for this installation")
+            .to_string();
+        let _ = app_handle.emit("update_error", serde_json::json!({ "error": error_msg }));
+        return Err("Updates are not available for this installation".to_string());
+    }
+
     if DOWNLOAD_IN_PROGRESS
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
         .is_err()

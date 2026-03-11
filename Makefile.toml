@@ -174,7 +174,7 @@ echo "Starting Tauri with updater pointing to localhost:8888..."
 echo "(Update check will run 5 seconds after startup)"
 echo ""
 
-cd src-tauri && NOVYWAVE_PLATFORM=TAURI cargo tauri dev --config tauri.dev.conf.json --config tauri.dev.updater.conf.json
+cd src-tauri && NOVYWAVE_PLATFORM=TAURI NOVYWAVE_UPDATER_TEST=1 cargo tauri dev --config tauri.dev.conf.json --config tauri.dev.updater.conf.json
 
 # Cleanup: Kill mzoon when tauri exits
 kill $MZOON_PID 2>/dev/null || true
@@ -386,7 +386,7 @@ cd src-tauri && NOVYWAVE_PLATFORM=TAURI cargo tauri build --debug --bundles appi
 [tasks.run-tauri-debug-appimage]
 description = "Run debug AppImage with verbose logs and devtools"
 script = '''
-TAURI_LOG_LEVEL=debug RUST_LOG=debug target/debug/bundle/appimage/NovyWave_0.1.0_amd64.AppImage
+TAURI_LOG_LEVEL=debug RUST_LOG=debug $(find target/debug/bundle/appimage -maxdepth 1 -name 'NovyWave_*_amd64.AppImage' | head -1)
 '''
 
 [tasks.tauri-dev-standalone]
