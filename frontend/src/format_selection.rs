@@ -304,15 +304,18 @@ pub fn create_format_dropdown(
             let trigger_id = trigger_id.clone();
             let is_open = is_open.clone();
             let unique_id_outer = unique_id.clone();
+            let app_config = app_config.clone();
             move |maybe_signal_value| {
                 let selected_variables_for_map = selected_variables.clone();
                 let unique_id_for_map = unique_id_outer.clone();
                 let trigger_id_for_map = trigger_id.clone();
                 let waveform_timeline_for_map = waveform_timeline.clone();
                 let is_open_for_map = is_open.clone();
+                let app_config_for_map = app_config.clone();
                 maybe_signal_value.map(move |signal_value| {
                     let selected_variables = selected_variables_for_map.clone();
                     let waveform_timeline = waveform_timeline_for_map.clone();
+                    let app_config = app_config_for_map.clone();
                     let options =
                         generate_ui_dropdown_options(&signal_value, "", DROPDOWN_VALUE_MAX_CHARS);
                     let unique_id_for_call = unique_id_for_map.clone();
@@ -323,6 +326,7 @@ pub fn create_format_dropdown(
                         current_format,
                         selected_variables,
                         waveform_timeline,
+                        app_config,
                         is_open_for_call,
                         trigger_id_for_call,
                         unique_id_for_call,
@@ -380,6 +384,7 @@ pub fn create_smart_dropdown(
     current_format: VarFormat,
     selected_variables: crate::selected_variables::SelectedVariables,
     waveform_timeline: crate::visualizer::timeline::timeline_actor::WaveformTimeline,
+    app_config: crate::config::AppConfig,
     is_open: Mutable<bool>,
     trigger_id: String,
     unique_id: String,
@@ -402,6 +407,7 @@ pub fn create_smart_dropdown(
     let dropdown_id = format!("smart-dropdown-{}", js_sys::Date::now() as u64);
     let selected_variables_shared = selected_variables.clone();
     let waveform_timeline_shared = waveform_timeline.clone();
+    let app_config_shared = app_config.clone();
 
     Column::new()
         .s(Transform::new().move_down(0))
@@ -498,6 +504,7 @@ pub fn create_smart_dropdown(
                     let is_selected = option.format == current_format;
                     let selected_variables = selected_variables_shared.clone();
                     let waveform_timeline = waveform_timeline_shared.clone();
+                    let app_config = app_config_shared.clone();
 
                     El::new()
                         .s(Width::fill())
@@ -652,6 +659,7 @@ pub fn create_smart_dropdown(
                             let option_format_enum = option.format; // Use the actual enum, not the string
                             let selected_variables = selected_variables.clone();
                             let waveform_timeline = waveform_timeline.clone();
+                            let app_config = app_config.clone();
                             move || {
                                 if !option_disabled {
                                     update_variable_format(
@@ -659,6 +667,7 @@ pub fn create_smart_dropdown(
                                         option_format_enum,
                                         &selected_variables,
                                         &waveform_timeline,
+                                        &app_config,
                                     );
                                     is_open.set(false);
                                 }
@@ -675,7 +684,9 @@ pub fn update_variable_format(
     new_format: shared::VarFormat,
     selected_variables: &crate::selected_variables::SelectedVariables,
     waveform_timeline: &crate::visualizer::timeline::timeline_actor::WaveformTimeline,
+    app_config: &crate::config::AppConfig,
 ) {
     selected_variables.change_variable_format(unique_id.to_string(), new_format);
+    app_config.update_variable_formatter(unique_id, new_format);
     waveform_timeline.on_variable_format_updated(unique_id.to_string(), new_format);
 }

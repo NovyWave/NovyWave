@@ -8,6 +8,7 @@
 use crate::platform::Platform;
 use crate::platform::web;
 use shared::UpMsg;
+use wasm_bindgen::JsValue;
 use wasm_bindgen::prelude::*;
 use zoon::*;
 
@@ -66,17 +67,27 @@ pub fn set_platform_connection(
 
 /// Request update download via Tauri command
 pub fn request_update_download() {
+    if !tauri_api_available() {
+        return;
+    }
     tauri_invoke("request_update_download");
 }
 
 /// Request app restart to complete update via Tauri command
 pub fn request_app_restart() {
+    if !tauri_api_available() {
+        return;
+    }
     tauri_invoke("request_app_restart");
 }
 
 /// Get the application version from Tauri
 pub async fn get_app_version() -> String {
     use wasm_bindgen_futures::JsFuture;
+
+    if !tauri_api_available() {
+        return "unknown".to_string();
+    }
 
     match JsFuture::from(tauri_get_version()).await {
         Ok(version_js) => version_js
@@ -88,6 +99,11 @@ pub async fn get_app_version() -> String {
 
 /// Set up listeners for Tauri update events and bridge them to the notification system
 pub fn setup_update_event_listeners(error_display: crate::error_display::ErrorDisplay) {
+    if !tauri_api_available() {
+        zoon::println!("platform(tauri): Tauri API unavailable, skipping update listeners");
+        return;
+    }
+
     // Listen for update_available event
     {
         let error_display = error_display.clone();
@@ -173,4 +189,27 @@ pub fn setup_update_event_listeners(error_display: crate::error_display::ErrorDi
         let _ = tauri_listen("update_error", &closure);
         closure.forget();
     }
+}
+
+fn tauri_api_available() -> bool {
+    let Some(window) = web_sys::window() else {
+        return false;
+    };
+
+    let tauri = js_sys::Reflect::get(&window, &JsValue::from_str("__TAURI__"))
+        .ok()
+        .filter(|value| !value.is_undefined() && !value.is_null());
+
+    let Some(tauri) = tauri else {
+        return false;
+    };
+
+    let event = js_sys::Reflect::get(&tauri, &JsValue::from_str("event"))
+        .ok()
+        .filter(|value| !value.is_undefined() && !value.is_null());
+    let core = js_sys::Reflect::get(&tauri, &JsValue::from_str("core"))
+        .ok()
+        .filter(|value| !value.is_undefined() && !value.is_null());
+
+    event.is_some() && core.is_some()
 }

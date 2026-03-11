@@ -104,7 +104,14 @@ pub fn selected_variables_panel(
         }))
         .layer_signal(analog_dialog.visible.signal().map_true({
             let selected_variables = selected_variables_for_header.clone();
-            move || analog_limits_dialog(selected_variables.clone(), analog_dialog.clone())
+            let app_config = app_config_for_header.clone();
+            move || {
+                analog_limits_dialog(
+                    selected_variables.clone(),
+                    app_config.clone(),
+                    analog_dialog.clone(),
+                )
+            }
         }))
         .layer_signal(marker_manager_visible.signal().map_true({
             let timeline = waveform_timeline_for_header.clone();
@@ -586,6 +593,7 @@ fn name_column_group_header(
                     move || {
                         sv.toggle_group_collapse(group_index);
                         cfg.signal_groups_config.set(sv.signal_groups_as_config());
+                        cfg.request_save();
                     }
                 }),
         )
@@ -626,6 +634,7 @@ fn name_column_group_header(
                     move || {
                         sv.ungroup(group_index);
                         cfg.signal_groups_config.set(sv.signal_groups_as_config());
+                        cfg.request_save();
                     }
                 })
                 .build(),
@@ -852,6 +861,7 @@ fn value_column_variable_row(
                 selected_var,
                 selected_variables,
                 waveform_timeline,
+                app_config,
                 analog_dialog,
             )
             .into_raw()
@@ -1071,6 +1081,7 @@ fn analog_value_row(
     selected_var: SelectedVariable,
     selected_variables: crate::selected_variables::SelectedVariables,
     waveform_timeline: crate::visualizer::timeline::timeline_actor::WaveformTimeline,
+    app_config: crate::config::AppConfig,
     analog_dialog: AnalogLimitsDialogState,
 ) -> impl Element {
     let unique_id = selected_var.unique_id.clone();
@@ -1122,10 +1133,14 @@ fn analog_value_row(
                                 .on_press({
                                     let selected_variables = selected_variables.clone();
                                     let unique_id = unique_id.clone();
+                                    let app_config = app_config.clone();
                                     move || {
-                                        selected_variables.update_analog_limits(
+                                        let next_limits = Some(AnalogLimits::auto());
+                                        selected_variables
+                                            .update_analog_limits(&unique_id, next_limits.clone());
+                                        app_config.update_variable_analog_limits(
                                             &unique_id,
-                                            Some(AnalogLimits::auto()),
+                                            next_limits,
                                         );
                                     }
                                 })
@@ -1242,6 +1257,7 @@ fn group_name_dialog(
             app_config
                 .signal_groups_config
                 .set(selected_variables.signal_groups_as_config());
+            app_config.request_save();
             dialog.visible.set(false);
         })
     };
@@ -1311,11 +1327,13 @@ fn group_name_dialog(
 
 fn analog_limits_dialog(
     selected_variables: crate::selected_variables::SelectedVariables,
+    app_config: crate::config::AppConfig,
     dialog: AnalogLimitsDialogState,
 ) -> impl Element {
     let close_dialog = dialog.clone();
     let confirm_action = {
         let selected_variables = selected_variables.clone();
+        let app_config = app_config.clone();
         let dialog = dialog.clone();
         Rc::new(move || {
             let Some(unique_id) = dialog.target_unique_id.get_cloned() else {
@@ -1324,7 +1342,9 @@ fn analog_limits_dialog(
             };
 
             if dialog.auto.get() {
-                selected_variables.update_analog_limits(&unique_id, Some(AnalogLimits::auto()));
+                let next_limits = Some(AnalogLimits::auto());
+                selected_variables.update_analog_limits(&unique_id, next_limits.clone());
+                app_config.update_variable_analog_limits(&unique_id, next_limits);
                 dialog.error_message.set(None);
                 dialog.visible.set(false);
                 return;
@@ -1351,8 +1371,9 @@ fn analog_limits_dialog(
                 return;
             }
 
-            selected_variables
-                .update_analog_limits(&unique_id, Some(AnalogLimits::manual(min, max)));
+            let next_limits = Some(AnalogLimits::manual(min, max));
+            selected_variables.update_analog_limits(&unique_id, next_limits.clone());
+            app_config.update_variable_analog_limits(&unique_id, next_limits);
             dialog.error_message.set(None);
             dialog.visible.set(false);
         })
@@ -1622,6 +1643,7 @@ fn marker_manager_dialog(
                                                             app_config
                                                                 .markers_config
                                                                 .set(timeline.markers_as_config());
+                                                            app_config.request_save();
                                                         }
                                                     })
                                                     .build(),
@@ -1639,6 +1661,7 @@ fn marker_manager_dialog(
                                                             app_config
                                                                 .markers_config
                                                                 .set(timeline.markers_as_config());
+                                                            app_config.request_save();
                                                         }
                                                     })
                                                     .build(),

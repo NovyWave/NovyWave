@@ -775,6 +775,7 @@ impl SignalCacheManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     fn project_path(relative: &str) -> String {
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
@@ -849,6 +850,36 @@ mod tests {
         assert!(
             !signal_data[0].transitions.is_empty(),
             "expected transitions for TOP|clk from FST waveform"
+        );
+    }
+
+    #[test]
+    fn relativize_workspace_directory_path_normalizes_workspace_root() {
+        let context = WorkspaceContext::new(PathBuf::from("/tmp/novywave_ai_workspace"));
+
+        assert_eq!(
+            relativize_workspace_directory_path("/tmp/novywave_ai_workspace", &context),
+            "."
+        );
+        assert_eq!(
+            relativize_workspace_directory_path("/tmp/novywave_ai_workspace/", &context),
+            "."
+        );
+        assert_eq!(relativize_workspace_directory_path("", &context), ".");
+        assert_eq!(relativize_workspace_directory_path(".", &context), ".");
+    }
+
+    #[test]
+    fn relativize_workspace_directory_path_keeps_non_root_paths_relative() {
+        let context = WorkspaceContext::new(PathBuf::from("/tmp/novywave_ai_workspace"));
+
+        assert_eq!(
+            relativize_workspace_directory_path("/tmp/novywave_ai_workspace/subdir", &context),
+            "subdir"
+        );
+        assert_eq!(
+            relativize_workspace_directory_path("/home/martinkavik/Downloads", &context),
+            "/home/martinkavik/Downloads"
         );
     }
 }
@@ -2720,17 +2751,7 @@ fn relativize_config_paths(config: &mut AppConfig) {
         .workspace
         .load_files_expanded_directories
         .iter()
-        .map(|dir| {
-            let path_buf = PathBuf::from(dir);
-            let normalized = context
-                .to_relative_if_in_workspace(&path_buf)
-                .unwrap_or(path_buf.clone());
-            if normalized.as_os_str().is_empty() {
-                ".".to_string()
-            } else {
-                normalized.to_string_lossy().to_string()
-            }
-        })
+        .map(|dir| relativize_workspace_directory_path(dir, context))
         .collect();
 
     config.workspace.expanded_scopes = config
@@ -2755,6 +2776,28 @@ fn relativize_config_paths(config: &mut AppConfig) {
             cloned
         })
         .collect();
+}
+
+fn relativize_workspace_directory_path(dir: &str, context: &WorkspaceContext) -> String {
+    let root = context.root();
+    let root_display = root.to_string_lossy();
+    let root_with_trailing_slash = format!("{}/", root_display.trim_end_matches('/'));
+    let trimmed = dir.trim();
+
+    if trimmed.is_empty() || trimmed == "." || trimmed == root_display || trimmed == root_with_trailing_slash {
+        return ".".to_string();
+    }
+
+    let path_buf = PathBuf::from(trimmed);
+    let normalized = context
+        .to_relative_if_in_workspace(&path_buf)
+        .unwrap_or(path_buf.clone());
+
+    if normalized.as_os_str().is_empty() {
+        ".".to_string()
+    } else {
+        normalized.to_string_lossy().to_string()
+    }
 }
 
 fn expand_unique_id(unique_id: &str, context: &WorkspaceContext) -> String {

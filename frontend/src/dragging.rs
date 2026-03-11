@@ -166,6 +166,8 @@ impl DraggingSystem {
                     (DividerType::SignalRowDivider { unique_id }, _) => {
                         self.selected_variables
                             .update_row_height(unique_id, new_value as u32);
+                        self.app_config
+                            .update_variable_row_height(unique_id, new_value as u32);
                     }
                 }
             }

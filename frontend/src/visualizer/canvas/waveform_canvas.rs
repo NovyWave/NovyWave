@@ -24,6 +24,8 @@ pub struct WaveformCanvas {
     current_theme: Mutable<Theme>,
     canvas_element_store: Mutable<Option<HtmlCanvasElement>>,
     canvas_dimensions: Mutable<(f32, f32)>,
+    canvas_backing_width: Mutable<u32>,
+    canvas_backing_height: Mutable<u32>,
     canvas_ready: Mutable<bool>,
 }
 
@@ -34,6 +36,8 @@ impl WaveformCanvas {
         let current_theme = Mutable::new(app_config.theme.get_cloned());
         let canvas_element_store: Mutable<Option<HtmlCanvasElement>> = Mutable::new(None);
         let canvas_dimensions = Mutable::new((0.0f32, 0.0f32));
+        let canvas_backing_width = Mutable::new(1_u32);
+        let canvas_backing_height = Mutable::new(1_u32);
         let canvas_ready = Mutable::new(false);
 
         let canvas_task = Arc::new(Task::start_droppable({
@@ -214,6 +218,8 @@ impl WaveformCanvas {
             current_theme,
             canvas_element_store,
             canvas_dimensions,
+            canvas_backing_width,
+            canvas_backing_height,
             canvas_ready,
         }
     }
@@ -224,6 +230,8 @@ impl WaveformCanvas {
 
     pub fn notify_dimensions(&self, width: f32, height: f32) {
         self.canvas_dimensions.set_neq((width, height));
+        self.canvas_backing_width.set_neq(width.max(1.0) as u32);
+        self.canvas_backing_height.set_neq(height.max(1.0) as u32);
     }
 
     pub fn notify_canvas_ready(&self) {
@@ -320,6 +328,8 @@ pub fn waveform_canvas(
     let timeline_for_leave = waveform_timeline.clone();
     let canvas_element_store = waveform_canvas.canvas_element_store.clone();
     let canvas_element_store_for_insert = canvas_element_store.clone();
+    let canvas_backing_width = waveform_canvas.canvas_backing_width.clone();
+    let canvas_backing_height = waveform_canvas.canvas_backing_height.clone();
 
     let theme_signal_for_tooltip = waveform_canvas.current_theme.signal_cloned();
 
@@ -332,8 +342,22 @@ pub fn waveform_canvas(
             let render_state_store_click = render_state_store_click.clone();
             let render_state_store_move = render_state_store_move.clone();
             let timeline_for_click = timeline_for_click.clone();
+            let canvas_backing_width = canvas_backing_width.clone();
+            let canvas_backing_height = canvas_backing_height.clone();
             move |raw_el| {
                 let raw_el = raw_el
+                    .attr_signal(
+                        "width",
+                        canvas_backing_width
+                            .signal()
+                            .map(|width| Some(width.to_string())),
+                    )
+                    .attr_signal(
+                        "height",
+                        canvas_backing_height
+                            .signal()
+                            .map(|height| Some(height.to_string())),
+                    )
                     .on_resize({
                         let canvas_ref = canvas_ref_for_resize.clone();
                         move |width, height| {

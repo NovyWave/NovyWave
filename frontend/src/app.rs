@@ -2254,6 +2254,7 @@ fn marker_name_dialog(
             if !name.is_empty() {
                 timeline.add_marker(name);
                 config.markers_config.set(timeline.markers_as_config());
+                config.request_save();
             }
             dialog_visible.set(false);
         })

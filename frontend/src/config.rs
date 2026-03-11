@@ -16,7 +16,7 @@ pub struct TimeRange {
     pub end: TimePs,
 }
 
-fn compose_shared_app_config(
+pub(crate) fn compose_shared_app_config(
     theme: &Mutable<SharedTheme>,
     dock_mode: &Mutable<DockMode>,
     toast_dismiss_ms: &Mutable<u32>,
@@ -437,6 +437,7 @@ pub struct AppConfig {
     _workspace_history_task: Arc<TaskHandle>,
     _selected_variables_snapshot_task: Arc<TaskHandle>,
     _clipboard_task: Arc<TaskHandle>,
+    config_save_request_sender: futures::channel::mpsc::UnboundedSender<()>,
     clipboard_sender: futures::channel::mpsc::UnboundedSender<String>,
 }
 
@@ -458,7 +459,69 @@ impl AppConfig {
         if let Some(var) = vars.iter_mut().find(|v| v.unique_id == unique_id) {
             var.row_height = Some(height);
             self.selected_variables_snapshot.set(vars);
+            self.request_save();
         }
+    }
+
+    pub fn update_variable_analog_limits(
+        &self,
+        unique_id: &str,
+        analog_limits: Option<shared::AnalogLimits>,
+    ) {
+        let mut vars = self.selected_variables_snapshot.get_cloned();
+        if let Some(var) = vars.iter_mut().find(|v| v.unique_id == unique_id) {
+            var.analog_limits = analog_limits;
+            self.selected_variables_snapshot.set(vars);
+            self.request_save();
+        }
+    }
+
+    pub fn update_variable_formatter(&self, unique_id: &str, formatter: shared::VarFormat) {
+        let mut vars = self.selected_variables_snapshot.get_cloned();
+        if let Some(var) = vars.iter_mut().find(|v| v.unique_id == unique_id) {
+            var.formatter = Some(formatter);
+            self.selected_variables_snapshot.set(vars);
+            self.request_save();
+        }
+    }
+
+    pub fn request_save(&self) {
+        let _ = self.config_save_request_sender.unbounded_send(());
+    }
+
+    pub fn is_config_loaded(&self) -> bool {
+        self.config_loaded_flag.get()
+    }
+
+    pub fn compose_current_shared_config(
+        &self,
+        tracked_files: &crate::tracked_files::TrackedFiles,
+        selected_variables: &crate::selected_variables::SelectedVariables,
+    ) -> Option<shared::AppConfig> {
+        compose_shared_app_config(
+            &self.theme,
+            &self.dock_mode,
+            &self.toast_dismiss_ms,
+            &self.file_picker_domain,
+            &self.selected_variables_snapshot,
+            &self.files_panel_width_right,
+            &self.files_panel_height_right,
+            &self.files_panel_width_bottom,
+            &self.files_panel_height_bottom,
+            &self.name_column_width_bottom_state,
+            &self.name_column_width_right_state,
+            &self.value_column_width_bottom_state,
+            &self.value_column_width_right_state,
+            &self.timeline_state,
+            &self.workspace_history_state,
+            &self.plugins_state,
+            &self.files_expanded_scopes,
+            &self.files_selected_scope,
+            &tracked_files.files_vec_signal,
+            &selected_variables.search_filter,
+            &self.markers_config,
+            &self.signal_groups_config,
+        )
     }
 
     pub async fn new(
@@ -724,6 +787,8 @@ impl AppConfig {
 
         let markers_config = Mutable::new(Vec::<shared::MarkerConfig>::new());
         let signal_groups_config = Mutable::new(Vec::<shared::SignalGroupConfig>::new());
+        let (config_save_request_sender, config_save_request_receiver) =
+            futures::channel::mpsc::unbounded::<()>();
 
         // Pure signal observation for config saves - no channels needed
         // The debouncer observes all source Mutables directly (no intermediate SessionState)
@@ -809,6 +874,7 @@ impl AppConfig {
                 let mut config_stream = config_changed.to_stream().fuse();
                 let mut config_loaded_stream =
                     config_loaded_flag_for_saver.signal().to_stream().fuse();
+                let mut explicit_save_stream = config_save_request_receiver.fuse();
                 let mut config_ready = false;
 
                 loop {
@@ -824,16 +890,18 @@ impl AppConfig {
                     select! {
                         result = config_stream.next() => {
                             if result.is_some() {
-                                // Debounce loop - wait for quiet period, cancelling if new change arrives
                                 loop {
                                     select! {
-                                        // New config change cancels timer
                                         result = config_stream.next() => {
                                             if result.is_some() {
-                                                continue; // Restart timer
+                                                continue;
                                             }
                                         }
-                                        // Timer completes - do the save
+                                        result = explicit_save_stream.next() => {
+                                            if result.is_some() {
+                                                continue;
+                                            }
+                                        }
                                         _ = zoon::Timer::sleep(300).fuse() => {
                                             if config_ready && crate::platform::server_is_ready() {
                                                 if let Some(shared_config) = compose_shared_app_config(
@@ -865,10 +933,60 @@ impl AppConfig {
                                                     }
                                                 }
                                             }
-                                            break; // Back to outer loop
+                                            break;
                                         }
                                     }
                                 }
+                            } else {
+                                break;
+                            }
+                        }
+                        result = explicit_save_stream.next() => {
+                            if result.is_some() {
+                                loop {
+                                    select! {
+                                        result = explicit_save_stream.next() => {
+                                            if result.is_some() {
+                                                continue;
+                                            }
+                                        }
+                                        _ = zoon::Timer::sleep(300).fuse() => {
+                                            if config_ready && crate::platform::server_is_ready() {
+                                                if let Some(shared_config) = compose_shared_app_config(
+                                                    &theme_clone,
+                                                    &dock_mode_clone,
+                                                    &toast_clone,
+                                                    &file_picker_domain_clone,
+                                                    &selected_variables_snapshot_clone,
+                                                    &files_width_right_clone,
+                                                    &files_height_right_clone,
+                                                    &files_width_bottom_clone,
+                                                    &files_height_bottom_clone,
+                                                    &name_column_width_bottom_state_clone,
+                                                    &name_column_width_right_state_clone,
+                                                    &value_column_width_bottom_state_clone,
+                                                    &value_column_width_right_state_clone,
+                                                    &timeline_state_clone,
+                                                    &workspace_history_state_clone_for_save,
+                                                    &plugins_state_clone,
+                                                    &files_expanded_scopes_clone,
+                                                    &files_selected_scope_clone,
+                                                    &files_vec_signal_clone,
+                                                    &variables_search_filter_clone,
+                                                    &markers_config_clone,
+                                                    &signal_groups_config_clone,
+                                                ) {
+                                                    if let Err(e) = CurrentPlatform::send_message(UpMsg::SaveConfig(shared_config)).await {
+                                                        zoon::println!("ERROR: Failed to send SaveConfig: {e}");
+                                                    }
+                                                }
+                                            }
+                                            break;
+                                        }
+                                    }
+                                }
+                            } else {
+                                break;
                             }
                         }
                         loaded = config_loaded_stream.next() => {
@@ -957,6 +1075,7 @@ impl AppConfig {
             _workspace_history_task,
             _selected_variables_snapshot_task,
             _clipboard_task,
+            config_save_request_sender,
             clipboard_sender,
             _connection_message_actor: connection_message_actor,
         }

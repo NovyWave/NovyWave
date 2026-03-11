@@ -123,6 +123,26 @@ pub fn expose_novywave_test_api() {
     .ok();
     get_file_picker_roots_closure.forget();
 
+    let get_config_debug_closure =
+        Closure::wrap(Box::new(get_config_debug_impl) as Box<dyn Fn() -> JsValue>);
+    js_sys::Reflect::set(
+        &api,
+        &"getConfigDebug".into(),
+        get_config_debug_closure.as_ref().unchecked_ref(),
+    )
+    .ok();
+    get_config_debug_closure.forget();
+
+    let save_config_now_closure =
+        Closure::wrap(Box::new(save_config_now_impl) as Box<dyn Fn() -> bool>);
+    js_sys::Reflect::set(
+        &api,
+        &"saveConfigNow".into(),
+        save_config_now_closure.as_ref().unchecked_ref(),
+    )
+    .ok();
+    save_config_now_closure.forget();
+
     let select_workspace_closure =
         Closure::wrap(Box::new(select_workspace_impl) as Box<dyn Fn(String) -> bool>);
     js_sys::Reflect::set(
@@ -192,6 +212,16 @@ pub fn expose_novywave_test_api() {
     )
     .ok();
     set_row_height_closure.forget();
+
+    let set_variable_format_closure =
+        Closure::wrap(Box::new(set_variable_format_impl) as Box<dyn Fn(String, String) -> bool>);
+    js_sys::Reflect::set(
+        &api,
+        &"setVariableFormat".into(),
+        set_variable_format_closure.as_ref().unchecked_ref(),
+    )
+    .ok();
+    set_variable_format_closure.forget();
 
     let set_analog_limits_closure = Closure::wrap(
         Box::new(set_analog_limits_impl) as Box<dyn Fn(String, bool, f64, f64) -> bool>
@@ -507,6 +537,93 @@ fn get_file_picker_roots_impl() -> JsValue {
     .unwrap_or(JsValue::NULL)
 }
 
+fn get_config_debug_impl() -> JsValue {
+    with_state(|state| {
+        let obj = js_sys::Object::new();
+        js_sys::Reflect::set(
+            &obj,
+            &"configLoaded".into(),
+            &JsValue::from_bool(state.app_config.is_config_loaded()),
+        )
+        .ok();
+        js_sys::Reflect::set(
+            &obj,
+            &"serverReady".into(),
+            &JsValue::from_bool(crate::platform::server_is_ready()),
+        )
+        .ok();
+        js_sys::Reflect::set(
+            &obj,
+            &"selectedVariablesSnapshotLen".into(),
+            &JsValue::from_f64(state.app_config.selected_variables_snapshot.get_cloned().len() as f64),
+        )
+        .ok();
+        js_sys::Reflect::set(
+            &obj,
+            &"markersConfigLen".into(),
+            &JsValue::from_f64(state.app_config.markers_config.get_cloned().len() as f64),
+        )
+        .ok();
+        js_sys::Reflect::set(
+            &obj,
+            &"signalGroupsConfigLen".into(),
+            &JsValue::from_f64(state.app_config.signal_groups_config.get_cloned().len() as f64),
+        )
+        .ok();
+        js_sys::Reflect::set(
+            &obj,
+            &"expandedDirectoriesLen".into(),
+            &JsValue::from_f64(state.app_config.file_picker_domain.get_expanded_snapshot().len() as f64),
+        )
+        .ok();
+        js_sys::Reflect::set(
+            &obj,
+            &"theme".into(),
+            &format!("{:?}", state.app_config.theme.get()).into(),
+        )
+        .ok();
+        js_sys::Reflect::set(
+            &obj,
+            &"dockMode".into(),
+            &format!("{:?}", state.app_config.dock_mode.get_cloned()).into(),
+        )
+        .ok();
+        js_sys::Reflect::set(
+            &obj,
+            &"tooltipEnabled".into(),
+            &JsValue::from_bool(state.waveform_timeline.tooltip_visibility_handle().get()),
+        )
+        .ok();
+        obj.into()
+    })
+    .unwrap_or(JsValue::NULL)
+}
+
+fn save_config_now_impl() -> bool {
+    TEST_API_STATE.with(|cell| {
+        let binding = cell.borrow();
+        let Some(state) = binding.as_ref() else {
+            return false;
+        };
+
+        let Some(shared_config) = state
+            .app_config
+            .compose_current_shared_config(&state.tracked_files, &state.selected_variables)
+        else {
+            return false;
+        };
+
+        let connection = state.connection.clone();
+        zoon::Task::start(async move {
+            if let Err(error) = connection.send_up_msg(shared::UpMsg::SaveConfig(shared_config)).await {
+                zoon::eprintln!("[Test API] saveConfigNow failed: {:?}", error);
+            }
+        });
+
+        true
+    })
+}
+
 fn select_workspace_impl(path: String) -> bool {
     zoon::println!("[Test API] selectWorkspace called with: {}", path);
 
@@ -555,6 +672,7 @@ fn add_marker_impl(name: String) -> bool {
             .app_config
             .markers_config
             .set(state.waveform_timeline.markers_as_config());
+        state.app_config.request_save();
         true
     })
     .unwrap_or(false)
@@ -571,6 +689,7 @@ fn remove_marker_impl(index: f64) -> bool {
             .app_config
             .markers_config
             .set(state.waveform_timeline.markers_as_config());
+        state.app_config.request_save();
         true
     })
     .unwrap_or(false)
@@ -593,6 +712,7 @@ fn rename_marker_impl(index: f64, name: String) -> bool {
             .app_config
             .markers_config
             .set(state.waveform_timeline.markers_as_config());
+        state.app_config.request_save();
         true
     })
     .unwrap_or(false)
@@ -623,6 +743,32 @@ fn set_row_height_impl(unique_id: String, row_height: f64) -> bool {
         state
             .selected_variables
             .update_row_height(trimmed_id, row_height.clamp(20, 300));
+        state
+            .app_config
+            .update_variable_row_height(trimmed_id, row_height.clamp(20, 300));
+        true
+    })
+    .unwrap_or(false)
+}
+
+fn set_variable_format_impl(unique_id: String, format: String) -> bool {
+    let trimmed_id = unique_id.trim();
+    if trimmed_id.is_empty() {
+        return false;
+    }
+
+    let Some(format) = parse_var_format(&format) else {
+        return false;
+    };
+
+    with_state(|state| {
+        crate::format_selection::update_variable_format(
+            trimmed_id,
+            format,
+            &state.selected_variables,
+            &state.waveform_timeline,
+            &state.app_config,
+        );
         true
     })
     .unwrap_or(false)
@@ -645,7 +791,10 @@ fn set_analog_limits_impl(unique_id: String, auto: bool, min: f64, max: f64) -> 
     with_state(|state| {
         state
             .selected_variables
-            .update_analog_limits(trimmed_id, analog_limits);
+            .update_analog_limits(trimmed_id, analog_limits.clone());
+        state
+            .app_config
+            .update_variable_analog_limits(trimmed_id, analog_limits);
         true
     })
     .unwrap_or(false)
@@ -668,6 +817,7 @@ fn create_group_impl(name: String, member_ids: JsValue) -> bool {
             .app_config
             .signal_groups_config
             .set(state.selected_variables.signal_groups_as_config());
+        state.app_config.request_save();
         true
     })
     .unwrap_or(false)
@@ -690,6 +840,7 @@ fn rename_group_impl(index: f64, name: String) -> bool {
             .app_config
             .signal_groups_config
             .set(state.selected_variables.signal_groups_as_config());
+        state.app_config.request_save();
         true
     })
     .unwrap_or(false)
@@ -706,6 +857,7 @@ fn toggle_group_collapse_impl(index: f64) -> bool {
             .app_config
             .signal_groups_config
             .set(state.selected_variables.signal_groups_as_config());
+        state.app_config.request_save();
         true
     })
     .unwrap_or(false)
@@ -722,6 +874,7 @@ fn delete_group_impl(index: f64) -> bool {
             .app_config
             .signal_groups_config
             .set(state.selected_variables.signal_groups_as_config());
+        state.app_config.request_save();
         true
     })
     .unwrap_or(false)
@@ -739,6 +892,19 @@ fn f64_to_usize(value: f64) -> Option<usize> {
         return None;
     }
     Some(value as usize)
+}
+
+fn parse_var_format(value: &str) -> Option<shared::VarFormat> {
+    match value.trim() {
+        "ASCII" => Some(shared::VarFormat::ASCII),
+        "Binary" => Some(shared::VarFormat::Binary),
+        "BinaryWithGroups" => Some(shared::VarFormat::BinaryWithGroups),
+        "Hexadecimal" => Some(shared::VarFormat::Hexadecimal),
+        "Octal" => Some(shared::VarFormat::Octal),
+        "Signed" => Some(shared::VarFormat::Signed),
+        "Unsigned" => Some(shared::VarFormat::Unsigned),
+        _ => None,
+    }
 }
 
 fn js_value_to_string_vec(value: JsValue) -> Option<Vec<String>> {
