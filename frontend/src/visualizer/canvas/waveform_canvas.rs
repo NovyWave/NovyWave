@@ -132,16 +132,27 @@ impl WaveformCanvas {
                                 if (width, height) != cached_dimensions && width > 0.0 && height > 0.0 {
                                     cached_dimensions = (width, height);
                                     timeline.set_canvas_dimensions(width, height);
-                                    if let (Some(ref mut renderer), Some(render_state)) =
-                                        (renderer.as_mut(), render_state_store.get_cloned())
-                                    {
-                                        let params = Self::render_params_from_state(
-                                            &render_state,
-                                            active_theme,
-                                        );
-                                        renderer.set_dimensions(width, height);
-                                        if let Some(duration_ms) = renderer.render_frame(params) {
-                                            timeline.record_render_duration(duration_ms as f64);
+                                    if let Some(ref mut renderer) = renderer.as_mut() {
+                                        if let Some(canvas_element) = canvas_element_store_task.get_cloned() {
+                                            let fast_canvas = fast2d::CanvasWrapper::new_with_canvas(canvas_element)
+                                                .await;
+                                            renderer.set_canvas(fast_canvas);
+                                        }
+
+                                        if let Some(render_state) = render_state_store.get_cloned() {
+                                            let render_state = Self::state_with_measured_dimensions(
+                                                render_state,
+                                                Some((width, height)),
+                                            );
+                                            render_state_store.set(Some(render_state.clone()));
+                                            let params = Self::render_params_from_state(
+                                                &render_state,
+                                                active_theme,
+                                            );
+                                            renderer.set_dimensions(width, height);
+                                            if let Some(duration_ms) = renderer.render_frame(params) {
+                                                timeline.record_render_duration(duration_ms as f64);
+                                            }
                                         }
                                     }
                                 }

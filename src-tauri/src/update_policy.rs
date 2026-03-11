@@ -65,6 +65,9 @@ impl UpdateCapability {
             Some(BundleType::Msi) => Self::Hidden {
                 reason: "MSI installs are manual-update only",
             },
+            Some(BundleType::Dmg) => Self::Hidden {
+                reason: "disk image bundles are not installed apps",
+            },
             None => Self::Hidden {
                 reason: "unsupported or unknown bundle type",
             },
@@ -152,6 +155,10 @@ mod tests {
         assert_eq!(
             UpdateCapability::for_bundle(false, false, Some(BundleType::Msi)).hidden_reason(),
             Some("MSI installs are manual-update only")
+        );
+        assert_eq!(
+            UpdateCapability::for_bundle(false, false, Some(BundleType::Dmg)).hidden_reason(),
+            Some("disk image bundles are not installed apps")
         );
     }
 }
