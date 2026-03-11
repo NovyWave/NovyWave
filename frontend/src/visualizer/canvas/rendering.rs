@@ -1,12 +1,12 @@
 use crate::visualizer::timeline::time_domain::{PS_PER_MS, PS_PER_NS, PS_PER_SECOND, PS_PER_US};
-use zoon::Mutable;
-use fast2d::{CanvasWrapper as Fast2DCanvas, Family, Object2d, Rectangle, Text};
+use fast2d::{CanvasWrapper as Fast2DCanvas, Family, Line, Object2d, Rectangle, Text};
 use moonzoon_novyui::tokens::theme::Theme as NovyUITheme;
-use shared::{SignalTransition, SignalValue, VarFormat};
+use shared::{AnalogLimits, SignalTransition, SignalValue, VarFormat};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 use std::sync::Arc;
+use zoon::Mutable;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TimeLabelUnit {
@@ -41,6 +41,7 @@ struct ThemeColors {
     state_unknown: (u8, u8, u8, f32),
     state_uninitialized: (u8, u8, u8, f32),
     segment_alt_multiplier: f32,
+    value_analog_color: (u8, u8, u8, f32),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,6 +60,30 @@ pub struct VariableRenderSnapshot {
     pub transitions: Arc<Vec<SignalTransition>>,
     #[allow(dead_code)]
     pub cursor_value: Option<SignalValue>,
+    pub signal_type: Option<String>,
+    pub row_height: u32,
+    pub analog_limits: Option<AnalogLimits>,
+}
+
+#[derive(Clone, Debug)]
+pub enum RenderRowSnapshot {
+    GroupHeader { name: String, row_height: u32 },
+    Variable(VariableRenderSnapshot),
+}
+
+impl RenderRowSnapshot {
+    fn row_height(&self) -> u32 {
+        match self {
+            RenderRowSnapshot::GroupHeader { row_height, .. } => *row_height,
+            RenderRowSnapshot::Variable(variable) => variable.row_height,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct MarkerRenderData {
+    pub time_ps: u64,
+    pub name: String,
 }
 
 #[derive(Clone, Debug)]
@@ -70,7 +95,8 @@ pub struct RenderingParameters {
     pub cursor_position_ps: Option<u64>,
     pub zoom_center_ps: Option<u64>,
     pub theme: NovyUITheme,
-    pub variables: Vec<VariableRenderSnapshot>,
+    pub rows: Vec<RenderRowSnapshot>,
+    pub markers: Vec<MarkerRenderData>,
 }
 
 pub struct WaveformRenderer {
@@ -124,19 +150,34 @@ impl StaticRenderKey {
             viewport_start_ps: params.viewport_start_ps,
             viewport_end_ps: params.viewport_end_ps,
             theme_key: Self::theme_key(params.theme),
-            variables_signature: Self::variables_signature(&params.variables),
+            variables_signature: Self::rows_signature(&params.rows),
             revision: STATIC_CACHE_REVISION,
         }
     }
 
-    fn variables_signature(variables: &[VariableRenderSnapshot]) -> u64 {
+    fn rows_signature(rows: &[RenderRowSnapshot]) -> u64 {
         let mut hasher = DefaultHasher::new();
-        variables.len().hash(&mut hasher);
-        for variable in variables {
-            variable.unique_id.hash(&mut hasher);
-            variable.formatter.hash(&mut hasher);
-            let ptr = Arc::as_ptr(&variable.transitions) as usize;
-            ptr.hash(&mut hasher);
+        rows.len().hash(&mut hasher);
+        for row in rows {
+            match row {
+                RenderRowSnapshot::GroupHeader { name, row_height } => {
+                    name.hash(&mut hasher);
+                    row_height.hash(&mut hasher);
+                }
+                RenderRowSnapshot::Variable(variable) => {
+                    variable.unique_id.hash(&mut hasher);
+                    variable.formatter.hash(&mut hasher);
+                    variable.row_height.hash(&mut hasher);
+                    variable.signal_type.hash(&mut hasher);
+                    if let Some(limits) = &variable.analog_limits {
+                        limits.auto.hash(&mut hasher);
+                        limits.min.to_bits().hash(&mut hasher);
+                        limits.max.to_bits().hash(&mut hasher);
+                    }
+                    let ptr = Arc::as_ptr(&variable.transitions) as usize;
+                    ptr.hash(&mut hasher);
+                }
+            }
         }
         hasher.finish()
     }
@@ -283,7 +324,32 @@ impl WaveformRenderer {
             return objects;
         }
         Self::add_cursor_lines(&mut objects, params, theme_colors);
+        Self::add_marker_lines(&mut objects, params);
         objects
+    }
+
+    fn compute_row_layout(params: &RenderingParameters) -> Vec<(f32, f32)> {
+        let total_desired: f32 = params
+            .rows
+            .iter()
+            .map(|row| row.row_height() as f32)
+            .sum::<f32>()
+            + 30.0;
+        let available = params.canvas_height as f32;
+        let scale = if total_desired > available && available > 0.0 {
+            available / total_desired
+        } else {
+            1.0
+        };
+
+        let mut layout = Vec::with_capacity(params.rows.len());
+        let mut y = 0.0f32;
+        for row in &params.rows {
+            let h = row.row_height() as f32 * scale;
+            layout.push((y, h));
+            y += h;
+        }
+        layout
     }
 
     fn add_waveforms(
@@ -291,16 +357,14 @@ impl WaveformRenderer {
         params: &RenderingParameters,
         theme_colors: &ThemeColors,
     ) {
-        if params.variables.is_empty() {
+        if params.rows.is_empty() {
             return;
         }
 
-        let total_rows = params.variables.len() + 1;
-        let available_height = params.canvas_height as f32;
-        let row_height = available_height / total_rows.max(1) as f32;
+        let layout = Self::compute_row_layout(params);
 
-        for (index, variable) in params.variables.iter().enumerate() {
-            let row_top = index as f32 * row_height;
+        for (index, row) in params.rows.iter().enumerate() {
+            let (row_top, row_height) = layout[index];
             let row_color = if index % 2 == 0 {
                 theme_colors.row_even_bg
             } else {
@@ -315,11 +379,52 @@ impl WaveformRenderer {
                     .into(),
             );
 
-            Self::add_signal_segments(objects, variable, row_top, row_height, params, theme_colors);
+            match row {
+                RenderRowSnapshot::GroupHeader { name, .. } => {
+                    objects.push(
+                        Text::new()
+                            .text(name.clone())
+                            .position(10.0, row_top + (row_height / 2.0) - 6.0)
+                            .size(
+                                (params.canvas_width as f32 - 20.0).max(20.0),
+                                row_height.max(12.0),
+                            )
+                            .color(
+                                theme_colors.neutral_12.0,
+                                theme_colors.neutral_12.1,
+                                theme_colors.neutral_12.2,
+                                0.62,
+                            )
+                            .font_size(12.0)
+                            .family(Family::name("Inter"))
+                            .into(),
+                    );
+                }
+                RenderRowSnapshot::Variable(variable) => {
+                    if Self::is_analog_signal(variable) {
+                        Self::add_analog_signal(
+                            objects,
+                            variable,
+                            row_top,
+                            row_height,
+                            params,
+                            theme_colors,
+                        );
+                    } else {
+                        Self::add_signal_segments(
+                            objects,
+                            variable,
+                            row_top,
+                            row_height,
+                            params,
+                            theme_colors,
+                        );
+                    }
+                }
+            }
 
-            if index < params.variables.len() - 1 {
-                let separator_y =
-                    ((index + 1) as f32 * row_height).min(params.canvas_height as f32);
+            if index < params.rows.len() - 1 {
+                let separator_y = (row_top + row_height).min(params.canvas_height as f32);
                 objects.push(
                     Rectangle::new()
                         .position(0.0, separator_y - 0.5)
@@ -596,6 +701,174 @@ impl WaveformRenderer {
         }
     }
 
+    fn is_analog_signal(variable: &VariableRenderSnapshot) -> bool {
+        variable.signal_type.as_deref() == Some("Real")
+    }
+
+    fn parse_analog_value(value_str: &str) -> Option<f64> {
+        let v: f64 = value_str.trim().parse().ok()?;
+        if v.is_nan() || v.is_infinite() {
+            None
+        } else {
+            Some(v)
+        }
+    }
+
+    fn compute_analog_range(
+        transitions: &[SignalTransition],
+        viewport_start_ps: u64,
+        viewport_end_ps: u64,
+        analog_limits: Option<&AnalogLimits>,
+    ) -> Option<(f64, f64)> {
+        if let Some(limits) = analog_limits {
+            if !limits.auto
+                && limits.min.is_finite()
+                && limits.max.is_finite()
+                && limits.min < limits.max
+            {
+                return Some((limits.min, limits.max));
+            }
+        }
+
+        let mut min = f64::MAX;
+        let mut max = f64::MIN;
+        let mut found = false;
+        for (index, t) in transitions.iter().enumerate() {
+            let start_ps = t.time_ns.saturating_mul(PS_PER_NS);
+            let end_ps = transitions
+                .get(index + 1)
+                .map(|next| next.time_ns.saturating_mul(PS_PER_NS))
+                .unwrap_or(viewport_end_ps);
+
+            if end_ps <= viewport_start_ps {
+                continue;
+            }
+            if start_ps >= viewport_end_ps {
+                break;
+            }
+            if let Some(v) = Self::parse_analog_value(&t.value) {
+                if v < min {
+                    min = v;
+                }
+                if v > max {
+                    max = v;
+                }
+                found = true;
+            }
+        }
+        if found { Some((min, max)) } else { None }
+    }
+
+    fn add_analog_signal(
+        objects: &mut Vec<Object2d>,
+        variable: &VariableRenderSnapshot,
+        row_top: f32,
+        row_height: f32,
+        params: &RenderingParameters,
+        theme_colors: &ThemeColors,
+    ) {
+        let range = match Self::compute_analog_range(
+            &variable.transitions,
+            params.viewport_start_ps,
+            params.viewport_end_ps,
+            variable.analog_limits.as_ref(),
+        ) {
+            Some(r) => r,
+            None => return,
+        };
+        let (min_val, max_val) = range;
+        let value_range = max_val - min_val;
+        let margin = 4.0f32;
+        let draw_top = row_top + margin;
+        let draw_height = (row_height - 2.0 * margin).max(1.0);
+
+        let start_ps = params.viewport_start_ps;
+        let end_ps = params.viewport_end_ps;
+        let range_ps = (end_ps - start_ps) as f64;
+        if range_ps <= 0.0 {
+            return;
+        }
+
+        let value_to_y = |val: f64| -> f32 {
+            if value_range.abs() < 1e-30 {
+                draw_top + draw_height / 2.0
+            } else {
+                let normalized = (val - min_val) / value_range;
+                draw_top + draw_height * (1.0 - normalized as f32)
+            }
+        };
+
+        let time_to_x = |time_ns: u64| -> f32 {
+            let time_ps = time_ns.saturating_mul(PS_PER_NS);
+            let ratio = (time_ps.saturating_sub(start_ps)) as f64 / range_ps;
+            (ratio * params.canvas_width as f64) as f32
+        };
+
+        let mut points: Vec<(f32, f32)> = Vec::new();
+
+        for (i, transition) in variable.transitions.iter().enumerate() {
+            let time_ps = transition.time_ns.saturating_mul(PS_PER_NS);
+            let val = match Self::parse_analog_value(&transition.value) {
+                Some(v) => v,
+                None => continue,
+            };
+
+            let next_time_ps = if i + 1 < variable.transitions.len() {
+                variable.transitions[i + 1]
+                    .time_ns
+                    .saturating_mul(PS_PER_NS)
+            } else {
+                end_ps
+            };
+
+            if next_time_ps <= start_ps {
+                continue;
+            }
+            if time_ps >= end_ps {
+                break;
+            }
+
+            let y = value_to_y(val);
+
+            if points.is_empty() {
+                let x_start = if time_ps < start_ps {
+                    0.0
+                } else {
+                    time_to_x(transition.time_ns)
+                };
+                points.push((x_start, y));
+            } else {
+                let x = time_to_x(transition.time_ns);
+                points.push((x, points.last().unwrap().1));
+                points.push((x, y));
+            }
+
+            let x_end = if next_time_ps > end_ps {
+                params.canvas_width as f32
+            } else {
+                time_to_x(
+                    variable
+                        .transitions
+                        .get(i + 1)
+                        .map(|t| t.time_ns)
+                        .unwrap_or(transition.time_ns),
+                )
+            };
+            points.push((x_end, y));
+        }
+
+        if points.len() >= 2 {
+            let color = theme_colors.value_analog_color;
+            objects.push(
+                Line::new()
+                    .points(&points)
+                    .width(1.5)
+                    .color(color.0, color.1, color.2, color.3)
+                    .into(),
+            );
+        }
+    }
+
     fn classify_signal_state(value: &str) -> SignalState {
         let normalized = value.trim().to_ascii_uppercase();
         match normalized.as_str() {
@@ -722,6 +995,65 @@ impl WaveformRenderer {
         }
     }
 
+    fn add_marker_lines(objects: &mut Vec<Object2d>, params: &RenderingParameters) {
+        if params.viewport_end_ps <= params.viewport_start_ps || params.markers.is_empty() {
+            return;
+        }
+        let range_ps = (params.viewport_end_ps - params.viewport_start_ps) as f64;
+        let marker_color = (0u8, 220u8, 220u8, 0.85f32);
+        let canvas_height = params.canvas_height as f32;
+        let mut markers = params.markers.clone();
+        markers.sort_by_key(|marker| marker.time_ps);
+        let lane_count = 3usize;
+        let lane_height = 14.0f32;
+        let lane_gap = 2.0f32;
+        let mut lane_end_x = vec![0.0f32; lane_count];
+
+        for marker in &markers {
+            if !(params.viewport_start_ps..=params.viewport_end_ps).contains(&marker.time_ps) {
+                continue;
+            }
+            let ratio = (marker.time_ps - params.viewport_start_ps) as f64 / range_ps;
+            let x = (ratio * params.canvas_width as f64) as f32;
+
+            objects.push(
+                Rectangle::new()
+                    .position(x - 0.5, 0.0)
+                    .size(1.0, canvas_height)
+                    .color(
+                        marker_color.0,
+                        marker_color.1,
+                        marker_color.2,
+                        marker_color.3,
+                    )
+                    .into(),
+            );
+
+            let label_width = (marker.name.chars().count() as f32 * 6.5 + 16.0).clamp(36.0, 180.0);
+            let label_x = (x + 4.0).min((params.canvas_width as f32 - label_width - 2.0).max(0.0));
+            if let Some((lane_index, lane_end)) = lane_end_x
+                .iter_mut()
+                .enumerate()
+                .find(|(_, lane_end)| label_x >= **lane_end)
+            {
+                let label_y = 4.0 + lane_index as f32 * (lane_height + lane_gap);
+                if label_y + lane_height <= canvas_height {
+                    objects.push(
+                        Text::new()
+                            .text(marker.name.clone())
+                            .position(label_x, label_y)
+                            .size(label_width, lane_height)
+                            .color(marker_color.0, marker_color.1, marker_color.2, 1.0)
+                            .font_size(11.0)
+                            .family(Family::name("Inter"))
+                            .into(),
+                    );
+                    *lane_end = label_x + label_width + 6.0;
+                }
+            }
+        }
+    }
+
     fn add_timeline_row(
         objects: &mut Vec<Object2d>,
         params: &RenderingParameters,
@@ -731,10 +1063,8 @@ impl WaveformRenderer {
             return;
         }
 
-        let total_rows = params.variables.len() + 1;
-        let available_height = params.canvas_height as f32;
-        let row_height = available_height / total_rows.max(1) as f32;
-        let timeline_y = (total_rows - 1) as f32 * row_height;
+        let layout = Self::compute_row_layout(params);
+        let timeline_y = layout.last().map(|(top, h)| top + h).unwrap_or(0.0);
         let timeline_height = (params.canvas_height as f32 - timeline_y).max(1.0);
 
         objects.push(
@@ -938,6 +1268,7 @@ impl WaveformRenderer {
                 state_unknown: (220, 38, 38, 0.9),
                 state_uninitialized: (220, 38, 38, 0.65),
                 segment_alt_multiplier: 0.45,
+                value_analog_color: (40, 170, 200, 0.95),
             },
             NovyUITheme::Light => ThemeColors {
                 row_even_bg: (248, 250, 255, 1.0),
@@ -955,6 +1286,7 @@ impl WaveformRenderer {
                 state_unknown: (220, 38, 38, 0.85),
                 state_uninitialized: (220, 38, 38, 0.6),
                 segment_alt_multiplier: 1.1,
+                value_analog_color: (20, 140, 180, 0.95),
             },
         }
     }
@@ -989,6 +1321,7 @@ impl TimeLabelUnit {
 #[cfg(test)]
 mod tests {
     use super::WaveformRenderer;
+    use shared::{AnalogLimits, SignalTransition};
 
     #[test]
     fn rounds_small_values_to_friendly_steps() {
@@ -1003,5 +1336,40 @@ mod tests {
     #[test]
     fn rounds_large_values_to_ten() {
         assert!((WaveformRenderer::round_to_nice_number(6.5) - 10.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn manual_analog_limits_override_visible_window_range() {
+        let transitions = vec![
+            SignalTransition::new(0, "1.0".to_string()),
+            SignalTransition::new(10, "3.0".to_string()),
+        ];
+
+        let range = WaveformRenderer::compute_analog_range(
+            &transitions,
+            0,
+            20_000,
+            Some(&AnalogLimits::manual(-5.0, 5.0)),
+        );
+
+        assert_eq!(range, Some((-5.0, 5.0)));
+    }
+
+    #[test]
+    fn auto_analog_range_uses_only_visible_window() {
+        let transitions = vec![
+            SignalTransition::new(0, "1.0".to_string()),
+            SignalTransition::new(10, "10.0".to_string()),
+            SignalTransition::new(20, "100.0".to_string()),
+        ];
+
+        let range = WaveformRenderer::compute_analog_range(
+            &transitions,
+            10_000,
+            20_000,
+            Some(&AnalogLimits::auto()),
+        );
+
+        assert_eq!(range, Some((10.0, 10.0)));
     }
 }

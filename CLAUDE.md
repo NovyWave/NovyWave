@@ -120,3 +120,8 @@ let (sender, receiver) = futures::channel::mpsc::unbounded::<Message>();
 
 **Anti-Consultation Guards**: Command files have explicit enforcement sections to prevent consultation mode
 
+## Build Observation
+
+- For maintainer-run shared watchers, read `dev_server.log`, `dev_plugins.log`, and `dev_tauri.log`.
+- Do not assume you can attach to an already-running process stdout unless you are the one who launched it in that terminal session.
+- Treat the logs as the source of truth for compile status before declaring UI work complete.

@@ -38,10 +38,18 @@ pub enum Response {
         #[serde(skip_serializing_if = "Option::is_none")]
         data: Option<serde_json::Value>,
     },
-    Error { message: String },
-    Screenshot { base64: String },
-    ScreenshotFile { filepath: String },
-    Console { messages: Vec<ConsoleMessage> },
+    Error {
+        message: String,
+    },
+    Screenshot {
+        base64: String,
+    },
+    ScreenshotFile {
+        filepath: String,
+    },
+    Console {
+        messages: Vec<ConsoleMessage>,
+    },
     Pong,
     Status {
         connected: bool,
@@ -60,12 +68,26 @@ pub enum Response {
         #[serde(rename = "zoomCenterPs")]
         zoom_center_ps: Option<u64>,
     },
-    CursorValues { values: serde_json::Value },
-    SelectedVariables { variables: Vec<VariableInfo> },
-    LoadedFiles { files: Vec<FileInfo> },
-    JsResult { result: serde_json::Value },
-    TextMatches { found: bool, count: u32, matches: Vec<String> },
-    PageText { text: String },
+    CursorValues {
+        values: serde_json::Value,
+    },
+    SelectedVariables {
+        variables: Vec<VariableInfo>,
+    },
+    LoadedFiles {
+        files: Vec<FileInfo>,
+    },
+    JsResult {
+        result: serde_json::Value,
+    },
+    TextMatches {
+        found: bool,
+        count: u32,
+        matches: Vec<String>,
+    },
+    PageText {
+        text: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

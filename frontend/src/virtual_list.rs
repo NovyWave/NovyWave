@@ -158,50 +158,53 @@ pub fn rust_virtual_variables_list_with_signal(
         let scroll_velocity = scroll_velocity.clone();
         let visible_start = visible_start.clone();
         let visible_end = visible_end.clone();
-        height_signal.signal().dedupe().for_each_sync(move |height| {
-            let new_visible_count =
-                ((height as f64 / item_height).ceil() as usize + 5).min(total_items);
-            visible_count.set_neq(new_visible_count);
+        height_signal
+            .signal()
+            .dedupe()
+            .for_each_sync(move |height| {
+                let new_visible_count =
+                    ((height as f64 / item_height).ceil() as usize + 5).min(total_items);
+                visible_count.set_neq(new_visible_count);
 
-            // ===== DYNAMIC POOL RESIZING BASED ON VELOCITY =====
-            let current_velocity = scroll_velocity.get();
-            let velocity_buffer = if current_velocity > 1000.0 {
-                15
-            } else if current_velocity > 500.0 {
-                10
-            } else {
-                base_buffer
-            };
+                // ===== DYNAMIC POOL RESIZING BASED ON VELOCITY =====
+                let current_velocity = scroll_velocity.get();
+                let velocity_buffer = if current_velocity > 1000.0 {
+                    15
+                } else if current_velocity > 500.0 {
+                    10
+                } else {
+                    base_buffer
+                };
 
-            let needed_pool_size = new_visible_count + velocity_buffer;
-            let current_pool_size = element_pool.lock_ref().len();
+                let needed_pool_size = new_visible_count + velocity_buffer;
+                let current_pool_size = element_pool.lock_ref().len();
 
-            if needed_pool_size > current_pool_size {
-                let additional_elements: Vec<VirtualElementState> = (current_pool_size
-                    ..needed_pool_size)
-                    .map(|_| VirtualElementState {
-                        name_signal: Mutable::new(String::new()),
-                        type_signal: Mutable::new(String::new()),
-                        position_signal: Mutable::new(-9999),
-                        visible_signal: Mutable::new(false),
-                        previous_name_signal: Mutable::new(None),
-                        file_id_signal: Mutable::new(String::new()),
-                        scope_id_signal: Mutable::new(String::new()),
-                        variable_signal: Mutable::new(None),
-                        is_selected_signal: Mutable::new(false),
-                        absolute_index_signal: Mutable::new(0),
-                    })
-                    .collect();
-                element_pool.lock_mut().extend(additional_elements);
-            } else if needed_pool_size < current_pool_size {
-                let min_pool_size = (new_visible_count + base_buffer).max(20);
-                element_pool.lock_mut().truncate(min_pool_size);
-            }
+                if needed_pool_size > current_pool_size {
+                    let additional_elements: Vec<VirtualElementState> = (current_pool_size
+                        ..needed_pool_size)
+                        .map(|_| VirtualElementState {
+                            name_signal: Mutable::new(String::new()),
+                            type_signal: Mutable::new(String::new()),
+                            position_signal: Mutable::new(-9999),
+                            visible_signal: Mutable::new(false),
+                            previous_name_signal: Mutable::new(None),
+                            file_id_signal: Mutable::new(String::new()),
+                            scope_id_signal: Mutable::new(String::new()),
+                            variable_signal: Mutable::new(None),
+                            is_selected_signal: Mutable::new(false),
+                            absolute_index_signal: Mutable::new(0),
+                        })
+                        .collect();
+                    element_pool.lock_mut().extend(additional_elements);
+                } else if needed_pool_size < current_pool_size {
+                    let min_pool_size = (new_visible_count + base_buffer).max(20);
+                    element_pool.lock_mut().truncate(min_pool_size);
+                }
 
-            let current_start = visible_start.get();
-            let new_end = (current_start + new_visible_count).min(total_items);
-            visible_end.set_neq(new_end);
-        })
+                let current_start = visible_start.get();
+                let new_end = (current_start + new_visible_count).min(total_items);
+                visible_end.set_neq(new_end);
+            })
     });
 
     // ===== OPTIMIZED POOL UPDATE TASK WITH DOM BATCHING =====
@@ -241,8 +244,6 @@ pub fn rust_virtual_variables_list_with_signal(
                     let visible_count = end - start;
                     let mut batched_updates = Vec::with_capacity(pool.len());
 
-                    // ✅ OPTIMIZATION: Pre-compute selection lookup to reduce clone operations
-                    // use crate::state::{find_scope_full_name}; // Unused
 
                     let tracked_files: Vec<shared::TrackedFile> = vec![];
 
@@ -370,76 +371,78 @@ pub fn rust_virtual_variables_list_with_signal(
             drop(_pool_update_task);
         })
         .item(
-        // ===== SCROLL CONTAINER WITH SIGNAL HEIGHT =====
-        // CRITICAL: Uses Height::exact_signal() instead of Height::exact()
-        El::new()
-            .s(Width::fill())
-            .s(Height::exact_signal(height_signal.signal())) // 🔥 KEY CHANGE: Signal-based height
-            .s(Background::new().color_signal(neutral_2()))
-            .s(Padding::new().top(4))
-            .update_raw_el({
-                let scroll_top = scroll_top.clone();
-                let visible_start = visible_start.clone();
-                let visible_end = visible_end.clone();
-                let visible_count = visible_count.clone();
-                let last_scroll_time = last_scroll_time.clone();
-                let last_scroll_position = last_scroll_position.clone();
-                let scroll_velocity = scroll_velocity.clone();
-                let element_pool = element_pool.clone();
+            // ===== SCROLL CONTAINER WITH SIGNAL HEIGHT =====
+            // CRITICAL: Uses Height::exact_signal() instead of Height::exact()
+            El::new()
+                .s(Width::fill())
+                .s(Height::exact_signal(height_signal.signal())) // 🔥 KEY CHANGE: Signal-based height
+                .s(Background::new().color_signal(neutral_2()))
+                .s(Padding::new().top(4))
+                .update_raw_el({
+                    let scroll_top = scroll_top.clone();
+                    let visible_start = visible_start.clone();
+                    let visible_end = visible_end.clone();
+                    let visible_count = visible_count.clone();
+                    let last_scroll_time = last_scroll_time.clone();
+                    let last_scroll_position = last_scroll_position.clone();
+                    let scroll_velocity = scroll_velocity.clone();
+                    let element_pool = element_pool.clone();
 
-                move |el| {
-                    if let Some(html_el) = el.dom_element().dyn_ref::<web_sys::HtmlElement>() {
-                        html_el.set_id("virtual-container-signal");
-                        html_el.style().set_property("overflow-y", "auto").unwrap();
-                        html_el.style().set_property("display", "block").unwrap();
+                    move |el| {
+                        if let Some(html_el) = el.dom_element().dyn_ref::<web_sys::HtmlElement>() {
+                            html_el.set_id("virtual-container-signal");
+                            html_el.style().set_property("overflow-y", "auto").unwrap();
+                            html_el.style().set_property("display", "block").unwrap();
 
-                        let scroll_closure = wasm_bindgen::closure::Closure::wrap(Box::new({
-                            let scroll_top = scroll_top.clone();
-                            let visible_start = visible_start.clone();
-                            let visible_end = visible_end.clone();
-                            let visible_count = visible_count.clone();
-                            let last_scroll_time = last_scroll_time.clone();
-                            let last_scroll_position = last_scroll_position.clone();
-                            let scroll_velocity = scroll_velocity.clone();
-                            let element_pool = element_pool.clone();
+                            let scroll_closure = wasm_bindgen::closure::Closure::wrap(Box::new({
+                                let scroll_top = scroll_top.clone();
+                                let visible_start = visible_start.clone();
+                                let visible_end = visible_end.clone();
+                                let visible_count = visible_count.clone();
+                                let last_scroll_time = last_scroll_time.clone();
+                                let last_scroll_position = last_scroll_position.clone();
+                                let scroll_velocity = scroll_velocity.clone();
+                                let element_pool = element_pool.clone();
 
-                            move |_event: web_sys::Event| {
-                                if let Some(scroll_el) = web_sys::window()
-                                    .and_then(|w| w.document())
-                                    .and_then(|d| d.get_element_by_id("virtual-container-signal"))
-                                    .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok())
-                                {
-                                    let new_scroll_top = scroll_el.scroll_top() as f64;
+                                move |_event: web_sys::Event| {
+                                    if let Some(scroll_el) = web_sys::window()
+                                        .and_then(|w| w.document())
+                                        .and_then(|d| {
+                                            d.get_element_by_id("virtual-container-signal")
+                                        })
+                                        .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok())
+                                    {
+                                        let new_scroll_top = scroll_el.scroll_top() as f64;
 
-                                    // ===== VELOCITY CALCULATION =====
-                                    let current_time = web_sys::window()
-                                        .and_then(|w| Some(w.performance()?.now()))
-                                        .unwrap_or(0.0);
+                                        // ===== VELOCITY CALCULATION =====
+                                        let current_time = web_sys::window()
+                                            .and_then(|w| Some(w.performance()?.now()))
+                                            .unwrap_or(0.0);
 
-                                    let last_time = last_scroll_time.get();
-                                    let last_position = last_scroll_position.get();
+                                        let last_time = last_scroll_time.get();
+                                        let last_position = last_scroll_position.get();
 
-                                    if last_time > 0.0 {
-                                        let time_delta = current_time - last_time;
-                                        let position_delta = (new_scroll_top - last_position).abs();
+                                        if last_time > 0.0 {
+                                            let time_delta = current_time - last_time;
+                                            let position_delta =
+                                                (new_scroll_top - last_position).abs();
 
-                                        if time_delta > 0.0 {
-                                            let new_velocity =
-                                                (position_delta / time_delta) * 1000.0; // px/second
-                                            scroll_velocity.set_neq(new_velocity);
+                                            if time_delta > 0.0 {
+                                                let new_velocity =
+                                                    (position_delta / time_delta) * 1000.0; // px/second
+                                                scroll_velocity.set_neq(new_velocity);
 
-                                            // ===== DYNAMIC POOL ADJUSTMENT ON FAST SCROLL =====
-                                            if new_velocity > FAST_SCROLL_VELOCITY_THRESHOLD {
-                                                let current_pool_size =
-                                                    element_pool.lock_ref().len();
-                                                let needed_size =
-                                                    visible_count.get() + FAST_SCROLL_BUFFER_SIZE; // Fast scroll: larger buffer
+                                                // ===== DYNAMIC POOL ADJUSTMENT ON FAST SCROLL =====
+                                                if new_velocity > FAST_SCROLL_VELOCITY_THRESHOLD {
+                                                    let current_pool_size =
+                                                        element_pool.lock_ref().len();
+                                                    let needed_size = visible_count.get()
+                                                        + FAST_SCROLL_BUFFER_SIZE; // Fast scroll: larger buffer
 
-                                                if needed_size > current_pool_size {
-                                                    let additional_elements: Vec<
-                                                        VirtualElementState,
-                                                    > =
-                                                        (current_pool_size..needed_size)
+                                                    if needed_size > current_pool_size {
+                                                        let additional_elements: Vec<
+                                                            VirtualElementState,
+                                                        > = (current_pool_size..needed_size)
                                                             .map(|_| VirtualElementState {
                                                                 name_signal: Mutable::new(
                                                                     String::new(),
@@ -470,130 +473,133 @@ pub fn rust_virtual_variables_list_with_signal(
                                                             })
                                                             .collect();
 
-                                                    element_pool
-                                                        .lock_mut()
-                                                        .extend(additional_elements);
+                                                        element_pool
+                                                            .lock_mut()
+                                                            .extend(additional_elements);
+                                                    }
                                                 }
                                             }
                                         }
-                                    }
 
-                                    last_scroll_time.set_neq(current_time);
-                                    last_scroll_position.set_neq(new_scroll_top);
-                                    scroll_top.set_neq(new_scroll_top);
+                                        last_scroll_time.set_neq(current_time);
+                                        last_scroll_position.set_neq(new_scroll_top);
+                                        scroll_top.set_neq(new_scroll_top);
 
-                                    let start_index =
-                                        (new_scroll_top / item_height).floor() as usize;
-                                    let end_index =
-                                        (start_index + visible_count.get()).min(total_items);
+                                        let start_index =
+                                            (new_scroll_top / item_height).floor() as usize;
+                                        let end_index =
+                                            (start_index + visible_count.get()).min(total_items);
 
-                                    visible_start.set_neq(start_index);
-                                    visible_end.set_neq(end_index);
-                                }
-                            }
-                        })
-                            as Box<dyn FnMut(_)>);
-
-                        html_el
-                            .add_event_listener_with_callback(
-                                "scroll",
-                                scroll_closure.as_ref().unchecked_ref(),
-                            )
-                            .unwrap();
-
-                        scroll_closure.forget();
-                    }
-
-                    el
-                }
-            })
-            .update_raw_el({
-                let hovered_index = hovered_index.clone();
-                let scroll_top = scroll_top.clone();
-                move |raw_el| {
-                    // Add mouse tracking for centralized hover - FIXED coordinate system
-                    if let Some(html_el) = raw_el.dom_element().dyn_ref::<web_sys::HtmlElement>() {
-                        let mousemove_closure = Closure::wrap(Box::new({
-                            let hovered_index = hovered_index.clone();
-                            let scroll_top = scroll_top.clone();
-                            move |event: web_sys::MouseEvent| {
-                                // FIX: Use clientY relative to viewport, then get container bounds
-                                if let Some(target_el) = event
-                                    .current_target()
-                                    .and_then(|t| t.dyn_into::<web_sys::HtmlElement>().ok())
-                                {
-                                    let container_rect = target_el.get_bounding_client_rect();
-                                    let client_y = event.client_y() as f64;
-
-                                    // Calculate mouse Y relative to container top
-                                    let container_relative_y = client_y - container_rect.top();
-
-                                    // Add scroll offset to get absolute position within virtual content
-                                    let current_scroll = scroll_top.get();
-                                    let absolute_y = container_relative_y + current_scroll;
-                                    let item_index = (absolute_y / item_height).floor() as usize;
-
-                                    if item_index < total_items && container_relative_y >= 0.0 {
-                                        hovered_index.set_neq(Some(item_index));
-                                    } else {
-                                        hovered_index.set_neq(None);
+                                        visible_start.set_neq(start_index);
+                                        visible_end.set_neq(end_index);
                                     }
                                 }
-                            }
-                        })
-                            as Box<dyn FnMut(web_sys::MouseEvent)>);
+                            })
+                                as Box<dyn FnMut(_)>);
 
-                        html_el
-                            .add_event_listener_with_callback(
-                                "mousemove",
-                                mousemove_closure.as_ref().unchecked_ref(),
-                            )
-                            .unwrap();
+                            html_el
+                                .add_event_listener_with_callback(
+                                    "scroll",
+                                    scroll_closure.as_ref().unchecked_ref(),
+                                )
+                                .unwrap();
 
-                        // Clear hover when mouse leaves
-                        let mouseleave_closure = Closure::wrap(Box::new({
-                            let hovered_index = hovered_index.clone();
-                            move |_event: web_sys::MouseEvent| {
-                                hovered_index.set_neq(None);
-                            }
-                        })
-                            as Box<dyn FnMut(web_sys::MouseEvent)>);
-
-                        html_el
-                            .add_event_listener_with_callback(
-                                "mouseleave",
-                                mouseleave_closure.as_ref().unchecked_ref(),
-                            )
-                            .unwrap();
-
-                        mousemove_closure.forget();
-                        mouseleave_closure.forget();
-                    }
-
-                    raw_el
-                        .style("scrollbar-width", "thin")
-                        .apply(|raw_el| apply_scrollbar_colors(raw_el))
-                }
-            })
-            .child(
-                // ===== HYBRID STABLE POOL CONTAINER =====
-                // No more child_signal recreation - stable elements only!
-                Stack::new()
-                    .s(Width::fill())
-                    .s(Height::exact((total_items as f64 * item_height) as u32))
-                    .layers_signal_vec(element_pool.signal_vec_cloned().map({
-                        let hovered_index = hovered_index.clone();
-                        let selected_variables_for_map = selected_variables.clone();
-                        move |element_state| {
-                            create_stable_variable_element_hybrid(
-                                element_state,
-                                hovered_index.clone(),
-                                selected_variables_for_map.clone(),
-                            )
+                            scroll_closure.forget();
                         }
-                    })),
-            ),
-    )
+
+                        el
+                    }
+                })
+                .update_raw_el({
+                    let hovered_index = hovered_index.clone();
+                    let scroll_top = scroll_top.clone();
+                    move |raw_el| {
+                        // Add mouse tracking for centralized hover - FIXED coordinate system
+                        if let Some(html_el) =
+                            raw_el.dom_element().dyn_ref::<web_sys::HtmlElement>()
+                        {
+                            let mousemove_closure = Closure::wrap(Box::new({
+                                let hovered_index = hovered_index.clone();
+                                let scroll_top = scroll_top.clone();
+                                move |event: web_sys::MouseEvent| {
+                                    // FIX: Use clientY relative to viewport, then get container bounds
+                                    if let Some(target_el) = event
+                                        .current_target()
+                                        .and_then(|t| t.dyn_into::<web_sys::HtmlElement>().ok())
+                                    {
+                                        let container_rect = target_el.get_bounding_client_rect();
+                                        let client_y = event.client_y() as f64;
+
+                                        // Calculate mouse Y relative to container top
+                                        let container_relative_y = client_y - container_rect.top();
+
+                                        // Add scroll offset to get absolute position within virtual content
+                                        let current_scroll = scroll_top.get();
+                                        let absolute_y = container_relative_y + current_scroll;
+                                        let item_index =
+                                            (absolute_y / item_height).floor() as usize;
+
+                                        if item_index < total_items && container_relative_y >= 0.0 {
+                                            hovered_index.set_neq(Some(item_index));
+                                        } else {
+                                            hovered_index.set_neq(None);
+                                        }
+                                    }
+                                }
+                            })
+                                as Box<dyn FnMut(web_sys::MouseEvent)>);
+
+                            html_el
+                                .add_event_listener_with_callback(
+                                    "mousemove",
+                                    mousemove_closure.as_ref().unchecked_ref(),
+                                )
+                                .unwrap();
+
+                            // Clear hover when mouse leaves
+                            let mouseleave_closure = Closure::wrap(Box::new({
+                                let hovered_index = hovered_index.clone();
+                                move |_event: web_sys::MouseEvent| {
+                                    hovered_index.set_neq(None);
+                                }
+                            })
+                                as Box<dyn FnMut(web_sys::MouseEvent)>);
+
+                            html_el
+                                .add_event_listener_with_callback(
+                                    "mouseleave",
+                                    mouseleave_closure.as_ref().unchecked_ref(),
+                                )
+                                .unwrap();
+
+                            mousemove_closure.forget();
+                            mouseleave_closure.forget();
+                        }
+
+                        raw_el
+                            .style("scrollbar-width", "thin")
+                            .apply(|raw_el| apply_scrollbar_colors(raw_el))
+                    }
+                })
+                .child(
+                    // ===== HYBRID STABLE POOL CONTAINER =====
+                    // No more child_signal recreation - stable elements only!
+                    Stack::new()
+                        .s(Width::fill())
+                        .s(Height::exact((total_items as f64 * item_height) as u32))
+                        .layers_signal_vec(element_pool.signal_vec_cloned().map({
+                            let hovered_index = hovered_index.clone();
+                            let selected_variables_for_map = selected_variables.clone();
+                            move |element_state| {
+                                create_stable_variable_element_hybrid(
+                                    element_state,
+                                    hovered_index.clone(),
+                                    selected_variables_for_map.clone(),
+                                )
+                            }
+                        })),
+                ),
+        )
 }
 
 // ===== ROW RENDERING FUNCTIONS =====

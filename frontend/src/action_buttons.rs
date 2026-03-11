@@ -12,17 +12,16 @@ pub fn load_files_button_with_progress(
 ) -> impl Element {
     // Count files that are actually in loading state
     // Use files.signal_vec_cloned() for non-Copy types
-    let loading_count_signal =
-        tracked_files
-            .files
-            .signal_vec_cloned()
-            .to_signal_cloned()
-            .map(move |files| {
-                files
-                    .iter()
-                    .filter(|file| matches!(file.state, shared::FileState::Loading(_)))
-                    .count()
-            });
+    let loading_count_signal = tracked_files
+        .files
+        .signal_vec_cloned()
+        .to_signal_cloned()
+        .map(move |files| {
+            files
+                .iter()
+                .filter(|file| matches!(file.state, shared::FileState::Loading(_)))
+                .count()
+        });
 
     El::new().child_signal(loading_count_signal.map(move |loading_count| {
         let is_loading = loading_count > 0; // Only true when files are actively loading

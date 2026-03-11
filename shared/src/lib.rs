@@ -45,6 +45,7 @@ pub enum UpMsg {
     },
     /// Debug: Trigger test notifications to demonstrate notification system
     TriggerTestNotifications,
+    GetPlatformRoots,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -122,6 +123,7 @@ pub enum DownMsg {
         request_id: String,
         error: String,
     },
+    PlatformRoots(Vec<PlatformRoot>),
     /// Debug: Test notification from backend
     TestNotification {
         variant: String, // "error", "info", "success"
@@ -436,6 +438,13 @@ pub struct SignalStatistics {
 // ===== FILESYSTEM TYPES =====
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct PlatformRoot {
+    pub path: String,
+    pub label: String,
+    pub is_quick_access: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct FileSystemItem {
     pub name: String,
     pub path: String,
@@ -513,21 +522,67 @@ pub struct SelectedVariable {
     /// Format type for display - None uses default (Hexadecimal)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub formatter: Option<VarFormat>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signal_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub row_height: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub analog_limits: Option<AnalogLimits>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct AnalogLimits {
+    pub auto: bool,
+    pub min: f64,
+    pub max: f64,
+}
+
+impl AnalogLimits {
+    pub fn auto() -> Self {
+        Self {
+            auto: true,
+            min: 0.0,
+            max: 0.0,
+        }
+    }
+
+    pub fn manual(min: f64, max: f64) -> Self {
+        Self {
+            auto: false,
+            min,
+            max,
+        }
+    }
 }
 
 impl SelectedVariable {
+    pub fn default_row_height_for_signal_type(signal_type: &str) -> u32 {
+        if signal_type == "Real" { 90 } else { 30 }
+    }
+
     pub fn new(variable: Signal, file_path: String, scope_full_name: String) -> Self {
-        let Signal { name, width, .. } = variable;
-        let unique_id = format!("{}|{}|{}", file_path, scope_full_name, name);
-        let formatter = if width <= 1 {
+        let unique_id = format!("{}|{}|{}", file_path, scope_full_name, variable.name);
+        let formatter = if variable.width <= 1 {
             Some(VarFormat::Binary)
         } else {
-            None // Multi-bit defaults to Hexadecimal for compactness
+            None
+        };
+        let is_real = variable.signal_type == "Real";
+        let row_height = Some(Self::default_row_height_for_signal_type(
+            &variable.signal_type,
+        ));
+        let analog_limits = if is_real {
+            Some(AnalogLimits::auto())
+        } else {
+            None
         };
 
         Self {
             unique_id,
             formatter,
+            signal_type: Some(variable.signal_type),
+            row_height,
+            analog_limits,
         }
     }
 
@@ -538,10 +593,22 @@ impl SelectedVariable {
         formatter: VarFormat,
     ) -> Self {
         let unique_id = format!("{}|{}|{}", file_path, scope_full_name, variable.name);
+        let is_real = variable.signal_type == "Real";
+        let row_height = Some(Self::default_row_height_for_signal_type(
+            &variable.signal_type,
+        ));
+        let analog_limits = if is_real {
+            Some(AnalogLimits::auto())
+        } else {
+            None
+        };
 
         Self {
             unique_id,
-            formatter: Some(formatter), // Explicitly set by user
+            formatter: Some(formatter),
+            signal_type: Some(variable.signal_type),
+            row_height,
+            analog_limits,
         }
     }
 
@@ -590,8 +657,11 @@ impl SelectedVariable {
         Some(Signal {
             id: variable_name.clone(),
             name: variable_name,
-            signal_type: "Unknown".to_string(), // Type info not stored in new format
-            width: 0,                           // Width info not stored in new format
+            signal_type: self
+                .signal_type
+                .clone()
+                .unwrap_or_else(|| "Unknown".to_string()),
+            width: 0,
         })
     }
 
@@ -894,10 +964,7 @@ pub enum FileError {
         reason: String,
     },
     /// Loading timed out
-    Timeout {
-        path: String,
-        timeout_seconds: u64,
-    },
+    Timeout { path: String, timeout_seconds: u64 },
 }
 
 impl FileError {
@@ -946,7 +1013,10 @@ impl FileError {
             } => {
                 format!("Invalid {} file: {} ({})", expected_format, path, reason)
             }
-            FileError::Timeout { path, timeout_seconds } => {
+            FileError::Timeout {
+                path,
+                timeout_seconds,
+            } => {
                 format!("Loading timed out after {}s: {}", timeout_seconds, path)
             }
         }
@@ -1405,6 +1475,19 @@ where
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct SignalGroupConfig {
+    pub name: String,
+    pub member_ids: Vec<String>,
+    pub collapsed: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct MarkerConfig {
+    pub time_ps: u64,
+    pub name: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct TimelineConfig {
     #[serde(default = "default_cursor_position_ps")]
     pub cursor_position_ps: u64,
@@ -1416,6 +1499,8 @@ pub struct TimelineConfig {
     pub zoom_center_ps: u64,
     #[serde(default = "default_tooltip_enabled")]
     pub tooltip_enabled: bool,
+    #[serde(default)]
+    pub markers: Vec<MarkerConfig>,
 }
 
 impl Default for TimelineConfig {
@@ -1426,6 +1511,7 @@ impl Default for TimelineConfig {
             visible_range_end_ps: default_visible_range_end_ps(),
             zoom_center_ps: default_zoom_center_ps(),
             tooltip_enabled: default_tooltip_enabled(),
+            markers: Vec::new(),
         }
     }
 }
@@ -1476,6 +1562,8 @@ pub struct WorkspaceSection {
     #[serde(default)]
     pub selected_variables: Vec<SelectedVariable>,
     #[serde(default)]
+    pub signal_groups: Vec<SignalGroupConfig>,
+    #[serde(default)]
     pub timeline: TimelineConfig,
 }
 
@@ -1492,6 +1580,7 @@ impl Default for WorkspaceSection {
             load_files_scroll_position: 0,
             variables_search_filter: String::new(),
             selected_variables: Vec::new(),
+            signal_groups: Vec::new(),
             timeline: TimelineConfig::default(),
         }
     }
@@ -2217,6 +2306,39 @@ mod tests {
         assert_eq!(VarFormat::Octal.next(), VarFormat::Signed);
         assert_eq!(VarFormat::Signed.next(), VarFormat::Unsigned);
         assert_eq!(VarFormat::Unsigned.next(), VarFormat::ASCII);
+    }
+
+    #[test]
+    fn real_selected_variables_get_taller_default_rows_and_auto_limits() {
+        let signal = Signal {
+            id: "sig0".to_string(),
+            name: "analog".to_string(),
+            signal_type: "Real".to_string(),
+            width: 64,
+        };
+
+        let selected =
+            SelectedVariable::new(signal, "/tmp/test.vcd".to_string(), "top".to_string());
+
+        assert_eq!(selected.row_height, Some(90));
+        assert_eq!(selected.analog_limits, Some(AnalogLimits::auto()));
+    }
+
+    #[test]
+    fn digital_selected_variables_keep_compact_rows_and_no_analog_limits() {
+        let signal = Signal {
+            id: "sig1".to_string(),
+            name: "digital".to_string(),
+            signal_type: "Bit".to_string(),
+            width: 1,
+        };
+
+        let selected =
+            SelectedVariable::new(signal, "/tmp/test.vcd".to_string(), "top".to_string());
+
+        assert_eq!(selected.row_height, Some(30));
+        assert_eq!(selected.analog_limits, None);
+        assert_eq!(selected.formatter, Some(VarFormat::Binary));
     }
 
     #[test]

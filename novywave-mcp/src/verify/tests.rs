@@ -1,9 +1,9 @@
-use super::config::NovyWaveConfig;
-use super::polling;
 use super::CommandRunner;
 use super::TestResult;
+use super::config::NovyWaveConfig;
+use super::polling;
 use crate::ws_server::{Command, Response};
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 
 pub async fn test_no_loading_stuck_runner(runner: &CommandRunner, timeout_ms: u64) -> TestResult {
     if let Err(e) = polling::wait_for_app_ready_runner(runner, timeout_ms).await {
@@ -124,7 +124,9 @@ pub async fn test_variables_restored_runner(
             }
 
             for expected_var in &config.workspace.selected_variables {
-                let found = variables.iter().any(|v| v.unique_id == expected_var.unique_id);
+                let found = variables
+                    .iter()
+                    .any(|v| v.unique_id == expected_var.unique_id);
 
                 if !found {
                     return TestResult::Fail(format!(

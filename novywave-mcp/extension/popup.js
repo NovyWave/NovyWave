@@ -25,7 +25,7 @@ async function checkStatus() {
   }
 
   try {
-    const tabs = await chrome.tabs.query({ url: 'http://localhost:8080/*' });
+    const tabs = await chrome.tabs.query({ url: 'http://localhost:8082/*' });
 
     if (tabs.length > 0) {
       tabIndicator.classList.add('connected');

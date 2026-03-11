@@ -1,4 +1,7 @@
-use super::rendering::{RenderingParameters, VariableRenderSnapshot, WaveformRenderer};
+use super::rendering::{
+    MarkerRenderData, RenderRowSnapshot, RenderingParameters, VariableRenderSnapshot,
+    WaveformRenderer,
+};
 use crate::config::AppConfig;
 use crate::visualizer::timeline::timeline_actor::{
     TimelinePointerHover, TimelineRenderState, TimelineTooltipData, TooltipVerticalAlignment,
@@ -48,10 +51,16 @@ impl WaveformCanvas {
                 let mut active_theme = current_theme_store.get_cloned();
                 let mut cached_dimensions = (0.0f32, 0.0f32);
 
-                let mut render_state_stream = timeline.render_state_actor().signal_cloned().to_stream().fuse();
+                let mut render_state_stream = timeline
+                    .render_state_actor()
+                    .signal_cloned()
+                    .to_stream()
+                    .fuse();
                 let mut theme_stream = app_config_task.theme.signal().to_stream().fuse();
-                let mut dimensions_stream = canvas_dimensions_task.signal().dedupe().to_stream().fuse();
-                let mut canvas_ready_stream = canvas_ready_task.signal().dedupe().to_stream().fuse();
+                let mut dimensions_stream =
+                    canvas_dimensions_task.signal().dedupe().to_stream().fuse();
+                let mut canvas_ready_stream =
+                    canvas_ready_task.signal().dedupe().to_stream().fuse();
 
                 loop {
                     select! {
@@ -59,13 +68,24 @@ impl WaveformCanvas {
                             if let Some(true) = canvas_is_ready {
                                 if let Some(canvas_element) = canvas_element_store_task.get_cloned() {
                                     if !initialized {
+                                        let measured_dimensions =
+                                            Self::measure_canvas_element(&canvas_element);
                                         let mut new_renderer = WaveformRenderer::new();
                                         let fast_canvas = fast2d::CanvasWrapper::new_with_canvas(canvas_element)
                                             .await;
                                         new_renderer.set_canvas(fast_canvas);
+                                        if let Some((width, height)) = measured_dimensions {
+                                            canvas_dimensions_task.set_neq((width, height));
+                                            timeline.set_canvas_dimensions(width, height);
+                                            new_renderer.set_dimensions(width, height);
+                                            cached_dimensions = (width, height);
+                                        }
                                         if let Some(render_state) = render_state_store.get_cloned() {
                                             let params = Self::render_params_from_state(
-                                                &render_state,
+                                                &Self::state_with_measured_dimensions(
+                                                    render_state,
+                                                    measured_dimensions,
+                                                ),
                                                 active_theme,
                                             );
                                             if let Some(duration_ms) = new_renderer.render_frame(params) {
@@ -76,12 +96,23 @@ impl WaveformCanvas {
                                         initialized = true;
                                         initialization_status_task.set_neq(true);
                                     } else if let Some(ref mut renderer) = renderer {
+                                        let measured_dimensions =
+                                            Self::measure_canvas_element(&canvas_element);
                                         let fast_canvas = fast2d::CanvasWrapper::new_with_canvas(canvas_element)
                                             .await;
                                         renderer.set_canvas(fast_canvas);
+                                        if let Some((width, height)) = measured_dimensions {
+                                            canvas_dimensions_task.set_neq((width, height));
+                                            timeline.set_canvas_dimensions(width, height);
+                                            renderer.set_dimensions(width, height);
+                                            cached_dimensions = (width, height);
+                                        }
                                         if let Some(render_state) = render_state_store.get_cloned() {
                                             let params = Self::render_params_from_state(
-                                                &render_state,
+                                                &Self::state_with_measured_dimensions(
+                                                    render_state,
+                                                    measured_dimensions,
+                                                ),
                                                 active_theme,
                                             );
                                             if let Some(duration_ms) = renderer.render_frame(params) {
@@ -119,8 +150,21 @@ impl WaveformCanvas {
                                 if let (Some(ref mut renderer), Some(render_state)) =
                                     (renderer.as_mut(), render_state_store.get_cloned())
                                 {
+                                    let measured_dimensions = canvas_element_store_task
+                                        .get_cloned()
+                                        .and_then(|canvas| Self::measure_canvas_element(&canvas))
+                                        .or_else(|| {
+                                            if cached_dimensions.0 > 0.0 && cached_dimensions.1 > 0.0 {
+                                                Some(cached_dimensions)
+                                            } else {
+                                                None
+                                            }
+                                        });
                                     let params = Self::render_params_from_state(
-                                        &render_state,
+                                        &Self::state_with_measured_dimensions(
+                                            render_state,
+                                            measured_dimensions,
+                                        ),
                                         active_theme,
                                     );
                                     renderer.set_theme(Self::map_theme(theme));
@@ -132,6 +176,20 @@ impl WaveformCanvas {
                         }
                         state_update = render_state_stream.next() => {
                             if let Some(render_state) = state_update {
+                                let measured_dimensions = canvas_element_store_task
+                                    .get_cloned()
+                                    .and_then(|canvas| Self::measure_canvas_element(&canvas))
+                                    .or_else(|| {
+                                        if cached_dimensions.0 > 0.0 && cached_dimensions.1 > 0.0 {
+                                            Some(cached_dimensions)
+                                        } else {
+                                            None
+                                        }
+                                    });
+                                let render_state = Self::state_with_measured_dimensions(
+                                    render_state,
+                                    measured_dimensions,
+                                );
                                 render_state_store.set(Some(render_state.clone()));
                                 if let Some(ref mut renderer) = renderer.as_mut() {
                                     let params = Self::render_params_from_state(
@@ -181,16 +239,62 @@ impl WaveformCanvas {
             cursor_position_ps: Some(state.cursor.picoseconds()),
             zoom_center_ps: Some(state.zoom_center.picoseconds()),
             theme: Self::map_theme(theme),
-            variables: state
-                .variables
+            rows: state
+                .rows
                 .iter()
-                .map(|series| VariableRenderSnapshot {
-                    unique_id: series.unique_id.clone(),
-                    formatter: series.formatter,
-                    transitions: Arc::clone(&series.transitions),
-                    cursor_value: series.cursor_value.clone(),
+                .map(|row| {
+                    match row {
+                    crate::visualizer::timeline::timeline_actor::TimelineRenderRow::GroupHeader {
+                        name,
+                        row_height,
+                    } => RenderRowSnapshot::GroupHeader {
+                        name: name.clone(),
+                        row_height: *row_height,
+                    },
+                    crate::visualizer::timeline::timeline_actor::TimelineRenderRow::Variable(
+                        series,
+                    ) => RenderRowSnapshot::Variable(VariableRenderSnapshot {
+                        unique_id: series.unique_id.clone(),
+                        formatter: series.formatter,
+                        transitions: Arc::clone(&series.transitions),
+                        cursor_value: series.cursor_value.clone(),
+                        signal_type: series.signal_type.clone(),
+                        row_height: series.row_height,
+                        analog_limits: series.analog_limits.clone(),
+                    }),
+                }
                 })
                 .collect(),
+            markers: state
+                .markers
+                .iter()
+                .map(|m| MarkerRenderData {
+                    time_ps: m.time_ps,
+                    name: m.name.clone(),
+                })
+                .collect(),
+        }
+    }
+
+    fn state_with_measured_dimensions(
+        mut state: TimelineRenderState,
+        measured_dimensions: Option<(f32, f32)>,
+    ) -> TimelineRenderState {
+        if let Some((width, height)) = measured_dimensions {
+            state.canvas_width_px = width.max(1.0) as u32;
+            state.canvas_height_px = height.max(1.0) as u32;
+        }
+        state
+    }
+
+    fn measure_canvas_element(canvas_element: &HtmlCanvasElement) -> Option<(f32, f32)> {
+        let rect = canvas_element.get_bounding_client_rect();
+        let width = rect.width().max(canvas_element.client_width() as f64) as f32;
+        let height = rect.height().max(canvas_element.client_height() as f64) as f32;
+        if width > 0.0 && height > 0.0 {
+            Some((width, height))
+        } else {
+            None
         }
     }
 
@@ -316,9 +420,7 @@ pub fn waveform_canvas(
             let canvas_element_store = canvas_element_store_for_insert.clone();
             let canvas_ref = canvas_ref.clone();
             move |canvas: HtmlCanvasElement| {
-                let width = canvas.client_width() as f32;
-                let height = canvas.client_height() as f32;
-                if width > 0.0 && height > 0.0 {
+                if let Some((width, height)) = WaveformCanvas::measure_canvas_element(&canvas) {
                     canvas_ref.notify_dimensions(width, height);
                 }
                 canvas_element_store.set(Some(canvas));

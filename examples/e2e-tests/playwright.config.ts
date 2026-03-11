@@ -12,7 +12,7 @@ export default defineConfig({
   ],
 
   use: {
-    baseURL: 'http://localhost:8080',
+    baseURL: 'http://localhost:8082',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
@@ -35,7 +35,7 @@ export default defineConfig({
   // Or configure webServer to auto-start (commented out below)
   // webServer: {
   //   command: 'cd ../.. && makers start',
-  //   url: 'http://localhost:8080',
+  //   url: 'http://localhost:8082',
   //   reuseExistingServer: true,
   //   timeout: 120000,
   // },

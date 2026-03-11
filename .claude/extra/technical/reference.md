@@ -8,7 +8,7 @@ Quick reference for NovyWave development patterns and solutions.
 
 **Browser MCP limits:** No F12/F5, no drag/scroll. Use `browser_get_console_logs` and `browser_navigate` instead.
 
-**Build:** Never use `cargo build/check` - only mzoon handles WASM properly. Run `makers start` and watch output directly.
+**Build:** Never use `cargo build/check` for frontend verification. For maintainer-run shared watchers, inspect `dev_server.log` / `dev_plugins.log` / `dev_tauri.log`. Watch stdout directly only when you are the one who launched that process in the same terminal.
 
 ## Zoon/NovyUI Patterns
 

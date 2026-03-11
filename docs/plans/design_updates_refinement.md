@@ -1,98 +1,286 @@
-# Design Updates Refinement — Feature Spec
+# Design Updates Refinement
 
-Five features traced to user research interviews and issue tracker findings. Each addresses friction that real users reported.
+Five user-visible features complete the gap described in the NovyWave blog post: analog signal rendering, per-signal row resizing, signal grouping, named markers, and platform-aware file-picker roots. This document describes the intended final behavior, persistence model, edge cases, and the verification procedure for both AI-assisted checks and manual maintainer checks.
 
----
+## Final State Ownership
+
+- `SelectedVariables` is the live owner of per-signal metadata:
+  - `formatter`
+  - `signal_type`
+  - `row_height`
+  - `analog_limits`
+- `WaveformTimeline` is the live owner of markers and marker ordering behavior.
+- `AppConfig` persists snapshots. It must not become a second live state store for row heights, analog limits, groups, or markers.
+
+## Shared Types and Persistence
+
+- `shared::SelectedVariable` persists:
+  - `unique_id`
+  - `formatter`
+  - `signal_type`
+  - `row_height`
+  - `analog_limits: Option<AnalogLimits>`
+- `AnalogLimits` persists as:
+  - `auto: bool`
+  - `min: f64`
+  - `max: f64`
+- `WorkspaceSection.signal_groups` stores named group membership and collapse state.
+- `TimelineConfig.markers` stores named time bookmarks.
+- New fields stay backward-compatible with `#[serde(default)]`.
+- Restore-time metadata backfill fills missing `signal_type`, `row_height`, and default analog limits after tracked files load.
+- Defaults:
+  - digital rows: `30px`
+  - real/analog rows: `90px`
+  - real/analog limits: `auto = true`
 
 ## Feature 1: Analog Signal Rendering
 
-**Why**: Physicist: "height extensions feel wonky, values normalized to current window, cannot set limits." Backend parses Real values via `wellen` (floats with 6 decimal places, sent as strings). Frontend renders them as digital text rectangles — no curves, no Y-axis.
+### Behavior
 
-**What**: Polyline/step-function rendering for Real signals in Fast2D canvas. Y-axis scale in the value column area. User-settable min/max limits (not just auto-normalize to visible window). Smooth interaction with zoom/pan.
+- Real-valued signals render as analog line traces instead of digital rectangles.
+- Auto range uses only the visible time window, not the full file.
+- Manual limits override auto range when `min < max`.
+- Flat signals render as a centered line instead of collapsing or disappearing.
+- Invalid numeric samples are skipped without panicking.
+- Rendering is clipped to the signal row bounds.
 
-**How**:
-- `frontend/src/visualizer/canvas/rendering.rs`: New rendering path in `draw_pixel_run` / `add_signal_segments` — detect Real signal type via `signal_type` field in `VariableRenderSnapshot` (needs threading through from `Signal` struct). Parse float strings back to f64, compute Y positions from min/max scaling within row height. Use Fast2D `Line` primitive (exists at `crates/fast2d/src/object2d/line.rs`, accepts `Vec<(f32, f32)>` — currently unused in codebase).
-- `frontend/src/selected_variables_panel.rs`: Add Y-axis min/max controls per variable (follow-up, not first version).
-- `shared/src/lib.rs`: Add `AnalogLimits { min: f64, max: f64, auto: bool }` to per-variable config.
-- `.novywave` config: Persist limits per signal.
+### UI
 
-**Key challenge**: Two-pass rendering needed — first pass finds min/max of visible transitions for auto-scaling, second pass draws. The pixel-bucketing approach (`PixelValue::Single`/`Mixed`) needs adaptation for analog: show min-max range per pixel instead of "Mixed" marker.
+- The value column for analog rows shows:
+  - current value
+  - current range summary (`Auto range` or `min .. max`)
+  - action to switch back to auto
+  - action to edit manual bounds
+- Manual bounds are edited through the analog limits dialog.
+- Invalid manual bounds are rejected unless both values are finite and `min < max`.
 
-**Difficulty**: Medium. Fast2D `Line` is ready, backend data pipeline works. Main work is the parallel rendering path and Y-axis scaling. Best-effort: basic step rendering with auto-scaling first, user-settable limits as follow-up.
+### Acceptance Criteria
 
----
+- Analog rows are visibly different from digital rows.
+- Zooming or panning changes auto-scaled analog traces based on the visible window.
+- Manual limits survive workspace reload.
 
 ## Feature 2: Signal Row Height Resizing
 
-**Why**: `SELECTED_VARIABLES_ROW_HEIGHT` hardcoded as `const u32 = 30` in `selected_variables_panel.rs:20`. Too small for analog traces. Used in name column (line 228), value column (line 445), footers (lines 307, 479), and panel height calculation (line 115). Canvas rendering computes height differently: `available_height / total_rows`.
+### Behavior
 
-**What**: Start with a global row height control (drag handle or slider). Per-variable heights as a follow-up if needed. Larger default for analog signals.
+- Every visible signal row can be resized by dragging its divider.
+- Resizing updates the name column, value column, and waveform column immediately.
+- Heights clamp to `20..=300`.
+- Group headers keep a fixed `30px` height and are not waveform rows.
 
-**How**:
-- `frontend/src/selected_variables_panel.rs`: Replace `SELECTED_VARIABLES_ROW_HEIGHT` const with a `Mutable<u32>` in `AppConfig`. Reuse `DraggingSystem` from `frontend/src/dragging.rs` (already has `start_drag`, `process_drag_movement`, `end_drag` with min/max clamping and auto-persistence).
-- `frontend/src/visualizer/canvas/rendering.rs`: Update row height calculation at line 300-301 to respect the configurable value.
-- `shared/src/lib.rs`: Add `row_height: Option<u32>` to config.
+### Acceptance Criteria
 
-**Difficulty**: Easy (global). `DraggingSystem` is ready to reuse. Per-variable heights would be Hard (data model + canvas sync + three-column layout coordination).
-
----
+- Dragging a divider changes row height in all three columns without misalignment.
+- Heights persist after workspace reload.
+- Analog rows default taller than digital rows.
 
 ## Feature 3: Signal Grouping
 
-**Why**: [GTKWave #368](https://github.com/gtkwave/gtkwave/issues/368), [#476](https://github.com/gtkwave/gtkwave/issues/476). Signal list doesn't scale past ~20 signals.
+### Behavior
 
-**What**: Named collapsible groups in selected variables panel. No drag & drop. No coloring.
+- Groups are named, collapsible, and rendered as their own visible rows.
+- Each signal can belong to at most one group at a time.
+- Re-grouping removes a signal from its previous group.
+- Groups with fewer than two members are dropped automatically.
+- Stale group member IDs are removed when variables are removed or restored.
 
-**How**:
-- `frontend/src/selected_variables.rs`: Currently stores `MutableVec<SelectedVariable>` (line 15). Add a separate `signal_groups: MutableVec<SignalGroup>` where `SignalGroup { name: String, member_ids: Vec<String>, collapsed: Mutable<bool> }`. Flat list remains for backward compatibility — ungrouped variables show outside any group.
-- `frontend/src/selected_variables_panel.rs`: Add group header rows (clickable to collapse/expand) using the existing `expanded_scopes` pattern (line 19 of `selected_variables.rs`) as template for collapse state.
-- `frontend/src/visualizer/canvas/rendering.rs`: Filter out collapsed variables from render list.
-- `shared/src/lib.rs`: `SelectedVariable` (line 509) currently has `unique_id` and `formatter` only. Add `signal_groups: Vec<SignalGroupConfig>` to `WorkspaceSection` serialization. Old configs with no groups load fine (default to empty).
+### UI
 
-**Key challenge**: Keeping three columns (name, value, wave) synchronized when some rows are collapsed.
+- Header actions:
+  - enter grouping mode
+  - select variables for grouping
+  - create group with a name dialog
+- Group header actions:
+  - collapse / expand
+  - rename
+  - delete group
 
-**Difficulty**: Medium.
+### Acceptance Criteria
 
----
+- Group headers reserve vertical space in the name, value, and waveform columns.
+- Collapsed members disappear consistently from all three columns and the timeline render state.
+- Deleting a group leaves its variables selected but ungrouped.
 
-## Feature 4: Named Markers / Time Bookmarks
+## Feature 4: Named Markers
 
-**Why**: [vcdrom #27](https://github.com/wavedrom/vcdrom/issues/27) — navigation too manual. [GTKWave #308](https://github.com/gtkwave/gtkwave/issues/308) — extensibility demand. Jump-to-transition exists but no persistent bookmarks.
+### Behavior
 
-**What**: Place named markers at specific time points on the timeline. Render as labeled vertical lines on the waveform canvas (distinct color from cursor/zoom-center). Markers persist in `.novywave` workspace config. UX for creating/managing markers TBD.
+- `M` adds a marker at the current cursor time.
+- `1`-`9` jump to the nth marker in time order.
+- Markers restore from workspace config and refresh render state immediately.
+- Marker lines always render when visible.
+- Marker labels use three fixed top lanes.
+- If every label lane would overlap, the line still renders and only the label text is suppressed.
 
-**How**:
-- `frontend/src/visualizer/timeline/timeline_actor.rs`: Add `markers: MutableVec<Marker>` where `Marker { time_ps: TimePs, name: String }`.
-- `frontend/src/visualizer/canvas/rendering.rs`: Render marker lines using same pattern as `add_cursor_lines` (line 676-723) — vertical `Rectangle` at marker X position. Add text label using Fast2D `Text` (already used for timeline labels at line 831 and signal values at line 584).
-- `shared/src/lib.rs`: Add `Marker` type and serialization in `TimelineConfig`.
-- `frontend/src/visualizer/canvas/rendering.rs`: Add `markers: Vec<Marker>` field to `RenderingParameters` (line 65).
+### UI
 
-**Key challenge**: Text label overlap when markers are close together. Need a positioning strategy. Rendering itself is straightforward — direct copy of cursor line code.
+- Marker manager lists markers sorted by time.
+- Each marker can be renamed, jumped to, or deleted.
 
-**Difficulty**: Easy-Medium. Rendering: easy (2-3 hours). Marker management UX: medium, depends on desired complexity.
+### Acceptance Criteria
 
----
+- Keyboard jumps follow time order, not insertion order.
+- Marker names and positions persist after workspace reload.
+- Dense marker sets still show the correct vertical lines.
 
 ## Feature 5: File Picker Platform Roots
 
-**Why**: macOS M1 developer blocked on first use. File picker showed `/home` instead of `/Users`. Files in `/tmp` invisible. First-minute blocker.
+### Behavior
 
-**What**: Platform-aware default roots. macOS: `/Users`, `~/`, `/Volumes`. Windows: drive letters. Linux: keep current. Clear "no waveform files found" empty-state when a directory has no supported files.
+- Platform roots are requested on startup.
+- If the file picker opens before roots are known, it requests them again.
+- macOS roots:
+  - `/`
+  - home
+  - Desktop
+  - Downloads
+  - `/Volumes`
+- Windows roots:
+  - available drives
+  - home
+  - Desktop
+  - Downloads
+- Linux roots:
+  - `/`
+  - home
+  - Desktop
+  - Downloads
+- Browsing `"/"` on Unix shows the real directory contents.
+- Old empty or invalid expanded-directory entries are discarded.
+- Empty directories show `No waveform files in this directory`.
 
-**How**:
-- `frontend/src/file_picker.rs`: Currently hardcodes `"/"` as root (line 50-51) and tries `HOME`/`USERPROFILE` env vars (lines 55-57). The `build_tree_data("/", ...)` call at line 503 always starts from `/`. Replace with dynamic roots received from backend.
-- Backend: Add `UpMsg::GetPlatformRoots` / `DownMsg::PlatformRoots(Vec<String>)`. Backend detects OS via `std::env::consts::OS` and returns appropriate root paths. Windows: enumerate drive letters. macOS: `/`, plus quick-access paths. Linux: `/`.
-- Frontend tree initialization in `initialize_directories_and_request_contents`: handle multiple roots as top-level entries.
-- `std::env::var("HOME")` on line 55 runs in WASM context — likely always fails in browser mode. Platform detection must happen on the backend side.
+### Acceptance Criteria
 
-**Difficulty**: Easy. No architectural changes. Main effort is cross-platform testing.
+- macOS and Linux no longer fake `"/"` with a hand-picked directory list.
+- `/tmp` or another non-home root path is reachable through normal browsing.
+- The tree shows platform roots even before any directory is manually expanded.
 
----
+## Build/Watcher Observation Policy
 
-## Implementation Priority
+- Maintainer-run shared processes are observed through log files:
+  - `dev_server.log`
+  - `dev_plugins.log`
+  - `dev_tauri.log`
+- Agents must treat those logs as the canonical source of compile status.
+- Agents must not switch policy to “attach directly to an already running dev server”.
+- Direct stdout watching is acceptable only for the same human who launched that interactive process and still owns that terminal session.
+- When reporting watcher state, inspect the newest relevant log chunk rather than dumping the full file.
 
-1. **File picker platform roots** — Easy, unblocks first-minute experience
-2. **Signal row height resizing** — Easy (global), prerequisite for useful analog rendering
-3. **Analog signal rendering** — Medium, biggest user-reported gap
-4. **Named markers / time bookmarks** — Easy-Medium, well-patterned addition
-5. **Signal grouping** — Medium, scales the tool for larger designs
+## AI Verification Procedure
+
+Follow this sequence after implementation:
+
+1. Inspect the newest `dev_server.log` chunk and list every warning or `error[E...]` line if any exist.
+2. Inspect `dev_plugins.log` or `dev_tauri.log` too if the touched code path depends on them.
+3. Run repository-allowed local checks for touched logic where feasible:
+   - `cargo fmt --all`
+   - targeted `cargo test` invocations or the workspace test command when allowed by the maintainer workflow
+4. Open the app with Browser MCP.
+5. Use `window.__novywave_test_api` to inspect:
+   - `getSelectedVariables()`
+   - `getVisibleRows()`
+   - `getMarkers()`
+   - `getFilePickerRoots()`
+   - `getTimelineState()`
+6. Verify file-picker roots:
+   - open the file picker
+   - confirm roots match the running platform
+   - browse `"/"` and confirm real directories are shown
+   - open an empty directory and confirm the empty-state message
+7. Verify analog rendering:
+   - load the analog fixture
+   - confirm a Real signal draws as a line trace
+   - pan or zoom and confirm auto range reacts to the visible window
+   - set manual min/max
+   - confirm invalid limits are rejected
+8. Verify row resizing:
+   - resize one digital row and one analog row
+   - confirm alignment across name/value/wave columns
+   - reload and confirm persistence
+9. Verify grouping:
+   - create a named group
+   - rename it
+   - regroup one signal into another group
+   - collapse and expand the groups
+   - delete a group
+10. Verify markers:
+   - add several markers with `M`
+   - rename and delete via the marker manager
+   - use `1`-`9` jumps
+   - reload and confirm persistence
+11. If the Tauri desktop app is under test, use the desktop bridge too:
+   - `GET /health`
+   - `POST /eval`
+   - `GET /state/selected-variables`
+   - `GET /state/visible-rows`
+   - `GET /state/markers`
+   - `GET /state/file-picker-roots`
+   - `POST /action/set-cursor-ps`
+   - `POST /action/add-marker`
+   - `POST /action/rename-marker`
+   - `POST /action/remove-marker`
+   - `POST /action/jump-to-marker`
+   - `POST /action/set-row-height`
+   - `POST /action/set-analog-limits`
+   - `POST /action/create-group`
+   - `POST /action/rename-group`
+   - `POST /action/toggle-group-collapse`
+   - `POST /action/delete-group`
+   - `POST /workspace/select`
+   - prefer the action endpoints over focus-based desktop input so AI verification does not interrupt the active desktop session
+12. Report pass/fail per feature and identify the first failing step if anything breaks.
+
+## Manual Verification Procedure
+
+Follow this checklist from a clean start:
+
+1. Launch the existing maintainer-run development environment.
+2. Open the waveform file picker.
+3. Confirm the expected platform roots appear for your OS.
+4. Browse to `"/tmp"` or another non-home directory and confirm real filesystem navigation works.
+5. Open a directory with no waveform files and confirm the empty-state message appears.
+6. Load one digital fixture and one analog/real-valued fixture.
+7. Find a real-valued signal and confirm it renders as an analog line.
+8. Zoom in and out and confirm the analog trace remains readable.
+9. Open the analog limits UI:
+   - leave it on auto and note the default behavior
+   - switch to manual
+   - enter a valid `min` and `max`
+   - confirm the waveform rescales
+   - try an invalid pair where `min >= max` and confirm it is rejected
+10. Resize one digital row and one analog row by dragging their dividers.
+11. Confirm row alignment remains correct across all three columns.
+12. Enter grouping mode and create a named group from at least two signals.
+13. Rename that group.
+14. Create a second group and move one signal into it.
+15. Confirm the moved signal is no longer shown in the first group.
+16. Collapse and expand both groups.
+17. Delete one group and confirm its signals remain selected.
+18. Move the cursor to several points and press `M` to add markers.
+19. Open the marker manager:
+   - rename one marker
+   - delete one marker
+   - jump to markers from the manager
+20. Press `1`-`9` and confirm jumps follow marker time order.
+21. Reload the workspace.
+22. Confirm all persisted state restores:
+   - row heights
+   - analog limits
+   - groups
+   - collapsed state
+   - markers
+23. Re-check existing behavior that must not regress:
+   - binary/hex formatting
+   - Dock to Bottom / Right
+   - waveform pan/zoom
+   - jump to next/previous change
+
+## Completion Rule
+
+This feature batch is complete only when:
+
+- watcher logs show no unresolved compile problems
+- automated checks used for the touched areas pass
+- AI verification passes end-to-end
+- manual verification passes end-to-end

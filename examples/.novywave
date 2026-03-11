@@ -32,9 +32,12 @@ load_files_expanded_directories = [
     "vhdl/counter",
     "amaranth/counter",
     "/home/martinkavik/repos/NovyWave/test_files",
+    "/home/martinkavik/Desktop",
+    "/home/martinkavik/Downloads",
 ]
 selected_scope_id = "scope_spade/counter/counter.vcd|counter_tb"
 load_files_scroll_position = 1920
+signal_groups = []
 
 [workspace.docked_bottom_dimensions]
 files_and_scopes_panel_width = 603.0
@@ -50,22 +53,34 @@ selected_variables_panel_value_column_width = 220.0
 
 [[workspace.selected_variables]]
 unique_id = "spade/counter/counter.vcd|counter_tb|clk"
+signal_type = "Reg"
+row_height = 30
 
 [[workspace.selected_variables]]
 unique_id = "spade/counter/counter.vcd|counter_tb|count"
 formatter = "Signed"
+signal_type = "Wire"
+row_height = 30
 
 [[workspace.selected_variables]]
 unique_id = "spade/counter/counter.vcd|counter_tb|enable"
+signal_type = "Reg"
+row_height = 30
 
 [[workspace.selected_variables]]
 unique_id = "spade/counter/counter.vcd|counter_tb|output_packed"
+signal_type = "Wire"
+row_height = 30
 
 [[workspace.selected_variables]]
 unique_id = "spade/counter/counter.vcd|counter_tb|overflow"
+signal_type = "Wire"
+row_height = 30
 
 [[workspace.selected_variables]]
 unique_id = "spade/counter/counter.vcd|counter_tb|rst"
+signal_type = "Reg"
+row_height = 30
 
 [workspace.timeline]
 cursor_position_ps = 279645
@@ -73,6 +88,10 @@ visible_range_start_ps = 0
 visible_range_end_ps = 1705000
 zoom_center_ps = 538103
 tooltip_enabled = true
+
+[[workspace.timeline.markers]]
+time_ps = 279645
+name = "Marker 1"
 
 [plugins]
 schema_version = 1

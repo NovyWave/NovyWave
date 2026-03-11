@@ -146,7 +146,7 @@ raw min 0 raw max 3830000 raw range 3830000
 ### Prerequisites
 1. Start NovyWave: `cd .. && makers start`
 2. Wait for compilation (check `dev_server.log`)
-3. Open http://localhost:8080
+3. Open http://localhost:8082
 
 ## Expected Results
 

@@ -5,9 +5,9 @@ use moon::*;
 use serde::{Deserialize, Serialize};
 use shared::{
     self, AppConfig, CanonicalPathPayload, DownMsg, FileError, FileFormat, FileHierarchy,
-    FileSystemItem, ScopeData, SignalStatistics, SignalTransition, SignalTransitionQuery,
-    SignalTransitionResult, SignalValue, SignalValueQuery, SignalValueResult, UnifiedSignalData,
-    UnifiedSignalRequest, UpMsg, WaveformFile,
+    FileSystemItem, PlatformRoot, ScopeData, SignalStatistics, SignalTransition,
+    SignalTransitionQuery, SignalTransitionResult, SignalValue, SignalValueQuery,
+    SignalValueResult, UnifiedSignalData, UnifiedSignalRequest, UpMsg, WaveformFile,
 };
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
@@ -552,10 +552,10 @@ impl SignalCacheManager {
                 let value = signal.get_value_at(&offset, 0);
                 let base_value = format_non_binary_signal_value(&value);
 
-                let stored_value = if let Some(bit_string) = value.to_bit_string() {
-                    bit_string
-                } else {
-                    base_value.clone()
+                let stored_value = match &value {
+                    // wellen panics if Real values are converted to bit strings.
+                    wellen::SignalValue::Real(_) => base_value.clone(),
+                    _ => value.to_bit_string().unwrap_or_else(|| base_value.clone()),
                 };
 
                 if last_value.as_ref() != Some(&stored_value) {
@@ -900,11 +900,19 @@ async fn up_msg_handler(req: UpMsgRequest<UpMsg>) {
             debug_log!(DEBUG_BACKEND, "🛰️ FRONTEND TRACE [{target}]: {message}");
         }
         UpMsg::BrowseDirectory(dir_path) => {
-            debug_log!(DEBUG_BACKEND, "🔍 BACKEND: enqueue BrowseDirectory {}", dir_path);
+            debug_log!(
+                DEBUG_BACKEND,
+                "🔍 BACKEND: enqueue BrowseDirectory {}",
+                dir_path
+            );
             browse_directory(dir_path.clone(), session_id, cor_id).await;
         }
         UpMsg::BrowseDirectories(dir_paths) => {
-            debug_log!(DEBUG_BACKEND, "🔍 BACKEND: enqueue BrowseDirectories batch {}", dir_paths.len());
+            debug_log!(
+                DEBUG_BACKEND,
+                "🔍 BACKEND: enqueue BrowseDirectories batch {}",
+                dir_paths.len()
+            );
             browse_directories_batch(dir_paths.clone(), session_id, cor_id).await;
         }
         UpMsg::QuerySignalValues { file_path, queries } => {
@@ -1005,6 +1013,10 @@ async fn up_msg_handler(req: UpMsgRequest<UpMsg>) {
                 "🔍 BACKEND: Completed UnifiedSignalQuery for request_id: {}",
                 request_id
             );
+        }
+        UpMsg::GetPlatformRoots => {
+            let roots = get_platform_roots();
+            send_down_msg(DownMsg::PlatformRoots(roots), session_id, cor_id).await;
         }
         UpMsg::TriggerTestNotifications => {
             println!("🧪 BACKEND: TriggerTestNotifications received - sending test notifications");
@@ -1231,7 +1243,8 @@ async fn parse_waveform_file(
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             wellen::viewers::read_header_from_file(&file_path_clone, &options)
         }))
-    }).await;
+    })
+    .await;
 
     let header_result = match parse_result {
         Ok(Ok(Ok(header))) => {
@@ -1370,109 +1383,119 @@ async fn parse_waveform_file(
 
             // For FST files, determine final time bounds and corrected timescale
             // Return hierarchy from match to support spawn_blocking ownership pattern
-            let (min_seconds, max_seconds, final_timescale_factor, hierarchy) = match time_bounds_from_scan {
-                Some(bounds) => (bounds.0, bounds.1, timescale_factor, header_result.hierarchy),
-                None => {
-                    // FST files require actual parsing to get time bounds
-                    debug_log!(
-                        DEBUG_PARSE,
-                        "🔍 PARSE: FST file '{}' requires body parsing for time bounds",
-                        file_path
-                    );
-
-                    // Parse the FST body to get actual time bounds
-                    // CRITICAL: Use spawn_blocking to avoid blocking the async runtime
-                    let body = header_result.body;
-                    let hierarchy = header_result.hierarchy;
-                    let file_path_for_log = file_path.clone();
-
-                    let spawn_result = tokio::task::spawn_blocking(move || {
-                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            wellen::viewers::read_body(body, &hierarchy, None)
-                        }));
-                        (result, hierarchy)
-                    })
-                    .await;
-
-                    let (body_parse_result, hierarchy) = match spawn_result {
-                        Ok(tuple) => tuple,
-                        Err(join_error) => {
-                            broadcast_down_msg(DownMsg::ParsingError {
-                                file_id: file_path.clone(),
-                                error: format!("Blocking task failed for FST body: {}", join_error),
-                            })
-                            .await;
-                            return;
-                        }
-                    };
-
-                    let body_result = match body_parse_result {
-                        Ok(Ok(body)) => body,
-                        Ok(Err(e)) => {
-                            broadcast_down_msg(DownMsg::ParsingError {
-                                file_id: file_path.clone(),
-                                error: format!("Failed to parse FST body: {}", e),
-                            })
-                            .await;
-                            return;
-                        }
-                        Err(_) => {
-                            broadcast_down_msg(DownMsg::ParsingError {
-                                file_id: file_path.clone(),
-                                error: "Critical error parsing FST body".to_string(),
-                            })
-                            .await;
-                            return;
-                        }
-                    };
-
-                    // Get actual time bounds from parsed body
-                    if let (Some(&min_time), Some(&max_time)) = (
-                        body_result.time_table.first(),
-                        body_result.time_table.last(),
-                    ) {
-                        // FST files often have incorrect embedded timescale, use intelligent inference
-                        let inferred_timescale = infer_reasonable_fst_timescale(
-                            &body_result,
-                            timescale_factor,
-                            &file_path_for_log,
-                        );
+            let (min_seconds, max_seconds, final_timescale_factor, hierarchy) =
+                match time_bounds_from_scan {
+                    Some(bounds) => (
+                        bounds.0,
+                        bounds.1,
+                        timescale_factor,
+                        header_result.hierarchy,
+                    ),
+                    None => {
+                        // FST files require actual parsing to get time bounds
                         debug_log!(
                             DEBUG_PARSE,
-                            "🔍 FST inference: raw_min={} raw_max={} raw_range={} embedded_factor={} inferred_factor={}",
-                            min_time,
-                            max_time,
-                            (max_time as i128 - min_time as i128),
-                            timescale_factor,
-                            inferred_timescale
-                        );
-                        let min_seconds = min_time as f64 * inferred_timescale;
-                        let max_seconds = max_time as f64 * inferred_timescale;
-
-                        // Store the body data for future use since we already parsed it
-                        // Build signal reference map (similar to what we do when loading body on demand)
-                        let mut signals: HashMap<String, wellen::SignalRef> = HashMap::new();
-                        build_signal_reference_map(&hierarchy, &mut signals);
-
-                        // Note: We don't store WaveformData here because hierarchy
-                        // will be moved later when creating the WaveformFile. The body will be
-                        // loaded on demand when signal values are requested.
-                        debug_log!(
-                            DEBUG_PARSE,
-                            "🔍 PARSE: FST body parsed for time bounds, will reload on demand for signal values",
+                            "🔍 PARSE: FST file '{}' requires body parsing for time bounds",
+                            file_path
                         );
 
-                        (min_seconds, max_seconds, inferred_timescale, hierarchy)
-                    } else {
-                        broadcast_down_msg(DownMsg::ParsingError {
-                            file_id: file_path.clone(),
-                            error: "FST file has no time data".to_string(),
+                        // Parse the FST body to get actual time bounds
+                        // CRITICAL: Use spawn_blocking to avoid blocking the async runtime
+                        let body = header_result.body;
+                        let hierarchy = header_result.hierarchy;
+                        let file_path_for_log = file_path.clone();
+
+                        let spawn_result = tokio::task::spawn_blocking(move || {
+                            let result =
+                                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                    wellen::viewers::read_body(body, &hierarchy, None)
+                                }));
+                            (result, hierarchy)
                         })
                         .await;
-                        return;
+
+                        let (body_parse_result, hierarchy) = match spawn_result {
+                            Ok(tuple) => tuple,
+                            Err(join_error) => {
+                                broadcast_down_msg(DownMsg::ParsingError {
+                                    file_id: file_path.clone(),
+                                    error: format!(
+                                        "Blocking task failed for FST body: {}",
+                                        join_error
+                                    ),
+                                })
+                                .await;
+                                return;
+                            }
+                        };
+
+                        let body_result = match body_parse_result {
+                            Ok(Ok(body)) => body,
+                            Ok(Err(e)) => {
+                                broadcast_down_msg(DownMsg::ParsingError {
+                                    file_id: file_path.clone(),
+                                    error: format!("Failed to parse FST body: {}", e),
+                                })
+                                .await;
+                                return;
+                            }
+                            Err(_) => {
+                                broadcast_down_msg(DownMsg::ParsingError {
+                                    file_id: file_path.clone(),
+                                    error: "Critical error parsing FST body".to_string(),
+                                })
+                                .await;
+                                return;
+                            }
+                        };
+
+                        // Get actual time bounds from parsed body
+                        if let (Some(&min_time), Some(&max_time)) = (
+                            body_result.time_table.first(),
+                            body_result.time_table.last(),
+                        ) {
+                            // FST files often have incorrect embedded timescale, use intelligent inference
+                            let inferred_timescale = infer_reasonable_fst_timescale(
+                                &body_result,
+                                timescale_factor,
+                                &file_path_for_log,
+                            );
+                            debug_log!(
+                                DEBUG_PARSE,
+                                "🔍 FST inference: raw_min={} raw_max={} raw_range={} embedded_factor={} inferred_factor={}",
+                                min_time,
+                                max_time,
+                                (max_time as i128 - min_time as i128),
+                                timescale_factor,
+                                inferred_timescale
+                            );
+                            let min_seconds = min_time as f64 * inferred_timescale;
+                            let max_seconds = max_time as f64 * inferred_timescale;
+
+                            // Store the body data for future use since we already parsed it
+                            // Build signal reference map (similar to what we do when loading body on demand)
+                            let mut signals: HashMap<String, wellen::SignalRef> = HashMap::new();
+                            build_signal_reference_map(&hierarchy, &mut signals);
+
+                            // Note: We don't store WaveformData here because hierarchy
+                            // will be moved later when creating the WaveformFile. The body will be
+                            // loaded on demand when signal values are requested.
+                            debug_log!(
+                                DEBUG_PARSE,
+                                "🔍 PARSE: FST body parsed for time bounds, will reload on demand for signal values",
+                            );
+
+                            (min_seconds, max_seconds, inferred_timescale, hierarchy)
+                        } else {
+                            broadcast_down_msg(DownMsg::ParsingError {
+                                file_id: file_path.clone(),
+                                error: "FST file has no time data".to_string(),
+                            })
+                            .await;
+                            return;
+                        }
                     }
-                }
-            };
+                };
 
             // Convert time bounds to nanoseconds
             let (min_time_ns, max_time_ns) = (
@@ -2702,7 +2725,11 @@ fn relativize_config_paths(config: &mut AppConfig) {
             let normalized = context
                 .to_relative_if_in_workspace(&path_buf)
                 .unwrap_or(path_buf.clone());
-            normalized.to_string_lossy().to_string()
+            if normalized.as_os_str().is_empty() {
+                ".".to_string()
+            } else {
+                normalized.to_string_lossy().to_string()
+            }
         })
         .collect();
 
@@ -2991,7 +3018,12 @@ async fn handle_loaded_config(
                 .load_files_expanded_directories
                 .len()
         );
-        send_down_msg(DownMsg::ConfigLoaded(config_for_messages), session_id, cor_id).await;
+        send_down_msg(
+            DownMsg::ConfigLoaded(config_for_messages),
+            session_id,
+            cor_id,
+        )
+        .await;
     }
 }
 
@@ -3081,8 +3113,11 @@ async fn save_config(config: AppConfig, _session_id: SessionId, _cor_id: CorId) 
             broadcast_down_msg(DownMsg::ConfigSaved).await;
         }
         Err(e) => {
-            broadcast_down_msg(DownMsg::ConfigError(format!("Failed to save config: {}", e)))
-                .await;
+            broadcast_down_msg(DownMsg::ConfigError(format!(
+                "Failed to save config: {}",
+                e
+            )))
+            .await;
         }
     }
 }
@@ -3175,6 +3210,131 @@ fn cleanup_parsing_session(file_id: &str) {
     }
 }
 
+fn get_platform_roots() -> Vec<PlatformRoot> {
+    let mut roots = Vec::new();
+
+    #[cfg(target_os = "macos")]
+    {
+        roots.push(PlatformRoot {
+            path: "/".to_string(),
+            label: "Macintosh HD".to_string(),
+            is_quick_access: false,
+        });
+        if let Some(home) = dirs::home_dir() {
+            let home_str = home.to_string_lossy().to_string();
+            roots.push(PlatformRoot {
+                path: home_str.clone(),
+                label: "Home".to_string(),
+                is_quick_access: true,
+            });
+            let desktop = home.join("Desktop");
+            if desktop.exists() {
+                roots.push(PlatformRoot {
+                    path: desktop.to_string_lossy().to_string(),
+                    label: "Desktop".to_string(),
+                    is_quick_access: true,
+                });
+            }
+            let downloads = home.join("Downloads");
+            if downloads.exists() {
+                roots.push(PlatformRoot {
+                    path: downloads.to_string_lossy().to_string(),
+                    label: "Downloads".to_string(),
+                    is_quick_access: true,
+                });
+            }
+        }
+        if Path::new("/Volumes").exists() {
+            roots.push(PlatformRoot {
+                path: "/Volumes".to_string(),
+                label: "Volumes".to_string(),
+                is_quick_access: false,
+            });
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        for drive_letter in b'A'..=b'Z' {
+            let drive_path = format!("{}:\\", drive_letter as char);
+            if Path::new(&drive_path).exists() {
+                roots.push(PlatformRoot {
+                    path: drive_path.clone(),
+                    label: format!("{}: Drive", drive_letter as char),
+                    is_quick_access: false,
+                });
+            }
+        }
+        if let Some(home) = dirs::home_dir() {
+            let home_str = home.to_string_lossy().to_string();
+            roots.push(PlatformRoot {
+                path: home_str.clone(),
+                label: "Home".to_string(),
+                is_quick_access: true,
+            });
+            let desktop = home.join("Desktop");
+            if desktop.exists() {
+                roots.push(PlatformRoot {
+                    path: desktop.to_string_lossy().to_string(),
+                    label: "Desktop".to_string(),
+                    is_quick_access: true,
+                });
+            }
+            let downloads = home.join("Downloads");
+            if downloads.exists() {
+                roots.push(PlatformRoot {
+                    path: downloads.to_string_lossy().to_string(),
+                    label: "Downloads".to_string(),
+                    is_quick_access: true,
+                });
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        roots.push(PlatformRoot {
+            path: "/".to_string(),
+            label: "File System".to_string(),
+            is_quick_access: false,
+        });
+        if let Some(home) = dirs::home_dir() {
+            let home_str = home.to_string_lossy().to_string();
+            roots.push(PlatformRoot {
+                path: home_str.clone(),
+                label: "Home".to_string(),
+                is_quick_access: true,
+            });
+            let desktop = home.join("Desktop");
+            if desktop.exists() {
+                roots.push(PlatformRoot {
+                    path: desktop.to_string_lossy().to_string(),
+                    label: "Desktop".to_string(),
+                    is_quick_access: true,
+                });
+            }
+            let downloads = home.join("Downloads");
+            if downloads.exists() {
+                roots.push(PlatformRoot {
+                    path: downloads.to_string_lossy().to_string(),
+                    label: "Downloads".to_string(),
+                    is_quick_access: true,
+                });
+            }
+        }
+    }
+
+    if roots.is_empty() {
+        roots.push(PlatformRoot {
+            path: "/".to_string(),
+            label: "File System".to_string(),
+            is_quick_access: false,
+        });
+    }
+
+    roots
+}
+
 async fn browse_directory(dir_path: String, session_id: SessionId, cor_id: CorId) {
     println!("🗂️ browse_directory request path='{}'", dir_path);
     debug_log!(
@@ -3214,55 +3374,6 @@ async fn browse_directory(dir_path: String, session_id: SessionId, cor_id: CorId
             DownMsg::DirectoryContents {
                 path: "/".to_string(),
                 items: drive_items,
-            },
-            session_id,
-            cor_id,
-        )
-        .await;
-        return;
-    }
-
-    // Handle Linux/Unix root directory - provide useful starting points instead of actual "/"
-    #[cfg(unix)]
-    if dir_path == "/" {
-        debug_log!(
-            DEBUG_BACKEND,
-            "🔍 BACKEND: Linux root directory requested, providing common paths"
-        );
-        let mut root_items = Vec::new();
-
-        // Add common useful directories for file selection
-        let useful_paths = vec![
-            ("/home", "home"),
-            ("/tmp", "tmp"),
-            ("/opt", "opt"),
-            ("/usr", "usr"),
-            ("/var", "var"),
-        ];
-
-        for (path, name) in useful_paths {
-            let path_obj = Path::new(path);
-            if path_obj.exists() && path_obj.is_dir() {
-                root_items.push(FileSystemItem {
-                    name: name.to_string(),
-                    path: path.to_string(),
-                    is_directory: true,
-                    file_size: None,
-                    is_waveform_file: false,
-                    file_extension: None,
-                    has_expandable_content: true,
-                });
-            }
-        }
-
-        eprintln!(
-            "🔍 BACKEND: Returning {} Linux root items",
-            root_items.len()
-        );
-        send_down_msg(
-            DownMsg::DirectoryContents {
-                path: "/".to_string(),
-                items: root_items,
             },
             session_id,
             cor_id,
@@ -3373,7 +3484,11 @@ async fn browse_directory(dir_path: String, session_id: SessionId, cor_id: CorId
 }
 
 async fn browse_directories_batch(dir_paths: Vec<String>, session_id: SessionId, cor_id: CorId) {
-    println!("🗂️ browse_directories batch {:?} (len={})", dir_paths, dir_paths.len());
+    println!(
+        "🗂️ browse_directories batch {:?} (len={})",
+        dir_paths,
+        dir_paths.len()
+    );
     // Use jwalk's parallel processing capabilities for batch directory scanning
     let mut results = HashMap::new();
 
@@ -3587,8 +3702,13 @@ async fn ensure_waveform_body_loaded(file_path: &str) -> Result<(), String> {
     let action = {
         let store = match WAVEFORM_DATA_STORE.lock() {
             Ok(store) => store,
-            Err(_) => {
-                return Err("Internal error: Failed to access waveform data store".to_string());
+            Err(poisoned) => {
+                debug_log!(
+                    DEBUG_BACKEND,
+                    "⚠️ WAVEFORM_DATA_STORE was poisoned while ensuring '{}'; recovering",
+                    file_path
+                );
+                poisoned.into_inner()
             }
         };
 
@@ -3599,8 +3719,13 @@ async fn ensure_waveform_body_loaded(file_path: &str) -> Result<(), String> {
             // Not loaded - need to check loading status
             let mut loading_in_progress = match VCD_LOADING_IN_PROGRESS.lock() {
                 Ok(loading) => loading,
-                Err(_) => {
-                    return Err("Internal error: Failed to access loading tracker".to_string())
+                Err(poisoned) => {
+                    debug_log!(
+                        DEBUG_BACKEND,
+                        "⚠️ VCD_LOADING_IN_PROGRESS was poisoned while ensuring '{}'; recovering",
+                        file_path
+                    );
+                    poisoned.into_inner()
                 }
             };
 
@@ -3609,7 +3734,14 @@ async fn ensure_waveform_body_loaded(file_path: &str) -> Result<(), String> {
                 let notifier = {
                     let mut notifiers = match LOADING_NOTIFIERS.lock() {
                         Ok(n) => n,
-                        Err(poisoned) => poisoned.into_inner(),
+                        Err(poisoned) => {
+                            debug_log!(
+                                DEBUG_BACKEND,
+                                "⚠️ LOADING_NOTIFIERS was poisoned while ensuring '{}'; recovering",
+                                file_path
+                            );
+                            poisoned.into_inner()
+                        }
                     };
                     notifiers
                         .entry(file_path.to_string())
@@ -3663,9 +3795,13 @@ async fn ensure_waveform_body_loaded(file_path: &str) -> Result<(), String> {
     let metadata = {
         let metadata_store = match WAVEFORM_METADATA_STORE.lock() {
             Ok(store) => store,
-            Err(_) => {
-                complete_loading(file_path);
-                return Err("Internal error: Failed to access metadata store".to_string());
+            Err(poisoned) => {
+                debug_log!(
+                    DEBUG_BACKEND,
+                    "⚠️ WAVEFORM_METADATA_STORE was poisoned while ensuring '{}'; recovering",
+                    file_path
+                );
+                poisoned.into_inner()
             }
         };
         let meta = metadata_store.get(file_path).cloned();
@@ -3711,7 +3847,10 @@ async fn ensure_waveform_body_loaded(file_path: &str) -> Result<(), String> {
             }
             Err(join_error) => {
                 complete_loading(file_path);
-                return Err(format!("Blocking task failed for header re-parse: {}", join_error));
+                return Err(format!(
+                    "Blocking task failed for header re-parse: {}",
+                    join_error
+                ));
             }
         };
 
@@ -3753,7 +3892,10 @@ async fn ensure_waveform_body_loaded(file_path: &str) -> Result<(), String> {
             }
             Err(join_error) => {
                 complete_loading(file_path);
-                return Err(format!("Blocking task failed for header parse: {}", join_error));
+                return Err(format!(
+                    "Blocking task failed for header parse: {}",
+                    join_error
+                ));
             }
         };
 
@@ -3819,7 +3961,10 @@ async fn ensure_waveform_body_loaded(file_path: &str) -> Result<(), String> {
         }
         Err(join_error) => {
             complete_loading(file_path);
-            return Err(format!("Blocking task failed for body reparse: {}", join_error));
+            return Err(format!(
+                "Blocking task failed for body reparse: {}",
+                join_error
+            ));
         }
     };
 
@@ -3838,7 +3983,10 @@ async fn ensure_waveform_body_loaded(file_path: &str) -> Result<(), String> {
         Ok(tuple) => tuple,
         Err(join_error) => {
             complete_loading(file_path);
-            return Err(format!("Blocking task failed for body parse: {}", join_error));
+            return Err(format!(
+                "Blocking task failed for body parse: {}",
+                join_error
+            ));
         }
     };
 
@@ -3909,9 +4057,15 @@ async fn ensure_waveform_body_loaded(file_path: &str) -> Result<(), String> {
             Ok(mut store) => {
                 store.insert(file_path.to_string(), waveform_data);
             }
-            Err(_) => {
-                complete_loading(file_path);
-                return Err("Internal error: Failed to store waveform data".to_string());
+            Err(poisoned) => {
+                debug_log!(
+                    DEBUG_BACKEND,
+                    "⚠️ WAVEFORM_DATA_STORE was poisoned while storing '{}'; recovering",
+                    file_path
+                );
+                poisoned
+                    .into_inner()
+                    .insert(file_path.to_string(), waveform_data);
             }
         }
     }
@@ -3992,17 +4146,13 @@ async fn query_signal_values(
 
     let store = match WAVEFORM_DATA_STORE.lock() {
         Ok(store) => store,
-        Err(_) => {
-            send_down_msg(
-                DownMsg::SignalValuesError {
-                    file_path,
-                    error: "Internal error: Failed to access waveform data store".to_string(),
-                },
-                session_id,
-                cor_id,
-            )
-            .await;
-            return;
+        Err(poisoned) => {
+            debug_log!(
+                DEBUG_BACKEND,
+                "⚠️ WAVEFORM_DATA_STORE was poisoned during signal value query for '{}'; recovering",
+                file_path
+            );
+            poisoned.into_inner()
         }
     };
 
@@ -4247,9 +4397,17 @@ async fn process_signal_value_queries_internal(
         return Err(e);
     }
 
-    let store = WAVEFORM_DATA_STORE
-        .lock()
-        .map_err(|_| "Failed to access waveform data store".to_string())?;
+    let store = match WAVEFORM_DATA_STORE.lock() {
+        Ok(store) => store,
+        Err(poisoned) => {
+            debug_log!(
+                DEBUG_BACKEND,
+                "⚠️ WAVEFORM_DATA_STORE was poisoned during internal signal value query for '{}'; recovering",
+                file_path
+            );
+            poisoned.into_inner()
+        }
+    };
 
     let waveform_data = store
         .get(file_path)
@@ -4449,17 +4607,13 @@ async fn query_signal_transitions(
 
     let store = match WAVEFORM_DATA_STORE.lock() {
         Ok(store) => store,
-        Err(_) => {
-            send_down_msg(
-                DownMsg::SignalTransitionsError {
-                    file_path,
-                    error: "Internal error: Failed to access waveform data store".to_string(),
-                },
-                session_id,
-                cor_id,
-            )
-            .await;
-            return;
+        Err(poisoned) => {
+            debug_log!(
+                DEBUG_BACKEND,
+                "⚠️ WAVEFORM_DATA_STORE was poisoned during signal transition query for '{}'; recovering",
+                file_path
+            );
+            poisoned.into_inner()
         }
     };
     let waveform_data = match store.get(&file_path) {

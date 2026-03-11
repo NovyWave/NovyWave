@@ -7,7 +7,7 @@
 
 set -e
 
-URL="${1:-http://localhost:8080}"
+URL="${1:-http://localhost:8082}"
 WAIT_SECONDS="${2:-15}"
 
 echo "=== Loading... Bug Fix Test ==="

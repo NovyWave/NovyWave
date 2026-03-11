@@ -7,7 +7,7 @@ use super::time_domain::TimePs;
 use shared::FileState;
 use std::collections::HashSet;
 use std::sync::Arc;
-use zoon::{map_ref, Mutable, SignalExt, SignalVecExt, Task, TaskHandle};
+use zoon::{Mutable, SignalExt, SignalVecExt, Task, TaskHandle, map_ref};
 
 /// Minimal data extracted from TrackedFile for range computation
 #[derive(Clone, PartialEq)]
@@ -31,7 +31,9 @@ impl MaximumTimelineRange {
         let range = Mutable::new(None);
         let range_clone = range.clone();
 
-        let files_signal = tracked_files.files.signal_vec_cloned()
+        let files_signal = tracked_files
+            .files
+            .signal_vec_cloned()
             .map(|file| FileRangeData {
                 path: file.path.clone(),
                 time_range: match &file.state {
@@ -44,8 +46,14 @@ impl MaximumTimelineRange {
             })
             .to_signal_cloned();
 
-        let vars_signal = selected_variables.variables_vec_actor.signal_cloned()
-            .map(|vars| vars.iter().filter_map(|v| v.file_path()).collect::<HashSet<_>>());
+        let vars_signal = selected_variables
+            .variables_vec_actor
+            .signal_cloned()
+            .map(|vars| {
+                vars.iter()
+                    .filter_map(|v| v.file_path())
+                    .collect::<HashSet<_>>()
+            });
 
         let _range_task = Arc::new(Task::start_droppable(
             map_ref! {

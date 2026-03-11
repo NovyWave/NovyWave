@@ -71,12 +71,14 @@ Start the development server with hot-reload:
 makers start
 ```
 
-Open http://localhost:8080 in your browser.
+Open http://localhost:8082 in your browser.
 
 The development server:
 - Watches for file changes
 - Recompiles automatically
 - Reloads the browser
+
+If the watcher is being run by another maintainer, inspect `dev_server.log` instead of trying to attach to their terminal output.
 
 ### Desktop Mode (Tauri)
 
@@ -134,7 +136,7 @@ makers build
 
 ### Check Compilation
 
-The MoonZoon dev server compiles automatically. Check the terminal for errors.
+The MoonZoon dev server compiles automatically. For shared maintainer-run watchers, check `dev_server.log` for errors.
 
 **Important:** Don't use `cargo check` or `cargo build` directly - they don't handle WASM compilation correctly. Always use `makers` commands.
 

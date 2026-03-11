@@ -30,7 +30,7 @@ To start and automatically open in browser:
 makers open
 ```
 
-The app will be available at http://localhost:8080
+The app will be available at http://localhost:8082
 
 ### Desktop Mode (Tauri)
 

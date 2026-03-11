@@ -1098,6 +1098,7 @@ pub fn flush_initial_discoveries() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::env;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 

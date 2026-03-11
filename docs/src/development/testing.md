@@ -46,6 +46,37 @@ For UI and interaction testing:
 2. Load test files from `test_files/`
 3. Test specific features
 
+When the dev server is started by someone else, inspect `dev_server.log` instead of trying to attach to their terminal output. The same rule applies to `dev_plugins.log` and `dev_tauri.log`.
+
+### Desktop Test Bridge
+
+When the Tauri desktop app is running, it also exposes a localhost-only desktop test bridge on `http://127.0.0.1:9226` by default. Override the port with `NOVYWAVE_DESKTOP_TEST_PORT`.
+
+Useful endpoints:
+
+```bash
+curl http://127.0.0.1:9226/health
+curl -X POST http://127.0.0.1:9226/eval -H 'Content-Type: application/json' \
+  -d '{"expression":"Object.keys(window.__novywave_test_api || {}).sort()"}'
+curl http://127.0.0.1:9226/state/selected-variables
+curl http://127.0.0.1:9226/state/visible-rows
+curl http://127.0.0.1:9226/state/markers
+curl http://127.0.0.1:9226/state/file-picker-roots
+curl -X POST --data-binary '/tmp/novywave_ai_workspace' http://127.0.0.1:9226/workspace/select
+curl -X POST http://127.0.0.1:9226/action/set-cursor-ps -H 'Content-Type: application/json' \
+  -d '{"timePs":21000}'
+curl -X POST http://127.0.0.1:9226/action/add-marker -H 'Content-Type: application/json' \
+  -d '{"name":"Bridge Marker"}'
+curl -X POST http://127.0.0.1:9226/action/set-row-height -H 'Content-Type: application/json' \
+  -d '{"uniqueId":"...","rowHeight":140}'
+curl -X POST http://127.0.0.1:9226/action/set-analog-limits -H 'Content-Type: application/json' \
+  -d '{"uniqueId":"...","auto":false,"min":-1,"max":4}'
+curl -X POST http://127.0.0.1:9226/action/create-group -H 'Content-Type: application/json' \
+  -d '{"name":"Bus Group","memberIds":["...","..."]}'
+```
+
+The bridge queries and drives the live desktop webview through `window.__novywave_test_api`, so it can verify desktop behavior without browser-only tooling and without stealing focus from the active desktop window. `POST /window/focus` still exists for debugging, but normal automation should prefer the `/action/*` endpoints.
+
 ## Test Files
 
 The `test_files/` directory contains waveform files for testing:
@@ -139,10 +170,9 @@ zoon::println!("Debug: {}", value);
 
 ### Compilation Errors
 
-Watch the development server output:
+Watch the newest development-server log chunk:
 ```bash
-makers start
-# Watch terminal for errors
+tail -n 120 dev_server.log
 ```
 
 ## Performance Testing

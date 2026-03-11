@@ -29,9 +29,9 @@ fi
 echo "✓ Frontend built successfully"
 
 # Test HTTP connection to app
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/ 2>/dev/null || echo "000")
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8082/ 2>/dev/null || echo "000")
 if [ "$HTTP_CODE" != "200" ]; then
-    echo "ERROR: HTTP request to localhost:8080 failed (code: $HTTP_CODE)"
+    echo "ERROR: HTTP request to localhost:8082 failed (code: $HTTP_CODE)"
     exit 1
 fi
 
@@ -85,7 +85,7 @@ import subprocess
 import time
 import sys
 
-proc = subprocess.Popen(['chromium', '--headless', '--disable-gpu', '--dump-dom', 'http://localhost:8080'],
+proc = subprocess.Popen(['chromium', '--headless', '--disable-gpu', '--dump-dom', 'http://localhost:8082'],
                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 time.sleep(15)
 try:

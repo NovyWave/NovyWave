@@ -4,7 +4,7 @@
   "version": "0.1.0", 
   "identifier": "com.novywave.app",
   "build": {
-    "devUrl": "http://localhost:8080",
+    "devUrl": "http://localhost:8082",
     "frontendDist": "../frontend_dist",
     "beforeDevCommand": ""
   },

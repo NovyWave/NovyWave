@@ -1,4 +1,3 @@
-use zoon::Mutable;
 use crate::file_operations::extract_filename;
 use moonzoon_novyui::tokens::color::{
     neutral_1, neutral_2, neutral_4, neutral_8, neutral_11, neutral_12,
@@ -10,11 +9,10 @@ use moonzoon_novyui::*;
 use shared::FileSystemItem;
 use std::collections::HashMap;
 use wasm_bindgen::JsCast;
+use zoon::Mutable;
 use zoon::events::{Click, KeyDown};
 use zoon::map_ref;
 use zoon::*;
-
-
 
 #[cfg(NOVYWAVE_PLATFORM = "WEB")]
 fn apply_scrollbar_colors(
@@ -37,41 +35,35 @@ fn apply_scrollbar_colors(
     raw_el
 }
 
-
-
 /// Initialize directories on first use and when restored from config
 pub fn initialize_directories_and_request_contents(
     file_picker_domain: &crate::config::FilePickerDomain,
 ) {
-    // Read current state directly - no async needed for Mutable reads
     let cache = file_picker_domain.directory_cache.get_cloned();
     let expanded = file_picker_domain.expanded_directories.get_cloned();
-
-    if !cache.contains_key("/") {
-        file_picker_domain.expand_directory("/".to_string());
-    }
-
-    if expanded.is_empty() {
-        if let Some(home_dir) = std::env::var("HOME")
-            .ok()
-            .or_else(|| std::env::var("USERPROFILE").ok())
-        {
-            file_picker_domain.expand_directory("/".to_string());
-            file_picker_domain.expand_directory(home_dir.clone());
-        } else {
-            file_picker_domain.expand_directory("/".to_string());
-        }
+    let platform_roots = file_picker_domain.platform_roots.get_cloned();
+    let directories: Vec<String> = if expanded.is_empty() {
+        platform_roots
+            .unwrap_or_default()
+            .into_iter()
+            .map(|root| root.path)
+            .filter(|path| !path.trim().is_empty())
+            .collect()
     } else {
-        // Request contents only for directories not already in cache
-        for directory in &expanded {
-            if !cache.contains_key(directory) {
-                file_picker_domain.expand_directory(directory.clone());
-            }
+        expanded
+            .into_iter()
+            .filter(|path| !path.trim().is_empty())
+            .collect()
+    };
+
+    for directory in directories {
+        if !cache.contains_key(&directory) {
+            file_picker_domain.expand_directory(directory);
         }
     }
 }
 
-/// Build tree data for TreeView component using Actor signals
+/// Build tree data for a single root directory
 fn build_tree_data(
     root_path: &str,
     cache: &HashMap<String, Vec<FileSystemItem>>,
@@ -95,6 +87,19 @@ fn build_tree_data(
     }
 
     root_items
+}
+
+/// Build multi-root tree data from platform roots
+fn build_multi_root_tree_data(
+    roots: &[shared::PlatformRoot],
+    cache: &HashMap<String, Vec<FileSystemItem>>,
+    errors: &HashMap<String, String>,
+) -> Vec<TreeViewItemData> {
+    let mut items = Vec::new();
+    for root in roots {
+        items.push(build_directory_item(&root.path, &root.label, cache, errors));
+    }
+    items
 }
 
 /// Build directory tree item with children
@@ -122,11 +127,13 @@ fn build_directory_item(
         let child_items = build_tree_data(path, cache, errors);
 
         if child_items.is_empty() {
-            // Directory is empty
             item = item.with_children(vec![
-                TreeViewItemData::new("empty".to_string(), "Empty".to_string())
-                    .disabled(true)
-                    .item_type(TreeViewItemType::Default),
+                TreeViewItemData::new(
+                    format!("empty:{path}"),
+                    "No waveform files in this directory".to_string(),
+                )
+                .disabled(true)
+                .item_type(TreeViewItemType::Default),
             ]);
         } else {
             item = item.with_children(child_items);
@@ -165,6 +172,16 @@ pub fn file_paths_dialog(
 
     // Get file picker domain for proper selected files management
     let file_picker_domain = app_config.file_picker_domain.clone();
+    if file_picker_domain.platform_roots.get_cloned().is_none()
+        && crate::platform::server_is_ready()
+    {
+        let connection = connection.clone();
+        Task::start(async move {
+            connection
+                .send_up_msg(shared::UpMsg::GetPlatformRoots)
+                .await;
+        });
+    }
 
     let close_dialog = {
         let file_dialog_visible = file_dialog_visible.clone();
@@ -469,10 +486,7 @@ pub fn file_picker_content(
                 .style("scrollbar-width", "thin")
                 .apply(|raw_el| apply_scrollbar_colors(raw_el))
         })
-        .child(file_picker_tree(
-            &app_config,
-            connection,
-        ))
+        .child(file_picker_tree(&app_config, connection))
 }
 
 /// File picker tree using FilePickerDomain Actors
@@ -481,10 +495,12 @@ pub fn file_picker_tree(
     _connection: crate::connection::ConnectionAdapter,
 ) -> impl Element {
     // Initialize directories and request contents for expanded directories from config
-    initialize_directories_and_request_contents(&app_config.file_picker_domain);
+    let file_picker_domain = app_config.file_picker_domain.clone();
+    initialize_directories_and_request_contents(&file_picker_domain);
 
-    let domain_for_treeview = app_config.file_picker_domain.clone();
-    let cache_signal = app_config.file_picker_domain.directory_cache_signal();
+    let domain_for_treeview = file_picker_domain.clone();
+    let cache_signal = file_picker_domain.directory_cache_signal();
+    let errors_signal = file_picker_domain.directory_errors_signal();
 
     El::new()
         .s(Height::fill())
@@ -497,18 +513,26 @@ pub fn file_picker_tree(
                 .apply(|raw_el| apply_scrollbar_colors(raw_el))
         })
         .child_signal({
-            cache_signal.map(move |cache| {
-                if cache.contains_key("/") {
-                    // Root directory loaded - show tree
-                    let tree_data = build_tree_data("/", &cache, &std::collections::HashMap::new());
+            let platform_roots_signal = file_picker_domain.platform_roots.signal_cloned();
+            map_ref! {
+                let cache = cache_signal,
+                let errors = errors_signal,
+                let platform_roots = platform_roots_signal => {
+                    (cache.clone(), errors.clone(), platform_roots.clone())
+                }
+            }
+            .map(move |(cache, errors, platform_roots)| {
+                if let Some(ref roots) = platform_roots {
+                    let tree_data = build_multi_root_tree_data(roots, &cache, &errors);
 
                     {
                         // Single Source of Truth: TreeView uses domain's Mutable directly
                         // Detection task in FilePickerDomain handles browse/save side effects
                         let external_expanded = domain_for_treeview.expanded_directories.clone();
 
-                        let scroll_task_handle: std::sync::Arc<std::sync::Mutex<Option<zoon::TaskHandle>>> =
-                            std::sync::Arc::new(std::sync::Mutex::new(None));
+                        let scroll_task_handle: std::sync::Arc<
+                            std::sync::Mutex<Option<zoon::TaskHandle>>,
+                        > = std::sync::Arc::new(std::sync::Mutex::new(None));
                         let scroll_task_handle_for_insert = scroll_task_handle.clone();
                         let scroll_task_handle_for_remove = scroll_task_handle.clone();
 
@@ -556,18 +580,76 @@ pub fn file_picker_tree(
                                     .show_checkboxes(true)
                                     .external_expanded(external_expanded)
                                     // Single Source of Truth: TreeView uses domain's MutableVec directly
-                                    .external_selected_vec(domain_for_treeview.selected_files.clone())
+                                    .external_selected_vec(
+                                        domain_for_treeview.selected_files.clone(),
+                                    )
+                                    .build()
+                                    .into_raw(),
+                            )
+                            .into_element()
+                    }
+                } else if cache.contains_key("/") {
+                    let tree_data = build_tree_data("/", &cache, &errors);
+                    {
+                        let external_expanded = domain_for_treeview.expanded_directories.clone();
+                        let scroll_task_handle: std::sync::Arc<
+                            std::sync::Mutex<Option<zoon::TaskHandle>>,
+                        > = std::sync::Arc::new(std::sync::Mutex::new(None));
+                        let scroll_task_handle_for_insert = scroll_task_handle.clone();
+                        let scroll_task_handle_for_remove = scroll_task_handle.clone();
+
+                        El::new()
+                            .s(Height::fill())
+                            .s(Width::fill())
+                            .after_remove(move |_| {
+                                drop(scroll_task_handle_for_remove.lock().unwrap().take());
+                            })
+                            .after_insert({
+                                let scroll_position_actor =
+                                    domain_for_treeview.scroll_position.clone();
+                                move |_element| {
+                                    let position = scroll_position_actor.get();
+                                    let handle = zoon::Task::start_droppable(async move {
+                                        zoon::Task::next_macro_tick().await;
+
+                                        if position > 0 {
+                                            if let Some(window) = web_sys::window() {
+                                                if let Some(document) = window.document() {
+                                                    if let Ok(Some(element)) = document
+                                                        .query_selector(
+                                                            "[data-scroll-container='file-picker']",
+                                                        )
+                                                    {
+                                                        element.set_scroll_top(position);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    });
+                                    *scroll_task_handle_for_insert.lock().unwrap() = Some(handle);
+                                }
+                            })
+                            .child(
+                                tree_view()
+                                    .data(tree_data)
+                                    .size(TreeViewSize::Medium)
+                                    .variant(TreeViewVariant::Basic)
+                                    .show_icons(true)
+                                    .show_checkboxes(true)
+                                    .external_expanded(external_expanded)
+                                    .external_selected_vec(
+                                        domain_for_treeview.selected_files.clone(),
+                                    )
                                     .build()
                                     .into_raw(),
                             )
                             .into_element()
                     }
                 } else {
-                    // Still loading root directory
                     El::new()
                         .s(Padding::all(20))
                         .s(Font::new().color_signal(neutral_8()).italic())
-                        .child("Loading directory contents...")
+                        .child("Loading platform roots...")
                         .into_element()
                 }
             })

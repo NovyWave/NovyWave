@@ -3,12 +3,28 @@
 //! Uses pure reactive dataflow: external state changes are observed via signals,
 //! internal state is updated reactively.
 
-#![allow(dead_code)] // API not yet fully integrated
-
 use indexmap::IndexSet;
 use shared::SelectedVariable;
 use std::sync::Arc;
-use zoon::{Mutable, MutableVec, MutableExt, SignalExt, SignalVecExt, Task, TaskHandle, VecDiff};
+use zoon::{Mutable, MutableExt, MutableVec, SignalExt, SignalVecExt, Task, TaskHandle, VecDiff};
+
+#[derive(Clone, Debug)]
+pub struct SignalGroup {
+    pub name: String,
+    pub member_ids: Vec<String>,
+    pub collapsed: Mutable<bool>,
+}
+
+#[derive(Clone, Debug)]
+pub enum SelectedVariableOrGroup {
+    Variable(SelectedVariable),
+    GroupHeader {
+        index: usize,
+        name: String,
+        collapsed: bool,
+        member_count: usize,
+    },
+}
 
 #[derive(Clone)]
 pub struct SelectedVariables {
@@ -19,6 +35,10 @@ pub struct SelectedVariables {
     pub expanded_scopes: Mutable<IndexSet<String>>,
     pub search_filter: Mutable<String>,
     pub search_focused: Mutable<bool>,
+    pub signal_groups: MutableVec<SignalGroup>,
+    pub selected_for_grouping: Mutable<IndexSet<String>>,
+    pub grouping_mode_active: Mutable<bool>,
+    pub visible_items: Mutable<Vec<SelectedVariableOrGroup>>,
     _scope_selection_observer: Arc<TaskHandle>,
 }
 
@@ -42,13 +62,20 @@ impl SelectedVariables {
                                 VecDiff::Replace { values } => *v = values,
                                 VecDiff::InsertAt { index, value } => v.insert(index, value),
                                 VecDiff::UpdateAt { index, value } => v[index] = value,
-                                VecDiff::RemoveAt { index } => { v.remove(index); }
-                                VecDiff::Move { old_index, new_index } => {
+                                VecDiff::RemoveAt { index } => {
+                                    v.remove(index);
+                                }
+                                VecDiff::Move {
+                                    old_index,
+                                    new_index,
+                                } => {
                                     let item = v.remove(old_index);
                                     v.insert(new_index, item);
                                 }
                                 VecDiff::Push { value } => v.push(value),
-                                VecDiff::Pop {} => { v.pop(); }
+                                VecDiff::Pop {} => {
+                                    v.pop();
+                                }
                                 VecDiff::Clear {} => v.clear(),
                             }
                         }
@@ -70,6 +97,10 @@ impl SelectedVariables {
             expanded_scopes: Mutable::new(IndexSet::new()),
             search_filter: Mutable::new(String::new()),
             search_focused: Mutable::new(false),
+            signal_groups: MutableVec::new(),
+            selected_for_grouping: Mutable::new(IndexSet::new()),
+            grouping_mode_active: Mutable::new(false),
+            visible_items: Mutable::new(Vec::new()),
             _scope_selection_observer,
         }
     }
@@ -111,6 +142,9 @@ impl SelectedVariables {
         let placeholder_var = shared::SelectedVariable {
             unique_id: variable_id,
             formatter: None,
+            signal_type: None,
+            row_height: None,
+            analog_limits: None,
         };
 
         self.variables.lock_mut().push_cloned(placeholder_var);
@@ -121,37 +155,31 @@ impl SelectedVariables {
         self.variables
             .lock_mut()
             .retain(|var| var.unique_id != variable_id);
+        self.remove_variable_from_groups(&variable_id);
+        self.selected_for_grouping.update_mut(|selection| {
+            selection.shift_remove(&variable_id);
+        });
         self.sync_variables_vec();
     }
 
     pub fn clear_selection(&self) {
         self.variables.lock_mut().clear();
+        self.signal_groups.lock_mut().clear();
+        self.selected_for_grouping.set(IndexSet::new());
+        self.grouping_mode_active.set(false);
         self.sync_variables_vec();
     }
 
     pub fn restore_variables(&self, restored_variables: Vec<SelectedVariable>) {
-        self.variables
-            .lock_mut()
-            .replace_cloned(restored_variables);
+        self.variables.lock_mut().replace_cloned(restored_variables);
+        self.prune_group_memberships();
         self.sync_variables_vec();
     }
 
     pub fn change_variable_format(&self, variable_id: String, new_format: shared::VarFormat) {
-        let variables = self.variables.lock_ref().to_vec();
-        let updated_variables: Vec<_> = variables
-            .into_iter()
-            .map(|mut var| {
-                if var.unique_id == variable_id {
-                    var.formatter = Some(new_format);
-                }
-                var
-            })
-            .collect();
-
-        self.variables
-            .lock_mut()
-            .replace_cloned(updated_variables);
-        self.sync_variables_vec();
+        self.update_variable(&variable_id, |var| {
+            var.formatter = Some(new_format);
+        });
     }
 
     pub fn select_scope(&self, scope_id: Option<String>) {
@@ -194,6 +222,7 @@ impl SelectedVariables {
     fn sync_variables_vec(&self) {
         let current_vars = self.variables.lock_ref().to_vec();
         self.variables_vec_actor.set(current_vars);
+        self.refresh_visible_items();
     }
 
     pub fn file_variables_signal(
@@ -219,24 +248,335 @@ impl SelectedVariables {
     pub fn tree_selection_mutable(&self) -> &Mutable<IndexSet<String>> {
         &self.tree_selection
     }
-}
 
-impl SelectedVariables {
-    fn find_signal_in_scopes(
-        scopes: &[shared::ScopeData],
-        signal_name: &str,
-    ) -> Option<(shared::Signal, String)> {
-        for scope in scopes {
-            for signal in &scope.variables {
-                if signal.name == signal_name {
-                    return Some((signal.clone(), scope.id.clone()));
-                }
+    pub fn toggle_variable_selection(&self, unique_id: &str) {
+        self.selected_for_grouping.update_mut(|set| {
+            if set.contains(unique_id) {
+                set.shift_remove(unique_id);
+            } else {
+                set.insert(unique_id.to_string());
             }
-            if let Some(result) = Self::find_signal_in_scopes(&scope.children, signal_name) {
-                return Some(result);
+        });
+    }
+
+    pub fn update_row_height(&self, unique_id: &str, row_height: u32) {
+        self.update_variable(unique_id, |var| {
+            var.row_height = Some(row_height);
+        });
+    }
+
+    pub fn update_analog_limits(
+        &self,
+        unique_id: &str,
+        analog_limits: Option<shared::AnalogLimits>,
+    ) {
+        self.update_variable(unique_id, |var| {
+            var.analog_limits = analog_limits.clone();
+        });
+    }
+
+    pub fn synchronize_metadata_from_files(&self, files: &[shared::TrackedFile]) {
+        let mut updated_any = false;
+        let mut current = {
+            let variables = self.variables.lock_ref();
+            variables.to_vec()
+        };
+
+        for selected in &mut current {
+            let Some((file_path, scope_path, variable_name)) = selected.parse_unique_id() else {
+                continue;
+            };
+            let Some(signal) = lookup_signal(files, &file_path, &scope_path, &variable_name) else {
+                continue;
+            };
+
+            let default_row_height =
+                shared::SelectedVariable::default_row_height_for_signal_type(&signal.signal_type);
+            let is_real = signal.signal_type == "Real";
+
+            if selected.signal_type.as_deref() != Some(signal.signal_type.as_str()) {
+                selected.signal_type = Some(signal.signal_type.clone());
+                updated_any = true;
+            }
+            if selected.row_height.is_none() {
+                selected.row_height = Some(default_row_height);
+                updated_any = true;
+            }
+            if is_real && selected.analog_limits.is_none() {
+                selected.analog_limits = Some(shared::AnalogLimits::auto());
+                updated_any = true;
+            }
+            if !is_real && selected.analog_limits.is_some() {
+                selected.analog_limits = None;
+                updated_any = true;
             }
         }
-        None
+
+        if updated_any {
+            self.variables.lock_mut().replace_cloned(current);
+            self.sync_variables_vec();
+        }
+    }
+
+    pub fn create_group(&self, name: String) {
+        let selected = self.selected_for_grouping.get_cloned();
+        self.create_group_from_members(name, selected.into_iter().collect());
+    }
+
+    pub fn create_group_from_members(&self, name: String, member_ids: Vec<String>) {
+        let selected: IndexSet<String> = member_ids.into_iter().collect();
+        if selected.len() < 2 {
+            return;
+        }
+        let member_ids: Vec<String> = selected.into_iter().collect();
+        self.remove_members_from_existing_groups(&member_ids);
+        self.signal_groups.lock_mut().push_cloned(SignalGroup {
+            name,
+            member_ids: member_ids.clone(),
+            collapsed: Mutable::new(false),
+        });
+        self.selected_for_grouping.set(IndexSet::new());
+        self.grouping_mode_active.set(false);
+        self.prune_group_memberships();
+        self.refresh_visible_items();
+    }
+
+    pub fn ungroup(&self, index: usize) {
+        let mut lock = self.signal_groups.lock_mut();
+        if index < lock.len() {
+            lock.remove(index);
+        }
+        drop(lock);
+        self.refresh_visible_items();
+    }
+
+    pub fn rename_group(&self, index: usize, name: String) {
+        let mut lock = self.signal_groups.lock_mut();
+        if let Some(group) = lock.get(index) {
+            let updated = SignalGroup {
+                name,
+                member_ids: group.member_ids.clone(),
+                collapsed: Mutable::new(group.collapsed.get()),
+            };
+            lock.set_cloned(index, updated);
+        }
+        drop(lock);
+        self.refresh_visible_items();
+    }
+
+    pub fn toggle_group_collapse(&self, index: usize) {
+        let lock = self.signal_groups.lock_ref();
+        if let Some(group) = lock.get(index) {
+            let current = group.collapsed.get();
+            group.collapsed.set(!current);
+        }
+        drop(lock);
+        self.refresh_visible_items();
+    }
+
+    pub fn refresh_visible_items(&self) {
+        let vars = self.variables.lock_ref().to_vec();
+        let groups = self.signal_groups.lock_ref().to_vec();
+        let items = Self::compute_visible_items(&vars, &groups);
+        self.visible_items.set(items);
+    }
+
+    fn compute_visible_items(
+        vars: &[SelectedVariable],
+        groups: &[SignalGroup],
+    ) -> Vec<SelectedVariableOrGroup> {
+        let mut items = Vec::new();
+        let mut grouped_ids: IndexSet<String> = IndexSet::new();
+
+        for group in groups {
+            for id in &group.member_ids {
+                grouped_ids.insert(id.clone());
+            }
+        }
+
+        let mut var_index = 0;
+        let mut group_positions: Vec<(usize, usize)> = Vec::new();
+
+        for (gi, group) in groups.iter().enumerate() {
+            let first_member_pos = vars
+                .iter()
+                .position(|v| group.member_ids.contains(&v.unique_id));
+            if let Some(pos) = first_member_pos {
+                group_positions.push((pos, gi));
+            }
+        }
+        group_positions.sort_by_key(|&(pos, _)| pos);
+
+        let mut emitted_groups: IndexSet<usize> = IndexSet::new();
+
+        for var in vars {
+            for &(pos, gi) in &group_positions {
+                if pos == var_index && !emitted_groups.contains(&gi) {
+                    emitted_groups.insert(gi);
+                    let group = &groups[gi];
+                    let collapsed = group.collapsed.get();
+                    items.push(SelectedVariableOrGroup::GroupHeader {
+                        index: gi,
+                        name: group.name.clone(),
+                        collapsed,
+                        member_count: group.member_ids.len(),
+                    });
+                    if !collapsed {
+                        for member_id in &group.member_ids {
+                            if let Some(member_var) =
+                                vars.iter().find(|v| &v.unique_id == member_id)
+                            {
+                                items.push(SelectedVariableOrGroup::Variable(member_var.clone()));
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !grouped_ids.contains(&var.unique_id) {
+                items.push(SelectedVariableOrGroup::Variable(var.clone()));
+            }
+            var_index += 1;
+        }
+
+        items
+    }
+
+    pub fn collapsed_variable_ids(&self) -> IndexSet<String> {
+        let groups = self.signal_groups.lock_ref();
+        let mut collapsed_ids = IndexSet::new();
+        for group in groups.iter() {
+            if group.collapsed.get() {
+                for id in &group.member_ids {
+                    collapsed_ids.insert(id.clone());
+                }
+            }
+        }
+        collapsed_ids
+    }
+
+    pub fn restore_signal_groups(&self, configs: Vec<shared::SignalGroupConfig>) {
+        let groups: Vec<SignalGroup> = configs
+            .into_iter()
+            .map(|c| SignalGroup {
+                name: c.name,
+                member_ids: c.member_ids,
+                collapsed: Mutable::new(c.collapsed),
+            })
+            .collect();
+        self.signal_groups.lock_mut().replace_cloned(groups);
+        self.prune_group_memberships();
+        self.refresh_visible_items();
+    }
+
+    pub fn signal_groups_as_config(&self) -> Vec<shared::SignalGroupConfig> {
+        self.signal_groups
+            .lock_ref()
+            .iter()
+            .map(|g| shared::SignalGroupConfig {
+                name: g.name.clone(),
+                member_ids: g.member_ids.clone(),
+                collapsed: g.collapsed.get(),
+            })
+            .collect()
+    }
+
+    fn update_variable<F>(&self, unique_id: &str, mut f: F)
+    where
+        F: FnMut(&mut SelectedVariable),
+    {
+        let mut current = {
+            let variables = self.variables.lock_ref();
+            variables.to_vec()
+        };
+        let mut changed = false;
+        for variable in &mut current {
+            if variable.unique_id == unique_id {
+                f(variable);
+                changed = true;
+                break;
+            }
+        }
+        if changed {
+            self.variables.lock_mut().replace_cloned(current);
+            self.sync_variables_vec();
+        }
+    }
+
+    fn remove_members_from_existing_groups(&self, member_ids: &[String]) {
+        let selected: IndexSet<String> = member_ids.iter().cloned().collect();
+        let groups = self.signal_groups.lock_ref().to_vec();
+        let mut rebuilt = Vec::new();
+
+        for group in groups {
+            let remaining: Vec<String> = group
+                .member_ids
+                .into_iter()
+                .filter(|id| !selected.contains(id))
+                .collect();
+            if remaining.len() >= 2 {
+                rebuilt.push(SignalGroup {
+                    name: group.name,
+                    member_ids: remaining,
+                    collapsed: Mutable::new(group.collapsed.get()),
+                });
+            }
+        }
+
+        self.signal_groups.lock_mut().replace_cloned(rebuilt);
+    }
+
+    fn remove_variable_from_groups(&self, unique_id: &str) {
+        let groups = self.signal_groups.lock_ref().to_vec();
+        let mut rebuilt = Vec::new();
+
+        for group in groups {
+            let remaining: Vec<String> = group
+                .member_ids
+                .into_iter()
+                .filter(|member| member != unique_id)
+                .collect();
+            if remaining.len() >= 2 {
+                rebuilt.push(SignalGroup {
+                    name: group.name,
+                    member_ids: remaining,
+                    collapsed: Mutable::new(group.collapsed.get()),
+                });
+            }
+        }
+
+        self.signal_groups.lock_mut().replace_cloned(rebuilt);
+    }
+
+    fn prune_group_memberships(&self) {
+        let variables: IndexSet<String> = self
+            .variables
+            .lock_ref()
+            .iter()
+            .map(|var| var.unique_id.clone())
+            .collect();
+        let mut seen = IndexSet::new();
+        let groups = self.signal_groups.lock_ref().to_vec();
+        let mut rebuilt = Vec::new();
+
+        for group in groups {
+            let mut member_ids = Vec::new();
+            for id in group.member_ids {
+                if variables.contains(&id) && seen.insert(id.clone()) {
+                    member_ids.push(id);
+                }
+            }
+
+            if member_ids.len() >= 2 {
+                rebuilt.push(SignalGroup {
+                    name: group.name,
+                    member_ids,
+                    collapsed: Mutable::new(group.collapsed.get()),
+                });
+            }
+        }
+
+        self.signal_groups.lock_mut().replace_cloned(rebuilt);
     }
 }
 
@@ -308,14 +648,70 @@ pub fn get_variables_from_tracked_files(
     variables_with_context
 }
 
-pub fn find_scope_full_name(scopes: &[shared::ScopeData], target_scope_id: &str) -> Option<String> {
-    for scope in scopes {
-        if scope.id == target_scope_id {
-            return Some(scope.full_name.clone());
+fn lookup_signal(
+    tracked_files: &[shared::TrackedFile],
+    file_path: &str,
+    scope_path: &str,
+    variable_name: &str,
+) -> Option<shared::Signal> {
+    let full_scope_id = format!("{file_path}|{scope_path}");
+    tracked_files.iter().find_map(|tracked_file| {
+        if tracked_file.canonical_path != file_path && tracked_file.path != file_path {
+            return None;
         }
-        if let Some(name) = find_scope_full_name(&scope.children, target_scope_id) {
-            return Some(name);
-        }
+        let shared::FileState::Loaded(waveform_file) = &tracked_file.state else {
+            return None;
+        };
+        shared::find_variables_in_scope(&waveform_file.scopes, &full_scope_id).and_then(|signals| {
+            signals
+                .into_iter()
+                .find(|signal| signal.name == variable_name)
+        })
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zoon::MutableVec;
+
+    #[test]
+    fn regrouping_enforces_single_group_membership() {
+        let selected_variables = SelectedVariables::new(MutableVec::new());
+        selected_variables.add_variable("file|scope|a".to_string());
+        selected_variables.add_variable("file|scope|b".to_string());
+        selected_variables.add_variable("file|scope|c".to_string());
+
+        selected_variables.create_group_from_members(
+            "Group 1".to_string(),
+            vec!["file|scope|a".to_string(), "file|scope|b".to_string()],
+        );
+        selected_variables.create_group_from_members(
+            "Group 2".to_string(),
+            vec!["file|scope|b".to_string(), "file|scope|c".to_string()],
+        );
+
+        let groups = selected_variables.signal_groups.lock_ref().to_vec();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].name, "Group 2");
+        assert_eq!(
+            groups[0].member_ids,
+            vec!["file|scope|b".to_string(), "file|scope|c".to_string()]
+        );
     }
-    None
+
+    #[test]
+    fn removing_variable_drops_small_groups() {
+        let selected_variables = SelectedVariables::new(MutableVec::new());
+        selected_variables.add_variable("file|scope|a".to_string());
+        selected_variables.add_variable("file|scope|b".to_string());
+        selected_variables.create_group_from_members(
+            "Group 1".to_string(),
+            vec!["file|scope|a".to_string(), "file|scope|b".to_string()],
+        );
+
+        selected_variables.remove_variable("file|scope|a".to_string());
+
+        assert!(selected_variables.signal_groups.lock_ref().is_empty());
+    }
 }

@@ -14,15 +14,16 @@ const MIN_FILES_PANEL_HEIGHT_RIGHT: f32 = 220.0;
 const MIN_FILES_PANEL_HEIGHT_BOTTOM: f32 = 220.0;
 const MAX_FILES_PANEL_HEIGHT: f32 = 900.0;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum DividerType {
     FilesPanelMain,
     FilesPanelSecondary,
     VariablesNameColumn,
     VariablesValueColumn,
+    SignalRowDivider { unique_id: String },
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 struct DragState {
     active_divider: Option<DividerType>,
     drag_start_position: (f32, f32),
@@ -33,20 +34,25 @@ struct DragState {
 pub struct DraggingSystem {
     drag_state: Mutable<DragState>,
     app_config: crate::config::AppConfig,
+    selected_variables: crate::selected_variables::SelectedVariables,
 }
 
 impl DraggingSystem {
-    pub fn new(app_config: crate::config::AppConfig) -> Self {
+    pub fn new(
+        app_config: crate::config::AppConfig,
+        selected_variables: crate::selected_variables::SelectedVariables,
+    ) -> Self {
         Self {
             drag_state: Mutable::new(DragState::default()),
             app_config,
+            selected_variables,
         }
     }
 
     pub fn start_drag(&self, divider_type: DividerType, start_position: (f32, f32)) {
         let dock_mode = self.app_config.dock_mode.get_cloned();
 
-        let initial_value = match divider_type {
+        let initial_value = match &divider_type {
             DividerType::FilesPanelMain => match dock_mode {
                 DockMode::Right => self.app_config.files_panel_width_right.get_cloned(),
                 DockMode::Bottom => self.app_config.files_panel_width_bottom.get_cloned(),
@@ -55,8 +61,20 @@ impl DraggingSystem {
                 DockMode::Right => self.app_config.files_panel_height_right.get_cloned(),
                 DockMode::Bottom => self.app_config.files_panel_height_bottom.get_cloned(),
             },
-            DividerType::VariablesNameColumn => self.app_config.variables_name_column_width.get_cloned(),
-            DividerType::VariablesValueColumn => self.app_config.variables_value_column_width.get_cloned(),
+            DividerType::VariablesNameColumn => {
+                self.app_config.variables_name_column_width.get_cloned()
+            }
+            DividerType::VariablesValueColumn => {
+                self.app_config.variables_value_column_width.get_cloned()
+            }
+            DividerType::SignalRowDivider { unique_id } => self
+                .selected_variables
+                .variables_vec_actor
+                .get_cloned()
+                .iter()
+                .find(|variable| variable.unique_id == *unique_id)
+                .and_then(|variable| variable.row_height)
+                .unwrap_or(30) as f32,
         };
 
         self.drag_state.set(DragState {
@@ -67,9 +85,9 @@ impl DraggingSystem {
     }
 
     pub fn process_drag_movement(&self, current_position: (f32, f32)) {
-        let current_drag_state = self.drag_state.get();
+        let current_drag_state = self.drag_state.get_cloned();
 
-        if let Some(divider_type) = current_drag_state.active_divider {
+        if let Some(ref divider_type) = current_drag_state.active_divider {
             let dock_mode = self.app_config.dock_mode.get_cloned();
 
             let (delta, new_value) = match divider_type {
@@ -77,8 +95,12 @@ impl DraggingSystem {
                     let delta_x = current_position.0 - current_drag_state.drag_start_position.0;
                     let unclamped_width = current_drag_state.initial_value + delta_x;
                     let (min_width, max_width) = match dock_mode {
-                        DockMode::Right => (MIN_FILES_PANEL_WIDTH_RIGHT, MAX_FILES_PANEL_WIDTH_RIGHT),
-                        DockMode::Bottom => (MIN_FILES_PANEL_WIDTH_BOTTOM, MAX_FILES_PANEL_WIDTH_BOTTOM),
+                        DockMode::Right => {
+                            (MIN_FILES_PANEL_WIDTH_RIGHT, MAX_FILES_PANEL_WIDTH_RIGHT)
+                        }
+                        DockMode::Bottom => {
+                            (MIN_FILES_PANEL_WIDTH_BOTTOM, MAX_FILES_PANEL_WIDTH_BOTTOM)
+                        }
                     };
                     (delta_x, unclamped_width.clamp(min_width, max_width))
                 }
@@ -89,15 +111,31 @@ impl DraggingSystem {
                         DockMode::Right => MIN_FILES_PANEL_HEIGHT_RIGHT,
                         DockMode::Bottom => MIN_FILES_PANEL_HEIGHT_BOTTOM,
                     };
-                    (delta_y, unclamped_height.clamp(min_height, MAX_FILES_PANEL_HEIGHT))
+                    (
+                        delta_y,
+                        unclamped_height.clamp(min_height, MAX_FILES_PANEL_HEIGHT),
+                    )
                 }
                 DividerType::VariablesNameColumn => {
                     let delta_x = current_position.0 - current_drag_state.drag_start_position.0;
-                    (delta_x, (current_drag_state.initial_value + delta_x).clamp(100.0, 400.0))
+                    (
+                        delta_x,
+                        (current_drag_state.initial_value + delta_x).clamp(100.0, 400.0),
+                    )
                 }
                 DividerType::VariablesValueColumn => {
                     let delta_x = current_position.0 - current_drag_state.drag_start_position.0;
-                    (delta_x, (current_drag_state.initial_value + delta_x).clamp(100.0, 400.0))
+                    (
+                        delta_x,
+                        (current_drag_state.initial_value + delta_x).clamp(100.0, 400.0),
+                    )
+                }
+                DividerType::SignalRowDivider { .. } => {
+                    let delta_y = current_position.1 - current_drag_state.drag_start_position.1;
+                    (
+                        delta_y,
+                        (current_drag_state.initial_value + delta_y).clamp(20.0, 300.0),
+                    )
                 }
             };
 
@@ -116,13 +154,20 @@ impl DraggingSystem {
                         self.app_config.files_panel_height_bottom.set_neq(new_value);
                     }
                     (DividerType::VariablesNameColumn, _) => {
-                        self.app_config.variables_name_column_width.set_neq(new_value);
+                        self.app_config
+                            .variables_name_column_width
+                            .set_neq(new_value);
                     }
                     (DividerType::VariablesValueColumn, _) => {
-                        self.app_config.variables_value_column_width.set_neq(new_value);
+                        self.app_config
+                            .variables_value_column_width
+                            .set_neq(new_value);
+                    }
+                    (DividerType::SignalRowDivider { unique_id }, _) => {
+                        self.selected_variables
+                            .update_row_height(unique_id, new_value as u32);
                     }
                 }
-                // Config save is handled automatically by the pure signal debouncer
             }
         }
     }
@@ -132,21 +177,32 @@ impl DraggingSystem {
     }
 
     pub fn is_any_divider_dragging(&self) -> impl Signal<Item = bool> + 'static {
-        self.drag_state.signal().map(|state| state.active_divider.is_some())
+        self.drag_state
+            .signal_cloned()
+            .map(|state| state.active_divider.is_some())
     }
 
-    pub fn is_divider_dragging(&self, divider_type: DividerType) -> impl Signal<Item = bool> + 'static {
-        self.drag_state.signal().map(move |state| {
+    pub fn is_divider_dragging(
+        &self,
+        divider_type: DividerType,
+    ) -> impl Signal<Item = bool> + 'static {
+        self.drag_state.signal_cloned().map(move |state| {
             matches!(state.active_divider, Some(ref active_type) if *active_type == divider_type)
         })
     }
 
     pub fn active_divider_type_signal(&self) -> impl Signal<Item = Option<DividerType>> + 'static {
-        self.drag_state.signal().map(|state| state.active_divider)
+        self.drag_state
+            .signal_cloned()
+            .map(|state| state.active_divider)
     }
 
-    pub fn active_overlay_divider_signal(&self) -> impl Signal<Item = Option<DividerType>> + 'static {
-        self.drag_state.signal().map(|state| state.active_divider)
+    pub fn active_overlay_divider_signal(
+        &self,
+    ) -> impl Signal<Item = Option<DividerType>> + 'static {
+        self.drag_state
+            .signal_cloned()
+            .map(|state| state.active_divider)
     }
 }
 
@@ -176,11 +232,15 @@ pub fn files_panel_width_signal(app_config: crate::config::AppConfig) -> impl Si
     }
 }
 
-pub fn variables_name_column_width_signal(app_config: crate::config::AppConfig) -> impl Signal<Item = f32> {
+pub fn variables_name_column_width_signal(
+    app_config: crate::config::AppConfig,
+) -> impl Signal<Item = f32> {
     app_config.variables_name_column_width.signal()
 }
 
-pub fn variables_value_column_width_signal(app_config: crate::config::AppConfig) -> impl Signal<Item = f32> {
+pub fn variables_value_column_width_signal(
+    app_config: crate::config::AppConfig,
+) -> impl Signal<Item = f32> {
     app_config.variables_value_column_width.signal()
 }
 

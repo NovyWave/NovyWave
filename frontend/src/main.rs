@@ -218,6 +218,7 @@ pub fn main() {
             app.tracked_files.clone(),
             app.selected_variables.clone(),
             app.waveform_timeline.clone(),
+            app.config.clone(),
             app.connection.clone(),
         );
         test_api::expose_novywave_test_api();
@@ -258,7 +259,7 @@ export function ensure_reconnecting_event_source() {
   if (typeof window === 'undefined') return;
   if (typeof window.EventSource === 'undefined') return;
 
-  const ORIGIN = 'http://127.0.0.1:8080';
+  const ORIGIN = 'http://127.0.0.1:8082';
 
   const rewriteApi = (urlStr) => {
     try {
@@ -271,7 +272,7 @@ export function ensure_reconnecting_event_source() {
         path.startsWith('/_api/browse');
       if (!is_api) return urlStr;
       url.protocol = 'http:';
-      url.host = '127.0.0.1:8080';
+      url.host = '127.0.0.1:8082';
       return url.toString();
     } catch (_e) {
       return urlStr;

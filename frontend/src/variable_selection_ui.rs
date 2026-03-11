@@ -84,15 +84,18 @@ pub fn variables_panel(
                                 .placeholder("variable_name")
                                 .value_signal(selected_variables.search_filter.signal_cloned())
                                 .left_icon(IconName::Search)
-                                .right_icon_signal(selected_variables.search_filter.signal_cloned().map(
-                                    |text| {
-                                        if text.is_empty() {
-                                            None
-                                        } else {
-                                            Some(IconName::X)
-                                        }
-                                    },
-                                ))
+                                .right_icon_signal(
+                                    selected_variables
+                                        .search_filter
+                                        .signal_cloned()
+                                        .map(|text| {
+                                            if text.is_empty() {
+                                                None
+                                            } else {
+                                                Some(IconName::X)
+                                            }
+                                        }),
+                                )
                                 .on_right_icon_click({
                                     let sv = sv_for_filter.clone();
                                     move || sv.set_search_filter(String::new())

@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 pub struct Tool {
     pub name: String,
@@ -225,7 +225,7 @@ pub fn get_tools() -> Vec<Tool> {
         },
         Tool {
             name: "novywave_launch_browser".into(),
-            description: "Launch Chromium with NovyWave extension. Opens localhost:8080.".into(),
+            description: "Launch Chromium with NovyWave extension. Opens localhost:8082.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {

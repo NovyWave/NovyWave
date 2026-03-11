@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{RwLock, mpsc};
 use tokio_tungstenite::{accept_async, connect_async, tungstenite::Message};
 
 pub use protocol::*;
@@ -75,9 +75,7 @@ impl ServerState {
         let request = Request { id, command };
         let json = serde_json::to_string(&request)?;
 
-        tx.send(json)
-            .await
-            .context("Failed to send to extension")?;
+        tx.send(json).await.context("Failed to send to extension")?;
 
         let response = tokio::time::timeout(std::time::Duration::from_secs(30), response_rx)
             .await
@@ -119,7 +117,10 @@ impl ServerState {
 pub async fn run_server_daemon(port: u16) {
     use crate::mcp::find_extension_dir;
 
-    log::info!("Starting NovyWave WebSocket server daemon on port {}...", port);
+    log::info!(
+        "Starting NovyWave WebSocket server daemon on port {}...",
+        port
+    );
 
     let extension_dir = find_extension_dir();
     if let Some(ref dir) = extension_dir {
@@ -184,13 +185,8 @@ async fn handle_connection(stream: TcpStream, state: Arc<ServerState>) -> Result
                 } else if let Ok(response_msg) = serde_json::from_str::<ResponseMessage>(&text) {
                     // First message is a response - treat as extension
                     log::info!("Extension connected");
-                    handle_extension_connection_with_first_msg(
-                        response_msg,
-                        ws_tx,
-                        ws_rx,
-                        &state,
-                    )
-                    .await?;
+                    handle_extension_connection_with_first_msg(response_msg, ws_tx, ws_rx, &state)
+                        .await?;
                 } else {
                     // Unknown message format, assume extension
                     log::warn!("Unknown first message format, assuming extension: {}", text);
@@ -241,15 +237,17 @@ async fn handle_cli_connection(
 
 async fn handle_extension_connection_with_first_msg(
     first_response: ResponseMessage,
-    ws_tx: futures_util::stream::SplitSink<
-        tokio_tungstenite::WebSocketStream<TcpStream>,
-        Message,
-    >,
+    ws_tx: futures_util::stream::SplitSink<tokio_tungstenite::WebSocketStream<TcpStream>, Message>,
     ws_rx: futures_util::stream::SplitStream<tokio_tungstenite::WebSocketStream<TcpStream>>,
     state: &Arc<ServerState>,
 ) -> Result<()> {
     // Handle the first response
-    if let Some(tx) = state.pending_requests.write().await.remove(&first_response.id) {
+    if let Some(tx) = state
+        .pending_requests
+        .write()
+        .await
+        .remove(&first_response.id)
+    {
         let _ = tx.send(first_response.response);
     }
 

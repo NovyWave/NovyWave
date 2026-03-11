@@ -128,17 +128,28 @@ impl ConnectionMessageActor {
                             DownMsg::ConfigLoaded(loaded_config) => {
                                 workspace_loading.set(false);
                                 // Phase 3: Apply UI config directly to state (except variables/scopes)
-                                config.restore_config(
-                                    loaded_config.clone(),
-                                    &selected_variables,
+                                config.restore_config(loaded_config.clone(), &selected_variables);
+                                waveform_timeline.restore_markers(
+                                    loaded_config.workspace.timeline.markers.clone(),
                                 );
+                                config
+                                    .markers_config
+                                    .set(waveform_timeline.markers_as_config());
+                                selected_variables.restore_signal_groups(
+                                    loaded_config.workspace.signal_groups.clone(),
+                                );
+                                config
+                                    .signal_groups_config
+                                    .set(selected_variables.signal_groups_as_config());
                                 // Phase 4: Load files, then restore variables/scopes AFTER files start loading
-                                config.complete_initialization(
-                                    &connection_for_init,
-                                    &tracked_files,
-                                    &selected_variables,
-                                    &loaded_config,
-                                ).await;
+                                config
+                                    .complete_initialization(
+                                        &connection_for_init,
+                                        &tracked_files,
+                                        &selected_variables,
+                                        &loaded_config,
+                                    )
+                                    .await;
                                 // Phase 5: Enable config saves AFTER files have started loading
                                 // (prevents config saves from capturing incomplete state)
                                 config.set_config_loaded();
@@ -158,14 +169,29 @@ impl ConnectionMessageActor {
                                 tracked_files.clear_all_files();
                                 selected_variables.clear_selection();
                                 // Apply workspace config (except variables/scopes)
-                                config.restore_config(workspace_config.clone(), &selected_variables);
+                                config
+                                    .restore_config(workspace_config.clone(), &selected_variables);
+                                waveform_timeline.restore_markers(
+                                    workspace_config.workspace.timeline.markers.clone(),
+                                );
+                                config
+                                    .markers_config
+                                    .set(waveform_timeline.markers_as_config());
+                                selected_variables.restore_signal_groups(
+                                    workspace_config.workspace.signal_groups.clone(),
+                                );
+                                config
+                                    .signal_groups_config
+                                    .set(selected_variables.signal_groups_as_config());
                                 // Load files, then restore variables/scopes AFTER files start loading
-                                config.complete_initialization(
-                                    &connection_for_init,
-                                    &tracked_files,
-                                    &selected_variables,
-                                    &workspace_config,
-                                ).await;
+                                config
+                                    .complete_initialization(
+                                        &connection_for_init,
+                                        &tracked_files,
+                                        &selected_variables,
+                                        &workspace_config,
+                                    )
+                                    .await;
                                 // Enable config saves
                                 config.set_config_loaded();
                             }
@@ -191,6 +217,13 @@ impl ConnectionMessageActor {
                                     error
                                 );
                                 config.file_picker_domain.on_directory_error(path, error);
+                            }
+                            DownMsg::PlatformRoots(roots) => {
+                                zoon::println!(
+                                    "frontend: PlatformRoots received {} roots",
+                                    roots.len()
+                                );
+                                config.file_picker_domain.on_platform_roots(roots);
                             }
                             // FileLoaded, ParsingError, ParsingStarted are handled directly
                             // in the Connection callback via tf.update_file_state()
@@ -228,8 +261,11 @@ impl ConnectionMessageActor {
                                 cursor_values,
                                 ..
                             } => {
-                                zoon::println!("[CONN] UnifiedSignalResponse: request_id={request_id} signal_data={} cursor_values={}",
-                                    signal_data.len(), cursor_values.len());
+                                zoon::println!(
+                                    "[CONN] UnifiedSignalResponse: request_id={request_id} signal_data={} cursor_values={}",
+                                    signal_data.len(),
+                                    cursor_values.len()
+                                );
                                 waveform_timeline.apply_unified_signal_response(
                                     &request_id,
                                     signal_data,
@@ -249,8 +285,14 @@ impl ConnectionMessageActor {
                                     tracked_files_for_reload.load_new_paths(file_paths);
                                 }
                             }
-                            DownMsg::TestNotification { variant, title, message } => {
-                                zoon::println!("🔔 FRONTEND: Received test notification: {variant} - {title}: {message}");
+                            DownMsg::TestNotification {
+                                variant,
+                                title,
+                                message,
+                            } => {
+                                zoon::println!(
+                                    "🔔 FRONTEND: Received test notification: {variant} - {title}: {message}"
+                                );
                             }
                             _ => {}
                         }
@@ -312,6 +354,9 @@ pub struct NovyWaveApp {
     debug_notification_task: Rc<RefCell<Option<TaskHandle>>>,
     workspace_switch_task: Rc<RefCell<Option<TaskHandle>>>,
     workspace_switch_generation: Mutable<u64>,
+
+    pub marker_dialog_visible: Mutable<bool>,
+    pub marker_name_input: Mutable<String>,
 }
 
 // Remove Default implementation - use new() method instead
@@ -401,7 +446,8 @@ impl NovyWaveApp {
         .await;
 
         // Initialize dragging system after config is ready
-        let dragging_system = crate::dragging::DraggingSystem::new(config.clone());
+        let dragging_system =
+            crate::dragging::DraggingSystem::new(config.clone(), selected_variables.clone());
 
         // scope_selection_sync removed - SelectedVariables observes files_selected_scope internally
 
@@ -417,6 +463,18 @@ impl NovyWaveApp {
             connection_arc.clone(),
         );
 
+        {
+            let connection = connection_arc.clone();
+            Task::start(async move {
+                if let Err(error) = connection
+                    .send_up_msg(shared::UpMsg::GetPlatformRoots)
+                    .await
+                {
+                    zoon::println!("ERROR: Failed to request platform roots on startup: {error:?}");
+                }
+            });
+        }
+
         // Request config loading once; the Web platform gate handles
         // readiness probes, single-flight, and quiet retry during dev-server swaps.
         let _ = <crate::platform::CurrentPlatform as crate::platform::Platform>::send_message(
@@ -430,7 +488,7 @@ impl NovyWaveApp {
         let workspace_switch_task = Rc::new(RefCell::new(None));
         let workspace_switch_generation = Mutable::new(0u64);
 
-        Self::setup_app_coordination(&selected_variables, &config).await;
+        Self::setup_app_coordination(&selected_variables, &tracked_files, &config).await;
 
         // Setup Tauri update event listeners (desktop only - no-op on web)
         crate::platform::setup_update_event_listeners(config.error_display.clone());
@@ -456,6 +514,8 @@ impl NovyWaveApp {
             debug_notification_task,
             workspace_switch_task,
             workspace_switch_generation,
+            marker_dialog_visible: Mutable::new(false),
+            marker_name_input: Mutable::new(String::new()),
         }
     }
 
@@ -517,20 +577,20 @@ impl NovyWaveApp {
                 match &down_msg {
                     DownMsg::FileLoaded { file_id, hierarchy } => {
                         if let Some(loaded_file) = hierarchy.files.first() {
-                            tf.backend_messages.file_loaded.set(Some((
-                                file_id.clone(),
-                                loaded_file.clone(),
-                            )));
+                            tf.backend_messages
+                                .file_loaded
+                                .set(Some((file_id.clone(), loaded_file.clone())));
                         }
                     }
                     DownMsg::ParsingStarted { file_id, .. } => {
-                        tf.backend_messages.parsing_started.set(Some(file_id.clone()));
+                        tf.backend_messages
+                            .parsing_started
+                            .set(Some(file_id.clone()));
                     }
                     DownMsg::ParsingError { file_id, error: _ } => {
-                        tf.backend_messages.parsing_error.set(Some((
-                            file_id.clone(),
-                            "Parsing error".to_string(),
-                        )));
+                        tf.backend_messages
+                            .parsing_error
+                            .set(Some((file_id.clone(), "Parsing error".to_string())));
                     }
                     _ => {}
                 }
@@ -542,15 +602,35 @@ impl NovyWaveApp {
             }
         });
 
-        (SendWrapper::new(connection), connection_message_actor, down_msg_receiver)
+        (
+            SendWrapper::new(connection),
+            connection_message_actor,
+            down_msg_receiver,
+        )
     }
 
     /// Setup app-level coordination
-    async fn setup_app_coordination(selected_variables: &SelectedVariables, config: &AppConfig) {
+    async fn setup_app_coordination(
+        selected_variables: &SelectedVariables,
+        tracked_files: &TrackedFiles,
+        config: &AppConfig,
+    ) {
         // Restore selected variables from config
         if !config.loaded_selected_variables.is_empty() {
             selected_variables.restore_variables(config.loaded_selected_variables.clone());
         }
+
+        let selected_variables_for_sync = selected_variables.clone();
+        let tracked_files_for_sync = tracked_files.clone();
+        Task::start(async move {
+            tracked_files_for_sync
+                .files_vec_signal
+                .signal_cloned()
+                .for_each_sync(move |files| {
+                    selected_variables_for_sync.synchronize_metadata_from_files(&files);
+                })
+                .await;
+        });
     }
 
     /// Root UI element
@@ -562,12 +642,12 @@ impl NovyWaveApp {
             .s(Height::screen())
             .s(Width::fill())
             .s(
-                Background::new().color_signal(self.config.theme.signal().map(|theme| {
-                    match theme {
+                Background::new().color_signal(self.config.theme.signal().map(
+                    |theme| match theme {
                         shared::Theme::Light => "rgb(255, 255, 255)",
                         shared::Theme::Dark => "rgb(13, 13, 13)",
-                    }
-                })),
+                    },
+                )),
             )
             .s(Font::new().family([
                 FontFamily::new("Inter"),
@@ -582,6 +662,8 @@ impl NovyWaveApp {
                 let dragging_system_for_events = dragging_system.clone();
                 let key_repeat_handles = self.key_repeat_handles.clone();
                 let debug_notification_task = self.debug_notification_task.clone();
+                let marker_dialog_visible = self.marker_dialog_visible.clone();
+                let marker_name_input = self.marker_name_input.clone();
 
                 move |raw_el| {
                     let app_config_for_keydown = app_config.clone();
@@ -590,6 +672,8 @@ impl NovyWaveApp {
                     let debug_notification_task_for_keydown = debug_notification_task.clone();
                     let timeline_for_keydown = timeline.clone();
                     let timeline_for_keyup = timeline.clone();
+                    let marker_dialog_visible_for_keydown = marker_dialog_visible.clone();
+                    let marker_name_input_for_keydown = marker_name_input.clone();
                     let raw_el = raw_el.global_event_handler_with_options(
                         EventOptions::new().preventable(),
                         move |event: KeyDown| {
@@ -758,15 +842,33 @@ impl NovyWaveApp {
                                         timeline_for_keydown.toggle_tooltip();
                                     }
 
+                                    // Markers
+                                    "m" | "M" => {
+                                        event.prevent_default();
+                                        let count =
+                                            timeline_for_keydown.markers.lock_ref().len() + 1;
+                                        marker_name_input_for_keydown
+                                            .set(format!("Marker {count}"));
+                                        marker_dialog_visible_for_keydown.set(true);
+                                    }
+                                    "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" => {
+                                        let digit: usize = event.key().parse().unwrap_or(1);
+                                        timeline_for_keydown.jump_to_marker(digit - 1);
+                                    }
+
                                     // Debug: Trigger test notifications
                                     "n" | "N" => {
                                         event.prevent_default();
                                         let config = app_config_for_keydown.clone();
                                         let handle = Task::start_droppable(async move {
-                                            crate::error_display::trigger_test_notifications(&config).await;
+                                            crate::error_display::trigger_test_notifications(
+                                                &config,
+                                            )
+                                            .await;
                                         });
                                         // Store handle to cancel previous task if retriggered
-                                        *debug_notification_task_for_keydown.borrow_mut() = Some(handle);
+                                        *debug_notification_task_for_keydown.borrow_mut() =
+                                            Some(handle);
                                     }
 
                                     _ => {}
@@ -879,6 +981,20 @@ impl NovyWaveApp {
                         config.clone(),
                         file_dialog_visible.clone(),
                         crate::connection::ConnectionAdapter::from_arc(connection.clone()),
+                    )
+                }
+            }))
+            .layer_signal(self.marker_dialog_visible.signal().map_true({
+                let marker_dialog_visible = self.marker_dialog_visible.clone();
+                let marker_name_input = self.marker_name_input.clone();
+                let waveform_timeline = self.waveform_timeline.clone();
+                let config = self.config.clone();
+                move || {
+                    marker_name_dialog(
+                        marker_dialog_visible.clone(),
+                        marker_name_input.clone(),
+                        waveform_timeline.clone(),
+                        config.clone(),
                     )
                 }
             }))
@@ -1037,7 +1153,11 @@ impl NovyWaveApp {
 
         // Clear picker state before switch to prevent stale state during transition (Issue #6 fix)
         app_config.file_picker_domain.clear_file_selection();
-        app_config.file_picker_domain.directory_cache.lock_mut().clear();
+        app_config
+            .file_picker_domain
+            .directory_cache
+            .lock_mut()
+            .clear();
 
         workspace_loading.set(true);
         // Optimistic update: reflect the user's choice immediately in the input.
@@ -1083,8 +1203,16 @@ impl NovyWaveApp {
                 }
                 let still_loading = *workspace_loading.lock_ref();
                 let current = workspace_path_for_revert.lock_ref().clone();
-                if still_loading && current.as_ref().map(|p| p == &request_path).unwrap_or(false) {
-                    zoon::println!("ERROR: Workspace load timeout after 6s for: {}", request_path);
+                if still_loading
+                    && current
+                        .as_ref()
+                        .map(|p| p == &request_path)
+                        .unwrap_or(false)
+                {
+                    zoon::println!(
+                        "ERROR: Workspace load timeout after 6s for: {}",
+                        request_path
+                    );
                     workspace_loading.set(false);
                 }
             }
@@ -1111,9 +1239,7 @@ impl NovyWaveApp {
             }
         }
 
-        domain
-            .expanded_directories
-            .set_neq(expanded_set);
+        domain.expanded_directories.set_neq(expanded_set);
         domain.scroll_position.set_neq(scroll_value);
     }
 
@@ -1174,7 +1300,9 @@ fn dragging_overlay_element(
     use crate::dragging::DividerType;
 
     let cursor_icon = match divider_type {
-        DividerType::FilesPanelSecondary => CursorIcon::RowResize,
+        DividerType::FilesPanelSecondary | DividerType::SignalRowDivider { .. } => {
+            CursorIcon::RowResize
+        }
         DividerType::VariablesNameColumn
         | DividerType::VariablesValueColumn
         | DividerType::FilesPanelMain => CursorIcon::ColumnResize,
@@ -1938,81 +2066,95 @@ fn workspace_picker_tree(
     // Initialize directories synchronously - no async needed for Mutable reads
     initialize_directories_and_request_contents(&domain);
     let cache_signal = domain.directory_cache_signal();
+    let errors_signal = domain.directory_errors_signal();
 
-    El::new()
-        .s(Height::fill())
-        .s(Width::fill())
-        .child_signal({
-            let domain_for_treeview = domain.clone();
-            cache_signal.map(move |cache| {
-                if cache.contains_key("/") {
-                    let tree_data = workspace_build_tree_data("/", &cache);
-                    // Single Source of Truth: use domain's Mutable directly
-                    // Persistence is handled globally by WorkspacePickerPersistence
-                    let external_expanded = domain_for_treeview.expanded_directories.clone();
-                    let scroll_position_actor = domain_for_treeview.scroll_position.clone();
+    El::new().s(Height::fill()).s(Width::fill()).child_signal({
+        let domain_for_treeview = domain.clone();
+        let platform_roots_signal = domain.platform_roots.signal_cloned();
+        map_ref! {
+            let cache = cache_signal,
+            let errors = errors_signal,
+            let platform_roots = platform_roots_signal => {
+                (cache.clone(), errors.clone(), platform_roots.clone())
+            }
+        }
+        .map(move |(cache, errors, platform_roots)| {
+            let tree_data = if let Some(ref roots) = platform_roots {
+                workspace_build_multi_root_tree_data(roots, &cache, &errors)
+            } else if cache.contains_key("/") {
+                workspace_build_tree_data("/", &cache, &errors)
+            } else {
+                Vec::new()
+            };
 
-                    let scroll_task_handle: std::sync::Arc<std::sync::Mutex<Option<zoon::TaskHandle>>> =
-                        std::sync::Arc::new(std::sync::Mutex::new(None));
-                    let scroll_task_handle_for_insert = scroll_task_handle.clone();
-                    let scroll_task_handle_for_remove = scroll_task_handle.clone();
+            if !tree_data.is_empty() || platform_roots.is_some() || cache.contains_key("/") {
+                // Single Source of Truth: use domain's Mutable directly
+                // Persistence is handled globally by WorkspacePickerPersistence
+                let external_expanded = domain_for_treeview.expanded_directories.clone();
+                let scroll_position_actor = domain_for_treeview.scroll_position.clone();
 
-                    El::new()
-                        .s(Height::fill())
-                        .s(Width::fill())
-                        .after_insert(move |_element| {
-                            // Restore scroll position after tree renders
-                            let handle = Task::start_droppable({
-                                let scroll_position_mutable = scroll_position_actor.clone();
-                                async move {
-                                    Task::next_macro_tick().await;
-                                    let position = scroll_position_mutable.get();
-                                    if position > 0 {
-                                        if let Some(window) = web_sys::window() {
-                                            if let Some(document) = window.document() {
-                                                if let Ok(Some(element)) = document.query_selector(
-                                                    "[data-scroll-container='workspace-picker']",
-                                                ) {
-                                                    element.set_scroll_top(position);
-                                                }
+                let scroll_task_handle: std::sync::Arc<std::sync::Mutex<Option<zoon::TaskHandle>>> =
+                    std::sync::Arc::new(std::sync::Mutex::new(None));
+                let scroll_task_handle_for_insert = scroll_task_handle.clone();
+                let scroll_task_handle_for_remove = scroll_task_handle.clone();
+
+                El::new()
+                    .s(Height::fill())
+                    .s(Width::fill())
+                    .after_insert(move |_element| {
+                        // Restore scroll position after tree renders
+                        let handle = Task::start_droppable({
+                            let scroll_position_mutable = scroll_position_actor.clone();
+                            async move {
+                                Task::next_macro_tick().await;
+                                let position = scroll_position_mutable.get();
+                                if position > 0 {
+                                    if let Some(window) = web_sys::window() {
+                                        if let Some(document) = window.document() {
+                                            if let Ok(Some(element)) = document.query_selector(
+                                                "[data-scroll-container='workspace-picker']",
+                                            ) {
+                                                element.set_scroll_top(position);
                                             }
                                         }
                                     }
                                 }
-                            });
-                            *scroll_task_handle_for_insert.lock().unwrap() = Some(handle);
-                        })
-                        .after_remove(move |_| {
-                            drop(scroll_task_handle_for_remove.lock().unwrap().take());
-                        })
-                        .child(
-                            tree_view()
-                                .data(tree_data)
-                                .size(TreeViewSize::Medium)
-                                .variant(TreeViewVariant::Basic)
-                                .show_icons(true)
-                                .show_checkboxes(true)
-                                .external_expanded(external_expanded)
-                                // Single Source of Truth: use domain's MutableVec directly
-                                .external_selected_vec(domain_for_treeview.selected_files.clone())
-                                .build()
-                                .into_raw(),
-                        )
-                        .into_element()
-                } else {
-                    El::new()
-                        .s(Padding::all(20))
-                        .s(Font::new().color_signal(neutral_8()).italic())
-                        .child("Loading directory contents...")
-                        .into_element()
-                }
-            })
+                            }
+                        });
+                        *scroll_task_handle_for_insert.lock().unwrap() = Some(handle);
+                    })
+                    .after_remove(move |_| {
+                        drop(scroll_task_handle_for_remove.lock().unwrap().take());
+                    })
+                    .child(
+                        tree_view()
+                            .data(tree_data)
+                            .size(TreeViewSize::Medium)
+                            .variant(TreeViewVariant::Basic)
+                            .show_icons(true)
+                            .show_checkboxes(true)
+                            .external_expanded(external_expanded)
+                            // Single Source of Truth: use domain's MutableVec directly
+                            .external_selected_vec(domain_for_treeview.selected_files.clone())
+                            .build()
+                            .into_raw(),
+                    )
+                    .into_element()
+            } else {
+                El::new()
+                    .s(Padding::all(20))
+                    .s(Font::new().color_signal(neutral_8()).italic())
+                    .child("Loading platform roots...")
+                    .into_element()
+            }
         })
+    })
 }
 
 fn workspace_build_tree_data(
     root_path: &str,
     cache: &HashMap<String, Vec<shared::FileSystemItem>>,
+    errors: &HashMap<String, String>,
 ) -> Vec<TreeViewItemData> {
     cache
         .get(root_path)
@@ -2020,16 +2162,30 @@ fn workspace_build_tree_data(
             entries
                 .iter()
                 .filter(|entry| entry.is_directory)
-                .map(|entry| workspace_build_directory_item(&entry.path, &entry.name, cache))
+                .map(|entry| {
+                    workspace_build_directory_item(&entry.path, &entry.name, cache, errors)
+                })
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn workspace_build_multi_root_tree_data(
+    roots: &[shared::PlatformRoot],
+    cache: &HashMap<String, Vec<shared::FileSystemItem>>,
+    errors: &HashMap<String, String>,
+) -> Vec<TreeViewItemData> {
+    roots
+        .iter()
+        .map(|root| workspace_build_directory_item(&root.path, &root.label, cache, errors))
+        .collect()
 }
 
 fn workspace_build_directory_item(
     path: &str,
     name: &str,
     cache: &HashMap<String, Vec<shared::FileSystemItem>>,
+    errors: &HashMap<String, String>,
 ) -> TreeViewItemData {
     let mut item = TreeViewItemData::new(path.to_string(), name.to_string())
         .icon("folder".to_string())
@@ -2037,7 +2193,16 @@ fn workspace_build_directory_item(
         .has_expandable_content(true)
         .is_waveform_file(true);
 
-    if let Some(children) = cache.get(path) {
+    if errors.contains_key(path) {
+        item = item.with_children(vec![
+            TreeViewItemData::new(
+                format!("{path}::error"),
+                "Can't access this directory".to_string(),
+            )
+            .disabled(true)
+            .item_type(TreeViewItemType::Default),
+        ]);
+    } else if let Some(children) = cache.get(path) {
         let mut child_items = Vec::new();
         for child in children {
             if child.is_directory {
@@ -2045,6 +2210,7 @@ fn workspace_build_directory_item(
                     &child.path,
                     &child.name,
                     cache,
+                    errors,
                 ));
             }
         }
@@ -2066,4 +2232,136 @@ fn workspace_build_directory_item(
     }
 
     item
+}
+
+fn marker_name_dialog(
+    dialog_visible: Mutable<bool>,
+    name_input: Mutable<String>,
+    timeline: WaveformTimeline,
+    config: AppConfig,
+) -> impl Element {
+    use moonzoon_novyui::components::input::{InputSize, input};
+    use moonzoon_novyui::tokens::color::{neutral_2, neutral_4, neutral_11};
+    use moonzoon_novyui::tokens::theme::{Theme, theme};
+
+    let confirm_action = {
+        let dialog_visible = dialog_visible.clone();
+        let name_input = name_input.clone();
+        let timeline = timeline.clone();
+        let config = config.clone();
+        Rc::new(move || {
+            let name = name_input.get_cloned();
+            if !name.is_empty() {
+                timeline.add_marker(name);
+                config.markers_config.set(timeline.markers_as_config());
+            }
+            dialog_visible.set(false);
+        })
+    };
+
+    let close_action = {
+        let dialog_visible = dialog_visible.clone();
+        Rc::new(move || dialog_visible.set(false))
+    };
+
+    El::new()
+        .s(Background::new().color_signal(theme().map(|t| match t {
+            Theme::Light => "rgba(255, 255, 255, 0.85)",
+            Theme::Dark => "rgba(0, 0, 0, 0.85)",
+        })))
+        .s(Width::fill())
+        .s(Height::fill())
+        .update_raw_el(|raw_el| {
+            raw_el
+                .style("display", "flex")
+                .style("position", "fixed")
+                .style("inset", "0")
+                .style("z-index", "22000")
+                .style("justify-content", "center")
+                .style("align-items", "center")
+        })
+        .update_raw_el({
+            let close_action = close_action.clone();
+            move |raw_el| {
+                raw_el.event_handler(move |_: Click| {
+                    close_action();
+                })
+            }
+        })
+        .child(
+            Column::new()
+                .s(Width::exact(320))
+                .s(Padding::all(20))
+                .s(Gap::new().y(16))
+                .s(RoundedCorners::all(8))
+                .s(Background::new().color_signal(neutral_2()))
+                .s(Borders::all_signal(
+                    neutral_4().map(|color| Border::new().width(1).color(color)),
+                ))
+                .update_raw_el(|raw_el| {
+                    raw_el.event_handler(|event: Click| event.stop_propagation())
+                })
+                .update_raw_el({
+                    let confirm_action = confirm_action.clone();
+                    let close_action_for_key = {
+                        let dialog_visible = dialog_visible.clone();
+                        move || dialog_visible.set(false)
+                    };
+                    move |raw_el| {
+                        raw_el.global_event_handler(move |event: KeyDown| {
+                            match event.key().as_str() {
+                                "Enter" => {
+                                    confirm_action();
+                                }
+                                "Escape" => {
+                                    close_action_for_key();
+                                }
+                                _ => {}
+                            }
+                        })
+                    }
+                })
+                .item(
+                    El::new()
+                        .s(Font::new()
+                            .color_signal(neutral_11())
+                            .weight(FontWeight::SemiBold)
+                            .size(14))
+                        .child("Add Marker"),
+                )
+                .item(
+                    input()
+                        .size(InputSize::Small)
+                        .placeholder("Marker name")
+                        .value_signal(name_input.signal_cloned())
+                        .on_change({
+                            let name_input = name_input.clone();
+                            move |text| name_input.set(text)
+                        })
+                        .build(),
+                )
+                .item(
+                    Row::new()
+                        .s(Gap::new().x(8))
+                        .s(Align::new().right())
+                        .item(
+                            button()
+                                .label("Cancel")
+                                .variant(ButtonVariant::Ghost)
+                                .size(ButtonSize::Small)
+                                .on_press({
+                                    let dialog_visible = dialog_visible.clone();
+                                    move || dialog_visible.set(false)
+                                })
+                                .build(),
+                        )
+                        .item(
+                            button()
+                                .label("Add")
+                                .size(ButtonSize::Small)
+                                .on_press(move || confirm_action())
+                                .build(),
+                        ),
+                ),
+        )
 }

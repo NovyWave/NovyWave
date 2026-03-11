@@ -421,9 +421,11 @@ pub fn convert_scope_to_tree_data(scope: &ScopeData) -> Option<TreeViewItemData>
 
     let scope_tree_id = format!("scope_{}", scope.id);
 
-    Some(TreeViewItemData::new(scope_tree_id, scope.name.clone())
-        .item_type(TreeViewItemType::Folder)
-        .with_children(children))
+    Some(
+        TreeViewItemData::new(scope_tree_id, scope.name.clone())
+            .item_type(TreeViewItemType::Folder)
+            .with_children(children),
+    )
 }
 
 /// Create enhanced file remove handler with proper cleanup

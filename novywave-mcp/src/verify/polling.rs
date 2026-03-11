@@ -1,7 +1,7 @@
 use super::CommandRunner;
 use crate::ws_server::{Command, Response};
-use anyhow::{bail, Result};
-use tokio::time::{sleep, Duration, Instant};
+use anyhow::{Result, bail};
+use tokio::time::{Duration, Instant, sleep};
 
 pub async fn wait_for_app_ready_runner(runner: &CommandRunner, timeout_ms: u64) -> Result<()> {
     let start = Instant::now();

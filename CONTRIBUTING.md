@@ -24,7 +24,7 @@ makers install
 makers start
 ```
 
-The app will be available at http://localhost:8080 with auto-reload.
+The app will be available at http://localhost:8082 with auto-reload.
 
 For desktop development:
 ```bash

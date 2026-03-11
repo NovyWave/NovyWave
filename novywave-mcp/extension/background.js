@@ -295,7 +295,7 @@ async function handleCommand(id, command) {
     if (cachedNovyWaveTabId !== null) {
       try {
         tab = await chrome.tabs.get(cachedNovyWaveTabId);
-        if (!tab.url || !tab.url.startsWith('http://localhost:8080')) {
+        if (!tab.url || !tab.url.startsWith('http://localhost:8082')) {
           cachedNovyWaveTabId = null;
           tab = null;
         }
@@ -306,9 +306,9 @@ async function handleCommand(id, command) {
     }
 
     if (tab === null) {
-      const tabs = await chrome.tabs.query({ url: 'http://localhost:8080/*' });
+      const tabs = await chrome.tabs.query({ url: 'http://localhost:8082/*' });
       if (tabs.length === 0) {
-        return { type: 'error', message: 'No NovyWave tab found (localhost:8080)' };
+        return { type: 'error', message: 'No NovyWave tab found (localhost:8082)' };
       }
       tab = tabs.find(t => t.active) || tabs[0];
       cachedNovyWaveTabId = tab.id;

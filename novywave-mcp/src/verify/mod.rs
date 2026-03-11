@@ -3,7 +3,7 @@ mod polling;
 pub mod tests;
 
 use crate::ws_server::{self, Command, Response};
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use std::path::PathBuf;
 
 pub use config::NovyWaveConfig;
@@ -39,7 +39,9 @@ pub enum CommandRunner {
 impl CommandRunner {
     pub async fn send_command(&self, command: Command) -> Result<Response> {
         match self {
-            CommandRunner::Remote { port } => ws_server::send_command_to_server(*port, command).await,
+            CommandRunner::Remote { port } => {
+                ws_server::send_command_to_server(*port, command).await
+            }
         }
     }
 
@@ -92,7 +94,12 @@ pub async fn run_verify(options: VerifyOptions) -> Result<bool> {
         .to_string_lossy()
         .to_string();
     println!("📂 Switching to workspace: {}", workspace_path);
-    match runner.send_command(Command::SelectWorkspace { path: workspace_path.clone() }).await {
+    match runner
+        .send_command(Command::SelectWorkspace {
+            path: workspace_path.clone(),
+        })
+        .await
+    {
         Ok(_) => println!("✅ Workspace switch initiated"),
         Err(e) => {
             println!("⚠️  Failed to switch workspace: {}", e);
@@ -100,7 +107,7 @@ pub async fn run_verify(options: VerifyOptions) -> Result<bool> {
     }
 
     // Wait for workspace to load (give time for files to parse)
-    use tokio::time::{sleep, Duration};
+    use tokio::time::{Duration, sleep};
     println!("⏳ Waiting for workspace to load...");
     sleep(Duration::from_millis(2000)).await;
 

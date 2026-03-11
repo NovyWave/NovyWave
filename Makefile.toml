@@ -48,7 +48,7 @@ script = 'exec ./mzoon/bin/mzoon start --open ${@}'
 [tasks.kill]
 description = "Stop all development processes"
 script = '''
-PORT=$(grep "^port = " MoonZoon.toml | head -1 | cut -d' ' -f3 || echo "8080")
+PORT=$(grep "^port = " MoonZoon.toml | head -1 | cut -d' ' -f3 || echo "8082")
 KILLED_ANY=false
 PROJECT_DIR=$(pwd)
 
@@ -116,16 +116,16 @@ description = "Start in Tauri mode using running dev server"
 dependencies = ["install", "install_tauri_cli"]
 env = { NOVYWAVE_PLATFORM = "TAURI" }
 script = '''
-echo "Starting Tauri desktop mode using dev server at http://localhost:8080..."
+echo "Starting Tauri desktop mode using dev server at http://localhost:8082..."
 
-# Check if dev server is running on port 8080
-if ! curl -s http://localhost:8080 >/dev/null 2>&1; then
-    echo "ERROR: Dev server is not running on port 8080"
+# Check if dev server is running on port 8082
+if ! curl -s http://localhost:8082 >/dev/null 2>&1; then
+    echo "ERROR: Dev server is not running on port 8082"
     echo "Please start the dev server first with: makers start"
     exit 1
 fi
 
-echo "✓ Dev server detected on port 8080"
+echo "✓ Dev server detected on port 8082"
 echo "✓ Starting Tauri with shared dev server..."
 
 cd src-tauri && cargo tauri dev --config tauri.dev.conf.json
@@ -150,10 +150,10 @@ NOVYWAVE_PLATFORM=TAURI ./mzoon/bin/mzoon start &
 MZOON_PID=$!
 
 # Wait for dev server to be ready (backend compilation can take minutes)
-echo "Waiting for dev server to be ready on port 8080..."
+echo "Waiting for dev server to be ready on port 8082..."
 for i in {1..300}; do
-    if curl -s http://localhost:8080 >/dev/null 2>&1; then
-        echo "Dev server ready on port 8080"
+    if curl -s http://localhost:8082 >/dev/null 2>&1; then
+        echo "Dev server ready on port 8082"
         break
     fi
     if ! kill -0 $MZOON_PID 2>/dev/null; then
@@ -163,7 +163,7 @@ for i in {1..300}; do
     sleep 1
 done
 
-if ! curl -s http://localhost:8080 >/dev/null 2>&1; then
+if ! curl -s http://localhost:8082 >/dev/null 2>&1; then
     echo "ERROR: Dev server failed to start within 5 minutes"
     kill $MZOON_PID 2>/dev/null
     exit 1
@@ -564,8 +564,8 @@ fi
 description = "Run NovyWave app verification tests"
 script = '''
 # Ensure dev server is running (which also starts WS server)
-if ! curl -s http://localhost:8080 >/dev/null 2>&1; then
-    echo "ERROR: Dev server not running on port 8080"
+if ! curl -s http://localhost:8082 >/dev/null 2>&1; then
+    echo "ERROR: Dev server not running on port 8082"
     echo "Start it with: makers start"
     exit 1
 fi

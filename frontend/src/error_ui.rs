@@ -106,9 +106,7 @@ pub fn toast_notifications_container(app_config: crate::config::AppConfig) -> im
                 .s(Gap::new().y(SPACING_8))
                 .s(Width::exact(400))
                 .s(Align::new().top().right())
-                .update_raw_el(|raw_el| {
-                    raw_el.style("pointer-events", "auto")
-                })
+                .update_raw_el(|raw_el| raw_el.style("pointer-events", "auto"))
                 .items_signal_vec(
                     crate::error_display::active_toasts_signal_vec(app_config.clone()).map({
                         let app_config_for_toast = app_config.clone();
@@ -199,7 +197,9 @@ fn toast_element(alert: ErrorAlert, app_config: crate::config::AppConfig) -> imp
         .s(Width::fill())
         .s(Background::new().color_signal(colors.background()))
         .s(Borders::all_signal(
-            colors.border().map(|color| Border::new().width(1).color(color)),
+            colors
+                .border()
+                .map(|color| Border::new().width(1).color(color)),
         ))
         .s(RoundedCorners::all(CORNER_RADIUS_8))
         .s(Shadows::new(vec![
@@ -271,7 +271,9 @@ fn toast_element(alert: ErrorAlert, app_config: crate::config::AppConfig) -> imp
                 .item({
                     let error_display = error_display.clone();
                     El::new()
-                        .s(Font::new().size(FONT_SIZE_14).color_signal(colors.message()))
+                        .s(Font::new()
+                            .size(FONT_SIZE_14)
+                            .color_signal(colors.message()))
                         .s(Cursor::new(CursorIcon::Pointer))
                         .s(Padding::all(SPACING_4))
                         .s(RoundedCorners::all(CORNER_RADIUS_4))

@@ -4,7 +4,9 @@
 //! TrackedFiles observes these signals and updates state reactively.
 
 use futures::StreamExt;
-use shared::{CanonicalPathPayload, FileState, LoadingStatus, TrackedFile, WaveformFile, create_tracked_file};
+use shared::{
+    CanonicalPathPayload, FileState, LoadingStatus, TrackedFile, WaveformFile, create_tracked_file,
+};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -60,10 +62,9 @@ impl TrackedFiles {
             while let Some((file_id, file_path)) = parse_request_receiver.next().await {
                 if let Err(error) = send_parse_request_to_backend(file_path.clone()).await {
                     let mut current = files_vec_for_task.get_cloned();
-                    if let Some(f) = current
-                        .iter_mut()
-                        .find(|f| f.id == file_id || f.path == file_path || f.canonical_path == file_path)
-                    {
+                    if let Some(f) = current.iter_mut().find(|f| {
+                        f.id == file_id || f.path == file_path || f.canonical_path == file_path
+                    }) {
                         f.state = FileState::Failed(shared::FileError::IoError {
                             path: file_path,
                             error,
@@ -77,7 +78,9 @@ impl TrackedFiles {
                     }
                 } else {
                     // Record loading start time - global watchdog will check for timeouts
-                    loading_start_times_for_task.lock_mut().insert(file_id, js_sys::Date::now());
+                    loading_start_times_for_task
+                        .lock_mut()
+                        .insert(file_id, js_sys::Date::now());
                 }
             }
         }));
@@ -185,9 +188,10 @@ impl TrackedFiles {
                         }) {
                             current[index].id = file_id.clone();
                             current[index].canonical_path = file_id.clone();
-                            current[index].state = FileState::Failed(shared::FileError::FileNotFound {
-                                path: file_id.clone(),
-                            });
+                            current[index].state =
+                                FileState::Failed(shared::FileError::FileNotFound {
+                                    path: file_id.clone(),
+                                });
                             changed = true;
                             reload_completed_clone.set(Some(file_id.clone()));
                             loading_times_clone.lock_mut().remove(&file_id);
@@ -220,7 +224,10 @@ impl TrackedFiles {
     }
 
     pub fn load_config_files(&self, file_payloads: Vec<CanonicalPathPayload>) {
-        zoon::println!("[TRACKED_FILES] config_files_loaded: {} files", file_payloads.len());
+        zoon::println!(
+            "[TRACKED_FILES] config_files_loaded: {} files",
+            file_payloads.len()
+        );
 
         let mut seen = HashSet::new();
         let tracked_files: Vec<TrackedFile> = file_payloads
@@ -248,7 +255,10 @@ impl TrackedFiles {
         }
         self.files_vec_signal.set_neq(tracked_files.clone());
 
-        zoon::println!("[TRACKED_FILES] sending parse requests for {} files", tracked_files.len());
+        zoon::println!(
+            "[TRACKED_FILES] sending parse requests for {} files",
+            tracked_files.len()
+        );
         for file in &tracked_files {
             let load_path = if file.path.is_empty() {
                 file.canonical_path.clone()
@@ -266,10 +276,8 @@ impl TrackedFiles {
         for path in file_paths {
             let path_str = path.to_string_lossy().to_string();
             let payload = payload_from_string(path_str.clone());
-            let new_file = create_tracked_file(
-                payload,
-                FileState::Loading(LoadingStatus::Starting),
-            );
+            let new_file =
+                create_tracked_file(payload, FileState::Loading(LoadingStatus::Starting));
 
             let existing = current_files.iter().any(|f| f.id == new_file.id);
             if !existing {
@@ -298,13 +306,14 @@ impl TrackedFiles {
             return;
         }
 
-        let new_file = create_tracked_file(
-            payload.clone(),
-            FileState::Loading(LoadingStatus::Starting),
-        );
+        let new_file =
+            create_tracked_file(payload.clone(), FileState::Loading(LoadingStatus::Starting));
 
         let mut current = self.files_vec_signal.get_cloned();
-        if let Some(index) = current.iter().position(|f| f.canonical_path == canonical_key) {
+        if let Some(index) = current
+            .iter()
+            .position(|f| f.canonical_path == canonical_key)
+        {
             current[index] = new_file.clone();
         } else {
             zoon::println!(
@@ -329,9 +338,10 @@ impl TrackedFiles {
     pub fn update_file_state(&self, file_id: String, new_state: FileState) {
         let mut current = self.files_vec_signal.get_cloned();
 
-        if let Some(index) = current.iter().position(|tracked| {
-            tracked.canonical_path == file_id || tracked.path == file_id
-        }) {
+        if let Some(index) = current
+            .iter()
+            .position(|tracked| tracked.canonical_path == file_id || tracked.path == file_id)
+        {
             {
                 let file = &mut current[index];
                 file.id = file_id.clone();
@@ -438,7 +448,9 @@ impl TrackedFiles {
     }
 
     fn send_parse_request(&self, file_id: String, file_path: String) {
-        let _ = self.parse_request_sender.unbounded_send((file_id, file_path));
+        let _ = self
+            .parse_request_sender
+            .unbounded_send((file_id, file_path));
     }
 
     fn cancel_watchdog(&self, file_id: &str) {

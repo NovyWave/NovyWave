@@ -1,4 +1,5 @@
 mod commands;
+mod desktop_test_bridge;
 
 use std::{
     net::TcpListener,
@@ -50,7 +51,7 @@ pub fn run() {
                     println!("Failed to spawn embedded backend: {}", e);
                 }
 
-                let target: tauri::Url = "http://127.0.0.1:8080".parse().unwrap();
+                let target: tauri::Url = "http://127.0.0.1:8082".parse().unwrap();
                 tauri::WebviewWindowBuilder::new(
                     app,
                     "main".to_string(),
@@ -64,6 +65,8 @@ pub fn run() {
                     println!("Failed to create main window: {e}");
                     e
                 })?;
+
+                desktop_test_bridge::start(&app.handle());
             }
 
             let handle = app.handle();
@@ -110,8 +113,8 @@ pub fn run() {
 
 fn spawn_backend_if_needed(app: &tauri::App) -> Result<(), String> {
     // If port already in use, assume user/dev server is running; skip spawn
-    if TcpListener::bind("127.0.0.1:8080").is_err() {
-        println!("Backend already running on 127.0.0.1:8080, skipping embedded spawn.");
+    if TcpListener::bind("127.0.0.1:8082").is_err() {
+        println!("Backend already running on 127.0.0.1:8082, skipping embedded spawn.");
         return Ok(());
     }
 

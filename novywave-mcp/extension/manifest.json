@@ -11,7 +11,7 @@
     "debugger"
   ],
   "host_permissions": [
-    "http://localhost:8080/*",
+    "http://localhost:8082/*",
     "<all_urls>"
   ],
   "background": {
@@ -28,6 +28,6 @@
   },
   "web_accessible_resources": [{
     "resources": ["console-capture.js"],
-    "matches": ["http://localhost:8080/*"]
+    "matches": ["http://localhost:8082/*"]
   }]
 }

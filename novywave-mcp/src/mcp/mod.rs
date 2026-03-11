@@ -1,7 +1,7 @@
 pub mod tools;
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 
@@ -68,7 +68,10 @@ pub async fn run_mcp_server(ws_port: u16) {
     let stdin = io::stdin();
     let mut stdout = io::stdout();
 
-    log::info!("NovyWave MCP server starting (connecting to WS server on port {})...", ws_port);
+    log::info!(
+        "NovyWave MCP server starting (connecting to WS server on port {})...",
+        ws_port
+    );
 
     for line in stdin.lock().lines() {
         let line = match line {
@@ -197,45 +200,47 @@ async fn send_cmd(port: u16, command: Command) -> Result<Response, String> {
 
 async fn call_tool(name: &str, args: Value, ws_port: u16) -> Result<String, String> {
     match name {
-        "novywave_status" => {
-            match send_cmd(ws_port, Command::GetStatus).await {
-                Ok(Response::Status {
-                    connected,
-                    page_url,
-                    app_ready,
-                }) => Ok(format!(
-                    "Connected: {}\nPage URL: {}\nApp Ready: {}",
-                    connected,
-                    page_url.unwrap_or_else(|| "N/A".into()),
-                    app_ready
-                )),
-                Ok(r) => Ok(format!("Response: {:?}", r)),
-                Err(e) => Err(format!("WS server not running or extension not connected: {}", e)),
-            }
-        }
+        "novywave_status" => match send_cmd(ws_port, Command::GetStatus).await {
+            Ok(Response::Status {
+                connected,
+                page_url,
+                app_ready,
+            }) => Ok(format!(
+                "Connected: {}\nPage URL: {}\nApp Ready: {}",
+                connected,
+                page_url.unwrap_or_else(|| "N/A".into()),
+                app_ready
+            )),
+            Ok(r) => Ok(format!("Response: {:?}", r)),
+            Err(e) => Err(format!(
+                "WS server not running or extension not connected: {}",
+                e
+            )),
+        },
 
-        "novywave_screenshot" => match send_cmd(ws_port,Command::Screenshot).await {
-            Ok(Response::ScreenshotFile { filepath }) => Ok(format!("Screenshot saved: {}", filepath)),
+        "novywave_screenshot" => match send_cmd(ws_port, Command::Screenshot).await {
+            Ok(Response::ScreenshotFile { filepath }) => {
+                Ok(format!("Screenshot saved: {}", filepath))
+            }
             Ok(Response::Screenshot { .. }) => Ok("Screenshot captured".into()),
             Ok(r) => Err(format!("Unexpected response: {:?}", r)),
             Err(e) => Err(e.to_string()),
         },
 
-        "novywave_screenshot_canvas" => match send_cmd(ws_port,Command::ScreenshotCanvas).await {
-            Ok(Response::ScreenshotFile { filepath }) => Ok(format!("Canvas screenshot saved: {}", filepath)),
+        "novywave_screenshot_canvas" => match send_cmd(ws_port, Command::ScreenshotCanvas).await {
+            Ok(Response::ScreenshotFile { filepath }) => {
+                Ok(format!("Canvas screenshot saved: {}", filepath))
+            }
             Ok(r) => Err(format!("Unexpected response: {:?}", r)),
             Err(e) => Err(e.to_string()),
         },
 
         "novywave_console" => {
             let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(100);
-            let level = args
-                .get("level")
-                .and_then(|v| v.as_str())
-                .unwrap_or("all");
+            let level = args.get("level").and_then(|v| v.as_str()).unwrap_or("all");
             let pattern = args.get("pattern").and_then(|v| v.as_str());
 
-            match send_cmd(ws_port,Command::GetConsole).await {
+            match send_cmd(ws_port, Command::GetConsole).await {
                 Ok(Response::Console { messages }) => {
                     let filtered: Vec<_> = messages
                         .into_iter()
@@ -250,23 +255,29 @@ async fn call_tool(name: &str, args: Value, ws_port: u16) -> Result<String, Stri
             }
         }
 
-        "novywave_refresh" => match send_cmd(ws_port,Command::Refresh).await {
+        "novywave_refresh" => match send_cmd(ws_port, Command::Refresh).await {
             Ok(_) => Ok("Page refreshed".into()),
             Err(e) => Err(e.to_string()),
         },
 
-        "novywave_detach" => match send_cmd(ws_port,Command::Detach).await {
+        "novywave_detach" => match send_cmd(ws_port, Command::Detach).await {
             Ok(_) => Ok("Debugger detached".into()),
             Err(e) => Err(e.to_string()),
         },
 
         "novywave_timeline_zoom_in" => {
-            let faster = args.get("faster").and_then(|v| v.as_bool()).unwrap_or(false);
-            match send_cmd(ws_port,Command::PressKey {
+            let faster = args
+                .get("faster")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            match send_cmd(
+                ws_port,
+                Command::PressKey {
                     key: "w".into(),
                     shift: faster,
-                })
-                .await
+                },
+            )
+            .await
             {
                 Ok(_) => Ok(format!("Zoomed in{}", if faster { " (fast)" } else { "" })),
                 Err(e) => Err(e.to_string()),
@@ -274,12 +285,18 @@ async fn call_tool(name: &str, args: Value, ws_port: u16) -> Result<String, Stri
         }
 
         "novywave_timeline_zoom_out" => {
-            let faster = args.get("faster").and_then(|v| v.as_bool()).unwrap_or(false);
-            match send_cmd(ws_port,Command::PressKey {
+            let faster = args
+                .get("faster")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            match send_cmd(
+                ws_port,
+                Command::PressKey {
                     key: "s".into(),
                     shift: faster,
-                })
-                .await
+                },
+            )
+            .await
             {
                 Ok(_) => Ok(format!("Zoomed out{}", if faster { " (fast)" } else { "" })),
                 Err(e) => Err(e.to_string()),
@@ -287,48 +304,75 @@ async fn call_tool(name: &str, args: Value, ws_port: u16) -> Result<String, Stri
         }
 
         "novywave_timeline_pan_left" => {
-            let faster = args.get("faster").and_then(|v| v.as_bool()).unwrap_or(false);
-            match send_cmd(ws_port,Command::PressKey {
+            let faster = args
+                .get("faster")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            match send_cmd(
+                ws_port,
+                Command::PressKey {
                     key: "a".into(),
                     shift: faster,
-                })
-                .await
+                },
+            )
+            .await
             {
-                Ok(_) => Ok(format!("Panned left{}", if faster { " (fast)" } else { "" })),
+                Ok(_) => Ok(format!(
+                    "Panned left{}",
+                    if faster { " (fast)" } else { "" }
+                )),
                 Err(e) => Err(e.to_string()),
             }
         }
 
         "novywave_timeline_pan_right" => {
-            let faster = args.get("faster").and_then(|v| v.as_bool()).unwrap_or(false);
-            match send_cmd(ws_port,Command::PressKey {
+            let faster = args
+                .get("faster")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            match send_cmd(
+                ws_port,
+                Command::PressKey {
                     key: "d".into(),
                     shift: faster,
-                })
-                .await
+                },
+            )
+            .await
             {
-                Ok(_) => Ok(format!("Panned right{}", if faster { " (fast)" } else { "" })),
+                Ok(_) => Ok(format!(
+                    "Panned right{}",
+                    if faster { " (fast)" } else { "" }
+                )),
                 Err(e) => Err(e.to_string()),
             }
         }
 
-        "novywave_timeline_reset" => match send_cmd(ws_port,Command::PressKey {
+        "novywave_timeline_reset" => match send_cmd(
+            ws_port,
+            Command::PressKey {
                 key: "r".into(),
                 shift: false,
-            })
-            .await
+            },
+        )
+        .await
         {
             Ok(_) => Ok("Timeline reset".into()),
             Err(e) => Err(e.to_string()),
         },
 
         "novywave_cursor_left" => {
-            let faster = args.get("faster").and_then(|v| v.as_bool()).unwrap_or(false);
-            match send_cmd(ws_port,Command::PressKey {
+            let faster = args
+                .get("faster")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            match send_cmd(
+                ws_port,
+                Command::PressKey {
                     key: "q".into(),
                     shift: faster,
-                })
-                .await
+                },
+            )
+            .await
             {
                 Ok(_) => Ok(format!(
                     "Cursor moved left{}",
@@ -339,12 +383,18 @@ async fn call_tool(name: &str, args: Value, ws_port: u16) -> Result<String, Stri
         }
 
         "novywave_cursor_right" => {
-            let faster = args.get("faster").and_then(|v| v.as_bool()).unwrap_or(false);
-            match send_cmd(ws_port,Command::PressKey {
+            let faster = args
+                .get("faster")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            match send_cmd(
+                ws_port,
+                Command::PressKey {
                     key: "e".into(),
                     shift: faster,
-                })
-                .await
+                },
+            )
+            .await
             {
                 Ok(_) => Ok(format!(
                     "Cursor moved right{}",
@@ -354,7 +404,7 @@ async fn call_tool(name: &str, args: Value, ws_port: u16) -> Result<String, Stri
             }
         }
 
-        "novywave_get_timeline_state" => match send_cmd(ws_port,Command::GetTimelineState).await {
+        "novywave_get_timeline_state" => match send_cmd(ws_port, Command::GetTimelineState).await {
             Ok(Response::TimelineState {
                 viewport_start_ps,
                 viewport_end_ps,
@@ -369,26 +419,32 @@ async fn call_tool(name: &str, args: Value, ws_port: u16) -> Result<String, Stri
             Err(e) => Err(e.to_string()),
         },
 
-        "novywave_get_cursor_values" => match send_cmd(ws_port,Command::GetCursorValues).await {
-            Ok(Response::CursorValues { values }) => Ok(serde_json::to_string_pretty(&values).unwrap()),
+        "novywave_get_cursor_values" => match send_cmd(ws_port, Command::GetCursorValues).await {
+            Ok(Response::CursorValues { values }) => {
+                Ok(serde_json::to_string_pretty(&values).unwrap())
+            }
             Ok(Response::JsResult { result }) => Ok(serde_json::to_string_pretty(&result).unwrap()),
             Ok(r) => Err(format!("Unexpected response: {:?}", r)),
             Err(e) => Err(e.to_string()),
         },
 
         "novywave_get_selected_variables" => {
-            match send_cmd(ws_port,Command::GetSelectedVariables).await {
+            match send_cmd(ws_port, Command::GetSelectedVariables).await {
                 Ok(Response::SelectedVariables { variables }) => {
                     Ok(serde_json::to_string_pretty(&variables).unwrap())
                 }
-                Ok(Response::JsResult { result }) => Ok(serde_json::to_string_pretty(&result).unwrap()),
+                Ok(Response::JsResult { result }) => {
+                    Ok(serde_json::to_string_pretty(&result).unwrap())
+                }
                 Ok(r) => Err(format!("Unexpected response: {:?}", r)),
                 Err(e) => Err(e.to_string()),
             }
         }
 
-        "novywave_get_loaded_files" => match send_cmd(ws_port,Command::GetLoadedFiles).await {
-            Ok(Response::LoadedFiles { files }) => Ok(serde_json::to_string_pretty(&files).unwrap()),
+        "novywave_get_loaded_files" => match send_cmd(ws_port, Command::GetLoadedFiles).await {
+            Ok(Response::LoadedFiles { files }) => {
+                Ok(serde_json::to_string_pretty(&files).unwrap())
+            }
             Ok(Response::JsResult { result }) => Ok(serde_json::to_string_pretty(&result).unwrap()),
             Ok(r) => Err(format!("Unexpected response: {:?}", r)),
             Err(e) => Err(e.to_string()),
@@ -401,11 +457,14 @@ async fn call_tool(name: &str, args: Value, ws_port: u16) -> Result<String, Stri
                 .ok_or("text parameter required")?;
             let exact = args.get("exact").and_then(|v| v.as_bool()).unwrap_or(false);
 
-            match send_cmd(ws_port,Command::ClickText {
+            match send_cmd(
+                ws_port,
+                Command::ClickText {
                     text: text.into(),
                     exact,
-                })
-                .await
+                },
+            )
+            .await
             {
                 Ok(_) => Ok(format!("Clicked: {}", text)),
                 Err(e) => Err(e.to_string()),
@@ -419,21 +478,29 @@ async fn call_tool(name: &str, args: Value, ws_port: u16) -> Result<String, Stri
                 .ok_or("text parameter required")?;
             let exact = args.get("exact").and_then(|v| v.as_bool()).unwrap_or(false);
 
-            match send_cmd(ws_port,Command::FindText {
+            match send_cmd(
+                ws_port,
+                Command::FindText {
                     text: text.into(),
                     exact,
-                })
-                .await
+                },
+            )
+            .await
             {
-                Ok(Response::TextMatches { found, count, matches }) => {
-                    Ok(format!("Found: {}\nCount: {}\nMatches: {:?}", found, count, matches))
-                }
+                Ok(Response::TextMatches {
+                    found,
+                    count,
+                    matches,
+                }) => Ok(format!(
+                    "Found: {}\nCount: {}\nMatches: {:?}",
+                    found, count, matches
+                )),
                 Ok(r) => Err(format!("Unexpected response: {:?}", r)),
                 Err(e) => Err(e.to_string()),
             }
         }
 
-        "novywave_get_page_text" => match send_cmd(ws_port,Command::GetPageText).await {
+        "novywave_get_page_text" => match send_cmd(ws_port, Command::GetPageText).await {
             Ok(Response::PageText { text }) => Ok(text),
             Ok(r) => Err(format!("Unexpected response: {:?}", r)),
             Err(e) => Err(e.to_string()),
@@ -445,9 +512,7 @@ async fn call_tool(name: &str, args: Value, ws_port: u16) -> Result<String, Stri
                 .and_then(|v| v.as_str())
                 .ok_or("text parameter required")?;
 
-            match send_cmd(ws_port,Command::TypeText { text: text.into() })
-                .await
-            {
+            match send_cmd(ws_port, Command::TypeText { text: text.into() }).await {
                 Ok(_) => Ok(format!("Typed: {}", text)),
                 Err(e) => Err(e.to_string()),
             }
@@ -459,11 +524,14 @@ async fn call_tool(name: &str, args: Value, ws_port: u16) -> Result<String, Stri
                 .and_then(|v| v.as_str())
                 .ok_or("key parameter required")?;
 
-            match send_cmd(ws_port,Command::PressKey {
+            match send_cmd(
+                ws_port,
+                Command::PressKey {
                     key: key.into(),
                     shift: false,
-                })
-                .await
+                },
+            )
+            .await
             {
                 Ok(_) => Ok(format!("Pressed: {}", key)),
                 Err(e) => Err(e.to_string()),
@@ -471,7 +539,10 @@ async fn call_tool(name: &str, args: Value, ws_port: u16) -> Result<String, Stri
         }
 
         "novywave_launch_browser" => {
-            let headless = args.get("headless").and_then(|v| v.as_bool()).unwrap_or(false);
+            let headless = args
+                .get("headless")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             launch_browser(headless, ws_port).await
         }
 
@@ -549,12 +620,13 @@ async fn launch_browser(headless: bool, ws_port: u16) -> Result<String, String> 
 
     let extension_dir = find_extension_dir().ok_or("Extension directory not found")?;
     let profile_dir = find_profile_dir().ok_or("Could not create profile directory")?;
-    std::fs::create_dir_all(&profile_dir).map_err(|e| format!("Failed to create profile dir: {}", e))?;
+    std::fs::create_dir_all(&profile_dir)
+        .map_err(|e| format!("Failed to create profile dir: {}", e))?;
 
     let browser = find_chromium_binary().ok_or(
         "Chromium not found in PATH.\n\
         Install with: apt install chromium-browser (Debian/Ubuntu)\n\
-        Note: Chrome is not supported because --load-extension was deprecated in Chrome 137+"
+        Note: Chrome is not supported because --load-extension was deprecated in Chrome 137+",
     )?;
 
     let load_ext_arg = format!("--load-extension={}", extension_dir.display());
@@ -581,7 +653,7 @@ async fn launch_browser(headless: bool, ws_port: u16) -> Result<String, String> 
         cmd.arg("--headless=new");
     }
 
-    cmd.arg("http://localhost:8080");
+    cmd.arg("http://localhost:8082");
     cmd.stdout(std::process::Stdio::null());
     cmd.stderr(std::process::Stdio::null());
 
@@ -589,7 +661,9 @@ async fn launch_browser(headless: bool, ws_port: u16) -> Result<String, String> 
     log::info!("Extension: {}", extension_dir.display());
     log::info!("Profile: {}", profile_dir.display());
 
-    let child = cmd.spawn().map_err(|e| format!("Failed to launch browser: {}", e))?;
+    let child = cmd
+        .spawn()
+        .map_err(|e| format!("Failed to launch browser: {}", e))?;
     let pid = child.id();
 
     for _ in 0..30 {
@@ -654,7 +728,10 @@ async fn run_verify_tests(
             failed += 1;
         }
         verify::TestResult::Skip(msg) => {
-            results.push(format!("⏭️  No stuck 'Loading workspace...' (skipped: {})", msg));
+            results.push(format!(
+                "⏭️  No stuck 'Loading workspace...' (skipped: {})",
+                msg
+            ));
             skipped += 1;
         }
     }
@@ -701,7 +778,11 @@ async fn run_verify_tests(
         passed,
         failed,
         skipped,
-        if failed > 0 { "❌ VERIFICATION FAILED" } else { "✅ VERIFICATION PASSED" }
+        if failed > 0 {
+            "❌ VERIFICATION FAILED"
+        } else {
+            "✅ VERIFICATION PASSED"
+        }
     );
 
     results.push(summary);

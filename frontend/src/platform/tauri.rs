@@ -3,7 +3,7 @@
 //! Desktop build reuses the same MoonZoon Connection as the web target.
 //! The embedded backend is started by Tauri (see `src-tauri/src/lib.rs`)
 //! and the JS shim in `main.rs` rewrites fetch/EventSource to hit
-//! `http://127.0.0.1:8080/_api/...`, so the standard web platform logic works.
+//! `http://127.0.0.1:8082/_api/...`, so the standard web platform logic works.
 
 use crate::platform::Platform;
 use crate::platform::web;
@@ -79,7 +79,9 @@ pub async fn get_app_version() -> String {
     use wasm_bindgen_futures::JsFuture;
 
     match JsFuture::from(tauri_get_version()).await {
-        Ok(version_js) => version_js.as_string().unwrap_or_else(|| "unknown".to_string()),
+        Ok(version_js) => version_js
+            .as_string()
+            .unwrap_or_else(|| "unknown".to_string()),
         Err(_) => "unknown".to_string(),
     }
 }
@@ -91,16 +93,20 @@ pub fn setup_update_event_listeners(error_display: crate::error_display::ErrorDi
         let error_display = error_display.clone();
         let closure = Closure::new(move |event: JsValue| {
             if let Ok(payload) = js_sys::Reflect::get(&event, &JsValue::from_str("payload")) {
-                let current_version = js_sys::Reflect::get(&payload, &JsValue::from_str("current_version"))
-                    .ok()
-                    .and_then(|v| v.as_string())
-                    .unwrap_or_else(|| "unknown".to_string());
+                let current_version =
+                    js_sys::Reflect::get(&payload, &JsValue::from_str("current_version"))
+                        .ok()
+                        .and_then(|v| v.as_string())
+                        .unwrap_or_else(|| "unknown".to_string());
                 let new_version = js_sys::Reflect::get(&payload, &JsValue::from_str("new_version"))
                     .ok()
                     .and_then(|v| v.as_string())
                     .unwrap_or_else(|| "unknown".to_string());
 
-                let alert = crate::error_display::ErrorAlert::new_update_available(current_version, new_version);
+                let alert = crate::error_display::ErrorAlert::new_update_available(
+                    current_version,
+                    new_version,
+                );
                 error_display.add_toast(alert);
             }
         });
@@ -167,5 +173,4 @@ pub fn setup_update_event_listeners(error_display: crate::error_display::ErrorDi
         let _ = tauri_listen("update_error", &closure);
         closure.forget();
     }
-
 }

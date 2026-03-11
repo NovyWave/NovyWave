@@ -27,7 +27,7 @@ Quick reference for remaining manual steps to complete the beta release.
 
 ### Browser Mode Testing
 ```bash
-makers start                    # Start dev server at http://localhost:8080
+makers start                    # Start dev server at http://localhost:8082
 # Test workspace history:
 # 1. Open workspace, expand directories, select files
 # 2. Close and reopen - state should persist in ~/.config/novywave/.novywave_global

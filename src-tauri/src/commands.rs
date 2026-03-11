@@ -420,28 +420,20 @@ pub async fn request_update_download(app_handle: tauri::AppHandle) -> Result<(),
                 }
                 Err(e) => {
                     let error_msg = format!("Failed to download/install update: {:?}", e);
-                    let _ = app_handle.emit(
-                        "update_error",
-                        serde_json::json!({ "error": error_msg }),
-                    );
+                    let _ =
+                        app_handle.emit("update_error", serde_json::json!({ "error": error_msg }));
                     Err(error_msg)
                 }
             }
         }
         Ok(None) => {
             let error_msg = "No update available".to_string();
-            let _ = app_handle.emit(
-                "update_error",
-                serde_json::json!({ "error": error_msg }),
-            );
+            let _ = app_handle.emit("update_error", serde_json::json!({ "error": error_msg }));
             Err(error_msg)
         }
         Err(e) => {
             let error_msg = format!("Failed to check for updates: {:?}", e);
-            let _ = app_handle.emit(
-                "update_error",
-                serde_json::json!({ "error": error_msg }),
-            );
+            let _ = app_handle.emit("update_error", serde_json::json!({ "error": error_msg }));
             Err(error_msg)
         }
     }

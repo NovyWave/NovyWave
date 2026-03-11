@@ -43,7 +43,7 @@ Key rules:
 
 ## Compilation Verification (CRITICAL)
 
-Run `makers start` and check mzoon output directly for errors. Use browser MCP to verify app works.
+For maintainer-run shared watchers, use `dev_server.log`, `dev_plugins.log`, and `dev_tauri.log` as the canonical compile output. Only watch stdout directly when you personally launched that watcher in the same interactive terminal session. Use browser MCP to verify the app once the logs are clean.
 
 **Never report success without verification.** Even 1 error = task incomplete.
 
