@@ -21,6 +21,37 @@ static LAST_DOWNMSG_MS: std::sync::LazyLock<Mutable<i64>> =
 
 pub struct WebPlatform;
 
+fn platform_log_label() -> &'static str {
+    let Some(window) = web_sys::window() else {
+        return "unknown";
+    };
+
+    match js_sys::Reflect::get(&window, &wasm_bindgen::JsValue::from_str("__TAURI__")) {
+        Ok(value) if !value.is_null() && !value.is_undefined() => "tauri",
+        _ => "web",
+    }
+}
+
+fn message_name(msg: &UpMsg) -> &'static str {
+    match msg {
+        UpMsg::LoadWaveformFile(_) => "LoadWaveformFile",
+        UpMsg::GetParsingProgress(_) => "GetParsingProgress",
+        UpMsg::LoadConfig => "LoadConfig",
+        UpMsg::SelectWorkspace { .. } => "SelectWorkspace",
+        UpMsg::SaveConfig(_) => "SaveConfig",
+        UpMsg::UpdateWorkspaceHistory(_) => "UpdateWorkspaceHistory",
+        UpMsg::FrontendTrace { .. } => "FrontendTrace",
+        UpMsg::BrowseDirectory(_) => "BrowseDirectory",
+        UpMsg::BrowseDirectories(_) => "BrowseDirectories",
+        UpMsg::QuerySignalValues { .. } => "QuerySignalValues",
+        UpMsg::BatchQuerySignalValues { .. } => "BatchQuerySignalValues",
+        UpMsg::QuerySignalTransitions { .. } => "QuerySignalTransitions",
+        UpMsg::UnifiedSignalQuery { .. } => "UnifiedSignalQuery",
+        UpMsg::TriggerTestNotifications => "TriggerTestNotifications",
+        UpMsg::GetPlatformRoots => "GetPlatformRoots",
+    }
+}
+
 /// Initialize the platform with a connection
 pub fn set_platform_connection(connection: Arc<SendWrapper<zoon::Connection<UpMsg, DownMsg>>>) {
     (&*CONNECTION).set(Some(connection));
@@ -50,17 +81,26 @@ pub fn server_is_ready() -> bool {
 
 /// Request update download - no-op on web platform (updates only work on desktop)
 pub fn request_update_download() {
-    zoon::println!("platform(web): request_update_download - no-op (desktop only)");
+    zoon::println!(
+        "platform({}): request_update_download - no-op (desktop only)",
+        platform_log_label()
+    );
 }
 
 /// Request app restart to complete update - no-op on web platform
 pub fn request_app_restart() {
-    zoon::println!("platform(web): request_app_restart - no-op (desktop only)");
+    zoon::println!(
+        "platform({}): request_app_restart - no-op (desktop only)",
+        platform_log_label()
+    );
 }
 
 /// Set up update event listeners - no-op on web platform (updates only work on desktop)
 pub fn setup_update_event_listeners(_error_display: crate::error_display::ErrorDisplay) {
-    zoon::println!("platform(web): setup_update_event_listeners - no-op (desktop only)");
+    zoon::println!(
+        "platform({}): setup_update_event_listeners - no-op (desktop only)",
+        platform_log_label()
+    );
 }
 
 /// Get the application version - returns compile-time version on web
@@ -72,14 +112,16 @@ pub async fn get_app_version() -> String {
 
 impl Platform for WebPlatform {
     async fn send_message(msg: UpMsg) -> Result<(), String> {
-        zoon::println!("platform(web): send_message {:?}", msg);
+        let label = platform_log_label();
+        let msg_name = message_name(&msg);
+        zoon::println!("platform({label}): send_message {msg_name}");
         match (&*CONNECTION).get_cloned() {
             Some(connection) => {
                 if matches!(msg, UpMsg::LoadConfig) {
                     if let Err(e) = connection.send_up_msg(UpMsg::LoadConfig).await {
                         zoon::println!("ERROR: Failed to send LoadConfig: {:?}", e);
                     }
-                    zoon::println!("platform(web): sent LoadConfig");
+                    zoon::println!("platform({label}): sent LoadConfig");
                     return Ok(());
                 }
 
@@ -90,7 +132,7 @@ impl Platform for WebPlatform {
                     UpMsg::LoadConfig | UpMsg::SelectWorkspace { .. } | UpMsg::LoadWaveformFile(_)
                 );
                 if !SERVER_ALIVE.get() && !is_critical {
-                    zoon::println!("platform(web): suppressing {:?}, server not alive", msg);
+                    zoon::println!("platform({label}): suppressing {msg_name}, server not alive");
                     return Ok(());
                 }
 
@@ -100,7 +142,7 @@ impl Platform for WebPlatform {
                     .map(|_| ())
                     .map_err(|e| format!("{:?}", e));
                 if res.is_err() {
-                    zoon::println!("platform(web): send_up_msg error {:?}", res);
+                    zoon::println!("platform({label}): send_up_msg error {:?}", res);
                 }
                 res
             }

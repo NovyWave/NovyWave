@@ -3,6 +3,8 @@
 //! Data flows: Mouse Events → Direct Methods → Config Updates → UI Signals
 
 use shared::DockMode;
+use wasm_bindgen::JsCast;
+use wasm_bindgen::closure::Closure;
 use zoon::*;
 
 const MIN_FILES_PANEL_WIDTH_RIGHT: f32 = 240.0;
@@ -35,6 +37,8 @@ pub struct DraggingSystem {
     drag_state: Mutable<DragState>,
     app_config: crate::config::AppConfig,
     selected_variables: crate::selected_variables::SelectedVariables,
+    pending_row_resize: Mutable<Option<(String, u32)>>,
+    row_resize_frame_scheduled: Mutable<bool>,
 }
 
 impl DraggingSystem {
@@ -46,11 +50,54 @@ impl DraggingSystem {
             drag_state: Mutable::new(DragState::default()),
             app_config,
             selected_variables,
+            pending_row_resize: Mutable::new(None),
+            row_resize_frame_scheduled: Mutable::new(false),
         }
+    }
+
+    fn apply_pending_row_resize(&self) {
+        let Some((unique_id, row_height)) = self.pending_row_resize.take() else {
+            self.row_resize_frame_scheduled.set(false);
+            return;
+        };
+        self.row_resize_frame_scheduled.set(false);
+        self.selected_variables
+            .set_live_row_height(&unique_id, row_height);
+    }
+
+    fn schedule_row_resize_frame(&self, unique_id: &str, row_height: u32) {
+        self.pending_row_resize
+            .set(Some((unique_id.to_string(), row_height)));
+
+        if self.row_resize_frame_scheduled.get_cloned() {
+            return;
+        }
+
+        self.row_resize_frame_scheduled.set(true);
+        let system = self.clone();
+        let callback = Closure::once(move || {
+            system.apply_pending_row_resize();
+        });
+
+        if let Some(window) = web_sys::window() {
+            if window
+                .request_animation_frame(callback.as_ref().unchecked_ref())
+                .is_ok()
+            {
+                callback.forget();
+                return;
+            }
+        }
+
+        self.apply_pending_row_resize();
     }
 
     pub fn start_drag(&self, divider_type: DividerType, start_position: (f32, f32)) {
         let dock_mode = self.app_config.dock_mode.get_cloned();
+
+        if matches!(divider_type, DividerType::SignalRowDivider { .. }) {
+            self.app_config.set_row_resize_in_progress(true);
+        }
 
         let initial_value = match &divider_type {
             DividerType::FilesPanelMain => match dock_mode {
@@ -67,14 +114,9 @@ impl DraggingSystem {
             DividerType::VariablesValueColumn => {
                 self.app_config.variables_value_column_width.get_cloned()
             }
-            DividerType::SignalRowDivider { unique_id } => self
-                .selected_variables
-                .variables_vec_actor
-                .get_cloned()
-                .iter()
-                .find(|variable| variable.unique_id == *unique_id)
-                .and_then(|variable| variable.row_height)
-                .unwrap_or(30) as f32,
+            DividerType::SignalRowDivider { unique_id } => {
+                self.selected_variables.live_row_height(unique_id) as f32
+            }
         };
 
         self.drag_state.set(DragState {
@@ -164,10 +206,7 @@ impl DraggingSystem {
                             .set_neq(new_value);
                     }
                     (DividerType::SignalRowDivider { unique_id }, _) => {
-                        self.selected_variables
-                            .update_row_height(unique_id, new_value as u32);
-                        self.app_config
-                            .update_variable_row_height(unique_id, new_value as u32);
+                        self.schedule_row_resize_frame(unique_id, new_value as u32);
                     }
                 }
             }
@@ -175,6 +214,33 @@ impl DraggingSystem {
     }
 
     pub fn end_drag(&self) {
+        if let Some(DividerType::SignalRowDivider { unique_id }) =
+            self.drag_state.get_cloned().active_divider
+        {
+            let final_row_height = self
+                .pending_row_resize
+                .take()
+                .filter(|(pending_id, _)| pending_id == &unique_id)
+                .map(|(_, row_height)| row_height)
+                .unwrap_or_else(|| self.selected_variables.live_row_height(&unique_id));
+
+            self.app_config.set_row_resize_in_progress(false);
+            self.row_resize_frame_scheduled.set(false);
+            self.selected_variables
+                .set_live_row_height(&unique_id, final_row_height);
+            let persisted_row_height = self
+                .selected_variables
+                .variables_vec_actor
+                .get_cloned()
+                .iter()
+                .find(|variable| variable.unique_id == unique_id)
+                .and_then(|variable| variable.row_height)
+                .unwrap_or(30);
+            if persisted_row_height != final_row_height {
+                self.selected_variables
+                    .update_row_height(&unique_id, final_row_height);
+            }
+        }
         self.drag_state.set(DragState::default());
     }
 

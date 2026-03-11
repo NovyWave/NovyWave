@@ -447,6 +447,9 @@ fn get_visible_rows_impl() -> JsValue {
                     js_sys::Reflect::set(&obj, &"rowHeight".into(), &JsValue::from_f64(30.0)).ok();
                 }
                 crate::selected_variables::SelectedVariableOrGroup::Variable(variable) => {
+                    let row_height = state
+                        .selected_variables
+                        .live_row_height(&variable.unique_id);
                     js_sys::Reflect::set(&obj, &"kind".into(), &"variable".into()).ok();
                     js_sys::Reflect::set(
                         &obj,
@@ -463,7 +466,7 @@ fn get_visible_rows_impl() -> JsValue {
                     js_sys::Reflect::set(
                         &obj,
                         &"rowHeight".into(),
-                        &JsValue::from_f64(variable.row_height.unwrap_or(30) as f64),
+                        &JsValue::from_f64(row_height as f64),
                     )
                     .ok();
                 }

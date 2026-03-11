@@ -532,11 +532,6 @@ impl WaveformTimeline {
     }
 
     pub fn cursor_values_actor(&self) -> Mutable<BTreeMap<String, SignalValue>> {
-        let current_count = self.cursor_values.lock_ref().len();
-        zoon::println!(
-            "[TIMELINE] cursor_values_actor() called - current map has {} entries",
-            current_count
-        );
         self.cursor_values.clone()
     }
 
@@ -959,7 +954,6 @@ impl WaveformTimeline {
     pub fn set_canvas_dimensions(&self, width: f32, height: f32) {
         self.canvas_width.set_neq(width);
         self.canvas_height.set_neq(height);
-        self.update_render_state();
     }
 
     pub fn set_zoom_center_follow(&self, time: Option<TimePs>) {
@@ -1249,6 +1243,10 @@ impl WaveformTimeline {
 
     fn on_selected_variables_updated(&self, variables: Vec<shared::SelectedVariable>) {
         let desired: HashSet<_> = variables.iter().map(|var| var.unique_id.clone()).collect();
+        let needs_request = {
+            let map = self.series_map.lock_ref();
+            desired.iter().any(|unique_id| !map.contains_key(unique_id))
+        };
 
         {
             let mut map = self.series_map.lock_mut();
@@ -1273,7 +1271,9 @@ impl WaveformTimeline {
         }
 
         self.update_render_state();
-        self.schedule_request();
+        if needs_request {
+            self.schedule_request();
+        }
     }
 
     fn schedule_request(&self) {
@@ -1407,8 +1407,6 @@ impl WaveformTimeline {
     fn send_request(&self) {
         let variables = self.selected_variables.variables_vec_actor.get_cloned();
 
-        zoon::println!("[TIMELINE] send_request: {} variables", variables.len());
-
         if variables.is_empty() {
             self.series_map.lock_mut().clear();
             self.cursor_values.lock_mut().clear();
@@ -1421,13 +1419,7 @@ impl WaveformTimeline {
         let viewport = self.viewport.get_cloned();
         let start_ps = viewport.start.picoseconds();
         let end_ps = viewport.end.picoseconds();
-        zoon::println!(
-            "[TIMELINE] viewport: start_ps={} end_ps={}",
-            start_ps,
-            end_ps
-        );
         if end_ps <= start_ps {
-            zoon::println!("[TIMELINE] SKIPPING: viewport invalid (end <= start)");
             return;
         }
 
@@ -1565,18 +1557,7 @@ impl WaveformTimeline {
         }
 
         if requests.is_empty() {
-            zoon::println!("[TIMELINE] SKIPPING: no requests to send");
             return;
-        }
-
-        zoon::println!("[TIMELINE] Sending {} requests:", requests.len());
-        for req in &requests {
-            zoon::println!(
-                "[TIMELINE]   - {}|{}|{}",
-                req.file_path,
-                req.scope_path,
-                req.variable_name
-            );
         }
 
         for unique_id in loading_candidates {
@@ -1594,8 +1575,6 @@ impl WaveformTimeline {
         context.latest_request_started_ms = Some(Date::now());
         context.latest_request_windows = request_windows;
         self.request_state.set(context);
-
-        zoon::println!("[TIMELINE] Sending request_id={}", request_id);
 
         let connection = self.connection.clone();
         let handle = Task::start_droppable(async move {
@@ -1616,16 +1595,6 @@ impl WaveformTimeline {
         signal_data: Vec<UnifiedSignalData>,
         cursor_values: BTreeMap<String, SignalValue>,
     ) {
-        zoon::println!(
-            "[TIMELINE] apply_unified_signal_response: request_id={} signal_data={} cursor_values={}",
-            request_id,
-            signal_data.len(),
-            cursor_values.len()
-        );
-        for (k, v) in &cursor_values {
-            zoon::println!("[TIMELINE]   cursor: {} = {:?}", k, v);
-        }
-
         let mut current_request = self.request_state.get_cloned();
         if current_request
             .latest_request_id
@@ -1633,11 +1602,6 @@ impl WaveformTimeline {
             .map(|id| id != request_id)
             .unwrap_or(true)
         {
-            zoon::println!(
-                "[TIMELINE] SKIPPING response: request_id mismatch (expected {:?}, got {})",
-                current_request.latest_request_id,
-                request_id
-            );
             return;
         }
 
@@ -1767,10 +1731,6 @@ impl WaveformTimeline {
                 values_map.insert(unique_id.clone(), value);
                 self.cancel_cursor_loading_indicator(&unique_id);
             }
-            zoon::println!(
-                "[TIMELINE] After cursor_values insertion, map has {} entries",
-                values_map.len()
-            );
         }
 
         self.update_render_state();
@@ -1787,7 +1747,6 @@ impl WaveformTimeline {
 
         current_request.latest_request_windows = request_windows;
         self.request_state.set(current_request);
-        zoon::println!("[TIMELINE] apply_unified_signal_response: COMPLETED for request_id");
     }
 
     fn sync_state_to_config(&self) {
@@ -1866,6 +1825,7 @@ impl WaveformTimeline {
         let time_per_pixel = TimePerPixel::from_duration_and_width(duration_ps, width);
 
         let variables_snapshot = self.selected_variables.variables_vec_actor.get_cloned();
+        let row_heights = self.selected_variables.row_heights.get_cloned();
         let collapsed_ids = self.selected_variables.collapsed_variable_ids();
 
         let series_guard = self.series_map.lock_ref();
@@ -1880,7 +1840,10 @@ impl WaveformTimeline {
             let series_data = series_guard.get(&variable.unique_id);
             let cursor_value = values_guard.get(&variable.unique_id).cloned();
             let signal_type = variable.signal_type.clone();
-            let row_height = variable.row_height.unwrap_or(30);
+            let row_height = row_heights
+                .get(&variable.unique_id)
+                .copied()
+                .unwrap_or(variable.row_height.unwrap_or(30));
             let analog_limits = variable.analog_limits.clone();
             match series_data {
                 Some(series) => {
@@ -2227,19 +2190,24 @@ impl WaveformTimeline {
                         }
                     })
             })),
-            // Viewport + Canvas + Cursor changes → update render state and request data
+            // Viewport + Canvas width + Cursor changes → update render state and request data
             Arc::new(Task::start_droppable({
                 let t = t.clone();
                 map_ref! {
                     let _viewport = t.viewport.signal_cloned(),
                     let _canvas_width = t.canvas_width.signal_cloned(),
-                    let _canvas_height = t.canvas_height.signal_cloned(),
                     let _cursor = t.cursor.signal_cloned() => {}
                 }
                 .for_each_sync(move |_| {
                     t.ensure_viewport_within_bounds();
                     t.update_render_state();
                     t.schedule_request();
+                })
+            })),
+            Arc::new(Task::start_droppable({
+                let t = t.clone();
+                t.canvas_height.signal_cloned().for_each_sync(move |_| {
+                    t.update_render_state();
                 })
             })),
             // Config-relevant state changes → sync to config (config module handles debouncing)

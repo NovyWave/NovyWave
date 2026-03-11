@@ -428,6 +428,7 @@ pub struct AppConfig {
     value_column_width_right_state: Mutable<f32>,
 
     pub selected_variables_snapshot: Mutable<Vec<shared::SelectedVariable>>,
+    pub row_resize_in_progress: Mutable<bool>,
 
     pub markers_config: Mutable<Vec<shared::MarkerConfig>>,
     pub signal_groups_config: Mutable<Vec<shared::SignalGroupConfig>>,
@@ -455,12 +456,20 @@ impl AppConfig {
     }
 
     pub fn update_variable_row_height(&self, unique_id: &str, height: u32) {
+        self.set_variable_row_height_snapshot(unique_id, height);
+        self.request_save();
+    }
+
+    pub fn set_variable_row_height_snapshot(&self, unique_id: &str, height: u32) {
         let mut vars = self.selected_variables_snapshot.get_cloned();
         if let Some(var) = vars.iter_mut().find(|v| v.unique_id == unique_id) {
             var.row_height = Some(height);
             self.selected_variables_snapshot.set(vars);
-            self.request_save();
         }
+    }
+
+    pub fn set_row_resize_in_progress(&self, in_progress: bool) {
+        self.row_resize_in_progress.set_neq(in_progress);
     }
 
     pub fn update_variable_analog_limits(
@@ -771,17 +780,24 @@ impl AppConfig {
         // Track SelectedVariables changes - snapshot for config saves
         // Config save is handled automatically by the pure signal debouncer
         let selected_variables_snapshot = Mutable::new(Vec::<shared::SelectedVariable>::new());
+        let row_resize_in_progress = Mutable::new(false);
         let _selected_variables_snapshot_task = {
             let state = selected_variables_snapshot.clone();
             let variables_mutable = selected_variables.variables_vec_actor.clone();
+            let row_resize_state = row_resize_in_progress.clone();
 
             Arc::new(Task::start_droppable(
-                variables_mutable
-                    .signal_cloned()
-                    .dedupe_cloned()
-                    .for_each_sync(move |vars| {
-                        state.set_neq(vars.clone());
-                    }),
+                map_ref! {
+                    let vars = variables_mutable.signal_cloned(),
+                    let row_resize_active = row_resize_state.signal()
+                        => (vars.clone(), *row_resize_active)
+                }
+                .dedupe_cloned()
+                .for_each_sync(move |(vars, row_resize_active)| {
+                    if !row_resize_active {
+                        state.set_neq(vars);
+                    }
+                }),
             ))
         };
 
@@ -799,6 +815,7 @@ impl AppConfig {
             let timeline_state_clone = timeline_state.clone();
             let file_picker_domain_clone = file_picker_domain.clone();
             let selected_variables_snapshot_clone = selected_variables_snapshot.clone();
+            let row_resize_in_progress_clone = row_resize_in_progress.clone();
             let config_loaded_flag_for_saver = config_loaded_flag.clone();
             let files_width_right_clone = files_panel_width_right.clone();
             let files_height_right_clone = files_panel_height_right.clone();
@@ -833,6 +850,7 @@ impl AppConfig {
             let plugins_for_signal = plugins_state.clone();
             let workspace_history_for_signal = workspace_history_state.clone();
             let selected_vars_for_signal = selected_variables_snapshot.clone();
+            let row_resize_for_signal = row_resize_in_progress.clone();
             let files_expanded_for_signal = files_expanded_scopes.clone();
             let files_selected_for_signal = files_selected_scope.clone();
             let files_vec_for_signal = tracked_files.files_vec_signal.clone();
@@ -860,6 +878,7 @@ impl AppConfig {
                     let _ = plugins_for_signal.signal_cloned(),
                     let _ = workspace_history_for_signal.signal_cloned(),
                     let _ = selected_vars_for_signal.signal_cloned(),
+                    let _ = row_resize_for_signal.signal(),
                     let _ = files_expanded_for_signal.signal_cloned(),
                     let _ = files_selected_for_signal.signal_vec_cloned().map(|_| ()).to_signal_cloned(),
                     let _ = files_vec_for_signal.signal_cloned(),
@@ -903,7 +922,10 @@ impl AppConfig {
                                             }
                                         }
                                         _ = zoon::Timer::sleep(300).fuse() => {
-                                            if config_ready && crate::platform::server_is_ready() {
+                                            if config_ready
+                                                && crate::platform::server_is_ready()
+                                                && !row_resize_in_progress_clone.get_cloned()
+                                            {
                                                 if let Some(shared_config) = compose_shared_app_config(
                                                     &theme_clone,
                                                     &dock_mode_clone,
@@ -1069,6 +1091,7 @@ impl AppConfig {
             value_column_width_bottom_state,
             value_column_width_right_state,
             selected_variables_snapshot,
+            row_resize_in_progress,
             markers_config,
             signal_groups_config,
             _config_save_debouncer_task,

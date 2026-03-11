@@ -51,7 +51,6 @@ impl WaveformCanvas {
             let app_config_task = app_config.clone();
             async move {
                 let mut renderer: Option<WaveformRenderer> = None;
-                let mut initialized = false;
                 let mut active_theme = current_theme_store.get_cloned();
                 let mut cached_dimensions = (0.0f32, 0.0f32);
 
@@ -71,7 +70,7 @@ impl WaveformCanvas {
                         canvas_is_ready = canvas_ready_stream.next() => {
                             if let Some(true) = canvas_is_ready {
                                 if let Some(canvas_element) = canvas_element_store_task.get_cloned() {
-                                    if !initialized {
+                                    if renderer.is_none() {
                                         let measured_dimensions =
                                             Self::measure_canvas_element(&canvas_element);
                                         let mut new_renderer = WaveformRenderer::new();
@@ -97,14 +96,10 @@ impl WaveformCanvas {
                                             }
                                         }
                                         renderer = Some(new_renderer);
-                                        initialized = true;
                                         initialization_status_task.set_neq(true);
                                     } else if let Some(ref mut renderer) = renderer {
                                         let measured_dimensions =
                                             Self::measure_canvas_element(&canvas_element);
-                                        let fast_canvas = fast2d::CanvasWrapper::new_with_canvas(canvas_element)
-                                            .await;
-                                        renderer.set_canvas(fast_canvas);
                                         if let Some((width, height)) = measured_dimensions {
                                             canvas_dimensions_task.set_neq((width, height));
                                             timeline.set_canvas_dimensions(width, height);
@@ -112,11 +107,13 @@ impl WaveformCanvas {
                                             cached_dimensions = (width, height);
                                         }
                                         if let Some(render_state) = render_state_store.get_cloned() {
+                                            let render_state = Self::state_with_measured_dimensions(
+                                                render_state,
+                                                measured_dimensions,
+                                            );
+                                            render_state_store.set(Some(render_state.clone()));
                                             let params = Self::render_params_from_state(
-                                                &Self::state_with_measured_dimensions(
-                                                    render_state,
-                                                    measured_dimensions,
-                                                ),
+                                                &render_state,
                                                 active_theme,
                                             );
                                             if let Some(duration_ms) = renderer.render_frame(params) {
@@ -133,26 +130,13 @@ impl WaveformCanvas {
                                     cached_dimensions = (width, height);
                                     timeline.set_canvas_dimensions(width, height);
                                     if let Some(ref mut renderer) = renderer.as_mut() {
-                                        if let Some(canvas_element) = canvas_element_store_task.get_cloned() {
-                                            let fast_canvas = fast2d::CanvasWrapper::new_with_canvas(canvas_element)
-                                                .await;
-                                            renderer.set_canvas(fast_canvas);
-                                        }
-
+                                        renderer.set_dimensions(width, height);
                                         if let Some(render_state) = render_state_store.get_cloned() {
                                             let render_state = Self::state_with_measured_dimensions(
                                                 render_state,
                                                 Some((width, height)),
                                             );
                                             render_state_store.set(Some(render_state.clone()));
-                                            let params = Self::render_params_from_state(
-                                                &render_state,
-                                                active_theme,
-                                            );
-                                            renderer.set_dimensions(width, height);
-                                            if let Some(duration_ms) = renderer.render_frame(params) {
-                                                timeline.record_render_duration(duration_ms as f64);
-                                            }
                                         }
                                     }
                                 }

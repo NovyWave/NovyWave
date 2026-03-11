@@ -212,6 +212,7 @@ impl WaveformRenderer {
 
     pub fn set_canvas(&mut self, canvas: Fast2DCanvas) {
         self.canvas = Some(canvas);
+        self.rendering_state.lock_mut().static_cache = None;
     }
 
     #[allow(dead_code)]
@@ -226,6 +227,7 @@ impl WaveformRenderer {
             let width = width.max(1.0) as u32;
             let height = height.max(1.0) as u32;
             canvas.resized(width, height);
+            self.rendering_state.lock_mut().static_cache = None;
         }
     }
 

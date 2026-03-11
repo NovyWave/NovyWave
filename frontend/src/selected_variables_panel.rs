@@ -264,32 +264,28 @@ fn selected_variables_panel_content(
     group_dialog: GroupDialogState,
     analog_dialog: AnalogLimitsDialogState,
 ) -> impl Element {
-    let selected_variables_for_height = selected_variables.clone();
     let _name_column_width_signal = variables_name_column_width_signal(app_config.clone());
     let _value_column_width_signal = variables_value_column_width_signal(app_config.clone());
 
     El::new()
-        .s(Height::exact_signal(
-            selected_variables_for_height
-                .visible_items
-                .signal_cloned()
-                .map(|items| {
-                    if items.is_empty() {
-                        2 * SELECTED_VARIABLES_ROW_HEIGHT
-                    } else {
-                        let var_count = items.iter().filter(|i| matches!(i, crate::selected_variables::SelectedVariableOrGroup::Variable(_))).count() as u32;
-                        let item_heights: u32 = items.iter().map(|item| {
-                            match item {
-                                crate::selected_variables::SelectedVariableOrGroup::Variable(v) =>
-                                    v.row_height.unwrap_or(SELECTED_VARIABLES_ROW_HEIGHT),
-                                crate::selected_variables::SelectedVariableOrGroup::GroupHeader { .. } =>
-                                    SELECTED_VARIABLES_ROW_HEIGHT,
-                            }
-                        }).sum();
-                        item_heights + var_count * 3 + SELECTED_VARIABLES_ROW_HEIGHT // items + dividers + footer
-                    }
-                }),
-        ))
+        .s(Height::exact_signal(map_ref! {
+            let items = selected_variables.visible_items.signal_cloned(),
+            let row_heights = selected_variables.row_heights.signal_cloned() => {
+                if items.is_empty() {
+                    2 * SELECTED_VARIABLES_ROW_HEIGHT
+                } else {
+                    let var_count = items
+                        .iter()
+                        .filter(|item| matches!(item, crate::selected_variables::SelectedVariableOrGroup::Variable(_)))
+                        .count() as u32;
+                    let item_heights: u32 = items
+                        .iter()
+                        .map(|item| crate::selected_variables::SelectedVariables::row_height_for_item(item, row_heights))
+                        .sum();
+                    item_heights + var_count * 3 + SELECTED_VARIABLES_ROW_HEIGHT
+                }
+            }
+        }))
         .s(Width::fill())
         .s(Scrollbars::x_and_clip_y())
         .child_signal({
@@ -299,11 +295,11 @@ fn selected_variables_panel_content(
             let dragging_system = dragging_system.clone();
             let waveform_timeline = waveform_timeline.clone();
             let waveform_canvas = waveform_canvas.clone();
-            selected_variables_for_height
-                .variables_vec_actor
+            selected_variables
+                .visible_items
                 .signal_cloned()
-                .map(move |vars| {
-                    if vars.is_empty() {
+                .map(move |items| {
+                    if items.is_empty() {
                         crate::file_management::empty_state_hint(
                             "Select variables in the Variables panel to show them here.",
                         )
@@ -425,9 +421,12 @@ fn name_column_variable_row(
 ) -> impl Element {
     let unique_id = selected_var.unique_id.clone();
     let selected_variables_for_remove = selected_variables.clone();
-    let var_row_height = selected_var
-        .row_height
-        .unwrap_or(SELECTED_VARIABLES_ROW_HEIGHT);
+    let row_height_signal = selected_variables.live_row_height_signal(
+        selected_var.unique_id.clone(),
+        selected_var
+            .row_height
+            .unwrap_or(SELECTED_VARIABLES_ROW_HEIGHT),
+    );
     let tracked_files_broadcaster = tracked_files
         .files
         .signal_vec_cloned()
@@ -442,7 +441,7 @@ fn name_column_variable_row(
     };
 
     Row::new()
-        .s(Height::exact(var_row_height))
+        .s(Height::exact_signal(row_height_signal))
         .s(Width::fill())
         .s(Padding::new().x(SPACING_2).y(SPACING_4))
         .s(Gap::new().x(SPACING_4))
@@ -849,12 +848,15 @@ fn value_column_variable_row(
     app_config: crate::config::AppConfig,
     analog_dialog: AnalogLimitsDialogState,
 ) -> impl Element {
-    let var_row_height = selected_var
-        .row_height
-        .unwrap_or(SELECTED_VARIABLES_ROW_HEIGHT);
+    let row_height_signal = selected_variables.live_row_height_signal(
+        selected_var.unique_id.clone(),
+        selected_var
+            .row_height
+            .unwrap_or(SELECTED_VARIABLES_ROW_HEIGHT),
+    );
     let is_real_signal = selected_var.signal_type.as_deref() == Some("Real");
     El::new()
-        .s(Height::exact(var_row_height))
+        .s(Height::exact_signal(row_height_signal))
         .s(Width::fill())
         .child(if is_real_signal {
             analog_value_row(

@@ -5,6 +5,7 @@
 
 use indexmap::IndexSet;
 use shared::SelectedVariable;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use zoon::{Mutable, MutableExt, MutableVec, SignalExt, SignalVecExt, Task, TaskHandle, VecDiff};
 
@@ -15,7 +16,7 @@ pub struct SignalGroup {
     pub collapsed: Mutable<bool>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum SelectedVariableOrGroup {
     Variable(SelectedVariable),
     GroupHeader {
@@ -30,6 +31,7 @@ pub enum SelectedVariableOrGroup {
 pub struct SelectedVariables {
     pub variables: MutableVec<SelectedVariable>,
     pub variables_vec_actor: Mutable<Vec<SelectedVariable>>,
+    pub row_heights: Mutable<BTreeMap<String, u32>>,
     pub selected_scope: Mutable<Option<String>>,
     pub tree_selection: Mutable<IndexSet<String>>,
     pub expanded_scopes: Mutable<IndexSet<String>>,
@@ -92,6 +94,7 @@ impl SelectedVariables {
         Self {
             variables: MutableVec::new(),
             variables_vec_actor: Mutable::new(vec![]),
+            row_heights: Mutable::new(BTreeMap::new()),
             selected_scope,
             tree_selection,
             expanded_scopes: Mutable::new(IndexSet::new()),
@@ -177,7 +180,7 @@ impl SelectedVariables {
     }
 
     pub fn change_variable_format(&self, variable_id: String, new_format: shared::VarFormat) {
-        self.update_variable(&variable_id, |var| {
+        self.update_variable_with_visibility_refresh(&variable_id, true, |var| {
             var.formatter = Some(new_format);
         });
     }
@@ -221,8 +224,15 @@ impl SelectedVariables {
 
     fn sync_variables_vec(&self) {
         let current_vars = self.variables.lock_ref().to_vec();
-        self.variables_vec_actor.set(current_vars);
+        self.sync_row_heights(&current_vars);
+        self.variables_vec_actor.set_neq(current_vars);
         self.refresh_visible_items();
+    }
+
+    fn sync_variables_vec_without_refresh(&self) {
+        let current_vars = self.variables.lock_ref().to_vec();
+        self.sync_row_heights(&current_vars);
+        self.variables_vec_actor.set_neq(current_vars);
     }
 
     pub fn file_variables_signal(
@@ -260,9 +270,41 @@ impl SelectedVariables {
     }
 
     pub fn update_row_height(&self, unique_id: &str, row_height: u32) {
-        self.update_variable(unique_id, |var| {
+        self.update_variable_with_visibility_refresh(unique_id, false, |var| {
             var.row_height = Some(row_height);
         });
+    }
+
+    pub fn set_live_row_height(&self, unique_id: &str, row_height: u32) {
+        let mut row_heights = self.row_heights.get_cloned();
+        row_heights.insert(unique_id.to_string(), row_height);
+        self.row_heights.set_neq(row_heights);
+    }
+
+    pub fn live_row_height(&self, unique_id: &str) -> u32 {
+        self.row_heights
+            .get_cloned()
+            .get(unique_id)
+            .copied()
+            .or_else(|| {
+                self.variables_vec_actor
+                    .get_cloned()
+                    .iter()
+                    .find(|variable| variable.unique_id == unique_id)
+                    .map(Self::row_height_for_variable)
+            })
+            .unwrap_or(30)
+    }
+
+    pub fn live_row_height_signal(
+        &self,
+        unique_id: String,
+        fallback: u32,
+    ) -> impl zoon::Signal<Item = u32> + 'static {
+        let row_heights = self.row_heights.clone();
+        row_heights
+            .signal_cloned()
+            .map(move |row_heights| row_heights.get(&unique_id).copied().unwrap_or(fallback))
     }
 
     pub fn update_analog_limits(
@@ -270,7 +312,7 @@ impl SelectedVariables {
         unique_id: &str,
         analog_limits: Option<shared::AnalogLimits>,
     ) {
-        self.update_variable(unique_id, |var| {
+        self.update_variable_with_visibility_refresh(unique_id, true, |var| {
             var.analog_limits = analog_limits.clone();
         });
     }
@@ -378,7 +420,7 @@ impl SelectedVariables {
         let vars = self.variables.lock_ref().to_vec();
         let groups = self.signal_groups.lock_ref().to_vec();
         let items = Self::compute_visible_items(&vars, &groups);
-        self.visible_items.set(items);
+        self.visible_items.set_neq(items);
     }
 
     fn compute_visible_items(
@@ -481,8 +523,12 @@ impl SelectedVariables {
             .collect()
     }
 
-    fn update_variable<F>(&self, unique_id: &str, mut f: F)
-    where
+    fn update_variable_with_visibility_refresh<F>(
+        &self,
+        unique_id: &str,
+        refresh_visible_items: bool,
+        mut f: F,
+    ) where
         F: FnMut(&mut SelectedVariable),
     {
         let mut current = {
@@ -499,8 +545,46 @@ impl SelectedVariables {
         }
         if changed {
             self.variables.lock_mut().replace_cloned(current);
-            self.sync_variables_vec();
+            if refresh_visible_items {
+                self.sync_variables_vec();
+            } else {
+                self.sync_variables_vec_without_refresh();
+            }
         }
+    }
+
+    fn sync_row_heights(&self, variables: &[SelectedVariable]) {
+        let mut next = BTreeMap::new();
+        for variable in variables {
+            next.insert(
+                variable.unique_id.clone(),
+                Self::row_height_for_variable(variable),
+            );
+        }
+        self.row_heights.set_neq(next);
+    }
+
+    pub fn row_height_for_item(
+        item: &SelectedVariableOrGroup,
+        row_heights: &BTreeMap<String, u32>,
+    ) -> u32 {
+        match item {
+            SelectedVariableOrGroup::Variable(variable) => row_heights
+                .get(&variable.unique_id)
+                .copied()
+                .unwrap_or_else(|| Self::row_height_for_variable(variable)),
+            SelectedVariableOrGroup::GroupHeader { .. } => 30,
+        }
+    }
+
+    fn row_height_for_variable(variable: &SelectedVariable) -> u32 {
+        variable.row_height.unwrap_or_else(|| {
+            variable
+                .signal_type
+                .as_deref()
+                .map(shared::SelectedVariable::default_row_height_for_signal_type)
+                .unwrap_or(30)
+        })
     }
 
     fn remove_members_from_existing_groups(&self, member_ids: &[String]) {
