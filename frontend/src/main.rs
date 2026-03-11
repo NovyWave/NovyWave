@@ -259,11 +259,14 @@ export function ensure_reconnecting_event_source() {
   if (typeof window === 'undefined') return;
   if (typeof window.EventSource === 'undefined') return;
 
-  const ORIGIN = 'http://127.0.0.1:8082';
+  const backendOrigin =
+    (typeof window.__NOVYWAVE_BACKEND_ORIGIN === 'string' &&
+      window.__NOVYWAVE_BACKEND_ORIGIN) ||
+    'http://127.0.0.1:8082';
 
   const rewriteApi = (urlStr) => {
     try {
-      const url = new URL(urlStr, ORIGIN);
+      const url = new URL(urlStr, backendOrigin);
       const path = url.pathname;
       const is_api =
         path.startsWith('/_api/message') ||
@@ -271,8 +274,9 @@ export function ensure_reconnecting_event_source() {
         path.startsWith('/_api/load') ||
         path.startsWith('/_api/browse');
       if (!is_api) return urlStr;
-      url.protocol = 'http:';
-      url.host = '127.0.0.1:8082';
+      const backendUrl = new URL(backendOrigin);
+      url.protocol = backendUrl.protocol;
+      url.host = backendUrl.host;
       return url.toString();
     } catch (_e) {
       return urlStr;

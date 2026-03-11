@@ -1,9 +1,10 @@
 //! Tauri platform implementation
 //!
 //! Desktop build reuses the same MoonZoon Connection as the web target.
-//! The embedded backend is started by Tauri (see `src-tauri/src/lib.rs`)
-//! and the JS shim in `main.rs` rewrites fetch/EventSource to hit
-//! `http://127.0.0.1:8082/_api/...`, so the standard web platform logic works.
+//! In dev it talks to the shared MoonZoon server on port 8082.
+//! In packaged builds Tauri injects a private localhost backend origin and
+//! the JS shim in `main.rs` rewrites fetch/EventSource to that origin, so the
+//! standard web platform logic works in both modes.
 
 use crate::platform::Platform;
 use crate::platform::web;

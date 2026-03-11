@@ -2,16 +2,24 @@ mod commands;
 mod desktop_test_bridge;
 
 use std::{
-    net::TcpListener,
+    net::{TcpListener, TcpStream},
     path::PathBuf,
     process::{Child, Command},
     sync::{Mutex, OnceLock},
+    time::{Duration, Instant},
 };
 
+use portpicker::pick_unused_port;
 use tauri::{Manager, WindowEvent};
 
 // Keep handle to embedded backend so we can terminate it when the app closes.
 static BACKEND_CHILD: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
+const DEV_SERVER_PORT: u16 = 8082;
+const EMBEDDED_BACKEND_STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
+
+struct TauriRuntimeTarget {
+    origin: String,
+}
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
@@ -47,16 +55,29 @@ pub fn run() {
             println!("=== Tauri app setup completed ===");
 
             if !test_updater {
-                if let Err(e) = spawn_backend_if_needed(app) {
-                    println!("Failed to spawn embedded backend: {}", e);
-                }
+                let runtime_target = select_runtime_target(app).map_err(|error| {
+                    println!("Failed to prepare Tauri runtime target: {error}");
+                    std::io::Error::other(error)
+                })?;
 
-                let target: tauri::Url = "http://127.0.0.1:8082".parse().unwrap();
+                let target: tauri::Url = runtime_target.origin.parse().map_err(|error| {
+                    println!("Failed to parse runtime target '{}': {error}", runtime_target.origin);
+                    std::io::Error::other("failed to parse runtime target")
+                })?;
+                let init_script = format!(
+                    "window.__NOVYWAVE_BACKEND_ORIGIN = {};",
+                    serde_json::to_string(&runtime_target.origin).map_err(|error| {
+                        println!("Failed to encode runtime origin: {error}");
+                        std::io::Error::other("failed to encode runtime origin")
+                    })?
+                );
+
                 tauri::WebviewWindowBuilder::new(
                     app,
                     "main".to_string(),
                     tauri::WebviewUrl::External(target),
                 )
+                .initialization_script(init_script)
                 .title("NovyWave")
                 .inner_size(1200.0, 800.0)
                 .devtools(true)
@@ -111,11 +132,27 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
-fn spawn_backend_if_needed(app: &tauri::App) -> Result<(), String> {
-    // If port already in use, assume user/dev server is running; skip spawn
-    if TcpListener::bind("127.0.0.1:8082").is_err() {
-        println!("Backend already running on 127.0.0.1:8082, skipping embedded spawn.");
-        return Ok(());
+fn select_runtime_target(app: &tauri::App) -> Result<TauriRuntimeTarget, String> {
+    if tauri::is_dev() {
+        let origin = format!("http://127.0.0.1:{DEV_SERVER_PORT}");
+        return Ok(TauriRuntimeTarget { origin });
+    }
+
+    let backend_port =
+        pick_unused_port().ok_or("failed to allocate an unused localhost port".to_string())?;
+    spawn_embedded_backend(app, backend_port)?;
+    wait_for_backend_ready(backend_port)?;
+
+    Ok(TauriRuntimeTarget {
+        origin: format!("http://127.0.0.1:{backend_port}"),
+    })
+}
+
+fn spawn_embedded_backend(app: &tauri::App, backend_port: u16) -> Result<(), String> {
+    if TcpListener::bind(("127.0.0.1", backend_port)).is_err() {
+        return Err(format!(
+            "embedded backend port {backend_port} is already in use before spawn"
+        ));
     }
 
     // Resolve backend binary from resources or fallback to workspace target
@@ -203,6 +240,8 @@ fn spawn_backend_if_needed(app: &tauri::App) -> Result<(), String> {
     // Force backend to serve uncompressed pkg and built frontend_dist for desktop bundle.
     command.env("COMPRESSED_PKG", "false");
     command.env("FRONTEND_DIST", "true");
+    command.env("PORT", backend_port.to_string());
+    command.env("REDIRECT_ENABLED", "false");
     if let Some(dist) = dist_env.clone() {
         command.env("MOON_ASSETS_DIR", dist);
     }
@@ -218,6 +257,20 @@ fn spawn_backend_if_needed(app: &tauri::App) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn wait_for_backend_ready(port: u16) -> Result<(), String> {
+    let deadline = Instant::now() + EMBEDDED_BACKEND_STARTUP_TIMEOUT;
+    while Instant::now() < deadline {
+        if TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    Err(format!(
+        "embedded backend on 127.0.0.1:{port} did not accept connections within {:?}",
+        EMBEDDED_BACKEND_STARTUP_TIMEOUT
+    ))
 }
 
 fn updates_configured(app: &tauri::AppHandle) -> bool {
