@@ -555,7 +555,13 @@ fn get_config_debug_impl() -> JsValue {
         js_sys::Reflect::set(
             &obj,
             &"selectedVariablesSnapshotLen".into(),
-            &JsValue::from_f64(state.app_config.selected_variables_snapshot.get_cloned().len() as f64),
+            &JsValue::from_f64(
+                state
+                    .app_config
+                    .selected_variables_snapshot
+                    .get_cloned()
+                    .len() as f64,
+            ),
         )
         .ok();
         js_sys::Reflect::set(
@@ -573,7 +579,13 @@ fn get_config_debug_impl() -> JsValue {
         js_sys::Reflect::set(
             &obj,
             &"expandedDirectoriesLen".into(),
-            &JsValue::from_f64(state.app_config.file_picker_domain.get_expanded_snapshot().len() as f64),
+            &JsValue::from_f64(
+                state
+                    .app_config
+                    .file_picker_domain
+                    .get_expanded_snapshot()
+                    .len() as f64,
+            ),
         )
         .ok();
         js_sys::Reflect::set(
@@ -615,7 +627,10 @@ fn save_config_now_impl() -> bool {
 
         let connection = state.connection.clone();
         zoon::Task::start(async move {
-            if let Err(error) = connection.send_up_msg(shared::UpMsg::SaveConfig(shared_config)).await {
+            if let Err(error) = connection
+                .send_up_msg(shared::UpMsg::SaveConfig(shared_config))
+                .await
+            {
                 zoon::eprintln!("[Test API] saveConfigNow failed: {:?}", error);
             }
         });

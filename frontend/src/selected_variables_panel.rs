@@ -1138,10 +1138,8 @@ fn analog_value_row(
                                         let next_limits = Some(AnalogLimits::auto());
                                         selected_variables
                                             .update_analog_limits(&unique_id, next_limits.clone());
-                                        app_config.update_variable_analog_limits(
-                                            &unique_id,
-                                            next_limits,
-                                        );
+                                        app_config
+                                            .update_variable_analog_limits(&unique_id, next_limits);
                                     }
                                 })
                                 .build()

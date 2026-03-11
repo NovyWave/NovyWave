@@ -2784,7 +2784,11 @@ fn relativize_workspace_directory_path(dir: &str, context: &WorkspaceContext) ->
     let root_with_trailing_slash = format!("{}/", root_display.trim_end_matches('/'));
     let trimmed = dir.trim();
 
-    if trimmed.is_empty() || trimmed == "." || trimmed == root_display || trimmed == root_with_trailing_slash {
+    if trimmed.is_empty()
+        || trimmed == "."
+        || trimmed == root_display
+        || trimmed == root_with_trailing_slash
+    {
         return ".".to_string();
     }
 
