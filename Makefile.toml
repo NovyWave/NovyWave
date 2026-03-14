@@ -118,17 +118,18 @@ env = { NOVYWAVE_PLATFORM = "TAURI" }
 script = '''
 echo "Starting Tauri desktop mode using dev server at http://localhost:8082..."
 
-# Check if dev server is running on port 8082
-if ! curl -s http://localhost:8082 >/dev/null 2>&1; then
-    echo "ERROR: Dev server is not running on port 8082"
-    echo "Please start the dev server first with: makers start"
-    exit 1
+if curl -s http://localhost:8082 >/dev/null 2>&1; then
+    echo "✓ Dev server detected on port 8082"
+    echo "✓ Starting Tauri with shared dev server..."
+    TAURI_CONFIG=tauri.dev.conf.json
+else
+    echo "⚠ Dev server is not running on port 8082"
+    echo "⚠ Building TAURI frontend_dist and launching with embedded backend fallback..."
+    NOVYWAVE_PLATFORM=TAURI ./mzoon/bin/mzoon build
+    TAURI_CONFIG=tauri.conf.json
 fi
 
-echo "✓ Dev server detected on port 8082"
-echo "✓ Starting Tauri with shared dev server..."
-
-cd src-tauri && cargo tauri dev --config tauri.dev.conf.json
+cd src-tauri && cargo tauri dev --config $TAURI_CONFIG
 '''
 
 [tasks.tauri-test-updater]

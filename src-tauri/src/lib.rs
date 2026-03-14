@@ -137,9 +137,15 @@ pub fn run() {
 }
 
 fn select_runtime_target(app: &tauri::App) -> Result<TauriRuntimeTarget, String> {
-    if tauri::is_dev() {
+    if tauri::is_dev() && dev_server_is_available(DEV_SERVER_PORT) {
         let origin = format!("http://127.0.0.1:{DEV_SERVER_PORT}");
         return Ok(TauriRuntimeTarget { origin });
+    }
+
+    if tauri::is_dev() {
+        println!(
+            "Dev server on 127.0.0.1:{DEV_SERVER_PORT} is unavailable, falling back to embedded backend."
+        );
     }
 
     let backend_port =
@@ -150,6 +156,10 @@ fn select_runtime_target(app: &tauri::App) -> Result<TauriRuntimeTarget, String>
     Ok(TauriRuntimeTarget {
         origin: format!("http://127.0.0.1:{backend_port}"),
     })
+}
+
+fn dev_server_is_available(port: u16) -> bool {
+    TcpStream::connect(("127.0.0.1", port)).is_ok()
 }
 
 fn spawn_embedded_backend(app: &tauri::App, backend_port: u16) -> Result<(), String> {

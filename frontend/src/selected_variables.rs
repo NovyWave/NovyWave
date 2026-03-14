@@ -5,7 +5,9 @@
 
 use indexmap::IndexSet;
 use shared::SelectedVariable;
+use std::cell::Cell;
 use std::collections::BTreeMap;
+use std::rc::Rc;
 use std::sync::Arc;
 use zoon::{Mutable, MutableExt, MutableVec, SignalExt, SignalVecExt, Task, TaskHandle, VecDiff};
 
@@ -27,11 +29,19 @@ pub enum SelectedVariableOrGroup {
     },
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RowHeightChange {
+    pub seq: u64,
+    pub unique_id: String,
+    pub old_height: u32,
+    pub new_height: u32,
+}
+
 #[derive(Clone)]
 pub struct SelectedVariables {
     pub variables: MutableVec<SelectedVariable>,
     pub variables_vec_actor: Mutable<Vec<SelectedVariable>>,
-    pub row_heights: Mutable<BTreeMap<String, u32>>,
+    pub row_height_atoms: Mutable<BTreeMap<String, Mutable<u32>>>,
     pub selected_scope: Mutable<Option<String>>,
     pub tree_selection: Mutable<IndexSet<String>>,
     pub expanded_scopes: Mutable<IndexSet<String>>,
@@ -41,6 +51,9 @@ pub struct SelectedVariables {
     pub selected_for_grouping: Mutable<IndexSet<String>>,
     pub grouping_mode_active: Mutable<bool>,
     pub visible_items: Mutable<Vec<SelectedVariableOrGroup>>,
+    pub total_content_height: Mutable<u32>,
+    pub last_row_height_change: Mutable<Option<RowHeightChange>>,
+    row_height_change_seq: Rc<Cell<u64>>,
     _scope_selection_observer: Arc<TaskHandle>,
 }
 
@@ -94,7 +107,7 @@ impl SelectedVariables {
         Self {
             variables: MutableVec::new(),
             variables_vec_actor: Mutable::new(vec![]),
-            row_heights: Mutable::new(BTreeMap::new()),
+            row_height_atoms: Mutable::new(BTreeMap::new()),
             selected_scope,
             tree_selection,
             expanded_scopes: Mutable::new(IndexSet::new()),
@@ -104,6 +117,9 @@ impl SelectedVariables {
             selected_for_grouping: Mutable::new(IndexSet::new()),
             grouping_mode_active: Mutable::new(false),
             visible_items: Mutable::new(Vec::new()),
+            total_content_height: Mutable::new(2 * 30),
+            last_row_height_change: Mutable::new(None),
+            row_height_change_seq: Rc::new(Cell::new(0)),
             _scope_selection_observer,
         }
     }
@@ -276,24 +292,31 @@ impl SelectedVariables {
     }
 
     pub fn set_live_row_height(&self, unique_id: &str, row_height: u32) {
-        let mut row_heights = self.row_heights.get_cloned();
-        row_heights.insert(unique_id.to_string(), row_height);
-        self.row_heights.set_neq(row_heights);
+        let atom = self.ensure_row_height_atom(unique_id, row_height);
+        let old_height = atom.get_cloned();
+        if old_height == row_height {
+            return;
+        }
+
+        atom.set_neq(row_height);
+        self.adjust_total_content_height(unique_id, old_height, row_height);
+
+        let next_seq = self.row_height_change_seq.get().saturating_add(1);
+        self.row_height_change_seq.set(next_seq);
+        self.last_row_height_change.set(Some(RowHeightChange {
+            seq: next_seq,
+            unique_id: unique_id.to_string(),
+            old_height,
+            new_height: row_height,
+        }));
     }
 
     pub fn live_row_height(&self, unique_id: &str) -> u32 {
-        self.row_heights
+        self.row_height_atoms
             .get_cloned()
             .get(unique_id)
-            .copied()
-            .or_else(|| {
-                self.variables_vec_actor
-                    .get_cloned()
-                    .iter()
-                    .find(|variable| variable.unique_id == unique_id)
-                    .map(Self::row_height_for_variable)
-            })
-            .unwrap_or(30)
+            .map(|atom| atom.get_cloned())
+            .unwrap_or_else(|| self.committed_row_height(unique_id))
     }
 
     pub fn live_row_height_signal(
@@ -301,10 +324,27 @@ impl SelectedVariables {
         unique_id: String,
         fallback: u32,
     ) -> impl zoon::Signal<Item = u32> + 'static {
-        let row_heights = self.row_heights.clone();
-        row_heights
-            .signal_cloned()
-            .map(move |row_heights| row_heights.get(&unique_id).copied().unwrap_or(fallback))
+        self.ensure_row_height_atom(&unique_id, fallback).signal()
+    }
+
+    pub fn committed_row_height(&self, unique_id: &str) -> u32 {
+        self.variables_vec_actor
+            .get_cloned()
+            .iter()
+            .find(|variable| variable.unique_id == unique_id)
+            .map(Self::row_height_for_variable)
+            .unwrap_or(30)
+    }
+
+    pub fn commit_live_row_height(&self, unique_id: &str) -> bool {
+        let live_row_height = self.live_row_height(unique_id);
+        let committed_row_height = self.committed_row_height(unique_id);
+        if live_row_height == committed_row_height {
+            return false;
+        }
+
+        self.update_row_height(unique_id, live_row_height);
+        true
     }
 
     pub fn update_analog_limits(
@@ -420,7 +460,9 @@ impl SelectedVariables {
         let vars = self.variables.lock_ref().to_vec();
         let groups = self.signal_groups.lock_ref().to_vec();
         let items = Self::compute_visible_items(&vars, &groups);
-        self.visible_items.set_neq(items);
+        self.visible_items.set_neq(items.clone());
+        self.total_content_height
+            .set_neq(self.total_content_height_for_items(&items));
     }
 
     fn compute_visible_items(
@@ -554,27 +596,23 @@ impl SelectedVariables {
     }
 
     fn sync_row_heights(&self, variables: &[SelectedVariable]) {
-        let mut next = BTreeMap::new();
+        let mut next = self.row_height_atoms.get_cloned();
+        let mut desired_ids = IndexSet::new();
         for variable in variables {
-            next.insert(
-                variable.unique_id.clone(),
-                Self::row_height_for_variable(variable),
-            );
+            desired_ids.insert(variable.unique_id.clone());
         }
-        self.row_heights.set_neq(next);
-    }
 
-    pub fn row_height_for_item(
-        item: &SelectedVariableOrGroup,
-        row_heights: &BTreeMap<String, u32>,
-    ) -> u32 {
-        match item {
-            SelectedVariableOrGroup::Variable(variable) => row_heights
-                .get(&variable.unique_id)
-                .copied()
-                .unwrap_or_else(|| Self::row_height_for_variable(variable)),
-            SelectedVariableOrGroup::GroupHeader { .. } => 30,
+        next.retain(|unique_id, _| desired_ids.contains(unique_id));
+
+        for variable in variables {
+            let next_height = Self::row_height_for_variable(variable);
+            if let Some(atom) = next.get(&variable.unique_id) {
+                atom.set_neq(next_height);
+            } else {
+                next.insert(variable.unique_id.clone(), Mutable::new(next_height));
+            }
         }
+        self.row_height_atoms.set(next);
     }
 
     fn row_height_for_variable(variable: &SelectedVariable) -> u32 {
@@ -630,6 +668,62 @@ impl SelectedVariables {
         }
 
         self.signal_groups.lock_mut().replace_cloned(rebuilt);
+    }
+
+    fn ensure_row_height_atom(&self, unique_id: &str, fallback: u32) -> Mutable<u32> {
+        if let Some(atom) = self.row_height_atoms.get_cloned().get(unique_id).cloned() {
+            return atom;
+        }
+
+        let mut atoms = self.row_height_atoms.get_cloned();
+        let atom = Mutable::new(fallback);
+        atoms.insert(unique_id.to_string(), atom.clone());
+        self.row_height_atoms.set(atoms);
+        atom
+    }
+
+    fn total_content_height_for_items(&self, items: &[SelectedVariableOrGroup]) -> u32 {
+        if items.is_empty() {
+            return 2 * 30;
+        }
+
+        let variable_count = items
+            .iter()
+            .filter(|item| matches!(item, SelectedVariableOrGroup::Variable(_)))
+            .count() as u32;
+        let item_heights: u32 = items
+            .iter()
+            .map(|item| match item {
+                SelectedVariableOrGroup::Variable(variable) => {
+                    self.live_row_height(&variable.unique_id)
+                }
+                SelectedVariableOrGroup::GroupHeader { .. } => 30,
+            })
+            .sum();
+
+        item_heights + variable_count * 3 + 30
+    }
+
+    fn adjust_total_content_height(&self, unique_id: &str, old_height: u32, new_height: u32) {
+        let is_visible = self.visible_items.get_cloned().iter().any(|item| {
+            matches!(
+                item,
+                SelectedVariableOrGroup::Variable(variable) if variable.unique_id == unique_id
+            )
+        });
+
+        if !is_visible {
+            return;
+        }
+
+        let delta = new_height as i64 - old_height as i64;
+        self.total_content_height.update_mut(|height| {
+            if delta >= 0 {
+                *height = height.saturating_add(delta as u32);
+            } else {
+                *height = height.saturating_sub(delta.unsigned_abs() as u32);
+            }
+        });
     }
 
     fn prune_group_memberships(&self) {

@@ -145,6 +145,25 @@ pub struct TimelineState {
     pub tooltip_enabled: bool,
 }
 
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ConfigDebugMetrics {
+    pub save_send_count: u64,
+    pub save_deduped_count: u64,
+    pub startup_platform_roots_request_count: u64,
+    pub startup_browse_request_count: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RestorePhase {
+    #[default]
+    Inactive,
+    ReplayingConfig,
+    LoadingFiles,
+    WaitingForStableCanvasWidth,
+    RunningInitialQuery,
+    Active,
+}
+
 impl Default for TimelineState {
     fn default() -> Self {
         Self {
@@ -161,6 +180,39 @@ pub const DEFAULT_TIMELINE_HEIGHT: f32 = 200.0;
 pub const DEFAULT_NAME_COLUMN_WIDTH: f32 = 190.0;
 pub const DEFAULT_VALUE_COLUMN_WIDTH: f32 = 220.0;
 
+fn normalize_restore_directory_path(path: &str) -> Option<String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let normalized = trimmed
+        .replace("/./", "/")
+        .trim_end_matches("/.")
+        .trim_end_matches('/')
+        .to_string();
+
+    if normalized.is_empty() {
+        if trimmed == "/" {
+            Some("/".to_string())
+        } else {
+            None
+        }
+    } else {
+        Some(normalized)
+    }
+}
+
+fn normalize_restore_directory_paths(paths: &[String]) -> Vec<String> {
+    let mut seen = indexmap::IndexSet::new();
+    for path in paths {
+        if let Some(normalized) = normalize_restore_directory_path(path) {
+            seen.insert(normalized);
+        }
+    }
+    seen.into_iter().collect()
+}
+
 /// File picker domain - simplified with direct method calls, minimal async
 #[derive(Clone)]
 pub struct FilePickerDomain {
@@ -168,10 +220,12 @@ pub struct FilePickerDomain {
     pub scroll_position: Mutable<i32>,
     pub directory_cache: Mutable<std::collections::HashMap<String, Vec<shared::FileSystemItem>>>,
     pub directory_errors: Mutable<std::collections::HashMap<String, String>>,
+    pub directory_browse_in_flight: Mutable<std::collections::BTreeSet<String>>,
     pub selected_files: MutableVec<String>,
     pub selected_files_vec_signal: zoon::Mutable<Vec<String>>,
     pub platform_roots: Mutable<Option<Vec<shared::PlatformRoot>>>,
 
+    browse_request_sender: futures::channel::mpsc::UnboundedSender<String>,
     _browse_task: Arc<TaskHandle>,
     _expansion_detection_task: Arc<TaskHandle>,
     _selection_detection_task: Arc<TaskHandle>,
@@ -190,6 +244,8 @@ impl FilePickerDomain {
         let errors = Mutable::new(std::collections::HashMap::<String, String>::new());
         let errors_for_task = errors.clone();
         let connection_for_task = connection.clone();
+        let in_flight = Mutable::new(std::collections::BTreeSet::<String>::new());
+        let in_flight_for_task = in_flight.clone();
 
         let _browse_task = Arc::new(Task::start_droppable(async move {
             while let Some(path) = browse_request_receiver.next().await {
@@ -199,7 +255,10 @@ impl FilePickerDomain {
                     .await
                 {
                     zoon::println!("ERROR: BrowseDirectory failed for {path}: {:?}", e);
-                    errors_for_task.lock_mut().insert(path, format!("{:?}", e));
+                    errors_for_task
+                        .lock_mut()
+                        .insert(path.clone(), format!("{:?}", e));
+                    in_flight_for_task.lock_mut().remove(&path);
                 }
             }
         }));
@@ -211,7 +270,8 @@ impl FilePickerDomain {
         // Config save is handled by the pure signal debouncer observing source Mutables directly
         let _expansion_detection_task = {
             let expanded = expanded_directories.clone();
-            let cache = directory_cache.clone();
+            let directory_cache_for_detection = directory_cache.clone();
+            let in_flight_for_detection = in_flight.clone();
             let browse_sender = browse_request_sender.clone();
             Arc::new(Task::start_droppable({
                 let previous = Mutable::new(indexmap::IndexSet::<String>::new());
@@ -221,9 +281,13 @@ impl FilePickerDomain {
                     .for_each_sync(move |current| {
                         let prev = previous.get_cloned();
                         for path in current.difference(&prev) {
-                            if !cache.get_cloned().contains_key(path)
-                                && crate::platform::server_is_ready()
-                            {
+                            let should_request = crate::platform::server_is_ready()
+                                && !directory_cache_for_detection
+                                    .get_cloned()
+                                    .contains_key(path)
+                                && !in_flight_for_detection.get_cloned().contains(path);
+                            if should_request {
+                                in_flight_for_detection.lock_mut().insert(path.clone());
                                 let _ = browse_sender.unbounded_send(path.clone());
                             }
                         }
@@ -276,9 +340,11 @@ impl FilePickerDomain {
             scroll_position: Mutable::new(initial_scroll),
             directory_cache,
             directory_errors: errors,
+            directory_browse_in_flight: in_flight,
             selected_files,
             selected_files_vec_signal,
             platform_roots: Mutable::new(None),
+            browse_request_sender,
             _browse_task,
             _expansion_detection_task,
             _selection_detection_task,
@@ -308,11 +374,13 @@ impl FilePickerDomain {
 
     /// Handle directory contents received from backend
     pub fn on_directory_contents(&self, path: String, items: Vec<shared::FileSystemItem>) {
+        self.directory_browse_in_flight.lock_mut().remove(&path);
         self.directory_cache.lock_mut().insert(path, items);
     }
 
     /// Handle directory error received from backend
     pub fn on_directory_error(&self, path: String, error: String) {
+        self.directory_browse_in_flight.lock_mut().remove(&path);
         self.directory_errors.lock_mut().insert(path, error);
     }
 
@@ -340,6 +408,28 @@ impl FilePickerDomain {
         let mut current = self.expanded_directories.get_cloned();
         if current.insert(path) {
             self.expanded_directories.set_neq(current);
+        }
+    }
+
+    pub fn request_directory_browse(&self, path: String) {
+        if path.trim().is_empty() || !crate::platform::server_is_ready() {
+            return;
+        }
+        if self.directory_cache.get_cloned().contains_key(&path) {
+            return;
+        }
+        {
+            let mut in_flight = self.directory_browse_in_flight.lock_mut();
+            if !in_flight.insert(path.clone()) {
+                return;
+            }
+        }
+        if self
+            .browse_request_sender
+            .unbounded_send(path.clone())
+            .is_err()
+        {
+            self.directory_browse_in_flight.lock_mut().remove(&path);
         }
     }
 
@@ -429,6 +519,9 @@ pub struct AppConfig {
 
     pub selected_variables_snapshot: Mutable<Vec<shared::SelectedVariable>>,
     pub row_resize_in_progress: Mutable<bool>,
+    pub debug_metrics: Mutable<ConfigDebugMetrics>,
+    pub restore_phase: Mutable<RestorePhase>,
+    pub last_saved_config: Mutable<Option<shared::AppConfig>>,
 
     pub markers_config: Mutable<Vec<shared::MarkerConfig>>,
     pub signal_groups_config: Mutable<Vec<shared::SignalGroupConfig>>,
@@ -781,6 +874,9 @@ impl AppConfig {
         // Config save is handled automatically by the pure signal debouncer
         let selected_variables_snapshot = Mutable::new(Vec::<shared::SelectedVariable>::new());
         let row_resize_in_progress = Mutable::new(false);
+        let debug_metrics = Mutable::new(ConfigDebugMetrics::default());
+        let restore_phase = Mutable::new(RestorePhase::Inactive);
+        let last_saved_config = Mutable::new(None::<shared::AppConfig>);
         let _selected_variables_snapshot_task = {
             let state = selected_variables_snapshot.clone();
             let variables_mutable = selected_variables.variables_vec_actor.clone();
@@ -817,6 +913,7 @@ impl AppConfig {
             let selected_variables_snapshot_clone = selected_variables_snapshot.clone();
             let row_resize_in_progress_clone = row_resize_in_progress.clone();
             let config_loaded_flag_for_saver = config_loaded_flag.clone();
+            let restore_phase_clone = restore_phase.clone();
             let files_width_right_clone = files_panel_width_right.clone();
             let files_height_right_clone = files_panel_height_right.clone();
             let files_width_bottom_clone = files_panel_width_bottom.clone();
@@ -833,6 +930,8 @@ impl AppConfig {
             let variables_search_filter_clone = selected_variables.search_filter.clone();
             let markers_config_clone = markers_config.clone();
             let signal_groups_config_clone = signal_groups_config.clone();
+            let debug_metrics_clone = debug_metrics.clone();
+            let last_saved_config_clone = last_saved_config.clone();
 
             // Clone references for the combined signal
             let theme_for_signal = theme.clone();
@@ -851,6 +950,7 @@ impl AppConfig {
             let workspace_history_for_signal = workspace_history_state.clone();
             let selected_vars_for_signal = selected_variables_snapshot.clone();
             let row_resize_for_signal = row_resize_in_progress.clone();
+            let restore_phase_for_signal = restore_phase.clone();
             let files_expanded_for_signal = files_expanded_scopes.clone();
             let files_selected_for_signal = files_selected_scope.clone();
             let files_vec_for_signal = tracked_files.files_vec_signal.clone();
@@ -879,6 +979,7 @@ impl AppConfig {
                     let _ = workspace_history_for_signal.signal_cloned(),
                     let _ = selected_vars_for_signal.signal_cloned(),
                     let _ = row_resize_for_signal.signal(),
+                    let _ = restore_phase_for_signal.signal_cloned(),
                     let _ = files_expanded_for_signal.signal_cloned(),
                     let _ = files_selected_for_signal.signal_vec_cloned().map(|_| ()).to_signal_cloned(),
                     let _ = files_vec_for_signal.signal_cloned(),
@@ -924,6 +1025,7 @@ impl AppConfig {
                                         _ = zoon::Timer::sleep(300).fuse() => {
                                             if config_ready
                                                 && crate::platform::server_is_ready()
+                                                && restore_phase_clone.get_cloned() == RestorePhase::Active
                                                 && !row_resize_in_progress_clone.get_cloned()
                                             {
                                                 if let Some(shared_config) = compose_shared_app_config(
@@ -950,8 +1052,29 @@ impl AppConfig {
                                                     &markers_config_clone,
                                                     &signal_groups_config_clone,
                                                 ) {
-                                                    if let Err(e) = CurrentPlatform::send_message(UpMsg::SaveConfig(shared_config)).await {
-                                                        zoon::println!("ERROR: Failed to send SaveConfig: {e}");
+                                                    let should_send = {
+                                                        let last_saved = last_saved_config_clone.get_cloned();
+                                                        last_saved
+                                                            .as_ref()
+                                                            .map(|previous| previous != &shared_config)
+                                                            .unwrap_or(true)
+                                                    };
+                                                    if should_send {
+                                                        match CurrentPlatform::send_message(UpMsg::SaveConfig(shared_config.clone())).await {
+                                                            Ok(_) => {
+                                                                last_saved_config_clone.set_neq(Some(shared_config));
+                                                                debug_metrics_clone.update_mut(|metrics| {
+                                                                    metrics.save_send_count = metrics.save_send_count.saturating_add(1);
+                                                                });
+                                                            }
+                                                            Err(e) => {
+                                                                zoon::println!("ERROR: Failed to send SaveConfig: {e}");
+                                                            }
+                                                        }
+                                                    } else {
+                                                        debug_metrics_clone.update_mut(|metrics| {
+                                                            metrics.save_deduped_count = metrics.save_deduped_count.saturating_add(1);
+                                                        });
                                                     }
                                                 }
                                             }
@@ -974,6 +1097,9 @@ impl AppConfig {
                                         }
                                         _ = zoon::Timer::sleep(300).fuse() => {
                                             if config_ready && crate::platform::server_is_ready() {
+                                                if restore_phase_clone.get_cloned() != RestorePhase::Active {
+                                                    break;
+                                                }
                                                 if let Some(shared_config) = compose_shared_app_config(
                                                     &theme_clone,
                                                     &dock_mode_clone,
@@ -998,8 +1124,29 @@ impl AppConfig {
                                                     &markers_config_clone,
                                                     &signal_groups_config_clone,
                                                 ) {
-                                                    if let Err(e) = CurrentPlatform::send_message(UpMsg::SaveConfig(shared_config)).await {
-                                                        zoon::println!("ERROR: Failed to send SaveConfig: {e}");
+                                                    let should_send = {
+                                                        let last_saved = last_saved_config_clone.get_cloned();
+                                                        last_saved
+                                                            .as_ref()
+                                                            .map(|previous| previous != &shared_config)
+                                                            .unwrap_or(true)
+                                                    };
+                                                    if should_send {
+                                                        match CurrentPlatform::send_message(UpMsg::SaveConfig(shared_config.clone())).await {
+                                                            Ok(_) => {
+                                                                last_saved_config_clone.set_neq(Some(shared_config));
+                                                                debug_metrics_clone.update_mut(|metrics| {
+                                                                    metrics.save_send_count = metrics.save_send_count.saturating_add(1);
+                                                                });
+                                                            }
+                                                            Err(e) => {
+                                                                zoon::println!("ERROR: Failed to send SaveConfig: {e}");
+                                                            }
+                                                        }
+                                                    } else {
+                                                        debug_metrics_clone.update_mut(|metrics| {
+                                                            metrics.save_deduped_count = metrics.save_deduped_count.saturating_add(1);
+                                                        });
                                                     }
                                                 }
                                             }
@@ -1092,6 +1239,9 @@ impl AppConfig {
             value_column_width_right_state,
             selected_variables_snapshot,
             row_resize_in_progress,
+            debug_metrics,
+            restore_phase,
+            last_saved_config,
             markers_config,
             signal_groups_config,
             _config_save_debouncer_task,
@@ -1108,6 +1258,8 @@ impl AppConfig {
     /// until the next ConfigLoaded arrives.
     pub fn mark_workspace_switching(&self) {
         self.config_loaded_flag.set(false);
+        self.restore_phase.set_neq(RestorePhase::Inactive);
+        self.last_saved_config.set(None);
     }
 
     /// Update timeline state - config save handled by pure signal debouncer
@@ -1200,16 +1352,19 @@ impl AppConfig {
             .set_neq(loaded_config.global.workspace_history.clone());
 
         // Update expanded directories directly (bypass relay to avoid feedback loop)
+        let normalized_expanded_directories = normalize_restore_directory_paths(
+            &loaded_config.workspace.load_files_expanded_directories,
+        );
         {
             let mut expanded = self.file_picker_domain.expanded_directories.lock_mut();
-            for dir in &loaded_config.workspace.load_files_expanded_directories {
+            for dir in &normalized_expanded_directories {
                 expanded.insert(dir.clone());
             }
         }
         // Request directory contents for uncached directories via direct method
         {
             let cache = self.file_picker_domain.directory_cache.lock_ref();
-            for dir in &loaded_config.workspace.load_files_expanded_directories {
+            for dir in &normalized_expanded_directories {
                 if !cache.contains_key(dir) {
                     self.file_picker_domain.expand_directory(dir.clone());
                 }
@@ -1230,6 +1385,7 @@ impl AppConfig {
         loaded_config: shared::AppConfig,
         _selected_variables: &crate::selected_variables::SelectedVariables,
     ) {
+        self.restore_phase.set_neq(RestorePhase::ReplayingConfig);
         // Update global state
         self.plugins_state.set(loaded_config.plugins.clone());
         self.workspace_history_state
@@ -1345,10 +1501,13 @@ impl AppConfig {
 
         // Phase 3: Update FilePickerDomain expanded directories directly (no relay sends)
         // The actual directory loading requests will be sent in complete_initialization()
+        let normalized_expanded_directories = normalize_restore_directory_paths(
+            &loaded_config.workspace.load_files_expanded_directories,
+        );
         {
             let mut expanded = self.file_picker_domain.expanded_directories.lock_mut();
             expanded.clear();
-            for dir in &loaded_config.workspace.load_files_expanded_directories {
+            for dir in &normalized_expanded_directories {
                 expanded.insert(dir.clone());
             }
         }
@@ -1368,6 +1527,17 @@ impl AppConfig {
 
     pub fn set_config_loaded(&self) {
         self.config_loaded_flag.set(true);
+        self.restore_phase
+            .set_neq(RestorePhase::WaitingForStableCanvasWidth);
+    }
+
+    pub fn mark_initial_query_running(&self) {
+        self.restore_phase
+            .set_neq(RestorePhase::RunningInitialQuery);
+    }
+
+    pub fn mark_restore_active(&self) {
+        self.restore_phase.set_neq(RestorePhase::Active);
     }
 
     /// Phase 4: Complete initialization with DIRECT backend calls (no relays!).
@@ -1379,34 +1549,19 @@ impl AppConfig {
     /// This ordering prevents variables/scopes from referencing files that don't exist yet.
     pub async fn complete_initialization(
         &self,
-        connection: &std::sync::Arc<SendWrapper<Connection<shared::UpMsg, shared::DownMsg>>>,
+        _connection: &std::sync::Arc<SendWrapper<Connection<shared::UpMsg, shared::DownMsg>>>,
         tracked_files: &crate::tracked_files::TrackedFiles,
         selected_variables: &crate::selected_variables::SelectedVariables,
         loaded_config: &shared::AppConfig,
     ) {
+        self.restore_phase.set_neq(RestorePhase::LoadingFiles);
         let opened_files = loaded_config.workspace.opened_files.clone();
-        let expanded_directories = loaded_config
-            .workspace
-            .load_files_expanded_directories
-            .clone();
-
-        zoon::println!("[CONFIG] complete_initialization: DIRECT to backend (no relays)");
-        zoon::println!(
-            "[CONFIG] complete_initialization: {} directories to check",
-            expanded_directories.len()
+        let expanded_directories = normalize_restore_directory_paths(
+            &loaded_config.workspace.load_files_expanded_directories,
         );
 
-        {
-            let conn = connection.clone();
-            Task::start(async move {
-                if let Err(e) = conn.send_up_msg(shared::UpMsg::GetPlatformRoots).await {
-                    zoon::println!("ERROR: Failed to send GetPlatformRoots: {:?}", e);
-                }
-            });
-        }
-
-        // Send directory browse requests DIRECTLY to backend (bypasses relay race condition)
-        // Fire-and-forget: don't await, let files start loading immediately (Issue #7 fix)
+        // Send directory browse requests directly to backend and let file loading continue
+        // immediately so restore can converge without extra relay races.
         let dirs_to_browse: Vec<String> = {
             let cache = self.file_picker_domain.directory_cache.lock_ref();
             expanded_directories
@@ -1416,36 +1571,19 @@ impl AppConfig {
                 .collect()
         };
 
-        zoon::println!(
-            "[CONFIG] complete_initialization: {} directories need browsing",
-            dirs_to_browse.len()
-        );
-
-        // Fire-and-forget directory browses - don't block file loading
         for dir in dirs_to_browse {
-            let conn = connection.clone();
-            Task::start(async move {
-                if let Err(e) = conn
-                    .send_up_msg(shared::UpMsg::BrowseDirectory(dir.clone()))
-                    .await
-                {
-                    zoon::println!("ERROR: Failed to send BrowseDirectory for {}: {:?}", dir, e);
-                }
+            self.debug_metrics.update_mut(|metrics| {
+                metrics.startup_browse_request_count =
+                    metrics.startup_browse_request_count.saturating_add(1);
             });
+            self.file_picker_domain.request_directory_browse(dir);
         }
 
-        // Send file load requests directly (TrackedFiles processes immediately)
+        // Send file load requests directly after browse replay is queued.
         if opened_files.is_empty() {
-            zoon::println!(
-                "[CONFIG] complete_initialization: no files to load, clearing files and variables"
-            );
             tracked_files.clear_all_files();
             selected_variables.clear_selection();
         } else {
-            zoon::println!(
-                "[CONFIG] complete_initialization: loading {} files via method",
-                opened_files.len()
-            );
             tracked_files.load_config_files(opened_files);
         }
 
@@ -1474,6 +1612,41 @@ impl AppConfig {
             let mut scope_guard = self.files_selected_scope.lock_mut();
             scope_guard.clear();
             scope_guard.push_cloned(scope_id);
+        }
+    }
+
+    pub fn prime_saved_config_snapshot(
+        &self,
+        tracked_files: &crate::tracked_files::TrackedFiles,
+        selected_variables: &crate::selected_variables::SelectedVariables,
+    ) {
+        self.selected_variables_snapshot
+            .set_neq(selected_variables.variables_vec_actor.get_cloned());
+        if let Some(config) = compose_shared_app_config(
+            &self.theme,
+            &self.dock_mode,
+            &self.toast_dismiss_ms,
+            &self.file_picker_domain,
+            &self.selected_variables_snapshot,
+            &self.files_panel_width_right,
+            &self.files_panel_height_right,
+            &self.files_panel_width_bottom,
+            &self.files_panel_height_bottom,
+            &self.name_column_width_bottom_state,
+            &self.name_column_width_right_state,
+            &self.value_column_width_bottom_state,
+            &self.value_column_width_right_state,
+            &self.timeline_state,
+            &self.workspace_history_state,
+            &self.plugins_state,
+            &self.files_expanded_scopes,
+            &self.files_selected_scope,
+            &tracked_files.files_vec_signal,
+            &selected_variables.search_filter,
+            &self.markers_config,
+            &self.signal_groups_config,
+        ) {
+            self.last_saved_config.set_neq(Some(config));
         }
     }
 

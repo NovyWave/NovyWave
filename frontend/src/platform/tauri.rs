@@ -46,17 +46,17 @@ impl Platform for TauriPlatform {
     }
 }
 
-/// Desktop build talks to a local backend; consider it ready immediately.
+/// Desktop build reuses the same backend readiness tracking as the web transport.
 pub fn server_ready_signal() -> impl Signal<Item = bool> {
-    zoon::always(true)
+    web::server_ready_signal()
 }
 
 pub fn notify_server_alive() {
-    // no-op; always ready
+    web::notify_server_alive();
 }
 
 pub fn server_is_ready() -> bool {
-    true
+    web::server_is_ready()
 }
 
 /// Capture the connection so platform calls can forward UpMsgs.

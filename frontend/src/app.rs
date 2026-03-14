@@ -150,6 +150,10 @@ impl ConnectionMessageActor {
                                         &loaded_config,
                                     )
                                     .await;
+                                config.prime_saved_config_snapshot(
+                                    &tracked_files,
+                                    &selected_variables,
+                                );
                                 // Phase 5: Enable config saves AFTER files have started loading
                                 // (prevents config saves from capturing incomplete state)
                                 config.set_config_loaded();
@@ -192,6 +196,10 @@ impl ConnectionMessageActor {
                                         &workspace_config,
                                     )
                                     .await;
+                                config.prime_saved_config_snapshot(
+                                    &tracked_files,
+                                    &selected_variables,
+                                );
                                 // Enable config saves
                                 config.set_config_loaded();
                             }
@@ -465,7 +473,13 @@ impl NovyWaveApp {
 
         {
             let connection = connection_arc.clone();
+            let config_for_roots = config.clone();
             Task::start(async move {
+                config_for_roots.debug_metrics.update_mut(|metrics| {
+                    metrics.startup_platform_roots_request_count = metrics
+                        .startup_platform_roots_request_count
+                        .saturating_add(1);
+                });
                 if let Err(error) = connection
                     .send_up_msg(shared::UpMsg::GetPlatformRoots)
                     .await

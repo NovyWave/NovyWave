@@ -89,6 +89,7 @@ pub fn variables_name_vertical_divider(
             .color_signal(is_dragging_signal.map_bool_signal(|| primary_7(), || primary_6())))
         .s(Cursor::new(CursorIcon::ColumnResize))
         .s(Padding::all(0))
+        .update_raw_el(|raw_el| raw_el.attr("data-testid", "variables-name-column-divider"))
         .on_pointer_down_event({
             let dragging_system = dragging_system.clone();
             move |event: PointerEvent| {
@@ -129,6 +130,7 @@ pub fn variables_value_vertical_divider(
             .color_signal(is_dragging_signal.map_bool_signal(|| primary_7(), || primary_6())))
         .s(Cursor::new(CursorIcon::ColumnResize))
         .s(Padding::all(0))
+        .update_raw_el(|raw_el| raw_el.attr("data-testid", "variables-value-column-divider"))
         .on_pointer_down_event({
             let dragging_system = dragging_system.clone();
             move |event: PointerEvent| {
@@ -169,6 +171,7 @@ pub fn files_panel_vertical_divider(
             .color_signal(is_dragging_signal.map_bool_signal(|| primary_7(), || primary_6())))
         .s(Cursor::new(CursorIcon::ColumnResize))
         .s(Padding::all(0))
+        .update_raw_el(|raw_el| raw_el.attr("data-testid", "files-panel-main-divider"))
         .on_pointer_down_event({
             let dragging_system = dragging_system.clone();
             move |event: PointerEvent| {
@@ -208,6 +211,7 @@ pub fn files_panel_horizontal_divider(
         .s(Background::new()
             .color_signal(is_dragging_signal.map_bool_signal(|| primary_7(), || primary_6())))
         .s(Cursor::new(CursorIcon::RowResize))
+        .update_raw_el(|raw_el| raw_el.attr("data-testid", "files-panel-secondary-divider"))
         .on_pointer_down_event({
             let dragging_system = dragging_system.clone();
             move |event: PointerEvent| {

@@ -32,6 +32,12 @@ struct DragState {
     initial_value: f32,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DraggingDebugMetrics {
+    pub drag_update_count: u64,
+    pub applied_row_resize_count: u64,
+}
+
 #[derive(Clone)]
 pub struct DraggingSystem {
     drag_state: Mutable<DragState>,
@@ -39,6 +45,7 @@ pub struct DraggingSystem {
     selected_variables: crate::selected_variables::SelectedVariables,
     pending_row_resize: Mutable<Option<(String, u32)>>,
     row_resize_frame_scheduled: Mutable<bool>,
+    debug_metrics: Mutable<DraggingDebugMetrics>,
 }
 
 impl DraggingSystem {
@@ -52,6 +59,7 @@ impl DraggingSystem {
             selected_variables,
             pending_row_resize: Mutable::new(None),
             row_resize_frame_scheduled: Mutable::new(false),
+            debug_metrics: Mutable::new(DraggingDebugMetrics::default()),
         }
     }
 
@@ -63,6 +71,9 @@ impl DraggingSystem {
         self.row_resize_frame_scheduled.set(false);
         self.selected_variables
             .set_live_row_height(&unique_id, row_height);
+        self.debug_metrics.update_mut(|metrics| {
+            metrics.applied_row_resize_count = metrics.applied_row_resize_count.saturating_add(1);
+        });
     }
 
     fn schedule_row_resize_frame(&self, unique_id: &str, row_height: u32) {
@@ -206,6 +217,9 @@ impl DraggingSystem {
                             .set_neq(new_value);
                     }
                     (DividerType::SignalRowDivider { unique_id }, _) => {
+                        self.debug_metrics.update_mut(|metrics| {
+                            metrics.drag_update_count = metrics.drag_update_count.saturating_add(1);
+                        });
                         self.schedule_row_resize_frame(unique_id, new_value as u32);
                     }
                 }
@@ -228,18 +242,7 @@ impl DraggingSystem {
             self.row_resize_frame_scheduled.set(false);
             self.selected_variables
                 .set_live_row_height(&unique_id, final_row_height);
-            let persisted_row_height = self
-                .selected_variables
-                .variables_vec_actor
-                .get_cloned()
-                .iter()
-                .find(|variable| variable.unique_id == unique_id)
-                .and_then(|variable| variable.row_height)
-                .unwrap_or(30);
-            if persisted_row_height != final_row_height {
-                self.selected_variables
-                    .update_row_height(&unique_id, final_row_height);
-            }
+            self.selected_variables.commit_live_row_height(&unique_id);
         }
         self.drag_state.set(DragState::default());
     }
@@ -271,6 +274,14 @@ impl DraggingSystem {
         self.drag_state
             .signal_cloned()
             .map(|state| state.active_divider)
+    }
+
+    pub fn debug_metrics_actor(&self) -> Mutable<DraggingDebugMetrics> {
+        self.debug_metrics.clone()
+    }
+
+    pub fn reset_debug_metrics(&self) {
+        self.debug_metrics.set(DraggingDebugMetrics::default());
     }
 }
 

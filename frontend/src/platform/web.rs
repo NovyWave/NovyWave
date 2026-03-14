@@ -142,6 +142,8 @@ impl Platform for WebPlatform {
                     .map(|_| ())
                     .map_err(|e| format!("{:?}", e));
                 if res.is_err() {
+                    SERVER_READY.set(false);
+                    SERVER_ALIVE.set(false);
                     zoon::println!("platform({label}): send_up_msg error {:?}", res);
                 }
                 res

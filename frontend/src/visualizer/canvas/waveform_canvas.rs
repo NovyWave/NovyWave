@@ -11,6 +11,8 @@ use futures::{select, stream::StreamExt};
 use moonzoon_novyui::tokens::theme::Theme as NovyUITheme;
 use moonzoon_novyui::*;
 use shared::Theme;
+use std::cell::Cell;
+use std::rc::Rc;
 use std::sync::Arc;
 use web_sys::{HtmlCanvasElement, HtmlElement};
 use zoon::events::{PointerDown, PointerLeave, PointerMove};
@@ -53,6 +55,39 @@ impl WaveformCanvas {
                 let mut renderer: Option<WaveformRenderer> = None;
                 let mut active_theme = current_theme_store.get_cloned();
                 let mut cached_dimensions = (0.0f32, 0.0f32);
+                let mut last_observed_dimensions: Option<(f32, f32)> = None;
+                let mut row_resize_active = app_config_task.row_resize_in_progress.get_cloned();
+                let mut frame_deferred_for_row_resize = false;
+                let frame_tick = Mutable::new(0_u64);
+                let frame_pending = Rc::new(Cell::new(false));
+                let schedule_frame: Rc<dyn Fn()> = {
+                    let frame_tick = frame_tick.clone();
+                    let frame_pending = frame_pending.clone();
+                    Rc::new(move || {
+                        if frame_pending.get() {
+                            return;
+                        }
+                        frame_pending.set(true);
+                        let frame_tick_for_callback = frame_tick.clone();
+                        let frame_pending_for_callback = frame_pending.clone();
+                        let callback = wasm_bindgen::closure::Closure::once(move || {
+                            frame_pending_for_callback.set(false);
+                            frame_tick_for_callback
+                                .update_mut(|tick| *tick = tick.saturating_add(1));
+                        });
+                        if let Some(window) = web_sys::window() {
+                            if window
+                                .request_animation_frame(callback.as_ref().unchecked_ref())
+                                .is_ok()
+                            {
+                                callback.forget();
+                                return;
+                            }
+                        }
+                        frame_pending.set(false);
+                        frame_tick.update_mut(|tick| *tick = tick.saturating_add(1));
+                    })
+                };
 
                 let mut render_state_stream = timeline
                     .render_state_actor()
@@ -64,80 +99,87 @@ impl WaveformCanvas {
                     canvas_dimensions_task.signal().dedupe().to_stream().fuse();
                 let mut canvas_ready_stream =
                     canvas_ready_task.signal().dedupe().to_stream().fuse();
+                let mut row_resize_stream = app_config_task
+                    .row_resize_in_progress
+                    .signal()
+                    .dedupe()
+                    .to_stream()
+                    .fuse();
+                let mut frame_stream = frame_tick.signal().to_stream().skip(1).fuse();
 
                 loop {
                     select! {
-                        canvas_is_ready = canvas_ready_stream.next() => {
-                            if let Some(true) = canvas_is_ready {
-                                if let Some(canvas_element) = canvas_element_store_task.get_cloned() {
-                                    if renderer.is_none() {
-                                        let measured_dimensions =
-                                            Self::measure_canvas_element(&canvas_element);
-                                        let mut new_renderer = WaveformRenderer::new();
-                                        let fast_canvas = fast2d::CanvasWrapper::new_with_canvas(canvas_element)
-                                            .await;
-                                        new_renderer.set_canvas(fast_canvas);
-                                        if let Some((width, height)) = measured_dimensions {
-                                            canvas_dimensions_task.set_neq((width, height));
-                                            timeline.set_canvas_dimensions(width, height);
-                                            new_renderer.set_dimensions(width, height);
-                                            cached_dimensions = (width, height);
-                                        }
-                                        if let Some(render_state) = render_state_store.get_cloned() {
-                                            let params = Self::render_params_from_state(
-                                                &Self::state_with_measured_dimensions(
-                                                    render_state,
-                                                    measured_dimensions,
-                                                ),
-                                                active_theme,
-                                            );
-                                            if let Some(duration_ms) = new_renderer.render_frame(params) {
-                                                timeline.record_render_duration(duration_ms as f64);
-                                            }
-                                        }
-                                        renderer = Some(new_renderer);
-                                        initialization_status_task.set_neq(true);
-                                    } else if let Some(ref mut renderer) = renderer {
-                                        let measured_dimensions =
-                                            Self::measure_canvas_element(&canvas_element);
-                                        if let Some((width, height)) = measured_dimensions {
-                                            canvas_dimensions_task.set_neq((width, height));
-                                            timeline.set_canvas_dimensions(width, height);
-                                            renderer.set_dimensions(width, height);
-                                            cached_dimensions = (width, height);
-                                        }
+                        row_resize_change = row_resize_stream.next() => {
+                            if let Some(is_active) = row_resize_change {
+                                row_resize_active = is_active;
+                                if !row_resize_active && frame_deferred_for_row_resize {
+                                    if cached_dimensions.0 > 0.0 && cached_dimensions.1 > 0.0 {
+                                        timeline.set_canvas_dimensions(
+                                            cached_dimensions.0,
+                                            cached_dimensions.1,
+                                        );
                                         if let Some(render_state) = render_state_store.get_cloned() {
                                             let render_state = Self::state_with_measured_dimensions(
                                                 render_state,
-                                                measured_dimensions,
+                                                Some(cached_dimensions),
                                             );
-                                            render_state_store.set(Some(render_state.clone()));
-                                            let params = Self::render_params_from_state(
-                                                &render_state,
-                                                active_theme,
-                                            );
-                                            if let Some(duration_ms) = renderer.render_frame(params) {
-                                                timeline.record_render_duration(duration_ms as f64);
-                                            }
+                                            render_state_store.set(Some(render_state));
                                         }
+                                    }
+                                    frame_deferred_for_row_resize = false;
+                                    schedule_frame();
+                                }
+                            }
+                        }
+                        canvas_is_ready = canvas_ready_stream.next() => {
+                            if let Some(true) = canvas_is_ready {
+                                if let Some(canvas_element) = canvas_element_store_task.get_cloned() {
+                                    if let Some((width, height)) = Self::measure_canvas_element(&canvas_element) {
+                                        canvas_dimensions_task.set_neq((width, height));
+                                        timeline.set_canvas_dimensions(width, height);
+                                        cached_dimensions = (width, height);
+                                    }
+                                    if row_resize_active {
+                                        frame_deferred_for_row_resize = true;
+                                    } else {
+                                        schedule_frame();
                                     }
                                 }
                             }
                         }
                         dimensions_change = dimensions_stream.next() => {
                             if let Some((width, height)) = dimensions_change {
-                                if (width, height) != cached_dimensions && width > 0.0 && height > 0.0 {
-                                    cached_dimensions = (width, height);
-                                    timeline.set_canvas_dimensions(width, height);
-                                    if let Some(ref mut renderer) = renderer.as_mut() {
-                                        renderer.set_dimensions(width, height);
+                                let observed = (width, height);
+                                if row_resize_active {
+                                    cached_dimensions = if width > 0.0 && height > 0.0 {
+                                        observed
+                                    } else {
+                                        (0.0, 0.0)
+                                    };
+                                    frame_deferred_for_row_resize = true;
+                                    continue;
+                                }
+                                if last_observed_dimensions != Some(observed) {
+                                    last_observed_dimensions = Some(observed);
+                                    if width > 0.0 && height > 0.0 {
+                                        cached_dimensions = observed;
+                                        timeline.set_canvas_dimensions(width, height);
                                         if let Some(render_state) = render_state_store.get_cloned() {
                                             let render_state = Self::state_with_measured_dimensions(
                                                 render_state,
-                                                Some((width, height)),
+                                                Some(observed),
                                             );
-                                            render_state_store.set(Some(render_state.clone()));
+                                            render_state_store.set(Some(render_state));
                                         }
+                                    } else {
+                                        // Remember the transient zero-size state so returning to the
+                                        // previous size still triggers a repaint.
+                                        cached_dimensions = (0.0, 0.0);
+                                    }
+                                    if row_resize_active {
+                                        frame_deferred_for_row_resize = true;
+                                    } else {
+                                        schedule_frame();
                                     }
                                 }
                             }
@@ -146,51 +188,54 @@ impl WaveformCanvas {
                             if let Some(theme) = theme_change {
                                 active_theme = theme;
                                 current_theme_store.set(theme);
-                                if let (Some(ref mut renderer), Some(render_state)) =
-                                    (renderer.as_mut(), render_state_store.get_cloned())
-                                {
-                                    let measured_dimensions = canvas_element_store_task
-                                        .get_cloned()
-                                        .and_then(|canvas| Self::measure_canvas_element(&canvas))
-                                        .or_else(|| {
-                                            if cached_dimensions.0 > 0.0 && cached_dimensions.1 > 0.0 {
-                                                Some(cached_dimensions)
-                                            } else {
-                                                None
-                                            }
-                                        });
-                                    let params = Self::render_params_from_state(
-                                        &Self::state_with_measured_dimensions(
-                                            render_state,
-                                            measured_dimensions,
-                                        ),
-                                        active_theme,
-                                    );
-                                    renderer.set_theme(Self::map_theme(theme));
-                                    if let Some(duration_ms) = renderer.render_frame(params) {
-                                        timeline.record_render_duration(duration_ms as f64);
-                                    }
+                                if row_resize_active {
+                                    frame_deferred_for_row_resize = true;
+                                } else {
+                                    schedule_frame();
                                 }
                             }
                         }
                         state_update = render_state_stream.next() => {
                             if let Some(render_state) = state_update {
-                                let measured_dimensions = canvas_element_store_task
-                                    .get_cloned()
-                                    .and_then(|canvas| Self::measure_canvas_element(&canvas))
-                                    .or_else(|| {
-                                        if cached_dimensions.0 > 0.0 && cached_dimensions.1 > 0.0 {
-                                            Some(cached_dimensions)
-                                        } else {
-                                            None
-                                        }
-                                    });
+                                let measured_dimensions =
+                                    if cached_dimensions.0 > 0.0 && cached_dimensions.1 > 0.0 {
+                                        Some(cached_dimensions)
+                                    } else {
+                                        None
+                                    };
                                 let render_state = Self::state_with_measured_dimensions(
                                     render_state,
                                     measured_dimensions,
                                 );
                                 render_state_store.set(Some(render_state.clone()));
-                                if let Some(ref mut renderer) = renderer.as_mut() {
+                                if row_resize_active {
+                                    frame_deferred_for_row_resize = true;
+                                } else {
+                                    schedule_frame();
+                                }
+                            }
+                        }
+                        frame_ready = frame_stream.next() => {
+                            if frame_ready.is_some() {
+                                if renderer.is_none() {
+                                    if let Some(canvas_element) = canvas_element_store_task.get_cloned() {
+                                        let mut new_renderer = WaveformRenderer::new();
+                                        let fast_canvas = fast2d::CanvasWrapper::new_with_canvas(canvas_element)
+                                            .await;
+                                        new_renderer.set_canvas(fast_canvas);
+                                        renderer = Some(new_renderer);
+                                        initialization_status_task.set_neq(true);
+                                    }
+                                }
+
+                                if let (Some(ref mut renderer), Some(render_state)) =
+                                    (renderer.as_mut(), render_state_store.get_cloned())
+                                {
+                                    if cached_dimensions.0 <= 0.0 || cached_dimensions.1 <= 0.0 {
+                                        continue;
+                                    }
+                                    renderer.set_dimensions(cached_dimensions.0, cached_dimensions.1);
+                                    renderer.set_theme(Self::map_theme(active_theme));
                                     let params = Self::render_params_from_state(
                                         &render_state,
                                         active_theme,

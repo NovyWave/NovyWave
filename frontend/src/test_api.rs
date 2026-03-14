@@ -1,3 +1,4 @@
+use crate::dragging::DraggingSystem;
 use crate::selected_variables::SelectedVariables;
 use crate::tracked_files::TrackedFiles;
 use crate::visualizer::timeline::TimePs;
@@ -6,12 +7,14 @@ use shared::AnalogLimits;
 use std::cell::RefCell;
 use std::sync::Arc;
 use wasm_bindgen::prelude::*;
+use wasm_bindgen::{JsCast, closure::Closure};
 use zoon::SendWrapper;
 
 pub struct TestApiState {
     pub tracked_files: TrackedFiles,
     pub selected_variables: SelectedVariables,
     pub waveform_timeline: WaveformTimeline,
+    pub dragging_system: DraggingSystem,
     pub app_config: crate::config::AppConfig,
     pub connection: Arc<SendWrapper<zoon::Connection<shared::UpMsg, shared::DownMsg>>>,
 }
@@ -24,6 +27,7 @@ pub fn store_test_api_state(
     tracked_files: TrackedFiles,
     selected_variables: SelectedVariables,
     waveform_timeline: WaveformTimeline,
+    dragging_system: DraggingSystem,
     app_config: crate::config::AppConfig,
     connection: Arc<SendWrapper<zoon::Connection<shared::UpMsg, shared::DownMsg>>>,
 ) {
@@ -32,6 +36,7 @@ pub fn store_test_api_state(
             tracked_files,
             selected_variables,
             waveform_timeline,
+            dragging_system,
             app_config,
             connection,
         });
@@ -133,6 +138,46 @@ pub fn expose_novywave_test_api() {
     .ok();
     get_config_debug_closure.forget();
 
+    let get_perf_counters_closure =
+        Closure::wrap(Box::new(get_perf_counters_impl) as Box<dyn Fn() -> JsValue>);
+    js_sys::Reflect::set(
+        &api,
+        &"getPerfCounters".into(),
+        get_perf_counters_closure.as_ref().unchecked_ref(),
+    )
+    .ok();
+    get_perf_counters_closure.forget();
+
+    let reset_perf_counters_closure =
+        Closure::wrap(Box::new(reset_perf_counters_impl) as Box<dyn Fn() -> bool>);
+    js_sys::Reflect::set(
+        &api,
+        &"resetPerfCounters".into(),
+        reset_perf_counters_closure.as_ref().unchecked_ref(),
+    )
+    .ok();
+    reset_perf_counters_closure.forget();
+
+    let start_frame_sampler_closure =
+        Closure::wrap(Box::new(start_frame_sampler_impl) as Box<dyn Fn() -> bool>);
+    js_sys::Reflect::set(
+        &api,
+        &"startFrameSampler".into(),
+        start_frame_sampler_closure.as_ref().unchecked_ref(),
+    )
+    .ok();
+    start_frame_sampler_closure.forget();
+
+    let stop_frame_sampler_closure =
+        Closure::wrap(Box::new(stop_frame_sampler_impl) as Box<dyn Fn() -> JsValue>);
+    js_sys::Reflect::set(
+        &api,
+        &"stopFrameSampler".into(),
+        stop_frame_sampler_closure.as_ref().unchecked_ref(),
+    )
+    .ok();
+    stop_frame_sampler_closure.forget();
+
     let save_config_now_closure =
         Closure::wrap(Box::new(save_config_now_impl) as Box<dyn Fn() -> bool>);
     js_sys::Reflect::set(
@@ -213,6 +258,36 @@ pub fn expose_novywave_test_api() {
     .ok();
     set_row_height_closure.forget();
 
+    let start_row_resize_closure =
+        Closure::wrap(Box::new(start_row_resize_impl) as Box<dyn Fn(String) -> bool>);
+    js_sys::Reflect::set(
+        &api,
+        &"startRowResize".into(),
+        start_row_resize_closure.as_ref().unchecked_ref(),
+    )
+    .ok();
+    start_row_resize_closure.forget();
+
+    let move_active_drag_closure =
+        Closure::wrap(Box::new(move_active_drag_impl) as Box<dyn Fn(f64) -> bool>);
+    js_sys::Reflect::set(
+        &api,
+        &"moveActiveDrag".into(),
+        move_active_drag_closure.as_ref().unchecked_ref(),
+    )
+    .ok();
+    move_active_drag_closure.forget();
+
+    let end_active_drag_closure =
+        Closure::wrap(Box::new(end_active_drag_impl) as Box<dyn Fn() -> bool>);
+    js_sys::Reflect::set(
+        &api,
+        &"endActiveDrag".into(),
+        end_active_drag_closure.as_ref().unchecked_ref(),
+    )
+    .ok();
+    end_active_drag_closure.forget();
+
     let set_variable_format_closure =
         Closure::wrap(Box::new(set_variable_format_impl) as Box<dyn Fn(String, String) -> bool>);
     js_sys::Reflect::set(
@@ -282,6 +357,7 @@ pub fn expose_novywave_test_api() {
 fn get_timeline_state_impl() -> JsValue {
     with_state(|state| {
         let render_state = state.waveform_timeline.render_state_actor().get_cloned();
+        let debug_metrics = state.waveform_timeline.debug_metrics_actor().get_cloned();
 
         let obj = js_sys::Object::new();
         js_sys::Reflect::set(
@@ -306,6 +382,42 @@ fn get_timeline_state_impl() -> JsValue {
             &obj,
             &"zoomCenterPs".into(),
             &JsValue::from_f64(render_state.zoom_center.0 as f64),
+        )
+        .ok();
+        js_sys::Reflect::set(
+            &obj,
+            &"renderCount".into(),
+            &JsValue::from_f64(debug_metrics.render_count as f64),
+        )
+        .ok();
+        js_sys::Reflect::set(
+            &obj,
+            &"fullRenderCount".into(),
+            &JsValue::from_f64(debug_metrics.full_render_count as f64),
+        )
+        .ok();
+        js_sys::Reflect::set(
+            &obj,
+            &"layoutRenderCount".into(),
+            &JsValue::from_f64(debug_metrics.layout_render_count as f64),
+        )
+        .ok();
+        js_sys::Reflect::set(
+            &obj,
+            &"requestSendCount".into(),
+            &JsValue::from_f64(debug_metrics.request_send_count as f64),
+        )
+        .ok();
+        js_sys::Reflect::set(
+            &obj,
+            &"requestDedupedCount".into(),
+            &JsValue::from_f64(debug_metrics.request_deduped_count as f64),
+        )
+        .ok();
+        js_sys::Reflect::set(
+            &obj,
+            &"startupInitialQuerySendCount".into(),
+            &JsValue::from_f64(debug_metrics.startup_initial_query_send_count as f64),
         )
         .ok();
 
@@ -543,6 +655,7 @@ fn get_file_picker_roots_impl() -> JsValue {
 fn get_config_debug_impl() -> JsValue {
     with_state(|state| {
         let obj = js_sys::Object::new();
+        let debug_metrics = state.app_config.debug_metrics.get_cloned();
         js_sys::Reflect::set(
             &obj,
             &"configLoaded".into(),
@@ -609,8 +722,192 @@ fn get_config_debug_impl() -> JsValue {
             &JsValue::from_bool(state.waveform_timeline.tooltip_visibility_handle().get()),
         )
         .ok();
+        js_sys::Reflect::set(
+            &obj,
+            &"saveSendCount".into(),
+            &JsValue::from_f64(debug_metrics.save_send_count as f64),
+        )
+        .ok();
+        js_sys::Reflect::set(
+            &obj,
+            &"saveDedupedCount".into(),
+            &JsValue::from_f64(debug_metrics.save_deduped_count as f64),
+        )
+        .ok();
+        js_sys::Reflect::set(
+            &obj,
+            &"startupPlatformRootsRequestCount".into(),
+            &JsValue::from_f64(debug_metrics.startup_platform_roots_request_count as f64),
+        )
+        .ok();
+        js_sys::Reflect::set(
+            &obj,
+            &"startupBrowseRequestCount".into(),
+            &JsValue::from_f64(debug_metrics.startup_browse_request_count as f64),
+        )
+        .ok();
+        js_sys::Reflect::set(
+            &obj,
+            &"restorePhase".into(),
+            &format!("{:?}", state.app_config.restore_phase.get_cloned()).into(),
+        )
+        .ok();
         obj.into()
     })
+    .unwrap_or(JsValue::NULL)
+}
+
+fn get_perf_counters_impl() -> JsValue {
+    with_state(|state| {
+        let obj = js_sys::Object::new();
+        let timeline = state.waveform_timeline.debug_metrics_actor().get_cloned();
+        let config = state.app_config.debug_metrics.get_cloned();
+        let dragging = state.dragging_system.debug_metrics_actor().get_cloned();
+
+        js_sys::Reflect::set(
+            &obj,
+            &"dragUpdateCount".into(),
+            &JsValue::from_f64(dragging.drag_update_count as f64),
+        )
+        .ok();
+        js_sys::Reflect::set(
+            &obj,
+            &"appliedRowResizeCount".into(),
+            &JsValue::from_f64(dragging.applied_row_resize_count as f64),
+        )
+        .ok();
+        js_sys::Reflect::set(
+            &obj,
+            &"renderCount".into(),
+            &JsValue::from_f64(timeline.render_count as f64),
+        )
+        .ok();
+        js_sys::Reflect::set(
+            &obj,
+            &"fullRenderCount".into(),
+            &JsValue::from_f64(timeline.full_render_count as f64),
+        )
+        .ok();
+        js_sys::Reflect::set(
+            &obj,
+            &"layoutRenderCount".into(),
+            &JsValue::from_f64(timeline.layout_render_count as f64),
+        )
+        .ok();
+        js_sys::Reflect::set(
+            &obj,
+            &"requestSendCount".into(),
+            &JsValue::from_f64(timeline.request_send_count as f64),
+        )
+        .ok();
+        js_sys::Reflect::set(
+            &obj,
+            &"requestDedupedCount".into(),
+            &JsValue::from_f64(timeline.request_deduped_count as f64),
+        )
+        .ok();
+        js_sys::Reflect::set(
+            &obj,
+            &"saveSendCount".into(),
+            &JsValue::from_f64(config.save_send_count as f64),
+        )
+        .ok();
+        js_sys::Reflect::set(
+            &obj,
+            &"saveDedupedCount".into(),
+            &JsValue::from_f64(config.save_deduped_count as f64),
+        )
+        .ok();
+        obj.into()
+    })
+    .unwrap_or(JsValue::NULL)
+}
+
+fn reset_perf_counters_impl() -> bool {
+    with_state(|state| {
+        state.dragging_system.reset_debug_metrics();
+        state
+            .waveform_timeline
+            .debug_metrics_actor()
+            .set(crate::visualizer::timeline::timeline_actor::TimelineDebugMetrics::default());
+        state
+            .app_config
+            .debug_metrics
+            .set(crate::config::ConfigDebugMetrics::default());
+        true
+    })
+    .unwrap_or(false)
+}
+
+fn start_frame_sampler_impl() -> bool {
+    js_sys::eval(
+        r#"
+        (() => {
+            const state = window.__novywave_frame_sampler || (window.__novywave_frame_sampler = {
+                active: false,
+                deltasMs: [],
+                lastTimestampMs: null,
+                rafId: 0,
+            });
+            state.active = true;
+            state.deltasMs = [];
+            state.lastTimestampMs = null;
+            const step = (timestampMs) => {
+                if (!state.active) return;
+                if (state.lastTimestampMs !== null) {
+                    state.deltasMs.push(timestampMs - state.lastTimestampMs);
+                }
+                state.lastTimestampMs = timestampMs;
+                state.rafId = window.requestAnimationFrame(step);
+            };
+            state.rafId = window.requestAnimationFrame(step);
+            return true;
+        })()
+        "#,
+    )
+    .map(|value| value.as_bool().unwrap_or(false))
+    .unwrap_or(false)
+}
+
+fn stop_frame_sampler_impl() -> JsValue {
+    js_sys::eval(
+        r#"
+        (() => {
+            const state = window.__novywave_frame_sampler || {
+                active: false,
+                deltasMs: [],
+                lastTimestampMs: null,
+                rafId: 0,
+            };
+            state.active = false;
+            if (state.rafId) {
+                window.cancelAnimationFrame(state.rafId);
+                state.rafId = 0;
+            }
+            const deltas = [...state.deltasMs].sort((a, b) => a - b);
+            const percentile = (p) => {
+                if (deltas.length === 0) return 0;
+                const index = Math.min(
+                    deltas.length - 1,
+                    Math.round((deltas.length - 1) * Math.max(0, Math.min(1, p)))
+                );
+                return deltas[index];
+            };
+            const result = {
+                sampleCount: deltas.length,
+                p50Ms: percentile(0.5),
+                p95Ms: percentile(0.95),
+                maxMs: deltas.length === 0 ? 0 : deltas[deltas.length - 1],
+                over16_7Count: deltas.filter((delta) => delta > 16.7).length,
+                over33Count: deltas.filter((delta) => delta > 33).length,
+            };
+            state.deltasMs = [];
+            state.lastTimestampMs = null;
+            window.__novywave_frame_sampler = state;
+            return result;
+        })()
+        "#,
+    )
     .unwrap_or(JsValue::NULL)
 }
 
@@ -643,16 +940,13 @@ fn save_config_now_impl() -> bool {
 }
 
 fn select_workspace_impl(path: String) -> bool {
-    zoon::println!("[Test API] selectWorkspace called with: {}", path);
-
     TEST_API_STATE.with(|cell| {
         if let Some(state) = cell.borrow().as_ref() {
             let connection = state.connection.clone();
             zoon::Task::start(async move {
                 let msg = shared::UpMsg::SelectWorkspace { root: path };
-                zoon::println!("[Test API] Sending SelectWorkspace message...");
                 match connection.send_up_msg(msg).await {
-                    Ok(_) => zoon::println!("[Test API] SelectWorkspace sent successfully"),
+                    Ok(_) => {}
                     Err(e) => zoon::eprintln!("[Test API] Failed to send SelectWorkspace: {:?}", e),
                 }
             });
@@ -743,6 +1037,46 @@ fn jump_to_marker_impl(index: f64) -> bool {
 
     with_state(|state| {
         state.waveform_timeline.jump_to_marker(index);
+        true
+    })
+    .unwrap_or(false)
+}
+
+fn start_row_resize_impl(unique_id: String) -> bool {
+    let trimmed_id = unique_id.trim();
+    if trimmed_id.is_empty() {
+        return false;
+    }
+
+    with_state(|state| {
+        state.dragging_system.start_drag(
+            crate::dragging::DividerType::SignalRowDivider {
+                unique_id: trimmed_id.to_string(),
+            },
+            (0.0, 0.0),
+        );
+        true
+    })
+    .unwrap_or(false)
+}
+
+fn move_active_drag_impl(delta_y: f64) -> bool {
+    if !delta_y.is_finite() {
+        return false;
+    }
+
+    with_state(|state| {
+        state
+            .dragging_system
+            .process_drag_movement((0.0, delta_y as f32));
+        true
+    })
+    .unwrap_or(false)
+}
+
+fn end_active_drag_impl() -> bool {
+    with_state(|state| {
+        state.dragging_system.end_drag();
         true
     })
     .unwrap_or(false)

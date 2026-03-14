@@ -1,4 +1,4 @@
-use crate::config::{AppConfig, TimeRange, TimelineState};
+use crate::config::{AppConfig, RestorePhase, TimeRange, TimelineState};
 use crate::connection::ConnectionAdapter;
 use crate::selected_variables::SelectedVariables;
 use crate::tracked_files::TrackedFiles;
@@ -52,6 +52,63 @@ impl TimelineVariableSeries {
             signal_type: None,
             row_height: 30,
             analog_limits: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct TimelineVariableStructure {
+    unique_id: String,
+    formatter: VarFormat,
+    transitions: Arc<Vec<SignalTransition>>,
+    total_transitions: usize,
+    cursor_value: Option<SignalValue>,
+    signal_type: Option<String>,
+    analog_limits: Option<shared::AnalogLimits>,
+}
+
+#[derive(Clone, Debug)]
+enum TimelineStructureRow {
+    GroupHeader { name: String },
+    Variable { unique_id: String },
+}
+
+#[derive(Clone, Debug, Default)]
+struct TimelineStructureSnapshot {
+    variables_by_id: BTreeMap<String, TimelineVariableStructure>,
+    rows: Vec<TimelineStructureRow>,
+    markers: Vec<Marker>,
+}
+
+#[derive(Clone, Debug)]
+enum TimelineLayoutRow {
+    GroupHeader { row_height: u32 },
+    Variable { unique_id: String, row_height: u32 },
+}
+
+#[derive(Clone, Debug)]
+struct TimelineLayoutSnapshot {
+    viewport_start: TimePs,
+    viewport_end: TimePs,
+    cursor: TimePs,
+    zoom_center: TimePs,
+    canvas_width_px: u32,
+    canvas_height_px: u32,
+    time_per_pixel: TimePerPixel,
+    rows: Vec<TimelineLayoutRow>,
+}
+
+impl Default for TimelineLayoutSnapshot {
+    fn default() -> Self {
+        Self {
+            viewport_start: TimePs::ZERO,
+            viewport_end: TimePs::from_nanos(1_000_000_000),
+            cursor: TimePs::ZERO,
+            zoom_center: TimePs::ZERO,
+            canvas_width_px: 1,
+            canvas_height_px: 1,
+            time_per_pixel: TimePerPixel::from_picoseconds(MIN_CURSOR_STEP_NS * PS_PER_NS),
+            rows: Vec::new(),
         }
     }
 }
@@ -154,6 +211,9 @@ struct RequestContext {
     latest_request_id: Option<String>,
     latest_request_started_ms: Option<f64>,
     latest_request_windows: BTreeMap<String, RequestedWindow>,
+    latest_request_fingerprint: Option<RequestFingerprint>,
+    latest_completed_request_fingerprint: Option<RequestFingerprint>,
+    latest_request_mode: RequestMode,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -168,12 +228,41 @@ struct RequestedWindow {
     lod_bucket: u64,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RequestFingerprintSignal {
+    file_path: String,
+    scope_path: String,
+    variable_name: String,
+    time_range_ns: Option<(u64, u64)>,
+    max_transitions: Option<usize>,
+    format: VarFormat,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RequestFingerprint {
+    signals: Vec<RequestFingerprintSignal>,
+    cursor_time_ns: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum RequestMode {
+    #[default]
+    Normal,
+    StartupBootstrap,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct TimelineDebugMetrics {
     pub last_request_duration_ms: Option<f64>,
     pub last_render_duration_ms: Option<f64>,
     pub last_cache_hit: Option<bool>,
     pub last_cache_coverage: Option<f64>,
+    pub render_count: u64,
+    pub full_render_count: u64,
+    pub layout_render_count: u64,
+    pub request_send_count: u64,
+    pub request_deduped_count: u64,
+    pub startup_initial_query_send_count: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -337,6 +426,8 @@ pub struct WaveformTimeline {
     canvas_height: Mutable<f32>,
     pub shift_active: Mutable<bool>,
     render_state: Mutable<TimelineRenderState>,
+    structure_snapshot: Mutable<TimelineStructureSnapshot>,
+    layout_snapshot: Mutable<TimelineLayoutSnapshot>,
     series_map: Mutable<BTreeMap<String, VariableSeriesData>>,
     cursor_values: Mutable<BTreeMap<String, SignalValue>>,
     tooltip_state: Mutable<Option<TimelineTooltipData>>,
@@ -349,14 +440,18 @@ pub struct WaveformTimeline {
     reload_in_progress: Rc<RefCell<HashSet<String>>>,
     reload_viewport_snapshot: Rc<RefCell<Option<(Viewport, TimePs)>>>,
     reload_restore_pending: Rc<Cell<bool>>,
+    last_selected_variables_snapshot: Rc<RefCell<Vec<shared::SelectedVariable>>>,
 
     selected_variables: SelectedVariables,
     maximum_range: MaximumTimelineRange,
+    tracked_files: TrackedFiles,
     connection: ConnectionAdapter,
     app_config: AppConfig,
     request_counter: Arc<AtomicU64>,
     bounds_state: Mutable<Option<TimelineBounds>>,
     request_debounce: Rc<RefCell<Option<Timeout>>>,
+    request_bootstrap_pending: Mutable<bool>,
+    request_bootstrap_timer: Rc<RefCell<Option<Timeout>>>,
     viewport_initialized: Mutable<bool>,
     restoring_from_config: Rc<Cell<bool>>,
     pointer_hover_snapshot: Mutable<Option<PointerHoverSnapshot>>,
@@ -437,6 +532,8 @@ impl WaveformTimeline {
         let canvas_height = Mutable::new(400.0);
         let shift_active = Mutable::new(false);
         let render_state = Mutable::new(TimelineRenderState::default());
+        let structure_snapshot = Mutable::new(TimelineStructureSnapshot::default());
+        let layout_snapshot = Mutable::new(TimelineLayoutSnapshot::default());
         let series_map = Mutable::new(BTreeMap::new());
         let cursor_values = Mutable::new(BTreeMap::new());
         let tooltip_state = Mutable::new(None);
@@ -453,9 +550,14 @@ impl WaveformTimeline {
         let reload_in_progress = Rc::new(RefCell::new(HashSet::new()));
         let reload_viewport_snapshot = Rc::new(RefCell::new(None));
         let reload_restore_pending = Rc::new(Cell::new(false));
+        let last_selected_variables_snapshot = Rc::new(RefCell::new(
+            selected_variables.variables_vec_actor.get_cloned(),
+        ));
 
         let bounds_state = Mutable::new(None);
         let request_debounce = Rc::new(RefCell::new(None));
+        let request_bootstrap_pending = Mutable::new(true);
+        let request_bootstrap_timer = Rc::new(RefCell::new(None));
         let viewport_initialized = Mutable::new(false);
         let pointer_hover_snapshot = Mutable::new(None);
         let restoring_from_config = Rc::new(Cell::new(false));
@@ -469,6 +571,8 @@ impl WaveformTimeline {
             canvas_height,
             shift_active,
             render_state,
+            structure_snapshot,
+            layout_snapshot,
             series_map,
             cursor_values,
             tooltip_state: tooltip_state.clone(),
@@ -481,13 +585,17 @@ impl WaveformTimeline {
             reload_in_progress: reload_in_progress.clone(),
             reload_viewport_snapshot: reload_viewport_snapshot.clone(),
             reload_restore_pending: reload_restore_pending.clone(),
+            last_selected_variables_snapshot: last_selected_variables_snapshot.clone(),
             selected_variables,
             maximum_range,
+            tracked_files: tracked_files.clone(),
             connection,
             app_config,
             request_counter: Arc::new(AtomicU64::new(1)),
             bounds_state,
             request_debounce,
+            request_bootstrap_pending,
+            request_bootstrap_timer,
             viewport_initialized,
             restoring_from_config: restoring_from_config.clone(),
             pointer_hover_snapshot: pointer_hover_snapshot.clone(),
@@ -558,8 +666,10 @@ impl WaveformTimeline {
                 duration_ms
             );
         }
-        self.debug_metrics
-            .update_mut(|metrics| metrics.last_render_duration_ms = Some(duration_ms));
+        self.debug_metrics.update_mut(|metrics| {
+            metrics.last_render_duration_ms = Some(duration_ms);
+            metrics.render_count = metrics.render_count.saturating_add(1);
+        });
     }
 
     fn record_request_duration(&self, duration_ms: f64) {
@@ -586,6 +696,29 @@ impl WaveformTimeline {
                     None
                 };
             }
+        });
+    }
+
+    fn record_request_sent(&self, mode: RequestMode) {
+        self.debug_metrics.update_mut(|metrics| {
+            metrics.request_send_count = metrics.request_send_count.saturating_add(1);
+            if mode == RequestMode::StartupBootstrap {
+                metrics.startup_initial_query_send_count =
+                    metrics.startup_initial_query_send_count.saturating_add(1);
+            }
+        });
+    }
+
+    fn record_request_deduped(&self) {
+        self.debug_metrics.update_mut(|metrics| {
+            metrics.request_deduped_count = metrics.request_deduped_count.saturating_add(1)
+        });
+    }
+
+    fn invalidate_request_fingerprints(&self) {
+        self.request_state.update_mut(|context| {
+            context.latest_request_fingerprint = None;
+            context.latest_completed_request_fingerprint = None;
         });
     }
 
@@ -1242,6 +1375,19 @@ impl WaveformTimeline {
     }
 
     fn on_selected_variables_updated(&self, variables: Vec<shared::SelectedVariable>) {
+        let row_height_only_commit = {
+            let previous = self.last_selected_variables_snapshot.borrow();
+            Self::is_row_height_only_commit(&previous, &variables)
+        };
+        self.last_selected_variables_snapshot
+            .replace(variables.clone());
+
+        if row_height_only_commit {
+            self.update_render_state_layout_only();
+            return;
+        }
+
+        self.invalidate_request_fingerprints();
         let desired: HashSet<_> = variables.iter().map(|var| var.unique_id.clone()).collect();
         let needs_request = {
             let map = self.series_map.lock_ref();
@@ -1276,7 +1422,47 @@ impl WaveformTimeline {
         }
     }
 
+    fn is_row_height_only_commit(
+        previous: &[shared::SelectedVariable],
+        next: &[shared::SelectedVariable],
+    ) -> bool {
+        if previous.len() != next.len() {
+            return false;
+        }
+
+        let mut saw_row_height_change = false;
+
+        for (previous, next) in previous.iter().zip(next.iter()) {
+            if previous.unique_id != next.unique_id
+                || previous.formatter != next.formatter
+                || previous.signal_type != next.signal_type
+                || previous.analog_limits != next.analog_limits
+            {
+                return false;
+            }
+
+            if previous.row_height != next.row_height {
+                saw_row_height_change = true;
+            }
+        }
+
+        saw_row_height_change
+    }
+
     fn schedule_request(&self) {
+        if self.app_config.restore_phase.get_cloned() != RestorePhase::Active {
+            return;
+        }
+        if self.request_bootstrap_pending.get_cloned() {
+            return;
+        }
+        if self.canvas_width.get_cloned() <= 1.0 {
+            return;
+        }
+        if !self.are_selected_variable_files_ready() {
+            return;
+        }
+
         {
             let mut slot = self.request_debounce.borrow_mut();
             if let Some(timer) = slot.take() {
@@ -1306,6 +1492,10 @@ impl WaveformTimeline {
         } else {
             self.send_request();
         }
+    }
+
+    fn send_request(&self) {
+        self.send_request_with_mode(RequestMode::Normal);
     }
 
     fn schedule_zoom_center_update(&self, delay_ms: u32) {
@@ -1404,7 +1594,7 @@ impl WaveformTimeline {
         }
     }
 
-    fn send_request(&self) {
+    fn send_request_with_mode(&self, mode: RequestMode) {
         let variables = self.selected_variables.variables_vec_actor.get_cloned();
 
         if variables.is_empty() {
@@ -1412,6 +1602,7 @@ impl WaveformTimeline {
             self.cursor_values.lock_mut().clear();
             self.window_cache.lock_mut().clear();
             self.cancel_all_cursor_loading_indicators();
+            self.invalidate_request_fingerprints();
             self.update_render_state();
             return;
         }
@@ -1557,6 +1748,9 @@ impl WaveformTimeline {
         }
 
         if requests.is_empty() {
+            if mode == RequestMode::StartupBootstrap {
+                self.app_config.mark_restore_active();
+            }
             return;
         }
 
@@ -1565,6 +1759,38 @@ impl WaveformTimeline {
         }
 
         let cursor_ns = self.cursor.get_cloned().nanos();
+        let request_fingerprint = RequestFingerprint {
+            signals: requests
+                .iter()
+                .map(|request| RequestFingerprintSignal {
+                    file_path: request.file_path.clone(),
+                    scope_path: request.scope_path.clone(),
+                    variable_name: request.variable_name.clone(),
+                    time_range_ns: request.time_range_ns,
+                    max_transitions: request.max_transitions,
+                    format: request.format,
+                })
+                .collect(),
+            cursor_time_ns: Some(cursor_ns),
+        };
+
+        {
+            let context = self.request_state.get_cloned();
+            let is_duplicate = context
+                .latest_request_fingerprint
+                .as_ref()
+                .map(|fingerprint| fingerprint == &request_fingerprint)
+                .unwrap_or(false)
+                || context
+                    .latest_completed_request_fingerprint
+                    .as_ref()
+                    .map(|fingerprint| fingerprint == &request_fingerprint)
+                    .unwrap_or(false);
+            if is_duplicate {
+                self.record_request_deduped();
+                return;
+            }
+        }
 
         let request_id = format!(
             "timeline-{}",
@@ -1574,9 +1800,12 @@ impl WaveformTimeline {
         context.latest_request_id = Some(request_id.clone());
         context.latest_request_started_ms = Some(Date::now());
         context.latest_request_windows = request_windows;
+        context.latest_request_fingerprint = Some(request_fingerprint);
+        context.latest_request_mode = mode;
         self.request_state.set(context);
 
         let connection = self.connection.clone();
+        self.record_request_sent(mode);
         let handle = Task::start_droppable(async move {
             connection
                 .send_up_msg(UpMsg::UnifiedSignalQuery {
@@ -1611,6 +1840,10 @@ impl WaveformTimeline {
             let duration_ms = Date::now() - started_ms;
             self.record_request_duration(duration_ms);
         }
+        let completed_request_mode = current_request.latest_request_mode;
+        current_request.latest_request_mode = RequestMode::Normal;
+        current_request.latest_completed_request_fingerprint =
+            current_request.latest_request_fingerprint.take();
         self.request_state.set(current_request.clone());
 
         let mut cache = self.window_cache.lock_mut();
@@ -1736,6 +1969,13 @@ impl WaveformTimeline {
         self.update_render_state();
         self.refresh_cursor_values_from_series();
 
+        if completed_request_mode == RequestMode::StartupBootstrap
+            && self.app_config.restore_phase.get_cloned() == RestorePhase::RunningInitialQuery
+        {
+            self.app_config.mark_restore_active();
+            self.schedule_request();
+        }
+
         if self.reload_in_progress.borrow().is_empty() && self.reload_restore_pending.get() {
             if let Some((viewport, cursor)) = self.reload_viewport_snapshot.borrow_mut().take() {
                 self.viewport.set(viewport);
@@ -1785,6 +2025,9 @@ impl WaveformTimeline {
                 let duration_ms = Date::now() - started_ms;
                 self.record_request_duration(duration_ms);
             }
+            let failed_request_mode = current_request.latest_request_mode;
+            current_request.latest_request_mode = RequestMode::Normal;
+            current_request.latest_request_fingerprint = None;
             let pending: Vec<String> = current_request
                 .latest_request_windows
                 .keys()
@@ -1812,10 +2055,152 @@ impl WaveformTimeline {
             if !pending.is_empty() {
                 self.update_render_state();
             }
+            if failed_request_mode == RequestMode::StartupBootstrap
+                && self.app_config.restore_phase.get_cloned() == RestorePhase::RunningInitialQuery
+            {
+                self.app_config
+                    .restore_phase
+                    .set_neq(RestorePhase::WaitingForStableCanvasWidth);
+                self.reset_request_bootstrap();
+                self.maybe_schedule_bootstrap_request();
+            }
         }
     }
 
     fn update_render_state(&self) {
+        self.debug_metrics.update_mut(|metrics| {
+            metrics.full_render_count = metrics.full_render_count.saturating_add(1);
+        });
+        self.rebuild_structure_snapshot();
+        self.rebuild_layout_snapshot();
+        self.publish_render_state();
+    }
+
+    fn update_render_state_layout_only(&self) {
+        self.debug_metrics.update_mut(|metrics| {
+            metrics.layout_render_count = metrics.layout_render_count.saturating_add(1);
+        });
+        self.rebuild_layout_snapshot();
+        self.publish_render_state();
+    }
+
+    fn apply_row_height_change(&self, change: &crate::selected_variables::RowHeightChange) {
+        self.debug_metrics.update_mut(|metrics| {
+            metrics.layout_render_count = metrics.layout_render_count.saturating_add(1);
+        });
+
+        self.layout_snapshot.update_mut(|layout| {
+            for row in &mut layout.rows {
+                if let TimelineLayoutRow::Variable {
+                    unique_id,
+                    row_height,
+                } = row
+                {
+                    if unique_id == &change.unique_id {
+                        *row_height = change.new_height;
+                        break;
+                    }
+                }
+            }
+        });
+
+        self.render_state.update_mut(|state| {
+            for row in &mut state.rows {
+                if let TimelineRenderRow::Variable(series) = row {
+                    if series.unique_id == change.unique_id.as_str() {
+                        series.row_height = change.new_height;
+                        break;
+                    }
+                }
+            }
+
+            for series in &mut state.variables {
+                if series.unique_id == change.unique_id.as_str() {
+                    series.row_height = change.new_height;
+                    break;
+                }
+            }
+        });
+
+        self.refresh_tooltip();
+    }
+
+    fn rebuild_structure_snapshot(&self) {
+        let variables_snapshot = self.selected_variables.variables_vec_actor.get_cloned();
+        let visible_items = self.selected_variables.visible_items.get_cloned();
+        let visible_variable_ids: HashSet<String> = visible_items
+            .iter()
+            .filter_map(|item| match item {
+                crate::selected_variables::SelectedVariableOrGroup::Variable(variable) => {
+                    Some(variable.unique_id.clone())
+                }
+                _ => None,
+            })
+            .collect();
+
+        let series_guard = self.series_map.lock_ref();
+        let values_guard = self.cursor_values.lock_ref();
+        let mut variables_by_id = BTreeMap::new();
+
+        for variable in variables_snapshot {
+            if !visible_variable_ids.contains(&variable.unique_id) {
+                continue;
+            }
+            let formatter = variable.formatter.unwrap_or(VarFormat::Hexadecimal);
+            let cursor_value = values_guard.get(&variable.unique_id).cloned();
+            let signal_type = variable.signal_type.clone();
+            let analog_limits = variable.analog_limits.clone();
+            let structure = match series_guard.get(&variable.unique_id) {
+                Some(series) => TimelineVariableStructure {
+                    unique_id: variable.unique_id.clone(),
+                    formatter,
+                    transitions: Arc::clone(&series.transitions),
+                    total_transitions: series.total_transitions,
+                    cursor_value,
+                    signal_type,
+                    analog_limits,
+                },
+                None => TimelineVariableStructure {
+                    unique_id: variable.unique_id.clone(),
+                    formatter,
+                    transitions: Arc::new(Vec::new()),
+                    total_transitions: 0,
+                    cursor_value,
+                    signal_type,
+                    analog_limits,
+                },
+            };
+            variables_by_id.insert(variable.unique_id.clone(), structure);
+        }
+        drop(series_guard);
+        drop(values_guard);
+
+        let rows = visible_items
+            .into_iter()
+            .filter_map(|item| match item {
+                crate::selected_variables::SelectedVariableOrGroup::GroupHeader {
+                    name, ..
+                } => Some(TimelineStructureRow::GroupHeader { name }),
+                crate::selected_variables::SelectedVariableOrGroup::Variable(variable) => {
+                    if variables_by_id.contains_key(&variable.unique_id) {
+                        Some(TimelineStructureRow::Variable {
+                            unique_id: variable.unique_id,
+                        })
+                    } else {
+                        None
+                    }
+                }
+            })
+            .collect();
+
+        self.structure_snapshot.set(TimelineStructureSnapshot {
+            variables_by_id,
+            rows,
+            markers: self.markers_snapshot.get_cloned(),
+        });
+    }
+
+    fn rebuild_layout_snapshot(&self) {
         let viewport = self.viewport.get_cloned();
         let cursor = self.cursor.get_cloned();
         let zoom_center = self.zoom_center.get_cloned();
@@ -1823,79 +2208,25 @@ impl WaveformTimeline {
         let height = self.canvas_height.get_cloned().max(1.0) as u32;
         let duration_ps = viewport.duration().picoseconds();
         let time_per_pixel = TimePerPixel::from_duration_and_width(duration_ps, width);
-
-        let variables_snapshot = self.selected_variables.variables_vec_actor.get_cloned();
-        let row_heights = self.selected_variables.row_heights.get_cloned();
-        let collapsed_ids = self.selected_variables.collapsed_variable_ids();
-
-        let series_guard = self.series_map.lock_ref();
-        let values_guard = self.cursor_values.lock_ref();
-        let mut variables = Vec::with_capacity(variables_snapshot.len());
-        let visible_items = self.selected_variables.visible_items.get_cloned();
-        for variable in variables_snapshot {
-            if collapsed_ids.contains(&variable.unique_id) {
-                continue;
-            }
-            let formatter = variable.formatter.unwrap_or(VarFormat::Hexadecimal);
-            let series_data = series_guard.get(&variable.unique_id);
-            let cursor_value = values_guard.get(&variable.unique_id).cloned();
-            let signal_type = variable.signal_type.clone();
-            let row_height = row_heights
-                .get(&variable.unique_id)
-                .copied()
-                .unwrap_or(variable.row_height.unwrap_or(30));
-            let analog_limits = variable.analog_limits.clone();
-            match series_data {
-                Some(series) => {
-                    variables.push(TimelineVariableSeries {
-                        unique_id: variable.unique_id.clone(),
-                        formatter,
-                        transitions: Arc::clone(&series.transitions),
-                        total_transitions: series.total_transitions,
-                        cursor_value,
-                        signal_type,
-                        row_height,
-                        analog_limits,
-                    });
-                }
-                None => {
-                    let mut series =
-                        TimelineVariableSeries::empty(variable.unique_id.clone(), formatter);
-                    series.cursor_value = cursor_value;
-                    series.signal_type = signal_type;
-                    series.row_height = row_height;
-                    series.analog_limits = analog_limits;
-                    variables.push(series);
-                }
-            }
-        }
-        drop(series_guard);
-        drop(values_guard);
-
-        let mut variable_lookup: BTreeMap<String, TimelineVariableSeries> = variables
+        let structure = self.structure_snapshot.get_cloned();
+        let rows = structure
+            .rows
             .iter()
-            .cloned()
-            .map(|series| (series.unique_id.clone(), series))
-            .collect();
-        let rows = visible_items
-            .into_iter()
-            .filter_map(|item| match item {
-                crate::selected_variables::SelectedVariableOrGroup::GroupHeader {
-                    name, ..
-                } => Some(TimelineRenderRow::GroupHeader {
-                    name,
-                    row_height: 30,
-                }),
-                crate::selected_variables::SelectedVariableOrGroup::Variable(variable) => {
-                    variable_lookup
-                        .remove(&variable.unique_id)
-                        .map(TimelineRenderRow::Variable)
-                }
+            .map(|row| {
+                let layout_row = match row {
+                    TimelineStructureRow::GroupHeader { .. } => {
+                        TimelineLayoutRow::GroupHeader { row_height: 30 }
+                    }
+                    TimelineStructureRow::Variable { unique_id } => TimelineLayoutRow::Variable {
+                        unique_id: unique_id.clone(),
+                        row_height: self.selected_variables.live_row_height(unique_id),
+                    },
+                };
+                layout_row
             })
             .collect();
 
-        let markers = self.markers_snapshot.get_cloned();
-        self.render_state.set(TimelineRenderState {
+        self.layout_snapshot.set(TimelineLayoutSnapshot {
             viewport_start: viewport.start,
             viewport_end: viewport.end,
             cursor,
@@ -1903,15 +2234,71 @@ impl WaveformTimeline {
             canvas_width_px: width,
             canvas_height_px: height,
             time_per_pixel,
+            rows,
+        });
+    }
+
+    fn publish_render_state(&self) {
+        let structure = self.structure_snapshot.get_cloned();
+        let layout = self.layout_snapshot.get_cloned();
+        let mut variables = Vec::new();
+        let mut rows = Vec::with_capacity(structure.rows.len());
+
+        for (structure_row, layout_row) in structure.rows.iter().zip(layout.rows.iter()) {
+            match (structure_row, layout_row) {
+                (
+                    TimelineStructureRow::GroupHeader { name },
+                    TimelineLayoutRow::GroupHeader { row_height },
+                ) => rows.push(TimelineRenderRow::GroupHeader {
+                    name: name.clone(),
+                    row_height: *row_height,
+                }),
+                (
+                    TimelineStructureRow::Variable { unique_id },
+                    TimelineLayoutRow::Variable {
+                        unique_id: layout_unique_id,
+                        row_height,
+                    },
+                ) if unique_id == layout_unique_id => {
+                    if let Some(series) = structure.variables_by_id.get(unique_id) {
+                        let render_series = TimelineVariableSeries {
+                            unique_id: series.unique_id.clone(),
+                            formatter: series.formatter,
+                            transitions: Arc::clone(&series.transitions),
+                            total_transitions: series.total_transitions,
+                            cursor_value: series.cursor_value.clone(),
+                            signal_type: series.signal_type.clone(),
+                            row_height: *row_height,
+                            analog_limits: series.analog_limits.clone(),
+                        };
+                        variables.push(render_series.clone());
+                        rows.push(TimelineRenderRow::Variable(render_series));
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        self.render_state.set(TimelineRenderState {
+            viewport_start: layout.viewport_start,
+            viewport_end: layout.viewport_end,
+            cursor: layout.cursor,
+            zoom_center: layout.zoom_center,
+            canvas_width_px: layout.canvas_width_px,
+            canvas_height_px: layout.canvas_height_px,
+            time_per_pixel: layout.time_per_pixel,
             variables,
             rows,
-            markers,
+            markers: structure.markers,
         });
 
         self.refresh_tooltip();
     }
 
     fn update_zoom_center_only(&self, zoom_center: TimePs) {
+        self.layout_snapshot.update_mut(|state| {
+            state.zoom_center = zoom_center;
+        });
         self.render_state.update_mut(|state| {
             if state.zoom_center != zoom_center {
                 state.zoom_center = zoom_center;
@@ -2095,6 +2482,22 @@ impl WaveformTimeline {
                         }
                     })
             })),
+            Arc::new(Task::start_droppable({
+                let t = t.clone();
+                t.app_config
+                    .restore_phase
+                    .signal_cloned()
+                    .for_each_sync(move |phase| {
+                        if phase == RestorePhase::WaitingForStableCanvasWidth {
+                            t.reset_request_bootstrap();
+                            t.invalidate_request_fingerprints();
+                            t.update_render_state_layout_only();
+                            t.maybe_schedule_bootstrap_request();
+                        } else if phase != RestorePhase::Active {
+                            t.reset_request_bootstrap();
+                        }
+                    })
+            })),
             // Selected variables
             Arc::new(Task::start_droppable({
                 let t = t.clone();
@@ -2103,6 +2506,46 @@ impl WaveformTimeline {
                     .signal_cloned()
                     .for_each_sync(move |variables| {
                         t.on_selected_variables_updated(variables);
+                        t.maybe_schedule_bootstrap_request();
+                    })
+            })),
+            Arc::new(Task::start_droppable({
+                let t = t.clone();
+                t.selected_variables
+                    .visible_items
+                    .signal_cloned()
+                    .for_each_sync(move |_| {
+                        t.rebuild_structure_snapshot();
+                        t.rebuild_layout_snapshot();
+                        t.publish_render_state();
+                    })
+            })),
+            Arc::new(Task::start_droppable({
+                let t = t.clone();
+                t.selected_variables
+                    .last_row_height_change
+                    .signal_cloned()
+                    .for_each_sync(move |maybe_change| {
+                        if let Some(change) = maybe_change {
+                            if t.app_config.row_resize_in_progress.get_cloned() {
+                                return;
+                            }
+                            t.apply_row_height_change(&change);
+                        }
+                    })
+            })),
+            Arc::new(Task::start_droppable({
+                let t = t.clone();
+                tracked_files
+                    .files_vec_signal
+                    .signal_cloned()
+                    .for_each_sync(move |_| {
+                        if t.app_config.restore_phase.get_cloned()
+                            == RestorePhase::WaitingForStableCanvasWidth
+                            && t.request_bootstrap_pending.get_cloned()
+                        {
+                            t.maybe_schedule_bootstrap_request();
+                        }
                     })
             })),
             // Bounds changes
@@ -2200,14 +2643,21 @@ impl WaveformTimeline {
                 }
                 .for_each_sync(move |_| {
                     t.ensure_viewport_within_bounds();
-                    t.update_render_state();
+                    if t.app_config.row_resize_in_progress.get_cloned() {
+                        return;
+                    }
+                    t.update_render_state_layout_only();
+                    t.maybe_schedule_bootstrap_request();
                     t.schedule_request();
                 })
             })),
             Arc::new(Task::start_droppable({
                 let t = t.clone();
                 t.canvas_height.signal_cloned().for_each_sync(move |_| {
-                    t.update_render_state();
+                    if t.app_config.row_resize_in_progress.get_cloned() {
+                        return;
+                    }
+                    t.update_render_state_layout_only();
                 })
             })),
             // Config-relevant state changes → sync to config (config module handles debouncing)
@@ -2371,6 +2821,7 @@ impl WaveformTimeline {
     }
 
     fn handle_file_reload_requested(&self, file_path: &str) {
+        self.invalidate_request_fingerprints();
         let mut set = self.reload_in_progress.borrow_mut();
         if set.is_empty() {
             let snapshot = (self.viewport.get_cloned(), self.cursor.get_cloned());
@@ -2444,6 +2895,74 @@ impl WaveformTimeline {
 
     fn has_active_reload(&self) -> bool {
         !self.reload_in_progress.borrow().is_empty()
+    }
+
+    fn are_selected_variable_files_ready(&self) -> bool {
+        let variables = self.selected_variables.variables_vec_actor.get_cloned();
+        if variables.is_empty() {
+            return false;
+        }
+
+        let tracked_files = self.tracked_files.files_vec_signal.get_cloned();
+        variables.iter().all(|variable| {
+            let Some(file_path) = variable.file_path() else {
+                return true;
+            };
+            tracked_files.iter().any(|tracked_file| {
+                (tracked_file.canonical_path == file_path || tracked_file.path == file_path)
+                    && matches!(
+                        tracked_file.state,
+                        shared::FileState::Loaded(_) | shared::FileState::Failed(_)
+                    )
+            })
+        })
+    }
+
+    fn reset_request_bootstrap(&self) {
+        self.request_bootstrap_pending.set_neq(true);
+        if let Some(timer) = self.request_bootstrap_timer.borrow_mut().take() {
+            timer.cancel();
+        }
+    }
+
+    fn maybe_schedule_bootstrap_request(&self) {
+        if self.app_config.restore_phase.get_cloned() != RestorePhase::WaitingForStableCanvasWidth {
+            return;
+        }
+        if !self.request_bootstrap_pending.get_cloned() {
+            return;
+        }
+        if self.canvas_width.get_cloned() <= 1.0 {
+            return;
+        }
+        if !self.are_selected_variable_files_ready() {
+            return;
+        }
+
+        if let Some(existing) = self.request_bootstrap_timer.borrow_mut().take() {
+            existing.cancel();
+        }
+
+        let timeline = self.clone();
+        let timer_slot = self.request_bootstrap_timer.clone();
+        let timeout = Timeout::new(150, move || {
+            *timer_slot.borrow_mut() = None;
+            if timeline.app_config.restore_phase.get_cloned()
+                != RestorePhase::WaitingForStableCanvasWidth
+            {
+                return;
+            }
+            if timeline.canvas_width.get_cloned() <= 1.0 {
+                return;
+            }
+            if !timeline.are_selected_variable_files_ready() {
+                return;
+            }
+            timeline.request_bootstrap_pending.set_neq(false);
+            timeline.app_config.mark_initial_query_running();
+            timeline.send_request_with_mode(RequestMode::StartupBootstrap);
+        });
+        *self.request_bootstrap_timer.borrow_mut() = Some(timeout);
     }
 }
 

@@ -43,7 +43,7 @@ fn apply_scrollbar_colors(
 // ===== CORE VIRTUAL LIST FUNCTIONS =====
 //
 // Virtual lists trigger frequent resize/scroll events that can generate thousands of log
-// entries per second, corrupting dev_server.log with multi-gigabyte binary data and
+// entries per second, corrupting terminal output or redirected logs with multi-gigabyte binary data and
 // making compilation errors impossible to see.
 //
 // SOLUTION: Use debug_throttled() for high-frequency events, debug_critical() for errors.

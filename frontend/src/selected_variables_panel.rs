@@ -268,24 +268,9 @@ fn selected_variables_panel_content(
     let _value_column_width_signal = variables_value_column_width_signal(app_config.clone());
 
     El::new()
-        .s(Height::exact_signal(map_ref! {
-            let items = selected_variables.visible_items.signal_cloned(),
-            let row_heights = selected_variables.row_heights.signal_cloned() => {
-                if items.is_empty() {
-                    2 * SELECTED_VARIABLES_ROW_HEIGHT
-                } else {
-                    let var_count = items
-                        .iter()
-                        .filter(|item| matches!(item, crate::selected_variables::SelectedVariableOrGroup::Variable(_)))
-                        .count() as u32;
-                    let item_heights: u32 = items
-                        .iter()
-                        .map(|item| crate::selected_variables::SelectedVariables::row_height_for_item(item, row_heights))
-                        .sum();
-                    item_heights + var_count * 3 + SELECTED_VARIABLES_ROW_HEIGHT
-                }
-            }
-        }))
+        .s(Height::exact_signal(
+            selected_variables.total_content_height.signal(),
+        ))
         .s(Width::fill())
         .s(Scrollbars::x_and_clip_y())
         .child_signal({
@@ -651,6 +636,14 @@ fn signal_row_divider(
         .s(Height::exact(3))
         .s(Cursor::new(CursorIcon::RowResize))
         .s(Background::new().color_signal(moonzoon_novyui::tokens::color::neutral_3().map(|c| c)))
+        .update_raw_el({
+            let unique_id = unique_id.clone();
+            move |raw_el| {
+                raw_el
+                    .attr("data-testid", &format!("selected-row-divider-{unique_id}"))
+                    .attr("data-row-unique-id", &unique_id)
+            }
+        })
         .on_pointer_down_event({
             let dragging_system = dragging_system.clone();
             move |event: PointerEvent| {

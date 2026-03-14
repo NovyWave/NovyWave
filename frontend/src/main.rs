@@ -209,6 +209,7 @@ pub fn main() {
     // Tauri builds don't include the devserver's ReconnectingEventSource helper.
     // Provide a minimal shim so zoon's Connection can initialize without crashing.
     ensure_reconnecting_event_source();
+    install_console_capture();
 
     let handle = Task::start_droppable(async {
         let app = crate::app::NovyWaveApp::new().await;
@@ -218,6 +219,7 @@ pub fn main() {
             app.tracked_files.clone(),
             app.selected_variables.clone(),
             app.waveform_timeline.clone(),
+            app.dragging_system.clone(),
             app.config.clone(),
             app.connection.clone(),
         );
@@ -231,6 +233,42 @@ pub fn main() {
 
 #[cfg(not(NOVYWAVE_PLATFORM = "TAURI"))]
 #[wasm_bindgen::prelude::wasm_bindgen(inline_js = r#"
+export function install_console_capture() {
+  if (typeof window === 'undefined') return;
+  const existing = window.__NOVYWAVE_CONSOLE_BUFFER;
+  if (Array.isArray(existing)) return;
+  const buffer = [];
+  const maxEntries = 400;
+  const normalize = (value) => {
+    try {
+      if (typeof value === 'string') return value;
+      if (value instanceof Error) return value.stack || value.message || String(value);
+      return JSON.stringify(value);
+    } catch (_e) {
+      return String(value);
+    }
+  };
+  const patch = (level) => {
+    const original = console[level] ? console[level].bind(console) : console.log.bind(console);
+    console[level] = (...args) => {
+      buffer.push({
+        level,
+        message: args.map(normalize).join(' '),
+        timestampMs: Date.now(),
+      });
+      if (buffer.length > maxEntries) {
+        buffer.splice(0, buffer.length - maxEntries);
+      }
+      original(...args);
+    };
+  };
+  window.__NOVYWAVE_CONSOLE_BUFFER = buffer;
+  patch('log');
+  patch('info');
+  patch('warn');
+  patch('error');
+}
+
 export function ensure_reconnecting_event_source() {
   if (typeof window === 'undefined') return;
   if (typeof window.ReconnectingEventSource !== 'undefined') return;
@@ -250,11 +288,48 @@ export function ensure_reconnecting_event_source() {
 }
 "#)]
 extern "C" {
+    fn install_console_capture();
     fn ensure_reconnecting_event_source();
 }
 
 #[cfg(NOVYWAVE_PLATFORM = "TAURI")]
 #[wasm_bindgen::prelude::wasm_bindgen(inline_js = r#"
+export function install_console_capture() {
+  if (typeof window === 'undefined') return;
+  const existing = window.__NOVYWAVE_CONSOLE_BUFFER;
+  if (Array.isArray(existing)) return;
+  const buffer = [];
+  const maxEntries = 400;
+  const normalize = (value) => {
+    try {
+      if (typeof value === 'string') return value;
+      if (value instanceof Error) return value.stack || value.message || String(value);
+      return JSON.stringify(value);
+    } catch (_e) {
+      return String(value);
+    }
+  };
+  const patch = (level) => {
+    const original = console[level] ? console[level].bind(console) : console.log.bind(console);
+    console[level] = (...args) => {
+      buffer.push({
+        level,
+        message: args.map(normalize).join(' '),
+        timestampMs: Date.now(),
+      });
+      if (buffer.length > maxEntries) {
+        buffer.splice(0, buffer.length - maxEntries);
+      }
+      original(...args);
+    };
+  };
+  window.__NOVYWAVE_CONSOLE_BUFFER = buffer;
+  patch('log');
+  patch('info');
+  patch('warn');
+  patch('error');
+}
+
 export function ensure_reconnecting_event_source() {
   if (typeof window === 'undefined') return;
   if (typeof window.EventSource === 'undefined') return;
@@ -331,6 +406,7 @@ export function ensure_reconnecting_event_source() {
 }
 "#)]
 extern "C" {
+    fn install_console_capture();
     fn ensure_reconnecting_event_source();
 }
 

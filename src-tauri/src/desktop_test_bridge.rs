@@ -46,6 +46,18 @@ struct RowHeightRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct RowResizeRequest {
+    unique_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DragDeltaRequest {
+    delta_y: f64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct AnalogLimitsRequest {
     unique_id: String,
     auto: bool,
@@ -192,11 +204,37 @@ fn route_request(
             app,
             "window.__novywave_test_api?.getFilePickerRoots?.() ?? null",
         ),
+        ("GET", "/state/console-log") => {
+            state_response(app, "window.__NOVYWAVE_CONSOLE_BUFFER ?? []")
+        }
+        ("GET", "/state/config-debug") => state_response(
+            app,
+            "window.__novywave_test_api?.getConfigDebug?.() ?? null",
+        ),
+        ("GET", "/state/perf-counters") => state_response(
+            app,
+            "window.__novywave_test_api?.getPerfCounters?.() ?? null",
+        ),
         ("POST", "/eval") => {
             action_response::<EvalRequest, _>(app, body, |request| Ok(request.expression))
         }
         ("POST", "/window/focus") => focus_window_response(app),
         ("POST", "/workspace/select") => select_workspace_response(app, body.trim()),
+        ("POST", "/action/reset-perf-counters") => state_response(
+            app,
+            "window.__novywave_test_api?.resetPerfCounters?.() ?? false",
+        ),
+        ("POST", "/action/start-frame-sampler") => state_response(
+            app,
+            "window.__novywave_test_api?.startFrameSampler?.() ?? false",
+        ),
+        ("POST", "/action/stop-frame-sampler") => state_response(
+            app,
+            "window.__novywave_test_api?.stopFrameSampler?.() ?? null",
+        ),
+        ("POST", "/action/clear-console-log") => {
+            state_response(app, "((window.__NOVYWAVE_CONSOLE_BUFFER = []), true)")
+        }
         ("POST", "/action/set-cursor-ps") => {
             action_response::<CursorRequest, _>(app, body, |request| {
                 Ok(format!(
@@ -247,6 +285,26 @@ fn route_request(
                 ))
             })
         }
+        ("POST", "/action/start-row-resize") => {
+            action_response::<RowResizeRequest, _>(app, body, |request| {
+                Ok(format!(
+                    "window.__novywave_test_api?.startRowResize?.({}) ?? false",
+                    json_string(&request.unique_id)?
+                ))
+            })
+        }
+        ("POST", "/action/move-active-drag") => {
+            action_response::<DragDeltaRequest, _>(app, body, |request| {
+                Ok(format!(
+                    "window.__novywave_test_api?.moveActiveDrag?.({}) ?? false",
+                    request.delta_y
+                ))
+            })
+        }
+        ("POST", "/action/end-active-drag") => state_response(
+            app,
+            "window.__novywave_test_api?.endActiveDrag?.() ?? false",
+        ),
         ("POST", "/action/set-analog-limits") => {
             action_response::<AnalogLimitsRequest, _>(app, body, |request| {
                 Ok(format!(
