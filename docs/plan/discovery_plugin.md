@@ -75,7 +75,7 @@
 - [x] Add user-facing documentation covering configuration, limitations, and manual QA steps.
 - [ ] Populate `test_files/to_discover` with sample `.vcd`/`.fst` fixtures referenced in manual testing docs.
 - [ ] Write integration coverage that simulates directory creation events and asserts `DownMsg::LoadWaveformFile` is broadcast once per new file.
-- [ ] Verify `dev_server.log` after wiring the plugin to capture any warnings from startup enumeration.
+- [ ] Verify the live `makers start` output after wiring the plugin to capture any warnings from startup enumeration.
 
 ## Validation Plan
 - Manual QA: run `makers start`, enable the plugin with `patterns = ["test_files/to_discover/**/*.vcd"]`, drop a new `.vcd` file in that directory, and confirm it appears in the UI without manual loading.

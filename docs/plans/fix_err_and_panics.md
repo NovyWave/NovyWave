@@ -7,7 +7,7 @@ future session can continue from a stable baseline.
 ## Observations
 - Browser console showed multiple `POST /_api/up_msg_handler net::ERR_EMPTY_RESPONSE`
   on fresh page load and when switching workspaces.
-- dev_server.log periodically contained plugin panic lines (e.g. plugin manager
+- Live dev-server output periodically contained plugin panic lines (e.g. plugin manager
   mutex poisoned; catch_unwind continued; repeated panic prints).
 - In some runs the UI label said "No workspace selected" or stayed on
   "Loading workspace…" even though the default workspace was already active.
@@ -62,12 +62,12 @@ future session can continue from a stable baseline.
    - Files & Scopes cleared on `WorkspaceLoaded`; repopulated only if new config
      has `opened_files`.
 3) Plugin panics
-   - Acceptable: panic lines in dev_server.log; must still see
+   - Acceptable: panic lines in live `makers start` output; must still see
      `WorkspaceLoaded` → `ConfigLoaded` sequence immediately after.
 
 ## Minimal log filters
 ```
-rg -n "LoadConfig received|WorkspaceLoaded|ConfigLoaded|SelectWorkspace|SaveConfig|UpdateWorkspaceHistory" dev_server.log
+makers start 2>&1 | rg -n "LoadConfig received|WorkspaceLoaded|ConfigLoaded|SelectWorkspace|SaveConfig|UpdateWorkspaceHistory"
 ```
 Interpretation:
 - During boot: only `LoadConfig received` → `WorkspaceLoaded` → `ConfigLoaded`.
@@ -88,4 +88,3 @@ Interpretation:
   is: those should be rare (≤1) and never from saver/history/trace traffic in
   the sensitive window. If more appear, re‑check that only critical messages are
   allowed pre‑DownMsg and that the saver stays paused during workspace changes.
-

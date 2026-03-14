@@ -46,7 +46,7 @@ For UI and interaction testing:
 2. Load test files from `test_files/`
 3. Test specific features
 
-When the dev server is started by someone else, inspect `dev_server.log` instead of trying to attach to their terminal output. The same rule applies to `dev_plugins.log` and `dev_tauri.log`.
+If someone else started the dev server or Tauri watcher, have them share the live terminal output directly or use a shared tmux/screen session. Do not rely on redirected repo log files.
 
 ### Desktop Test Bridge
 
@@ -62,6 +62,7 @@ curl http://127.0.0.1:9226/state/selected-variables
 curl http://127.0.0.1:9226/state/visible-rows
 curl http://127.0.0.1:9226/state/markers
 curl http://127.0.0.1:9226/state/file-picker-roots
+curl http://127.0.0.1:9226/state/perf-counters
 curl -X POST --data-binary '/tmp/novywave_ai_workspace' http://127.0.0.1:9226/workspace/select
 curl -X POST http://127.0.0.1:9226/action/set-cursor-ps -H 'Content-Type: application/json' \
   -d '{"timePs":21000}'
@@ -69,6 +70,14 @@ curl -X POST http://127.0.0.1:9226/action/add-marker -H 'Content-Type: applicati
   -d '{"name":"Bridge Marker"}'
 curl -X POST http://127.0.0.1:9226/action/set-row-height -H 'Content-Type: application/json' \
   -d '{"uniqueId":"...","rowHeight":140}'
+curl -X POST http://127.0.0.1:9226/action/reset-perf-counters
+curl -X POST http://127.0.0.1:9226/action/start-frame-sampler
+curl -X POST http://127.0.0.1:9226/action/start-row-resize -H 'Content-Type: application/json' \
+  -d '{"uniqueId":"..."}'
+curl -X POST http://127.0.0.1:9226/action/move-active-drag -H 'Content-Type: application/json' \
+  -d '{"deltaY":24}'
+curl -X POST http://127.0.0.1:9226/action/end-active-drag
+curl -X POST http://127.0.0.1:9226/action/stop-frame-sampler
 curl -X POST http://127.0.0.1:9226/action/set-analog-limits -H 'Content-Type: application/json' \
   -d '{"uniqueId":"...","auto":false,"min":-1,"max":4}'
 curl -X POST http://127.0.0.1:9226/action/create-group -H 'Content-Type: application/json' \
@@ -170,10 +179,7 @@ zoon::println!("Debug: {}", value);
 
 ### Compilation Errors
 
-Watch the newest development-server log chunk:
-```bash
-tail -n 120 dev_server.log
-```
+Watch the live `makers start` or `makers tauri` terminal output directly and report the relevant warning or error lines.
 
 ## Performance Testing
 

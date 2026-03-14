@@ -78,7 +78,7 @@ The development server:
 - Recompiles automatically
 - Reloads the browser
 
-If the watcher is being run by another maintainer, inspect `dev_server.log` instead of trying to attach to their terminal output.
+If another maintainer is running the watcher, have them share the live terminal output directly or use a shared tmux/screen session. Do not rely on redirected repo log files.
 
 ### Desktop Mode (Tauri)
 
@@ -136,7 +136,7 @@ makers build
 
 ### Check Compilation
 
-The MoonZoon dev server compiles automatically. For shared maintainer-run watchers, check `dev_server.log` for errors.
+The MoonZoon dev server compiles automatically. Watch the active `makers start` or `makers tauri` terminal output for errors.
 
 **Important:** Don't use `cargo check` or `cargo build` directly - they don't handle WASM compilation correctly. Always use `makers` commands.
 

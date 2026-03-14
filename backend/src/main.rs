@@ -18,12 +18,12 @@ use tokio::sync::Notify;
 use tokio::time::{Duration, timeout};
 
 // ===== CENTRALIZED DEBUG FLAGS =====
-const DEBUG_BACKEND: bool = true; // Backend request/response debugging
-const DEBUG_PARSE: bool = true; // File parsing debugging
-const DEBUG_SIGNAL_CACHE: bool = true; // Signal cache hit/miss debugging
-const DEBUG_CURSOR: bool = true; // Cursor value computation debugging
-const DEBUG_WAVEFORM_STORE: bool = true; // Waveform data storage debugging
-const DEBUG_EXTRACT: bool = true; // Signal transition extraction debugging
+const DEBUG_BACKEND: bool = false; // Backend request/response debugging
+const DEBUG_PARSE: bool = false; // File parsing debugging
+const DEBUG_SIGNAL_CACHE: bool = false; // Signal cache hit/miss debugging
+const DEBUG_CURSOR: bool = false; // Cursor value computation debugging
+const DEBUG_WAVEFORM_STORE: bool = false; // Waveform data storage debugging
+const DEBUG_EXTRACT: bool = false; // Signal transition extraction debugging
 
 // Debug macro for easy toggling
 macro_rules! debug_log {
@@ -4935,18 +4935,8 @@ fn format_non_binary_signal_value(value: &wellen::SignalValue) -> String {
                     None => "X".to_string(),
                 }
             } else {
-                // For multi-bit values, use wellen's to_bit_string() directly
-                let bit_string = value.to_bit_string().unwrap_or_else(|| "?".to_string());
-
-                // 🐛 DEBUG: Log what wellen actually returns vs what we expect
-                debug_log!(
-                    DEBUG_BACKEND,
-                    "🔍 WELLEN ACTUAL: width={}, to_bit_string()='{}' (expecting binary like '1100')",
-                    width,
-                    bit_string
-                );
-
-                bit_string
+                // For multi-bit values, use wellen's to_bit_string() directly.
+                value.to_bit_string().unwrap_or_else(|| "?".to_string())
             }
         }
         wellen::SignalValue::FourValue(_bits, width) => {
@@ -4959,18 +4949,8 @@ fn format_non_binary_signal_value(value: &wellen::SignalValue) -> String {
                     None => "X".to_string(),
                 }
             } else {
-                // Multi-bit FourValue (can include X and Z states)
-                let bit_string = value.to_bit_string().unwrap_or_else(|| "?".to_string());
-
-                // 🐛 DEBUG: Log FourValue output too
-                debug_log!(
-                    DEBUG_BACKEND,
-                    "🔍 WELLEN FOURVALUE: width={}, to_bit_string()='{}' (expecting binary)",
-                    width,
-                    bit_string
-                );
-
-                bit_string
+                // Multi-bit FourValue can include X and Z states.
+                value.to_bit_string().unwrap_or_else(|| "?".to_string())
             }
         }
         wellen::SignalValue::NineValue(_bits, _width) => {

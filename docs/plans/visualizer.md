@@ -92,7 +92,7 @@
   - [x] `FRONTEND_BUILD_ID=dev CACHE_BUSTING=1 cargo check`
   - [x] `FRONTEND_BUILD_ID=dev CACHE_BUSTING=1 cargo clippy --workspace --all-targets`
   - [x] `FRONTEND_BUILD_ID=dev CACHE_BUSTING=1 cargo test --workspace` *(gated wasm-only dataflow tests behind `cfg(target_arch = "wasm32")` so the native runner executes cleanly)*
-- [x] Tail latest `dev_server.log` chunk after build to surface warnings/errors.
+- [x] Review the latest live `makers start` output after build to surface warnings/errors.
 
 ## Verification Checklist
 - [x] Timeline rows render backend transitions instead of `Loading…` placeholders (verified via Browser MCP screenshot and canvas logs).
@@ -103,7 +103,7 @@
 - [x] Switching themes redraws canvas with new palette without refresh (toggled theme in Browser MCP; canvas re-rendered with alternate palette, no errors).
 
 ### Latest Verification Notes (2025-02-13)
-- `dev_server.log` (tail attached) contains repeated `timeline query start` entries with transition counts for both `simple.vcd` signals; no warnings or errors emitted after latest rebuild.
+- Live `makers start` output contained repeated `timeline query start` entries with transition counts for both `simple.vcd` signals; no warnings or errors emitted after the latest rebuild.
 - `FRONTEND_BUILD_ID=dev CACHE_BUSTING=1 cargo clippy --workspace --all-targets` completed (pre-existing third-party warnings remain untouched).
 - `FRONTEND_BUILD_ID=dev CACHE_BUSTING=1 cargo test --workspace` now passes; wasm-only dataflow/unit tests are `#[cfg(target_arch = "wasm32")]` to avoid native runtime panics while preserving future wasm coverage.
 - Browser MCP console log + screenshot (`browsermcp` capture) show live timeline with colored transitions, cursor/zoom overlays, and responsive hover/keyboard interactions.

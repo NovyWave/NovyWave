@@ -9,11 +9,11 @@ Notes (current state observed)
 
 Changes implemented
 - Simplified bridge in `frontend/src/app.rs`: subscribe to the TreeView `MutableVec` using `signal_vec_cloned().to_signal_cloned().to_stream()` and forward the whole selection snapshot on every change via `propagate_scope_selection(...)`. This eliminates diff bookkeeping and ensures consistent propagation, including clearing on empty.
-- Removed noisy frontend logs (app/config/treeview/tracked_files/variables UI) and trimmed backend printlns to make dev_server.log and browser console readable for testing.
+- Removed noisy frontend logs (app/config/treeview/tracked_files/variables UI) and trimmed backend printlns to make live terminal output and the browser console readable for testing.
 
 Quick TODOs (compact)
 - Verify live behavior in Browser MCP: check `s` → list appears; uncheck → list clears; re-check → list reappears.
-- Tail dev_server.log (last ~200 lines) and confirm “Frontend built” and no `error[E...]` lines.
+- Watch the live `makers start` output and confirm `Frontend built` with no `error[E...]` lines.
 - Keep logging lean going forward; avoid re‑adding `zoon::println!` except when strictly necessary and temporary.
 
 Post‑fix validation
@@ -25,7 +25,7 @@ Post‑fix validation
 Aim: keep our iteration context tiny and high‑signal so we don’t blow buffers or waste attention.
 
 - Log access
-  - dev_server.log: use `tail -n 200 dev_server.log` + grep for `Frontend built`, `Finished`, `error[E`, `error:`, `panic` only. No full scans.
+  - Live build output: use `makers start 2>&1 | rg -n "Frontend built|Finished|error\\[E|error:|panic"` if you need a filtered rerun. No full scans.
   - Browser logs: sample last ~50 entries and filter for `🧭`, `VARIABLES_CONTEXT`, `TREEVIEW_SYNC`. Ignore everything else.
 - Instrumentation gates
   - Keep only compact `🧭` traces in: app bridge and SelectedVariables scope actor. Remove them after confirmation.

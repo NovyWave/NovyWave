@@ -33,7 +33,7 @@
 - `🛰️ FRONTEND TRACE [workspace_picker_scroll]`: scroll actor updates during dialog use.
 - `🛰️ FRONTEND TRACE [workspace_picker_restore]`: restore lifecycle.
 - `frontend/src/config.rs:selected push single`, `… removed`, `… clear_selection_relay`: show when selection actors receive clear/select events.
-- Backend persistence runs through `UpMsg::UpdateWorkspaceHistory`; watch `dev_server.log` for any errors after the snapshot log fires.
+- Backend persistence runs through `UpMsg::UpdateWorkspaceHistory`; watch the live `makers start` output for any errors after the snapshot log fires.
 - Keep logs active until persistence works; remove afterwards.
 
 ## Latest Snapshot – 2025-10-22
@@ -82,7 +82,7 @@
 ### Log Snippets To Watch
 Use these quick filters while testing:
 ```
-rg "workspace_picker_dom_scroll|origin=picker_scroll|workspace_history_actor|UpdateWorkspaceHistory" dev_server.log -n
+makers start 2>&1 | rg -n "workspace_picker_dom_scroll|origin=picker_scroll|workspace_history_actor|UpdateWorkspaceHistory"
 ```
 
 ## Findings From Last Runs

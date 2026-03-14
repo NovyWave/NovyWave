@@ -13,6 +13,7 @@ WAIT_SECONDS="${2:-15}"
 echo "=== Loading... Bug Fix Test ==="
 echo "URL: $URL"
 echo "Wait: ${WAIT_SECONDS}s for data to load"
+echo "Keep the live makers terminal output visible for rebuild warnings or errors"
 echo ""
 
 # Use Python + Selenium with HEADED Chrome

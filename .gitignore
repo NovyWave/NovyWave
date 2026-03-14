@@ -81,10 +81,6 @@ test_files/update-test-artifacts/
 # Research files (moved to docs/research)
 docs/research/
 
-# Development logs (now properly covered by *.log above)
-**/dev_server.log
-
-
 # mdBook generated documentation
 docs/book/book/
 

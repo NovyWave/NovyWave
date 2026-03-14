@@ -24,7 +24,7 @@
 - [x] **Config wiring:** Update `.novywave` templates and `shared::AppConfig` persistence so plugin-specific settings (selected directories, debounce overrides, maybe glob filters) round-trip cleanly. Ensure the new plugin entry is disabled by default until signed off.
 - [x] **Timeline cache invalidation:** Plugin-triggered reloads and manual reloads now share the `TrackedFiles::reload_existing_paths` relay; `WaveformTimeline` listens to the relay, clears caches, marks variables loading, and schedules a fresh request when a file is reloaded.
 - [x] **SelectedVariables resilience:** Reloads keep the same unique IDs, so the listener preserves selections/formats, forces cursor values back to `Loading`, and re-requests data via the unified code path.
-- [x] **Diagnostics & logging:** Feed watcher lifecycle and reload attempts into existing logging (backend console + `dev_server.log`) with clear icons, matching the current `🔌`/`🔍` style. Surface actionable errors to the UI via `DownMsg::ParsingError`.
+- [x] **Diagnostics & logging:** Feed watcher lifecycle and reload attempts into existing logging (backend console + live dev-server output) with clear icons, matching the current `🔌`/`🔍` style. Surface actionable errors to the UI via `DownMsg::ParsingError`.
 - [x] **Documentation pass:** Expand `docs/plugins/authoring_guide.md` with the new APIs, usage examples, and guidance on safe watcher scopes. Include manual QA steps so contributors can verify live reloads without guessing.
 
 ## Current Status (2025-10-09)
@@ -41,4 +41,4 @@
 ## Validation Plan
 - Manual: run `makers start`, load `test_files/simple.vcd`, then modify it externally and confirm tracked files flip to `Loading` → `Loaded`, selected variables remain, and the timeline redraws automatically.
 - Backend: add integration coverage that simulates a file change event and asserts `load_waveform_file` executes once per debounce window.
-- Frontend: watch `dev_server.log` for new plugin warnings/errors; ensure no stray panics when watchers vanish (e.g., directory deleted mid-run).
+- Frontend: watch the live `makers start` output for new plugin warnings/errors; ensure no stray panics when watchers vanish (e.g., directory deleted mid-run).

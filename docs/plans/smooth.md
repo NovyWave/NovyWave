@@ -86,7 +86,7 @@ These reinforce three lightweight principles for NovyWave:
 
 ## 8. Validation & Manual Acceptance
 
-- Use the maintainer dev server (`dev_server.log`) to confirm no warnings/errors after code changes.
+- Use the live `makers start` output to confirm no warnings/errors after code changes.
 - Manual smoke tests (desktop + web):
   - Hold `S` then `W` for 3 s on `simple.vcd` and verify no blank frames.
   - Drag timeline rapidly on `wave_27.fst` while watching cursor dropdowns—values should not flicker to "Loading…" unless we leave cached regions.
@@ -96,7 +96,7 @@ These reinforce three lightweight principles for NovyWave:
 
 - Backend LOD pyramid remains interesting but is not required for the current smoothness pass. Revisit only if manual tests still show stalls after Phase 1.
 - Evaluate WebGL or alternative renderers later; Canvas2D remains the target for this iteration.
-- TODO: Triage the existing `frontend` warnings (unused timeline constants, unused UI helpers) once the smoothing changes land so `dev_server.log` stays clean.
+- TODO: Triage the existing `frontend` warnings (unused timeline constants, unused UI helpers) once the smoothing changes land so the live `makers start` output stays clean.
 
 ## 10. Open Questions
 

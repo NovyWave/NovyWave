@@ -23,7 +23,7 @@ This document describes how to test that the example waveform files load correct
    makers start
    ```
 
-4. Wait for compilation to complete (check `dev_server.log`)
+4. Wait for compilation to complete in the `makers start` terminal output
 
 ## Test Files
 
@@ -145,7 +145,7 @@ raw min 0 raw max 3830000 raw range 3830000
 
 ### Prerequisites
 1. Start NovyWave: `cd .. && makers start`
-2. Wait for compilation (check `dev_server.log`)
+2. Wait for compilation in the `makers start` terminal output
 3. Open http://localhost:8082
 
 ## Expected Results

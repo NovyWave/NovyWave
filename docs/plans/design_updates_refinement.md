@@ -158,21 +158,16 @@ Five user-visible features complete the gap described in the NovyWave blog post:
 
 ## Build/Watcher Observation Policy
 
-- Maintainer-run shared processes are observed through log files:
-  - `dev_server.log`
-  - `dev_plugins.log`
-  - `dev_tauri.log`
-- Agents must treat those logs as the canonical source of compile status.
-- Agents must not switch policy to “attach directly to an already running dev server”.
-- Direct stdout watching is acceptable only for the same human who launched that interactive process and still owns that terminal session.
-- When reporting watcher state, inspect the newest relevant log chunk rather than dumping the full file.
+- Treat the live `makers start`, `makers watch_plugins`, and `makers tauri` terminal output as the canonical source of compile status.
+- If another maintainer owns the process, have them share the relevant terminal output directly instead of redirecting it to repo log files.
+- When reporting watcher state, quote only the newest relevant output lines rather than dumping the full terminal transcript.
 
 ## AI Verification Procedure
 
 Follow this sequence after implementation:
 
-1. Inspect the newest `dev_server.log` chunk and list every warning or `error[E...]` line if any exist.
-2. Inspect `dev_plugins.log` or `dev_tauri.log` too if the touched code path depends on them.
+1. Inspect the newest live `makers start` output and list every warning or `error[E...]` line if any exist.
+2. Inspect live `makers watch_plugins` or `makers tauri` output too if the touched code path depends on them.
 3. Run repository-allowed local checks for touched logic where feasible:
    - `cargo fmt --all`
    - targeted `cargo test` invocations or the workspace test command when allowed by the maintainer workflow

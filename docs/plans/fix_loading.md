@@ -7,7 +7,7 @@
    - Bar updates strictly on WorkspaceLoaded; default label “Default ([path])”. frontend/src/app.rs.
    - Only LoadConfig retries at boot; SaveConfig/UpdateWorkspaceHistory are deferred until ConfigLoaded and ignore transient errors. frontend/src/platform/web.rs, frontend/src/config.rs.
    - Open Workspace dialog: clear selection on open; recents filtered by current+default; per‑item X removes. frontend/src/app.rs, frontend/src/config.rs.
-4) Validate with the Test Plan using dev_server.log (no cargo): confirm WorkspaceLoaded and ConfigLoaded order, no early Save/History POSTs, and bar matches backend.
+4) Validate with the Test Plan using live `makers start` output (no cargo): confirm WorkspaceLoaded and ConfigLoaded order, no early Save/History POSTs, and bar matches backend.
 5) Remove temporary traces after stability.
 
 This doc reflects observations from October 22, 2025 and folds in new constraints: the backend reads `.novywave_global` at start-of-process (before any frontend request). The server is therefore the source of truth for the active workspace at boot. The frontend must not “guess” and display a different workspace than the backend actually loads.
@@ -96,7 +96,7 @@ Frontend: AFTER ConfigLoaded → SaveConfig / UpdateWorkspaceHistory (debounced,
 
 ## Minimal Log Filters
 ```
-rg -n "WorkspaceLoaded|ConfigLoaded|SelectWorkspace|UpdateWorkspaceHistory|SaveConfig" dev_server.log
+makers start 2>&1 | rg -n "WorkspaceLoaded|ConfigLoaded|SelectWorkspace|UpdateWorkspaceHistory|SaveConfig"
 ```
 
 ## Open Items

@@ -122,6 +122,5 @@ let (sender, receiver) = futures::channel::mpsc::unbounded::<Message>();
 
 ## Build Observation
 
-- For maintainer-run shared watchers, read `dev_server.log`, `dev_plugins.log`, and `dev_tauri.log`.
-- Do not assume you can attach to an already-running process stdout unless you are the one who launched it in that terminal session.
-- Treat the logs as the source of truth for compile status before declaring UI work complete.
+- Treat the live `makers start`, `makers watch_plugins`, and `makers tauri` terminal output as the source of truth for compile status before declaring UI work complete.
+- If another maintainer owns the process, have them share the relevant terminal output directly instead of relying on redirected repo log files.
