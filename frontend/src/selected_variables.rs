@@ -292,6 +292,19 @@ impl SelectedVariables {
     }
 
     pub fn set_live_row_height(&self, unique_id: &str, row_height: u32) {
+        self.set_live_row_height_internal(unique_id, row_height, true);
+    }
+
+    pub fn set_live_row_height_without_total_height(&self, unique_id: &str, row_height: u32) {
+        self.set_live_row_height_internal(unique_id, row_height, false);
+    }
+
+    fn set_live_row_height_internal(
+        &self,
+        unique_id: &str,
+        row_height: u32,
+        update_total_content_height: bool,
+    ) {
         let atom = self.ensure_row_height_atom(unique_id, row_height);
         let old_height = atom.get_cloned();
         if old_height == row_height {
@@ -299,7 +312,9 @@ impl SelectedVariables {
         }
 
         atom.set_neq(row_height);
-        self.adjust_total_content_height(unique_id, old_height, row_height);
+        if update_total_content_height {
+            self.adjust_total_content_height(unique_id, old_height, row_height);
+        }
 
         let next_seq = self.row_height_change_seq.get().saturating_add(1);
         self.row_height_change_seq.set(next_seq);

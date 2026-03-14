@@ -70,7 +70,7 @@ impl DraggingSystem {
         };
         self.row_resize_frame_scheduled.set(false);
         self.selected_variables
-            .set_live_row_height(&unique_id, row_height);
+            .set_live_row_height_without_total_height(&unique_id, row_height);
         self.debug_metrics.update_mut(|metrics| {
             metrics.applied_row_resize_count = metrics.applied_row_resize_count.saturating_add(1);
         });
