@@ -70,7 +70,7 @@ row_height = 36
 [[workspace.selected_variables]]
 unique_id = "test_files/analog.vcd|top|analog"
 signal_type = "Real"
-row_height = 64
+row_height = 70
 
 [workspace.selected_variables.analog_limits]
 auto = true
@@ -78,15 +78,15 @@ min = 0.0
 max = 0.0
 
 [workspace.timeline]
-cursor_position_ps = 29117
+cursor_position_ps = 12797
 visible_range_start_ps = 0
-visible_range_end_ps = 61267
-zoom_center_ps = 45379
+visible_range_end_ps = 46728
+zoom_center_ps = 36370
 tooltip_enabled = true
 
 [[workspace.timeline.markers]]
 time_ps = 22118
-name = "Marker 1rdg"
+name = "Marker 1"
 
 [plugins]
 schema_version = 1

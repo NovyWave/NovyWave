@@ -2421,7 +2421,11 @@ impl WaveformTimeline {
         let target_ns = target_time.picoseconds() / PS_PER_NS;
 
         let value = Self::cursor_value_from_transitions(series.transitions.as_ref(), target_ns);
-        let formatted_value = value.get_formatted(&series.formatter);
+        let formatted_value = crate::format_selection::format_signal_value_for_display(
+            &value,
+            series.signal_type.as_deref(),
+            series.formatter,
+        );
         let variable_label = Self::tooltip_label_from_unique_id(&series.unique_id);
         let time_label = format!("{}", target_time);
 

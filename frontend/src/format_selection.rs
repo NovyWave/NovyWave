@@ -62,6 +62,50 @@ fn special_state_tooltip(value: &SignalValue) -> Option<&'static str> {
     }
 }
 
+pub fn is_real_signal_type(signal_type: Option<&str>) -> bool {
+    signal_type == Some("Real")
+}
+
+pub fn format_analog_signal_value(value: &SignalValue) -> String {
+    match value {
+        SignalValue::Present(raw) => format_numeric_label(raw.trim().parse::<f64>().ok()),
+        SignalValue::Missing => "N/A".to_string(),
+        SignalValue::Loading => "Loading...".to_string(),
+    }
+}
+
+pub fn format_signal_value_for_display(
+    signal_value: &SignalValue,
+    signal_type: Option<&str>,
+    format: VarFormat,
+) -> String {
+    if is_real_signal_type(signal_type) {
+        format_analog_signal_value(signal_value)
+    } else {
+        signal_value.get_formatted(&format)
+    }
+}
+
+pub(crate) fn format_numeric_label(value: Option<f64>) -> String {
+    match value {
+        Some(value) if value.is_finite() => {
+            let mut text = format!("{value:.6}");
+            while text.contains('.') && text.ends_with('0') {
+                text.pop();
+            }
+            if text.ends_with('.') {
+                text.pop();
+            }
+            if text.is_empty() {
+                "0".to_string()
+            } else {
+                text
+            }
+        }
+        _ => "-".to_string(),
+    }
+}
+
 /// Format options for dropdown - contains value and disabled state
 #[derive(Debug, Clone)]
 pub struct DropdownFormatOption {

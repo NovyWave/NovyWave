@@ -12,7 +12,7 @@ use crate::dragging::{variables_name_column_width_signal, variables_value_column
 use crate::visualizer::timeline::TimePerPixel;
 use moonzoon_novyui::components::input::{InputSize, input};
 use moonzoon_novyui::components::{KbdSize, KbdVariant, kbd};
-use moonzoon_novyui::tokens::color::{neutral_8, neutral_11};
+use moonzoon_novyui::tokens::color::{neutral_2, neutral_4, neutral_8, neutral_11};
 use moonzoon_novyui::*;
 use shared::{AnalogLimits, SelectedVariable, SignalValue, TrackedFile, VarFormat};
 use std::rc::Rc;
@@ -1208,7 +1208,7 @@ fn analog_visible_span_width_px(
 
 fn analog_value_row(
     selected_var: SelectedVariable,
-    selected_variables: crate::selected_variables::SelectedVariables,
+    _selected_variables: crate::selected_variables::SelectedVariables,
     waveform_timeline: crate::visualizer::timeline::timeline_actor::WaveformTimeline,
     tracked_files: crate::tracked_files::TrackedFiles,
     app_config: crate::config::AppConfig,
@@ -1225,6 +1225,7 @@ fn analog_value_row(
         analog_compressed_zoom_hint_signal(unique_id.clone(), waveform_timeline.clone());
     let latest_value = Mutable::new(SignalValue::Loading);
     let app_config_for_copy = app_config.clone();
+    let range_label = if limits.auto { "Auto" } else { "Manual" };
 
     Column::new()
         .s(Width::fill())
@@ -1237,82 +1238,115 @@ fn analog_value_row(
                 .s(Gap::new().x(SPACING_6))
                 .item(
                     El::new()
-                        .s(Font::new()
-                            .size(13)
-                            .weight(FontWeight::SemiBold)
-                            .color_signal(neutral_11()))
                         .s(Width::growable())
-                        .child_signal(waveform_timeline.cursor_values_actor().signal_cloned().map(
-                            {
-                                let latest_value = latest_value.clone();
-                                move |values| {
-                                    let value = values
-                                        .get(&unique_id_for_value)
-                                        .cloned()
-                                        .unwrap_or(SignalValue::Loading);
-                                    latest_value.set(value.clone());
-                                    format_analog_signal_value(value)
-                                }
-                            },
-                        )),
+                        .s(Height::exact(24))
+                        .s(Background::new().color_signal(neutral_2()))
+                        .s(Borders::all_signal(
+                            neutral_4().map(|color| Border::new().width(1).color(color)),
+                        ))
+                        .s(RoundedCorners::all(4))
+                        .child(
+                            Row::new()
+                                .s(Width::fill())
+                                .s(Height::fill())
+                                .s(Align::new().center_y())
+                                .s(Padding::new().x(SPACING_6))
+                                .s(Gap::new().x(SPACING_6))
+                                .item(
+                                    El::new()
+                                        .s(Width::growable())
+                                        .s(Font::new().size(13).no_wrap().color_signal(
+                                            waveform_timeline
+                                                .cursor_values_actor()
+                                                .signal_cloned()
+                                                .map({
+                                                    let unique_id_for_color =
+                                                        unique_id_for_value.clone();
+                                                    move |values| {
+                                                        values
+                                                            .get(&unique_id_for_color)
+                                                            .cloned()
+                                                            .map(|value| {
+                                                                matches!(
+                                                                    value,
+                                                                    SignalValue::Loading
+                                                                        | SignalValue::Missing
+                                                                )
+                                                            })
+                                                            .unwrap_or(true)
+                                                    }
+                                                })
+                                                .map_bool_signal(|| neutral_8(), || neutral_11()),
+                                        ))
+                                        .child_signal(
+                                            waveform_timeline
+                                                .cursor_values_actor()
+                                                .signal_cloned()
+                                                .map({
+                                                    let latest_value = latest_value.clone();
+                                                    move |values| {
+                                                        let value = values
+                                                            .get(&unique_id_for_value)
+                                                            .cloned()
+                                                            .unwrap_or(SignalValue::Loading);
+                                                        latest_value.set(value.clone());
+                                                        crate::format_selection::format_analog_signal_value(
+                                                            &value,
+                                                        )
+                                                    }
+                                                })
+                                                .map(Text::new),
+                                        ),
+                                )
+                                .item(
+                                    El::new()
+                                        .update_raw_el(|raw_el| {
+                                            raw_el.attr("title", "Copy value to clipboard")
+                                        })
+                                        .child(
+                                            button()
+                                                .variant(ButtonVariant::Ghost)
+                                                .size(ButtonSize::Small)
+                                                .left_icon(IconName::Copy)
+                                                .custom_padding(4, 4)
+                                                .on_press({
+                                                    let latest_value = latest_value.clone();
+                                                    let app_config = app_config_for_copy.clone();
+                                                    move || {
+                                                        let formatted = crate::format_selection::format_analog_signal_value(
+                                                            &latest_value.get_cloned(),
+                                                        );
+                                                        crate::clipboard::copy_variable_value(
+                                                            &formatted,
+                                                            &app_config,
+                                                        );
+                                                    }
+                                                })
+                                                .build(),
+                                        ),
+                                ),
+                        ),
                 )
                 .item(
-                    button()
-                        .variant(ButtonVariant::Ghost)
-                        .size(ButtonSize::Small)
-                        .left_icon(IconName::Copy)
-                        .custom_padding(4, 4)
-                        .on_press({
-                            let latest_value = latest_value.clone();
-                            let app_config = app_config_for_copy.clone();
-                            move || {
-                                let formatted =
-                                    format_analog_signal_value(latest_value.get_cloned());
-                                crate::clipboard::copy_variable_value(&formatted, &app_config);
-                            }
+                    El::new()
+                        .update_raw_el(|raw_el| {
+                            raw_el.attr("title", "Open analog range settings")
                         })
-                        .build(),
-                )
-                .item_signal(always(!limits.auto).map(move |show_auto| {
-                    if show_auto {
-                        Some(
+                        .child(
                             button()
-                                .label("Auto")
-                                .variant(ButtonVariant::Ghost)
+                                .label(range_label)
+                                .variant(ButtonVariant::Outline)
                                 .size(ButtonSize::Small)
                                 .on_press({
-                                    let selected_variables = selected_variables.clone();
-                                    let unique_id = unique_id.clone();
-                                    let app_config = app_config.clone();
+                                    let dialog = analog_dialog.clone();
+                                    let selected_var = selected_var.clone();
                                     move || {
-                                        let next_limits = Some(AnalogLimits::auto());
-                                        selected_variables
-                                            .update_analog_limits(&unique_id, next_limits.clone());
-                                        app_config
-                                            .update_variable_analog_limits(&unique_id, next_limits);
+                                        populate_analog_dialog(&dialog, &selected_var);
+                                        dialog.visible.set(true);
                                     }
                                 })
-                                .build()
-                                .into_raw(),
-                        )
-                    } else {
-                        None
-                    }
-                }))
-                .item(
-                    button()
-                        .label(if limits.auto { "Manual" } else { "Edit" })
-                        .variant(ButtonVariant::Ghost)
-                        .size(ButtonSize::Small)
-                        .on_press({
-                            let dialog = analog_dialog.clone();
-                            let selected_var = selected_var.clone();
-                            move || {
-                                populate_analog_dialog(&dialog, &selected_var);
-                                dialog.visible.set(true);
-                            }
-                        })
-                        .build(),
+                                .build(),
+                        ),
                 ),
         )
         .item_signal(hint_signal.map(|hint| {
@@ -1323,34 +1357,6 @@ fn analog_value_row(
                     .into_raw()
             })
         }))
-}
-
-fn format_analog_signal_value(value: SignalValue) -> String {
-    match value {
-        SignalValue::Present(raw) => format_numeric_label(raw.trim().parse::<f64>().ok()),
-        SignalValue::Missing => "N/A".to_string(),
-        SignalValue::Loading => "Loading...".to_string(),
-    }
-}
-
-fn format_numeric_label(value: Option<f64>) -> String {
-    match value {
-        Some(value) if value.is_finite() => {
-            let mut text = format!("{value:.6}");
-            while text.contains('.') && text.ends_with('0') {
-                text.pop();
-            }
-            if text.ends_with('.') {
-                text.pop();
-            }
-            if text.is_empty() {
-                "0".to_string()
-            } else {
-                text
-            }
-        }
-        _ => "-".to_string(),
-    }
 }
 
 fn populate_analog_dialog(dialog: &AnalogLimitsDialogState, selected_var: &SelectedVariable) {
@@ -1369,12 +1375,12 @@ fn populate_analog_dialog(dialog: &AnalogLimitsDialogState, selected_var: &Selec
     dialog.min_input.set(if limits.auto {
         String::new()
     } else {
-        format_numeric_label(Some(limits.min))
+        crate::format_selection::format_numeric_label(Some(limits.min))
     });
     dialog.max_input.set(if limits.auto {
         String::new()
     } else {
-        format_numeric_label(Some(limits.max))
+        crate::format_selection::format_numeric_label(Some(limits.max))
     });
 }
 
