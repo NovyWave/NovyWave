@@ -1,6 +1,7 @@
 use crate::dragging::DraggingSystem;
 use crate::selected_variables::SelectedVariables;
 use crate::tracked_files::TrackedFiles;
+use crate::visualizer::canvas::rendering::canvas_render_debug_snapshot;
 use crate::visualizer::timeline::TimePs;
 use crate::visualizer::timeline::timeline_actor::WaveformTimeline;
 use shared::AnalogLimits;
@@ -147,6 +148,16 @@ pub fn expose_novywave_test_api() {
     )
     .ok();
     get_perf_counters_closure.forget();
+
+    let get_canvas_render_debug_closure =
+        Closure::wrap(Box::new(get_canvas_render_debug_impl) as Box<dyn Fn() -> JsValue>);
+    js_sys::Reflect::set(
+        &api,
+        &"getCanvasRenderDebug".into(),
+        get_canvas_render_debug_closure.as_ref().unchecked_ref(),
+    )
+    .ok();
+    get_canvas_render_debug_closure.forget();
 
     let reset_perf_counters_closure =
         Closure::wrap(Box::new(reset_perf_counters_impl) as Box<dyn Fn() -> bool>);
@@ -865,6 +876,84 @@ fn get_perf_counters_impl() -> JsValue {
         obj.into()
     })
     .unwrap_or(JsValue::NULL)
+}
+
+fn get_canvas_render_debug_impl() -> JsValue {
+    let debug = canvas_render_debug_snapshot();
+    let obj = js_sys::Object::new();
+    js_sys::Reflect::set(
+        &obj,
+        &"hadCanvas".into(),
+        &JsValue::from_bool(debug.had_canvas),
+    )
+    .ok();
+    js_sys::Reflect::set(
+        &obj,
+        &"canvasWidth".into(),
+        &JsValue::from_f64(debug.canvas_width as f64),
+    )
+    .ok();
+    js_sys::Reflect::set(
+        &obj,
+        &"canvasHeight".into(),
+        &JsValue::from_f64(debug.canvas_height as f64),
+    )
+    .ok();
+    js_sys::Reflect::set(
+        &obj,
+        &"viewportStartPs".into(),
+        &JsValue::from_f64(debug.viewport_start_ps as f64),
+    )
+    .ok();
+    js_sys::Reflect::set(
+        &obj,
+        &"viewportEndPs".into(),
+        &JsValue::from_f64(debug.viewport_end_ps as f64),
+    )
+    .ok();
+    js_sys::Reflect::set(
+        &obj,
+        &"rowsLen".into(),
+        &JsValue::from_f64(debug.rows_len as f64),
+    )
+    .ok();
+    js_sys::Reflect::set(
+        &obj,
+        &"markersLen".into(),
+        &JsValue::from_f64(debug.markers_len as f64),
+    )
+    .ok();
+    js_sys::Reflect::set(
+        &obj,
+        &"staticChanged".into(),
+        &JsValue::from_bool(debug.static_changed),
+    )
+    .ok();
+    js_sys::Reflect::set(
+        &obj,
+        &"staticCount".into(),
+        &JsValue::from_f64(debug.static_count as f64),
+    )
+    .ok();
+    js_sys::Reflect::set(
+        &obj,
+        &"overlayCount".into(),
+        &JsValue::from_f64(debug.overlay_count as f64),
+    )
+    .ok();
+    js_sys::Reflect::set(
+        &obj,
+        &"totalObjects".into(),
+        &JsValue::from_f64(debug.total_objects as f64),
+    )
+    .ok();
+    js_sys::Reflect::set(
+        &obj,
+        &"staticSkipReason".into(),
+        &debug.static_skip_reason.unwrap_or("").into(),
+    )
+    .ok();
+    obj.into()
 }
 
 fn reset_perf_counters_impl() -> bool {

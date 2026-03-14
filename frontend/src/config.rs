@@ -518,6 +518,7 @@ pub struct AppConfig {
     value_column_width_right_state: Mutable<f32>,
 
     pub selected_variables_snapshot: Mutable<Vec<shared::SelectedVariable>>,
+    pub divider_drag_in_progress: Mutable<bool>,
     pub row_resize_in_progress: Mutable<bool>,
     pub debug_metrics: Mutable<ConfigDebugMetrics>,
     pub restore_phase: Mutable<RestorePhase>,
@@ -563,6 +564,10 @@ impl AppConfig {
 
     pub fn set_row_resize_in_progress(&self, in_progress: bool) {
         self.row_resize_in_progress.set_neq(in_progress);
+    }
+
+    pub fn set_divider_drag_in_progress(&self, in_progress: bool) {
+        self.divider_drag_in_progress.set_neq(in_progress);
     }
 
     pub fn update_variable_analog_limits(
@@ -873,6 +878,7 @@ impl AppConfig {
         // Track SelectedVariables changes - snapshot for config saves
         // Config save is handled automatically by the pure signal debouncer
         let selected_variables_snapshot = Mutable::new(Vec::<shared::SelectedVariable>::new());
+        let divider_drag_in_progress = Mutable::new(false);
         let row_resize_in_progress = Mutable::new(false);
         let debug_metrics = Mutable::new(ConfigDebugMetrics::default());
         let restore_phase = Mutable::new(RestorePhase::Inactive);
@@ -911,6 +917,7 @@ impl AppConfig {
             let timeline_state_clone = timeline_state.clone();
             let file_picker_domain_clone = file_picker_domain.clone();
             let selected_variables_snapshot_clone = selected_variables_snapshot.clone();
+            let divider_drag_in_progress_clone = divider_drag_in_progress.clone();
             let row_resize_in_progress_clone = row_resize_in_progress.clone();
             let config_loaded_flag_for_saver = config_loaded_flag.clone();
             let restore_phase_clone = restore_phase.clone();
@@ -949,6 +956,7 @@ impl AppConfig {
             let plugins_for_signal = plugins_state.clone();
             let workspace_history_for_signal = workspace_history_state.clone();
             let selected_vars_for_signal = selected_variables_snapshot.clone();
+            let divider_drag_for_signal = divider_drag_in_progress.clone();
             let row_resize_for_signal = row_resize_in_progress.clone();
             let restore_phase_for_signal = restore_phase.clone();
             let files_expanded_for_signal = files_expanded_scopes.clone();
@@ -978,6 +986,7 @@ impl AppConfig {
                     let _ = plugins_for_signal.signal_cloned(),
                     let _ = workspace_history_for_signal.signal_cloned(),
                     let _ = selected_vars_for_signal.signal_cloned(),
+                    let _ = divider_drag_for_signal.signal(),
                     let _ = row_resize_for_signal.signal(),
                     let _ = restore_phase_for_signal.signal_cloned(),
                     let _ = files_expanded_for_signal.signal_cloned(),
@@ -1026,6 +1035,7 @@ impl AppConfig {
                                             if config_ready
                                                 && crate::platform::server_is_ready()
                                                 && restore_phase_clone.get_cloned() == RestorePhase::Active
+                                                && !divider_drag_in_progress_clone.get_cloned()
                                                 && !row_resize_in_progress_clone.get_cloned()
                                             {
                                                 if let Some(shared_config) = compose_shared_app_config(
@@ -1098,6 +1108,11 @@ impl AppConfig {
                                         _ = zoon::Timer::sleep(300).fuse() => {
                                             if config_ready && crate::platform::server_is_ready() {
                                                 if restore_phase_clone.get_cloned() != RestorePhase::Active {
+                                                    break;
+                                                }
+                                                if divider_drag_in_progress_clone.get_cloned()
+                                                    || row_resize_in_progress_clone.get_cloned()
+                                                {
                                                     break;
                                                 }
                                                 if let Some(shared_config) = compose_shared_app_config(
@@ -1238,6 +1253,7 @@ impl AppConfig {
             value_column_width_bottom_state,
             value_column_width_right_state,
             selected_variables_snapshot,
+            divider_drag_in_progress,
             row_resize_in_progress,
             debug_metrics,
             restore_phase,

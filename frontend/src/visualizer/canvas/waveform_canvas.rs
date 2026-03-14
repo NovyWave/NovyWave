@@ -29,6 +29,7 @@ pub struct WaveformCanvas {
     canvas_backing_width: Mutable<u32>,
     canvas_backing_height: Mutable<u32>,
     canvas_ready: Mutable<bool>,
+    canvas_instance_version: Mutable<u64>,
 }
 
 impl WaveformCanvas {
@@ -41,6 +42,7 @@ impl WaveformCanvas {
         let canvas_backing_width = Mutable::new(1_u32);
         let canvas_backing_height = Mutable::new(1_u32);
         let canvas_ready = Mutable::new(false);
+        let canvas_instance_version = Mutable::new(0_u64);
 
         let canvas_task = Arc::new(Task::start_droppable({
             let render_state_store = render_state_store.clone();
@@ -48,6 +50,7 @@ impl WaveformCanvas {
             let canvas_element_store_task = canvas_element_store.clone();
             let canvas_dimensions_task = canvas_dimensions.clone();
             let canvas_ready_task = canvas_ready.clone();
+            let canvas_instance_version_task = canvas_instance_version.clone();
             let initialization_status_task = initialization_status.clone();
             let timeline = waveform_timeline.clone();
             let app_config_task = app_config.clone();
@@ -56,8 +59,8 @@ impl WaveformCanvas {
                 let mut active_theme = current_theme_store.get_cloned();
                 let mut cached_dimensions = (0.0f32, 0.0f32);
                 let mut last_observed_dimensions: Option<(f32, f32)> = None;
-                let mut row_resize_active = app_config_task.row_resize_in_progress.get_cloned();
-                let mut frame_deferred_for_row_resize = false;
+                let mut divider_drag_active = app_config_task.divider_drag_in_progress.get_cloned();
+                let mut frame_deferred_for_divider_drag = false;
                 let frame_tick = Mutable::new(0_u64);
                 let frame_pending = Rc::new(Cell::new(false));
                 let schedule_frame: Rc<dyn Fn()> = {
@@ -99,20 +102,26 @@ impl WaveformCanvas {
                     canvas_dimensions_task.signal().dedupe().to_stream().fuse();
                 let mut canvas_ready_stream =
                     canvas_ready_task.signal().dedupe().to_stream().fuse();
-                let mut row_resize_stream = app_config_task
-                    .row_resize_in_progress
+                let mut divider_drag_stream = app_config_task
+                    .divider_drag_in_progress
                     .signal()
                     .dedupe()
                     .to_stream()
+                    .fuse();
+                let mut canvas_instance_stream = canvas_instance_version_task
+                    .signal()
+                    .dedupe()
+                    .to_stream()
+                    .skip(1)
                     .fuse();
                 let mut frame_stream = frame_tick.signal().to_stream().skip(1).fuse();
 
                 loop {
                     select! {
-                        row_resize_change = row_resize_stream.next() => {
-                            if let Some(is_active) = row_resize_change {
-                                row_resize_active = is_active;
-                                if !row_resize_active && frame_deferred_for_row_resize {
+                        divider_drag_change = divider_drag_stream.next() => {
+                            if let Some(is_active) = divider_drag_change {
+                                divider_drag_active = is_active;
+                                if !divider_drag_active && frame_deferred_for_divider_drag {
                                     if cached_dimensions.0 > 0.0 && cached_dimensions.1 > 0.0 {
                                         timeline.set_canvas_dimensions(
                                             cached_dimensions.0,
@@ -126,9 +135,22 @@ impl WaveformCanvas {
                                             render_state_store.set(Some(render_state));
                                         }
                                     }
-                                    frame_deferred_for_row_resize = false;
+                                    frame_deferred_for_divider_drag = false;
                                     schedule_frame();
                                 }
+                            }
+                        }
+                        canvas_instance_change = canvas_instance_stream.next() => {
+                            if canvas_instance_change.is_some() {
+                                renderer = None;
+                                initialization_status_task.set_neq(false);
+                                if let Some(canvas_element) = canvas_element_store_task.get_cloned() {
+                                    if let Some((width, height)) = Self::measure_canvas_element(&canvas_element) {
+                                        canvas_dimensions_task.set_neq((width, height));
+                                        cached_dimensions = (width, height);
+                                    }
+                                }
+                                schedule_frame();
                             }
                         }
                         canvas_is_ready = canvas_ready_stream.next() => {
@@ -139,8 +161,8 @@ impl WaveformCanvas {
                                         timeline.set_canvas_dimensions(width, height);
                                         cached_dimensions = (width, height);
                                     }
-                                    if row_resize_active {
-                                        frame_deferred_for_row_resize = true;
+                                    if divider_drag_active {
+                                        frame_deferred_for_divider_drag = true;
                                     } else {
                                         schedule_frame();
                                     }
@@ -150,13 +172,13 @@ impl WaveformCanvas {
                         dimensions_change = dimensions_stream.next() => {
                             if let Some((width, height)) = dimensions_change {
                                 let observed = (width, height);
-                                if row_resize_active {
+                                if divider_drag_active {
                                     cached_dimensions = if width > 0.0 && height > 0.0 {
                                         observed
                                     } else {
                                         (0.0, 0.0)
                                     };
-                                    frame_deferred_for_row_resize = true;
+                                    frame_deferred_for_divider_drag = true;
                                     continue;
                                 }
                                 if last_observed_dimensions != Some(observed) {
@@ -176,8 +198,8 @@ impl WaveformCanvas {
                                         // previous size still triggers a repaint.
                                         cached_dimensions = (0.0, 0.0);
                                     }
-                                    if row_resize_active {
-                                        frame_deferred_for_row_resize = true;
+                                    if divider_drag_active {
+                                        frame_deferred_for_divider_drag = true;
                                     } else {
                                         schedule_frame();
                                     }
@@ -188,8 +210,8 @@ impl WaveformCanvas {
                             if let Some(theme) = theme_change {
                                 active_theme = theme;
                                 current_theme_store.set(theme);
-                                if row_resize_active {
-                                    frame_deferred_for_row_resize = true;
+                                if divider_drag_active {
+                                    frame_deferred_for_divider_drag = true;
                                 } else {
                                     schedule_frame();
                                 }
@@ -208,8 +230,8 @@ impl WaveformCanvas {
                                     measured_dimensions,
                                 );
                                 render_state_store.set(Some(render_state.clone()));
-                                if row_resize_active {
-                                    frame_deferred_for_row_resize = true;
+                                if divider_drag_active {
+                                    frame_deferred_for_divider_drag = true;
                                 } else {
                                     schedule_frame();
                                 }
@@ -261,6 +283,7 @@ impl WaveformCanvas {
             canvas_backing_width,
             canvas_backing_height,
             canvas_ready,
+            canvas_instance_version,
         }
     }
 
@@ -369,6 +392,7 @@ pub fn waveform_canvas(
     let timeline_for_leave = waveform_timeline.clone();
     let canvas_element_store = waveform_canvas.canvas_element_store.clone();
     let canvas_element_store_for_insert = canvas_element_store.clone();
+    let canvas_instance_version = waveform_canvas.canvas_instance_version.clone();
     let canvas_backing_width = waveform_canvas.canvas_backing_width.clone();
     let canvas_backing_height = waveform_canvas.canvas_backing_height.clone();
 
@@ -484,12 +508,22 @@ pub fn waveform_canvas(
         .after_insert({
             let canvas_element_store = canvas_element_store_for_insert.clone();
             let canvas_ref = canvas_ref.clone();
+            let canvas_instance_version = canvas_instance_version.clone();
             move |canvas: HtmlCanvasElement| {
                 if let Some((width, height)) = WaveformCanvas::measure_canvas_element(&canvas) {
                     canvas_ref.notify_dimensions(width, height);
                 }
                 canvas_element_store.set(Some(canvas));
+                canvas_instance_version.update_mut(|version| {
+                    *version = version.saturating_add(1);
+                });
                 canvas_ref.notify_canvas_ready();
+            }
+        })
+        .after_remove({
+            let canvas_element_store = canvas_element_store.clone();
+            move |_| {
+                canvas_element_store.set(None);
             }
         })
         .unify();

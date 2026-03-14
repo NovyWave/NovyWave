@@ -35,7 +35,7 @@ load_files_expanded_directories = [
     "/home/martinkavik/Desktop",
     "/home/martinkavik/Downloads",
 ]
-selected_scope_id = "scope_test_files/simple_reload_test.vcd|simple_tb.s"
+selected_scope_id = "scope_test_files/analog.vcd|top"
 load_files_scroll_position = 507
 signal_groups = []
 
@@ -63,13 +63,14 @@ row_height = 24
 
 [[workspace.selected_variables]]
 unique_id = "test_files/simple_reload_test.vcd|simple_tb.s|C"
+formatter = "Hexadecimal"
 signal_type = "Wire"
-row_height = 24
+row_height = 36
 
 [[workspace.selected_variables]]
 unique_id = "test_files/analog.vcd|top|analog"
 signal_type = "Real"
-row_height = 128
+row_height = 64
 
 [workspace.selected_variables.analog_limits]
 auto = true
@@ -77,43 +78,15 @@ min = 0.0
 max = 0.0
 
 [workspace.timeline]
-cursor_position_ps = 125000000000000
+cursor_position_ps = 29117
 visible_range_start_ps = 0
-visible_range_end_ps = 250000000000000
-zoom_center_ps = 114073426573427
+visible_range_end_ps = 61267
+zoom_center_ps = 45379
 tooltip_enabled = true
 
 [[workspace.timeline.markers]]
-time_ps = 49938347718866
-name = "Marker 1"
-
-[[workspace.timeline.markers]]
-time_ps = 95000000000000
-name = "Marker 2"
-
-[[workspace.timeline.markers]]
-time_ps = 175000000000000
-name = "Marker 3"
-
-[[workspace.timeline.markers]]
-time_ps = 0
-name = "Marker 4 grgr"
-
-[[workspace.timeline.markers]]
-time_ps = 138333333333333
-name = "Marker 5"
-
-[[workspace.timeline.markers]]
-time_ps = 187500000000000
-name = "Marker 6"
-
-[[workspace.timeline.markers]]
-time_ps = 0
-name = "Marker 7"
-
-[[workspace.timeline.markers]]
-time_ps = 120000000000000
-name = "Marker X"
+time_ps = 22118
+name = "Marker 1rdg"
 
 [plugins]
 schema_version = 1

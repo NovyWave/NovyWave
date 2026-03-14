@@ -43,6 +43,8 @@ pub struct DraggingSystem {
     drag_state: Mutable<DragState>,
     app_config: crate::config::AppConfig,
     selected_variables: crate::selected_variables::SelectedVariables,
+    pending_divider_resize: Mutable<Option<(DividerType, f32)>>,
+    divider_resize_frame_scheduled: Mutable<bool>,
     pending_row_resize: Mutable<Option<(String, u32)>>,
     row_resize_frame_scheduled: Mutable<bool>,
     debug_metrics: Mutable<DraggingDebugMetrics>,
@@ -57,10 +59,68 @@ impl DraggingSystem {
             drag_state: Mutable::new(DragState::default()),
             app_config,
             selected_variables,
+            pending_divider_resize: Mutable::new(None),
+            divider_resize_frame_scheduled: Mutable::new(false),
             pending_row_resize: Mutable::new(None),
             row_resize_frame_scheduled: Mutable::new(false),
             debug_metrics: Mutable::new(DraggingDebugMetrics::default()),
         }
+    }
+
+    fn apply_pending_divider_resize(&self) {
+        let Some((divider_type, value)) = self.pending_divider_resize.take() else {
+            self.divider_resize_frame_scheduled.set(false);
+            return;
+        };
+        self.divider_resize_frame_scheduled.set(false);
+        let dock_mode = self.app_config.dock_mode.get_cloned();
+        match (divider_type, dock_mode) {
+            (DividerType::FilesPanelMain, DockMode::Right) => {
+                self.app_config.files_panel_width_right.set_neq(value);
+            }
+            (DividerType::FilesPanelMain, DockMode::Bottom) => {
+                self.app_config.files_panel_width_bottom.set_neq(value);
+            }
+            (DividerType::FilesPanelSecondary, DockMode::Right) => {
+                self.app_config.files_panel_height_right.set_neq(value);
+            }
+            (DividerType::FilesPanelSecondary, DockMode::Bottom) => {
+                self.app_config.files_panel_height_bottom.set_neq(value);
+            }
+            (DividerType::VariablesNameColumn, _) => {
+                self.app_config.variables_name_column_width.set_neq(value);
+            }
+            (DividerType::VariablesValueColumn, _) => {
+                self.app_config.variables_value_column_width.set_neq(value);
+            }
+            (DividerType::SignalRowDivider { .. }, _) => {}
+        }
+    }
+
+    fn schedule_divider_resize_frame(&self, divider_type: DividerType, value: f32) {
+        self.pending_divider_resize.set(Some((divider_type, value)));
+
+        if self.divider_resize_frame_scheduled.get_cloned() {
+            return;
+        }
+
+        self.divider_resize_frame_scheduled.set(true);
+        let system = self.clone();
+        let callback = Closure::once(move || {
+            system.apply_pending_divider_resize();
+        });
+
+        if let Some(window) = web_sys::window() {
+            if window
+                .request_animation_frame(callback.as_ref().unchecked_ref())
+                .is_ok()
+            {
+                callback.forget();
+                return;
+            }
+        }
+
+        self.apply_pending_divider_resize();
     }
 
     fn apply_pending_row_resize(&self) {
@@ -105,6 +165,8 @@ impl DraggingSystem {
 
     pub fn start_drag(&self, divider_type: DividerType, start_position: (f32, f32)) {
         let dock_mode = self.app_config.dock_mode.get_cloned();
+
+        self.app_config.set_divider_drag_in_progress(true);
 
         if matches!(divider_type, DividerType::SignalRowDivider { .. }) {
             self.app_config.set_row_resize_in_progress(true);
@@ -195,26 +257,22 @@ impl DraggingSystem {
             if delta.abs() > 1.0 {
                 match (divider_type, dock_mode) {
                     (DividerType::FilesPanelMain, DockMode::Right) => {
-                        self.app_config.files_panel_width_right.set_neq(new_value);
+                        self.schedule_divider_resize_frame(divider_type.clone(), new_value);
                     }
                     (DividerType::FilesPanelMain, DockMode::Bottom) => {
-                        self.app_config.files_panel_width_bottom.set_neq(new_value);
+                        self.schedule_divider_resize_frame(divider_type.clone(), new_value);
                     }
                     (DividerType::FilesPanelSecondary, DockMode::Right) => {
-                        self.app_config.files_panel_height_right.set_neq(new_value);
+                        self.schedule_divider_resize_frame(divider_type.clone(), new_value);
                     }
                     (DividerType::FilesPanelSecondary, DockMode::Bottom) => {
-                        self.app_config.files_panel_height_bottom.set_neq(new_value);
+                        self.schedule_divider_resize_frame(divider_type.clone(), new_value);
                     }
                     (DividerType::VariablesNameColumn, _) => {
-                        self.app_config
-                            .variables_name_column_width
-                            .set_neq(new_value);
+                        self.schedule_divider_resize_frame(divider_type.clone(), new_value);
                     }
                     (DividerType::VariablesValueColumn, _) => {
-                        self.app_config
-                            .variables_value_column_width
-                            .set_neq(new_value);
+                        self.schedule_divider_resize_frame(divider_type.clone(), new_value);
                     }
                     (DividerType::SignalRowDivider { unique_id }, _) => {
                         self.debug_metrics.update_mut(|metrics| {
@@ -228,6 +286,7 @@ impl DraggingSystem {
     }
 
     pub fn end_drag(&self) {
+        self.apply_pending_divider_resize();
         if let Some(DividerType::SignalRowDivider { unique_id }) =
             self.drag_state.get_cloned().active_divider
         {
@@ -244,6 +303,8 @@ impl DraggingSystem {
                 .set_live_row_height(&unique_id, final_row_height);
             self.selected_variables.commit_live_row_height(&unique_id);
         }
+        self.app_config.set_divider_drag_in_progress(false);
+        self.divider_resize_frame_scheduled.set(false);
         self.drag_state.set(DragState::default());
     }
 

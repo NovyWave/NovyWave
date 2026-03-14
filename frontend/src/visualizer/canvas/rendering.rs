@@ -2,6 +2,7 @@ use crate::visualizer::timeline::time_domain::{PS_PER_MS, PS_PER_NS, PS_PER_SECO
 use fast2d::{CanvasWrapper as Fast2DCanvas, Family, Line, Object2d, Rectangle, Text};
 use moonzoon_novyui::tokens::theme::Theme as NovyUITheme;
 use shared::{AnalogLimits, SignalTransition, SignalValue, VarFormat};
+use std::cell::RefCell;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
@@ -51,6 +52,31 @@ enum SignalState {
     Unknown,
     Uninitialized,
     Missing,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct CanvasRenderDebug {
+    pub had_canvas: bool,
+    pub canvas_width: u32,
+    pub canvas_height: u32,
+    pub viewport_start_ps: u64,
+    pub viewport_end_ps: u64,
+    pub rows_len: usize,
+    pub markers_len: usize,
+    pub static_changed: bool,
+    pub static_count: usize,
+    pub overlay_count: usize,
+    pub total_objects: usize,
+    pub static_skip_reason: Option<&'static str>,
+}
+
+thread_local! {
+    static CANVAS_RENDER_DEBUG: RefCell<CanvasRenderDebug> =
+        RefCell::new(CanvasRenderDebug::default());
+}
+
+pub fn canvas_render_debug_snapshot() -> CanvasRenderDebug {
+    CANVAS_RENDER_DEBUG.with(|debug| debug.borrow().clone())
 }
 
 #[derive(Clone, Debug)]
@@ -244,6 +270,7 @@ impl WaveformRenderer {
         if let Some(canvas) = &mut self.canvas {
             let start_time = Self::get_current_time_ms();
             let theme_colors = Self::get_theme_colors(params.theme);
+            let static_skip_reason = Self::static_skip_reason(&params);
             let overlay_objects = Self::build_overlay_objects(&params, &theme_colors);
 
             let mut state = self.rendering_state.lock_mut();
@@ -294,6 +321,22 @@ impl WaveformRenderer {
                 objects_rendered,
                 rendering_time_ms: render_time,
             });
+            CANVAS_RENDER_DEBUG.with(|debug| {
+                *debug.borrow_mut() = CanvasRenderDebug {
+                    had_canvas: true,
+                    canvas_width: params.canvas_width,
+                    canvas_height: params.canvas_height,
+                    viewport_start_ps: params.viewport_start_ps,
+                    viewport_end_ps: params.viewport_end_ps,
+                    rows_len: params.rows.len(),
+                    markers_len: params.markers.len(),
+                    static_changed,
+                    static_count,
+                    overlay_count: overlay_objects.len(),
+                    total_objects: objects_rendered,
+                    static_skip_reason,
+                };
+            });
             if render_time > 80.0 {
                 zoon::println!(
                     "⚠️ Waveform render took {:.1}ms (threshold 80ms)",
@@ -302,8 +345,34 @@ impl WaveformRenderer {
             }
             Some(render_time)
         } else {
+            CANVAS_RENDER_DEBUG.with(|debug| {
+                *debug.borrow_mut() = CanvasRenderDebug {
+                    had_canvas: false,
+                    canvas_width: params.canvas_width,
+                    canvas_height: params.canvas_height,
+                    viewport_start_ps: params.viewport_start_ps,
+                    viewport_end_ps: params.viewport_end_ps,
+                    rows_len: params.rows.len(),
+                    markers_len: params.markers.len(),
+                    static_changed: false,
+                    static_count: 0,
+                    overlay_count: 0,
+                    total_objects: 0,
+                    static_skip_reason: Some("missing_canvas"),
+                };
+            });
             None
         }
+    }
+
+    fn static_skip_reason(params: &RenderingParameters) -> Option<&'static str> {
+        if params.canvas_width == 0 || params.canvas_height == 0 {
+            return Some("zero_canvas");
+        }
+        if params.viewport_end_ps <= params.viewport_start_ps {
+            return Some("invalid_viewport");
+        }
+        None
     }
 
     fn build_static_objects(
