@@ -299,6 +299,16 @@ pub fn expose_novywave_test_api() {
     .ok();
     start_row_resize_closure.forget();
 
+    let start_divider_drag_closure =
+        Closure::wrap(Box::new(start_divider_drag_impl) as Box<dyn Fn(String) -> bool>);
+    js_sys::Reflect::set(
+        &api,
+        &"startDividerDrag".into(),
+        start_divider_drag_closure.as_ref().unchecked_ref(),
+    )
+    .ok();
+    start_divider_drag_closure.forget();
+
     let move_active_drag_closure =
         Closure::wrap(Box::new(move_active_drag_impl) as Box<dyn Fn(f64) -> bool>);
     js_sys::Reflect::set(
@@ -308,6 +318,16 @@ pub fn expose_novywave_test_api() {
     )
     .ok();
     move_active_drag_closure.forget();
+
+    let move_active_drag_2d_closure =
+        Closure::wrap(Box::new(move_active_drag_2d_impl) as Box<dyn Fn(f64, f64) -> bool>);
+    js_sys::Reflect::set(
+        &api,
+        &"moveActiveDrag2d".into(),
+        move_active_drag_2d_closure.as_ref().unchecked_ref(),
+    )
+    .ok();
+    move_active_drag_2d_closure.forget();
 
     let end_active_drag_closure =
         Closure::wrap(Box::new(end_active_drag_impl) as Box<dyn Fn() -> bool>);
@@ -821,8 +841,20 @@ fn get_perf_counters_impl() -> JsValue {
 
         js_sys::Reflect::set(
             &obj,
-            &"dragUpdateCount".into(),
-            &JsValue::from_f64(dragging.drag_update_count as f64),
+            &"rowDragUpdateCount".into(),
+            &JsValue::from_f64(dragging.row_drag_update_count as f64),
+        )
+        .ok();
+        js_sys::Reflect::set(
+            &obj,
+            &"dividerDragUpdateCount".into(),
+            &JsValue::from_f64(dragging.divider_drag_update_count as f64),
+        )
+        .ok();
+        js_sys::Reflect::set(
+            &obj,
+            &"appliedDividerResizeCount".into(),
+            &JsValue::from_f64(dragging.applied_divider_resize_count as f64),
         )
         .ok();
         js_sys::Reflect::set(
@@ -1218,6 +1250,22 @@ fn start_row_resize_impl(unique_id: String) -> bool {
     .unwrap_or(false)
 }
 
+fn start_divider_drag_impl(divider: String) -> bool {
+    let divider_type = match divider.trim() {
+        "variables-name" => crate::dragging::DividerType::VariablesNameColumn,
+        "variables-value" => crate::dragging::DividerType::VariablesValueColumn,
+        "files-main" => crate::dragging::DividerType::FilesPanelMain,
+        "files-secondary" => crate::dragging::DividerType::FilesPanelSecondary,
+        _ => return false,
+    };
+
+    with_state(|state| {
+        state.dragging_system.start_drag(divider_type, (0.0, 0.0));
+        true
+    })
+    .unwrap_or(false)
+}
+
 fn move_active_drag_impl(delta_y: f64) -> bool {
     if !delta_y.is_finite() {
         return false;
@@ -1227,6 +1275,20 @@ fn move_active_drag_impl(delta_y: f64) -> bool {
         state
             .dragging_system
             .process_drag_movement((0.0, delta_y as f32));
+        true
+    })
+    .unwrap_or(false)
+}
+
+fn move_active_drag_2d_impl(delta_x: f64, delta_y: f64) -> bool {
+    if !delta_x.is_finite() || !delta_y.is_finite() {
+        return false;
+    }
+
+    with_state(|state| {
+        state
+            .dragging_system
+            .process_drag_movement((delta_x as f32, delta_y as f32));
         true
     })
     .unwrap_or(false)

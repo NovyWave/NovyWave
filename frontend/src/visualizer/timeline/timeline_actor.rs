@@ -1864,26 +1864,58 @@ impl WaveformTimeline {
         cursor_values: BTreeMap<String, SignalValue>,
     ) {
         let mut current_request = self.request_state.get_cloned();
-        if current_request
+        let is_latest_response = current_request
             .latest_request_id
             .as_deref()
-            .map(|id| id != request_id)
-            .unwrap_or(true)
-        {
-            return;
+            .map(|id| id == request_id)
+            .unwrap_or(false);
+
+        if !is_latest_response {
+            let selected_ids: HashSet<String> = self
+                .selected_variables
+                .variables_vec_actor
+                .get_cloned()
+                .into_iter()
+                .map(|variable| variable.unique_id)
+                .collect();
+            let series_map = self.series_map.lock_ref();
+            let cursor_values_map = self.cursor_values.lock_ref();
+            let has_missing_selected_payload = signal_data.iter().any(|signal| {
+                selected_ids.contains(&signal.unique_id)
+                    && (!series_map.contains_key(&signal.unique_id)
+                        || matches!(
+                            cursor_values_map.get(&signal.unique_id),
+                            None | Some(SignalValue::Loading)
+                        ))
+            });
+            drop(cursor_values_map);
+            drop(series_map);
+
+            if !has_missing_selected_payload {
+                return;
+            }
         }
 
-        let mut request_windows = std::mem::take(&mut current_request.latest_request_windows);
+        let mut request_windows = if is_latest_response {
+            std::mem::take(&mut current_request.latest_request_windows)
+        } else {
+            BTreeMap::new()
+        };
 
-        if let Some(started_ms) = current_request.latest_request_started_ms.take() {
-            let duration_ms = Date::now() - started_ms;
-            self.record_request_duration(duration_ms);
-        }
-        let completed_request_mode = current_request.latest_request_mode;
-        current_request.latest_request_mode = RequestMode::Normal;
-        current_request.latest_completed_request_fingerprint =
-            current_request.latest_request_fingerprint.take();
-        self.request_state.set(current_request.clone());
+        let completed_request_mode = if is_latest_response {
+            if let Some(started_ms) = current_request.latest_request_started_ms.take() {
+                let duration_ms = Date::now() - started_ms;
+                self.record_request_duration(duration_ms);
+            }
+            let completed_request_mode = current_request.latest_request_mode;
+            current_request.latest_request_mode = RequestMode::Normal;
+            current_request.latest_completed_request_fingerprint =
+                current_request.latest_request_fingerprint.take();
+            self.request_state.set(current_request.clone());
+            completed_request_mode
+        } else {
+            RequestMode::Normal
+        };
 
         let mut cache = self.window_cache.lock_mut();
         let mut series_map = self.series_map.lock_mut();
@@ -1896,6 +1928,10 @@ impl WaveformTimeline {
             ..
         } in signal_data
         {
+            if !is_latest_response && series_map.contains_key(&unique_id) {
+                continue;
+            }
+
             let requested_window = request_windows.remove(&unique_id);
             let existing_series = series_map
                 .get(&unique_id)
@@ -1998,16 +2034,25 @@ impl WaveformTimeline {
         drop(series_map);
         drop(cache);
 
+        self.refresh_cursor_values_from_series();
+
         {
             let mut values_map = self.cursor_values.lock_mut();
             for (unique_id, value) in cursor_values {
+                if !is_latest_response
+                    && !matches!(
+                        values_map.get(&unique_id),
+                        None | Some(SignalValue::Loading)
+                    )
+                {
+                    continue;
+                }
                 values_map.insert(unique_id.clone(), value);
                 self.cancel_cursor_loading_indicator(&unique_id);
             }
         }
 
         self.update_render_state();
-        self.refresh_cursor_values_from_series();
 
         if completed_request_mode == RequestMode::StartupBootstrap
             && self.app_config.restore_phase.get_cloned() == RestorePhase::RunningInitialQuery
@@ -2025,8 +2070,10 @@ impl WaveformTimeline {
             self.reload_restore_pending.set(false);
         }
 
-        current_request.latest_request_windows = request_windows;
-        self.request_state.set(current_request);
+        if is_latest_response {
+            current_request.latest_request_windows = request_windows;
+            self.request_state.set(current_request);
+        }
     }
 
     fn sync_state_to_config(&self) {
@@ -2567,9 +2614,6 @@ impl WaveformTimeline {
                     .signal_cloned()
                     .for_each_sync(move |maybe_change| {
                         if let Some(change) = maybe_change {
-                            if t.app_config.row_resize_in_progress.get_cloned() {
-                                return;
-                            }
                             t.apply_row_height_change(&change);
                         }
                     })

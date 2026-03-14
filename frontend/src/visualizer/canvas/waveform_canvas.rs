@@ -60,6 +60,7 @@ impl WaveformCanvas {
                 let mut cached_dimensions = (0.0f32, 0.0f32);
                 let mut last_observed_dimensions: Option<(f32, f32)> = None;
                 let mut divider_drag_active = app_config_task.divider_drag_in_progress.get_cloned();
+                let mut row_resize_active = app_config_task.row_resize_in_progress.get_cloned();
                 let mut frame_deferred_for_divider_drag = false;
                 let frame_tick = Mutable::new(0_u64);
                 let frame_pending = Rc::new(Cell::new(false));
@@ -108,6 +109,12 @@ impl WaveformCanvas {
                     .dedupe()
                     .to_stream()
                     .fuse();
+                let mut row_resize_stream = app_config_task
+                    .row_resize_in_progress
+                    .signal()
+                    .dedupe()
+                    .to_stream()
+                    .fuse();
                 let mut canvas_instance_stream = canvas_instance_version_task
                     .signal()
                     .dedupe()
@@ -121,7 +128,33 @@ impl WaveformCanvas {
                         divider_drag_change = divider_drag_stream.next() => {
                             if let Some(is_active) = divider_drag_change {
                                 divider_drag_active = is_active;
-                                if !divider_drag_active && frame_deferred_for_divider_drag {
+                                if (!divider_drag_active || row_resize_active)
+                                    && frame_deferred_for_divider_drag
+                                {
+                                    if cached_dimensions.0 > 0.0 && cached_dimensions.1 > 0.0 {
+                                        timeline.set_canvas_dimensions(
+                                            cached_dimensions.0,
+                                            cached_dimensions.1,
+                                        );
+                                        if let Some(render_state) = render_state_store.get_cloned() {
+                                            let render_state = Self::state_with_measured_dimensions(
+                                                render_state,
+                                                Some(cached_dimensions),
+                                            );
+                                            render_state_store.set(Some(render_state));
+                                        }
+                                    }
+                                    frame_deferred_for_divider_drag = false;
+                                    schedule_frame();
+                                }
+                            }
+                        }
+                        row_resize_change = row_resize_stream.next() => {
+                            if let Some(is_active) = row_resize_change {
+                                row_resize_active = is_active;
+                                if (!divider_drag_active || row_resize_active)
+                                    && frame_deferred_for_divider_drag
+                                {
                                     if cached_dimensions.0 > 0.0 && cached_dimensions.1 > 0.0 {
                                         timeline.set_canvas_dimensions(
                                             cached_dimensions.0,
@@ -161,7 +194,7 @@ impl WaveformCanvas {
                                         timeline.set_canvas_dimensions(width, height);
                                         cached_dimensions = (width, height);
                                     }
-                                    if divider_drag_active {
+                                    if divider_drag_active && !row_resize_active {
                                         frame_deferred_for_divider_drag = true;
                                     } else {
                                         schedule_frame();
@@ -172,7 +205,7 @@ impl WaveformCanvas {
                         dimensions_change = dimensions_stream.next() => {
                             if let Some((width, height)) = dimensions_change {
                                 let observed = (width, height);
-                                if divider_drag_active {
+                                if divider_drag_active && !row_resize_active {
                                     cached_dimensions = if width > 0.0 && height > 0.0 {
                                         observed
                                     } else {
@@ -198,7 +231,7 @@ impl WaveformCanvas {
                                         // previous size still triggers a repaint.
                                         cached_dimensions = (0.0, 0.0);
                                     }
-                                    if divider_drag_active {
+                                    if divider_drag_active && !row_resize_active {
                                         frame_deferred_for_divider_drag = true;
                                     } else {
                                         schedule_frame();
@@ -210,7 +243,7 @@ impl WaveformCanvas {
                             if let Some(theme) = theme_change {
                                 active_theme = theme;
                                 current_theme_store.set(theme);
-                                if divider_drag_active {
+                                if divider_drag_active && !row_resize_active {
                                     frame_deferred_for_divider_drag = true;
                                 } else {
                                     schedule_frame();
@@ -230,7 +263,7 @@ impl WaveformCanvas {
                                     measured_dimensions,
                                 );
                                 render_state_store.set(Some(render_state.clone()));
-                                if divider_drag_active {
+                                if divider_drag_active && !row_resize_active {
                                     frame_deferred_for_divider_drag = true;
                                 } else {
                                     schedule_frame();

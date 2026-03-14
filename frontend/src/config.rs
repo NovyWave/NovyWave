@@ -1355,6 +1355,23 @@ impl AppConfig {
         }
     }
 
+    pub fn sync_live_selected_variables_widths_to_current_dock(&self) {
+        match self.dock_mode.get_cloned() {
+            DockMode::Bottom => {
+                self.name_column_width_bottom_state
+                    .set_neq(self.variables_name_column_width.get_cloned());
+                self.value_column_width_bottom_state
+                    .set_neq(self.variables_value_column_width.get_cloned());
+            }
+            DockMode::Right => {
+                self.name_column_width_right_state
+                    .set_neq(self.variables_name_column_width.get_cloned());
+                self.value_column_width_right_state
+                    .set_neq(self.variables_value_column_width.get_cloned());
+            }
+        }
+    }
+
     /// Update config from loaded backend data
     pub fn update_from_loaded_config(&self, loaded_config: shared::AppConfig) {
         self.plugins_state.set(loaded_config.plugins.clone());
