@@ -6,9 +6,9 @@ Quick reference for NovyWave development patterns and solutions.
 
 **Logging:** `zoon::println!()` works, `std::println!()` does nothing
 
-**Browser MCP limits:** No F12/F5, no drag/scroll. Use `browser_get_console_logs` and `browser_navigate` instead.
+**UI verification:** Prefer live Tauri bridge inspection, console access, and DOM/canvas captures. Do not rely on OS-level screenshots.
 
-**Build:** Never use `cargo build/check` for frontend verification. For maintainer-run shared watchers, inspect `dev_server.log` / `dev_plugins.log` / `dev_tauri.log`. Watch stdout directly only when you are the one who launched that process in the same terminal.
+**Build:** Never use `cargo build/check` for frontend verification. Use live watcher or Tauri terminal output instead of repo log files, and only watch stdout directly when you are the one who launched that process in the same terminal.
 
 ## Zoon/NovyUI Patterns
 
@@ -86,7 +86,7 @@ _ = Timer::sleep(1000).fuse() => ...
 ## Quick Troubleshooting
 
 ### Compilation
-- WASM changes not visible: Check mzoon output for errors, or use browser MCP
+- WASM changes not visible: Check live mzoon or Tauri output for errors
 - Only trust mzoon output for WASM status
 
 ### Layout

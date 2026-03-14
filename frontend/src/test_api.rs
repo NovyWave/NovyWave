@@ -208,6 +208,26 @@ pub fn expose_novywave_test_api() {
     .ok();
     set_cursor_ps_closure.forget();
 
+    let set_pointer_hover_closure =
+        Closure::wrap(Box::new(set_pointer_hover_impl) as Box<dyn Fn(f64, f64) -> bool>);
+    js_sys::Reflect::set(
+        &api,
+        &"setPointerHover".into(),
+        set_pointer_hover_closure.as_ref().unchecked_ref(),
+    )
+    .ok();
+    set_pointer_hover_closure.forget();
+
+    let clear_pointer_hover_closure =
+        Closure::wrap(Box::new(clear_pointer_hover_impl) as Box<dyn Fn() -> bool>);
+    js_sys::Reflect::set(
+        &api,
+        &"clearPointerHover".into(),
+        clear_pointer_hover_closure.as_ref().unchecked_ref(),
+    )
+    .ok();
+    clear_pointer_hover_closure.forget();
+
     let add_marker_closure =
         Closure::wrap(Box::new(add_marker_impl) as Box<dyn Fn(String) -> bool>);
     js_sys::Reflect::set(
@@ -382,6 +402,30 @@ fn get_timeline_state_impl() -> JsValue {
             &obj,
             &"zoomCenterPs".into(),
             &JsValue::from_f64(render_state.zoom_center.0 as f64),
+        )
+        .ok();
+        js_sys::Reflect::set(
+            &obj,
+            &"canvasWidthPx".into(),
+            &JsValue::from_f64(render_state.canvas_width_px as f64),
+        )
+        .ok();
+        js_sys::Reflect::set(
+            &obj,
+            &"canvasHeightPx".into(),
+            &JsValue::from_f64(render_state.canvas_height_px as f64),
+        )
+        .ok();
+        js_sys::Reflect::set(
+            &obj,
+            &"renderRowsLen".into(),
+            &JsValue::from_f64(render_state.rows.len() as f64),
+        )
+        .ok();
+        js_sys::Reflect::set(
+            &obj,
+            &"renderVariablesLen".into(),
+            &JsValue::from_f64(render_state.variables.len() as f64),
         )
         .ok();
         js_sys::Reflect::set(
@@ -967,6 +1011,31 @@ fn set_cursor_ps_impl(time_ps: f64) -> bool {
         state
             .waveform_timeline
             .set_cursor_clamped(TimePs::from_picoseconds(time_ps.round() as u64));
+        true
+    })
+    .unwrap_or(false)
+}
+
+fn set_pointer_hover_impl(normalized_x: f64, normalized_y: f64) -> bool {
+    if !normalized_x.is_finite() || !normalized_y.is_finite() {
+        return false;
+    }
+
+    with_state(|state| {
+        state.waveform_timeline.set_pointer_hover(Some(
+            crate::visualizer::timeline::timeline_actor::TimelinePointerHover {
+                normalized_x: normalized_x.clamp(0.0, 1.0),
+                normalized_y: normalized_y.clamp(0.0, 1.0),
+            },
+        ));
+        true
+    })
+    .unwrap_or(false)
+}
+
+fn clear_pointer_hover_impl() -> bool {
+    with_state(|state| {
+        state.waveform_timeline.set_pointer_hover(None);
         true
     })
     .unwrap_or(false)

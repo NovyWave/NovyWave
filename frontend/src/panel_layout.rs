@@ -10,17 +10,16 @@ pub fn create_panel(header_content: impl Element, content: impl Element) -> impl
     El::new()
         .s(Height::fill())
         .s(Width::growable())
-        .s(Scrollbars::both())
         .s(Background::new().color_signal(neutral_2()))
-        .update_raw_el(|raw_el| raw_el.style("scrollbar-width", "thin"))
+        .update_raw_el(|raw_el| raw_el.style("min-height", "0").style("overflow", "hidden"))
         .s(Borders::all_signal(
             neutral_4().map(|color| Border::new().width(1).color(color)),
         ))
         .child(
             Column::new()
                 .s(Height::fill())
-                .s(Scrollbars::both())
-                .update_raw_el(|raw_el| raw_el.style("scrollbar-width", "thin"))
+                .s(Width::fill())
+                .update_raw_el(|raw_el| raw_el.style("min-height", "0").style("overflow", "hidden"))
                 .item(
                     El::new()
                         .s(Padding::new().x(SPACING_12).y(SPACING_4))
@@ -38,11 +37,9 @@ pub fn create_panel(header_content: impl Element, content: impl Element) -> impl
                     El::new()
                         .s(Height::fill())
                         .s(Width::fill())
-                        .s(Scrollbars::both())
                         .update_raw_el(|raw_el| {
                             raw_el
-                                .style("scrollbar-width", "thin")
-                                .style("overflow-x", "auto")
+                                .style("overflow", "hidden")
                                 .style("min-height", "0")
                                 .apply(|raw_el| apply_scrollbar_colors(raw_el))
                         })

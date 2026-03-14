@@ -43,7 +43,7 @@ Key rules:
 
 ## Compilation Verification (CRITICAL)
 
-For maintainer-run shared watchers, use `dev_server.log`, `dev_plugins.log`, and `dev_tauri.log` as the canonical compile output. Only watch stdout directly when you personally launched that watcher in the same interactive terminal session. Use browser MCP to verify the app once the logs are clean.
+Use live watcher or Tauri terminal output as the canonical compile output. Do not rely on repo log files for verification. Only watch stdout directly when you personally launched that watcher in the same interactive terminal session. Use live Tauri bridge inspection, console checks, and DOM/canvas captures to verify the app.
 
 **Never report success without verification.** Even 1 error = task incomplete.
 
@@ -261,7 +261,7 @@ signal.dedupe_cloned().for_each_sync(|v| expensive_work(v));
 
 ## Verification Requirements
 
-- **NEVER claim success without browser MCP verification**
+- **NEVER claim success without live UI verification**
 - If verification fails, tell user immediately with specific reason
 - Check compilation before testing
 
@@ -339,7 +339,7 @@ Ask before complex tasks:
 - [ ] No `.to_stream()` on signals (use `for_each_sync` or `map_ref!`)
 - [ ] Public field architecture maintained
 - [ ] Compilation successful (0 errors)
-- [ ] Browser MCP verification passed
+- [ ] Live UI verification passed
 
 ## Antipattern Search Commands
 

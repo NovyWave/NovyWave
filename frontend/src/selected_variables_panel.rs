@@ -12,7 +12,7 @@ use crate::dragging::{variables_name_column_width_signal, variables_value_column
 use crate::visualizer::timeline::TimePerPixel;
 use moonzoon_novyui::components::input::{InputSize, input};
 use moonzoon_novyui::components::{KbdSize, KbdVariant, kbd};
-use moonzoon_novyui::tokens::color::{neutral_8, neutral_11, primary_6};
+use moonzoon_novyui::tokens::color::{neutral_8, neutral_11};
 use moonzoon_novyui::*;
 use shared::{AnalogLimits, SelectedVariable, SignalValue, TrackedFile, VarFormat};
 use std::rc::Rc;
@@ -268,11 +268,9 @@ fn selected_variables_panel_content(
     let _value_column_width_signal = variables_value_column_width_signal(app_config.clone());
 
     El::new()
-        .s(Height::exact_signal(
-            selected_variables.total_content_height.signal(),
-        ))
+        .s(Height::fill())
         .s(Width::fill())
-        .s(Scrollbars::x_and_clip_y())
+        .update_raw_el(|raw_el| raw_el.style("min-height", "0"))
         .child_signal({
             let selected_variables = selected_variables.clone();
             let tracked_files = tracked_files.clone();
@@ -290,7 +288,6 @@ fn selected_variables_panel_content(
                         )
                         .into_raw()
                     } else {
-                        // Recompute width signals inside the branch to avoid moving non-Copy signals into the closure
                         let name_signal = variables_name_column_width_signal(app_config.clone());
                         let value_signal = variables_value_column_width_signal(app_config.clone());
                         zoon::RawElOrText::RawHtmlEl(
@@ -314,6 +311,7 @@ fn selected_variables_panel_content(
                                 .item(selected_variables_value_column(
                                     selected_variables.clone(),
                                     waveform_timeline.clone(),
+                                    tracked_files.clone(),
                                     app_config.clone(),
                                     analog_dialog.clone(),
                                     value_signal,
@@ -349,21 +347,30 @@ fn selected_variables_name_column(
         .s(Width::exact_signal(width_signal.map(|w| w as u32)))
         .s(Height::fill())
         .s(Align::new().top())
-        .s(Scrollbars::x_and_clip_y())
-        .update_raw_el(|raw_el| raw_el.style("scrollbar-width", "thin"))
-        .item(El::new().s(Width::fill()).child_signal({
-            let sv = selected_variables.clone();
-            let tf = tracked_files.clone();
-            let cfg = app_config.clone();
-            let ds = dragging_system.clone();
-            sv.visible_items.signal_cloned().map(move |items| {
-                let sv = sv.clone();
-                let tf = tf.clone();
-                let cfg = cfg.clone();
-                let ds = ds.clone();
-                let mut elements: Vec<zoon::RawElOrText> = Vec::new();
-                for item in items {
-                    match item {
+        .update_raw_el(|raw_el| raw_el.style("min-height", "0"))
+        .item(
+            El::new()
+                .s(Width::fill())
+                .s(Height::fill())
+                .s(Scrollbars::x_and_clip_y())
+                .update_raw_el(|raw_el| {
+                    raw_el
+                        .style("min-height", "0")
+                        .style("scrollbar-width", "thin")
+                })
+                .child_signal({
+                    let sv = selected_variables.clone();
+                    let tf = tracked_files.clone();
+                    let cfg = app_config.clone();
+                    let ds = dragging_system.clone();
+                    sv.visible_items.signal_cloned().map(move |items| {
+                        let sv = sv.clone();
+                        let tf = tf.clone();
+                        let cfg = cfg.clone();
+                        let ds = ds.clone();
+                        let mut elements: Vec<zoon::RawElOrText> = Vec::new();
+                        for item in items {
+                            match item {
                         crate::selected_variables::SelectedVariableOrGroup::Variable(var) => {
                             let uid = var.unique_id.clone();
                             elements.push(
@@ -391,10 +398,11 @@ fn selected_variables_name_column(
                             );
                         }
                     }
-                }
-                Column::new().items(elements)
-            })
-        }))
+                        }
+                        Column::new().items(elements)
+                    })
+                }),
+        )
         .item(name_column_footer(waveform_timeline))
 }
 
@@ -509,23 +517,6 @@ fn name_column_variable_row(
                             raw_el.style("white-space", "nowrap")
                         })
                         .child(&selected_var.variable_name().unwrap_or_default())
-                )
-                .item(
-                    El::new()
-                        .s(Font::new().color_signal(primary_6()).size(11).no_wrap())
-                        .s(Align::new().right())
-                        .s(Padding::new().right(8))
-                        .update_raw_el(|raw_el| {
-                            raw_el
-                                .style("text-overflow", "ellipsis")
-                                .style("max-width", "100%")
-                        })
-                        .child_signal({
-                            let selected_var = selected_var.clone();
-                            tracked_files_broadcaster.signal_cloned().map(move |files: Vec<TrackedFile>| {
-                                crate::signal_processing::get_signal_type_for_selected_variable_from_files(&selected_var, &files)
-                            })
-                        })
                 )
                 .update_raw_el({
                     let selected_var = selected_var.clone();
@@ -673,94 +664,104 @@ fn name_column_footer(
     El::new()
         .s(Height::exact(SELECTED_VARIABLES_ROW_HEIGHT))
         .s(Width::fill())
-        .s(Padding::all(1))
-        .s(Font::new().color_signal(neutral_8()).size(12).center())
-        .s(Transform::new().move_up(4))
+        .s(Padding::new().x(2).y(1))
+        .s(Font::new().color_signal(neutral_8()).size(12))
         .child(
             Row::new()
-                // .s(Align::new().center_y())
+                .s(Width::fill())
+                .s(Height::fill())
+                .s(Align::new().center_y())
                 .item(
-                    // Z key - Reset zoom center
-                    kbd("Z")
-                        .size(KbdSize::Small)
-                        .variant(KbdVariant::Outlined)
-                        .title("Press Z to move zoom center to 0")
-                        .build()
-                )
-                .item(El::new().s(Width::fill()))
-                .item(
-                    // Zoom controls section
-                    Row::new()
-                        .s(Align::center())
-                        .s(Gap::new().x(SPACING_6))
-                        .item(
-                            // W key - Zoom in
-                            kbd("W")
-                                .size(KbdSize::Small)
-                                .variant(KbdVariant::Outlined)
-                                .title("Press W to zoom in. Press Shift+W to zoom in faster.")
-                                .build()
-                        )
-                        .item(
-                            El::new()
-                                .update_raw_el(|raw_el| {
-                                    raw_el
-                                        .style("min-width", "45px")
-                                        .style("width", "fit-content")
-                                        .style("max-width", "80px")
-                                })
-                                .s(Font::new().color_signal(neutral_11()).center())
-                                .child_signal({
-                                    let viewport_actor = waveform_timeline.viewport_actor();
-                                    let width_actor = waveform_timeline.canvas_width_actor();
-                                    map_ref! {
-                                        let viewport = viewport_actor.signal(),
-                                        let width = width_actor.signal() => {
-                                            let range_ps = viewport.duration().picoseconds();
-                                            let width_px = width.max(1.0).round().max(1.0) as u32;
-                                            TimePerPixel::formatted_from_duration_and_width(range_ps, width_px)
-                                        }
-                                    }
-                                    .map(Text::new)
-                                })
-                        )
-                        .item(
-                            // S key - Zoom out
-                            kbd("S")
-                                .size(KbdSize::Small)
-                                .variant(KbdVariant::Outlined)
-                                .title("Press S to zoom out. Press Shift+S to zoom out faster.")
-                                .build()
-                        )
-                )
-                .item(El::new().s(Width::fill()))
-                .item(
-                    // R key - Reset zoom, T key - Toggle tooltip visibility
-                    Row::new()
-                        .s(Align::center())
-                        .s(Gap::new().x(SPACING_4))
-                        .item(
-                            El::new()
-                                .on_click({
-                                    let timeline = waveform_timeline.clone();
-                                    move || {
-                                        timeline.reset_zoom();
-                                    }
-                                })
-                                .child(
-                                    kbd("R")
+                    El::new()
+                        .s(Width::growable())
+                        .child(
+                            Row::new()
+                                .s(Align::new().left().center_y())
+                                .item(
+                                    kbd("Z")
                                         .size(KbdSize::Small)
                                         .variant(KbdVariant::Outlined)
-                                        .title("Press R to reset to default zoom center, zoom and cursor position.")
+                                        .title("Press Z to move zoom center to 0")
                                         .build()
                                 )
                         )
-                        .item(
-                            kbd("T")
-                                .size(KbdSize::Small)
-                                .variant(KbdVariant::Outlined)
-                                .title("Press T to toggle waveform tooltip visibility")
-                                .build()
+                )
+                .item(
+                    El::new()
+                        .s(Width::growable())
+                        .child(
+                            Row::new()
+                                .s(Align::center())
+                                .s(Gap::new().x(SPACING_6))
+                                .item(
+                                    kbd("W")
+                                        .size(KbdSize::Small)
+                                        .variant(KbdVariant::Outlined)
+                                        .title("Press W to zoom in. Press Shift+W to zoom in faster.")
+                                        .build()
+                                )
+                                .item(
+                                    El::new()
+                                        .update_raw_el(|raw_el| {
+                                            raw_el
+                                                .style("min-width", "45px")
+                                                .style("width", "fit-content")
+                                                .style("max-width", "80px")
+                                        })
+                                        .s(Font::new().color_signal(neutral_11()).center())
+                                        .child_signal({
+                                            let viewport_actor = waveform_timeline.viewport_actor();
+                                            let width_actor = waveform_timeline.canvas_width_actor();
+                                            map_ref! {
+                                                let viewport = viewport_actor.signal(),
+                                                let width = width_actor.signal() => {
+                                                    let range_ps = viewport.duration().picoseconds();
+                                                    let width_px = width.max(1.0).round().max(1.0) as u32;
+                                                    TimePerPixel::formatted_from_duration_and_width(range_ps, width_px)
+                                                }
+                                            }
+                                            .map(Text::new)
+                                        })
+                                )
+                                .item(
+                                    kbd("S")
+                                        .size(KbdSize::Small)
+                                        .variant(KbdVariant::Outlined)
+                                        .title("Press S to zoom out. Press Shift+S to zoom out faster.")
+                                        .build()
+                                )
+                        )
+                )
+                .item(
+                    El::new()
+                        .s(Width::growable())
+                        .child(
+                            Row::new()
+                                .s(Align::new().right().center_y())
+                                .s(Gap::new().x(SPACING_4))
+                                .item(
+                                    El::new()
+                                        .on_click({
+                                            let timeline = waveform_timeline.clone();
+                                            move || {
+                                                timeline.reset_zoom();
+                                            }
+                                        })
+                                        .child(
+                                            kbd("R")
+                                                .size(KbdSize::Small)
+                                                .variant(KbdVariant::Outlined)
+                                                .title("Press R to reset to default zoom center, zoom and cursor position.")
+                                                .build()
+                                        )
+                                )
+                                .item(
+                                    kbd("T")
+                                        .size(KbdSize::Small)
+                                        .variant(KbdVariant::Outlined)
+                                        .title("Press T to toggle waveform tooltip visibility")
+                                        .build()
+                                )
                         )
                 )
         )
@@ -770,6 +771,7 @@ fn name_column_footer(
 fn selected_variables_value_column(
     selected_variables: crate::selected_variables::SelectedVariables,
     waveform_timeline: crate::visualizer::timeline::timeline_actor::WaveformTimeline,
+    tracked_files: crate::tracked_files::TrackedFiles,
     app_config: crate::config::AppConfig,
     analog_dialog: AnalogLimitsDialogState,
     width_signal: impl Signal<Item = f32> + Unpin + 'static,
@@ -781,25 +783,37 @@ fn selected_variables_value_column(
         .s(Width::exact_signal(width_signal.map(|w| w as u32)))
         .s(Height::fill())
         .s(Align::new().top())
-        .s(Scrollbars::x_and_clip_y())
-        .update_raw_el(|raw_el| raw_el.style("scrollbar-width", "thin"))
-        .item(El::new().s(Width::fill()).child_signal({
-            let sv = selected_variables.clone();
-            let tl = waveform_timeline_for_values.clone();
-            let cfg = app_config_for_values.clone();
-            sv.visible_items.signal_cloned().map(move |items| {
-                let sv = sv.clone();
-                let tl = tl.clone();
-                let cfg = cfg.clone();
-                let mut elements: Vec<zoon::RawElOrText> = Vec::new();
-                for item in items {
-                    match item {
+        .update_raw_el(|raw_el| raw_el.style("min-height", "0"))
+        .item(
+            El::new()
+                .s(Width::fill())
+                .s(Height::fill())
+                .s(Scrollbars::x_and_clip_y())
+                .update_raw_el(|raw_el| {
+                    raw_el
+                        .style("min-height", "0")
+                        .style("scrollbar-width", "thin")
+                })
+                .child_signal({
+                    let sv = selected_variables.clone();
+                    let tl = waveform_timeline_for_values.clone();
+                    let cfg = app_config_for_values.clone();
+                    let tracked_files = tracked_files.clone();
+                    sv.visible_items.signal_cloned().map(move |items| {
+                        let sv = sv.clone();
+                        let tl = tl.clone();
+                        let cfg = cfg.clone();
+                        let tracked_files = tracked_files.clone();
+                        let mut elements: Vec<zoon::RawElOrText> = Vec::new();
+                        for item in items {
+                            match item {
                         crate::selected_variables::SelectedVariableOrGroup::Variable(var) => {
                             elements.push(
                                 value_column_variable_row(
                                     var,
                                     sv.clone(),
                                     tl.clone(),
+                                    tracked_files.clone(),
                                     cfg.clone(),
                                     analog_dialog.clone(),
                                 )
@@ -826,10 +840,11 @@ fn selected_variables_value_column(
                             );
                         }
                     }
-                }
-                Column::new().items(elements)
-            })
-        }))
+                        }
+                        Column::new().items(elements)
+                    })
+                }),
+        )
         .item(value_column_footer(waveform_timeline_for_values))
 }
 
@@ -838,6 +853,7 @@ fn value_column_variable_row(
     selected_var: SelectedVariable,
     selected_variables: crate::selected_variables::SelectedVariables,
     waveform_timeline: crate::visualizer::timeline::timeline_actor::WaveformTimeline,
+    tracked_files: crate::tracked_files::TrackedFiles,
     app_config: crate::config::AppConfig,
     analog_dialog: AnalogLimitsDialogState,
 ) -> impl Element {
@@ -856,20 +872,43 @@ fn value_column_variable_row(
                 selected_var,
                 selected_variables,
                 waveform_timeline,
+                tracked_files,
                 app_config,
                 analog_dialog,
             )
             .into_raw()
         } else {
-            crate::format_selection::create_format_dropdown(
-                &selected_var.unique_id,
-                selected_var.formatter.unwrap_or(VarFormat::Hexadecimal),
-                &selected_variables,
-                &waveform_timeline,
+            digital_value_row(
+                selected_var,
+                selected_variables,
+                waveform_timeline,
+                tracked_files,
                 app_config,
             )
             .into_raw()
         })
+}
+
+fn digital_value_row(
+    selected_var: SelectedVariable,
+    selected_variables: crate::selected_variables::SelectedVariables,
+    waveform_timeline: crate::visualizer::timeline::timeline_actor::WaveformTimeline,
+    tracked_files: crate::tracked_files::TrackedFiles,
+    app_config: crate::config::AppConfig,
+) -> impl Element {
+    let _tracked_files = tracked_files;
+
+    El::new()
+        .s(Width::fill())
+        .s(Height::fill())
+        .s(Padding::new().x(SPACING_8).top(1).bottom(1))
+        .child(crate::format_selection::create_format_dropdown(
+            &selected_var.unique_id,
+            selected_var.formatter.unwrap_or(VarFormat::Hexadecimal),
+            &selected_variables,
+            &waveform_timeline,
+            app_config,
+        ))
 }
 
 /// Value Column Footer with timeline boundaries and cursor controls
@@ -898,87 +937,93 @@ fn value_column_footer(
     El::new()
         .s(Height::exact(SELECTED_VARIABLES_ROW_HEIGHT))
         .s(Width::fill())
-        .s(Padding::all(1))
-        .s(Transform::new().move_up(4))
+        .s(Padding::new().x(2).y(1))
         .child(
             Row::new()
+                .s(Width::fill())
+                .s(Height::fill())
                 .s(Align::new().center_y())
                 .s(Font::new().color_signal(neutral_8()).size(12))
                 .item(
-                    // Left boundary and pan left controls
-                    Row::new()
-                        .s(Gap::new().x(SPACING_6))
-                        .item(
-                            // Timeline start boundary (0s)
-                            El::new()
-                                .s(Font::new().color_signal(neutral_11()).center().size(11))
-                                .update_raw_el(|raw_el| {
-                                    raw_el.style("width", "max-content")
-                                })
-                                .child_signal(start_signal.map(Text::new))
-                        )
-                        .item(
-                            // A key - Pan left
-                            kbd("A")
-                                .size(KbdSize::Small)
-                                .variant(KbdVariant::Outlined)
-                                .title("Press A to pan left. Press Shift+A to pan left faster.")
-                                .build()
-                        )
-                )
-                .item(El::new().s(Width::fill()))
-                .item(
-                    // Cursor controls section
-                    Row::new()
-                        .s(Gap::new().x(SPACING_2))
-                        .item(
-                            // Q key - Move cursor left
-                            kbd("Q")
-                                .size(KbdSize::Small)
-                                .variant(KbdVariant::Outlined)
-                                .title("Press Q to move cursor left. Press Shift+Q to jump to the previous transition.")
-                                .build()
-                        )
-                        .item(
-                            El::new()
-                                .update_raw_el(|raw_el| {
-                                    raw_el
-                                        .style("min-width", "45px")
-                                        .style("width", "fit-content")
-                                        .style("max-width", "90px")
-                                })
-                                .s(Font::new().color_signal(neutral_11()).center())
-                                .child_signal(cursor_signal.map(Text::new))
-                        )
-                        .item(
-                            // E key - Move cursor right
-                            kbd("E")
-                                .size(KbdSize::Small)
-                                .variant(KbdVariant::Outlined)
-                                .title("Press E to move cursor right. Press Shift+E to jump to the next transition.")
-                                .build()
+                    El::new()
+                        .s(Width::growable())
+                        .child(
+                            Row::new()
+                                .s(Align::new().left().center_y())
+                                .s(Gap::new().x(SPACING_6))
+                                .item(
+                                    El::new()
+                                        .s(Font::new().color_signal(neutral_11()).center().size(11))
+                                        .update_raw_el(|raw_el| {
+                                            raw_el.style("width", "max-content")
+                                        })
+                                        .child_signal(start_signal.map(Text::new))
+                                )
+                                .item(
+                                    kbd("A")
+                                        .size(KbdSize::Small)
+                                        .variant(KbdVariant::Outlined)
+                                        .title("Press A to pan left. Press Shift+A to pan left faster.")
+                                        .build()
+                                )
                         )
                 )
-                .item(El::new().s(Width::fill()))
                 .item(
-                    // Right boundary and pan right controls
-                    Row::new()
-                        .s(Gap::new().x(SPACING_6))
-                        .item(
-                            // D key - Pan right
-                            kbd("D")
-                                .size(KbdSize::Small)
-                                .variant(KbdVariant::Outlined)
-                                .title("Press D to pan right. Press Shift+D to pan right faster.")
-                                .build()
+                    El::new()
+                        .s(Width::growable())
+                        .child(
+                            Row::new()
+                                .s(Align::center())
+                                .s(Gap::new().x(SPACING_2))
+                                .item(
+                                    kbd("Q")
+                                        .size(KbdSize::Small)
+                                        .variant(KbdVariant::Outlined)
+                                        .title("Press Q to move cursor left. Press Shift+Q to jump to the previous transition.")
+                                        .build()
+                                )
+                                .item(
+                                    El::new()
+                                        .update_raw_el(|raw_el| {
+                                            raw_el
+                                                .style("min-width", "45px")
+                                                .style("width", "fit-content")
+                                                .style("max-width", "90px")
+                                        })
+                                        .s(Font::new().color_signal(neutral_11()).center())
+                                        .child_signal(cursor_signal.map(Text::new))
+                                )
+                                .item(
+                                    kbd("E")
+                                        .size(KbdSize::Small)
+                                        .variant(KbdVariant::Outlined)
+                                        .title("Press E to move cursor right. Press Shift+E to jump to the next transition.")
+                                        .build()
+                                )
                         )
-                        .item(
-                            El::new()
-                                .s(Font::new().color_signal(neutral_11()).center().size(11))
-                                .update_raw_el(|raw_el| {
-                                    raw_el.style("width", "max-content")
-                                })
-                                .child_signal(end_signal.map(Text::new))
+                )
+                .item(
+                    El::new()
+                        .s(Width::growable())
+                        .child(
+                            Row::new()
+                                .s(Align::new().right().center_y())
+                                .s(Gap::new().x(SPACING_6))
+                                .item(
+                                    kbd("D")
+                                        .size(KbdSize::Small)
+                                        .variant(KbdVariant::Outlined)
+                                        .title("Press D to pan right. Press Shift+D to pan right faster.")
+                                        .build()
+                                )
+                                .item(
+                                    El::new()
+                                        .s(Font::new().color_signal(neutral_11()).center().size(11))
+                                        .update_raw_el(|raw_el| {
+                                            raw_el.style("width", "max-content")
+                                        })
+                                        .child_signal(end_signal.map(Text::new))
+                                )
                         )
                 )
         )
@@ -1072,10 +1117,100 @@ impl TimeDisplayUnit {
     }
 }
 
+fn analog_compressed_zoom_hint_signal(
+    unique_id: String,
+    waveform_timeline: crate::visualizer::timeline::timeline_actor::WaveformTimeline,
+) -> impl Signal<Item = Option<String>> {
+    waveform_timeline
+        .render_state_actor()
+        .signal_cloned()
+        .map(move |state| analog_compressed_zoom_hint(&state, &unique_id))
+}
+
+fn analog_compressed_zoom_hint(
+    state: &crate::visualizer::timeline::timeline_actor::TimelineRenderState,
+    unique_id: &str,
+) -> Option<String> {
+    let series = state.rows.iter().find_map(|row| match row {
+        crate::visualizer::timeline::timeline_actor::TimelineRenderRow::Variable(series)
+            if series.unique_id == unique_id && series.signal_type.as_deref() == Some("Real") =>
+        {
+            Some(series)
+        }
+        _ => None,
+    })?;
+
+    let visible_width_px = analog_visible_span_width_px(
+        series.transitions.as_ref(),
+        series.actual_time_range_ns,
+        state.viewport_start.picoseconds(),
+        state.viewport_end.picoseconds(),
+        state.canvas_width_px,
+    )?;
+
+    if visible_width_px < 2.0 {
+        Some("Zoom in to inspect analog waveform".to_string())
+    } else {
+        None
+    }
+}
+
+fn analog_visible_span_width_px(
+    transitions: &[shared::SignalTransition],
+    actual_time_range_ns: Option<(u64, u64)>,
+    viewport_start_ps: u64,
+    viewport_end_ps: u64,
+    canvas_width_px: u32,
+) -> Option<f64> {
+    if transitions.is_empty() || viewport_end_ps <= viewport_start_ps || canvas_width_px == 0 {
+        return None;
+    }
+
+    let mut visible_start_ps = u64::MAX;
+    let mut visible_end_ps = 0_u64;
+    let mut found_segment = false;
+    let actual_end_ps = actual_time_range_ns.map(|(_, end_ns)| end_ns.saturating_mul(1_000));
+
+    for (index, transition) in transitions.iter().enumerate() {
+        let segment_start_ps = transition.time_ns.saturating_mul(1_000);
+        let segment_end_ps = transitions
+            .get(index + 1)
+            .map(|next| next.time_ns.saturating_mul(1_000))
+            .or(actual_end_ps)
+            .unwrap_or(viewport_end_ps);
+
+        if segment_end_ps <= viewport_start_ps {
+            continue;
+        }
+        if segment_start_ps >= viewport_end_ps {
+            break;
+        }
+
+        let clamped_start = segment_start_ps.max(viewport_start_ps);
+        let clamped_end = segment_end_ps.min(viewport_end_ps);
+        if clamped_end <= clamped_start {
+            continue;
+        }
+
+        visible_start_ps = visible_start_ps.min(clamped_start);
+        visible_end_ps = visible_end_ps.max(clamped_end);
+        found_segment = true;
+    }
+
+    if !found_segment || visible_end_ps <= visible_start_ps {
+        return None;
+    }
+
+    let viewport_span_ps = (viewport_end_ps - viewport_start_ps) as f64;
+    let visible_span_ps = (visible_end_ps - visible_start_ps) as f64;
+    Some((visible_span_ps / viewport_span_ps) * canvas_width_px as f64)
+}
+
 fn analog_value_row(
     selected_var: SelectedVariable,
     selected_variables: crate::selected_variables::SelectedVariables,
     waveform_timeline: crate::visualizer::timeline::timeline_actor::WaveformTimeline,
+    tracked_files: crate::tracked_files::TrackedFiles,
     app_config: crate::config::AppConfig,
     analog_dialog: AnalogLimitsDialogState,
 ) -> impl Element {
@@ -1085,39 +1220,59 @@ fn analog_value_row(
         .analog_limits
         .clone()
         .unwrap_or_else(AnalogLimits::auto);
+    let _tracked_files = tracked_files;
+    let hint_signal =
+        analog_compressed_zoom_hint_signal(unique_id.clone(), waveform_timeline.clone());
+    let latest_value = Mutable::new(SignalValue::Loading);
+    let app_config_for_copy = app_config.clone();
 
     Column::new()
         .s(Width::fill())
         .s(Height::fill())
         .s(Padding::new().x(SPACING_8).y(SPACING_6))
-        .s(Gap::new().y(SPACING_6))
-        .item(
-            El::new()
-                .s(Font::new()
-                    .size(13)
-                    .weight(FontWeight::SemiBold)
-                    .color_signal(neutral_11()))
-                .child_signal(waveform_timeline.cursor_values_actor().signal_cloned().map(
-                    move |values| {
-                        format_analog_signal_value(
-                            values
-                                .get(&unique_id_for_value)
-                                .cloned()
-                                .unwrap_or(SignalValue::Loading),
-                        )
-                    },
-                )),
-        )
+        .s(Gap::new().y(SPACING_4))
         .item(
             Row::new()
                 .s(Align::new().center_y())
                 .s(Gap::new().x(SPACING_6))
                 .item(
                     El::new()
-                        .s(Font::new().size(11).color_signal(neutral_8()).no_wrap())
-                        .child(analog_limits_summary(&limits)),
+                        .s(Font::new()
+                            .size(13)
+                            .weight(FontWeight::SemiBold)
+                            .color_signal(neutral_11()))
+                        .s(Width::growable())
+                        .child_signal(waveform_timeline.cursor_values_actor().signal_cloned().map(
+                            {
+                                let latest_value = latest_value.clone();
+                                move |values| {
+                                    let value = values
+                                        .get(&unique_id_for_value)
+                                        .cloned()
+                                        .unwrap_or(SignalValue::Loading);
+                                    latest_value.set(value.clone());
+                                    format_analog_signal_value(value)
+                                }
+                            },
+                        )),
                 )
-                .item(El::new().s(Width::growable()))
+                .item(
+                    button()
+                        .variant(ButtonVariant::Ghost)
+                        .size(ButtonSize::Small)
+                        .left_icon(IconName::Copy)
+                        .custom_padding(4, 4)
+                        .on_press({
+                            let latest_value = latest_value.clone();
+                            let app_config = app_config_for_copy.clone();
+                            move || {
+                                let formatted =
+                                    format_analog_signal_value(latest_value.get_cloned());
+                                crate::clipboard::copy_variable_value(&formatted, &app_config);
+                            }
+                        })
+                        .build(),
+                )
                 .item_signal(always(!limits.auto).map(move |show_auto| {
                     if show_auto {
                         Some(
@@ -1160,6 +1315,14 @@ fn analog_value_row(
                         .build(),
                 ),
         )
+        .item_signal(hint_signal.map(|hint| {
+            hint.map(|message| {
+                El::new()
+                    .s(Font::new().size(10).color_signal(neutral_8()))
+                    .child(message)
+                    .into_raw()
+            })
+        }))
 }
 
 fn format_analog_signal_value(value: SignalValue) -> String {
@@ -1187,18 +1350,6 @@ fn format_numeric_label(value: Option<f64>) -> String {
             }
         }
         _ => "-".to_string(),
-    }
-}
-
-fn analog_limits_summary(limits: &AnalogLimits) -> String {
-    if limits.auto {
-        "Auto range".to_string()
-    } else {
-        format!(
-            "{} .. {}",
-            format_numeric_label(Some(limits.min)),
-            format_numeric_label(Some(limits.max))
-        )
     }
 }
 
@@ -1559,7 +1710,7 @@ fn marker_manager_dialog(
                                 .item(
                                     El::new()
                                         .s(Font::new().size(13).color_signal(neutral_8()))
-                                        .child("No markers yet. Press M to add one at the cursor."),
+                                        .child("No markers yet. Press M to add one at the hover line or cursor."),
                                 )
                                 .into_raw()
                         } else {

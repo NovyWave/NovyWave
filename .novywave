@@ -41,7 +41,7 @@ signal_groups = []
 
 [workspace.docked_bottom_dimensions]
 files_and_scopes_panel_width = 400.0
-files_and_scopes_panel_height = 521.0
+files_and_scopes_panel_height = 507.0
 selected_variables_panel_name_column_width = 190.0
 selected_variables_panel_value_column_width = 220.0
 
@@ -54,22 +54,22 @@ selected_variables_panel_value_column_width = 220.0
 [[workspace.selected_variables]]
 unique_id = "test_files/simple.vcd|simple_tb.s|A"
 signal_type = "Wire"
-row_height = 106
+row_height = 25
 
 [[workspace.selected_variables]]
 unique_id = "test_files/simple_reload_test.vcd|simple_tb.s|A"
 signal_type = "Wire"
-row_height = 30
+row_height = 24
 
 [[workspace.selected_variables]]
 unique_id = "test_files/simple_reload_test.vcd|simple_tb.s|C"
 signal_type = "Wire"
-row_height = 71
+row_height = 24
 
 [[workspace.selected_variables]]
 unique_id = "test_files/analog.vcd|top|analog"
 signal_type = "Real"
-row_height = 90
+row_height = 128
 
 [workspace.selected_variables.analog_limits]
 auto = true
@@ -77,12 +77,43 @@ min = 0.0
 max = 0.0
 
 [workspace.timeline]
-cursor_position_ps = 49938347718866
+cursor_position_ps = 125000000000000
 visible_range_start_ps = 0
 visible_range_end_ps = 250000000000000
-zoom_center_ps = 155000000000000
+zoom_center_ps = 114073426573427
 tooltip_enabled = true
-markers = []
+
+[[workspace.timeline.markers]]
+time_ps = 49938347718866
+name = "Marker 1"
+
+[[workspace.timeline.markers]]
+time_ps = 95000000000000
+name = "Marker 2"
+
+[[workspace.timeline.markers]]
+time_ps = 175000000000000
+name = "Marker 3"
+
+[[workspace.timeline.markers]]
+time_ps = 0
+name = "Marker 4 grgr"
+
+[[workspace.timeline.markers]]
+time_ps = 138333333333333
+name = "Marker 5"
+
+[[workspace.timeline.markers]]
+time_ps = 187500000000000
+name = "Marker 6"
+
+[[workspace.timeline.markers]]
+time_ps = 0
+name = "Marker 7"
+
+[[workspace.timeline.markers]]
+time_ps = 120000000000000
+name = "Marker X"
 
 [plugins]
 schema_version = 1

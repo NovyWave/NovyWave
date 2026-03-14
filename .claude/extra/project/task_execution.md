@@ -42,10 +42,10 @@ items.signal_vec().to_signal_cloned()  // 20+ renders per change
 
 **During:** Event-source naming, Cache Current Values in loops only, no raw Mutables
 
-**After:** Compilation check, browser MCP test, no signal cascades
+**After:** Compilation check, live UI verification, no signal cascades
 
 ## Debugging
 
 - **Performance:** Check SignalVec→Signal antipatterns, use `.dedupe()`
 - **Compilation:** Verify Actor+Relay patterns, event-source naming
-- **Functionality:** Trace data flow, check Actor loops, browser MCP
+- **Functionality:** Trace data flow, check Actor loops, live UI verification

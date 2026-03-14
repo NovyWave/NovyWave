@@ -24,15 +24,14 @@ Concise, direct. Explain non-trivial bash commands. Output is CLI-rendered markd
 
 **Context conservation:** Subagents extend sessions 2-3x, use for 2+ files
 
-### Browser MCP
-- `browser_navigate`, `browser_snapshot`, `browser_click`, `browser_screenshot`
-- Use for UI verification after changes
+### Live UI Verification
+- Use live Tauri bridge inspection, console access, and DOM/canvas captures after changes
 
 ## Testing & Verification (CRITICAL)
 
 **NEVER claim success without verification:**
-- Browser MCP for visual verification
-- Check compilation logs for errors
+- Live Tauri UI verification without OS-level screenshots
+- Check live compile output for errors
 - If cannot verify: tell user immediately with specific reason
 - Report errors in logs - don't hide them
 
@@ -45,9 +44,9 @@ Concise, direct. Explain non-trivial bash commands. Output is CLI-rendered markd
 
 ## Subagent Workflow
 
-**Implementor agents:** Code changes + verify mzoon output + browser MCP for visual verification.
+**Implementor agents:** Code changes + verify live build output + live Tauri verification.
 
-**Pattern:** Make changes → Verify compilation → Browser MCP check
+**Pattern:** Make changes → Verify compilation → Live Tauri check
 
 ## Version Control (CRITICAL)
 

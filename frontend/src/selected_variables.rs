@@ -117,7 +117,9 @@ impl SelectedVariables {
             selected_for_grouping: Mutable::new(IndexSet::new()),
             grouping_mode_active: Mutable::new(false),
             visible_items: Mutable::new(Vec::new()),
-            total_content_height: Mutable::new(2 * 30),
+            total_content_height: Mutable::new(
+                crate::selected_variables_layout::SELECTED_VARIABLES_EMPTY_CONTENT_HEIGHT,
+            ),
             last_row_height_change: Mutable::new(None),
             row_height_change_seq: Rc::new(Cell::new(0)),
             _scope_selection_observer,
@@ -698,25 +700,10 @@ impl SelectedVariables {
     }
 
     fn total_content_height_for_items(&self, items: &[SelectedVariableOrGroup]) -> u32 {
-        if items.is_empty() {
-            return 2 * 30;
-        }
-
-        let variable_count = items
-            .iter()
-            .filter(|item| matches!(item, SelectedVariableOrGroup::Variable(_)))
-            .count() as u32;
-        let item_heights: u32 = items
-            .iter()
-            .map(|item| match item {
-                SelectedVariableOrGroup::Variable(variable) => {
-                    self.live_row_height(&variable.unique_id)
-                }
-                SelectedVariableOrGroup::GroupHeader { .. } => 30,
-            })
-            .sum();
-
-        item_heights + variable_count * 3 + 30
+        let metrics = crate::selected_variables_layout::metrics_from_items(items, |unique_id| {
+            self.live_row_height(unique_id)
+        });
+        crate::selected_variables_layout::total_content_height(&metrics)
     }
 
     fn adjust_total_content_height(&self, unique_id: &str, old_height: u32, new_height: u32) {

@@ -10,6 +10,7 @@ use zoon::*;
 
 const COLLAPSED_VALUE_MAX_CHARS: usize = 32;
 const DROPDOWN_VALUE_MAX_CHARS: usize = 56;
+const COLLAPSED_TRIGGER_HEIGHT: u32 = 24;
 
 fn sanitize_dom_id(input: &str) -> String {
     input
@@ -206,7 +207,7 @@ pub fn create_format_dropdown(
         .item(
             El::new()
                 .s(Width::fill())
-                .s(Height::fill())
+                .s(Height::exact(COLLAPSED_TRIGGER_HEIGHT))
                 .s(Background::new().color_signal(
                     is_open
                         .signal()
@@ -235,8 +236,8 @@ pub fn create_format_dropdown(
                         .s(Width::fill())
                         .s(Height::fill())
                         .s(Align::new().center_y())
-                        .s(Padding::new().x(SPACING_8))
-                        .s(Gap::new().x(SPACING_8))
+                        .s(Padding::new().x(SPACING_6))
+                        .s(Gap::new().x(SPACING_6))
                         .item(El::new().s(Width::growable()).child_signal(
                             value_signal_for_display.map({
                                 let latest_value = latest_value.clone();

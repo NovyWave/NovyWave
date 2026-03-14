@@ -15,6 +15,7 @@ mod error_display;
 mod error_ui;
 mod platform;
 mod selected_variables;
+mod selected_variables_layout;
 mod test_api;
 mod tracked_files;
 mod virtual_list;
@@ -48,8 +49,11 @@ pub fn main_layout(
     use crate::file_management::files_panel_with_dialog;
     use crate::variable_selection_ui::variables_panel_with_fill;
 
-    El::new().s(Width::fill()).s(Height::fill()).child_signal(
-        app_config.dock_mode.signal_cloned().map({
+    El::new()
+        .s(Width::fill())
+        .s(Height::fill())
+        .update_raw_el(|raw_el| raw_el.style("min-height", "0").style("overflow", "hidden"))
+        .child_signal(app_config.dock_mode.signal_cloned().map({
             let tracked_files = tracked_files.clone();
             let selected_variables = selected_variables.clone();
             let waveform_timeline = waveform_timeline.clone();
@@ -65,10 +69,23 @@ pub fn main_layout(
                         let top_section_height_signal =
                             crate::dragging::files_panel_height_signal(app_config.clone());
 
-                        El::new().s(Width::fill()).s(Height::fill()).child(
+                        El::new()
+                            .s(Width::fill())
+                            .s(Height::fill())
+                            .update_raw_el(|raw_el| {
+                                raw_el
+                                    .style("min-height", "0")
+                                    .style("overflow", "hidden")
+                            })
+                            .child(
                         Column::new()
                             .s(Width::fill())
                             .s(Height::fill())
+                            .update_raw_el(|raw_el| {
+                                raw_el
+                                    .style("min-height", "0")
+                                    .style("overflow", "hidden")
+                            })
                             .item(
                                 El::new()
                                     .s(Width::fill())
@@ -118,24 +135,47 @@ pub fn main_layout(
                                 &app_config,
                                 dragging_system.clone(),
                             ))
-                            .item(El::new().s(Width::fill()).s(Height::fill()).child(
-                                crate::selected_variables_panel::selected_variables_panel(
-                                    selected_variables.clone(),
-                                    waveform_timeline.clone(),
-                                    tracked_files.clone(),
-                                    app_config.clone(),
-                                    dragging_system.clone(),
-                                    waveform_canvas.clone(),
-                                ),
-                            )),
+                            .item(
+                                El::new()
+                                    .s(Width::fill())
+                                    .s(Height::fill())
+                                    .update_raw_el(|raw_el| {
+                                        raw_el
+                                            .style("min-height", "0")
+                                            .style("overflow", "hidden")
+                                    })
+                                    .child(
+                                        crate::selected_variables_panel::selected_variables_panel(
+                                            selected_variables.clone(),
+                                            waveform_timeline.clone(),
+                                            tracked_files.clone(),
+                                            app_config.clone(),
+                                            dragging_system.clone(),
+                                            waveform_canvas.clone(),
+                                        ),
+                                    ),
+                            ),
                     )
                     }
 
                     // Right dock layout: Files over Variables (left), Selected Variables (right)
-                    shared::DockMode::Right => El::new().s(Width::fill()).s(Height::fill()).child(
+                    shared::DockMode::Right => El::new()
+                        .s(Width::fill())
+                        .s(Height::fill())
+                        .update_raw_el(|raw_el| {
+                            raw_el
+                                .style("min-height", "0")
+                                .style("overflow", "hidden")
+                        })
+                        .child(
                         Row::new()
                             .s(Width::fill())
                             .s(Height::fill())
+                            .update_raw_el(|raw_el| {
+                                raw_el
+                                    .style("min-height", "0")
+                                    .style("overflow", "hidden")
+                            })
                             .item(
                                 El::new()
                                     .s(Height::fill())
@@ -188,21 +228,30 @@ pub fn main_layout(
                                 &app_config,
                                 dragging_system.clone(),
                             ))
-                            .item(El::new().s(Width::fill()).s(Height::fill()).child(
-                                crate::selected_variables_panel::selected_variables_panel(
-                                    selected_variables.clone(),
-                                    waveform_timeline.clone(),
-                                    tracked_files.clone(),
-                                    app_config.clone(),
-                                    dragging_system.clone(),
-                                    waveform_canvas.clone(),
-                                ),
-                            )),
+                            .item(
+                                El::new()
+                                    .s(Width::fill())
+                                    .s(Height::fill())
+                                    .update_raw_el(|raw_el| {
+                                        raw_el
+                                            .style("min-height", "0")
+                                            .style("overflow", "hidden")
+                                    })
+                                    .child(
+                                        crate::selected_variables_panel::selected_variables_panel(
+                                            selected_variables.clone(),
+                                            waveform_timeline.clone(),
+                                            tracked_files.clone(),
+                                            app_config.clone(),
+                                            dragging_system.clone(),
+                                            waveform_canvas.clone(),
+                                        ),
+                                    ),
+                            ),
                     ),
                 }
             }
-        }),
-    )
+        }))
 }
 
 pub fn main() {

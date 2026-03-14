@@ -60,6 +60,7 @@ pub struct VariableRenderSnapshot {
     pub transitions: Arc<Vec<SignalTransition>>,
     #[allow(dead_code)]
     pub cursor_value: Option<SignalValue>,
+    pub actual_time_range_ns: Option<(u64, u64)>,
     pub signal_type: Option<String>,
     pub row_height: u32,
     pub analog_limits: Option<AnalogLimits>,
@@ -69,15 +70,6 @@ pub struct VariableRenderSnapshot {
 pub enum RenderRowSnapshot {
     GroupHeader { name: String, row_height: u32 },
     Variable(VariableRenderSnapshot),
-}
-
-impl RenderRowSnapshot {
-    fn row_height(&self) -> u32 {
-        match self {
-            RenderRowSnapshot::GroupHeader { row_height, .. } => *row_height,
-            RenderRowSnapshot::Variable(variable) => variable.row_height,
-        }
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -97,6 +89,23 @@ pub struct RenderingParameters {
     pub theme: NovyUITheme,
     pub rows: Vec<RenderRowSnapshot>,
     pub markers: Vec<MarkerRenderData>,
+}
+
+fn row_metrics(
+    rows: &[RenderRowSnapshot],
+) -> Vec<crate::selected_variables_layout::SelectedVariablesRowMetric> {
+    rows.iter()
+        .map(|row| match row {
+            RenderRowSnapshot::GroupHeader { .. } => {
+                crate::selected_variables_layout::SelectedVariablesRowMetric::group_header()
+            }
+            RenderRowSnapshot::Variable(variable) => {
+                crate::selected_variables_layout::SelectedVariablesRowMetric::variable(
+                    variable.row_height,
+                )
+            }
+        })
+        .collect()
 }
 
 pub struct WaveformRenderer {
@@ -330,28 +339,11 @@ impl WaveformRenderer {
         objects
     }
 
-    fn compute_row_layout(params: &RenderingParameters) -> Vec<(f32, f32)> {
-        let total_desired: f32 = params
-            .rows
-            .iter()
-            .map(|row| row.row_height() as f32)
-            .sum::<f32>()
-            + 30.0;
-        let available = params.canvas_height as f32;
-        let scale = if total_desired > available && available > 0.0 {
-            available / total_desired
-        } else {
-            1.0
-        };
-
-        let mut layout = Vec::with_capacity(params.rows.len());
-        let mut y = 0.0f32;
-        for row in &params.rows {
-            let h = row.row_height() as f32 * scale;
-            layout.push((y, h));
-            y += h;
-        }
-        layout
+    fn compute_row_layout(
+        params: &RenderingParameters,
+    ) -> Vec<crate::selected_variables_layout::SelectedVariablesRowSpan> {
+        let metrics = row_metrics(&params.rows);
+        crate::selected_variables_layout::compute_row_spans(&metrics)
     }
 
     fn add_waveforms(
@@ -366,7 +358,9 @@ impl WaveformRenderer {
         let layout = Self::compute_row_layout(params);
 
         for (index, row) in params.rows.iter().enumerate() {
-            let (row_top, row_height) = layout[index];
+            let row_top = layout[index].top_px;
+            let row_height = layout[index].height_px;
+            let divider_height = layout[index].divider_height_after_px;
             let row_color = if index % 2 == 0 {
                 theme_colors.row_even_bg
             } else {
@@ -425,8 +419,9 @@ impl WaveformRenderer {
                 }
             }
 
-            if index < params.rows.len() - 1 {
-                let separator_y = (row_top + row_height).min(params.canvas_height as f32);
+            if divider_height > 0.0 {
+                let separator_y = (row_top + row_height + (divider_height / 2.0))
+                    .min(params.canvas_height as f32);
                 objects.push(
                     Rectangle::new()
                         .position(0.0, separator_y - 0.5)
@@ -718,6 +713,7 @@ impl WaveformRenderer {
 
     fn compute_analog_range(
         transitions: &[SignalTransition],
+        actual_time_range_ns: Option<(u64, u64)>,
         viewport_start_ps: u64,
         viewport_end_ps: u64,
         analog_limits: Option<&AnalogLimits>,
@@ -735,11 +731,14 @@ impl WaveformRenderer {
         let mut min = f64::MAX;
         let mut max = f64::MIN;
         let mut found = false;
+        let actual_end_ps =
+            actual_time_range_ns.map(|(_, end_ns)| end_ns.saturating_mul(PS_PER_NS));
         for (index, t) in transitions.iter().enumerate() {
             let start_ps = t.time_ns.saturating_mul(PS_PER_NS);
             let end_ps = transitions
                 .get(index + 1)
                 .map(|next| next.time_ns.saturating_mul(PS_PER_NS))
+                .or(actual_end_ps)
                 .unwrap_or(viewport_end_ps);
 
             if end_ps <= viewport_start_ps {
@@ -769,8 +768,22 @@ impl WaveformRenderer {
         params: &RenderingParameters,
         theme_colors: &ThemeColors,
     ) {
+        if Self::analog_visible_span_width_px(
+            &variable.transitions,
+            variable.actual_time_range_ns,
+            params.viewport_start_ps,
+            params.viewport_end_ps,
+            params.canvas_width,
+        )
+        .is_some_and(|width| width < 2.0)
+        {
+            Self::add_analog_zoom_hint(objects, row_top, row_height, params, theme_colors);
+            return;
+        }
+
         let range = match Self::compute_analog_range(
             &variable.transitions,
+            variable.actual_time_range_ns,
             params.viewport_start_ps,
             params.viewport_end_ps,
             variable.analog_limits.as_ref(),
@@ -805,6 +818,13 @@ impl WaveformRenderer {
             let ratio = (time_ps.saturating_sub(start_ps)) as f64 / range_ps;
             (ratio * params.canvas_width as f64) as f32
         };
+        let time_ps_to_x = |time_ps: u64| -> f32 {
+            let ratio = (time_ps.saturating_sub(start_ps)) as f64 / range_ps;
+            (ratio * params.canvas_width as f64) as f32
+        };
+        let actual_end_ps = variable
+            .actual_time_range_ns
+            .map(|(_, end_ns)| end_ns.saturating_mul(PS_PER_NS));
 
         let mut points: Vec<(f32, f32)> = Vec::new();
 
@@ -820,7 +840,7 @@ impl WaveformRenderer {
                     .time_ns
                     .saturating_mul(PS_PER_NS)
             } else {
-                end_ps
+                actual_end_ps.unwrap_or(end_ps)
             };
 
             if next_time_ps <= start_ps {
@@ -848,13 +868,7 @@ impl WaveformRenderer {
             let x_end = if next_time_ps > end_ps {
                 params.canvas_width as f32
             } else {
-                time_to_x(
-                    variable
-                        .transitions
-                        .get(i + 1)
-                        .map(|t| t.time_ns)
-                        .unwrap_or(transition.time_ns),
-                )
+                time_ps_to_x(next_time_ps)
             };
             points.push((x_end, y));
         }
@@ -869,6 +883,85 @@ impl WaveformRenderer {
                     .into(),
             );
         }
+    }
+
+    fn analog_visible_span_width_px(
+        transitions: &[SignalTransition],
+        actual_time_range_ns: Option<(u64, u64)>,
+        viewport_start_ps: u64,
+        viewport_end_ps: u64,
+        canvas_width_px: u32,
+    ) -> Option<f64> {
+        if transitions.is_empty() || viewport_end_ps <= viewport_start_ps || canvas_width_px == 0 {
+            return None;
+        }
+
+        let mut visible_start_ps = u64::MAX;
+        let mut visible_end_ps = 0_u64;
+        let mut found_segment = false;
+        let actual_end_ps =
+            actual_time_range_ns.map(|(_, end_ns)| end_ns.saturating_mul(PS_PER_NS));
+
+        for (index, transition) in transitions.iter().enumerate() {
+            let segment_start_ps = transition.time_ns.saturating_mul(PS_PER_NS);
+            let segment_end_ps = transitions
+                .get(index + 1)
+                .map(|next| next.time_ns.saturating_mul(PS_PER_NS))
+                .or(actual_end_ps)
+                .unwrap_or(viewport_end_ps);
+
+            if segment_end_ps <= viewport_start_ps {
+                continue;
+            }
+            if segment_start_ps >= viewport_end_ps {
+                break;
+            }
+
+            let clamped_start = segment_start_ps.max(viewport_start_ps);
+            let clamped_end = segment_end_ps.min(viewport_end_ps);
+            if clamped_end <= clamped_start {
+                continue;
+            }
+
+            visible_start_ps = visible_start_ps.min(clamped_start);
+            visible_end_ps = visible_end_ps.max(clamped_end);
+            found_segment = true;
+        }
+
+        if !found_segment || visible_end_ps <= visible_start_ps {
+            return None;
+        }
+
+        let viewport_span_ps = (viewport_end_ps - viewport_start_ps) as f64;
+        let visible_span_ps = (visible_end_ps - visible_start_ps) as f64;
+        Some((visible_span_ps / viewport_span_ps) * canvas_width_px as f64)
+    }
+
+    fn add_analog_zoom_hint(
+        objects: &mut Vec<Object2d>,
+        row_top: f32,
+        row_height: f32,
+        params: &RenderingParameters,
+        theme_colors: &ThemeColors,
+    ) {
+        objects.push(
+            Text::new()
+                .text("Zoom in to inspect analog waveform")
+                .position(10.0, row_top + (row_height / 2.0) - 5.0)
+                .size(
+                    (params.canvas_width as f32 - 20.0).max(20.0),
+                    row_height.max(12.0),
+                )
+                .color(
+                    theme_colors.neutral_12.0,
+                    theme_colors.neutral_12.1,
+                    theme_colors.neutral_12.2,
+                    0.5,
+                )
+                .font_size(10.0)
+                .family(Family::name("Inter"))
+                .into(),
+        );
     }
 
     fn classify_signal_state(value: &str) -> SignalState {
@@ -1004,11 +1097,19 @@ impl WaveformRenderer {
         let range_ps = (params.viewport_end_ps - params.viewport_start_ps) as f64;
         let marker_color = (0u8, 220u8, 220u8, 0.85f32);
         let canvas_height = params.canvas_height as f32;
+        let layout = Self::compute_row_layout(params);
+        let timeline_y = layout
+            .last()
+            .map(|span| span.top_px + span.height_px + span.divider_height_after_px)
+            .unwrap_or(0.0);
+        let timeline_height = (canvas_height - timeline_y).max(1.0);
         let mut markers = params.markers.clone();
         markers.sort_by_key(|marker| marker.time_ps);
-        let lane_count = 3usize;
         let lane_height = 14.0f32;
         let lane_gap = 2.0f32;
+        let lane_capacity =
+            (((timeline_height + lane_gap) / (lane_height + lane_gap)).floor() as usize).max(1);
+        let lane_count = lane_capacity.min(3);
         let mut lane_end_x = vec![0.0f32; lane_count];
 
         for marker in &markers {
@@ -1038,8 +1139,9 @@ impl WaveformRenderer {
                 .enumerate()
                 .find(|(_, lane_end)| label_x >= **lane_end)
             {
-                let label_y = 4.0 + lane_index as f32 * (lane_height + lane_gap);
-                if label_y + lane_height <= canvas_height {
+                let label_y = (canvas_height - lane_height - 2.0)
+                    - lane_index as f32 * (lane_height + lane_gap);
+                if label_y >= timeline_y && label_y + lane_height <= canvas_height {
                     objects.push(
                         Text::new()
                             .text(marker.name.clone())
@@ -1066,7 +1168,10 @@ impl WaveformRenderer {
         }
 
         let layout = Self::compute_row_layout(params);
-        let timeline_y = layout.last().map(|(top, h)| top + h).unwrap_or(0.0);
+        let timeline_y = layout
+            .last()
+            .map(|span| span.top_px + span.height_px + span.divider_height_after_px)
+            .unwrap_or(0.0);
         let timeline_height = (params.canvas_height as f32 - timeline_y).max(1.0);
 
         objects.push(
@@ -1349,6 +1454,7 @@ mod tests {
 
         let range = WaveformRenderer::compute_analog_range(
             &transitions,
+            None,
             0,
             20_000,
             Some(&AnalogLimits::manual(-5.0, 5.0)),
@@ -1367,11 +1473,31 @@ mod tests {
 
         let range = WaveformRenderer::compute_analog_range(
             &transitions,
+            None,
             10_000,
             20_000,
             Some(&AnalogLimits::auto()),
         );
 
         assert_eq!(range, Some((10.0, 10.0)));
+    }
+
+    #[test]
+    fn analog_visible_span_width_tracks_compressed_segments() {
+        let transitions = vec![
+            SignalTransition::new(0, "0.0".to_string()),
+            SignalTransition::new(1, "1.0".to_string()),
+        ];
+
+        let visible_width = WaveformRenderer::analog_visible_span_width_px(
+            &transitions,
+            Some((0, 1)),
+            0,
+            1_000_000,
+            100,
+        );
+
+        assert!(visible_width.is_some());
+        assert!(visible_width.unwrap() < 2.0);
     }
 }

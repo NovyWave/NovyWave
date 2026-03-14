@@ -365,6 +365,7 @@ pub struct NovyWaveApp {
 
     pub marker_dialog_visible: Mutable<bool>,
     pub marker_name_input: Mutable<String>,
+    pub marker_target_time: Mutable<Option<crate::visualizer::timeline::time_domain::TimePs>>,
 }
 
 // Remove Default implementation - use new() method instead
@@ -530,6 +531,7 @@ impl NovyWaveApp {
             workspace_switch_generation,
             marker_dialog_visible: Mutable::new(false),
             marker_name_input: Mutable::new(String::new()),
+            marker_target_time: Mutable::new(None),
         }
     }
 
@@ -678,6 +680,7 @@ impl NovyWaveApp {
                 let debug_notification_task = self.debug_notification_task.clone();
                 let marker_dialog_visible = self.marker_dialog_visible.clone();
                 let marker_name_input = self.marker_name_input.clone();
+                let marker_target_time = self.marker_target_time.clone();
 
                 move |raw_el| {
                     let app_config_for_keydown = app_config.clone();
@@ -688,6 +691,7 @@ impl NovyWaveApp {
                     let timeline_for_keyup = timeline.clone();
                     let marker_dialog_visible_for_keydown = marker_dialog_visible.clone();
                     let marker_name_input_for_keydown = marker_name_input.clone();
+                    let marker_target_time_for_keydown = marker_target_time.clone();
                     let raw_el = raw_el.global_event_handler_with_options(
                         EventOptions::new().preventable(),
                         move |event: KeyDown| {
@@ -863,6 +867,8 @@ impl NovyWaveApp {
                                             timeline_for_keydown.markers.lock_ref().len() + 1;
                                         marker_name_input_for_keydown
                                             .set(format!("Marker {count}"));
+                                        marker_target_time_for_keydown
+                                            .set(Some(timeline_for_keydown.marker_target_time()));
                                         marker_dialog_visible_for_keydown.set(true);
                                     }
                                     "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" => {
@@ -939,6 +945,9 @@ impl NovyWaveApp {
                         El::new()
                             .s(Width::fill())
                             .s(Height::growable())
+                            .update_raw_el(|raw_el| {
+                                raw_el.style("min-height", "0").style("overflow", "hidden")
+                            })
                             .child(self.main_layout()),
                     ),
             )
@@ -1001,12 +1010,14 @@ impl NovyWaveApp {
             .layer_signal(self.marker_dialog_visible.signal().map_true({
                 let marker_dialog_visible = self.marker_dialog_visible.clone();
                 let marker_name_input = self.marker_name_input.clone();
+                let marker_target_time = self.marker_target_time.clone();
                 let waveform_timeline = self.waveform_timeline.clone();
                 let config = self.config.clone();
                 move || {
                     marker_name_dialog(
                         marker_dialog_visible.clone(),
                         marker_name_input.clone(),
+                        marker_target_time.clone(),
                         waveform_timeline.clone(),
                         config.clone(),
                     )
@@ -2251,6 +2262,7 @@ fn workspace_build_directory_item(
 fn marker_name_dialog(
     dialog_visible: Mutable<bool>,
     name_input: Mutable<String>,
+    marker_target_time: Mutable<Option<crate::visualizer::timeline::time_domain::TimePs>>,
     timeline: WaveformTimeline,
     config: AppConfig,
 ) -> impl Element {
@@ -2261,22 +2273,32 @@ fn marker_name_dialog(
     let confirm_action = {
         let dialog_visible = dialog_visible.clone();
         let name_input = name_input.clone();
+        let marker_target_time = marker_target_time.clone();
         let timeline = timeline.clone();
         let config = config.clone();
         Rc::new(move || {
             let name = name_input.get_cloned();
             if !name.is_empty() {
-                timeline.add_marker(name);
+                if let Some(target_time) = marker_target_time.get_cloned() {
+                    timeline.add_marker_at(name, target_time);
+                } else {
+                    timeline.add_marker(name);
+                }
                 config.markers_config.set(timeline.markers_as_config());
                 config.request_save();
             }
+            marker_target_time.set(None);
             dialog_visible.set(false);
         })
     };
 
     let close_action = {
         let dialog_visible = dialog_visible.clone();
-        Rc::new(move || dialog_visible.set(false))
+        let marker_target_time = marker_target_time.clone();
+        Rc::new(move || {
+            marker_target_time.set(None);
+            dialog_visible.set(false);
+        })
     };
 
     El::new()
@@ -2320,7 +2342,11 @@ fn marker_name_dialog(
                     let confirm_action = confirm_action.clone();
                     let close_action_for_key = {
                         let dialog_visible = dialog_visible.clone();
-                        move || dialog_visible.set(false)
+                        let marker_target_time = marker_target_time.clone();
+                        move || {
+                            marker_target_time.set(None);
+                            dialog_visible.set(false);
+                        }
                     };
                     move |raw_el| {
                         raw_el.global_event_handler(move |event: KeyDown| {
@@ -2366,7 +2392,11 @@ fn marker_name_dialog(
                                 .size(ButtonSize::Small)
                                 .on_press({
                                     let dialog_visible = dialog_visible.clone();
-                                    move || dialog_visible.set(false)
+                                    let marker_target_time = marker_target_time.clone();
+                                    move || {
+                                        marker_target_time.set(None);
+                                        dialog_visible.set(false);
+                                    }
                                 })
                                 .build(),
                         )

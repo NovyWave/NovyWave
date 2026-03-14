@@ -35,6 +35,7 @@ pub struct TimelineVariableSeries {
     pub formatter: VarFormat,
     pub transitions: Arc<Vec<SignalTransition>>,
     pub total_transitions: usize,
+    pub actual_time_range_ns: Option<(u64, u64)>,
     pub cursor_value: Option<SignalValue>,
     pub signal_type: Option<String>,
     pub row_height: u32,
@@ -48,6 +49,7 @@ impl TimelineVariableSeries {
             formatter,
             transitions: Arc::new(Vec::new()),
             total_transitions: 0,
+            actual_time_range_ns: None,
             cursor_value: None,
             signal_type: None,
             row_height: 30,
@@ -62,6 +64,7 @@ struct TimelineVariableStructure {
     formatter: VarFormat,
     transitions: Arc<Vec<SignalTransition>>,
     total_transitions: usize,
+    actual_time_range_ns: Option<(u64, u64)>,
     cursor_value: Option<SignalValue>,
     signal_type: Option<String>,
     analog_limits: Option<shared::AnalogLimits>,
@@ -220,6 +223,7 @@ struct RequestContext {
 struct VariableSeriesData {
     transitions: Arc<Vec<SignalTransition>>,
     total_transitions: usize,
+    actual_time_range_ns: Option<(u64, u64)>,
 }
 
 #[derive(Clone, Debug)]
@@ -1011,7 +1015,16 @@ impl WaveformTimeline {
     }
 
     pub fn add_marker(&self, name: String) {
-        let time_ps = self.cursor.get_cloned().picoseconds();
+        let time_ps = self.marker_target_time().picoseconds();
+        self.markers
+            .lock_mut()
+            .push_cloned(Marker { time_ps, name });
+        self.sync_markers_snapshot();
+        self.update_render_state();
+    }
+
+    pub fn add_marker_at(&self, name: String, time: TimePs) {
+        let time_ps = self.clamp_to_bounds(time).picoseconds();
         self.markers
             .lock_mut()
             .push_cloned(Marker { time_ps, name });
@@ -1140,6 +1153,31 @@ impl WaveformTimeline {
         } else {
             self.tooltip_state.set_neq(None);
         }
+    }
+
+    fn preferred_marker_time(&self) -> Option<TimePs> {
+        self.pointer_hover_snapshot
+            .get_cloned()
+            .map(|snapshot| self.hover_time_from_snapshot(&snapshot))
+    }
+
+    pub fn marker_target_time(&self) -> TimePs {
+        self.preferred_marker_time()
+            .unwrap_or_else(|| self.cursor.get_cloned())
+    }
+
+    fn hover_time_from_snapshot(&self, snapshot: &PointerHoverSnapshot) -> TimePs {
+        let render_state = self.render_state.get_cloned();
+        let start_ps = render_state.viewport_start.picoseconds();
+        let end_ps = render_state.viewport_end.picoseconds();
+        let duration_ps = end_ps.saturating_sub(start_ps);
+        let normalized_x = snapshot.normalized_x.clamp(0.0, 1.0);
+        let offset_ps = if duration_ps == 0 {
+            0
+        } else {
+            ((duration_ps as f64) * normalized_x).round() as u64
+        };
+        TimePs::from_picoseconds(start_ps.saturating_add(offset_ps))
     }
 
     fn set_zoom_center(&self, time: TimePs) {
@@ -1710,6 +1748,7 @@ impl WaveformTimeline {
                         VariableSeriesData {
                             transitions: Arc::clone(&entry.transitions),
                             total_transitions: entry.total_transitions,
+                            actual_time_range_ns: Some(entry.range_ns),
                         },
                     );
                 }
@@ -1951,6 +1990,7 @@ impl WaveformTimeline {
                 VariableSeriesData {
                     transitions: transitions_arc,
                     total_transitions: transition_count,
+                    actual_time_range_ns: Some(merged_range),
                 },
             );
         }
@@ -2156,6 +2196,7 @@ impl WaveformTimeline {
                     formatter,
                     transitions: Arc::clone(&series.transitions),
                     total_transitions: series.total_transitions,
+                    actual_time_range_ns: series.actual_time_range_ns,
                     cursor_value,
                     signal_type,
                     analog_limits,
@@ -2165,6 +2206,7 @@ impl WaveformTimeline {
                     formatter,
                     transitions: Arc::new(Vec::new()),
                     total_transitions: 0,
+                    actual_time_range_ns: None,
                     cursor_value,
                     signal_type,
                     analog_limits,
@@ -2266,6 +2308,7 @@ impl WaveformTimeline {
                             formatter: series.formatter,
                             transitions: Arc::clone(&series.transitions),
                             total_transitions: series.total_transitions,
+                            actual_time_range_ns: series.actual_time_range_ns,
                             cursor_value: series.cursor_value.clone(),
                             signal_type: series.signal_type.clone(),
                             row_height: *row_height,
@@ -2341,47 +2384,40 @@ impl WaveformTimeline {
         }
 
         let pointer_y = snapshot.normalized_y * (render_state.canvas_height_px.max(1) as f64);
-        let total_desired_height: f64 = render_state
-            .rows
-            .iter()
-            .map(|row| row.row_height() as f64)
-            .sum::<f64>()
-            + 30.0;
-        let available_height = render_state.canvas_height_px.max(1) as f64;
-        let scale = if total_desired_height > available_height {
-            available_height / total_desired_height
-        } else {
-            1.0
-        };
+        let row_spans = crate::selected_variables_layout::compute_row_spans(
+            &render_state
+                .rows
+                .iter()
+                .map(|row| match row {
+                    TimelineRenderRow::GroupHeader { .. } => {
+                        crate::selected_variables_layout::SelectedVariablesRowMetric::group_header()
+                    }
+                    TimelineRenderRow::Variable(series) => {
+                        crate::selected_variables_layout::SelectedVariablesRowMetric::variable(
+                            series.row_height,
+                        )
+                    }
+                })
+                .collect::<Vec<_>>(),
+        );
 
-        let mut row_top = 0.0f64;
         let mut hovered_series = None;
-        for row in &render_state.rows {
-            let row_height = (row.row_height() as f64) * scale;
-            let row_bottom = row_top + row_height;
+        for (row, span) in render_state.rows.iter().zip(row_spans.iter()) {
+            let row_top = span.top_px as f64;
+            let row_bottom = row_top + span.height_px as f64;
             if pointer_y >= row_top && pointer_y < row_bottom {
                 if let TimelineRenderRow::Variable(series) = row {
                     hovered_series = Some(series);
                 }
                 break;
             }
-            row_top = row_bottom;
         }
 
         let Some(series) = hovered_series else {
             self.tooltip_state.set_neq(None);
             return;
         };
-        let start_ps = render_state.viewport_start.picoseconds();
-        let end_ps = render_state.viewport_end.picoseconds();
-        let duration_ps = end_ps.saturating_sub(start_ps);
-        let normalized_x = snapshot.normalized_x.clamp(0.0, 1.0);
-        let offset_ps = if duration_ps == 0 {
-            0
-        } else {
-            ((duration_ps as f64) * normalized_x).round() as u64
-        };
-        let target_time = TimePs::from_picoseconds(start_ps.saturating_add(offset_ps));
+        let target_time = self.hover_time_from_snapshot(&snapshot);
         let target_ns = target_time.picoseconds() / PS_PER_NS;
 
         let value = Self::cursor_value_from_transitions(series.transitions.as_ref(), target_ns);
@@ -2392,7 +2428,7 @@ impl WaveformTimeline {
         let canvas_width = render_state.canvas_width_px.max(1) as f32;
         let canvas_height = render_state.canvas_height_px.max(1) as f32;
 
-        let mut screen_x = (normalized_x as f32) * canvas_width;
+        let mut screen_x = (snapshot.normalized_x as f32) * canvas_width;
         let mut screen_y = (snapshot.normalized_y as f32) * canvas_height;
         const TOOLTIP_MARGIN: f32 = 12.0;
         if canvas_width > TOOLTIP_MARGIN {

@@ -61,10 +61,10 @@ fn display_signal() -> Signal { filter_variables(&variables, &filter) }
 - Add `.dedupe()` before expensive operations
 - Create signals once, update content only
 
-## Browser MCP Testing
+## Live UI Testing
 
-1. Navigate to localhost:8080
-2. Wait 3+ seconds for initialization
-3. Check console for spam patterns
-4. Test interactions, verify responsiveness
-5. Screenshot before/after
+1. Open the live Tauri session
+2. Wait for initialization to finish
+3. Check the live console for spam patterns
+4. Test interactions and verify responsiveness
+5. Use DOM or canvas captures when visual evidence is needed

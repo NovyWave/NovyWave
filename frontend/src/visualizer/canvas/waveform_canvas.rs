@@ -306,6 +306,7 @@ impl WaveformCanvas {
                         formatter: series.formatter,
                         transitions: Arc::clone(&series.transitions),
                         cursor_value: series.cursor_value.clone(),
+                        actual_time_range_ns: series.actual_time_range_ns,
                         signal_type: series.signal_type.clone(),
                         row_height: series.row_height,
                         analog_limits: series.analog_limits.clone(),
