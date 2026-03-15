@@ -511,6 +511,42 @@ fn get_timeline_state_impl() -> JsValue {
             &JsValue::from_bool(state.waveform_timeline.request_bootstrap_pending_debug()),
         )
         .ok();
+        js_sys::Reflect::set(
+            &obj,
+            &"lastRequestDurationMs".into(),
+            &debug_metrics
+                .last_request_duration_ms
+                .map(JsValue::from_f64)
+                .unwrap_or(JsValue::NULL),
+        )
+        .ok();
+        js_sys::Reflect::set(
+            &obj,
+            &"lastRenderDurationMs".into(),
+            &debug_metrics
+                .last_render_duration_ms
+                .map(JsValue::from_f64)
+                .unwrap_or(JsValue::NULL),
+        )
+        .ok();
+        js_sys::Reflect::set(
+            &obj,
+            &"lastCacheHit".into(),
+            &debug_metrics
+                .last_cache_hit
+                .map(JsValue::from_bool)
+                .unwrap_or(JsValue::NULL),
+        )
+        .ok();
+        js_sys::Reflect::set(
+            &obj,
+            &"lastCacheCoverage".into(),
+            &debug_metrics
+                .last_cache_coverage
+                .map(JsValue::from_f64)
+                .unwrap_or(JsValue::NULL),
+        )
+        .ok();
 
         obj.into()
     })
@@ -911,6 +947,42 @@ fn get_perf_counters_impl() -> JsValue {
         .ok();
         js_sys::Reflect::set(
             &obj,
+            &"lastRequestDurationMs".into(),
+            &timeline
+                .last_request_duration_ms
+                .map(JsValue::from_f64)
+                .unwrap_or(JsValue::NULL),
+        )
+        .ok();
+        js_sys::Reflect::set(
+            &obj,
+            &"lastRenderDurationMs".into(),
+            &timeline
+                .last_render_duration_ms
+                .map(JsValue::from_f64)
+                .unwrap_or(JsValue::NULL),
+        )
+        .ok();
+        js_sys::Reflect::set(
+            &obj,
+            &"lastCacheHit".into(),
+            &timeline
+                .last_cache_hit
+                .map(JsValue::from_bool)
+                .unwrap_or(JsValue::NULL),
+        )
+        .ok();
+        js_sys::Reflect::set(
+            &obj,
+            &"lastCacheCoverage".into(),
+            &timeline
+                .last_cache_coverage
+                .map(JsValue::from_f64)
+                .unwrap_or(JsValue::NULL),
+        )
+        .ok();
+        js_sys::Reflect::set(
+            &obj,
             &"saveSendCount".into(),
             &JsValue::from_f64(config.save_send_count as f64),
         )
@@ -999,6 +1071,21 @@ fn get_canvas_render_debug_impl() -> JsValue {
         &obj,
         &"staticSkipReason".into(),
         &debug.static_skip_reason.unwrap_or("").into(),
+    )
+    .ok();
+    js_sys::Reflect::set(
+        &obj,
+        &"lastRenderTimeMs".into(),
+        &debug
+            .last_render_time_ms
+            .map(|value| JsValue::from_f64(value as f64))
+            .unwrap_or(JsValue::NULL),
+    )
+    .ok();
+    js_sys::Reflect::set(
+        &obj,
+        &"renderCount".into(),
+        &JsValue::from_f64(debug.render_count as f64),
     )
     .ok();
     obj.into()

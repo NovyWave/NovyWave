@@ -68,6 +68,8 @@ pub struct CanvasRenderDebug {
     pub overlay_count: usize,
     pub total_objects: usize,
     pub static_skip_reason: Option<&'static str>,
+    pub last_render_time_ms: Option<f32>,
+    pub render_count: u32,
 }
 
 thread_local! {
@@ -338,6 +340,8 @@ impl WaveformRenderer {
                     overlay_count: overlay_objects.len(),
                     total_objects: objects_rendered,
                     static_skip_reason,
+                    last_render_time_ms: Some(render_time),
+                    render_count,
                 };
             });
             if render_time > 80.0 {
@@ -362,6 +366,8 @@ impl WaveformRenderer {
                     overlay_count: 0,
                     total_objects: 0,
                     static_skip_reason: Some("missing_canvas"),
+                    last_render_time_ms: None,
+                    render_count: 0,
                 };
             });
             None
