@@ -646,6 +646,7 @@ fn signal_row_divider(
                     return;
                 }
                 raw_pointer_down.prevent_default();
+                crate::dragging::capture_pointer(raw_pointer_down, "selected-row-divider");
                 start_drag(
                     &dragging_system,
                     DividerType::SignalRowDivider {

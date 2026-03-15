@@ -30,6 +30,7 @@ struct DragState {
     active_divider: Option<DividerType>,
     drag_start_position: (f32, f32),
     initial_value: f32,
+    has_logged_first_move: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -55,14 +56,61 @@ impl DraggingSystem {
         app_config: crate::config::AppConfig,
         selected_variables: crate::selected_variables::SelectedVariables,
     ) -> Self {
-        Self {
+        let system = Self {
             drag_state: Mutable::new(DragState::default()),
             app_config,
             selected_variables,
             pending_divider_resize: Mutable::new(None),
             divider_resize_frame_scheduled: Mutable::new(false),
             debug_metrics: Mutable::new(DraggingDebugMetrics::default()),
-        }
+        };
+        system.install_global_drag_event_listeners();
+        system
+    }
+
+    fn install_global_drag_event_listeners(&self) {
+        let Some(window) = web_sys::window() else {
+            return;
+        };
+
+        let move_system = self.clone();
+        let move_closure = Closure::wrap(Box::new(move |event: web_sys::PointerEvent| {
+            if move_system.drag_state.lock_ref().active_divider.is_none() {
+                return;
+            }
+            move_system.process_drag_movement((event.client_x() as f32, event.client_y() as f32));
+        }) as Box<dyn FnMut(_)>);
+        let _ = window
+            .add_event_listener_with_callback("pointermove", move_closure.as_ref().unchecked_ref());
+        move_closure.forget();
+
+        let up_system = self.clone();
+        let up_closure = Closure::wrap(Box::new(move |_event: web_sys::PointerEvent| {
+            if up_system.drag_state.lock_ref().active_divider.is_none() {
+                return;
+            }
+            up_system.end_drag();
+        }) as Box<dyn FnMut(_)>);
+        let _ = window
+            .add_event_listener_with_callback("pointerup", up_closure.as_ref().unchecked_ref());
+        up_closure.forget();
+
+        let cancel_system = self.clone();
+        let cancel_closure = Closure::wrap(Box::new(move |_event: web_sys::PointerEvent| {
+            let active_divider = cancel_system.drag_state.lock_ref().active_divider.clone();
+            if let Some(active_divider) = active_divider {
+                log_drag(format!(
+                    "cancel divider={} source=window",
+                    divider_label(&active_divider)
+                ));
+                cancel_system.end_drag();
+            }
+        }) as Box<dyn FnMut(_)>);
+        let _ = window.add_event_listener_with_callback(
+            "pointercancel",
+            cancel_closure.as_ref().unchecked_ref(),
+        );
+        cancel_closure.forget();
     }
 
     fn apply_divider_resize_value(&self, divider_type: &DividerType, value: f32) {
@@ -170,7 +218,14 @@ impl DraggingSystem {
             active_divider: Some(divider_type),
             drag_start_position: start_position,
             initial_value,
+            has_logged_first_move: false,
         });
+        log_drag(format!(
+            "start divider={} x={} y={}",
+            divider_label(self.drag_state.lock_ref().active_divider.as_ref().unwrap()),
+            start_position.0,
+            start_position.1
+        ));
     }
 
     pub fn process_drag_movement(&self, current_position: (f32, f32)) {
@@ -229,6 +284,17 @@ impl DraggingSystem {
             };
 
             if delta.abs() > 1.0 {
+                if !current_drag_state.has_logged_first_move {
+                    self.drag_state.update_mut(|state| {
+                        state.has_logged_first_move = true;
+                    });
+                    log_drag(format!(
+                        "move divider={} x={} y={}",
+                        divider_label(divider_type),
+                        current_position.0,
+                        current_position.1
+                    ));
+                }
                 match (divider_type, dock_mode) {
                     (DividerType::FilesPanelMain, DockMode::Right) => {
                         self.debug_metrics.update_mut(|metrics| {
@@ -286,6 +352,9 @@ impl DraggingSystem {
 
     pub fn end_drag(&self) {
         let active_divider = self.drag_state.get_cloned().active_divider;
+        if let Some(ref divider) = active_divider {
+            log_drag(format!("end divider={}", divider_label(divider)));
+        }
         self.apply_pending_divider_resize();
         match active_divider {
             Some(DividerType::SignalRowDivider { unique_id }) => {
@@ -391,10 +460,44 @@ pub fn start_drag(system: &DraggingSystem, divider_type: DividerType, start_posi
     system.start_drag(divider_type, start_position);
 }
 
-pub fn process_drag_movement(system: &DraggingSystem, current_position: (f32, f32)) {
-    system.process_drag_movement(current_position);
+pub fn capture_pointer(raw_pointer_down: &events_extra::PointerDown, label: &str) {
+    let pointer_id = raw_pointer_down.pointer_id();
+    let Some(target) = raw_pointer_down.dyn_target::<web_sys::Element>() else {
+        log_drag(format!(
+            "capture-miss label={label} pointer_id={pointer_id}"
+        ));
+        return;
+    };
+
+    match target.set_pointer_capture(pointer_id) {
+        Ok(()) => {
+            let testid = target.get_attribute("data-testid").unwrap_or_default();
+            log_drag(format!(
+                "capture-ok label={label} pointer_id={pointer_id} testid={testid}"
+            ));
+        }
+        Err(error) => {
+            log_drag(format!(
+                "capture-fail label={label} pointer_id={pointer_id} error={error:?}"
+            ));
+        }
+    }
 }
 
-pub fn end_drag(system: &DraggingSystem) {
-    system.end_drag();
+fn divider_label(divider_type: &DividerType) -> String {
+    match divider_type {
+        DividerType::FilesPanelMain => "files_panel_main".to_owned(),
+        DividerType::FilesPanelSecondary => "files_panel_secondary".to_owned(),
+        DividerType::VariablesNameColumn => "variables_name_column".to_owned(),
+        DividerType::VariablesValueColumn => "variables_value_column".to_owned(),
+        DividerType::SignalRowDivider { unique_id } => format!("signal_row:{unique_id}"),
+    }
 }
+
+#[cfg(debug_assertions)]
+fn log_drag(message: String) {
+    zoon::println!("[DRAG] {message}");
+}
+
+#[cfg(not(debug_assertions))]
+fn log_drag(_message: String) {}

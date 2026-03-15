@@ -8,7 +8,6 @@ use moonzoon_novyui::components::treeview::{
 use moonzoon_novyui::*;
 use zoon::RawHtmlEl;
 use zoon::events::{Click, KeyDown, KeyUp};
-use zoon::events_extra;
 use zoon::{EventOptions, *};
 
 use crate::config::AppConfig;
@@ -675,7 +674,6 @@ impl NovyWaveApp {
             .update_raw_el({
                 let app_config = self.config.clone();
                 let timeline = self.waveform_timeline.clone();
-                let dragging_system_for_events = dragging_system.clone();
                 let key_repeat_handles = self.key_repeat_handles.clone();
                 let debug_notification_task = self.debug_notification_task.clone();
                 let marker_dialog_visible = self.marker_dialog_visible.clone();
@@ -925,15 +923,7 @@ impl NovyWaveApp {
                         },
                     );
 
-                    let dragging_system_for_up = dragging_system_for_events.clone();
-                    let raw_el = raw_el.global_event_handler(move |_: events_extra::PointerUp| {
-                        crate::dragging::end_drag(&dragging_system_for_up);
-                    });
-
-                    let dragging_system_for_cancel = dragging_system_for_events;
-                    raw_el.global_event_handler(move |_: events_extra::PointerCancel| {
-                        crate::dragging::end_drag(&dragging_system_for_cancel);
-                    })
+                    raw_el
                 }
             })
             .layer(
@@ -1319,7 +1309,7 @@ impl NovyWaveApp {
 }
 
 fn dragging_overlay_element(
-    dragging_system: crate::dragging::DraggingSystem,
+    _dragging_system: crate::dragging::DraggingSystem,
     divider_type: crate::dragging::DividerType,
 ) -> impl Element {
     use crate::dragging::DividerType;
@@ -1333,10 +1323,6 @@ fn dragging_overlay_element(
         | DividerType::FilesPanelMain => CursorIcon::ColumnResize,
     };
 
-    let system_for_move = dragging_system.clone();
-    let system_for_up = dragging_system.clone();
-    let system_for_cancel = dragging_system.clone();
-
     El::new()
         .s(Width::fill())
         .s(Height::fill())
@@ -1348,20 +1334,6 @@ fn dragging_overlay_element(
                 .style("z-index", "9998")
                 .style("user-select", "none")
                 .style("touch-action", "none")
-        })
-        .on_pointer_move_event(move |event: PointerEvent| {
-            crate::dragging::process_drag_movement(
-                &system_for_move,
-                (event.x() as f32, event.y() as f32),
-            );
-        })
-        .on_pointer_up(move || {
-            crate::dragging::end_drag(&system_for_up);
-        })
-        .update_raw_el(move |raw_el| {
-            raw_el.event_handler(move |_: events_extra::PointerCancel| {
-                crate::dragging::end_drag(&system_for_cancel);
-            })
         })
 }
 

@@ -100,6 +100,7 @@ pub fn variables_name_vertical_divider(
                 }
 
                 raw_pointer_down.prevent_default();
+                crate::dragging::capture_pointer(raw_pointer_down, "variables-name-column");
 
                 start_drag(
                     &dragging_system,
@@ -141,6 +142,7 @@ pub fn variables_value_vertical_divider(
                 }
 
                 raw_pointer_down.prevent_default();
+                crate::dragging::capture_pointer(raw_pointer_down, "variables-value-column");
 
                 start_drag(
                     &dragging_system,
@@ -182,6 +184,7 @@ pub fn files_panel_vertical_divider(
                 }
 
                 raw_pointer_down.prevent_default();
+                crate::dragging::capture_pointer(raw_pointer_down, "files-panel-main");
 
                 start_drag(
                     &dragging_system,
@@ -222,6 +225,7 @@ pub fn files_panel_horizontal_divider(
                 }
 
                 raw_pointer_down.prevent_default();
+                crate::dragging::capture_pointer(raw_pointer_down, "files-panel-secondary");
 
                 start_drag(
                     &dragging_system,
