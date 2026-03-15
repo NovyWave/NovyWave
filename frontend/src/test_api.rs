@@ -159,6 +159,16 @@ pub fn expose_novywave_test_api() {
     .ok();
     get_canvas_render_debug_closure.forget();
 
+    let get_render_variables_debug_closure =
+        Closure::wrap(Box::new(get_render_variables_debug_impl) as Box<dyn Fn() -> JsValue>);
+    js_sys::Reflect::set(
+        &api,
+        &"getRenderVariablesDebug".into(),
+        get_render_variables_debug_closure.as_ref().unchecked_ref(),
+    )
+    .ok();
+    get_render_variables_debug_closure.forget();
+
     let reset_perf_counters_closure =
         Closure::wrap(Box::new(reset_perf_counters_impl) as Box<dyn Fn() -> bool>);
     js_sys::Reflect::set(
@@ -493,6 +503,12 @@ fn get_timeline_state_impl() -> JsValue {
             &obj,
             &"startupInitialQuerySendCount".into(),
             &JsValue::from_f64(debug_metrics.startup_initial_query_send_count as f64),
+        )
+        .ok();
+        js_sys::Reflect::set(
+            &obj,
+            &"requestBootstrapPending".into(),
+            &JsValue::from_bool(state.waveform_timeline.request_bootstrap_pending_debug()),
         )
         .ok();
 
@@ -986,6 +1002,48 @@ fn get_canvas_render_debug_impl() -> JsValue {
     )
     .ok();
     obj.into()
+}
+
+fn get_render_variables_debug_impl() -> JsValue {
+    with_state(|state| {
+        let render_state = state.waveform_timeline.render_state_actor().get_cloned();
+        let items = js_sys::Array::new();
+
+        for variable in render_state.variables {
+            let obj = js_sys::Object::new();
+            js_sys::Reflect::set(
+                &obj,
+                &"uniqueId".into(),
+                &JsValue::from_str(&variable.unique_id),
+            )
+            .ok();
+            js_sys::Reflect::set(
+                &obj,
+                &"transitionCount".into(),
+                &JsValue::from_f64(variable.transitions.len() as f64),
+            )
+            .ok();
+
+            let actual = js_sys::Array::new();
+            if let Some((start, end)) = variable.actual_time_range_ns {
+                actual.push(&JsValue::from_f64(start as f64));
+                actual.push(&JsValue::from_f64(end as f64));
+            }
+            js_sys::Reflect::set(&obj, &"actualTimeRangeNs".into(), &actual).ok();
+
+            let covered = js_sys::Array::new();
+            if let Some((start, end)) = variable.covered_time_range_ns {
+                covered.push(&JsValue::from_f64(start as f64));
+                covered.push(&JsValue::from_f64(end as f64));
+            }
+            js_sys::Reflect::set(&obj, &"coveredTimeRangeNs".into(), &covered).ok();
+
+            items.push(&obj);
+        }
+
+        items.into()
+    })
+    .unwrap_or(JsValue::NULL)
 }
 
 fn reset_perf_counters_impl() -> bool {

@@ -87,6 +87,7 @@ pub struct VariableRenderSnapshot {
     #[allow(dead_code)]
     pub cursor_value: Option<SignalValue>,
     pub actual_time_range_ns: Option<(u64, u64)>,
+    pub covered_time_range_ns: Option<(u64, u64)>,
     pub signal_type: Option<String>,
     pub row_height: u32,
     pub analog_limits: Option<AnalogLimits>,
@@ -204,6 +205,8 @@ impl StaticRenderKey {
                     variable.formatter.hash(&mut hasher);
                     variable.row_height.hash(&mut hasher);
                     variable.signal_type.hash(&mut hasher);
+                    variable.actual_time_range_ns.hash(&mut hasher);
+                    variable.covered_time_range_ns.hash(&mut hasher);
                     if let Some(limits) = &variable.analog_limits {
                         limits.auto.hash(&mut hasher);
                         limits.min.to_bits().hash(&mut hasher);
@@ -532,6 +535,9 @@ impl WaveformRenderer {
         let start_ps = params.viewport_start_ps;
         let end_ps = params.viewport_end_ps;
         let ps_per_pixel = range_ps as f64 / params.canvas_width.max(1) as f64;
+        let covered_end_ps = variable
+            .covered_time_range_ns
+            .map(|(_, end_ns)| end_ns.saturating_mul(PS_PER_NS));
         let mut pixel_states: Vec<Option<PixelValue>> = vec![None; width_px];
         let transition_values: Vec<Rc<String>> = variable
             .transitions
@@ -549,7 +555,7 @@ impl WaveformRenderer {
                     .time_ns
                     .saturating_mul(PS_PER_NS)
             } else {
-                end_ps
+                covered_end_ps.unwrap_or(end_ps)
             };
             let mut segment_end = next_time;
 
