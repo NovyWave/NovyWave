@@ -35,58 +35,87 @@ load_files_expanded_directories = [
     "/home/martinkavik/Desktop",
     "/home/martinkavik/Downloads",
 ]
-selected_scope_id = "scope_test_files/analog.vcd|top"
 load_files_scroll_position = 507
 signal_groups = []
 
 [workspace.docked_bottom_dimensions]
-files_and_scopes_panel_width = 400.0
-files_and_scopes_panel_height = 507.0
-selected_variables_panel_name_column_width = 190.0
-selected_variables_panel_value_column_width = 220.0
+files_and_scopes_panel_width = 431.0
+files_and_scopes_panel_height = 527.0
+selected_variables_panel_name_column_width = 237.0
+selected_variables_panel_value_column_width = 272.0
 
 [workspace.docked_right_dimensions]
 files_and_scopes_panel_width = 400.0
 files_and_scopes_panel_height = 300.0
-selected_variables_panel_name_column_width = 190.0
-selected_variables_panel_value_column_width = 220.0
+selected_variables_panel_name_column_width = 193.0
+selected_variables_panel_value_column_width = 264.0
 
 [[workspace.selected_variables]]
 unique_id = "test_files/simple.vcd|simple_tb.s|A"
 signal_type = "Wire"
-row_height = 25
+row_height = 32
 
 [[workspace.selected_variables]]
 unique_id = "test_files/simple_reload_test.vcd|simple_tb.s|A"
 signal_type = "Wire"
-row_height = 24
+row_height = 41
 
 [[workspace.selected_variables]]
 unique_id = "test_files/simple_reload_test.vcd|simple_tb.s|C"
 formatter = "Hexadecimal"
 signal_type = "Wire"
-row_height = 36
+row_height = 30
 
 [[workspace.selected_variables]]
 unique_id = "test_files/analog.vcd|top|analog"
 signal_type = "Real"
-row_height = 70
+row_height = 55
 
 [workspace.selected_variables.analog_limits]
 auto = true
 min = 0.0
 max = 0.0
 
+[[workspace.selected_variables]]
+unique_id = "test_files/simple.vcd|simple_tb.s|B"
+signal_type = "Wire"
+row_height = 30
+
 [workspace.timeline]
-cursor_position_ps = 12797
+cursor_position_ps = 15682
 visible_range_start_ps = 0
-visible_range_end_ps = 46728
-zoom_center_ps = 36370
+visible_range_end_ps = 43561
+zoom_center_ps = 19658
 tooltip_enabled = true
 
 [[workspace.timeline.markers]]
 time_ps = 22118
 name = "Marker 1"
+
+[[workspace.timeline.markers]]
+time_ps = 170250896057348
+name = "Marker 2"
+
+[global.workspace_history]
+last_selected = "/home/martinkavik/repos/NovyWave"
+recent_paths = [
+    "/home/martinkavik/repos/NovyWave",
+    "/tmp/novywave_row_resize_browser_rVysj3",
+    "/tmp/novywave_row_resize_desktop_p4x5nt",
+]
+
+[global.workspace_history.picker_tree_state]
+scroll_top = 0.0
+expanded_paths = [
+    "/",
+    "/home",
+    "/home/martinkavik",
+    "/home/martinkavik/repos",
+    "/home/martinkavik/repos/NovyWave",
+    "/home/martinkavik/repos/NovyWave/test_files",
+    "/home/martinkavik/repos/NovyWave/test_files/my_workspaces",
+    "/home/martinkavik/repos/NovyWave/examples",
+]
 
 [plugins]
 schema_version = 1
