@@ -172,16 +172,6 @@ pub fn file_paths_dialog(
 
     // Get file picker domain for proper selected files management
     let file_picker_domain = app_config.file_picker_domain.clone();
-    if file_picker_domain.platform_roots.get_cloned().is_none()
-        && crate::platform::server_is_ready()
-    {
-        let connection = connection.clone();
-        Task::start(async move {
-            connection
-                .send_up_msg(shared::UpMsg::GetPlatformRoots)
-                .await;
-        });
-    }
 
     let close_dialog = {
         let file_dialog_visible = file_dialog_visible.clone();

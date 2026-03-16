@@ -113,6 +113,7 @@ impl ConnectionMessageActor {
         waveform_timeline: crate::visualizer::timeline::WaveformTimeline,
         config: crate::config::AppConfig,
         connection: std::sync::Arc<SendWrapper<Connection<UpMsg, DownMsg>>>,
+        workspace_picker_domain: crate::config::FilePickerDomain,
     ) {
         let tracked_files_for_reload = self._tracked_files.clone();
 
@@ -215,7 +216,8 @@ impl ConnectionMessageActor {
                                     path,
                                     items.len()
                                 );
-                                config.file_picker_domain.on_directory_contents(path, items);
+                                config.file_picker_domain.on_directory_contents(path.clone(), items.clone());
+                                workspace_picker_domain.on_directory_contents(path, items);
                             }
                             DownMsg::DirectoryError { path, error } => {
                                 zoon::println!(
@@ -223,14 +225,16 @@ impl ConnectionMessageActor {
                                     path,
                                     error
                                 );
-                                config.file_picker_domain.on_directory_error(path, error);
+                                config.file_picker_domain.on_directory_error(path.clone(), error.clone());
+                                workspace_picker_domain.on_directory_error(path, error);
                             }
                             DownMsg::PlatformRoots(roots) => {
                                 zoon::println!(
                                     "frontend: PlatformRoots received {} roots",
                                     roots.len()
                                 );
-                                config.file_picker_domain.on_platform_roots(roots);
+                                config.file_picker_domain.on_platform_roots(roots.clone());
+                                workspace_picker_domain.on_platform_roots(roots);
                             }
                             // FileLoaded, ParsingError, ParsingStarted are handled directly
                             // in the Connection callback via tf.update_file_state()
@@ -469,24 +473,37 @@ impl NovyWaveApp {
             waveform_timeline.clone(),
             config.clone(),
             connection_arc.clone(),
+            workspace_picker_domain.clone(),
         );
 
         {
             let connection = connection_arc.clone();
             let config_for_roots = config.clone();
-            Task::start(async move {
-                config_for_roots.debug_metrics.update_mut(|metrics| {
-                    metrics.startup_platform_roots_request_count = metrics
-                        .startup_platform_roots_request_count
-                        .saturating_add(1);
-                });
-                if let Err(error) = connection
-                    .send_up_msg(shared::UpMsg::GetPlatformRoots)
-                    .await
-                {
-                    zoon::println!("ERROR: Failed to request platform roots on startup: {error:?}");
+            Task::start(
+                map_ref! {
+                    let server_ready = crate::platform::server_ready_signal(),
+                    let roots = config_for_roots.file_picker_domain.platform_roots.signal_cloned()
+                    => (*server_ready, roots.clone())
                 }
-            });
+                .for_each_sync(move |(server_ready, roots)| {
+                    if server_ready && roots.is_none() {
+                        config_for_roots.debug_metrics.update_mut(|metrics| {
+                            metrics.startup_platform_roots_request_count = metrics
+                                .startup_platform_roots_request_count
+                                .saturating_add(1);
+                        });
+                        let connection = connection.clone();
+                        Task::start(async move {
+                            if let Err(error) = connection
+                                .send_up_msg(shared::UpMsg::GetPlatformRoots)
+                                .await
+                            {
+                                zoon::println!("ERROR: Failed to request platform roots: {error:?}");
+                            }
+                        });
+                    }
+                }),
+            );
         }
 
         // Request config loading once; the Web platform gate handles

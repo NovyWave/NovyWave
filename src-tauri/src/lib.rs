@@ -32,6 +32,12 @@ fn greet(name: &str) -> String {
 pub fn run() {
     let test_updater = std::env::args().any(|a| a == "--test-updater");
 
+    #[cfg(target_os = "linux")]
+    {
+        std::env::set_var("WEBKIT_FORCE_COMPOSITING_MODE", "1");
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_http::init())
@@ -73,7 +79,7 @@ pub fn run() {
                     })?
                 );
 
-                tauri::WebviewWindowBuilder::new(
+                let main_window = tauri::WebviewWindowBuilder::new(
                     app,
                     "main".to_string(),
                     tauri::WebviewUrl::External(target),
@@ -87,6 +93,24 @@ pub fn run() {
                     println!("Failed to create main window: {e}");
                     e
                 })?;
+
+                #[cfg(target_os = "linux")]
+                {
+                    let _ = main_window.with_webview(|webview| {
+                        use webkit2gtk::{SettingsExt, WebViewExt};
+                        if let Some(settings) = webview.inner().settings() {
+                            settings.set_hardware_acceleration_policy(
+                                webkit2gtk::HardwareAccelerationPolicy::Always,
+                            );
+                            #[allow(deprecated)]
+                            settings.set_enable_accelerated_2d_canvas(true);
+                            println!(
+                                "WebKitGTK: hardware_acceleration=Always, accelerated_2d_canvas=true"
+                            );
+                        }
+                    });
+                }
+                let _ = main_window;
 
                 desktop_test_bridge::start(&app.handle());
             }
