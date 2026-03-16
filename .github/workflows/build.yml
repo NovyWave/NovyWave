@@ -1,0 +1,389 @@
+name: Build
+
+on:
+  workflow_call:
+    inputs:
+      release-build:
+        description: 'Build release bundles (AppImage/DMG/NSIS) and sign them'
+        type: boolean
+        default: false
+      version:
+        description: 'Version to embed in Tauri builds'
+        type: string
+        default: ''
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu,wasm32-unknown-unknown
+
+      - name: Install cargo-make
+        run: cargo install cargo-make
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            src-tauri
+
+      - name: Create MoonZoon build directories
+        run: |
+          mkdir -p backend/private
+          mkdir -p frontend_dist/_api/pkg
+
+      - name: Check signing key availability
+        if: inputs.release-build
+        run: |
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "TAURI_SIGNING_PRIVATE_KEY is set (length: ${#TAURI_SIGNING_PRIVATE_KEY} chars)"
+          else
+            echo "TAURI_SIGNING_PRIVATE_KEY is NOT set - updater artifacts will NOT be created"
+          fi
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+
+      - name: Build Tauri app (release bundle)
+        if: inputs.release-build
+        run: makers tauri-build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_BUILD_VERSION: ${{ inputs.version }}
+
+      - name: Build Tauri app (CI check)
+        if: ${{ !inputs.release-build }}
+        run: makers install && NOVYWAVE_PLATFORM=TAURI ./mzoon/bin/mzoon build -f && cargo build -p novywave
+
+      - name: Build Chrome launcher
+        run: cargo build --release -p novywave-chrome
+
+      - name: List built artifacts
+        run: |
+          echo "=== Chrome launcher ==="
+          ls -la target/release/novywave-chrome || true
+          if [ "${{ inputs.release-build }}" = "true" ]; then
+            echo "=== Bundle directory ==="
+            ls -la target/release/bundle/ || true
+            echo "=== AppImage ==="
+            ls -la target/release/bundle/appimage/ || true
+            echo "=== Deb ==="
+            ls -la target/release/bundle/deb/ || true
+            echo "=== RPM ==="
+            ls -la target/release/bundle/rpm/ || true
+          fi
+
+      - name: Upload Chrome launcher
+        if: inputs.release-build
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-chrome-launcher
+          path: target/release/novywave-chrome
+
+      - name: Upload AppImage
+        if: inputs.release-build
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-appimage
+          path: target/release/bundle/appimage/*.AppImage
+
+      - name: Upload Deb
+        if: inputs.release-build
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-deb
+          path: target/release/bundle/deb/*.deb
+
+      - name: Upload RPM
+        if: inputs.release-build
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-rpm
+          path: target/release/bundle/rpm/*.rpm
+
+      - name: Upload Updater artifacts (AppImage + signature)
+        if: inputs.release-build
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-updater
+          path: |
+            target/release/bundle/appimage/*.AppImage
+            target/release/bundle/appimage/*.AppImage.sig
+
+  build-macos-arm:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,wasm32-unknown-unknown
+
+      - name: Install cargo-make
+        run: cargo install cargo-make
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            src-tauri
+
+      - name: Create MoonZoon build directories
+        run: |
+          mkdir -p backend/private
+          mkdir -p frontend_dist/_api/pkg
+
+      - name: Check signing key availability
+        if: inputs.release-build
+        run: |
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "TAURI_SIGNING_PRIVATE_KEY is set (length: ${#TAURI_SIGNING_PRIVATE_KEY} chars)"
+          else
+            echo "TAURI_SIGNING_PRIVATE_KEY is NOT set - updater artifacts will NOT be created"
+          fi
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+
+      - name: Build Tauri app (release bundle)
+        if: inputs.release-build
+        run: makers tauri-build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_BUILD_VERSION: ${{ inputs.version }}
+
+      - name: Build Tauri app (CI check)
+        if: ${{ !inputs.release-build }}
+        run: makers install && NOVYWAVE_PLATFORM=TAURI ./mzoon/bin/mzoon build -f && cargo build -p novywave
+
+      - name: Build Chrome launcher
+        run: cargo build --release -p novywave-chrome
+
+      - name: Rename updater artifacts with architecture suffix
+        if: inputs.release-build
+        run: |
+          cd target/release/bundle/macos
+          for f in *.tar.gz; do
+            [ -f "$f" ] && mv "$f" "${f%.tar.gz}_aarch64.tar.gz"
+          done
+          for f in *.tar.gz.sig; do
+            [ -f "$f" ] && mv "$f" "${f%.tar.gz.sig}_aarch64.tar.gz.sig"
+          done
+
+      - name: Upload Chrome launcher (ARM)
+        if: inputs.release-build
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-chrome-launcher-arm
+          path: target/release/novywave-chrome
+
+      - name: Upload DMG (ARM)
+        if: inputs.release-build
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-dmg-arm
+          path: target/release/bundle/dmg/*.dmg
+
+      - name: Upload Updater artifacts (ARM)
+        if: inputs.release-build
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-updater-arm
+          path: |
+            target/release/bundle/macos/*.tar.gz
+            target/release/bundle/macos/*.tar.gz.sig
+
+  build-macos-x64:
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin,wasm32-unknown-unknown
+
+      - name: Install cargo-make
+        run: cargo install cargo-make
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            src-tauri
+
+      - name: Create MoonZoon build directories
+        run: |
+          mkdir -p backend/private
+          mkdir -p frontend_dist/_api/pkg
+
+      - name: Check signing key availability
+        if: inputs.release-build
+        run: |
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "TAURI_SIGNING_PRIVATE_KEY is set (length: ${#TAURI_SIGNING_PRIVATE_KEY} chars)"
+          else
+            echo "TAURI_SIGNING_PRIVATE_KEY is NOT set - updater artifacts will NOT be created"
+          fi
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+
+      - name: Build Tauri app (release bundle)
+        if: inputs.release-build
+        run: makers tauri-build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_BUILD_VERSION: ${{ inputs.version }}
+
+      - name: Build Tauri app (CI check)
+        if: ${{ !inputs.release-build }}
+        run: makers install && NOVYWAVE_PLATFORM=TAURI ./mzoon/bin/mzoon build -f && cargo build -p novywave
+
+      - name: Build Chrome launcher
+        run: cargo build --release -p novywave-chrome
+
+      - name: Rename updater artifacts with architecture suffix
+        if: inputs.release-build
+        run: |
+          cd target/release/bundle/macos
+          for f in *.tar.gz; do
+            [ -f "$f" ] && mv "$f" "${f%.tar.gz}_x64.tar.gz"
+          done
+          for f in *.tar.gz.sig; do
+            [ -f "$f" ] && mv "$f" "${f%.tar.gz.sig}_x64.tar.gz.sig"
+          done
+
+      - name: Upload Chrome launcher (x64)
+        if: inputs.release-build
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-chrome-launcher-x64
+          path: target/release/novywave-chrome
+
+      - name: Upload DMG (x64)
+        if: inputs.release-build
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-dmg-x64
+          path: target/release/bundle/dmg/*.dmg
+
+      - name: Upload Updater artifacts (x64)
+        if: inputs.release-build
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-updater-x64
+          path: |
+            target/release/bundle/macos/*.tar.gz
+            target/release/bundle/macos/*.tar.gz.sig
+
+  build-windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc,wasm32-unknown-unknown
+
+      - name: Install cargo-make
+        run: cargo install cargo-make
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            src-tauri
+
+      - name: Create MoonZoon build directories
+        shell: bash
+        run: |
+          mkdir -p backend/private
+          mkdir -p frontend_dist/_api/pkg
+
+      - name: Check signing key availability
+        if: inputs.release-build
+        shell: bash
+        run: |
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "TAURI_SIGNING_PRIVATE_KEY is set (length: ${#TAURI_SIGNING_PRIVATE_KEY} chars)"
+          else
+            echo "TAURI_SIGNING_PRIVATE_KEY is NOT set - updater artifacts will NOT be created"
+          fi
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+
+      - name: Build Tauri app (release bundle)
+        if: inputs.release-build
+        shell: bash
+        run: makers tauri-build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_BUILD_VERSION: ${{ inputs.version }}
+
+      - name: Build Tauri app (CI check)
+        if: ${{ !inputs.release-build }}
+        shell: bash
+        run: makers install && NOVYWAVE_PLATFORM=TAURI ./mzoon/bin/mzoon build -f && cargo build -p novywave
+
+      - name: Build Chrome launcher
+        shell: bash
+        run: cargo build --release -p novywave-chrome
+
+      - name: List built artifacts
+        if: inputs.release-build
+        shell: bash
+        run: |
+          echo "=== Bundle directory ==="
+          ls -la target/release/bundle/ || echo "No bundle dir"
+          echo "=== MSI ==="
+          ls -la target/release/bundle/msi/ || echo "No msi dir"
+          echo "=== NSIS ==="
+          ls -la target/release/bundle/nsis/ || echo "No nsis dir"
+
+      - name: Upload Chrome launcher (Windows)
+        if: inputs.release-build
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-chrome-launcher
+          path: target/release/novywave-chrome.exe
+
+      - name: Upload MSI
+        if: inputs.release-build
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-msi
+          path: target/release/bundle/msi/*.msi
+
+      - name: Upload NSIS installer
+        if: inputs.release-build
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-nsis
+          path: target/release/bundle/nsis/*.exe
+
+      - name: Upload Updater artifacts (Windows)
+        if: inputs.release-build
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-updater
+          if-no-files-found: warn
+          path: |
+            target/release/bundle/nsis/*.sig
