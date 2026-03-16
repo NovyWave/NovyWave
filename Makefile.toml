@@ -354,6 +354,16 @@ if ($LASTEXITCODE -ne 0) {
 }
 '''
 
+[tasks.chrome-build]
+description = "Build Chrome --app mode launcher"
+script_runner = "bash"
+script = '''
+set -e
+echo "Building novywave-chrome launcher..."
+cargo build --release -p novywave-chrome
+echo "[OK] Built: target/release/novywave-chrome"
+'''
+
 [tasks.tauri-build-debug]
 description = "Build Tauri desktop app in debug profile (AppImage only, devtools on)"
 dependencies = ["install", "install_tauri_cli"]

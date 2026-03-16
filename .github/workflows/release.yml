@@ -4,17 +4,82 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version for the release (e.g., 0.1.0)'
-        required: true
-        default: '0.1.0'
 
 permissions:
   contents: write
 
 jobs:
+  validate-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ needs.validate-version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Read and validate version
+        id: version
+        run: |
+          set -e
+
+          # Read version from Cargo.toml
+          CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          if [ -z "$CARGO_VERSION" ]; then
+            echo "::error::Version not found in Cargo.toml"
+            exit 1
+          fi
+
+          # Read version from tauri.conf.json
+          TAURI_VERSION=$(grep '"version"' src-tauri/tauri.conf.json | head -1 | sed 's/.*"\([0-9][0-9.]*\)".*/\1/')
+          if [ -z "$TAURI_VERSION" ]; then
+            echo "::error::Version not found in src-tauri/tauri.conf.json"
+            exit 1
+          fi
+
+          # Check versions match
+          if [ "$CARGO_VERSION" != "$TAURI_VERSION" ]; then
+            echo "::error::Version mismatch: Cargo.toml has $CARGO_VERSION but tauri.conf.json has $TAURI_VERSION"
+            exit 1
+          fi
+
+          echo "Release version: $CARGO_VERSION"
+
+          # If triggered by tag, verify tag matches code
+          if [ "${{ github.event_name }}" = "push" ]; then
+            TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+            if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
+              echo "::error::Tag v$TAG_VERSION does not match code version $CARGO_VERSION — update Cargo.toml and tauri.conf.json first"
+              exit 1
+            fi
+          fi
+
+          # Get the latest existing release tag
+          LATEST_TAG=$(git tag -l 'v*' --sort=-version:refname | head -1)
+          if [ -n "$LATEST_TAG" ]; then
+            LATEST_VERSION="${LATEST_TAG#v}"
+            echo "Latest released version: $LATEST_VERSION"
+
+            # Compare versions using sort -V
+            HIGHER=$(printf '%s\n%s' "$LATEST_VERSION" "$CARGO_VERSION" | sort -V | tail -1)
+            if [ "$CARGO_VERSION" = "$LATEST_VERSION" ]; then
+              echo "::error::Version $CARGO_VERSION is the same as the latest release — bump the version in Cargo.toml and tauri.conf.json"
+              exit 1
+            elif [ "$HIGHER" = "$LATEST_VERSION" ]; then
+              echo "::error::Version $CARGO_VERSION is lower than the latest release $LATEST_VERSION — bump the version in Cargo.toml and tauri.conf.json"
+              exit 1
+            fi
+            echo "Version $CARGO_VERSION is newer than $LATEST_VERSION"
+          else
+            echo "No previous release tags found — first release"
+          fi
+
+          echo "version=$CARGO_VERSION" >> $GITHUB_OUTPUT
+
   build-linux:
+    needs: validate-version
     runs-on: ubuntu-22.04
 
     steps:
@@ -41,20 +106,8 @@ jobs:
             .
             src-tauri
 
-      - name: Determine version from tag
-        id: version
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
-          else
-            echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-          fi
-          echo "Build version: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version || '${GITHUB_REF#refs/tags/v}' }}"
-
       - name: Create MoonZoon build directories
         run: |
-          # MoonZoon expects these directories to exist for build ID tracking
-          # They are gitignored so don't exist in fresh CI checkout
           mkdir -p backend/private
           mkdir -p frontend_dist/_api/pkg
 
@@ -73,7 +126,10 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          TAURI_BUILD_VERSION: ${{ steps.version.outputs.version }}
+          TAURI_BUILD_VERSION: ${{ needs.validate-version.outputs.version }}
+
+      - name: Build Chrome launcher for Linux
+        run: cargo build --release -p novywave-chrome
 
       - name: List built artifacts
         run: |
@@ -85,6 +141,14 @@ jobs:
           ls -la target/release/bundle/deb/ || true
           echo "=== RPM ==="
           ls -la target/release/bundle/rpm/ || true
+          echo "=== Chrome launcher ==="
+          ls -la target/release/novywave-chrome || true
+
+      - name: Upload Chrome launcher
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-chrome-launcher
+          path: target/release/novywave-chrome
 
       - name: Upload AppImage
         uses: actions/upload-artifact@v4
@@ -113,6 +177,7 @@ jobs:
             target/release/bundle/appimage/*.AppImage.sig
 
   build-macos-arm:
+    needs: validate-version
     runs-on: macos-15
 
     steps:
@@ -139,16 +204,6 @@ jobs:
           mkdir -p backend/private
           mkdir -p frontend_dist/_api/pkg
 
-      - name: Determine version from tag
-        id: version
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
-          else
-            echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-          fi
-          echo "Build version: $(cat $GITHUB_OUTPUT | grep version | cut -d= -f2)"
-
       - name: Check signing key availability
         run: |
           if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
@@ -164,7 +219,10 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          TAURI_BUILD_VERSION: ${{ steps.version.outputs.version }}
+          TAURI_BUILD_VERSION: ${{ needs.validate-version.outputs.version }}
+
+      - name: Build Chrome launcher
+        run: cargo build --release -p novywave-chrome
 
       - name: List built artifacts
         run: |
@@ -174,6 +232,8 @@ jobs:
           ls -la target/release/bundle/dmg/ || true
           echo "=== macOS app ==="
           ls -la target/release/bundle/macos/ || true
+          echo "=== Chrome launcher ==="
+          ls -la target/release/novywave-chrome || true
 
       - name: Rename updater artifacts with architecture suffix
         run: |
@@ -185,6 +245,12 @@ jobs:
             [ -f "$f" ] && mv "$f" "${f%.tar.gz.sig}_aarch64.tar.gz.sig"
           done
           ls -la
+
+      - name: Upload Chrome launcher (ARM)
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-chrome-launcher-arm
+          path: target/release/novywave-chrome
 
       - name: Upload DMG (ARM)
         uses: actions/upload-artifact@v4
@@ -201,6 +267,7 @@ jobs:
             target/release/bundle/macos/*.tar.gz.sig
 
   build-macos-x64:
+    needs: validate-version
     runs-on: macos-15-intel
 
     steps:
@@ -227,16 +294,6 @@ jobs:
           mkdir -p backend/private
           mkdir -p frontend_dist/_api/pkg
 
-      - name: Determine version from tag
-        id: version
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
-          else
-            echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-          fi
-          echo "Build version: $(cat $GITHUB_OUTPUT | grep version | cut -d= -f2)"
-
       - name: Check signing key availability
         run: |
           if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
@@ -252,7 +309,10 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          TAURI_BUILD_VERSION: ${{ steps.version.outputs.version }}
+          TAURI_BUILD_VERSION: ${{ needs.validate-version.outputs.version }}
+
+      - name: Build Chrome launcher
+        run: cargo build --release -p novywave-chrome
 
       - name: List built artifacts
         run: |
@@ -262,6 +322,8 @@ jobs:
           ls -la target/release/bundle/dmg/ || true
           echo "=== macOS app ==="
           ls -la target/release/bundle/macos/ || true
+          echo "=== Chrome launcher ==="
+          ls -la target/release/novywave-chrome || true
 
       - name: Rename updater artifacts with architecture suffix
         run: |
@@ -273,6 +335,12 @@ jobs:
             [ -f "$f" ] && mv "$f" "${f%.tar.gz.sig}_x64.tar.gz.sig"
           done
           ls -la
+
+      - name: Upload Chrome launcher (x64)
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-chrome-launcher-x64
+          path: target/release/novywave-chrome
 
       - name: Upload DMG (x64)
         uses: actions/upload-artifact@v4
@@ -289,6 +357,7 @@ jobs:
             target/release/bundle/macos/*.tar.gz.sig
 
   build-windows:
+    needs: validate-version
     runs-on: windows-2022
 
     steps:
@@ -316,17 +385,6 @@ jobs:
           mkdir -p backend/private
           mkdir -p frontend_dist/_api/pkg
 
-      - name: Determine version from tag
-        id: version
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
-          else
-            echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-          fi
-          echo "Build version: $(cat $GITHUB_OUTPUT | grep version | cut -d= -f2)"
-
       - name: Check signing key availability
         shell: bash
         run: |
@@ -344,7 +402,11 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          TAURI_BUILD_VERSION: ${{ steps.version.outputs.version }}
+          TAURI_BUILD_VERSION: ${{ needs.validate-version.outputs.version }}
+
+      - name: Build Chrome launcher
+        shell: bash
+        run: cargo build --release -p novywave-chrome
 
       - name: Debug - Check build artifacts exist
         shell: bash
@@ -372,6 +434,12 @@ jobs:
           ls -la target/release/bundle/msi/ || echo "No msi dir"
           echo "=== NSIS ==="
           ls -la target/release/bundle/nsis/ || echo "No nsis dir"
+
+      - name: Upload Chrome launcher (Windows)
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-chrome-launcher
+          path: target/release/novywave-chrome.exe
 
       - name: Upload MSI
         uses: actions/upload-artifact@v4
@@ -418,7 +486,7 @@ jobs:
             target/release/bundle/nsis/*.sig
 
   create-release:
-    needs: [build-linux, build-macos-arm, build-macos-x64, build-windows]
+    needs: [validate-version, build-linux, build-macos-arm, build-macos-x64, build-windows]
     runs-on: ubuntu-latest
 
     steps:
@@ -430,19 +498,9 @@ jobs:
       - name: List downloaded artifacts
         run: find artifacts -type f
 
-      - name: Determine version
-        id: version
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
-          else
-            # Extract version from tag (v0.1.0 -> 0.1.0)
-            echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-          fi
-
       - name: Generate unified latest.json for updater
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
+          VERSION="${{ needs.validate-version.outputs.version }}"
           PUB_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
           # Initialize platforms JSON
@@ -513,23 +571,23 @@ jobs:
       - name: Create or update release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ steps.version.outputs.version }}
-          name: NovyWave v${{ steps.version.outputs.version }}
+          tag_name: v${{ needs.validate-version.outputs.version }}
+          name: NovyWave v${{ needs.validate-version.outputs.version }}
           body: |
             ## Downloads
 
             | Platform | File |
             |----------|------|
             | **Linux** | |
-            | AppImage | `NovyWave_${{ steps.version.outputs.version }}_amd64.AppImage` |
-            | Debian/Ubuntu | `novywave_${{ steps.version.outputs.version }}_amd64.deb` |
-            | Fedora/RHEL | `novywave-${{ steps.version.outputs.version }}-1.x86_64.rpm` |
+            | AppImage | `NovyWave_${{ needs.validate-version.outputs.version }}_amd64.AppImage` |
+            | Debian/Ubuntu | `novywave_${{ needs.validate-version.outputs.version }}_amd64.deb` |
+            | Fedora/RHEL | `novywave-${{ needs.validate-version.outputs.version }}-1.x86_64.rpm` |
             | **macOS** | |
-            | Apple Silicon (M1/M2/M3) | `NovyWave_${{ steps.version.outputs.version }}_aarch64.dmg` |
-            | Intel | `NovyWave_${{ steps.version.outputs.version }}_x64.dmg` |
+            | Apple Silicon (M1/M2/M3) | `NovyWave_${{ needs.validate-version.outputs.version }}_aarch64.dmg` |
+            | Intel | `NovyWave_${{ needs.validate-version.outputs.version }}_x64.dmg` |
             | **Windows** | |
-            | Installer (NSIS) | `NovyWave_${{ steps.version.outputs.version }}_x64-setup.exe` |
-            | MSI | `NovyWave_${{ steps.version.outputs.version }}_x64_en-US.msi` |
+            | Installer (NSIS) | `NovyWave_${{ needs.validate-version.outputs.version }}_x64-setup.exe` |
+            | MSI | `NovyWave_${{ needs.validate-version.outputs.version }}_x64_en-US.msi` |
 
             ## Auto-Update
 
@@ -542,14 +600,18 @@ jobs:
             artifacts/linux-updater/*.AppImage.sig
             artifacts/linux-deb/*.deb
             artifacts/linux-rpm/*.rpm
+            artifacts/linux-chrome-launcher/novywave-chrome
             artifacts/macos-dmg-arm/*.dmg
             artifacts/macos-dmg-x64/*.dmg
+            artifacts/macos-chrome-launcher-arm/novywave-chrome
+            artifacts/macos-chrome-launcher-x64/novywave-chrome
             artifacts/macos-updater-arm/*.tar.gz
             artifacts/macos-updater-arm/*.tar.gz.sig
             artifacts/macos-updater-x64/*.tar.gz
             artifacts/macos-updater-x64/*.tar.gz.sig
             artifacts/windows-msi/*.msi
             artifacts/windows-nsis/*.exe
+            artifacts/windows-chrome-launcher/novywave-chrome.exe
             artifacts/windows-updater/**/*.sig
             artifacts/latest.json
         env:
