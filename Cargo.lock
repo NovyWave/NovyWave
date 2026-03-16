@@ -4280,6 +4280,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "novywave-chrome"
+version = "0.1.2"
+dependencies = [
+ "portpicker",
+ "tempfile",
+]
+
+[[package]]
 name = "novywave-mcp"
 version = "0.1.2"
 dependencies = [

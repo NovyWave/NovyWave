@@ -6,6 +6,7 @@ members = [
     "backend/crates/plugin_host",
     "shared",
     "src-tauri",
+    "src-chrome",
     "plugins/hello_world",
     "plugins/reload_watcher",
     "plugins/files_discovery",

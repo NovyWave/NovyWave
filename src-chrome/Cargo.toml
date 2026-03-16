@@ -1,0 +1,8 @@
+[package]
+name = "novywave-chrome"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+portpicker = "0.1"
+tempfile = "3"
