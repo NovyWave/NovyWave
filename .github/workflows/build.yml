@@ -87,12 +87,16 @@ jobs:
             ls -la target/release/bundle/rpm/ || true
           fi
 
+      - name: Rename Chrome launcher with platform suffix
+        if: inputs.release-build
+        run: mv target/release/novywave-chrome target/release/novywave-chrome-linux-x64
+
       - name: Upload Chrome launcher
         if: inputs.release-build
         uses: actions/upload-artifact@v7
         with:
           name: linux-chrome-launcher
-          path: target/release/novywave-chrome
+          path: target/release/novywave-chrome-linux-x64
 
       - name: Upload AppImage
         if: inputs.release-build
@@ -186,12 +190,16 @@ jobs:
             [ -f "$f" ] && mv "$f" "${f%.tar.gz.sig}_aarch64.tar.gz.sig"
           done
 
+      - name: Rename Chrome launcher with platform suffix
+        if: inputs.release-build
+        run: mv target/release/novywave-chrome target/release/novywave-chrome-macos-aarch64
+
       - name: Upload Chrome launcher (ARM)
         if: inputs.release-build
         uses: actions/upload-artifact@v7
         with:
           name: macos-chrome-launcher-arm
-          path: target/release/novywave-chrome
+          path: target/release/novywave-chrome-macos-aarch64
 
       - name: Upload DMG (ARM)
         if: inputs.release-build
@@ -271,12 +279,16 @@ jobs:
             [ -f "$f" ] && mv "$f" "${f%.tar.gz.sig}_x64.tar.gz.sig"
           done
 
+      - name: Rename Chrome launcher with platform suffix
+        if: inputs.release-build
+        run: mv target/release/novywave-chrome target/release/novywave-chrome-macos-x64
+
       - name: Upload Chrome launcher (x64)
         if: inputs.release-build
         uses: actions/upload-artifact@v7
         with:
           name: macos-chrome-launcher-x64
-          path: target/release/novywave-chrome
+          path: target/release/novywave-chrome-macos-x64
 
       - name: Upload DMG (x64)
         if: inputs.release-build
@@ -361,12 +373,17 @@ jobs:
           echo "=== NSIS ==="
           ls -la target/release/bundle/nsis/ || echo "No nsis dir"
 
+      - name: Rename Chrome launcher with platform suffix
+        if: inputs.release-build
+        shell: bash
+        run: mv target/release/novywave-chrome.exe target/release/novywave-chrome-windows-x64.exe
+
       - name: Upload Chrome launcher (Windows)
         if: inputs.release-build
         uses: actions/upload-artifact@v7
         with:
           name: windows-chrome-launcher
-          path: target/release/novywave-chrome.exe
+          path: target/release/novywave-chrome-windows-x64.exe
 
       - name: Upload MSI
         if: inputs.release-build

@@ -6,10 +6,6 @@ This cross-platform desktop application is suitable for both professionals and b
 
 ![NovyWave Dark Theme](docs/novywave_dark_linux.png)
 
-## Demo
-
-https://github.com/user-attachments/assets/c5f20ccb-6c49-4e80-943a-3f3ba10dc2af
-
 ## Features
 
 - **Multiple Waveform Formats**: VCD, FST, and GHW file support
@@ -25,6 +21,15 @@ https://github.com/user-attachments/assets/c5f20ccb-6c49-4e80-943a-3f3ba10dc2af
 - **Smart Labels**: Automatic path disambiguation for files with duplicate names
 - **Overflow Detection**: Track counter overflows and special signal states (X, Z, U)
 - **Persistent State**: Automatically saves and restores workspace configuration
+- **Analog Signals**: Real-valued signals rendered as continuous waveform traces with auto-scaling
+- **Signal Groups**: Organize selected signals into named, collapsible groups
+- **Named Markers**: Labeled timeline bookmarks, persisted across sessions
+- **Row Resizing**: Per-signal row height via draggable dividers
+- **Waveform Tooltips**: Hover over the timeline to inspect values
+- **WebAssembly Plugins**: Built-in plugins for live-reload and file discovery, or build your own
+- **Chrome Desktop Launcher**: Lightweight alternative using Chrome/Chromium `--app` mode
+- **Workspace Picker**: Switch between project workspaces with history
+- **Auto-Update**: Built-in update system for packaged desktop releases
 
 ## Supported Formats
 
@@ -39,6 +44,17 @@ https://github.com/user-attachments/assets/c5f20ccb-6c49-4e80-943a-3f3ba10dc2af
 ### Pre-built Binaries
 
 Download the latest release for your platform from [GitHub Releases](https://github.com/NovyWave/NovyWave/releases).
+
+### Chrome Desktop Launcher
+
+A lightweight alternative that opens NovyWave in Chrome, Chromium, or Edge using `--app` mode:
+
+| Platform | File |
+|----------|------|
+| Linux | `novywave-chrome-linux-x64` |
+| macOS Apple Silicon | `novywave-chrome-macos-aarch64` |
+| macOS Intel | `novywave-chrome-macos-x64` |
+| Windows | `novywave-chrome-windows-x64.exe` |
 
 ### From Source
 
@@ -55,6 +71,9 @@ See [INSTALLATION.md](INSTALLATION.md) for detailed build instructions.
 | `Shift+Q` / `Shift+E` | Jump to previous / next transition |
 | `Z` | Reset zoom center to 0 |
 | `R` | Full reset (zoom, cursor, viewport) |
+| `M` | Create named marker at cursor position |
+| `1`–`9` | Jump to marker |
+| `T` | Toggle tooltip |
 | `Ctrl+T` | Toggle theme |
 | `Ctrl+D` | Toggle dock mode |
 | `Escape` | Close dialogs |

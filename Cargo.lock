@@ -632,7 +632,7 @@ checksum = "ace50bade8e6234aa140d9a2f552bbee1db4d353f69b8217bc503490fc1a9f26"
 
 [[package]]
 name = "backend"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "dirs 5.0.1",
  "ignore",
@@ -2259,7 +2259,7 @@ dependencies = [
 
 [[package]]
 name = "frontend"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "fast2d",
  "futures",
@@ -4074,7 +4074,7 @@ dependencies = [
 
 [[package]]
 name = "moonzoon-novyui"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "indexmap 2.12.1",
  "zoon",
@@ -4258,7 +4258,7 @@ dependencies = [
 
 [[package]]
 name = "novywave"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "dirs 5.0.1",
  "log",
@@ -4281,7 +4281,7 @@ dependencies = [
 
 [[package]]
 name = "novywave-chrome"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "portpicker",
  "tempfile",
@@ -4289,7 +4289,7 @@ dependencies = [
 
 [[package]]
 name = "novywave-mcp"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -5044,7 +5044,7 @@ dependencies = [
 
 [[package]]
 name = "plugin_host"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "shared",
@@ -6324,7 +6324,7 @@ dependencies = [
 
 [[package]]
 name = "shared"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "convert-base",
  "serde",

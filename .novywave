@@ -47,8 +47,8 @@ selected_variables_panel_value_column_width = 272.0
 [workspace.docked_right_dimensions]
 files_and_scopes_panel_width = 400.0
 files_and_scopes_panel_height = 300.0
-selected_variables_panel_name_column_width = 193.0
-selected_variables_panel_value_column_width = 264.0
+selected_variables_panel_name_column_width = 237.0
+selected_variables_panel_value_column_width = 272.0
 
 [[workspace.selected_variables]]
 unique_id = "test_files/simple.vcd|simple_tb.s|A"
@@ -82,10 +82,10 @@ signal_type = "Wire"
 row_height = 30
 
 [workspace.timeline]
-cursor_position_ps = 15682
+cursor_position_ps = 85750000000000
 visible_range_start_ps = 0
-visible_range_end_ps = 43561
-zoom_center_ps = 19658
+visible_range_end_ps = 85750000000000
+zoom_center_ps = 0
 tooltip_enabled = true
 
 [[workspace.timeline.markers]]
@@ -97,24 +97,20 @@ time_ps = 170250896057348
 name = "Marker 2"
 
 [global.workspace_history]
-last_selected = "/home/martinkavik/repos/NovyWave"
+last_selected = "/tmp/novywave_row_resize_desktop_SiN5NW"
 recent_paths = [
-    "/home/martinkavik/repos/NovyWave",
-    "/tmp/novywave_row_resize_browser_rVysj3",
-    "/tmp/novywave_row_resize_desktop_p4x5nt",
+    "/tmp/novywave_row_resize_desktop_SiN5NW",
+    "/tmp/novywave_row_resize_desktop_U2DlWC",
+    "/tmp/novywave_row_resize_desktop_tl9dKv",
 ]
 
 [global.workspace_history.picker_tree_state]
 scroll_top = 0.0
 expanded_paths = [
     "/",
-    "/home",
     "/home/martinkavik",
-    "/home/martinkavik/repos",
-    "/home/martinkavik/repos/NovyWave",
-    "/home/martinkavik/repos/NovyWave/test_files",
-    "/home/martinkavik/repos/NovyWave/test_files/my_workspaces",
-    "/home/martinkavik/repos/NovyWave/examples",
+    "/home/martinkavik/Desktop",
+    "/home/martinkavik/Downloads",
 ]
 
 [plugins]
