@@ -1,101 +1,47 @@
 # NovyWave
 
-NovyWave is an open-source waveform viewer designed as a modern alternative to GTKWave.
-
-This cross-platform desktop application is suitable for both professionals and beginners, offering simple installation and a strong focus on user experience. Its goal is to boost productivity and satisfaction among current hardware developers while also attracting new developers and students to the hardware design ecosystem. NovyWave is built on fast and reliable Rust libraries and leverages well-proven web technologies to ensure a consistent look, accessibility, design flexibility, and safe user extensibility via WebAssembly plugins.
+Open-source waveform viewer for VCD, FST, and GHW files. Desktop app first, with a browser mode when needed.
 
 ![NovyWave Dark Theme](docs/novywave_dark_linux.png)
 
 ## Features
 
-- **Multiple Waveform Formats**: VCD, FST, and GHW file support
-- **Cross-Platform**: Linux, macOS, and Windows desktop applications
-- **Dark & Light Themes**: Optimized color palettes for waveform visualization
-- **Flexible Layouts**: Dock panels to bottom or right, resize with drag dividers
-- **Keyboard Navigation**: Comprehensive shortcuts for zooming, panning, and cursor control
-- **Variable Formatting**: Binary, Hex, Octal, Signed/Unsigned decimal, ASCII display
-- **Signal Search**: Filter variables by name with real-time results
-- **Multi-File Support**: Load and compare signals from multiple waveform files
-- **Scope Browser**: Navigate hierarchical module/scope structure
-- **Timeline Cursor**: Click or keyboard-navigate to inspect signal values at any time
-- **Smart Labels**: Automatic path disambiguation for files with duplicate names
-- **Overflow Detection**: Track counter overflows and special signal states (X, Z, U)
-- **Persistent State**: Automatically saves and restores workspace configuration
-- **Analog Signals**: Real-valued signals rendered as continuous waveform traces with auto-scaling
-- **Signal Groups**: Organize selected signals into named, collapsible groups
-- **Named Markers**: Labeled timeline bookmarks, persisted across sessions
-- **Row Resizing**: Per-signal row height via draggable dividers
-- **Waveform Tooltips**: Hover over the timeline to inspect values
-- **WebAssembly Plugins**: Built-in plugins for live-reload and file discovery, or build your own
-- **Chrome Desktop Launcher**: Lightweight alternative using Chrome/Chromium `--app` mode
-- **Workspace Picker**: Switch between project workspaces with history
-- **Auto-Update**: Built-in update system for packaged desktop releases
+**Multi-file comparison** — Load multiple waveform files in one session and compare signals across regression runs, design variants, or separate parts of the system.
 
-## Supported Formats
+**Analog signals** — Real-valued signals are automatically rendered as continuous waveform traces with auto-scaling.
 
-| Format | Extension | Description |
-|--------|-----------|-------------|
-| VCD | `.vcd` | Value Change Dump - IEEE standard format |
-| FST | `.fst` | Fast Signal Trace - GTKWave's compressed format |
-| GHW | `.ghw` | GHDL Waveform - GHDL native format |
+**WASD navigation** — WASD-style controls make zooming and panning fast, with built-in shortcuts for cursor movement and jumping between signal transitions.
+
+**Cross-platform** — Native apps for Linux, macOS, and Windows. There is also a browser mode when running NovyWave locally or on another machine.
+
+**WebAssembly plugins** — Live-reload waveforms and auto-discover new dump files with built-in plugins — or build your own.
+
+**Signal groups and markers** — Organize selected signals into named, collapsible groups. Add labeled timeline bookmarks that persist across sessions.
+
+**Everything else** — Dark and light themes, flexible panel layouts, per-signal row resizing, value formatting (Hex, Binary, Decimal, ASCII), scope browser, signal search, smart file labels, tooltips, workspace picker, persistent state, and auto-update.
 
 ## Installation
 
-### Pre-built Binaries
-
-Download the latest release for your platform from [GitHub Releases](https://github.com/NovyWave/NovyWave/releases).
-
-### Chrome Desktop Launcher
-
-A lightweight alternative that opens NovyWave in Chrome, Chromium, or Edge using `--app` mode:
-
-| Platform | File |
-|----------|------|
-| Linux | `novywave-chrome-linux-x64` |
-| macOS Apple Silicon | `novywave-chrome-macos-aarch64` |
-| macOS Intel | `novywave-chrome-macos-x64` |
-| Windows | `novywave-chrome-windows-x64.exe` |
-
-### From Source
-
-See [INSTALLATION.md](INSTALLATION.md) for detailed build instructions.
+Download the latest release for your platform from [GitHub Releases](https://github.com/NovyWave/NovyWave/releases). To build from source, see [INSTALLATION.md](INSTALLATION.md).
 
 ## Keyboard Shortcuts
 
 | Key | Action |
 |-----|--------|
 | `W` / `S` | Zoom in / out |
-| `Shift+W` / `Shift+S` | Fast zoom |
 | `A` / `D` | Pan left / right |
 | `Q` / `E` | Move cursor left / right |
 | `Shift+Q` / `Shift+E` | Jump to previous / next transition |
-| `Z` | Reset zoom center to 0 |
-| `R` | Full reset (zoom, cursor, viewport) |
-| `M` | Create named marker at cursor position |
-| `1`–`9` | Jump to marker |
-| `T` | Toggle tooltip |
-| `Ctrl+T` | Toggle theme |
-| `Ctrl+D` | Toggle dock mode |
-| `Escape` | Close dialogs |
+| `M` | Create named marker |
+| `R` | Full reset |
 
-## HDL Examples
-
-NovyWave includes example projects for various hardware description languages:
-
-- **VHDL** - GHDL simulation with GHW output
-- **Verilog** - Icarus Verilog simulation with VCD output
-- **SpinalHDL** - Scala-based HDL with Verilator simulation
-- **Amaranth** - Python HDL with built-in simulation
-- **Spade** - Rust-inspired HDL compiling to Verilog
-
-See the [examples/](examples/) directory for complete projects with Makefiles.
+See the [full shortcut reference](https://novywave.pages.dev/user-guide/keyboard-shortcuts/) for all keys including fast zoom, marker jumping, tooltips, and theme/dock toggles.
 
 ## Documentation
 
-- **[Documentation Site](https://novywave.pages.dev)** — User guides, tutorials, and reference
-- [Installation Guide](INSTALLATION.md)
-- [Contributing](CONTRIBUTING.md)
-- [Security Policy](SECURITY.md)
+**[novywave.pages.dev](https://novywave.pages.dev)** — Installation guides, tutorials (VHDL, Verilog, SpinalHDL, Amaranth, Spade), keyboard reference, plugin docs, and API reference.
+
+HDL example projects with Makefiles are in the [examples/](examples/) directory.
 
 ## Contact
 
@@ -103,14 +49,11 @@ Questions → martin@kavik.cz
 
 ## Contributing
 
-Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on:
-- Setting up the development environment
-- Code style and architecture patterns
-- Submitting pull requests
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, code style, and PR guidelines.
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+MIT — see [LICENSE](LICENSE).
 
 ## Funding
 
