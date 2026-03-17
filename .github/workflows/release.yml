@@ -158,61 +158,55 @@ jobs:
           echo "Generated latest.json:"
           cat artifacts/latest.json
 
-      - name: Create or update release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ needs.validate-version.outputs.version }}
-          name: NovyWave v${{ needs.validate-version.outputs.version }}
-          body: |
-            ## Downloads
+      - name: Collect release files
+        run: |
+          mkdir -p release-files
+          find artifacts -type f | while read f; do
+            cp "$f" "release-files/$(basename "$f")"
+          done
+          echo "=== Release files ==="
+          ls -la release-files/
 
-            | Platform | File |
-            |----------|------|
-            | **Linux** | |
-            | AppImage | `NovyWave_${{ needs.validate-version.outputs.version }}_amd64.AppImage` |
-            | Debian/Ubuntu | `novywave_${{ needs.validate-version.outputs.version }}_amd64.deb` |
-            | Fedora/RHEL | `novywave-${{ needs.validate-version.outputs.version }}-1.x86_64.rpm` |
-            | Chrome launcher | `novywave-chrome-linux-x64` |
-            | **macOS** | |
-            | Apple Silicon (M1/M2/M3) | `NovyWave_${{ needs.validate-version.outputs.version }}_aarch64.dmg` |
-            | Intel | `NovyWave_${{ needs.validate-version.outputs.version }}_x64.dmg` |
-            | Chrome launcher (ARM) | `novywave-chrome-macos-aarch64` |
-            | Chrome launcher (Intel) | `novywave-chrome-macos-x64` |
-            | **Windows** | |
-            | Installer (NSIS) | `NovyWave_${{ needs.validate-version.outputs.version }}_x64-setup.exe` |
-            | MSI | `NovyWave_${{ needs.validate-version.outputs.version }}_x64_en-US.msi` |
-            | Chrome launcher | `novywave-chrome-windows-x64.exe` |
+      - name: Create draft release
+        run: |
+          VERSION="${{ needs.validate-version.outputs.version }}"
+          cat > /tmp/release-notes.md << 'NOTES'
+          ## Downloads
 
-            ## Chrome Launcher
+          | Platform | File |
+          |----------|------|
+          | **Linux** | |
+          | AppImage | `NovyWave_VERSION_amd64.AppImage` |
+          | Debian/Ubuntu | `novywave_VERSION_amd64.deb` |
+          | Fedora/RHEL | `novywave-VERSION-1.x86_64.rpm` |
+          | Chrome launcher | `novywave-chrome-linux-x64` |
+          | **macOS** | |
+          | Apple Silicon (M1/M2/M3) | `NovyWave_VERSION_aarch64.dmg` |
+          | Intel | `NovyWave_VERSION_x64.dmg` |
+          | Chrome launcher (ARM) | `novywave-chrome-macos-aarch64` |
+          | Chrome launcher (Intel) | `novywave-chrome-macos-x64` |
+          | **Windows** | |
+          | Installer (NSIS) | `NovyWave_VERSION_x64-setup.exe` |
+          | MSI | `NovyWave_VERSION_x64_en-US.msi` |
+          | Chrome launcher | `novywave-chrome-windows-x64.exe` |
 
-            `novywave-chrome` is a lightweight alternative that opens NovyWave in Chrome/Chromium app mode.
-            Use it if the standard desktop app has performance issues (especially on Linux).
-            Requires Chrome or Chromium installed.
+          ## Chrome Launcher
 
-            ## Auto-Update
+          `novywave-chrome` is a lightweight alternative that opens NovyWave in Chrome/Chromium app mode.
+          Use it if the standard desktop app has performance issues (especially on Linux).
+          Requires Chrome or Chromium installed.
 
-            Auto-update is available for Linux AppImage, macOS app, and Windows NSIS installs.
-            Debian, RPM, and MSI installs update manually by downloading the new package from this release.
-          draft: true
-          prerelease: false
-          files: |
-            artifacts/linux-appimage/*.AppImage
-            artifacts/linux-updater/*.AppImage.sig
-            artifacts/linux-deb/*.deb
-            artifacts/linux-rpm/*.rpm
-            artifacts/linux-chrome-launcher/novywave-chrome-linux-x64
-            artifacts/macos-dmg-arm/*.dmg
-            artifacts/macos-dmg-x64/*.dmg
-            artifacts/macos-chrome-launcher-arm/novywave-chrome-macos-aarch64
-            artifacts/macos-chrome-launcher-x64/novywave-chrome-macos-x64
-            artifacts/macos-updater-arm/*.tar.gz
-            artifacts/macos-updater-arm/*.tar.gz.sig
-            artifacts/macos-updater-x64/*.tar.gz
-            artifacts/macos-updater-x64/*.tar.gz.sig
-            artifacts/windows-msi/*.msi
-            artifacts/windows-nsis/*.exe
-            artifacts/windows-chrome-launcher/novywave-chrome-windows-x64.exe
-            artifacts/windows-updater/**/*.sig
-            artifacts/latest.json
+          ## Auto-Update
+
+          Auto-update is available for Linux AppImage, macOS app, and Windows NSIS installs.
+          Debian, RPM, and MSI installs update manually by downloading the new package from this release.
+          NOTES
+          sed -i "s/VERSION/$VERSION/g" /tmp/release-notes.md
+
+          gh release create "v${VERSION}" \
+            --title "NovyWave v${VERSION}" \
+            --notes-file /tmp/release-notes.md \
+            --draft \
+            release-files/*
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
