@@ -82,10 +82,10 @@ signal_type = "Wire"
 row_height = 30
 
 [workspace.timeline]
-cursor_position_ps = 85750000000000
-visible_range_start_ps = 0
-visible_range_end_ps = 85750000000000
-zoom_center_ps = 0
+cursor_position_ps = 15682
+visible_range_start_ps = 4263
+visible_range_end_ps = 40336
+zoom_center_ps = 5199
 tooltip_enabled = true
 
 [[workspace.timeline.markers]]
