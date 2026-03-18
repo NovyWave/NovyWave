@@ -35,12 +35,12 @@ load_files_expanded_directories = [
     "/home/martinkavik/Desktop",
     "/home/martinkavik/Downloads",
 ]
+selected_scope_id = "scope_test_files/analog.vcd|top"
 load_files_scroll_position = 507
-signal_groups = []
 
 [workspace.docked_bottom_dimensions]
 files_and_scopes_panel_width = 431.0
-files_and_scopes_panel_height = 527.0
+files_and_scopes_panel_height = 354.0
 selected_variables_panel_name_column_width = 237.0
 selected_variables_panel_value_column_width = 272.0
 
@@ -69,7 +69,7 @@ row_height = 30
 [[workspace.selected_variables]]
 unique_id = "test_files/analog.vcd|top|analog"
 signal_type = "Real"
-row_height = 55
+row_height = 173
 
 [workspace.selected_variables.analog_limits]
 auto = true
@@ -81,11 +81,20 @@ unique_id = "test_files/simple.vcd|simple_tb.s|B"
 signal_type = "Wire"
 row_height = 30
 
+[[workspace.signal_groups]]
+name = "My Group"
+member_ids = [
+    "/home/martinkavik/repos/NovyWave/test_files/simple.vcd|simple_tb.s|A",
+    "/home/martinkavik/repos/NovyWave/test_files/simple_reload_test.vcd|simple_tb.s|A",
+    "/home/martinkavik/repos/NovyWave/test_files/simple_reload_test.vcd|simple_tb.s|C",
+]
+collapsed = true
+
 [workspace.timeline]
-cursor_position_ps = 15682
-visible_range_start_ps = 4263
-visible_range_end_ps = 40336
-zoom_center_ps = 5199
+cursor_position_ps = 96545
+visible_range_start_ps = 0
+visible_range_end_ps = 116878
+zoom_center_ps = 13970
 tooltip_enabled = true
 
 [[workspace.timeline.markers]]
@@ -95,6 +104,10 @@ name = "Marker 1"
 [[workspace.timeline.markers]]
 time_ps = 170250896057348
 name = "Marker 2"
+
+[[workspace.timeline.markers]]
+time_ps = 70265
+name = "Second Marker "
 
 [global.workspace_history]
 last_selected = "/tmp/novywave_row_resize_desktop_SiN5NW"
