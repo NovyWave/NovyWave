@@ -4,7 +4,7 @@ mod update_policy;
 
 use std::{
     net::{TcpListener, TcpStream},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Child, Command},
     sync::{Mutex, OnceLock},
     time::{Duration, Instant},
@@ -33,10 +33,7 @@ pub fn run() {
     let test_updater = std::env::args().any(|a| a == "--test-updater");
 
     #[cfg(target_os = "linux")]
-    {
-        std::env::set_var("WEBKIT_FORCE_COMPOSITING_MODE", "1");
-        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
-    }
+    let linux_webkit_profile = configure_linux_webkit_environment();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -63,13 +60,14 @@ pub fn run() {
 
             if !test_updater {
                 let runtime_target = select_runtime_target(app).map_err(|error| {
-                    println!("Failed to prepare Tauri runtime target: {error}");
-                    std::io::Error::other(error)
+                    startup_io_error("Failed to prepare NovyWave runtime", &error)
                 })?;
 
                 let target: tauri::Url = runtime_target.origin.parse().map_err(|error| {
-                    println!("Failed to parse runtime target '{}': {error}", runtime_target.origin);
-                    std::io::Error::other("failed to parse runtime target")
+                    startup_io_error(
+                        "Failed to parse NovyWave backend URL",
+                        &format!("{}\n\n{error}", runtime_target.origin),
+                    )
                 })?;
                 let init_script = format!(
                     "window.__NOVYWAVE_BACKEND_ORIGIN = {};",
@@ -90,22 +88,35 @@ pub fn run() {
                 .devtools(true)
                 .build()
                 .map_err(|e| {
-                    println!("Failed to create main window: {e}");
+                    show_startup_error("Failed to create NovyWave window", &e.to_string());
                     e
                 })?;
 
                 #[cfg(target_os = "linux")]
                 {
-                    let _ = main_window.with_webview(|webview| {
+                    let _ = main_window.with_webview(move |webview| {
                         use webkit2gtk::{SettingsExt, WebViewExt};
                         if let Some(settings) = webview.inner().settings() {
-                            settings.set_hardware_acceleration_policy(
-                                webkit2gtk::HardwareAccelerationPolicy::Always,
-                            );
+                            let (policy, policy_name, accelerated_2d_canvas) =
+                                match linux_webkit_profile {
+                                    LinuxWebkitProfile::Software => (
+                                        webkit2gtk::HardwareAccelerationPolicy::Never,
+                                        "Never",
+                                        false,
+                                    ),
+                                    LinuxWebkitProfile::Auto
+                                    | LinuxWebkitProfile::LegacyNvidia => (
+                                        webkit2gtk::HardwareAccelerationPolicy::Always,
+                                        "Always",
+                                        true,
+                                    ),
+                                };
+                            settings.set_hardware_acceleration_policy(policy);
                             #[allow(deprecated)]
-                            settings.set_enable_accelerated_2d_canvas(true);
+                            settings.set_enable_accelerated_2d_canvas(accelerated_2d_canvas);
                             println!(
-                                "WebKitGTK: hardware_acceleration=Always, accelerated_2d_canvas=true"
+                                "WebKitGTK: profile={}, hardware_acceleration={}, accelerated_2d_canvas={}",
+                                linux_webkit_profile, policy_name, accelerated_2d_canvas
                             );
                         }
                     });
@@ -195,33 +206,25 @@ fn spawn_embedded_backend(app: &tauri::App, backend_port: u16) -> Result<(), Str
 
     // Resolve backend binary from resources or fallback to workspace target
     let resolver = app.path();
-    let mut candidates: Vec<PathBuf> = vec![];
-
-    if let Ok(dir) = resolver.resource_dir() {
-        // In AppImage/Tauri bundle resources land under:
-        //   {resource_dir}/_up_/target/{profile}/backend
-        candidates.push(dir.join("_up_/target/release/backend"));
-        candidates.push(dir.join("_up_/target/debug/backend"));
-        // Older layout we tried first
-        candidates.push(dir.join("backend"));
-    }
-
-    // Fallbacks for dev runs (not packaged)
-    if let Ok(current_exe) = std::env::current_exe() {
-        if let Some(parent) = current_exe.parent() {
-            // target/{profile}/novywave -> add sibling backend
-            candidates.push(parent.join("../backend"));
-            candidates.push(parent.join("../../backend"));
-            // AppImage style: ../lib/NovyWave/_up_/target/{profile}/backend
-            candidates.push(parent.join("../lib/NovyWave/_up_/target/release/backend"));
-            candidates.push(parent.join("../lib/NovyWave/_up_/target/debug/backend"));
-        }
-    }
+    let resource_dir = resolver.resource_dir().ok();
+    let current_exe = std::env::current_exe().ok();
+    let candidates = backend_candidates(
+        resource_dir.as_deref(),
+        current_exe.as_deref(),
+        backend_binary_name(),
+    );
 
     let backend_path = candidates
-        .into_iter()
+        .iter()
         .find(|p| p.exists())
-        .ok_or("backend binary not found in resources or target paths".to_string())?;
+        .cloned()
+        .ok_or_else(|| {
+            format!(
+                "backend binary '{}' not found in resources or target paths.\n\nSearched:\n{}",
+                backend_binary_name(),
+                format_path_candidates(&candidates)
+            )
+        })?;
 
     println!("Starting embedded backend from: {}", backend_path.display());
 
@@ -284,9 +287,13 @@ fn spawn_embedded_backend(app: &tauri::App, backend_port: u16) -> Result<(), Str
         command.env("MOON_ASSETS_DIR", dist);
     }
 
-    let child = command
-        .spawn()
-        .map_err(|e| format!("failed to spawn backend: {}", e))?;
+    let child = command.spawn().map_err(|e| {
+        format!(
+            "failed to spawn backend at {}: {}",
+            backend_path.display(),
+            e
+        )
+    })?;
 
     // Stash handle for clean shutdown
     let cell = BACKEND_CHILD.get_or_init(|| Mutex::new(None));
@@ -295,6 +302,183 @@ fn spawn_embedded_backend(app: &tauri::App, backend_port: u16) -> Result<(), Str
     }
 
     Ok(())
+}
+
+fn backend_binary_name() -> &'static str {
+    if cfg!(windows) {
+        "backend.exe"
+    } else {
+        "backend"
+    }
+}
+
+fn backend_candidates(
+    resource_dir: Option<&Path>,
+    current_exe: Option<&Path>,
+    backend_name: &str,
+) -> Vec<PathBuf> {
+    let mut candidates = vec![];
+
+    if let Some(dir) = resource_dir {
+        // In AppImage/Tauri bundle resources land under:
+        //   {resource_dir}/_up_/target/{profile}/{backend}
+        candidates.push(dir.join("_up_").join("target/release").join(backend_name));
+        candidates.push(dir.join("_up_").join("target/debug").join(backend_name));
+        candidates.push(dir.join(backend_name));
+    }
+
+    if let Some(current_exe) = current_exe {
+        if let Some(parent) = current_exe.parent() {
+            candidates.push(parent.join(format!("../{backend_name}")));
+            candidates.push(parent.join(format!("../../{backend_name}")));
+            candidates.push(
+                parent
+                    .join("../lib/NovyWave/_up_/target/release")
+                    .join(backend_name),
+            );
+            candidates.push(
+                parent
+                    .join("../lib/NovyWave/_up_/target/debug")
+                    .join(backend_name),
+            );
+        }
+    }
+
+    candidates
+}
+
+fn format_path_candidates(candidates: &[PathBuf]) -> String {
+    candidates
+        .iter()
+        .map(|path| format!("  - {}", path.display()))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn startup_io_error(step: &str, detail: &str) -> std::io::Error {
+    show_startup_error(step, detail);
+    std::io::Error::other(format!("{step}: {detail}"))
+}
+
+fn show_startup_error(step: &str, detail: &str) {
+    let message = format!("NovyWave failed to start.\n\n{step}\n\n{detail}");
+    println!("{message}");
+    show_startup_error_dialog(&message);
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LinuxWebkitProfile {
+    Auto,
+    LegacyNvidia,
+    Software,
+}
+
+#[cfg(target_os = "linux")]
+impl LinuxWebkitProfile {
+    fn from_env_value(value: Option<&str>) -> Self {
+        match value.map(|value| value.trim().to_ascii_lowercase()) {
+            Some(value) if value == "legacy-nvidia" || value == "legacy_nvidia" => {
+                Self::LegacyNvidia
+            }
+            Some(value) if value == "software" => Self::Software,
+            _ => Self::Auto,
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl std::fmt::Display for LinuxWebkitProfile {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let value = match self {
+            Self::Auto => "auto",
+            Self::LegacyNvidia => "legacy-nvidia",
+            Self::Software => "software",
+        };
+        formatter.write_str(value)
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn configure_linux_webkit_environment() -> LinuxWebkitProfile {
+    let raw_profile = std::env::var("NOVYWAVE_WEBKIT_PROFILE").ok();
+    let profile = LinuxWebkitProfile::from_env_value(raw_profile.as_deref());
+
+    if let Some(raw_profile) = raw_profile.as_deref() {
+        let normalized = raw_profile.trim().to_ascii_lowercase();
+        if !matches!(
+            normalized.as_str(),
+            "auto" | "legacy-nvidia" | "legacy_nvidia" | "software"
+        ) {
+            println!("Unknown NOVYWAVE_WEBKIT_PROFILE='{raw_profile}', using auto");
+        }
+    }
+
+    match profile {
+        LinuxWebkitProfile::Auto => {}
+        LinuxWebkitProfile::LegacyNvidia => {
+            std::env::set_var("WEBKIT_FORCE_COMPOSITING_MODE", "1");
+            std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        }
+        LinuxWebkitProfile::Software => {
+            std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+        }
+    }
+
+    println!("Linux WebKit profile: {profile}");
+    profile
+}
+
+#[cfg(target_os = "linux")]
+fn show_startup_error_dialog(message: &str) {
+    let _ = Command::new("zenity")
+        .args([
+            "--error",
+            "--title=NovyWave",
+            "--text",
+            message,
+            "--width=520",
+        ])
+        .status()
+        .ok()
+        .is_some_and(|status| status.success())
+        || Command::new("kdialog")
+            .args(["--error", message, "--title", "NovyWave"])
+            .status()
+            .ok()
+            .is_some_and(|status| status.success())
+        || Command::new("xmessage")
+            .args(["-center", message])
+            .status()
+            .ok()
+            .is_some_and(|status| status.success());
+}
+
+#[cfg(target_os = "macos")]
+fn show_startup_error_dialog(message: &str) {
+    let escaped = message.replace('\\', "\\\\").replace('"', "\\\"");
+    let _ = Command::new("osascript")
+        .args([
+            "-e",
+            &format!(
+                "display dialog \"{escaped}\" with title \"NovyWave\" buttons {{\"OK\"}} default button \"OK\" with icon stop"
+            ),
+        ])
+        .status();
+}
+
+#[cfg(target_os = "windows")]
+fn show_startup_error_dialog(message: &str) {
+    let _ = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            &format!(
+                "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.MessageBox]::Show('{}', 'NovyWave', 'OK', 'Error')",
+                message.replace('\'', "''")
+            ),
+        ])
+        .status();
 }
 
 fn wait_for_backend_ready(port: u16) -> Result<(), String> {
@@ -448,5 +632,46 @@ fn stop_backend() {
                 let _ = child.wait();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backend_candidates_use_requested_backend_name() {
+        let candidates = backend_candidates(
+            Some(Path::new("/opt/NovyWave/resources")),
+            Some(Path::new("/opt/NovyWave/novywave.exe")),
+            "backend.exe",
+        );
+
+        assert!(candidates.contains(&PathBuf::from(
+            "/opt/NovyWave/resources/_up_/target/release/backend.exe"
+        )));
+        assert!(candidates.contains(&PathBuf::from("/opt/NovyWave/resources/backend.exe")));
+        assert!(candidates.contains(&PathBuf::from("/opt/NovyWave/../backend.exe")));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_webkit_profile_parses_supported_values() {
+        assert_eq!(
+            LinuxWebkitProfile::from_env_value(Some("legacy-nvidia")),
+            LinuxWebkitProfile::LegacyNvidia
+        );
+        assert_eq!(
+            LinuxWebkitProfile::from_env_value(Some("legacy_nvidia")),
+            LinuxWebkitProfile::LegacyNvidia
+        );
+        assert_eq!(
+            LinuxWebkitProfile::from_env_value(Some("software")),
+            LinuxWebkitProfile::Software
+        );
+        assert_eq!(
+            LinuxWebkitProfile::from_env_value(Some("unknown")),
+            LinuxWebkitProfile::Auto
+        );
     }
 }

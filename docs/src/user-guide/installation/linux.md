@@ -61,6 +61,40 @@ NovyWave works with both Wayland and X11. If you experience issues on Wayland, t
 GDK_BACKEND=x11 novywave
 ```
 
+## WebKit Rendering Profiles
+
+The Linux desktop app uses WebKitGTK. If rendering is slow or the window is blank, try these profiles:
+
+```bash
+# Default: hardware acceleration enabled, no forced WebKit environment overrides.
+NOVYWAVE_WEBKIT_PROFILE=auto novywave
+
+# Older NVIDIA/WebKitGTK workaround.
+NOVYWAVE_WEBKIT_PROFILE=legacy-nvidia novywave
+
+# Troubleshooting fallback for driver/compositor issues.
+NOVYWAVE_WEBKIT_PROFILE=software novywave
+```
+
+## Chrome Launcher
+
+The Chrome launcher is distributed as a one-file AppImage such as `NovyWave_x.x.x_chrome-linux-x64.AppImage`.
+Use it when the standard Linux desktop AppImage is slow or blank because of WebKitGTK rendering:
+
+```bash
+chmod +x NovyWave_x.x.x_chrome-linux-x64.AppImage
+./NovyWave_x.x.x_chrome-linux-x64.AppImage
+```
+
+The AppImage includes the backend and frontend assets. It requires Chrome, Chromium, Edge, Brave, Vivaldi, Snap Chromium, or a supported Chromium Flatpak with Chromium 109 or newer.
+If browser detection fails, a desktop error dialog or notification should explain what was checked.
+If browser detection fails, set one of:
+
+```bash
+NOVYWAVE_CHROME=/path/to/google-chrome ./NovyWave_x.x.x_chrome-linux-x64.AppImage
+CHROME_BIN=/path/to/chromium ./NovyWave_x.x.x_chrome-linux-x64.AppImage
+```
+
 ## File Associations
 
 To associate waveform files with NovyWave, create a MIME type file:

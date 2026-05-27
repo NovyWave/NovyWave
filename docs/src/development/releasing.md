@@ -54,10 +54,10 @@ CI creates a **draft** release with all artifacts:
 
 | Platform | Artifacts |
 |----------|-----------|
-| **Linux** | AppImage, .deb, .rpm, novywave-chrome |
-| **macOS ARM** | .dmg, novywave-chrome |
-| **macOS Intel** | .dmg, novywave-chrome |
-| **Windows** | NSIS installer, .msi, novywave-chrome.exe |
+| **Linux** | AppImage, .deb, .rpm, Chrome launcher AppImage |
+| **macOS ARM** | .dmg, Chrome launcher archive |
+| **macOS Intel** | .dmg, Chrome launcher archive |
+| **Windows** | NSIS installer, .msi, Chrome launcher archive |
 
 Plus `latest.json` for the auto-updater.
 
@@ -69,7 +69,7 @@ Plus `latest.json` for the auto-updater.
 ## What Each Binary Is
 
 - **NovyWave** (AppImage/DMG/NSIS/MSI) — Main desktop app using Tauri with native webview. Includes auto-updater.
-- **novywave-chrome** — Lightweight launcher (~4MB) that opens NovyWave in Chrome/Chromium `--app` mode. Alternative for users experiencing performance issues with native webview (especially WebKitGTK on Linux). Requires Chrome/Chromium installed.
+- **novywave-chrome** — Linux one-file AppImage that opens NovyWave in Chrome/Chromium `--app` mode. Alternative for users experiencing performance issues with native webview (especially WebKitGTK on Linux). It includes the launcher, backend, frontend assets, public assets, API package, and plugins. Requires Chromium 109+ through Chrome, Chromium, Edge, Brave, Vivaldi, Snap, or Flatpak.
 
 ## Verifying a Release
 
@@ -77,4 +77,4 @@ After publishing, verify:
 1. Auto-updater works: existing installations detect the new version
 2. `latest.json` is accessible at the GitHub release URL
 3. All platform binaries download and run correctly
-4. `novywave-chrome` detects Chrome and launches NovyWave
+4. `NovyWave_VERSION_chrome-linux-x64.AppImage` detects Chrome, starts the bundled backend, and launches NovyWave

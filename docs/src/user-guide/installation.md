@@ -8,7 +8,7 @@ Download the latest release from [GitHub Releases](https://github.com/NovyWave/N
 
 | Platform | Download |
 |----------|----------|
-| Linux (x64) | `novywave_x.x.x_amd64.deb` or `novywave_x.x.x_amd64.AppImage` |
+| Linux (x64) | `novywave_x.x.x_amd64.deb`, `NovyWave_x.x.x_amd64.AppImage`, or `NovyWave_x.x.x_chrome-linux-x64.AppImage` |
 | macOS (Apple Silicon) | `NovyWave_x.x.x_aarch64.dmg` |
 | macOS (Intel) | `NovyWave_x.x.x_x64.dmg` |
 | Windows | `NovyWave_x.x.x_x64-setup.exe` |

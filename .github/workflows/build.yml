@@ -87,16 +87,54 @@ jobs:
             ls -la target/release/bundle/rpm/ || true
           fi
 
-      - name: Rename Chrome launcher with platform suffix
+      - name: Build Chrome launcher AppImage
         if: inputs.release-build
-        run: mv target/release/novywave-chrome target/release/novywave-chrome-linux-x64
+        run: |
+          VERSION="${{ inputs.version }}"
+          scripts/package_chrome_appimage.sh "$VERSION"
+
+      - name: Verify Chrome launcher AppImage
+        if: inputs.release-build
+        run: |
+          set -euo pipefail
+          VERSION="${{ inputs.version }}"
+          APPIMAGE="target/release/NovyWave_${VERSION}_chrome-linux-x64.AppImage"
+          VERIFY_DIR="$(mktemp -d)"
+          cp "$APPIMAGE" "$VERIFY_DIR/"
+          cd "$VERIFY_DIR"
+
+          "./$(basename "$APPIMAGE")" --appimage-extract >/dev/null
+          test -x squashfs-root/usr/lib/novywave/novywave-chrome-linux-x64
+          test -x squashfs-root/usr/lib/novywave/backend
+          test -f squashfs-root/usr/lib/novywave/frontend_dist/index.html
+          test -f squashfs-root/usr/lib/novywave/_api/pkg/build_id
+          test -d squashfs-root/usr/lib/novywave/plugins/dist
+
+          cat > fake-chromium <<'EOF'
+          #!/usr/bin/env bash
+          if [ "${1:-}" = "--version" ]; then
+            echo "Chromium 120.0.6099.224"
+            exit 0
+          fi
+          printf '%s\n' "$*" > "${NOVYWAVE_FAKE_CHROME_LOG:?}"
+          exit 0
+          EOF
+          sed -i 's/^          //' fake-chromium
+          chmod +x fake-chromium
+
+          NOVYWAVE_CHROME="$PWD/fake-chromium" \
+          NOVYWAVE_FAKE_CHROME_LOG="$PWD/fake-chrome.log" \
+          APPIMAGE_EXTRACT_AND_RUN=1 \
+          timeout 30s "./$(basename "$APPIMAGE")"
+
+          grep -q -- "--app=http://127.0.0.1:" fake-chrome.log
 
       - name: Upload Chrome launcher
         if: inputs.release-build
         uses: actions/upload-artifact@v7
         with:
           name: linux-chrome-launcher
-          path: target/release/novywave-chrome-linux-x64
+          path: target/release/NovyWave_*_chrome-linux-x64.AppImage
 
       - name: Upload AppImage
         if: inputs.release-build
@@ -190,16 +228,28 @@ jobs:
             [ -f "$f" ] && mv "$f" "${f%.tar.gz.sig}_aarch64.tar.gz.sig"
           done
 
-      - name: Rename Chrome launcher with platform suffix
+      - name: Package Chrome launcher
         if: inputs.release-build
-        run: mv target/release/novywave-chrome target/release/novywave-chrome-macos-aarch64
+        run: |
+          VERSION="${{ inputs.version }}"
+          PACKAGE_NAME="NovyWave_${VERSION}_chrome-macos-aarch64"
+          PACKAGE_DIR="target/release/chrome-package/${PACKAGE_NAME}"
+          mkdir -p "$PACKAGE_DIR/frontend" "$PACKAGE_DIR/plugins"
+          cp target/release/novywave-chrome "$PACKAGE_DIR/novywave-chrome-macos-aarch64"
+          cp target/release/backend "$PACKAGE_DIR/backend"
+          cp -r frontend_dist "$PACKAGE_DIR/frontend_dist"
+          cp -r public "$PACKAGE_DIR/public"
+          cp -r _api "$PACKAGE_DIR/_api"
+          cp -r frontend/pkg "$PACKAGE_DIR/frontend/pkg"
+          cp -r plugins/dist "$PACKAGE_DIR/plugins/dist"
+          tar -C target/release/chrome-package -czf "target/release/${PACKAGE_NAME}.tar.gz" "$PACKAGE_NAME"
 
       - name: Upload Chrome launcher (ARM)
         if: inputs.release-build
         uses: actions/upload-artifact@v7
         with:
           name: macos-chrome-launcher-arm
-          path: target/release/novywave-chrome-macos-aarch64
+          path: target/release/NovyWave_*_chrome-macos-aarch64.tar.gz
 
       - name: Upload DMG (ARM)
         if: inputs.release-build
@@ -279,16 +329,28 @@ jobs:
             [ -f "$f" ] && mv "$f" "${f%.tar.gz.sig}_x64.tar.gz.sig"
           done
 
-      - name: Rename Chrome launcher with platform suffix
+      - name: Package Chrome launcher
         if: inputs.release-build
-        run: mv target/release/novywave-chrome target/release/novywave-chrome-macos-x64
+        run: |
+          VERSION="${{ inputs.version }}"
+          PACKAGE_NAME="NovyWave_${VERSION}_chrome-macos-x64"
+          PACKAGE_DIR="target/release/chrome-package/${PACKAGE_NAME}"
+          mkdir -p "$PACKAGE_DIR/frontend" "$PACKAGE_DIR/plugins"
+          cp target/release/novywave-chrome "$PACKAGE_DIR/novywave-chrome-macos-x64"
+          cp target/release/backend "$PACKAGE_DIR/backend"
+          cp -r frontend_dist "$PACKAGE_DIR/frontend_dist"
+          cp -r public "$PACKAGE_DIR/public"
+          cp -r _api "$PACKAGE_DIR/_api"
+          cp -r frontend/pkg "$PACKAGE_DIR/frontend/pkg"
+          cp -r plugins/dist "$PACKAGE_DIR/plugins/dist"
+          tar -C target/release/chrome-package -czf "target/release/${PACKAGE_NAME}.tar.gz" "$PACKAGE_NAME"
 
       - name: Upload Chrome launcher (x64)
         if: inputs.release-build
         uses: actions/upload-artifact@v7
         with:
           name: macos-chrome-launcher-x64
-          path: target/release/novywave-chrome-macos-x64
+          path: target/release/NovyWave_*_chrome-macos-x64.tar.gz
 
       - name: Upload DMG (x64)
         if: inputs.release-build
@@ -373,17 +435,29 @@ jobs:
           echo "=== NSIS ==="
           ls -la target/release/bundle/nsis/ || echo "No nsis dir"
 
-      - name: Rename Chrome launcher with platform suffix
+      - name: Package Chrome launcher
         if: inputs.release-build
         shell: bash
-        run: mv target/release/novywave-chrome.exe target/release/novywave-chrome-windows-x64.exe
+        run: |
+          VERSION="${{ inputs.version }}"
+          PACKAGE_NAME="NovyWave_${VERSION}_chrome-windows-x64"
+          PACKAGE_DIR="target/release/chrome-package/${PACKAGE_NAME}"
+          mkdir -p "$PACKAGE_DIR/frontend" "$PACKAGE_DIR/plugins"
+          cp target/release/novywave-chrome.exe "$PACKAGE_DIR/novywave-chrome-windows-x64.exe"
+          cp target/release/backend.exe "$PACKAGE_DIR/backend.exe"
+          cp -r frontend_dist "$PACKAGE_DIR/frontend_dist"
+          cp -r public "$PACKAGE_DIR/public"
+          cp -r _api "$PACKAGE_DIR/_api"
+          cp -r frontend/pkg "$PACKAGE_DIR/frontend/pkg"
+          cp -r plugins/dist "$PACKAGE_DIR/plugins/dist"
+          powershell -NoProfile -Command "Compress-Archive -Path 'target/release/chrome-package/${PACKAGE_NAME}' -DestinationPath 'target/release/${PACKAGE_NAME}.zip' -Force"
 
       - name: Upload Chrome launcher (Windows)
         if: inputs.release-build
         uses: actions/upload-artifact@v7
         with:
           name: windows-chrome-launcher
-          path: target/release/novywave-chrome-windows-x64.exe
+          path: target/release/NovyWave_*_chrome-windows-x64.zip
 
       - name: Upload MSI
         if: inputs.release-build

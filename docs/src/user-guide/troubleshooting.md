@@ -21,6 +21,7 @@ Solutions for common issues when using NovyWave.
 **Possible causes:**
 - Corrupted configuration file
 - Missing system libraries
+- Missing packaged backend/resources
 
 **Solutions:**
 1. Delete configuration file and restart:
@@ -31,6 +32,7 @@ Solutions for common issues when using NovyWave.
    ```bash
    novywave
    ```
+3. For the Chrome launcher AppImage, install a Chromium-based browser and run the AppImage directly. If it cannot detect a supported browser, it should show a desktop error and write `novywave-chrome.log` under the user cache/config area.
 
 ## File Loading Issues
 
@@ -111,6 +113,13 @@ These typically occur at simulation start or with tri-state signals.
 1. Reduce number of selected variables
 2. Close unused waveform files
 3. Check system resource usage
+4. On Linux, try WebKit rendering profiles:
+   ```bash
+   NOVYWAVE_WEBKIT_PROFILE=auto novywave
+   NOVYWAVE_WEBKIT_PROFILE=legacy-nvidia novywave
+   NOVYWAVE_WEBKIT_PROFILE=software novywave
+   ```
+5. If WebKitGTK remains slow on Linux, use `NovyWave_x.x.x_chrome-linux-x64.AppImage`.
 
 ## Configuration Problems
 

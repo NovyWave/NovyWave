@@ -180,22 +180,22 @@ jobs:
           | AppImage | `NovyWave_VERSION_amd64.AppImage` |
           | Debian/Ubuntu | `novywave_VERSION_amd64.deb` |
           | Fedora/RHEL | `novywave-VERSION-1.x86_64.rpm` |
-          | Chrome launcher | `novywave-chrome-linux-x64` |
+          | Chrome launcher AppImage | `NovyWave_VERSION_chrome-linux-x64.AppImage` |
           | **macOS** | |
           | Apple Silicon (M1/M2/M3) | `NovyWave_VERSION_aarch64.dmg` |
           | Intel | `NovyWave_VERSION_x64.dmg` |
-          | Chrome launcher (ARM) | `novywave-chrome-macos-aarch64` |
-          | Chrome launcher (Intel) | `novywave-chrome-macos-x64` |
+          | Chrome launcher (ARM) | `NovyWave_VERSION_chrome-macos-aarch64.tar.gz` |
+          | Chrome launcher (Intel) | `NovyWave_VERSION_chrome-macos-x64.tar.gz` |
           | **Windows** | |
           | Installer (NSIS) | `NovyWave_VERSION_x64-setup.exe` |
           | MSI | `NovyWave_VERSION_x64_en-US.msi` |
-          | Chrome launcher | `novywave-chrome-windows-x64.exe` |
+          | Chrome launcher | `NovyWave_VERSION_chrome-windows-x64.zip` |
 
           ## Chrome Launcher
 
-          `novywave-chrome` is a lightweight alternative that opens NovyWave in Chrome/Chromium app mode.
+          `novywave-chrome` is a one-file Linux AppImage alternative that opens NovyWave in Chrome/Chromium app mode.
           Use it if the standard desktop app has performance issues (especially on Linux).
-          Requires Chrome or Chromium installed.
+          It requires Chrome, Chromium, Edge, Brave, or another Chromium-based browser installed.
 
           ## Auto-Update
 

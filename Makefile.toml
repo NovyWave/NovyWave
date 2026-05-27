@@ -364,6 +364,17 @@ cargo build --release -p novywave-chrome
 echo "[OK] Built: target/release/novywave-chrome"
 '''
 
+[tasks.chrome-appimage]
+description = "Build one-file Linux Chrome-mode AppImage"
+condition = { platforms = ["linux"] }
+dependencies = ["chrome-build"]
+script_runner = "bash"
+script = '''
+set -euo pipefail
+VERSION="${TAURI_BUILD_VERSION:-$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')}"
+scripts/package_chrome_appimage.sh "$VERSION"
+'''
+
 [tasks.tauri-build-debug]
 description = "Build Tauri desktop app in debug profile (AppImage only, devtools on)"
 dependencies = ["install", "install_tauri_cli"]
