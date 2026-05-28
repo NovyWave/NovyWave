@@ -219,6 +219,13 @@ Every release artifact has non-interactive startup proof before upload.
 - Linux release CI now runs a live-browser Chrome AppImage smoke through a real Chromium browser, waits for the launcher's DevTools endpoint, and verifies the real app URL plus `/_api/pkg/build_id`.
 - Local run against `target/release/NovyWave_0.2.1_chrome-linux-x64.AppImage` proved the route smoke logic with the packaged backend.
 - Local run against the rebuilt `target/release/NovyWave_0.2.1_chrome-linux-x64.AppImage` passed the live-browser smoke with Google Chrome 146.
+- Added `scripts/smoke_chrome_package_directory.sh` for extracted Chrome package directory smoke:
+  - verifies launcher/backend/frontend/public/plugin payload shape
+  - validates every shipped frontend copy is WEB mode
+  - runs the launcher with a fake Chromium executable
+  - verifies the launcher starts the packaged backend and serves `/` plus `/_api/pkg/build_id`
+  - fails if `.novywave` is created under package resources
+- macOS ARM, macOS Intel, and Windows release CI now extract the generated Chrome archives and run the package directory smoke before upload.
 
 ### 4. Make Chrome Packaging Correct On Every OS
 
@@ -263,6 +270,10 @@ All Chrome packages are built from WEB frontend artifacts and validated the same
 - Added a shared Chrome package directory builder for macOS and Windows archives; it copies `_api` and `frontend/pkg` from the WEB `frontend_dist` output instead of reusing stale root copies.
 - macOS ARM, macOS Intel, and Windows release CI now run `makers build` immediately before Chrome packaging so the archive payload is rebuilt in WEB mode after the Tauri bundle step.
 - Local validation rebuilt WEB artifacts with `makers build` and assembled a Linux-shaped Chrome directory payload with the shared packager.
+- macOS ARM, macOS Intel, and Windows Chrome archives are now extracted and smoke-tested with a fake Chromium executable before upload.
+- Local `scripts/smoke_chrome_package_directory.sh target/release/chrome-package-test/NovyWave_test_chrome-linux-x64 novywave-chrome-linux-x64` passed.
+- Local smoke against the older Desktop `v0.2.1-local-build` Chrome package correctly failed because that package still contains Tauri frontend bindings, proving the validator catches the stale-frontend class.
+- `cargo test -p novywave-chrome` passed.
 
 ### 5. Make Startup And Config Errors Visible
 

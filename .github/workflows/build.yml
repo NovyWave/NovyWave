@@ -327,6 +327,19 @@ jobs:
             target/release/chrome-package
           tar -C target/release/chrome-package -czf "target/release/${PACKAGE_NAME}.tar.gz" "$PACKAGE_NAME"
 
+      - name: Verify Chrome launcher archive (ARM)
+        if: inputs.release-build
+        run: |
+          set -euo pipefail
+          VERSION="${{ inputs.version }}"
+          PACKAGE_NAME="NovyWave_${VERSION}_chrome-macos-aarch64"
+          VERIFY_DIR="$(mktemp -d)"
+          tar -xzf "target/release/${PACKAGE_NAME}.tar.gz" -C "$VERIFY_DIR"
+          NOVYWAVE_SMOKE_TIMEOUT_SECONDS=45 \
+          scripts/smoke_chrome_package_directory.sh \
+            "$VERIFY_DIR/$PACKAGE_NAME" \
+            novywave-chrome-macos-aarch64
+
       - name: Verify Tauri DMG startup (ARM)
         if: inputs.release-build
         run: |
@@ -443,6 +456,19 @@ jobs:
             backend \
             target/release/chrome-package
           tar -C target/release/chrome-package -czf "target/release/${PACKAGE_NAME}.tar.gz" "$PACKAGE_NAME"
+
+      - name: Verify Chrome launcher archive (x64)
+        if: inputs.release-build
+        run: |
+          set -euo pipefail
+          VERSION="${{ inputs.version }}"
+          PACKAGE_NAME="NovyWave_${VERSION}_chrome-macos-x64"
+          VERIFY_DIR="$(mktemp -d)"
+          tar -xzf "target/release/${PACKAGE_NAME}.tar.gz" -C "$VERIFY_DIR"
+          NOVYWAVE_SMOKE_TIMEOUT_SECONDS=45 \
+          scripts/smoke_chrome_package_directory.sh \
+            "$VERIFY_DIR/$PACKAGE_NAME" \
+            novywave-chrome-macos-x64
 
       - name: Verify Tauri DMG startup (x64)
         if: inputs.release-build
@@ -630,6 +656,23 @@ jobs:
             backend.exe \
             target/release/chrome-package
           powershell -NoProfile -Command "Compress-Archive -Path 'target/release/chrome-package/${PACKAGE_NAME}' -DestinationPath 'target/release/${PACKAGE_NAME}.zip' -Force"
+
+      - name: Verify Chrome launcher archive (Windows)
+        if: inputs.release-build
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ inputs.version }}"
+          PACKAGE_NAME="NovyWave_${VERSION}_chrome-windows-x64"
+          VERIFY_DIR="$(mktemp -d)"
+          ZIP_PATH="target/release/${PACKAGE_NAME}.zip"
+          ZIP_PATH_WIN="$(cygpath -w "$ZIP_PATH")"
+          VERIFY_DIR_WIN="$(cygpath -w "$VERIFY_DIR")"
+          powershell -NoProfile -Command "Expand-Archive -LiteralPath '$ZIP_PATH_WIN' -DestinationPath '$VERIFY_DIR_WIN' -Force"
+          NOVYWAVE_SMOKE_TIMEOUT_SECONDS=45 \
+          scripts/smoke_chrome_package_directory.sh \
+            "$VERIFY_DIR/$PACKAGE_NAME" \
+            novywave-chrome-windows-x64.exe
 
       - name: Upload Chrome launcher (Windows)
         if: inputs.release-build
