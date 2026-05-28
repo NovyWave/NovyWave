@@ -63,6 +63,10 @@ Plus `latest.json` for the auto-updater.
 
 Release CI fails before publishing updater metadata unless `TAURI_SIGNING_PRIVATE_KEY` is configured, the key is not the known development key, every updater bundle has a matching `.sig`, every signature verifies against `src-tauri/tauri.conf.json`, and `latest.json` contains exactly the supported updater platforms: `linux-x86_64`, `darwin-aarch64`, `darwin-x86_64`, and `windows-x86_64`.
 
+Release CI also generates `release-manifest-X.Y.Z.json` and uses it to generate the draft release notes. The manifest contains every uploaded filename, size, SHA-256, source commit, platform, architecture, bundle type, updater/signing status, and smoke result. Release creation fails if an expected artifact or updater platform is missing.
+
+Apple notarization and Windows Authenticode are not enforced by the current workflow. Until those policies are added, the manifest marks macOS DMG and Windows installer code-signing status explicitly instead of implying operating-system trust signing.
+
 1. Go to GitHub Releases
 2. Review the draft release
 3. Edit release notes if needed
@@ -78,5 +82,6 @@ Release CI fails before publishing updater metadata unless `TAURI_SIGNING_PRIVAT
 After publishing, verify:
 1. Auto-updater works: existing installations detect the new version
 2. `latest.json` is accessible at the GitHub release URL
-3. All platform binaries download and run correctly
-4. `NovyWave_VERSION_chrome-linux-x64.AppImage` detects Chrome, starts the bundled backend, and launches NovyWave
+3. `release-manifest-X.Y.Z.json` is attached and its checksums match the uploaded files
+4. All platform binaries download and run correctly
+5. `NovyWave_VERSION_chrome-linux-x64.AppImage` detects Chrome, starts the bundled backend, and launches NovyWave

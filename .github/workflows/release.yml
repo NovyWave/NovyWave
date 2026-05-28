@@ -125,42 +125,19 @@ jobs:
           echo "=== Release files ==="
           ls -la release-files/
 
+      - name: Generate release manifest and notes
+        run: |
+          VERSION="${{ needs.validate-version.outputs.version }}"
+          scripts/generate_release_manifest.py \
+            --release-files release-files \
+            --version "$VERSION" \
+            --source-commit "${{ github.sha }}" \
+            --output "release-files/release-manifest-${VERSION}.json" \
+            --notes-output /tmp/release-notes.md
+
       - name: Create draft release
         run: |
           VERSION="${{ needs.validate-version.outputs.version }}"
-          cat > /tmp/release-notes.md << 'NOTES'
-          ## Downloads
-
-          | Platform | File |
-          |----------|------|
-          | **Linux** | |
-          | AppImage | `NovyWave_VERSION_amd64.AppImage` |
-          | Debian/Ubuntu | `novywave_VERSION_amd64.deb` |
-          | Fedora/RHEL | `novywave-VERSION-1.x86_64.rpm` |
-          | Chrome launcher AppImage | `NovyWave_VERSION_chrome-linux-x64.AppImage` |
-          | **macOS** | |
-          | Apple Silicon (M1/M2/M3) | `NovyWave_VERSION_aarch64.dmg` |
-          | Intel | `NovyWave_VERSION_x64.dmg` |
-          | Chrome launcher (ARM) | `NovyWave_VERSION_chrome-macos-aarch64.tar.gz` |
-          | Chrome launcher (Intel) | `NovyWave_VERSION_chrome-macos-x64.tar.gz` |
-          | **Windows** | |
-          | Installer (NSIS) | `NovyWave_VERSION_x64-setup.exe` |
-          | MSI | `NovyWave_VERSION_x64_en-US.msi` |
-          | Chrome launcher | `NovyWave_VERSION_chrome-windows-x64.zip` |
-
-          ## Chrome Launcher
-
-          `novywave-chrome` is a one-file Linux AppImage alternative that opens NovyWave in Chrome/Chromium app mode.
-          Use it if the standard desktop app has performance issues (especially on Linux).
-          It requires Chrome, Chromium, Edge, Brave, or another Chromium-based browser installed.
-
-          ## Auto-Update
-
-          Auto-update is available for Linux AppImage, macOS app, and Windows NSIS installs.
-          Debian, RPM, and MSI installs update manually by downloading the new package from this release.
-          NOTES
-          sed -i "s/VERSION/$VERSION/g" /tmp/release-notes.md
-
           gh release create "v${VERSION}" \
             --title "NovyWave v${VERSION}" \
             --notes-file /tmp/release-notes.md \

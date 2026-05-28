@@ -529,6 +529,15 @@ Release creation is generated from machine-readable proof, not from hand-written
 - Draft release notes are generated from the manifest.
 - Artifact count, checksums, smoke status, and updater status are visible in CI.
 
+**Current Progress**
+
+- Added `scripts/generate_release_manifest.py` to validate the complete expected release file set, verify `latest.json` updater platform coverage, compute file size and SHA-256, and write a machine-readable release manifest.
+- Release CI now generates `release-manifest-X.Y.Z.json` from collected release files and creates draft release notes from that manifest instead of a hand-written artifact table.
+- The manifest includes source commit, platform, architecture, bundle type, updater/signing status, and smoke result for each expected release artifact.
+- Release creation now fails if expected release files are missing, unexpected non-signature files appear, or updater metadata omits a supported updater platform.
+- The release guide documents the manifest and explicitly states that Apple notarization and Windows Authenticode are not enforced yet.
+- Local checks passed for Python syntax, workflow YAML parsing, and a synthetic complete release directory.
+
 ## Suggested Execution Order
 
 1. Fix default workspace/resource cwd separation.
