@@ -1,0 +1,498 @@
+# Desktop Startup And Release Hardening Plan
+
+## Purpose
+
+Make the next desktop release resistant to the "nothing happens", blank window, and stuck "Loading workspace..." failure class across Windows, macOS, and Linux.
+
+The immediate public trigger is GitHub issue `#1`: a Windows user installed `NovyWave_0.2.0_x64-setup.exe` on Windows 11 and launching the app produced no UI, no error, and no visible logs.
+
+## Current Assessment
+
+The likely direct cause of the Windows issue is fixed locally:
+
+- `src-tauri/src/lib.rs` now chooses `backend.exe` on Windows.
+- Startup failures during runtime preparation or window creation now call `show_startup_error`.
+- The backend search path includes bundled resource locations such as `_up_/target/release/<backend>`.
+
+This is not enough to call the release safe. The current code still has package-root workspace risk, incomplete installed-app smoke coverage, platform-specific Chrome package drift, weak startup readiness checks, updater/signing gaps, and stale-plugin packaging risk.
+
+## Release Blockers
+
+### 1. Stop Treating Packaged Resource Directories As Workspaces
+
+**Problem**
+
+Packaged launchers set backend cwd to bundled resources so `frontend_dist`, `_api`, `public`, and plugins resolve. The backend also uses process cwd as the initial workspace root. On a fresh profile with no valid `last_selected`, this can create or load `.novywave` from the app bundle/resource directory.
+
+This is wrong on every OS:
+
+- Windows installed apps can live in protected directories such as `Program Files`.
+- macOS `.app/Contents/Resources` should not be the user workspace.
+- Linux packages may place resources under `/usr/lib`.
+- AppImage mount/extraction directories are transient implementation details.
+- Chrome package directories are distribution artifacts, not user workspaces.
+
+**Target Behavior**
+
+- Asset lookup and workspace selection must be separate concepts.
+- Packaged resource cwd must never become the default workspace.
+- Fresh packaged launch with no valid `last_selected` must enter a visible no-workspace state rather than silently creating `~/.novywave` or a resource-root `.novywave`.
+- `.novywave` should only be created after the user explicitly opens a workspace, or in a named app-owned default workspace if the product intentionally adds one later.
+- If the platform config directory is unavailable, the app must not fall back to process cwd for global state.
+
+**Implementation Tasks**
+
+- Add explicit backend env vars such as:
+  - `NOVYWAVE_RESOURCE_ROOT`
+  - `NOVYWAVE_FRONTEND_DIST_DIR`
+  - `NOVYWAVE_PUBLIC_DIR`
+  - `NOVYWAVE_PLUGIN_DIR`
+- Stop deriving workspace root from process cwd in packaged mode.
+- In Tauri and Chrome launchers, set resource/asset env vars independently of workspace selection.
+- In `backend/src/main.rs`, initialize `WorkspaceContext` from:
+  1. valid global `last_selected`
+  2. an explicit workspace env var only if product-approved and writable
+  3. no-workspace/global-only state that still lets the frontend load roots and open a workspace
+- Add resource-root detection so `.novywave` is never auto-created under:
+  - Windows install/resource dirs
+  - macOS `.app/Contents/Resources`
+  - Linux `/usr/lib` package dirs
+  - AppImage mount/extraction dirs
+  - Chrome package dirs
+- If no workspace is active, return a config/default state that makes the UI usable without creating workspace files.
+
+**Files**
+
+- `src-tauri/src/lib.rs`
+- `src-chrome/src/main.rs`
+- `scripts/package_chrome_appimage.sh`
+- `backend/src/main.rs`
+- `frontend/src/app.rs`
+
+**Verification Gate**
+
+- Fresh profile packaged run with empty config shows no package extraction/resource path as the workspace.
+- Backend cwd may be a resource root, but workspace root is not.
+- No `.novywave` is created in a resource cwd.
+- Fresh profile packaged run can load platform roots and open a workspace.
+- If config/global dirs are unavailable, the app shows a visible error and does not write config into cwd.
+
+### 2. Prove Windows Installer Contains And Starts The Backend
+
+**Problem**
+
+The local runtime now searches for `backend.exe`, but the release build must prove the Windows NSIS/MSI artifacts actually contain it in the installed layout searched by `backend_candidates`. Tauri platform-specific config may merge `tauri.windows.conf.json` automatically, but the release workflow still has to prove the effective Windows bundle includes `backend.exe` after version overrides and all config merges.
+
+**Target Behavior**
+
+- Windows release build bundles `backend.exe` predictably.
+- Runtime lookup has tests for the installed-resource layout.
+- CI installs or extracts Windows artifacts and asserts the backend exists where runtime lookup expects it.
+
+**Implementation Tasks**
+
+- Prove the effective Windows Tauri config includes `src-tauri/tauri.windows.conf.json`.
+- If merge order with the version override is ambiguous, pass/merge the Windows config explicitly in `Makefile.toml`.
+- Keep Tauri sidecar/externalBin migration as an optional later simplification, not the default first fix, because sidecars require target-triple-suffixed binaries and extra Tauri configuration.
+- Add Windows packaging assertions after build:
+  - NSIS silent install contains `backend.exe` in the runtime-searched resource layout
+  - MSI administrative/silent install or extraction contains `backend.exe` in the runtime-searched resource layout
+  - installed layout matches `backend_candidates`
+- Add unit tests for Windows-style backend candidate paths.
+- Keep startup error details visible if backend lookup fails.
+
+**Files**
+
+- `Makefile.toml`
+- `src-tauri/tauri.conf.json`
+- `src-tauri/tauri.windows.conf.json`
+- `src-tauri/src/lib.rs`
+- `.github/workflows/build.yml`
+
+**Verification Gate**
+
+- NSIS artifact is silently installed and the installed app layout contains `backend.exe` where runtime lookup searches.
+- MSI artifact is administratively installed or extracted and contains `backend.exe` where runtime lookup searches.
+- Windows installed-app smoke run reaches backend readiness and exits successfully.
+
+### 3. Add Package Startup Smoke Modes
+
+**Problem**
+
+Current CI mostly proves packages build, not that they start. The Linux Chrome AppImage fake-browser smoke proves the launcher passes `--app=http://127.0.0.1:<port>`, but not that config/workspace/root loading succeeds. Tauri AppImage, deb, rpm, DMG, NSIS, and MSI are not startup-smoked.
+
+The Windows issue was "no UI", so backend-only smoke is not enough.
+
+**Target Behavior**
+
+Every release artifact has non-interactive startup proof before upload.
+
+**Implementation Tasks**
+
+- Add a backend/resource smoke mode:
+  - resolve packaged resources
+  - start embedded backend
+  - verify `/` responds
+  - verify `_api/pkg/build_id` responds
+  - trigger `LoadConfig`
+  - verify platform roots can be produced
+  - assert selected workspace/root is not a package resource directory
+  - exit with status 0 before interactive UI work
+- Add an installed-app WebView smoke mode for Tauri:
+  - launch the installed app with isolated platform config/cache locations
+  - do not bypass `WebviewWindowBuilder`
+  - use the existing desktop test bridge to prove `windowFound: true`
+  - query test API state for config/debug and file-picker roots
+  - assert no visible startup/loading error remains
+- Add equivalent Chrome launcher smoke:
+  - start backend
+  - verify HTTP routes
+  - smoke with fake browser after backend route checks
+- Keep smoke modes headless, deterministic, and isolated from the maintainer's real profile.
+
+**Per-Artifact CI Matrix**
+
+- Linux AppImage: run with `APPIMAGE_EXTRACT_AND_RUN=1`.
+- Linux deb: extract with `dpkg-deb -x` and smoke the installed layout.
+- Linux rpm: extract with `rpm2cpio` or install in CI image and smoke the installed layout.
+- macOS DMG: mount DMG, run `.app` smoke, then unmount.
+- macOS updater tarball: extract `.app` and smoke it.
+- Windows NSIS: silent install, run installed `NovyWave.exe`, smoke, uninstall.
+- Windows MSI: administrative install or extraction, run installed `NovyWave.exe`, smoke.
+- Chrome AppImage/archive/zip/tarball: extract or run artifact, fake-browser smoke plus backend route checks.
+
+**Files**
+
+- `src-tauri/src/lib.rs`
+- `src-tauri/src/desktop_test_bridge.rs`
+- `src-chrome/src/main.rs`
+- `backend/src/main.rs`
+- `.github/workflows/build.yml`
+
+**Verification Gate**
+
+- Each uploaded artifact family has a smoke result.
+- Smoke uses isolated config locations such as `XDG_CONFIG_HOME`, `APPDATA`, and `LOCALAPPDATA`.
+- Smoke failure prints the failing path, URL, backend error, and startup log path.
+- Tauri installed-app smoke proves a real window was created.
+
+### 4. Make Chrome Packaging Correct On Every OS
+
+**Problem**
+
+Linux Chrome AppImage now rebuilds `NOVYWAVE_PLATFORM=WEB` and rejects Tauri/dev-server frontend artifacts. macOS and Windows Chrome packages still copy `frontend_dist`, `_api`, and `frontend/pkg` after the Tauri build, so they can carry the same stale Tauri frontend bug.
+
+**Target Behavior**
+
+All Chrome packages are built from WEB frontend artifacts and validated the same way.
+
+**Implementation Tasks**
+
+- Add shared Chrome package tasks:
+  - build WEB frontend immediately before packaging
+  - build `novywave-chrome`
+  - copy backend, frontend, public, `_api`, plugins from WEB artifacts
+  - scan every shipped frontend copy: `frontend_dist`, `_api`, and `frontend/pkg`
+  - validate no `window.__TAURI__`
+  - validate no hardcoded `127.0.0.1:8082`
+- Use the shared task in Linux, macOS ARM, macOS Intel, and Windows CI.
+- Smoke every uploaded Chrome artifact with a fake browser.
+- If macOS/Windows Chrome packages are not smoke-tested, remove them from uploads and release notes until they are.
+
+**Files**
+
+- `Makefile.toml`
+- `scripts/package_chrome_appimage.sh`
+- new shared package scripts if needed
+- `.github/workflows/build.yml`
+- `.github/workflows/release.yml`
+
+**Verification Gate**
+
+- Every Chrome package passes frontend artifact validation.
+- Every Chrome package passes launcher/backend smoke.
+- Release notes match the Chrome artifacts we actually trust.
+
+### 5. Make Startup And Config Errors Visible
+
+**Problem**
+
+Several errors currently only reach console logs. In release builds, users may see a blank window or unchanged loading state without an actionable message.
+
+**Target Behavior**
+
+Startup/config failures produce visible UI and a persistent startup log.
+
+**Implementation Tasks**
+
+- Add Tauri startup log file under user cache/config directory.
+- Reuse or align with Chrome startup logging.
+- Log:
+  - searched backend candidates
+  - chosen backend path
+  - resource dir
+  - backend cwd
+  - asset directories
+  - selected workspace root or no-workspace state
+  - backend readiness route failures
+  - config read/parse/write failure
+- On Windows, replace PowerShell-only error dialog with a native message box or guaranteed fallback.
+- In frontend, surface `ConfigError` as a persistent banner/toast, not only `zoon::println!`.
+- The startup/config error banner must include:
+  - technical detail
+  - startup log path when available
+  - an "Open Workspace" action when the app can continue
+- Add a startup timeout banner if `WorkspaceLoaded`/`ConfigLoaded` does not arrive.
+- Platform-root UI must stop showing only "Loading platform roots..." if roots fail or time out.
+
+**Files**
+
+- `src-tauri/src/lib.rs`
+- `src-chrome/src/main.rs`
+- `backend/src/main.rs`
+- `frontend/src/app.rs`
+- `frontend/src/error_display.rs`
+
+**Verification Gate**
+
+- Corrupt `.novywave` produces visible error and log.
+- Read-only workspace config produces visible error and log.
+- Missing backend produces visible startup dialog and log.
+- Platform-root timeout produces visible error and leaves workspace opening usable.
+
+### 6. Harden Config Recovery
+
+**Problem**
+
+Invalid or old config can return `ConfigError` and leave the UI partially initialized. Missing top-level sections may fail deserialization before `validate_and_fix` can run.
+
+**Target Behavior**
+
+Recoverable config problems should not strand the app.
+
+**Implementation Tasks**
+
+- Split recovery paths for:
+  - per-workspace `.novywave`
+  - global `.novywave_global`
+- Add serde defaults for safe top-level config sections, or implement a migration loader that can tolerate missing `app`, `ui`, and `workspace` sections.
+- On invalid TOML:
+  - move the bad file to a unique backup path
+  - if backup fails, do not overwrite the original
+  - load defaults
+  - show a visible warning with the backup path or backup failure
+- On permission denied:
+  - do not overwrite
+  - show visible error
+  - allow workspace switch
+- Keep global workspace history corruption isolated from per-workspace config.
+
+**Files**
+
+- `shared/src/lib.rs`
+- `backend/src/main.rs`
+- `frontend/src/app.rs`
+- `frontend/src/error_display.rs`
+
+**Verification Gate**
+
+- Tests cover invalid TOML, partial old config, missing top-level sections, permission denied, corrupt global history, invalid `last_selected`, and no home/config directory.
+
+### 7. Make Platform Roots Deterministic
+
+**Problem**
+
+The stuck-loading class includes root loading. Roots are requested after server readiness, directory probes can misclassify permission errors, and Windows drive probing can be slow or misleading.
+
+**Target Behavior**
+
+`GetPlatformRoots` always produces either `PlatformRoots` or a visible roots error. It never leaves the picker indefinitely loading.
+
+**Implementation Tasks**
+
+- Add a roots error message if platform roots cannot be determined.
+- Replace Windows `A:\` through `Z:\` probing with native drive enumeration where practical.
+- Use `dirs::desktop_dir()` and `dirs::download_dir()` instead of assuming `home/Desktop` and `home/Downloads`.
+- Use `try_exists()` to preserve permission errors instead of reporting them as "not found".
+- Surface `DirectoryError` in the tree and as a transient visible error when it blocks a requested action.
+- Either implement `BatchDirectoryContents` handling in the frontend or remove the unused message path.
+
+**Files**
+
+- `backend/src/main.rs`
+- `frontend/src/app.rs`
+- `frontend/src/file_picker.rs`
+- `shared/src/lib.rs`
+
+**Verification Gate**
+
+- Platform roots load on Linux, macOS, and Windows smoke runs.
+- Roots unavailable/permission-denied cases produce visible UI, not indefinite loading.
+- Windows smoke does not hang on inaccessible removable/network drives.
+
+### 8. Rebuild And Prove Plugin Artifacts
+
+**Problem**
+
+Release packaging currently copies `plugins/dist`, but release CI does not rebuild plugins. This can ship stale or missing plugin wasm artifacts.
+
+**Target Behavior**
+
+Plugin artifacts are rebuilt and verified before every package upload.
+
+**Implementation Tasks**
+
+- Install plugin build prerequisites in CI, including `cargo-component` if required.
+- Run `makers build_plugins` before all Tauri and Chrome packaging.
+- Assert exact nonempty plugin artifacts exist:
+  - `hello_world_plugin.wasm`
+  - `reload_watcher_plugin.wasm`
+  - `files_discovery_plugin.wasm`
+- Ensure plugin discovery failure cannot block `WorkspaceLoaded` or `ConfigLoaded`.
+
+**Files**
+
+- `Makefile.toml`
+- `.github/workflows/build.yml`
+- `backend/src/plugins.rs`
+
+**Verification Gate**
+
+- CI fails if any expected plugin artifact is missing or empty.
+- Package smoke proves plugin discovery failure does not block startup.
+
+### 9. Fix Updater And Distribution Signing
+
+**Problem**
+
+Updater artifacts are enabled, but release CI only warns when signing secrets are missing. Local/dev signing defaults and configured pubkey mismatches can produce unusable or untrustworthy update artifacts.
+
+**Target Behavior**
+
+Updater artifacts are either correctly signed and verified, or not produced.
+
+**Implementation Tasks**
+
+- Remove hardcoded dev signing defaults from release paths.
+- Fail release builds if updater signing secrets are missing while updater artifacts are enabled.
+- Reject known dev/default signing keys in release mode.
+- Verify every generated updater signature against the configured public key before generating `latest.json`.
+- Fail if `latest.json` omits an expected updater platform.
+- Decide and document Apple notarization and Windows Authenticode policy.
+
+**Files**
+
+- `Makefile.toml`
+- `src-tauri/tauri.conf.json`
+- `.github/workflows/build.yml`
+- `.github/workflows/release.yml`
+- `docs/src/development/releasing.md`
+
+**Verification Gate**
+
+- Release CI verifies every `.sig` against the configured pubkey.
+- `latest.json` has exactly the supported updater platform keys.
+- Release fails rather than publishing unsigned or mismatched updater artifacts.
+
+### 10. Add Release Artifact Manifest And CI Proof
+
+**Problem**
+
+Release notes and uploads can drift from what CI actually built and proved.
+
+**Target Behavior**
+
+Release creation is generated from machine-readable proof, not from hand-written assumptions.
+
+**Implementation Tasks**
+
+- Each build job emits an artifact manifest with:
+  - artifact filename
+  - size
+  - sha256
+  - source commit
+  - OS/architecture
+  - bundle type
+  - updater/signing status
+  - smoke result
+  - startup log path or attached smoke log artifact
+- `release.yml` collects manifests and fails if:
+  - expected artifacts are missing
+  - any uploaded artifact lacks a smoke result
+  - release notes mention a missing or unproved artifact
+  - updater metadata does not match uploaded artifacts
+- Use `if-no-files-found: error` for required uploads.
+
+**Files**
+
+- `.github/workflows/build.yml`
+- `.github/workflows/release.yml`
+- `docs/src/development/releasing.md`
+
+**Verification Gate**
+
+- Draft release notes are generated from the manifest.
+- Artifact count, checksums, smoke status, and updater status are visible in CI.
+
+## Suggested Execution Order
+
+1. Fix default workspace/resource cwd separation.
+2. Add visible config/startup errors and Tauri startup log.
+3. Add backend/resource and installed-WebView smoke modes.
+4. Prove Windows backend packaging with installed-artifact CI assertions.
+5. Unify Chrome package creation for every OS or stop publishing unproven Chrome packages.
+6. Harden config recovery.
+7. Make platform roots deterministic.
+8. Rebuild and prove plugin artifacts.
+9. Fix updater and distribution signing.
+10. Add release artifact manifest and CI proof.
+11. Rebuild/retest release artifacts.
+12. Update docs and GitHub issue response.
+
+## Required CI Gates Before Release
+
+- `makers build_plugins` ran and expected plugin artifacts are nonempty.
+- `TAURI_BUILD_VERSION=<version> makers tauri-build` passed on each OS.
+- `TAURI_BUILD_VERSION=<version> makers chrome-appimage` passed on Linux.
+- Shared Chrome packaging task passed on every OS that uploads a Chrome artifact.
+- Linux Chrome AppImage live smoke with real Chromium passed.
+- Linux Chrome AppImage fake-browser smoke passed.
+- Tauri package smoke passed for every uploaded package family.
+- Windows installed-artifact smoke proves `backend.exe`, real window creation, startup config, and platform roots.
+- macOS `.app` smoke proves backend starts from packaged resources and creates a real window.
+- Updater signatures verify against configured pubkey.
+- `latest.json` has exactly the supported updater keys.
+- Artifact manifest includes filename, sha256, source commit, bundle type, signing status, and smoke result for every upload.
+- Release notes are generated from or checked against the artifact manifest.
+- `cargo test -p novywave-chrome`
+- Focused backend/shared tests for config recovery and workspace root selection.
+
+## Required Scenario Tests
+
+- Temp-profile first run.
+- Read-only cwd/resource cwd.
+- Read-only selected workspace.
+- Corrupt `.novywave`.
+- Corrupt `.novywave_global`.
+- Missing top-level config sections.
+- Invalid `last_selected`.
+- No home/config directory.
+- Platform roots unavailable or permission denied.
+- Frontend loading timeout/error rendering through DOM or desktop test bridge.
+- Missing backend binary.
+- Existing user profile does not affect smoke results.
+
+## Release Issue Response Criteria
+
+Only close or respond as fixed on GitHub issue `#1` after a Windows release artifact built from the fixed commit proves:
+
+- exact uploaded installer filename and sha256
+- NSIS silent install proof, or MSI install/extraction proof for the artifact being recommended
+- installed layout contains `backend.exe` in the path searched by runtime
+- app starts as a normal user after install with an isolated fresh profile
+- a real WebView window is created
+- startup log is written and attached or linked from CI
+- `WorkspaceLoaded` or no-workspace equivalent arrives
+- platform roots load
+- no blank/no-window failure occurs when backend is missing or misconfigured; instead a visible error appears
+
