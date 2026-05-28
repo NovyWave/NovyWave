@@ -497,6 +497,7 @@ impl NovyWaveApp {
             let connection = connection_arc.clone();
             let config_for_roots = config.clone();
             let workspace_picker_domain_for_roots = workspace_picker_domain.clone();
+            let platform_roots_timeout_started = Mutable::new(false);
             Task::start(
                 map_ref! {
                     let server_ready = crate::platform::server_ready_signal(),
@@ -510,6 +511,43 @@ impl NovyWaveApp {
                                 .startup_platform_roots_request_count
                                 .saturating_add(1);
                         });
+
+                        if !platform_roots_timeout_started.get() {
+                            platform_roots_timeout_started.set(true);
+                            let config_for_timeout = config_for_roots.clone();
+                            let workspace_picker_domain_for_timeout =
+                                workspace_picker_domain_for_roots.clone();
+                            Task::start(async move {
+                                Timer::sleep(10000).await;
+                                if config_for_timeout
+                                    .file_picker_domain
+                                    .platform_roots
+                                    .get_cloned()
+                                    .is_some()
+                                {
+                                    return;
+                                }
+                                let message = "Platform roots did not load within 10 seconds. Use Open Workspace to choose a folder directly.".to_string();
+                                zoon::println!("ERROR: {message}");
+                                config_for_timeout.error_display.update_toast(
+                                    crate::error_display::ErrorAlert::new_directory_error(
+                                        "platform-roots".to_string(),
+                                        message.clone(),
+                                    ),
+                                );
+                                config_for_timeout.file_picker_domain.on_directory_error(
+                                    "platform-roots".to_string(),
+                                    message.clone(),
+                                );
+                                config_for_timeout
+                                    .file_picker_domain
+                                    .on_platform_roots(Vec::new());
+                                workspace_picker_domain_for_timeout
+                                    .on_directory_error("platform-roots".to_string(), message);
+                                workspace_picker_domain_for_timeout.on_platform_roots(Vec::new());
+                            });
+                        }
+
                         let connection = connection.clone();
                         let config_for_error = config_for_roots.clone();
                         let workspace_picker_domain_for_error =
@@ -544,6 +582,28 @@ impl NovyWaveApp {
                     }
                 }),
             );
+        }
+
+        {
+            let workspace_loading_for_timeout = workspace_loading.clone();
+            let workspace_path_for_timeout = workspace_path.clone();
+            let default_workspace_path_for_timeout = default_workspace_path.clone();
+            let config_for_timeout = config.clone();
+            Task::start(async move {
+                Timer::sleep(10000).await;
+                if !*workspace_loading_for_timeout.lock_ref()
+                    || workspace_path_for_timeout.lock_ref().is_some()
+                    || default_workspace_path_for_timeout.lock_ref().is_some()
+                {
+                    return;
+                }
+                workspace_loading_for_timeout.set(false);
+                let message = "Workspace load timeout after 10 seconds. The app is still usable; use Open Workspace to choose a folder.".to_string();
+                zoon::println!("ERROR: {message}");
+                config_for_timeout
+                    .error_display
+                    .update_toast(crate::error_display::ErrorAlert::new_config_error(message));
+            });
         }
 
         // Request config loading once; the Web platform gate handles
