@@ -1271,8 +1271,11 @@ impl PanelDimensions {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
 pub struct AppConfig {
+    #[serde(default)]
     pub app: AppSection,
+    #[serde(default)]
     pub ui: UiSection,
+    #[serde(default)]
     pub workspace: WorkspaceSection,
     #[serde(default, skip_serializing_if = "GlobalSection::is_default")]
     pub global: GlobalSection,
@@ -2258,6 +2261,23 @@ mod tests {
 
         // Check that warnings were generated
         assert_eq!(warnings.len(), 5);
+    }
+
+    #[test]
+    fn app_config_deserializes_missing_top_level_sections() {
+        let config: AppConfig = toml::from_str(
+            r#"
+            [ui]
+            toast_dismiss_ms = 2500
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(config.app, AppSection::default());
+        assert_eq!(config.ui.toast_dismiss_ms, 2500);
+        assert_eq!(config.workspace, WorkspaceSection::default());
+        assert_eq!(config.global, GlobalSection::default());
+        assert_eq!(config.plugins, PluginsSection::default());
     }
 
     #[test]

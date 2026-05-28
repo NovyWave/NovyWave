@@ -358,6 +358,14 @@ Recoverable config problems should not strand the app.
 
 - Tests cover invalid TOML, partial old config, missing top-level sections, permission denied, corrupt global history, invalid `last_selected`, and no home/config directory.
 
+**Current Progress**
+
+- `AppConfig` now deserializes missing top-level `app`, `ui`, and `workspace` sections with defaults, so partial old config files no longer fail before migration/validation can run.
+- Invalid per-workspace `.novywave` files are moved to a unique backup path before default workspace settings are loaded.
+- Invalid `.novywave_global` files are moved to a unique backup path before default workspace history is used for the session.
+- Config recovery warnings are sent to the frontend after the usable config loads, so the UI can continue while still showing the backup path or recovery failure.
+- Focused tests passed for missing top-level config sections and unique invalid-config backup paths.
+
 ### 7. Make Platform Roots Deterministic
 
 **Problem**

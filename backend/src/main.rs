@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::Notify;
 use tokio::time::{Duration, timeout};
 
@@ -776,6 +776,7 @@ impl SignalCacheManager {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn project_path(relative: &str) -> String {
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
@@ -881,6 +882,31 @@ mod tests {
             relativize_workspace_directory_path("/home/martinkavik/Downloads", &context),
             "/home/martinkavik/Downloads"
         );
+    }
+
+    #[::std::prelude::v1::test]
+    fn backup_invalid_config_file_moves_to_unique_backup() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("novywave-config-backup-test-{stamp}"));
+        fs::create_dir_all(&dir).expect("create temp dir");
+        let config_path = dir.join(CONFIG_FILENAME);
+
+        fs::write(&config_path, "not = [valid").expect("write invalid config");
+        let first_backup = backup_invalid_config_file(&config_path).expect("backup config");
+        assert!(!config_path.exists());
+        assert!(first_backup.exists());
+        assert_ne!(first_backup, config_path);
+
+        fs::write(&config_path, "still = [invalid").expect("write second invalid config");
+        let second_backup = backup_invalid_config_file(&config_path).expect("backup config again");
+        assert!(!config_path.exists());
+        assert!(second_backup.exists());
+        assert_ne!(second_backup, first_backup);
+
+        fs::remove_dir_all(&dir).expect("remove temp dir");
     }
 }
 
@@ -2507,6 +2533,11 @@ struct GlobalConfigFile {
     global: shared::GlobalSection,
 }
 
+struct LoadedConfig {
+    config: AppConfig,
+    recovery_warnings: Vec<String>,
+}
+
 fn global_config_path() -> PathBuf {
     // Use platform-specific config directory for global config
     // Linux: ~/.config/novywave/.novywave_global
@@ -2522,19 +2553,75 @@ fn global_config_path() -> PathBuf {
     base_dir.join(GLOBAL_CONFIG_FILENAME)
 }
 
+fn unique_backup_path(path: &Path) -> PathBuf {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("config");
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+
+    for attempt in 0..100 {
+        let suffix = if attempt == 0 {
+            format!("invalid-{stamp}")
+        } else {
+            format!("invalid-{stamp}-{attempt}")
+        };
+        let candidate = path.with_file_name(format!("{file_name}.{suffix}"));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+
+    path.with_file_name(format!("{file_name}.invalid-{stamp}-overflow"))
+}
+
+fn backup_invalid_config_file(path: &Path) -> Result<PathBuf, std::io::Error> {
+    let backup_path = unique_backup_path(path);
+    fs::rename(path, &backup_path)?;
+    Ok(backup_path)
+}
+
 fn read_global_section() -> shared::GlobalSection {
+    read_global_section_with_warnings().0
+}
+
+fn read_global_section_with_warnings() -> (shared::GlobalSection, Vec<String>) {
     let path = global_config_path();
+    let mut warnings = Vec::new();
     let mut section = match fs::read_to_string(&path) {
-        Ok(content) => toml::from_str::<GlobalConfigFile>(&content)
-            .map(|file| file.global)
-            .unwrap_or_default(),
+        Ok(content) => match toml::from_str::<GlobalConfigFile>(&content) {
+            Ok(file) => file.global,
+            Err(err) => match backup_invalid_config_file(&path) {
+                Ok(backup_path) => {
+                    warnings.push(format!(
+                        "Global config '{}' was invalid and was moved to '{}': {}. Loaded default workspace history.",
+                        path.display(),
+                        backup_path.display(),
+                        err
+                    ));
+                    shared::GlobalSection::default()
+                }
+                Err(backup_err) => {
+                    warnings.push(format!(
+                        "Global config '{}' is invalid and could not be backed up, so it was left untouched: {}; backup failed: {}. Loaded default workspace history for this session.",
+                        path.display(),
+                        err,
+                        backup_err
+                    ));
+                    shared::GlobalSection::default()
+                }
+            },
+        },
         Err(err) => {
             if err.kind() != std::io::ErrorKind::NotFound {
-                eprintln!(
-                    "⚠️ BACKEND: Failed to read global config '{}': {}",
+                warnings.push(format!(
+                    "Failed to read global config '{}': {}. Loaded default workspace history for this session.",
                     path.display(),
                     err
-                );
+                ));
             }
             shared::GlobalSection::default()
         }
@@ -2542,7 +2629,7 @@ fn read_global_section() -> shared::GlobalSection {
     section
         .workspace_history
         .clamp_to_limit(shared::WORKSPACE_HISTORY_MAX_RECENTS);
-    section
+    (section, warnings)
 }
 
 fn save_global_section(
@@ -2934,12 +3021,13 @@ fn reset_runtime_state_for_workspace() {
     // All locks released together here
 }
 
-fn read_or_create_config() -> Result<AppConfig, String> {
+fn read_or_create_config() -> Result<LoadedConfig, String> {
     let context = workspace_context();
     if !context.is_active() {
         return Err("No workspace is selected".to_string());
     }
     let config_path = context.config_path();
+    let mut recovery_warnings = Vec::new();
 
     let content = match fs::read_to_string(&config_path) {
         Ok(content) => content,
@@ -2955,7 +3043,10 @@ fn read_or_create_config() -> Result<AppConfig, String> {
                         save_err
                     ));
                 }
-                return Ok(default_config);
+                return Ok(LoadedConfig {
+                    config: default_config,
+                    recovery_warnings,
+                });
             } else {
                 return Err(format!(
                     "Failed to read config '{}': {}",
@@ -2966,27 +3057,64 @@ fn read_or_create_config() -> Result<AppConfig, String> {
         }
     };
 
-    let mut config: AppConfig = toml::from_str(&content).map_err(|err| {
-        format!(
-            "Failed to parse config '{}': {}",
-            config_path.display(),
-            err
-        )
-    })?;
+    let mut config: AppConfig = match toml::from_str(&content) {
+        Ok(config) => config,
+        Err(err) => {
+            let backup_path = match backup_invalid_config_file(&config_path) {
+                Ok(path) => path,
+                Err(backup_err) => {
+                    return Err(format!(
+                        "Failed to parse config '{}': {}; failed to back up invalid config, leaving it untouched: {}",
+                        config_path.display(),
+                        err,
+                        backup_err
+                    ));
+                }
+            };
+            recovery_warnings.push(format!(
+                "Config '{}' was invalid and was moved to '{}': {}. Loaded default workspace settings.",
+                config_path.display(),
+                backup_path.display(),
+                err
+            ));
+            let mut default_config = AppConfig::default();
+            let _ = default_config.validate_and_fix();
+            expand_config_paths(&mut default_config);
+            if let Err(save_err) = save_config_to_file(&default_config) {
+                recovery_warnings.push(format!(
+                    "Loaded default config after recovery, but failed to write replacement '{}': {}",
+                    config_path.display(),
+                    save_err
+                ));
+            }
+            return Ok(LoadedConfig {
+                config: default_config,
+                recovery_warnings,
+            });
+        }
+    };
 
     let migration_warnings = config.validate_and_fix();
     if !migration_warnings.is_empty() {
+        recovery_warnings.push(format!(
+            "Config '{}' was migrated: {}",
+            config_path.display(),
+            migration_warnings.join("; ")
+        ));
         if let Err(save_err) = save_config_to_file(&config) {
-            eprintln!(
-                "⚠️ BACKEND: Failed to persist migrated config '{}': {}",
+            recovery_warnings.push(format!(
+                "Failed to persist migrated config '{}': {}",
                 config_path.display(),
                 save_err
-            );
+            ));
         }
     }
 
     expand_config_paths(&mut config);
-    Ok(config)
+    Ok(LoadedConfig {
+        config,
+        recovery_warnings,
+    })
 }
 
 fn spawn_directory_preload(expanded_dirs: Vec<String>) {
@@ -3106,9 +3234,30 @@ async fn handle_loaded_config(
     }
 }
 
+async fn send_config_recovery_warnings(
+    warnings: Vec<String>,
+    session_id: SessionId,
+    cor_id: CorId,
+) {
+    if warnings.is_empty() {
+        return;
+    }
+
+    for warning in &warnings {
+        eprintln!("⚠️ BACKEND: {warning}");
+    }
+
+    send_down_msg(
+        DownMsg::ConfigError(warnings.join("\n")),
+        session_id,
+        cor_id,
+    )
+    .await;
+}
+
 async fn load_config(session_id: SessionId, cor_id: CorId) {
     // 1) Read global first and set the workspace root so we load the correct per-workspace config
-    let global_section = read_global_section();
+    let (global_section, mut recovery_warnings) = read_global_section_with_warnings();
     let mut selected_workspace = false;
     if let Some(last) = global_section.workspace_history.last_selected.clone() {
         if !last.is_empty() {
@@ -3136,22 +3285,25 @@ async fn load_config(session_id: SessionId, cor_id: CorId) {
         config.global = effective_global;
         println!("🚀 BACKEND: No workspace selected; sending global-only config");
         handle_loaded_config(config, session_id, cor_id, None).await;
+        send_config_recovery_warnings(recovery_warnings, session_id, cor_id).await;
         return;
     }
 
     // 2) Load the per-workspace config for the selected root
     match read_or_create_config() {
-        Ok(mut config) => {
+        Ok(mut loaded) => {
             // Attach the global section we read above
             let mut effective_global = global_section.clone();
             // Ensure recents list limits are applied consistently
             effective_global
                 .workspace_history
                 .clamp_to_limit(shared::WORKSPACE_HISTORY_MAX_RECENTS);
-            config.global = effective_global;
+            loaded.config.global = effective_global;
+            recovery_warnings.append(&mut loaded.recovery_warnings);
 
             let root_display = workspace_context().root().to_string_lossy().to_string();
-            handle_loaded_config(config, session_id, cor_id, Some(root_display)).await;
+            handle_loaded_config(loaded.config, session_id, cor_id, Some(root_display)).await;
+            send_config_recovery_warnings(recovery_warnings, session_id, cor_id).await;
         }
         Err(message) => {
             broadcast_down_msg(DownMsg::ConfigError(message)).await;
@@ -3274,10 +3426,12 @@ async fn select_workspace(root: String, session_id: SessionId, cor_id: CorId) {
     let global_section = update_workspace_history_on_select(&canonical_root);
 
     match read_or_create_config() {
-        Ok(mut config) => {
+        Ok(mut loaded) => {
             let root_display = canonical_root.to_string_lossy().to_string();
-            config.global = global_section.clone();
-            handle_loaded_config(config, session_id, cor_id, Some(root_display)).await;
+            loaded.config.global = global_section.clone();
+            let recovery_warnings = loaded.recovery_warnings;
+            handle_loaded_config(loaded.config, session_id, cor_id, Some(root_display)).await;
+            send_config_recovery_warnings(recovery_warnings, session_id, cor_id).await;
         }
         Err(message) => {
             send_down_msg(DownMsg::ConfigError(message), session_id, cor_id).await;
