@@ -577,6 +577,7 @@ Release creation is generated from machine-readable proof, not from hand-written
 - The release guide documents the manifest and explicitly states that Apple notarization and Windows Authenticode are not enforced yet.
 - Local checks passed for Python syntax, workflow YAML parsing, and a synthetic complete release directory including smoke proof files.
 - Local workflow YAML parsing passed after the manual Build dispatch and required-upload hardening changes. Live GitHub workflow inspection could not run because the local `GITHUB_TOKEN` is invalid.
+- The hardening stack was pushed to `origin/main` at commit `8366a2c4`; the remaining release-safety proof requires manually dispatching the `Build` workflow with `release-build` enabled and reviewing the uploaded smoke proof artifacts.
 
 ## Suggested Execution Order
 
