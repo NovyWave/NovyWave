@@ -418,6 +418,13 @@ Plugin artifacts are rebuilt and verified before every package upload.
 - CI fails if any expected plugin artifact is missing or empty.
 - Package smoke proves plugin discovery failure does not block startup.
 
+**Current Progress**
+
+- Added `scripts/verify_plugin_artifacts.sh` to fail when `hello_world_plugin.wasm`, `reload_watcher_plugin.wasm`, or `files_discovery_plugin.wasm` is missing or empty.
+- `makers build_plugins` now runs the verifier after copying component outputs to `plugins/dist`.
+- Linux, macOS ARM, macOS Intel, and Windows release CI now install `cargo-component` and run `makers build_plugins` before release packaging.
+- Local `makers build_plugins` passed and regenerated all three expected plugin artifacts as nonempty wasm files.
+
 ### 9. Fix Updater And Distribution Signing
 
 **Problem**

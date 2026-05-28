@@ -508,6 +508,7 @@ script = [
     "for manifest in \"${targets[@]}\"; do echo \"Building component for ${manifest}\"; cargo component build --release --manifest-path \"${manifest}\"; done",
     "rm -f \"${DIST_DIR}\"/*.wasm",
     "find target/wasm32-wasip1/release -maxdepth 1 -name '*.wasm' -print -exec cp {} \"${DIST_DIR}/\" \\;",
+    "scripts/verify_plugin_artifacts.sh \"${DIST_DIR}\"",
     "echo \"Plugin components copied to ${DIST_DIR}/\""
 ]
 

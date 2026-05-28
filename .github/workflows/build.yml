@@ -29,6 +29,10 @@ jobs:
       - name: Install cargo-make
         run: cargo install cargo-make
 
+      - name: Install cargo-component
+        if: inputs.release-build
+        run: cargo install cargo-component --locked
+
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
@@ -45,6 +49,10 @@ jobs:
         run: |
           mkdir -p backend/private
           mkdir -p frontend_dist/_api/pkg
+
+      - name: Build plugin artifacts
+        if: inputs.release-build
+        run: makers build_plugins
 
       - name: Check signing key availability
         if: inputs.release-build
@@ -254,6 +262,10 @@ jobs:
       - name: Install cargo-make
         run: cargo install cargo-make
 
+      - name: Install cargo-component
+        if: inputs.release-build
+        run: cargo install cargo-component --locked
+
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
@@ -265,6 +277,10 @@ jobs:
         run: |
           mkdir -p backend/private
           mkdir -p frontend_dist/_api/pkg
+
+      - name: Build plugin artifacts
+        if: inputs.release-build
+        run: makers build_plugins
 
       - name: Check signing key availability
         if: inputs.release-build
@@ -354,6 +370,10 @@ jobs:
       - name: Install cargo-make
         run: cargo install cargo-make
 
+      - name: Install cargo-component
+        if: inputs.release-build
+        run: cargo install cargo-component --locked
+
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
@@ -365,6 +385,10 @@ jobs:
         run: |
           mkdir -p backend/private
           mkdir -p frontend_dist/_api/pkg
+
+      - name: Build plugin artifacts
+        if: inputs.release-build
+        run: makers build_plugins
 
       - name: Check signing key availability
         if: inputs.release-build
@@ -454,6 +478,10 @@ jobs:
       - name: Install cargo-make
         run: cargo install cargo-make
 
+      - name: Install cargo-component
+        if: inputs.release-build
+        run: cargo install cargo-component --locked
+
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
@@ -466,6 +494,11 @@ jobs:
         run: |
           mkdir -p backend/private
           mkdir -p frontend_dist/_api/pkg
+
+      - name: Build plugin artifacts
+        if: inputs.release-build
+        shell: bash
+        run: makers build_plugins
 
       - name: Check signing key availability
         if: inputs.release-build
