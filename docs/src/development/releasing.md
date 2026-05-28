@@ -34,21 +34,24 @@ jj bookmark set main -r @-
 jj git push --bookmark main
 ```
 
-### 3. Trigger the release
+### 3. Run package-smoke preflight
 
-**Option A: Git tag (automatic)**
-```bash
-jj bookmark create vX.Y.Z -r @-
-jj git push --bookmark vX.Y.Z
-```
-The `release.yml` workflow triggers on `v*` tags.
+Before creating a draft release, run the package build workflow directly:
 
-**Option B: Manual dispatch (recommended)**
+1. Go to GitHub Actions -> Build workflow
+2. Click "Run workflow" on the `main` branch
+3. Keep `release-build` enabled
+4. Enter the same version as `Cargo.toml`
+
+This builds the release bundles on Linux, macOS ARM, macOS Intel, and Windows, runs the packaged startup smokes, and uploads the proved artifacts without creating a GitHub release.
+
+### 4. Trigger the release
+
 1. Go to GitHub Actions → Release workflow
 2. Click "Run workflow" on the `main` branch
 3. CI reads the version from `Cargo.toml` automatically — no version input needed
 
-### 4. Review and publish
+### 5. Review and publish
 
 CI creates a **draft** release with all artifacts:
 

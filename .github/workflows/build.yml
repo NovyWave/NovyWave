@@ -4,6 +4,17 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 on:
+  workflow_dispatch:
+    inputs:
+      release-build:
+        description: 'Build and smoke release bundles without creating a GitHub release'
+        type: boolean
+        default: true
+      version:
+        description: 'Version to embed in Tauri and Chrome package filenames'
+        type: string
+        required: true
+        default: '0.2.1'
   workflow_call:
     inputs:
       release-build:
@@ -213,6 +224,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: linux-chrome-launcher
+          if-no-files-found: error
           path: target/release/NovyWave_*_chrome-linux-x64.AppImage
 
       - name: Upload AppImage
@@ -220,6 +232,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: linux-appimage
+          if-no-files-found: error
           path: target/release/bundle/appimage/*.AppImage
 
       - name: Upload Deb
@@ -227,6 +240,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: linux-deb
+          if-no-files-found: error
           path: target/release/bundle/deb/*.deb
 
       - name: Upload RPM
@@ -234,6 +248,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: linux-rpm
+          if-no-files-found: error
           path: target/release/bundle/rpm/*.rpm
 
       - name: Upload Updater artifacts (AppImage + signature)
@@ -357,6 +372,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: macos-chrome-launcher-arm
+          if-no-files-found: error
           path: target/release/NovyWave_*_chrome-macos-aarch64.tar.gz
 
       - name: Upload DMG (ARM)
@@ -364,6 +380,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: macos-dmg-arm
+          if-no-files-found: error
           path: target/release/bundle/dmg/*.dmg
 
       - name: Upload Updater artifacts (ARM)
@@ -487,6 +504,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: macos-chrome-launcher-x64
+          if-no-files-found: error
           path: target/release/NovyWave_*_chrome-macos-x64.tar.gz
 
       - name: Upload DMG (x64)
@@ -494,6 +512,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: macos-dmg-x64
+          if-no-files-found: error
           path: target/release/bundle/dmg/*.dmg
 
       - name: Upload Updater artifacts (x64)
@@ -679,6 +698,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: windows-chrome-launcher
+          if-no-files-found: error
           path: target/release/NovyWave_*_chrome-windows-x64.zip
 
       - name: Upload MSI
@@ -686,6 +706,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: windows-msi
+          if-no-files-found: error
           path: target/release/bundle/msi/*.msi
 
       - name: Upload NSIS installer
@@ -693,6 +714,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: windows-nsis
+          if-no-files-found: error
           path: target/release/bundle/nsis/*.exe
 
       - name: Upload Updater artifacts (Windows)
