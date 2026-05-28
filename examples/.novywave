@@ -25,7 +25,7 @@ load_files_expanded_directories = [
     "/home/martinkavik",
     "/home/martinkavik/repos",
     "/home/martinkavik/repos/NovyWave",
-    "",
+    ".",
     "spade/counter",
     "spinalhdl/counter",
     "verilog/counter",
@@ -83,10 +83,10 @@ signal_type = "Reg"
 row_height = 30
 
 [workspace.timeline]
-cursor_position_ps = 279645
-visible_range_start_ps = 0
-visible_range_end_ps = 1705000
-zoom_center_ps = 538103
+cursor_position_ps = 611793
+visible_range_start_ps = 555507
+visible_range_end_ps = 894507
+zoom_center_ps = 691672
 tooltip_enabled = true
 
 [[workspace.timeline.markers]]
