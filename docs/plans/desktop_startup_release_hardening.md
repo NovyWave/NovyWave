@@ -233,6 +233,12 @@ Every release artifact has non-interactive startup proof before upload.
   - `target/release/bundle/rpm/NovyWave-0.2.1-1.x86_64.rpm`
 - Clean local Chrome AppImage live smoke passed for `target/release/NovyWave_0.2.1_chrome-linux-x64.AppImage`.
 - The refreshed Desktop test folder `v0.2.1_next_release` contains only the verified Linux-compatible files: AppImage, deb, rpm, and Chrome AppImage.
+- After the native startup-dialog changes, rebuilt local Tauri package smokes passed again for AppImage, deb, and rpm; the rebuilt Chrome AppImage live smoke also passed.
+- The refreshed Desktop test folder contains these current artifact SHA-256 values:
+  - `NovyWave_0.2.1_amd64.AppImage`: `cad207bb94182d99851561fe9613b6e6f155f6c013e7a85ee08b73eb94a33a19`
+  - `NovyWave_0.2.1_amd64.deb`: `419bf9e4f4ff2727469b5a7e8eadb9dfc28ff7d42509470ed37dddff8aecf091`
+  - `NovyWave-0.2.1-1.x86_64.rpm`: `392fbd6887fe9ca362fd0d82bd3c05714bb4fcc70eaeb3a57fc3b9ea21804c43`
+  - `NovyWave_0.2.1_chrome-linux-x64.AppImage`: `e55ddc696dedac922d0488d9c28ea06c014618264d7a9a3aabc8000e492a2ef5`
 
 ### 4. Make Chrome Packaging Correct On Every OS
 
