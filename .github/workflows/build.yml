@@ -54,16 +54,12 @@ jobs:
         if: inputs.release-build
         run: makers build_plugins
 
-      - name: Check signing key availability
+      - name: Validate release updater signing key
         if: inputs.release-build
-        run: |
-          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
-            echo "TAURI_SIGNING_PRIVATE_KEY is set (length: ${#TAURI_SIGNING_PRIVATE_KEY} chars)"
-          else
-            echo "TAURI_SIGNING_PRIVATE_KEY is NOT set - updater artifacts will NOT be created"
-          fi
+        run: scripts/validate_release_signing_env.sh
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       - name: Build Tauri app (release bundle)
         if: inputs.release-build
@@ -245,6 +241,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: linux-updater
+          if-no-files-found: error
           path: |
             target/release/bundle/appimage/*.AppImage
             target/release/bundle/appimage/*.AppImage.sig
@@ -282,16 +279,12 @@ jobs:
         if: inputs.release-build
         run: makers build_plugins
 
-      - name: Check signing key availability
+      - name: Validate release updater signing key
         if: inputs.release-build
-        run: |
-          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
-            echo "TAURI_SIGNING_PRIVATE_KEY is set (length: ${#TAURI_SIGNING_PRIVATE_KEY} chars)"
-          else
-            echo "TAURI_SIGNING_PRIVATE_KEY is NOT set - updater artifacts will NOT be created"
-          fi
+        run: scripts/validate_release_signing_env.sh
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       - name: Build Tauri app (release bundle)
         if: inputs.release-build
@@ -365,6 +358,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: macos-updater-arm
+          if-no-files-found: error
           path: |
             target/release/bundle/macos/*.tar.gz
             target/release/bundle/macos/*.tar.gz.sig
@@ -402,16 +396,12 @@ jobs:
         if: inputs.release-build
         run: makers build_plugins
 
-      - name: Check signing key availability
+      - name: Validate release updater signing key
         if: inputs.release-build
-        run: |
-          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
-            echo "TAURI_SIGNING_PRIVATE_KEY is set (length: ${#TAURI_SIGNING_PRIVATE_KEY} chars)"
-          else
-            echo "TAURI_SIGNING_PRIVATE_KEY is NOT set - updater artifacts will NOT be created"
-          fi
+        run: scripts/validate_release_signing_env.sh
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       - name: Build Tauri app (release bundle)
         if: inputs.release-build
@@ -485,6 +475,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: macos-updater-x64
+          if-no-files-found: error
           path: |
             target/release/bundle/macos/*.tar.gz
             target/release/bundle/macos/*.tar.gz.sig
@@ -524,17 +515,13 @@ jobs:
         shell: bash
         run: makers build_plugins
 
-      - name: Check signing key availability
+      - name: Validate release updater signing key
         if: inputs.release-build
         shell: bash
-        run: |
-          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
-            echo "TAURI_SIGNING_PRIVATE_KEY is set (length: ${#TAURI_SIGNING_PRIVATE_KEY} chars)"
-          else
-            echo "TAURI_SIGNING_PRIVATE_KEY is NOT set - updater artifacts will NOT be created"
-          fi
+        run: scripts/validate_release_signing_env.sh
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       - name: Build Tauri app (release bundle)
         if: inputs.release-build
@@ -670,6 +657,6 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: windows-updater
-          if-no-files-found: warn
+          if-no-files-found: error
           path: |
             target/release/bundle/nsis/*.sig

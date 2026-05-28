@@ -61,6 +61,8 @@ CI creates a **draft** release with all artifacts:
 
 Plus `latest.json` for the auto-updater.
 
+Release CI fails before publishing updater metadata unless `TAURI_SIGNING_PRIVATE_KEY` is configured, the key is not the known development key, every updater bundle has a matching `.sig`, every signature verifies against `src-tauri/tauri.conf.json`, and `latest.json` contains exactly the supported updater platforms: `linux-x86_64`, `darwin-aarch64`, `darwin-x86_64`, and `windows-x86_64`.
+
 1. Go to GitHub Releases
 2. Review the draft release
 3. Edit release notes if needed

@@ -463,8 +463,14 @@ Updater artifacts are either correctly signed and verified, or not produced.
 
 **Current Evidence**
 
-- Latest local `makers tauri-build` still warns that the updater signing private key does not match the configured updater public key for generated updater signatures.
-- The same build warns that Tauri could not patch `__TAURI_BUNDLE_TYPE` into the binary for deb/rpm/AppImage, and the AppImage smoke log reports the updater hidden because the bundle type is unsupported or unknown.
+- Hardcoded development updater signing defaults were removed from local Tauri bundle tasks.
+- Local Tauri bundles disable updater artifact creation when `TAURI_SIGNING_PRIVATE_KEY` is absent, instead of generating signatures with a development key.
+- Release CI now fails before packaging if `TAURI_SIGNING_PRIVATE_KEY` is missing, if it matches the known development key fingerprint, or if the password is the known development password.
+- Required updater artifact uploads now fail when generated updater bundles or signatures are missing.
+- `scripts/generate_updater_latest.py` verifies every updater signature with `minisign` against the configured updater public key before writing `latest.json`.
+- The updater metadata generator requires exactly the supported updater platforms: `linux-x86_64`, `darwin-aarch64`, `darwin-x86_64`, and `windows-x86_64`.
+- Local checks passed for script syntax, workflow YAML parsing, validator rejection paths, and synthetic signed updater artifacts for all supported updater platforms.
+- Existing older local updater signatures are correctly rejected against the configured updater public key, which confirms the previous mismatch would not be published by the hardened release flow.
 
 ### 10. Add Release Artifact Manifest And CI Proof
 

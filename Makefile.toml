@@ -192,7 +192,7 @@ dependencies = ["tauri-build-bundle-unix", "tauri-build-bundle-windows"]
 [tasks.tauri-build-bundle-unix]
 description = "Bundle Tauri app on Unix (Linux/macOS)"
 condition = { platforms = ["linux", "mac"] }
-env = { NOVYWAVE_PLATFORM = "TAURI", TAURI_SIGNING_PRIVATE_KEY = "dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWduIGVuY3J5cHRlZCBzZWNyZXQga2V5ClJXUlRZMEl5M2ROZnNZUDJMeTRiVUcxTzdpYjhMMmRSM1JYVGx1dEh3N1JsMTlVamtHWUFBQkFBQUFBQUFBQUFBQUlBQUFBQXJrTjVNSklsd3puMk5SaE1nM1NKaitnUEVBeDN0QWN5ZDVCZ2tFbjZ6UUE2Mk5QRkdVSkovNEc4MVg0Zm5TVnkxOUUvRytGWUFPdWhSRVQ3MnczTmd0bWhBdFNrOXJPbEg4SldLakF4YVBqYnU1ZUdUdjFSVk44NDRpTXZEbVpCNkhjd3RLVlVPc1E9Cg==", TAURI_SIGNING_PRIVATE_KEY_PASSWORD = "devkey" }
+env = { NOVYWAVE_PLATFORM = "TAURI" }
 script_runner = "bash"
 script = '''
 set -e  # Exit on any error
@@ -254,10 +254,19 @@ fi
 echo "Starting Tauri build..."
 cd src-tauri
 
-# If TAURI_BUILD_VERSION is set (from CI), override the version in tauri.conf.json
-if [ -n "$TAURI_BUILD_VERSION" ]; then
+# If TAURI_BUILD_VERSION is set (from CI), override the version in tauri.conf.json.
+# If TAURI_SIGNING_PRIVATE_KEY is missing, disable local updater artifacts instead
+# of generating signatures with a development key.
+if [ -n "${TAURI_BUILD_VERSION:-}" ] && [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
     echo "[OK] Using version from CI: $TAURI_BUILD_VERSION"
-    cargo tauri build --config "{\"version\": \"$TAURI_BUILD_VERSION\"}"
+    cargo tauri build --config "{\"version\":\"$TAURI_BUILD_VERSION\"}"
+elif [ -n "${TAURI_BUILD_VERSION:-}" ]; then
+    echo "[OK] Using version from CI: $TAURI_BUILD_VERSION"
+    echo "TAURI_SIGNING_PRIVATE_KEY is not set; disabling updater artifacts for this local bundle."
+    cargo tauri build --config "{\"version\":\"$TAURI_BUILD_VERSION\",\"bundle\":{\"createUpdaterArtifacts\":false}}"
+elif [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+    echo "TAURI_SIGNING_PRIVATE_KEY is not set; disabling updater artifacts for this local bundle."
+    cargo tauri build --config '{"bundle":{"createUpdaterArtifacts":false}}'
 else
     cargo tauri build
 fi
@@ -266,7 +275,7 @@ fi
 [tasks.tauri-build-bundle-windows]
 description = "Bundle Tauri app on Windows"
 condition = { platforms = ["windows"] }
-env = { NOVYWAVE_PLATFORM = "TAURI", TAURI_SIGNING_PRIVATE_KEY = "dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWduIGVuY3J5cHRlZCBzZWNyZXQga2V5ClJXUlRZMEl5M2ROZnNZUDJMeTRiVUcxTzdpYjhMMmRSM1JYVGx1dEh3N1JsMTlVamtHWUFBQkFBQUFBQUFBQUFBQUlBQUFBQXJrTjVNSklsd3puMk5SaE1nM1NKaitnUEVBeDN0QWN5ZDVCZ2tFbjZ6UUE2Mk5QRkdVSkovNEc4MVg0Zm5TVnkxOUUvRytGWUFPdWhSRVQ3MnczTmd0bWhBdFNrOXJPbEg4SldLakF4YVBqYnU1ZUdUdjFSVk44NDRpTXZEbVpCNkhjd3RLVlVPc1E9Cg==", TAURI_SIGNING_PRIVATE_KEY_PASSWORD = "devkey" }
+env = { NOVYWAVE_PLATFORM = "TAURI" }
 script_runner = "powershell"
 script_extension = "ps1"
 script = '''
@@ -337,13 +346,27 @@ Set-Location "src-tauri"
 
 # If TAURI_BUILD_VERSION is set (from CI), override the version in tauri.conf.json
 $buildVersion = $env:TAURI_BUILD_VERSION
+$updaterConfig = @{}
+if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
+    Write-Host "TAURI_SIGNING_PRIVATE_KEY is not set; disabling updater artifacts for this local bundle."
+    $updaterConfig = @{ bundle = @{ createUpdaterArtifacts = $false } }
+}
 if ($buildVersion) {
     Write-Host "[OK] Using version from CI: $buildVersion"
     # Write config to temp file to avoid PowerShell quote escaping issues
     $tempConfig = Join-Path $env:TEMP "tauri-version-override.json"
-    @{version = $buildVersion} | ConvertTo-Json -Compress | Set-Content $tempConfig -NoNewline
+    $config = @{version = $buildVersion}
+    foreach ($key in $updaterConfig.Keys) {
+        $config[$key] = $updaterConfig[$key]
+    }
+    $config | ConvertTo-Json -Compress -Depth 8 | Set-Content $tempConfig -NoNewline
     Write-Host "Config file: $tempConfig"
     Get-Content $tempConfig
+    cargo tauri build --config $tempConfig
+    Remove-Item $tempConfig -ErrorAction SilentlyContinue
+} elseif ($updaterConfig.Count -gt 0) {
+    $tempConfig = Join-Path $env:TEMP "tauri-local-bundle-override.json"
+    $updaterConfig | ConvertTo-Json -Compress -Depth 8 | Set-Content $tempConfig -NoNewline
     cargo tauri build --config $tempConfig
     Remove-Item $tempConfig -ErrorAction SilentlyContinue
 } else {
@@ -378,7 +401,7 @@ scripts/package_chrome_appimage.sh "$VERSION"
 [tasks.tauri-build-debug]
 description = "Build Tauri desktop app in debug profile (AppImage only, devtools on)"
 dependencies = ["install", "install_tauri_cli"]
-env = { NOVYWAVE_PLATFORM = "TAURI", TAURI_SIGNING_PRIVATE_KEY = "dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWduIGVuY3J5cHRlZCBzZWNyZXQga2V5ClJXUlRZMEl5M2ROZnNZUDJMeTRiVUcxTzdpYjhMMmRSM1JYVGx1dEh3N1JsMTlVamtHWUFBQkFBQUFBQUFBQUFBQUlBQUFBQXJrTjVNSklsd3puMk5SaE1nM1NKaitnUEVBeDN0QWN5ZDVCZ2tFbjZ6UUE2Mk5QRkdVSkovNEc4MVg0Zm5TVnkxOUUvRytGWUFPdWhSRVQ3MnczTmd0bWhBdFNrOXJPbEg4SldLakF4YVBqYnU1ZUdUdjFSVk44NDRpTXZEbVpCNkhjd3RLVlVPc1E9Cg==", TAURI_SIGNING_PRIVATE_KEY_PASSWORD = "devkey" }
+env = { NOVYWAVE_PLATFORM = "TAURI" }
 script = '''
 # Build frontend for TAURI in debug (no -r) to keep devtools and symbols
 NOVYWAVE_PLATFORM=TAURI ./mzoon/bin/mzoon build -f
@@ -401,8 +424,8 @@ if [ -f "$BUILD_ID_FILE" ]; then
   cp -r frontend_dist/_api/* _api/
 fi
 
-# Bundle debug Tauri app; limit to appimage to speed things up
-cd src-tauri && NOVYWAVE_PLATFORM=TAURI cargo tauri build --debug --bundles appimage --config tauri.conf.json
+# Bundle debug Tauri app; limit to appimage to speed things up and skip updater signatures.
+cd src-tauri && NOVYWAVE_PLATFORM=TAURI cargo tauri build --debug --bundles appimage --config tauri.conf.json --config '{"bundle":{"createUpdaterArtifacts":false}}'
 '''
 
 [tasks.run-tauri-debug-appimage]

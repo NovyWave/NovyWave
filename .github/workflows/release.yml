@@ -103,61 +103,18 @@ jobs:
       - name: List downloaded artifacts
         run: find artifacts -type f
 
+      - name: Install updater verification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y minisign
+
       - name: Generate unified latest.json for updater
         run: |
-          VERSION="${{ needs.validate-version.outputs.version }}"
-          PUB_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-
-          # Initialize platforms JSON
-          PLATFORMS="{}"
-
-          # Linux x86_64 (AppImage)
-          LINUX_SIG=$(find artifacts/linux-updater -name "*.AppImage.sig" -type f | head -1)
-          LINUX_APPIMAGE=$(find artifacts/linux-updater -name "*.AppImage" ! -name "*.sig" -type f | head -1)
-          if [ -n "$LINUX_SIG" ] && [ -n "$LINUX_APPIMAGE" ]; then
-            LINUX_SIG_CONTENT=$(cat "$LINUX_SIG")
-            LINUX_FILENAME=$(basename "$LINUX_APPIMAGE")
-            PLATFORMS=$(echo "$PLATFORMS" | jq --arg sig "$LINUX_SIG_CONTENT" --arg url "https://github.com/NovyWave/NovyWave/releases/download/v${VERSION}/${LINUX_FILENAME}" '. + {"linux-x86_64": {"signature": $sig, "url": $url}}')
-          fi
-
-          # macOS ARM (aarch64)
-          MACOS_ARM_SIG=$(find artifacts/macos-updater-arm -name "*.tar.gz.sig" -type f 2>/dev/null | head -1)
-          MACOS_ARM_TARBALL=$(find artifacts/macos-updater-arm -name "*.tar.gz" ! -name "*.sig" -type f 2>/dev/null | head -1)
-          if [ -n "$MACOS_ARM_SIG" ] && [ -n "$MACOS_ARM_TARBALL" ]; then
-            MACOS_ARM_SIG_CONTENT=$(cat "$MACOS_ARM_SIG")
-            MACOS_ARM_FILENAME=$(basename "$MACOS_ARM_TARBALL")
-            PLATFORMS=$(echo "$PLATFORMS" | jq --arg sig "$MACOS_ARM_SIG_CONTENT" --arg url "https://github.com/NovyWave/NovyWave/releases/download/v${VERSION}/${MACOS_ARM_FILENAME}" '. + {"darwin-aarch64": {"signature": $sig, "url": $url}}')
-          fi
-
-          # macOS x64
-          MACOS_X64_SIG=$(find artifacts/macos-updater-x64 -name "*.tar.gz.sig" -type f 2>/dev/null | head -1)
-          MACOS_X64_TARBALL=$(find artifacts/macos-updater-x64 -name "*.tar.gz" ! -name "*.sig" -type f 2>/dev/null | head -1)
-          if [ -n "$MACOS_X64_SIG" ] && [ -n "$MACOS_X64_TARBALL" ]; then
-            MACOS_X64_SIG_CONTENT=$(cat "$MACOS_X64_SIG")
-            MACOS_X64_FILENAME=$(basename "$MACOS_X64_TARBALL")
-            PLATFORMS=$(echo "$PLATFORMS" | jq --arg sig "$MACOS_X64_SIG_CONTENT" --arg url "https://github.com/NovyWave/NovyWave/releases/download/v${VERSION}/${MACOS_X64_FILENAME}" '. + {"darwin-x86_64": {"signature": $sig, "url": $url}}')
-          fi
-
-          # Windows x64 (NSIS only)
-          WINDOWS_SIG=$(find artifacts/windows-updater -name "*.sig" -type f 2>/dev/null | head -1)
-          WINDOWS_BUNDLE=$(find artifacts/windows-nsis -name "*-setup.exe" -type f 2>/dev/null | head -1)
-          if [ -n "$WINDOWS_SIG" ] && [ -n "$WINDOWS_BUNDLE" ]; then
-            WINDOWS_SIG_CONTENT=$(cat "$WINDOWS_SIG")
-            WINDOWS_FILENAME=$(basename "$WINDOWS_BUNDLE")
-            PLATFORMS=$(echo "$PLATFORMS" | jq --arg sig "$WINDOWS_SIG_CONTENT" --arg url "https://github.com/NovyWave/NovyWave/releases/download/v${VERSION}/${WINDOWS_FILENAME}" '. + {"windows-x86_64": {"signature": $sig, "url": $url}}')
-          fi
-
-          # Create unified latest.json
-          jq -n \
-            --arg version "$VERSION" \
-            --arg notes "See release notes on GitHub" \
-            --arg pub_date "$PUB_DATE" \
-            --argjson platforms "$PLATFORMS" \
-            '{version: $version, notes: $notes, pub_date: $pub_date, platforms: $platforms}' \
-            > artifacts/latest.json
-
-          echo "Generated latest.json:"
-          cat artifacts/latest.json
+          scripts/generate_updater_latest.py \
+            --artifacts artifacts \
+            --version "${{ needs.validate-version.outputs.version }}" \
+            --release-url-base "https://github.com/NovyWave/NovyWave/releases/download/v${{ needs.validate-version.outputs.version }}" \
+            --output artifacts/latest.json
 
       - name: Collect release files
         run: |
