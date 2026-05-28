@@ -141,6 +141,19 @@ impl ErrorAlert {
             progress: None,
         }
     }
+
+    pub fn new_config_error(error: String) -> Self {
+        Self {
+            id: "config_error".to_string(),
+            title: "Configuration Error".to_string(),
+            message: make_error_user_friendly(&error),
+            technical_error: format!("Configuration error: {}", error),
+            auto_dismiss_ms: 0,
+            variant: NotificationVariant::Error,
+            action_label: None,
+            progress: None,
+        }
+    }
 }
 
 pub fn make_error_user_friendly(error: &str) -> String {

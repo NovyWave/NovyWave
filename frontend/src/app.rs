@@ -129,6 +129,7 @@ impl ConnectionMessageActor {
                                 workspace_loading.set(false);
                                 workspace_path.set(None);
                                 default_workspace_path.set(None);
+                                config.error_display.dismiss_toast("config_error");
                                 // Phase 3: Apply UI config directly to state (except variables/scopes)
                                 config.restore_config(loaded_config.clone(), &selected_variables);
                                 waveform_timeline.restore_markers(
@@ -172,6 +173,7 @@ impl ConnectionMessageActor {
                                 workspace_loading.set(false);
                                 workspace_path.set(Some(root.clone()));
                                 default_workspace_path.set(Some(default_root.clone()));
+                                config.error_display.dismiss_toast("config_error");
                                 tracked_files.clear_all_files();
                                 selected_variables.clear_selection();
                                 // Apply workspace config (except variables/scopes)
@@ -208,6 +210,9 @@ impl ConnectionMessageActor {
                             DownMsg::ConfigError(error) => {
                                 workspace_loading.set(false);
                                 zoon::println!("Config error: {error}");
+                                config.error_display.update_toast(
+                                    crate::error_display::ErrorAlert::new_config_error(error),
+                                );
                             }
                             DownMsg::ConfigSaved => {
                                 // Config saved successfully - no action needed

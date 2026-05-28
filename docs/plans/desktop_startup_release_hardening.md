@@ -309,7 +309,9 @@ Startup/config failures produce visible UI and a persistent startup log.
 - Tauri startup errors now append to a persistent `novywave-tauri-startup.log` under the platform cache/log directory and include that path in the visible startup dialog.
 - Embedded backend spawn failures now report the backend path, cwd, frontend asset env vars, `COMPRESSED_PKG`, and selected port.
 - Tauri backend readiness now detects an embedded backend process that exits before accepting connections and reports that exit status instead of waiting for a generic timeout.
+- Frontend `ConfigError` messages now show a persistent configuration-error toast instead of only writing to the console, and successful config/workspace loads dismiss the stale error.
 - Local focused Tauri lib tests passed for backend candidate handling and Linux WebKit profile parsing; local `makers tauri-build` and AppImage startup smoke passed after this change.
+- Local `makers build` passed after the frontend config-error toast change.
 
 ### 6. Harden Config Recovery
 
