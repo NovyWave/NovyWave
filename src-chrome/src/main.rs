@@ -46,14 +46,15 @@ fn main() {
         );
     });
 
-    println!("Chrome DevTools Protocol available at http://127.0.0.1:{CDP_PORT}");
+    let cdp_port = chrome_devtools_port();
+    println!("Chrome DevTools Protocol available at http://127.0.0.1:{cdp_port}");
 
     let mut command = Command::new(&chrome.program);
     command
         .args(&chrome.args)
         .arg(format!("--app={origin}"))
         .arg(format!("--user-data-dir={}", temp_profile.path().display()))
-        .arg(format!("--remote-debugging-port={CDP_PORT}"))
+        .arg(format!("--remote-debugging-port={cdp_port}"))
         .arg("--no-first-run")
         .arg("--no-default-browser-check");
 
@@ -84,6 +85,17 @@ fn main() {
 fn stop_backend(mut child: Child) {
     let _ = child.kill();
     let _ = child.wait();
+}
+
+fn chrome_devtools_port() -> u16 {
+    chrome_devtools_port_from_env(env::var("NOVYWAVE_CHROME_CDP_PORT").ok().as_deref())
+}
+
+fn chrome_devtools_port_from_env(value: Option<&str>) -> u16 {
+    value
+        .and_then(|value| value.trim().parse::<u16>().ok())
+        .filter(|port| *port > 0)
+        .unwrap_or(CDP_PORT)
 }
 
 // ---------------------------------------------------------------------------
@@ -954,6 +966,15 @@ mod tests {
             command.display(),
             "/usr/bin/flatpak run org.chromium.Chromium"
         );
+    }
+
+    #[test]
+    fn chrome_devtools_port_parses_valid_override_only() {
+        assert_eq!(chrome_devtools_port_from_env(None), CDP_PORT);
+        assert_eq!(chrome_devtools_port_from_env(Some("")), CDP_PORT);
+        assert_eq!(chrome_devtools_port_from_env(Some("0")), CDP_PORT);
+        assert_eq!(chrome_devtools_port_from_env(Some("not-a-port")), CDP_PORT);
+        assert_eq!(chrome_devtools_port_from_env(Some("4567")), 4567);
     }
 
     #[test]

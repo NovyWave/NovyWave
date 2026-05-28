@@ -195,6 +195,15 @@ jobs:
           grep -q -- "--app=http://127.0.0.1:" fake-chrome.log
           grep -q -- "routes ok: http://127.0.0.1:" fake-chrome-routes.log
 
+      - name: Verify Chrome launcher AppImage with real browser
+        if: inputs.release-build
+        run: |
+          set -euo pipefail
+          VERSION="${{ inputs.version }}"
+          APPIMAGE="target/release/NovyWave_${VERSION}_chrome-linux-x64.AppImage"
+          NOVYWAVE_SMOKE_TIMEOUT_SECONDS=60 \
+          scripts/smoke_chrome_appimage_live.sh "$APPIMAGE"
+
       - name: Upload Chrome launcher
         if: inputs.release-build
         uses: actions/upload-artifact@v7

@@ -213,7 +213,9 @@ Every release artifact has non-interactive startup proof before upload.
   - `curl --fail` verifies `/`
   - `curl --fail` verifies `/_api/pkg/build_id`
   - the smoke runs with isolated `XDG_CONFIG_HOME`
+- Linux release CI now runs a live-browser Chrome AppImage smoke through a real Chromium browser, waits for the launcher's DevTools endpoint, and verifies the real app URL plus `/_api/pkg/build_id`.
 - Local run against `target/release/NovyWave_0.2.1_chrome-linux-x64.AppImage` proved the route smoke logic with the packaged backend.
+- Local run against the rebuilt `target/release/NovyWave_0.2.1_chrome-linux-x64.AppImage` passed the live-browser smoke with Google Chrome 146.
 
 ### 4. Make Chrome Packaging Correct On Every OS
 
