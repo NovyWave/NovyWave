@@ -111,17 +111,35 @@ try {
         $inputs = Invoke-SmokeEval -Expression "Array.from(document.querySelectorAll('input')).map(input => input.value)"
         $values = @($inputs.value)
         if (-not $inputs.ok) {
+            Show-SmokeLogs
             throw "$Label failed to read workspace inputs: $($inputs | ConvertTo-Json -Compress -Depth 8)"
         }
         if ($values | Where-Object { [string]$_ -like "*Loading workspace*" }) {
+            Show-SmokeLogs
             throw "$Label workspace input is still loading: $($values -join ', ')"
         }
         if (-not ($values | Where-Object { [string]$_ -eq "No workspace" })) {
+            Show-SmokeLogs
             throw "$Label expected fresh run to show 'No workspace', got: $($values -join ', ')"
+        }
+
+        $console = Invoke-SmokeGet -Path "/state/console-log"
+        if (-not $console.ok) {
+            Show-SmokeLogs
+            throw "$Label failed to read startup console log: $($console | ConvertTo-Json -Compress -Depth 8)"
+        }
+        $blockingConsoleErrors = @($console.value | Where-Object {
+            $message = [string]($_.message ?? $_)
+            $message -match "(?i)(Config error|Workspace load timeout|panic|failed to start)"
+        })
+        if ($blockingConsoleErrors.Count -gt 0) {
+            Show-SmokeLogs
+            throw "$Label startup console contained blocking errors: $($blockingConsoleErrors | ConvertTo-Json -Compress -Depth 8)"
         }
 
         $defaultWorkspaceConfig = Join-Path $appData "novywave\default-workspace\.novywave"
         if (Test-Path $defaultWorkspaceConfig) {
+            Show-SmokeLogs
             throw "$Label created workspace config in default workspace: $defaultWorkspaceConfig"
         }
 

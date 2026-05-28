@@ -33,6 +33,18 @@ cleanup() {
 }
 trap cleanup EXIT
 
+show_smoke_logs() {
+  local startup_log="$HOME/Library/Logs/NovyWave/novywave-tauri-startup.log"
+  if [ -f "$APP_LOG" ]; then
+    echo "=== app log: $APP_LOG ===" >&2
+    cat "$APP_LOG" >&2 || true
+  fi
+  if [ -f "$startup_log" ]; then
+    echo "=== Tauri startup log: $startup_log ===" >&2
+    cat "$startup_log" >&2 || true
+  fi
+}
+
 case "$PACKAGE_PATH" in
   *.dmg)
     mkdir -p "$MOUNT_DIR"
@@ -91,7 +103,7 @@ health_json=""
 while [ "$SECONDS" -lt "$deadline" ]; do
   if ! kill -0 "$APP_PID" 2>/dev/null; then
     echo "ERROR: app exited before desktop bridge became ready" >&2
-    cat "$APP_LOG" >&2 || true
+    show_smoke_logs
     exit 1
   fi
   if health_json="$(curl_bridge "$BRIDGE_URL/health" 2>/dev/null)"; then
@@ -116,7 +128,7 @@ raise SystemExit(0 if payload.get("ok") and payload.get("windowFound") else 1)
 PY
 then
   echo "ERROR: desktop test bridge did not report a main window at $BRIDGE_URL: ${health_json:-<empty>}" >&2
-  cat "$APP_LOG" >&2 || true
+  show_smoke_logs
   exit 1
 fi
 
@@ -146,7 +158,7 @@ raise SystemExit(0 if payload.get("ok") and value.get("configLoaded") and value.
 PY
 then
   echo "ERROR: config debug state was not ready: ${config_json:-<empty>}" >&2
-  cat "$APP_LOG" >&2 || true
+  show_smoke_logs
   exit 1
 fi
 
@@ -178,12 +190,12 @@ raise SystemExit(0 if payload.get("ok") and len(roots) > 0 else 1)
 PY
 then
   echo "ERROR: platform roots did not load: ${roots_json:-<empty>}" >&2
-  cat "$APP_LOG" >&2 || true
+  show_smoke_logs
   exit 1
 fi
 
 inputs_json="$(post_eval "Array.from(document.querySelectorAll('input')).map(input => input.value)")"
-python3 - "$inputs_json" <<'PY'
+if ! python3 - "$inputs_json" <<'PY'
 import json
 import sys
 payload = json.loads(sys.argv[1])
@@ -198,10 +210,43 @@ if "No workspace" not in values:
     print(f"ERROR: expected packaged fresh run to show 'No workspace', got: {values}", file=sys.stderr)
     raise SystemExit(1)
 PY
+then
+  show_smoke_logs
+  exit 1
+fi
+
+console_json="$(curl_bridge "$BRIDGE_URL/state/console-log")"
+if ! python3 - "$console_json" <<'PY'
+import json
+import re
+import sys
+payload = json.loads(sys.argv[1])
+entries = payload.get("value") or []
+pattern = re.compile(r"(Config error|Workspace load timeout|panic|failed to start)", re.IGNORECASE)
+matches = [
+    entry for entry in entries
+    if pattern.search(str(entry.get("message", entry)))
+]
+if matches:
+    print(f"ERROR: startup console contained blocking errors: {matches}", file=sys.stderr)
+    raise SystemExit(1)
+PY
+then
+  show_smoke_logs
+  exit 1
+fi
 
 DEFAULT_WORKSPACE="$HOME/Library/Application Support/novywave/default-workspace/.novywave"
 if [ -e "$DEFAULT_WORKSPACE" ]; then
   echo "ERROR: fresh packaged run created workspace config in default workspace: $DEFAULT_WORKSPACE" >&2
+  show_smoke_logs
+  exit 1
+fi
+
+BACKEND_CWD="$(sed -n 's/^.*BACKEND cwd = //p' "$APP_LOG" | tail -1)"
+if [ -n "$BACKEND_CWD" ] && [ -e "$BACKEND_CWD/.novywave" ]; then
+  echo "ERROR: fresh packaged run created workspace config in backend cwd: $BACKEND_CWD/.novywave" >&2
+  show_smoke_logs
   exit 1
 fi
 
