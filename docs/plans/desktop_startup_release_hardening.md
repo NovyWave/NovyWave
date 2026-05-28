@@ -128,6 +128,12 @@ The local runtime now searches for `backend.exe`, but the release build must pro
 - MSI artifact is administratively installed or extracted and contains `backend.exe` where runtime lookup searches.
 - Windows installed-app smoke run reaches backend readiness and exits successfully.
 
+**Current Progress**
+
+- Windows release CI now silently installs the NSIS artifact and fails if the installed layout does not contain both `NovyWave.exe` and `backend.exe`.
+- Windows release CI now administratively extracts the MSI artifact and fails if the extracted layout does not contain both `NovyWave.exe` and `backend.exe`.
+- Full Windows installed-app startup/WebView smoke is still required before issue `#1` can be closed as fixed.
+
 ### 3. Add Package Startup Smoke Modes
 
 **Problem**

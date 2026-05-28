@@ -477,6 +477,66 @@ jobs:
           echo "=== NSIS ==="
           ls -la target/release/bundle/nsis/ || echo "No nsis dir"
 
+      - name: Verify Windows installers contain backend
+        if: inputs.release-build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          function Assert-InstalledBackend {
+            param(
+              [Parameter(Mandatory = $true)][string]$Root,
+              [Parameter(Mandatory = $true)][string]$Label
+            )
+
+            if (-not (Test-Path $Root)) {
+              throw "$Label root does not exist: $Root"
+            }
+
+            $app = Get-ChildItem -Path $Root -Recurse -Filter "NovyWave.exe" -File | Select-Object -First 1
+            if (-not $app) {
+              Write-Host "$Label files:"
+              Get-ChildItem -Path $Root -Recurse | Select-Object -First 120 | Format-Table FullName
+              throw "$Label layout does not contain NovyWave.exe"
+            }
+
+            $backend = Get-ChildItem -Path $Root -Recurse -Filter "backend.exe" -File | Select-Object -First 1
+            if (-not $backend) {
+              Write-Host "$Label files:"
+              Get-ChildItem -Path $Root -Recurse | Select-Object -First 120 | Format-Table FullName
+              throw "$Label layout does not contain backend.exe"
+            }
+
+            $relativeApp = [System.IO.Path]::GetRelativePath($Root, $app.FullName)
+            $relativeBackend = [System.IO.Path]::GetRelativePath($Root, $backend.FullName)
+            Write-Host "$Label NovyWave.exe: $relativeApp"
+            Write-Host "$Label backend.exe: $relativeBackend"
+          }
+
+          $nsis = Get-ChildItem -Path "target/release/bundle/nsis" -Filter "*.exe" -File | Select-Object -First 1
+          if (-not $nsis) {
+            throw "No NSIS installer found under target/release/bundle/nsis"
+          }
+          $nsisInstallDir = Join-Path $env:RUNNER_TEMP "NovyWaveNsisInstall"
+          New-Item -ItemType Directory -Force -Path $nsisInstallDir | Out-Null
+          $nsisProcess = Start-Process -FilePath $nsis.FullName -ArgumentList @("/S", "/D=$nsisInstallDir") -Wait -PassThru
+          if ($nsisProcess.ExitCode -ne 0) {
+            throw "NSIS installer exited with $($nsisProcess.ExitCode)"
+          }
+          Assert-InstalledBackend -Root $nsisInstallDir -Label "NSIS install"
+
+          $msi = Get-ChildItem -Path "target/release/bundle/msi" -Filter "*.msi" -File | Select-Object -First 1
+          if (-not $msi) {
+            throw "No MSI artifact found under target/release/bundle/msi"
+          }
+          $msiExtractDir = Join-Path $env:RUNNER_TEMP "NovyWaveMsiExtract"
+          New-Item -ItemType Directory -Force -Path $msiExtractDir | Out-Null
+          $msiProcess = Start-Process -FilePath "msiexec.exe" -ArgumentList @("/a", $msi.FullName, "/qn", "TARGETDIR=$msiExtractDir") -Wait -PassThru
+          if ($msiProcess.ExitCode -ne 0) {
+            throw "MSI administrative extraction exited with $($msiProcess.ExitCode)"
+          }
+          Assert-InstalledBackend -Root $msiExtractDir -Label "MSI extraction"
+
       - name: Package Chrome launcher
         if: inputs.release-build
         shell: bash
