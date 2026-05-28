@@ -304,6 +304,13 @@ Startup/config failures produce visible UI and a persistent startup log.
 - Missing backend produces visible startup dialog and log.
 - Platform-root timeout produces visible error and leaves workspace opening usable.
 
+**Current Progress**
+
+- Tauri startup errors now append to a persistent `novywave-tauri-startup.log` under the platform cache/log directory and include that path in the visible startup dialog.
+- Embedded backend spawn failures now report the backend path, cwd, frontend asset env vars, `COMPRESSED_PKG`, and selected port.
+- Tauri backend readiness now detects an embedded backend process that exits before accepting connections and reports that exit status instead of waiting for a generic timeout.
+- Local focused Tauri lib tests passed for backend candidate handling and Linux WebKit profile parsing; local `makers tauri-build` and AppImage startup smoke passed after this change.
+
 ### 6. Harden Config Recovery
 
 **Problem**

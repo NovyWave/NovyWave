@@ -3,6 +3,8 @@ mod desktop_test_bridge;
 mod update_policy;
 
 use std::{
+    fs::{self, OpenOptions},
+    io::Write,
     net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::{Child, Command},
@@ -258,24 +260,6 @@ fn spawn_embedded_backend(app: &tauri::App, backend_port: u16) -> Result<(), Str
     if let Some(cwd) = command.get_current_dir() {
         println!("spawn backend cwd {}", cwd.display());
     }
-    let env_snapshot: Vec<(std::ffi::OsString, Option<std::ffi::OsString>)> = command
-        .get_envs()
-        .map(|(k, v)| (k.to_os_string(), v.map(|s| s.to_os_string())))
-        .collect();
-    let dist_env = env_snapshot
-        .iter()
-        .find(|(k, _)| k == "FRONTEND_DIST_DIR")
-        .and_then(|(_, v)| v.clone());
-    let compressed_env = env_snapshot
-        .iter()
-        .find(|(k, _)| k == "COMPRESSED_PKG")
-        .and_then(|(_, v)| v.clone());
-
-    println!(
-        "spawn backend env FRONTEND_DIST_DIR={:?} COMPRESSED_PKG={:?}",
-        dist_env, compressed_env
-    );
-
     let dist_env = {
         let env_snapshot: Vec<(std::ffi::OsString, Option<std::ffi::OsString>)> = command
             .get_envs()
@@ -295,10 +279,34 @@ fn spawn_embedded_backend(app: &tauri::App, backend_port: u16) -> Result<(), Str
         command.env("MOON_ASSETS_DIR", dist);
     }
 
+    let spawn_cwd = command
+        .get_current_dir()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "<inherit>".to_string());
+    let final_env_snapshot: Vec<(std::ffi::OsString, Option<std::ffi::OsString>)> = command
+        .get_envs()
+        .map(|(k, v)| (k.to_os_string(), v.map(|s| s.to_os_string())))
+        .collect();
+    let frontend_dist_env = final_env_snapshot
+        .iter()
+        .find(|(k, _)| k == "FRONTEND_DIST_DIR")
+        .and_then(|(_, v)| v.clone());
+    let moon_assets_env = final_env_snapshot
+        .iter()
+        .find(|(k, _)| k == "MOON_ASSETS_DIR")
+        .and_then(|(_, v)| v.clone());
+    println!(
+        "spawn backend env FRONTEND_DIST_DIR={:?} MOON_ASSETS_DIR={:?} COMPRESSED_PKG=false PORT={}",
+        frontend_dist_env, moon_assets_env, backend_port
+    );
     let child = command.spawn().map_err(|e| {
         format!(
-            "failed to spawn backend at {}: {}",
+            "failed to spawn backend at {}\n\ncwd: {}\nFRONTEND_DIST_DIR: {:?}\nMOON_ASSETS_DIR: {:?}\nCOMPRESSED_PKG: false\nPORT: {}\n\n{}",
             backend_path.display(),
+            spawn_cwd,
+            frontend_dist_env,
+            moon_assets_env,
+            backend_port,
             e
         )
     })?;
@@ -374,8 +382,53 @@ fn startup_io_error(step: &str, detail: &str) -> std::io::Error {
 
 fn show_startup_error(step: &str, detail: &str) {
     let message = format!("NovyWave failed to start.\n\n{step}\n\n{detail}");
-    println!("{message}");
-    show_startup_error_dialog(&message);
+    eprintln!("{message}");
+    let log_path = write_startup_error_log(&message);
+    let message_with_log = match log_path {
+        Some(path) => format!("{message}\n\nLog file:\n{}", path.display()),
+        None => message,
+    };
+    show_startup_error_dialog(&message_with_log);
+}
+
+fn write_startup_error_log(message: &str) -> Option<PathBuf> {
+    let dir = startup_log_dir()?;
+    fs::create_dir_all(&dir).ok()?;
+    let path = dir.join("novywave-tauri-startup.log");
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .ok()?;
+    let _ = writeln!(file, "{}", "-".repeat(72));
+    let _ = writeln!(file, "{message}");
+    Some(path)
+}
+
+#[cfg(target_os = "linux")]
+fn startup_log_dir() -> Option<PathBuf> {
+    std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))
+        .map(|dir| dir.join("novywave"))
+}
+
+#[cfg(target_os = "macos")]
+fn startup_log_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(|home| {
+        PathBuf::from(home)
+            .join("Library")
+            .join("Logs")
+            .join("NovyWave")
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn startup_log_dir() -> Option<PathBuf> {
+    std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("TEMP").map(PathBuf::from))
+        .map(|dir| dir.join("NovyWave"))
 }
 
 #[cfg(target_os = "linux")]
@@ -499,12 +552,27 @@ fn wait_for_backend_ready(port: u16) -> Result<(), String> {
         if TcpStream::connect(("127.0.0.1", port)).is_ok() {
             return Ok(());
         }
+        if let Some(status) = embedded_backend_exit_status() {
+            return Err(format!(
+                "embedded backend exited before accepting connections on 127.0.0.1:{port}: {status}"
+            ));
+        }
         std::thread::sleep(Duration::from_millis(50));
     }
     Err(format!(
         "embedded backend on 127.0.0.1:{port} did not accept connections within {:?}",
         EMBEDDED_BACKEND_STARTUP_TIMEOUT
     ))
+}
+
+fn embedded_backend_exit_status() -> Option<String> {
+    let cell = BACKEND_CHILD.get()?;
+    let mut slot = cell.lock().ok()?;
+    let child = slot.as_mut()?;
+    match child.try_wait() {
+        Ok(Some(status)) => Some(status.to_string()),
+        Ok(None) | Err(_) => None,
+    }
 }
 
 fn updates_configured(app: &tauri::AppHandle) -> bool {
