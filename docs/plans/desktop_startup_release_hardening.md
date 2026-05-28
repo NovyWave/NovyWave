@@ -282,6 +282,7 @@ All Chrome packages are built from WEB frontend artifacts and validated the same
 - Local smoke against the older Desktop `v0.2.1-local-build` Chrome package correctly failed because that package still contains Tauri frontend bindings, proving the validator catches the stale-frontend class.
 - `cargo test -p novywave-chrome` passed.
 - Clean local `makers chrome-appimage` rebuilt the one-file Linux Chrome AppImage from WEB frontend artifacts; the live Chrome smoke passed with Google Chrome from `/home/martinkavik/.local/bin/google-chrome-stable`.
+- After replacing the Chrome launcher's Windows startup dialog with native Win32 `MessageBoxW`, `cargo test -p novywave-chrome`, `makers chrome-appimage`, and the live Chrome AppImage smoke passed again.
 
 ### 5. Make Startup And Config Errors Visible
 
@@ -335,7 +336,7 @@ Startup/config failures produce visible UI and a persistent startup log.
 - Tauri startup errors now append to a persistent `novywave-tauri-startup.log` under the platform cache/log directory and include that path in the visible startup dialog.
 - Embedded backend spawn failures now report the backend path, cwd, frontend asset env vars, `COMPRESSED_PKG`, and selected port.
 - Tauri backend readiness now detects an embedded backend process that exits before accepting connections and reports that exit status instead of waiting for a generic timeout.
-- Windows startup failures now use a native Win32 `MessageBoxW` dialog directly instead of relying on PowerShell to render the error.
+- Windows startup failures now use native Win32 `MessageBoxW` dialogs directly in both the Tauri and Chrome launchers instead of relying on PowerShell to render the error.
 - Frontend `ConfigError` messages now show a persistent configuration-error toast instead of only writing to the console, and successful config/workspace loads dismiss the stale error.
 - Initial frontend startup now has a 10-second workspace/config watchdog; if `WorkspaceLoaded` or the no-workspace `ConfigLoaded` equivalent never arrives, it clears the loading state and shows a persistent visible configuration error that points the user to Open Workspace.
 - Platform-root startup now has a 10-second watchdog; if roots never resolve, the file picker and workspace picker enter an empty-roots state and show a visible directory error instead of staying on "Loading platform roots...".

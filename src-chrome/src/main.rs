@@ -809,16 +809,44 @@ fn show_error_dialog(message: &str) {
 
 #[cfg(target_os = "windows")]
 fn show_error_dialog(message: &str) {
-    let _ = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            &format!(
-                "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.MessageBox]::Show('{}', 'NovyWave', 'OK', 'Error')",
-                message.replace('\'', "''")
-            ),
-        ])
-        .status();
+    const MB_ICONERROR: u32 = 0x00000010;
+    const MB_OK: u32 = 0x00000000;
+    const MB_SETFOREGROUND: u32 = 0x00010000;
+
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn MessageBoxW(
+            hwnd: *mut std::ffi::c_void,
+            text: *const u16,
+            caption: *const u16,
+            typ: u32,
+        ) -> i32;
+    }
+
+    fn wide_null(value: &str) -> Vec<u16> {
+        value
+            .encode_utf16()
+            .map(|code_unit| {
+                if code_unit == 0 {
+                    b' ' as u16
+                } else {
+                    code_unit
+                }
+            })
+            .chain(std::iter::once(0))
+            .collect()
+    }
+
+    let text = wide_null(message);
+    let caption = wide_null("NovyWave");
+    unsafe {
+        let _ = MessageBoxW(
+            std::ptr::null_mut(),
+            text.as_ptr(),
+            caption.as_ptr(),
+            MB_OK | MB_ICONERROR | MB_SETFOREGROUND,
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
