@@ -573,8 +573,9 @@ Release creation is generated from machine-readable proof, not from hand-written
 - Release creation now fails if expected release files are missing, unexpected non-signature files appear, or updater metadata omits a supported updater platform.
 - The `Build` workflow can now be manually dispatched as a package-smoke preflight, with `release-build` enabled and an explicit version input, so Windows/macOS/Linux artifact startup proof can be run without creating a draft release.
 - Required installer/package uploads now use `if-no-files-found: error`, so missing proved artifacts fail CI instead of producing warning-only uploads.
+- Build jobs now upload per-platform smoke proof JSON files after their package smoke steps pass, and release manifest generation requires those proof files before creating release notes.
 - The release guide documents the manifest and explicitly states that Apple notarization and Windows Authenticode are not enforced yet.
-- Local checks passed for Python syntax, workflow YAML parsing, and a synthetic complete release directory.
+- Local checks passed for Python syntax, workflow YAML parsing, and a synthetic complete release directory including smoke proof files.
 - Local workflow YAML parsing passed after the manual Build dispatch and required-upload hardening changes. Live GitHub workflow inspection could not run because the local `GITHUB_TOKEN` is invalid.
 
 ## Suggested Execution Order

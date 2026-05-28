@@ -43,7 +43,7 @@ Before creating a draft release, run the package build workflow directly:
 3. Keep `release-build` enabled
 4. Enter the same version as `Cargo.toml`
 
-This builds the release bundles on Linux, macOS ARM, macOS Intel, and Windows, runs the packaged startup smokes, and uploads the proved artifacts without creating a GitHub release.
+This builds the release bundles on Linux, macOS ARM, macOS Intel, and Windows, runs the packaged startup smokes, and uploads the proved artifacts without creating a GitHub release. Each successful platform job also uploads a `smoke-proof-*.json` file listing the artifacts proved by that job.
 
 ### 4. Trigger the release
 
@@ -66,7 +66,7 @@ Plus `latest.json` for the auto-updater.
 
 Release CI fails before publishing updater metadata unless `TAURI_SIGNING_PRIVATE_KEY` is configured, the key is not the known development key, every updater bundle has a matching `.sig`, every signature verifies against `src-tauri/tauri.conf.json`, and `latest.json` contains exactly the supported updater platforms: `linux-x86_64`, `darwin-aarch64`, `darwin-x86_64`, and `windows-x86_64`.
 
-Release CI also generates `release-manifest-X.Y.Z.json` and uses it to generate the draft release notes. The manifest contains every uploaded filename, size, SHA-256, source commit, platform, architecture, bundle type, updater/signing status, and smoke result. Release creation fails if an expected artifact or updater platform is missing.
+Release CI also generates `release-manifest-X.Y.Z.json` and uses it to generate the draft release notes. The manifest contains every uploaded filename, size, SHA-256, source commit, platform, architecture, bundle type, updater/signing status, and smoke result. Release creation fails if an expected artifact, smoke proof file, or updater platform is missing.
 
 Apple notarization and Windows Authenticode are not enforced by the current workflow. Until those policies are added, the manifest marks macOS DMG and Windows installer code-signing status explicitly instead of implying operating-system trust signing.
 

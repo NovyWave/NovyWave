@@ -132,6 +132,38 @@ def expected_artifacts(version: str) -> list[ExpectedArtifact]:
             "contains verified updater signatures",
             release_note_label="Updater metadata",
         ),
+        ExpectedArtifact(
+            "smoke-proof-linux-x86_64.json",
+            "ci-proof",
+            "linux-x86_64",
+            "smoke-proof",
+            "uploaded only after Linux package smoke steps passed",
+            "not applicable",
+        ),
+        ExpectedArtifact(
+            "smoke-proof-macos-aarch64.json",
+            "ci-proof",
+            "macos-aarch64",
+            "smoke-proof",
+            "uploaded only after macOS ARM package smoke steps passed",
+            "not applicable",
+        ),
+        ExpectedArtifact(
+            "smoke-proof-macos-x86_64.json",
+            "ci-proof",
+            "macos-x86_64",
+            "smoke-proof",
+            "uploaded only after macOS Intel package smoke steps passed",
+            "not applicable",
+        ),
+        ExpectedArtifact(
+            "smoke-proof-windows-x86_64.json",
+            "ci-proof",
+            "windows-x86_64",
+            "smoke-proof",
+            "uploaded only after Windows package smoke steps passed",
+            "not applicable",
+        ),
     ]
 
 

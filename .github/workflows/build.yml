@@ -261,6 +261,42 @@ jobs:
             target/release/bundle/appimage/*.AppImage
             target/release/bundle/appimage/*.AppImage.sig
 
+      - name: Write Linux smoke proof
+        if: inputs.release-build
+        run: |
+          set -euo pipefail
+          mkdir -p target/release/smoke-proof
+          cat > target/release/smoke-proof/smoke-proof-linux-x86_64.json <<EOF
+          {
+            "job": "build-linux",
+            "platform": "linux",
+            "architecture": "x86_64",
+            "source_commit": "${{ github.sha }}",
+            "version": "${{ inputs.version }}",
+            "proved_artifacts": [
+              "NovyWave_${{ inputs.version }}_amd64.AppImage",
+              "NovyWave_${{ inputs.version }}_amd64.deb",
+              "NovyWave-${{ inputs.version }}-1.x86_64.rpm",
+              "NovyWave_${{ inputs.version }}_chrome-linux-x64.AppImage"
+            ],
+            "proof": [
+              "Tauri AppImage desktop bridge smoke passed",
+              "Tauri deb extracted-package desktop bridge smoke passed",
+              "Tauri rpm extracted-package desktop bridge smoke passed",
+              "Chrome AppImage fake-browser route smoke passed",
+              "Chrome AppImage real Chromium smoke passed"
+            ]
+          }
+          EOF
+
+      - name: Upload Linux smoke proof
+        if: inputs.release-build
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-smoke-proof
+          if-no-files-found: error
+          path: target/release/smoke-proof/smoke-proof-linux-x86_64.json
+
   build-macos-arm:
     runs-on: macos-15
     steps:
@@ -393,6 +429,37 @@ jobs:
             target/release/bundle/macos/*.tar.gz
             target/release/bundle/macos/*.tar.gz.sig
 
+      - name: Write macOS ARM smoke proof
+        if: inputs.release-build
+        run: |
+          set -euo pipefail
+          mkdir -p target/release/smoke-proof
+          cat > target/release/smoke-proof/smoke-proof-macos-aarch64.json <<EOF
+          {
+            "job": "build-macos-arm",
+            "platform": "macos",
+            "architecture": "aarch64",
+            "source_commit": "${{ github.sha }}",
+            "version": "${{ inputs.version }}",
+            "proved_artifacts": [
+              "NovyWave_${{ inputs.version }}_aarch64.dmg",
+              "NovyWave_${{ inputs.version }}_chrome-macos-aarch64.tar.gz"
+            ],
+            "proof": [
+              "macOS DMG desktop bridge smoke passed",
+              "Chrome launcher archive fake-browser route smoke passed"
+            ]
+          }
+          EOF
+
+      - name: Upload macOS ARM smoke proof
+        if: inputs.release-build
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-smoke-proof-arm
+          if-no-files-found: error
+          path: target/release/smoke-proof/smoke-proof-macos-aarch64.json
+
   build-macos-x64:
     runs-on: macos-15-intel
     steps:
@@ -524,6 +591,37 @@ jobs:
           path: |
             target/release/bundle/macos/*.tar.gz
             target/release/bundle/macos/*.tar.gz.sig
+
+      - name: Write macOS Intel smoke proof
+        if: inputs.release-build
+        run: |
+          set -euo pipefail
+          mkdir -p target/release/smoke-proof
+          cat > target/release/smoke-proof/smoke-proof-macos-x86_64.json <<EOF
+          {
+            "job": "build-macos-x64",
+            "platform": "macos",
+            "architecture": "x86_64",
+            "source_commit": "${{ github.sha }}",
+            "version": "${{ inputs.version }}",
+            "proved_artifacts": [
+              "NovyWave_${{ inputs.version }}_x64.dmg",
+              "NovyWave_${{ inputs.version }}_chrome-macos-x64.tar.gz"
+            ],
+            "proof": [
+              "macOS DMG desktop bridge smoke passed",
+              "Chrome launcher archive fake-browser route smoke passed"
+            ]
+          }
+          EOF
+
+      - name: Upload macOS Intel smoke proof
+        if: inputs.release-build
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-smoke-proof-x64
+          if-no-files-found: error
+          path: target/release/smoke-proof/smoke-proof-macos-x86_64.json
 
   build-windows:
     runs-on: windows-2022
@@ -725,3 +823,35 @@ jobs:
           if-no-files-found: error
           path: |
             target/release/bundle/nsis/*.sig
+
+      - name: Write Windows smoke proof
+        if: inputs.release-build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path "target/release/smoke-proof" | Out-Null
+          [ordered]@{
+            job = "build-windows"
+            platform = "windows"
+            architecture = "x86_64"
+            source_commit = "${{ github.sha }}"
+            version = "${{ inputs.version }}"
+            proved_artifacts = @(
+              "NovyWave_${{ inputs.version }}_x64-setup.exe",
+              "NovyWave_${{ inputs.version }}_x64_en-US.msi",
+              "NovyWave_${{ inputs.version }}_chrome-windows-x64.zip"
+            )
+            proof = @(
+              "NSIS installed-app desktop bridge smoke passed",
+              "MSI administrative-install desktop bridge smoke passed",
+              "Chrome launcher archive fake-browser route smoke passed"
+            )
+          } | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 "target/release/smoke-proof/smoke-proof-windows-x86_64.json"
+
+      - name: Upload Windows smoke proof
+        if: inputs.release-build
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-smoke-proof
+          if-no-files-found: error
+          path: target/release/smoke-proof/smoke-proof-windows-x86_64.json
