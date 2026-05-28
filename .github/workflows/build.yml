@@ -120,11 +120,29 @@ jobs:
 
           cat > fake-chromium <<'EOF'
           #!/usr/bin/env bash
+          set -euo pipefail
           if [ "${1:-}" = "--version" ]; then
             echo "Chromium 120.0.6099.224"
             exit 0
           fi
           printf '%s\n' "$*" > "${NOVYWAVE_FAKE_CHROME_LOG:?}"
+          app_url=""
+          for arg in "$@"; do
+            case "$arg" in
+              --app=*) app_url="${arg#--app=}" ;;
+            esac
+          done
+          if [ -z "$app_url" ]; then
+            echo "missing --app URL" > "${NOVYWAVE_FAKE_CHROME_ROUTE_LOG:?}"
+            exit 1
+          fi
+          for path in "/" "/_api/pkg/build_id"; do
+            if ! curl --fail --silent --show-error --max-time 10 "${app_url}${path}" >/dev/null; then
+              echo "route failed: ${app_url}${path}" > "${NOVYWAVE_FAKE_CHROME_ROUTE_LOG:?}"
+              exit 1
+            fi
+          done
+          printf 'routes ok: %s\n' "$app_url" > "${NOVYWAVE_FAKE_CHROME_ROUTE_LOG:?}"
           exit 0
           EOF
           sed -i 's/^          //' fake-chromium
@@ -132,10 +150,13 @@ jobs:
 
           NOVYWAVE_CHROME="$PWD/fake-chromium" \
           NOVYWAVE_FAKE_CHROME_LOG="$PWD/fake-chrome.log" \
+          NOVYWAVE_FAKE_CHROME_ROUTE_LOG="$PWD/fake-chrome-routes.log" \
+          XDG_CONFIG_HOME="$PWD/config" \
           APPIMAGE_EXTRACT_AND_RUN=1 \
           timeout 30s "./$(basename "$APPIMAGE")"
 
           grep -q -- "--app=http://127.0.0.1:" fake-chrome.log
+          grep -q -- "routes ok: http://127.0.0.1:" fake-chrome-routes.log
 
       - name: Upload Chrome launcher
         if: inputs.release-build

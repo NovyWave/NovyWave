@@ -189,6 +189,15 @@ Every release artifact has non-interactive startup proof before upload.
 - Smoke failure prints the failing path, URL, backend error, and startup log path.
 - Tauri installed-app smoke proves a real window was created.
 
+**Current Progress**
+
+- Linux Chrome AppImage CI fake-browser smoke now validates the backend routes while the launcher is alive:
+  - fake browser extracts the `--app=http://127.0.0.1:<port>` URL
+  - `curl --fail` verifies `/`
+  - `curl --fail` verifies `/_api/pkg/build_id`
+  - the smoke runs with isolated `XDG_CONFIG_HOME`
+- Local run against `target/release/NovyWave_0.2.1_chrome-linux-x64.AppImage` proved the route smoke logic with the packaged backend.
+
 ### 4. Make Chrome Packaging Correct On Every OS
 
 **Problem**
