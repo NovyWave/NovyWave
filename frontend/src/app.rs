@@ -127,6 +127,8 @@ impl ConnectionMessageActor {
                         match down_msg {
                             DownMsg::ConfigLoaded(loaded_config) => {
                                 workspace_loading.set(false);
+                                workspace_path.set(None);
+                                default_workspace_path.set(None);
                                 // Phase 3: Apply UI config directly to state (except variables/scopes)
                                 config.restore_config(loaded_config.clone(), &selected_variables);
                                 waveform_timeline.restore_markers(

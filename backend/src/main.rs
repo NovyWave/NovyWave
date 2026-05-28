@@ -855,7 +855,7 @@ mod tests {
 
     #[::std::prelude::v1::test]
     fn relativize_workspace_directory_path_normalizes_workspace_root() {
-        let context = WorkspaceContext::new(PathBuf::from("/tmp/novywave_ai_workspace"));
+        let context = WorkspaceContext::new(PathBuf::from("/tmp/novywave_ai_workspace"), true);
 
         assert_eq!(
             relativize_workspace_directory_path("/tmp/novywave_ai_workspace", &context),
@@ -871,7 +871,7 @@ mod tests {
 
     #[::std::prelude::v1::test]
     fn relativize_workspace_directory_path_keeps_non_root_paths_relative() {
-        let context = WorkspaceContext::new(PathBuf::from("/tmp/novywave_ai_workspace"));
+        let context = WorkspaceContext::new(PathBuf::from("/tmp/novywave_ai_workspace"), true);
 
         assert_eq!(
             relativize_workspace_directory_path("/tmp/novywave_ai_workspace/subdir", &context),
@@ -2419,33 +2419,28 @@ const DEFAULT_WORKSPACE_ENV: &str = "NOVYWAVE_DEFAULT_WORKSPACE";
 
 static INITIAL_CWD: Lazy<PathBuf> = Lazy::new(initial_workspace_root);
 
-static WORKSPACE_CONTEXT: Lazy<WorkspaceContext> =
-    Lazy::new(|| WorkspaceContext::new((*INITIAL_CWD).clone()));
+static WORKSPACE_CONTEXT: Lazy<WorkspaceContext> = Lazy::new(|| {
+    WorkspaceContext::new(
+        (*INITIAL_CWD).clone(),
+        packaged_default_workspace().is_none(),
+    )
+});
 
 pub(crate) fn workspace_context() -> &'static WorkspaceContext {
     &WORKSPACE_CONTEXT
 }
 
 fn is_global_workspace_active() -> bool {
-    workspace_context().root() == *INITIAL_CWD
+    workspace_context().is_active() && workspace_context().root() == *INITIAL_CWD
 }
 
 fn initial_workspace_root() -> PathBuf {
-    configured_default_workspace()
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
 
-fn configured_default_workspace() -> Option<PathBuf> {
+fn packaged_default_workspace() -> Option<PathBuf> {
     let path = std::env::var_os(DEFAULT_WORKSPACE_ENV).map(PathBuf::from)?;
     if path.as_os_str().is_empty() {
-        return None;
-    }
-    if let Err(err) = fs::create_dir_all(&path) {
-        eprintln!(
-            "⚠️ BACKEND: Failed to create default workspace '{}': {}",
-            path.display(),
-            err
-        );
         return None;
     }
     Some(path)
@@ -2453,12 +2448,14 @@ fn configured_default_workspace() -> Option<PathBuf> {
 
 struct WorkspaceContext {
     root: RwLock<PathBuf>,
+    active: RwLock<bool>,
 }
 
 impl WorkspaceContext {
-    fn new(initial_root: PathBuf) -> Self {
+    fn new(initial_root: PathBuf, active: bool) -> Self {
         Self {
             root: RwLock::new(initial_root),
+            active: RwLock::new(active),
         }
     }
 
@@ -2469,9 +2466,14 @@ impl WorkspaceContext {
             .clone()
     }
 
+    fn is_active(&self) -> bool {
+        *self.active.read().expect("workspace active lock poisoned")
+    }
+
     fn set_root(&self, new_root: PathBuf) {
         let mut guard = self.root.write().expect("workspace root lock poisoned");
         *guard = new_root;
+        *self.active.write().expect("workspace active lock poisoned") = true;
     }
 
     fn config_path(&self) -> PathBuf {
@@ -2510,11 +2512,14 @@ fn global_config_path() -> PathBuf {
     // Linux: ~/.config/novywave/.novywave_global
     // macOS: ~/Library/Application Support/novywave/.novywave_global
     // Windows: %APPDATA%\novywave\.novywave_global
-    dirs::config_dir()
-        .or_else(|| std::env::var_os(DEFAULT_WORKSPACE_ENV).map(PathBuf::from))
-        .unwrap_or_else(|| INITIAL_CWD.clone())
-        .join("novywave")
-        .join(GLOBAL_CONFIG_FILENAME)
+    let base_dir = dirs::config_dir()
+        .map(|dir| dir.join("novywave"))
+        .or_else(|| {
+            packaged_default_workspace()
+                .and_then(|path| path.parent().map(|parent| parent.to_path_buf()))
+        })
+        .unwrap_or_else(|| INITIAL_CWD.join("novywave"));
+    base_dir.join(GLOBAL_CONFIG_FILENAME)
 }
 
 fn read_global_section() -> shared::GlobalSection {
@@ -2931,6 +2936,9 @@ fn reset_runtime_state_for_workspace() {
 
 fn read_or_create_config() -> Result<AppConfig, String> {
     let context = workspace_context();
+    if !context.is_active() {
+        return Err("No workspace is selected".to_string());
+    }
     let config_path = context.config_path();
 
     let content = match fs::read_to_string(&config_path) {
@@ -3011,52 +3019,54 @@ async fn handle_loaded_config(
 ) {
     let config_for_messages = config;
 
-    spawn_directory_preload(
-        config_for_messages
-            .workspace
-            .load_files_expanded_directories
-            .clone(),
-    );
+    if workspace_event_root.is_some() {
+        spawn_directory_preload(
+            config_for_messages
+                .workspace
+                .load_files_expanded_directories
+                .clone(),
+        );
 
-    // Guard plugin reload/flush so a plugin panic cannot block config delivery
-    match std::panic::catch_unwind(|| {
-        plugins::reload_plugins(
-            &config_for_messages.plugins,
-            &config_for_messages.workspace.opened_files,
-        )
-    }) {
-        Ok(plugin_reload) => {
-            if plugin_reload.reloaded {
-                for status in &plugin_reload.statuses {
-                    let init_msg = status
-                        .init_message
-                        .as_ref()
-                        .map(|msg| msg.as_str())
-                        .unwrap_or("");
-                    let last_msg = status
-                        .last_message
-                        .as_ref()
-                        .map(|msg| msg.as_str())
-                        .unwrap_or("");
-                    let detail = match (init_msg.is_empty(), last_msg.is_empty()) {
-                        (false, false) => format!(" | init: {} | last: {}", init_msg, last_msg),
-                        (false, true) => format!(" | init: {}", init_msg),
-                        (true, false) => format!(" | last: {}", last_msg),
-                        (true, true) => String::new(),
-                    };
-                    println!(
-                        "🔌 BACKEND: plugin '{}' status {:?}{}",
-                        status.id, status.state, detail
-                    );
+        // Guard plugin reload/flush so a plugin panic cannot block config delivery
+        match std::panic::catch_unwind(|| {
+            plugins::reload_plugins(
+                &config_for_messages.plugins,
+                &config_for_messages.workspace.opened_files,
+            )
+        }) {
+            Ok(plugin_reload) => {
+                if plugin_reload.reloaded {
+                    for status in &plugin_reload.statuses {
+                        let init_msg = status
+                            .init_message
+                            .as_ref()
+                            .map(|msg| msg.as_str())
+                            .unwrap_or("");
+                        let last_msg = status
+                            .last_message
+                            .as_ref()
+                            .map(|msg| msg.as_str())
+                            .unwrap_or("");
+                        let detail = match (init_msg.is_empty(), last_msg.is_empty()) {
+                            (false, false) => format!(" | init: {} | last: {}", init_msg, last_msg),
+                            (false, true) => format!(" | init: {}", init_msg),
+                            (true, false) => format!(" | last: {}", last_msg),
+                            (true, true) => String::new(),
+                        };
+                        println!(
+                            "🔌 BACKEND: plugin '{}' status {:?}{}",
+                            status.id, status.state, detail
+                        );
+                    }
                 }
             }
+            Err(_) => {
+                eprintln!("🔌 BACKEND: plugin reload panicked; continuing without plugins");
+            }
         }
-        Err(_) => {
-            eprintln!("🔌 BACKEND: plugin reload panicked; continuing without plugins");
-        }
-    }
 
-    let _ = std::panic::catch_unwind(|| plugins::flush_initial_discoveries());
+        let _ = std::panic::catch_unwind(|| plugins::flush_initial_discoveries());
+    }
 
     // Only send one of WorkspaceLoaded or ConfigLoaded, not both.
     // WorkspaceLoaded includes the config, so sending both causes duplicate initialization.
@@ -3099,6 +3109,7 @@ async fn handle_loaded_config(
 async fn load_config(session_id: SessionId, cor_id: CorId) {
     // 1) Read global first and set the workspace root so we load the correct per-workspace config
     let global_section = read_global_section();
+    let mut selected_workspace = false;
     if let Some(last) = global_section.workspace_history.last_selected.clone() {
         if !last.is_empty() {
             let candidate = PathBuf::from(&last);
@@ -3110,9 +3121,22 @@ async fn load_config(session_id: SessionId, cor_id: CorId) {
             if let Ok(canon) = fs::canonicalize(&absolute) {
                 if canon.is_dir() {
                     workspace_context().set_root(canon);
+                    selected_workspace = true;
                 }
             }
         }
+    }
+
+    if !selected_workspace && packaged_default_workspace().is_some() {
+        let mut config = AppConfig::default();
+        let mut effective_global = global_section.clone();
+        effective_global
+            .workspace_history
+            .clamp_to_limit(shared::WORKSPACE_HISTORY_MAX_RECENTS);
+        config.global = effective_global;
+        println!("🚀 BACKEND: No workspace selected; sending global-only config");
+        handle_loaded_config(config, session_id, cor_id, None).await;
+        return;
     }
 
     // 2) Load the per-workspace config for the selected root
@@ -3136,6 +3160,12 @@ async fn load_config(session_id: SessionId, cor_id: CorId) {
 }
 
 async fn save_config(config: AppConfig, _session_id: SessionId, _cor_id: CorId) {
+    if !workspace_context().is_active() {
+        let _ = persist_global_section(&config.global);
+        broadcast_down_msg(DownMsg::ConfigSaved).await;
+        return;
+    }
+
     let mut runtime_config = config.clone();
     expand_config_paths(&mut runtime_config);
 
@@ -3194,6 +3224,18 @@ async fn save_config(config: AppConfig, _session_id: SessionId, _cor_id: CorId) 
 async fn select_workspace(root: String, session_id: SessionId, cor_id: CorId) {
     let context = workspace_context();
     let requested = PathBuf::from(&root);
+    if !requested.is_absolute() && !context.is_active() {
+        send_down_msg(
+            DownMsg::ConfigError(format!(
+                "Workspace '{}' must be an absolute path before a workspace is active",
+                root
+            )),
+            session_id,
+            cor_id,
+        )
+        .await;
+        return;
+    }
     let absolute_candidate = if requested.is_absolute() {
         requested
     } else {

@@ -77,6 +77,19 @@ This is wrong on every OS:
 - Fresh profile packaged run can load platform roots and open a workspace.
 - If config/global dirs are unavailable, the app shows a visible error and does not write config into cwd.
 
+**Current Progress**
+
+- Tauri and Chrome launchers pass a user-owned default-workspace hint to the backend so packaged resource cwd is no longer reused as workspace identity.
+- In packaged mode with no valid `last_selected`, backend `LoadConfig` now sends a global-only config instead of creating a per-workspace `.novywave`.
+- Frontend clears the active workspace path for global-only `ConfigLoaded`, leaving the workspace bar in a no-workspace state with the Open Workspace action available.
+- A local packaged-layout smoke with isolated `XDG_CONFIG_HOME`, read-only resource cwd, and `NOVYWAVE_DEFAULT_WORKSPACE` proved:
+  - backend cwd remained the packaged resource directory
+  - backend logged `No workspace selected; sending global-only config`
+  - the UI workspace input showed `No workspace`
+  - platform roots loaded through the frontend test API
+  - no `.novywave` was written under the resource cwd or default-workspace directory
+  - any global history writes are confined to the isolated config directory
+
 ### 2. Prove Windows Installer Contains And Starts The Backend
 
 **Problem**
@@ -495,4 +508,3 @@ Only close or respond as fixed on GitHub issue `#1` after a Windows release arti
 - `WorkspaceLoaded` or no-workspace equivalent arrives
 - platform roots load
 - no blank/no-window failure occurs when backend is missing or misconfigured; instead a visible error appears
-
