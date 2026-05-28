@@ -205,7 +205,9 @@ Every release artifact has non-interactive startup proof before upload.
   - evaluates the workspace input and fails if it remains on `Loading workspace`
   - fails if a fresh packaged run creates `.novywave` in backend cwd or the default-workspace hint
 - Linux release CI now runs the Tauri AppImage smoke before upload with `APPIMAGE_EXTRACT_AND_RUN=1`.
+- Linux release CI now extracts and smokes the Tauri deb and rpm packages before upload by running the installed `usr/bin/novywave` layout through the desktop test bridge.
 - Local run against the rebuilt `target/release/bundle/appimage/NovyWave_0.2.1_amd64.AppImage` passed the Tauri package smoke.
+- Local runs against the rebuilt `target/release/bundle/deb/NovyWave_0.2.1_amd64.deb` and `target/release/bundle/rpm/NovyWave-0.2.1-1.x86_64.rpm` passed the extracted-package Tauri smoke.
 - Linux Chrome AppImage CI fake-browser smoke now validates the backend routes while the launcher is alive:
   - fake browser extracts the `--app=http://127.0.0.1:<port>` URL
   - `curl --fail` verifies `/`
