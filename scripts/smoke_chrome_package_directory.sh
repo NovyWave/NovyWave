@@ -134,6 +134,47 @@ EOF
   printf '%s\n' "$path"
 }
 
+run_with_timeout() {
+  local seconds="$1"
+  shift
+
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "${seconds}s" "$@"
+    return $?
+  fi
+
+  if command -v gtimeout >/dev/null 2>&1; then
+    gtimeout "${seconds}s" "$@"
+    return $?
+  fi
+
+  local timed_out_marker="$WORK_DIR/timeout-fired"
+  rm -f "$timed_out_marker"
+
+  "$@" &
+  local app_pid=$!
+  (
+    sleep "$seconds"
+    if kill -0 "$app_pid" 2>/dev/null; then
+      touch "$timed_out_marker"
+      kill "$app_pid" 2>/dev/null || true
+    fi
+  ) &
+  local timer_pid=$!
+
+  local status=0
+  wait "$app_pid" || status=$?
+
+  if [ -f "$timed_out_marker" ]; then
+    wait "$timer_pid" 2>/dev/null || true
+    return 124
+  fi
+
+  kill "$timer_pid" 2>/dev/null || true
+  wait "$timer_pid" 2>/dev/null || true
+  return "$status"
+}
+
 case "$(uname -s 2>/dev/null || echo unknown)" in
   MINGW*|MSYS*|CYGWIN*) FAKE_CHROME="$(create_fake_chrome_windows)" ;;
   *) FAKE_CHROME="$(create_fake_chrome_unix)" ;;
@@ -150,7 +191,7 @@ export LOCALAPPDATA="$WORK_DIR/localappdata"
 export HOME="$WORK_DIR/home"
 mkdir -p "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME" "$APPDATA" "$LOCALAPPDATA" "$HOME"
 
-timeout "${NOVYWAVE_SMOKE_TIMEOUT_SECONDS:-45}s" "$LAUNCHER_PATH" >"$APP_LOG" 2>&1
+run_with_timeout "${NOVYWAVE_SMOKE_TIMEOUT_SECONDS:-45}" "$LAUNCHER_PATH" >"$APP_LOG" 2>&1
 
 grep -q -- "--app=http://127.0.0.1:" "$FAKE_CHROME_LOG"
 grep -q -- "routes ok: http://127.0.0.1:" "$FAKE_ROUTE_LOG"
