@@ -431,14 +431,22 @@ dependencies = [
 [tasks.build]
 description = "Build for browser mode (release)"
 env = { NOVYWAVE_PLATFORM = "WEB" }
-command = "mzoon/bin/mzoon"
-args = ["build", "-r", "-f"]
+script_runner = "bash"
+script = '''
+set -euo pipefail
+mkdir -p backend/private frontend/pkg frontend_dist/_api/pkg
+NOVYWAVE_PLATFORM=WEB ./mzoon/bin/mzoon build -r -f
+'''
 
 [tasks.build-web]
 description = "Build for web mode (MoonZoon)"
 env = { NOVYWAVE_PLATFORM = "WEB" }
-command = "mzoon/bin/mzoon" 
-args = ["build", "-r", "-f"]
+script_runner = "bash"
+script = '''
+set -euo pipefail
+mkdir -p backend/private frontend/pkg frontend_dist/_api/pkg
+NOVYWAVE_PLATFORM=WEB ./mzoon/bin/mzoon build -r -f
+'''
 
 [tasks.build-tauri]
 description = "Build frontend for Tauri mode"

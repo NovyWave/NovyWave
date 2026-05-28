@@ -112,6 +112,10 @@ jobs:
             echo "Chrome AppImage contains Tauri frontend bindings"
             exit 1
           fi
+          if grep -R "127.0.0.1:8082" squashfs-root/usr/lib/novywave/frontend_dist/_api/pkg >/dev/null 2>&1; then
+            echo "Chrome AppImage frontend is pinned to the dev server port 8082"
+            exit 1
+          fi
           test -d squashfs-root/usr/lib/novywave/plugins/dist
 
           cat > fake-chromium <<'EOF'

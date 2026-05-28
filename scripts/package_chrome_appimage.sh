@@ -37,6 +37,12 @@ if grep -R "window.__TAURI__" frontend_dist/_api/pkg >/dev/null 2>&1; then
   echo "Run: makers build && makers chrome-appimage" >&2
   exit 1
 fi
+if grep -R "127.0.0.1:8082" frontend_dist/_api/pkg >/dev/null 2>&1; then
+  echo "ERROR: Chrome AppImage frontend contains dev-server port 8082." >&2
+  echo "The Chrome AppImage must use its own runtime origin for /_api traffic." >&2
+  echo "Run: makers build && makers chrome-appimage" >&2
+  exit 1
+fi
 
 if [ ! -x "$APPIMAGETOOL" ]; then
   mkdir -p "$(dirname "$APPIMAGETOOL")"
