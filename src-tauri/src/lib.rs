@@ -209,7 +209,13 @@ fn spawn_embedded_backend(app: &tauri::App, backend_port: u16) -> Result<(), Str
 
     // Resolve backend binary from resources or fallback to workspace target
     let resolver = app.path();
-    let resource_dir = resolver.resource_dir().ok();
+    let resource_dir = match resolver.resource_dir() {
+        Ok(dir) => Some(dir),
+        Err(error) => {
+            println!("Unable to resolve Tauri resource directory: {error}");
+            None
+        }
+    };
     let current_exe = std::env::current_exe().ok();
     let candidates = backend_candidates(
         resource_dir.as_deref(),
@@ -345,6 +351,17 @@ fn backend_candidates(
 
     if let Some(current_exe) = current_exe {
         if let Some(parent) = current_exe.parent() {
+            candidates.push(
+                parent
+                    .join("../Resources/_up_/target/release")
+                    .join(backend_name),
+            );
+            candidates.push(
+                parent
+                    .join("../Resources/_up_/target/debug")
+                    .join(backend_name),
+            );
+            candidates.push(parent.join("../Resources").join(backend_name));
             candidates.push(parent.join(format!("../{backend_name}")));
             candidates.push(parent.join(format!("../../{backend_name}")));
             candidates.push(
@@ -759,6 +776,12 @@ mod tests {
             "/opt/NovyWave/resources/_up_/target/release/backend.exe"
         )));
         assert!(candidates.contains(&PathBuf::from("/opt/NovyWave/resources/backend.exe")));
+        assert!(candidates.contains(&PathBuf::from(
+            "/opt/NovyWave/../Resources/_up_/target/release/backend.exe"
+        )));
+        assert!(candidates.contains(&PathBuf::from(
+            "/opt/NovyWave/../Resources/backend.exe"
+        )));
         assert!(candidates.contains(&PathBuf::from("/opt/NovyWave/../backend.exe")));
     }
 
