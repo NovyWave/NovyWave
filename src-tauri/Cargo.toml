@@ -20,7 +20,12 @@ tauri-build = { version = "2.5.3", features = [] }
 [dependencies]
 tauri = { version = "2.9.5", features = [] }
 tauri-plugin-opener = "2.5"
-tauri-plugin-http = "2.5"
+tauri-plugin-http = { version = "2.5", default-features = false, features = [
+    "rustls-tls",
+    "http2",
+    "charset",
+    "macos-system-configuration",
+] }
 tauri-plugin-updater = "2.9"
 tauri-plugin-log = "2.7"
 log = "0.4"
