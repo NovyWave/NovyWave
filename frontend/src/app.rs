@@ -216,7 +216,9 @@ impl ConnectionMessageActor {
                                     path,
                                     items.len()
                                 );
-                                config.file_picker_domain.on_directory_contents(path.clone(), items.clone());
+                                config
+                                    .file_picker_domain
+                                    .on_directory_contents(path.clone(), items.clone());
                                 workspace_picker_domain.on_directory_contents(path, items);
                             }
                             DownMsg::DirectoryError { path, error } => {
@@ -225,7 +227,9 @@ impl ConnectionMessageActor {
                                     path,
                                     error
                                 );
-                                config.file_picker_domain.on_directory_error(path.clone(), error.clone());
+                                config
+                                    .file_picker_domain
+                                    .on_directory_error(path.clone(), error.clone());
                                 workspace_picker_domain.on_directory_error(path, error);
                             }
                             DownMsg::PlatformRoots(roots) => {
@@ -498,7 +502,9 @@ impl NovyWaveApp {
                                 .send_up_msg(shared::UpMsg::GetPlatformRoots)
                                 .await
                             {
-                                zoon::println!("ERROR: Failed to request platform roots: {error:?}");
+                                zoon::println!(
+                                    "ERROR: Failed to request platform roots: {error:?}"
+                                );
                             }
                         });
                     }

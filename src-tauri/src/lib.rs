@@ -17,6 +17,7 @@ use tauri::{Manager, WindowEvent};
 static BACKEND_CHILD: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
 const DEV_SERVER_PORT: u16 = 8082;
 const EMBEDDED_BACKEND_STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
+const DEFAULT_WORKSPACE_ENV: &str = "NOVYWAVE_DEFAULT_WORKSPACE";
 
 struct TauriRuntimeTarget {
     origin: String,
@@ -247,6 +248,13 @@ fn spawn_embedded_backend(app: &tauri::App, backend_port: u16) -> Result<(), Str
         command.current_dir(up_root);
         command.env("FRONTEND_DIST_DIR", dist_dir);
     }
+    if let Some(default_workspace) = default_workspace_dir() {
+        println!(
+            "spawn backend default workspace {}",
+            default_workspace.display()
+        );
+        command.env(DEFAULT_WORKSPACE_ENV, default_workspace);
+    }
     if let Some(cwd) = command.get_current_dir() {
         println!("spawn backend cwd {}", cwd.display());
     }
@@ -353,6 +361,10 @@ fn format_path_candidates(candidates: &[PathBuf]) -> String {
         .map(|path| format!("  - {}", path.display()))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn default_workspace_dir() -> Option<PathBuf> {
+    dirs::config_dir().map(|dir| dir.join("novywave").join("default-workspace"))
 }
 
 fn startup_io_error(step: &str, detail: &str) -> std::io::Error {

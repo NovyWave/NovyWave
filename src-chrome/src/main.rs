@@ -12,6 +12,7 @@ const DEV_SERVER_PORT: u16 = 8082;
 const BACKEND_STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
 const CDP_PORT: u16 = 9222;
 const MIN_CHROMIUM_MAJOR: u32 = 109;
+const DEFAULT_WORKSPACE_ENV: &str = "NOVYWAVE_DEFAULT_WORKSPACE";
 
 fn main() {
     let chrome = find_chrome().unwrap_or_else(|error| {
@@ -700,6 +701,14 @@ fn startup_log_dir() -> Option<PathBuf> {
         .map(|dir| dir.join("novywave"))
 }
 
+#[cfg(target_os = "linux")]
+fn app_config_dir() -> Option<PathBuf> {
+    env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
+        .map(|dir| dir.join("novywave"))
+}
+
 #[cfg(target_os = "macos")]
 fn startup_log_dir() -> Option<PathBuf> {
     env::var_os("HOME").map(|home| {
@@ -710,12 +719,34 @@ fn startup_log_dir() -> Option<PathBuf> {
     })
 }
 
+#[cfg(target_os = "macos")]
+fn app_config_dir() -> Option<PathBuf> {
+    env::var_os("HOME").map(|home| {
+        PathBuf::from(home)
+            .join("Library")
+            .join("Application Support")
+            .join("novywave")
+    })
+}
+
 #[cfg(target_os = "windows")]
 fn startup_log_dir() -> Option<PathBuf> {
     env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
         .or_else(|| env::var_os("TEMP").map(PathBuf::from))
         .map(|dir| dir.join("NovyWave"))
+}
+
+#[cfg(target_os = "windows")]
+fn app_config_dir() -> Option<PathBuf> {
+    env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .or_else(|| env::var_os("LOCALAPPDATA").map(PathBuf::from))
+        .map(|dir| dir.join("novywave"))
+}
+
+fn default_workspace_dir() -> Option<PathBuf> {
+    app_config_dir().map(|dir| dir.join("default-workspace"))
 }
 
 #[cfg(target_os = "linux")]
@@ -843,6 +874,9 @@ fn spawn_backend(port: u16) -> Result<Child, String> {
         command.current_dir(root);
         command.env("FRONTEND_DIST_DIR", root.join("frontend_dist"));
         command.env("MOON_ASSETS_DIR", root.join("frontend_dist"));
+    }
+    if let Some(default_workspace) = default_workspace_dir() {
+        command.env(DEFAULT_WORKSPACE_ENV, default_workspace);
     }
     command.env("COMPRESSED_PKG", "false");
     command.env("FRONTEND_DIST", "true");

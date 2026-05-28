@@ -853,7 +853,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[::std::prelude::v1::test]
     fn relativize_workspace_directory_path_normalizes_workspace_root() {
         let context = WorkspaceContext::new(PathBuf::from("/tmp/novywave_ai_workspace"));
 
@@ -869,7 +869,7 @@ mod tests {
         assert_eq!(relativize_workspace_directory_path(".", &context), ".");
     }
 
-    #[test]
+    #[::std::prelude::v1::test]
     fn relativize_workspace_directory_path_keeps_non_root_paths_relative() {
         let context = WorkspaceContext::new(PathBuf::from("/tmp/novywave_ai_workspace"));
 
@@ -2415,9 +2415,9 @@ async fn broadcast_down_msg(msg: DownMsg) {
 
 const CONFIG_FILENAME: &str = ".novywave";
 const GLOBAL_CONFIG_FILENAME: &str = ".novywave_global";
+const DEFAULT_WORKSPACE_ENV: &str = "NOVYWAVE_DEFAULT_WORKSPACE";
 
-static INITIAL_CWD: Lazy<PathBuf> =
-    Lazy::new(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+static INITIAL_CWD: Lazy<PathBuf> = Lazy::new(initial_workspace_root);
 
 static WORKSPACE_CONTEXT: Lazy<WorkspaceContext> =
     Lazy::new(|| WorkspaceContext::new((*INITIAL_CWD).clone()));
@@ -2428,6 +2428,27 @@ pub(crate) fn workspace_context() -> &'static WorkspaceContext {
 
 fn is_global_workspace_active() -> bool {
     workspace_context().root() == *INITIAL_CWD
+}
+
+fn initial_workspace_root() -> PathBuf {
+    configured_default_workspace()
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+}
+
+fn configured_default_workspace() -> Option<PathBuf> {
+    let path = std::env::var_os(DEFAULT_WORKSPACE_ENV).map(PathBuf::from)?;
+    if path.as_os_str().is_empty() {
+        return None;
+    }
+    if let Err(err) = fs::create_dir_all(&path) {
+        eprintln!(
+            "⚠️ BACKEND: Failed to create default workspace '{}': {}",
+            path.display(),
+            err
+        );
+        return None;
+    }
+    Some(path)
 }
 
 struct WorkspaceContext {
@@ -2490,6 +2511,7 @@ fn global_config_path() -> PathBuf {
     // macOS: ~/Library/Application Support/novywave/.novywave_global
     // Windows: %APPDATA%\novywave\.novywave_global
     dirs::config_dir()
+        .or_else(|| std::env::var_os(DEFAULT_WORKSPACE_ENV).map(PathBuf::from))
         .unwrap_or_else(|| INITIAL_CWD.clone())
         .join("novywave")
         .join(GLOBAL_CONFIG_FILENAME)
