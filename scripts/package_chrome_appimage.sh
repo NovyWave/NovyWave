@@ -27,9 +27,16 @@ require_path target/release/novywave-chrome
 require_path target/release/backend
 require_path frontend_dist
 require_path public
-require_path _api
-require_path frontend/pkg
+require_path frontend_dist/_api
+require_path frontend_dist/_api/pkg
+require_path frontend_dist/_api/pkg/build_id
 require_path plugins/dist
+
+if grep -R "window.__TAURI__" frontend_dist/_api/pkg >/dev/null 2>&1; then
+  echo "ERROR: Chrome AppImage requires a WEB frontend, but frontend_dist contains Tauri bindings." >&2
+  echo "Run: makers build && makers chrome-appimage" >&2
+  exit 1
+fi
 
 if [ ! -x "$APPIMAGETOOL" ]; then
   mkdir -p "$(dirname "$APPIMAGETOOL")"
@@ -51,8 +58,8 @@ cp target/release/novywave-chrome "$PAYLOAD_DIR/novywave-chrome-linux-x64"
 cp target/release/backend "$PAYLOAD_DIR/backend"
 cp -r frontend_dist "$PAYLOAD_DIR/frontend_dist"
 cp -r public "$PAYLOAD_DIR/public"
-cp -r _api "$PAYLOAD_DIR/_api"
-cp -r frontend/pkg "$PAYLOAD_DIR/frontend/pkg"
+cp -r frontend_dist/_api "$PAYLOAD_DIR/_api"
+cp -r frontend_dist/_api/pkg "$PAYLOAD_DIR/frontend/pkg"
 cp -r plugins/dist "$PAYLOAD_DIR/plugins/dist"
 chmod +x "$PAYLOAD_DIR/novywave-chrome-linux-x64" "$PAYLOAD_DIR/backend"
 

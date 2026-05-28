@@ -89,9 +89,9 @@ jobs:
 
       - name: Build Chrome launcher AppImage
         if: inputs.release-build
-        run: |
-          VERSION="${{ inputs.version }}"
-          scripts/package_chrome_appimage.sh "$VERSION"
+        run: makers chrome-appimage
+        env:
+          TAURI_BUILD_VERSION: ${{ inputs.version }}
 
       - name: Verify Chrome launcher AppImage
         if: inputs.release-build
@@ -108,6 +108,10 @@ jobs:
           test -x squashfs-root/usr/lib/novywave/backend
           test -f squashfs-root/usr/lib/novywave/frontend_dist/index.html
           test -f squashfs-root/usr/lib/novywave/_api/pkg/build_id
+          if grep -R "window.__TAURI__" squashfs-root/usr/lib/novywave/frontend_dist/_api/pkg >/dev/null 2>&1; then
+            echo "Chrome AppImage contains Tauri frontend bindings"
+            exit 1
+          fi
           test -d squashfs-root/usr/lib/novywave/plugins/dist
 
           cat > fake-chromium <<'EOF'

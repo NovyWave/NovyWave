@@ -367,7 +367,7 @@ echo "[OK] Built: target/release/novywave-chrome"
 [tasks.chrome-appimage]
 description = "Build one-file Linux Chrome-mode AppImage"
 condition = { platforms = ["linux"] }
-dependencies = ["chrome-build"]
+dependencies = ["build", "chrome-build"]
 script_runner = "bash"
 script = '''
 set -euo pipefail

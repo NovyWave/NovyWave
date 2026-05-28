@@ -383,10 +383,14 @@ export function ensure_reconnecting_event_source() {
   if (typeof window === 'undefined') return;
   if (typeof window.EventSource === 'undefined') return;
 
+  const defaultBackendOrigin =
+    window.location && /^https?:$/.test(window.location.protocol)
+      ? window.location.origin
+      : 'http://127.0.0.1:8082';
   const backendOrigin =
     (typeof window.__NOVYWAVE_BACKEND_ORIGIN === 'string' &&
       window.__NOVYWAVE_BACKEND_ORIGIN) ||
-    'http://127.0.0.1:8082';
+    defaultBackendOrigin;
 
   const rewriteApi = (urlStr) => {
     try {
