@@ -936,6 +936,102 @@ mod tests {
 
         fs::remove_dir_all(&dir).expect("remove temp dir");
     }
+
+    #[::std::prelude::v1::test]
+    fn workspace_history_promotes_valid_recent_after_invalid_last_selected() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!("novywave-history-test-{stamp}"));
+        let valid = base.join("valid-workspace");
+        let invalid = base.join("missing-workspace");
+        fs::create_dir_all(&valid).expect("create valid workspace");
+
+        let invalid_display = invalid.to_string_lossy().to_string();
+        let valid_display = valid.to_string_lossy().to_string();
+        let mut global = shared::GlobalSection {
+            workspace_history: shared::WorkspaceHistory {
+                last_selected: Some(invalid_display.clone()),
+                recent_paths: vec![invalid_display.clone(), valid_display.clone()],
+                tree_state: [(
+                    invalid_display.clone(),
+                    shared::WorkspaceTreeState::default(),
+                )]
+                .into_iter()
+                .collect(),
+                picker_tree_state: None,
+            },
+        };
+
+        let (resolved, warnings, changed) = resolve_workspace_from_history(&mut global, &base);
+
+        assert_eq!(resolved.expect("valid recent").as_path(), valid.as_path());
+        assert!(changed);
+        assert_eq!(
+            global.workspace_history.last_selected.as_deref(),
+            Some(valid_display.as_str())
+        );
+        assert!(
+            !global
+                .workspace_history
+                .recent_paths
+                .contains(&invalid_display)
+        );
+        assert!(
+            !global
+                .workspace_history
+                .tree_state
+                .contains_key(&invalid_display)
+        );
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("unavailable"))
+        );
+
+        fs::remove_dir_all(&base).expect("remove temp dir");
+    }
+
+    #[::std::prelude::v1::test]
+    fn workspace_history_clears_invalid_last_selected_without_cwd_fallback() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!("novywave-history-empty-test-{stamp}"));
+        fs::create_dir_all(&base).expect("create base");
+        let invalid = base.join("missing-workspace");
+        let invalid_display = invalid.to_string_lossy().to_string();
+        let mut global = shared::GlobalSection {
+            workspace_history: shared::WorkspaceHistory {
+                last_selected: Some(invalid_display.clone()),
+                recent_paths: vec![invalid_display.clone()],
+                tree_state: [(
+                    invalid_display.clone(),
+                    shared::WorkspaceTreeState::default(),
+                )]
+                .into_iter()
+                .collect(),
+                picker_tree_state: None,
+            },
+        };
+
+        let (resolved, warnings, changed) = resolve_workspace_from_history(&mut global, &base);
+
+        assert!(resolved.is_none());
+        assert!(changed);
+        assert_eq!(global.workspace_history.last_selected, None);
+        assert!(global.workspace_history.recent_paths.is_empty());
+        assert!(global.workspace_history.tree_state.is_empty());
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("unavailable"))
+        );
+
+        fs::remove_dir_all(&base).expect("remove temp dir");
+    }
 }
 
 /// Global signal cache manager instance
@@ -2577,19 +2673,18 @@ struct LoadedConfig {
     recovery_warnings: Vec<String>,
 }
 
-fn global_config_path() -> PathBuf {
+fn global_config_path() -> Option<PathBuf> {
     // Use platform-specific config directory for global config
     // Linux: ~/.config/novywave/.novywave_global
     // macOS: ~/Library/Application Support/novywave/.novywave_global
     // Windows: %APPDATA%\novywave\.novywave_global
-    let base_dir = dirs::config_dir()
+    dirs::config_dir()
         .map(|dir| dir.join("novywave"))
         .or_else(|| {
             packaged_default_workspace()
                 .and_then(|path| path.parent().map(|parent| parent.to_path_buf()))
         })
-        .unwrap_or_else(|| INITIAL_CWD.join("novywave"));
-    base_dir.join(GLOBAL_CONFIG_FILENAME)
+        .map(|base_dir| base_dir.join(GLOBAL_CONFIG_FILENAME))
 }
 
 fn unique_backup_path(path: &Path) -> PathBuf {
@@ -2628,7 +2723,15 @@ fn read_global_section() -> shared::GlobalSection {
 }
 
 fn read_global_section_with_warnings() -> (shared::GlobalSection, Vec<String>) {
-    let path = global_config_path();
+    let Some(path) = global_config_path() else {
+        return (
+            shared::GlobalSection::default(),
+            vec![
+                "No platform config directory is available for global workspace history. Loaded default workspace history for this session and did not write global config into the current directory."
+                    .to_string(),
+            ],
+        );
+    };
     let mut warnings = Vec::new();
     let mut section = match fs::read_to_string(&path) {
         Ok(content) => match toml::from_str::<GlobalConfigFile>(&content) {
@@ -2694,7 +2797,12 @@ fn save_global_section(
         toml_content
     );
 
-    let path = global_config_path();
+    let path = global_config_path().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "No platform config directory is available for global workspace history",
+        )
+    })?;
     debug_log!(
         DEBUG_BACKEND,
         "💾 BACKEND: Writing global config to {} (picker_state={:?})",
@@ -2833,6 +2941,101 @@ fn merge_workspace_history(
             }
         }
     }
+}
+
+fn resolve_workspace_from_history(
+    global: &mut shared::GlobalSection,
+    base_dir: &Path,
+) -> (Option<PathBuf>, Vec<String>, bool) {
+    let mut candidates = Vec::new();
+    if let Some(selected) = global.workspace_history.last_selected.clone() {
+        if !selected.trim().is_empty() {
+            candidates.push(selected);
+        }
+    }
+    for recent in &global.workspace_history.recent_paths {
+        if !recent.trim().is_empty() && !candidates.contains(recent) {
+            candidates.push(recent.clone());
+        }
+    }
+
+    let mut warnings = Vec::new();
+    let mut invalid_entries: Vec<String> = Vec::new();
+
+    for candidate in candidates {
+        let candidate_path = PathBuf::from(&candidate);
+        let absolute = if candidate_path.is_absolute() {
+            candidate_path
+        } else {
+            base_dir.join(candidate_path)
+        };
+
+        match fs::canonicalize(&absolute) {
+            Ok(canonical) if canonical.is_dir() => {
+                let mut changed = false;
+                for invalid in &invalid_entries {
+                    changed |=
+                        remove_workspace_history_entry(&mut global.workspace_history, invalid);
+                }
+                let canonical_display = canonical.to_string_lossy().to_string();
+                if global.workspace_history.last_selected.as_deref() != Some(&canonical_display) {
+                    global
+                        .workspace_history
+                        .touch_path(&canonical_display, shared::WORKSPACE_HISTORY_MAX_RECENTS);
+                    changed = true;
+                } else {
+                    global
+                        .workspace_history
+                        .clamp_to_limit(shared::WORKSPACE_HISTORY_MAX_RECENTS);
+                }
+                return (Some(canonical), warnings, changed);
+            }
+            Ok(_) => {
+                warnings.push(format!(
+                    "Workspace history entry '{}' is no longer a directory. It was removed from recent workspaces.",
+                    candidate
+                ));
+                invalid_entries.push(candidate);
+            }
+            Err(error) => {
+                warnings.push(format!(
+                    "Workspace history entry '{}' is unavailable: {}. It was removed from recent workspaces.",
+                    candidate, error
+                ));
+                invalid_entries.push(candidate);
+            }
+        }
+    }
+
+    let mut changed = false;
+    for invalid in &invalid_entries {
+        changed |= remove_workspace_history_entry(&mut global.workspace_history, invalid);
+    }
+    if !global
+        .workspace_history
+        .last_selected
+        .as_ref()
+        .map(|selected| !selected.trim().is_empty())
+        .unwrap_or(false)
+        && !invalid_entries.is_empty()
+    {
+        global.workspace_history.last_selected = None;
+    }
+
+    (None, warnings, changed)
+}
+
+fn remove_workspace_history_entry(history: &mut shared::WorkspaceHistory, entry: &str) -> bool {
+    let mut changed = false;
+    if history.last_selected.as_deref() == Some(entry) {
+        history.last_selected = None;
+        changed = true;
+    }
+    let before = history.recent_paths.len();
+    history.recent_paths.retain(|path| path != entry);
+    changed |= history.recent_paths.len() != before;
+    changed |= history.tree_state.remove(entry).is_some();
+    changed
 }
 
 fn expand_config_paths(config: &mut AppConfig) {
@@ -3299,23 +3502,22 @@ async fn send_config_recovery_warnings(
 
 async fn load_config(session_id: SessionId, cor_id: CorId) {
     // 1) Read global first and set the workspace root so we load the correct per-workspace config
-    let (global_section, mut recovery_warnings) = read_global_section_with_warnings();
-    let mut selected_workspace = false;
-    if let Some(last) = global_section.workspace_history.last_selected.clone() {
-        if !last.is_empty() {
-            let candidate = PathBuf::from(&last);
-            let absolute = if candidate.is_absolute() {
-                candidate
-            } else {
-                INITIAL_CWD.join(candidate)
-            };
-            if let Ok(canon) = fs::canonicalize(&absolute) {
-                if canon.is_dir() {
-                    workspace_context().set_root(canon);
-                    selected_workspace = true;
-                }
-            }
+    let (mut global_section, mut recovery_warnings) = read_global_section_with_warnings();
+    let (selected_root, mut history_warnings, history_changed) =
+        resolve_workspace_from_history(&mut global_section, &INITIAL_CWD);
+    recovery_warnings.append(&mut history_warnings);
+    if history_changed {
+        if let Err(error) = save_global_section(global_section.clone()) {
+            recovery_warnings.push(format!(
+                "Failed to persist recovered workspace history: {}",
+                error
+            ));
         }
+    }
+    let mut selected_workspace = false;
+    if let Some(canonical_root) = selected_root {
+        workspace_context().set_root(canonical_root);
+        selected_workspace = true;
     }
 
     if !selected_workspace && packaged_default_workspace().is_some() {
