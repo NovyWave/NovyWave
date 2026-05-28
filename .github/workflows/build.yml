@@ -273,17 +273,16 @@ jobs:
       - name: Package Chrome launcher
         if: inputs.release-build
         run: |
+          makers build
           VERSION="${{ inputs.version }}"
           PACKAGE_NAME="NovyWave_${VERSION}_chrome-macos-aarch64"
-          PACKAGE_DIR="target/release/chrome-package/${PACKAGE_NAME}"
-          mkdir -p "$PACKAGE_DIR/frontend" "$PACKAGE_DIR/plugins"
-          cp target/release/novywave-chrome "$PACKAGE_DIR/novywave-chrome-macos-aarch64"
-          cp target/release/backend "$PACKAGE_DIR/backend"
-          cp -r frontend_dist "$PACKAGE_DIR/frontend_dist"
-          cp -r public "$PACKAGE_DIR/public"
-          cp -r _api "$PACKAGE_DIR/_api"
-          cp -r frontend/pkg "$PACKAGE_DIR/frontend/pkg"
-          cp -r plugins/dist "$PACKAGE_DIR/plugins/dist"
+          scripts/package_chrome_directory.sh \
+            "$PACKAGE_NAME" \
+            target/release/novywave-chrome \
+            novywave-chrome-macos-aarch64 \
+            target/release/backend \
+            backend \
+            target/release/chrome-package
           tar -C target/release/chrome-package -czf "target/release/${PACKAGE_NAME}.tar.gz" "$PACKAGE_NAME"
 
       - name: Upload Chrome launcher (ARM)
@@ -374,17 +373,16 @@ jobs:
       - name: Package Chrome launcher
         if: inputs.release-build
         run: |
+          makers build
           VERSION="${{ inputs.version }}"
           PACKAGE_NAME="NovyWave_${VERSION}_chrome-macos-x64"
-          PACKAGE_DIR="target/release/chrome-package/${PACKAGE_NAME}"
-          mkdir -p "$PACKAGE_DIR/frontend" "$PACKAGE_DIR/plugins"
-          cp target/release/novywave-chrome "$PACKAGE_DIR/novywave-chrome-macos-x64"
-          cp target/release/backend "$PACKAGE_DIR/backend"
-          cp -r frontend_dist "$PACKAGE_DIR/frontend_dist"
-          cp -r public "$PACKAGE_DIR/public"
-          cp -r _api "$PACKAGE_DIR/_api"
-          cp -r frontend/pkg "$PACKAGE_DIR/frontend/pkg"
-          cp -r plugins/dist "$PACKAGE_DIR/plugins/dist"
+          scripts/package_chrome_directory.sh \
+            "$PACKAGE_NAME" \
+            target/release/novywave-chrome \
+            novywave-chrome-macos-x64 \
+            target/release/backend \
+            backend \
+            target/release/chrome-package
           tar -C target/release/chrome-package -czf "target/release/${PACKAGE_NAME}.tar.gz" "$PACKAGE_NAME"
 
       - name: Upload Chrome launcher (x64)
@@ -541,17 +539,16 @@ jobs:
         if: inputs.release-build
         shell: bash
         run: |
+          makers build
           VERSION="${{ inputs.version }}"
           PACKAGE_NAME="NovyWave_${VERSION}_chrome-windows-x64"
-          PACKAGE_DIR="target/release/chrome-package/${PACKAGE_NAME}"
-          mkdir -p "$PACKAGE_DIR/frontend" "$PACKAGE_DIR/plugins"
-          cp target/release/novywave-chrome.exe "$PACKAGE_DIR/novywave-chrome-windows-x64.exe"
-          cp target/release/backend.exe "$PACKAGE_DIR/backend.exe"
-          cp -r frontend_dist "$PACKAGE_DIR/frontend_dist"
-          cp -r public "$PACKAGE_DIR/public"
-          cp -r _api "$PACKAGE_DIR/_api"
-          cp -r frontend/pkg "$PACKAGE_DIR/frontend/pkg"
-          cp -r plugins/dist "$PACKAGE_DIR/plugins/dist"
+          scripts/package_chrome_directory.sh \
+            "$PACKAGE_NAME" \
+            target/release/novywave-chrome.exe \
+            novywave-chrome-windows-x64.exe \
+            target/release/backend.exe \
+            backend.exe \
+            target/release/chrome-package
           powershell -NoProfile -Command "Compress-Archive -Path 'target/release/chrome-package/${PACKAGE_NAME}' -DestinationPath 'target/release/${PACKAGE_NAME}.zip' -Force"
 
       - name: Upload Chrome launcher (Windows)

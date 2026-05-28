@@ -32,17 +32,7 @@ require_path frontend_dist/_api/pkg
 require_path frontend_dist/_api/pkg/build_id
 require_path plugins/dist
 
-if grep -R "window.__TAURI__" frontend_dist/_api/pkg >/dev/null 2>&1; then
-  echo "ERROR: Chrome AppImage requires a WEB frontend, but frontend_dist contains Tauri bindings." >&2
-  echo "Run: makers build && makers chrome-appimage" >&2
-  exit 1
-fi
-if grep -R "127.0.0.1:8082" frontend_dist/_api/pkg >/dev/null 2>&1; then
-  echo "ERROR: Chrome AppImage frontend contains dev-server port 8082." >&2
-  echo "The Chrome AppImage must use its own runtime origin for /_api traffic." >&2
-  echo "Run: makers build && makers chrome-appimage" >&2
-  exit 1
-fi
+scripts/validate_chrome_frontend.sh frontend_dist/_api/pkg
 
 if [ ! -x "$APPIMAGETOOL" ]; then
   mkdir -p "$(dirname "$APPIMAGETOOL")"
@@ -68,6 +58,11 @@ cp -r frontend_dist/_api "$PAYLOAD_DIR/_api"
 cp -r frontend_dist/_api/pkg "$PAYLOAD_DIR/frontend/pkg"
 cp -r plugins/dist "$PAYLOAD_DIR/plugins/dist"
 chmod +x "$PAYLOAD_DIR/novywave-chrome-linux-x64" "$PAYLOAD_DIR/backend"
+
+scripts/validate_chrome_frontend.sh \
+  "$PAYLOAD_DIR/frontend_dist/_api/pkg" \
+  "$PAYLOAD_DIR/_api/pkg" \
+  "$PAYLOAD_DIR/frontend/pkg"
 
 cp src-tauri/icons/128x128.png "$APPDIR/novywave-chrome.png"
 cp src-tauri/icons/128x128.png "$APPDIR/.DirIcon"

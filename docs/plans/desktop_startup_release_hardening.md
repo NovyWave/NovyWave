@@ -250,6 +250,13 @@ All Chrome packages are built from WEB frontend artifacts and validated the same
 - Every Chrome package passes launcher/backend smoke.
 - Release notes match the Chrome artifacts we actually trust.
 
+**Current Progress**
+
+- Added shared Chrome frontend validation that fails on Tauri bindings or dev-server `127.0.0.1:8082` references in every shipped frontend copy.
+- Added a shared Chrome package directory builder for macOS and Windows archives; it copies `_api` and `frontend/pkg` from the WEB `frontend_dist` output instead of reusing stale root copies.
+- macOS ARM, macOS Intel, and Windows release CI now run `makers build` immediately before Chrome packaging so the archive payload is rebuilt in WEB mode after the Tauri bundle step.
+- Local validation rebuilt WEB artifacts with `makers build` and assembled a Linux-shaped Chrome directory payload with the shared packager.
+
 ### 5. Make Startup And Config Errors Visible
 
 **Problem**
