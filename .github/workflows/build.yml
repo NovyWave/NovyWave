@@ -32,7 +32,7 @@ jobs:
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
@@ -86,6 +86,19 @@ jobs:
             echo "=== RPM ==="
             ls -la target/release/bundle/rpm/ || true
           fi
+
+      - name: Verify Tauri AppImage startup
+        if: inputs.release-build
+        run: |
+          set -euo pipefail
+          APPIMAGE="$(find target/release/bundle/appimage -maxdepth 1 -name '*.AppImage' ! -name '*.sig' | head -1)"
+          if [ -z "$APPIMAGE" ]; then
+            echo "No Tauri AppImage found under target/release/bundle/appimage"
+            exit 1
+          fi
+          APPIMAGE_EXTRACT_AND_RUN=1 \
+          NOVYWAVE_SMOKE_TIMEOUT_SECONDS=60 \
+          scripts/smoke_tauri_package.sh "$APPIMAGE"
 
       - name: Build Chrome launcher AppImage
         if: inputs.release-build

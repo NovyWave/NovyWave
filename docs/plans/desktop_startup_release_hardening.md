@@ -191,6 +191,15 @@ Every release artifact has non-interactive startup proof before upload.
 
 **Current Progress**
 
+- Added `scripts/smoke_tauri_package.sh` for Linux package startup smoke through the existing desktop test bridge:
+  - launches an executable or AppImage under isolated `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, and `XDG_DATA_HOME`
+  - uses `/health` to prove the real Tauri WebView window exists
+  - uses `/state/config-debug` to prove config/server readiness
+  - uses `/state/file-picker-roots` to prove platform roots load
+  - evaluates the workspace input and fails if it remains on `Loading workspace`
+  - fails if a fresh packaged run creates `.novywave` in backend cwd or the default-workspace hint
+- Linux release CI now runs the Tauri AppImage smoke before upload with `APPIMAGE_EXTRACT_AND_RUN=1`.
+- Local run against the rebuilt `target/release/bundle/appimage/NovyWave_0.2.1_amd64.AppImage` passed the Tauri package smoke.
 - Linux Chrome AppImage CI fake-browser smoke now validates the backend routes while the launcher is alive:
   - fake browser extracts the `--app=http://127.0.0.1:<port>` URL
   - `curl --fail` verifies `/`
@@ -415,6 +424,11 @@ Updater artifacts are either correctly signed and verified, or not produced.
 - Release CI verifies every `.sig` against the configured pubkey.
 - `latest.json` has exactly the supported updater platform keys.
 - Release fails rather than publishing unsigned or mismatched updater artifacts.
+
+**Current Evidence**
+
+- Latest local `makers tauri-build` still warns that the updater signing private key does not match the configured updater public key for generated updater signatures.
+- The same build warns that Tauri could not patch `__TAURI_BUNDLE_TYPE` into the binary for deb/rpm/AppImage, and the AppImage smoke log reports the updater hidden because the bundle type is unsupported or unknown.
 
 ### 10. Add Release Artifact Manifest And CI Proof
 
