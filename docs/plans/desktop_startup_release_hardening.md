@@ -226,6 +226,13 @@ Every release artifact has non-interactive startup proof before upload.
   - verifies the launcher starts the packaged backend and serves `/` plus `/_api/pkg/build_id`
   - fails if `.novywave` is created under package resources
 - macOS ARM, macOS Intel, and Windows release CI now extract the generated Chrome archives and run the package directory smoke before upload.
+- Clean local rebuild passed with `makers build_plugins`, `makers tauri-build`, and `makers chrome-appimage`.
+- Clean local Tauri package smokes passed for:
+  - `target/release/bundle/appimage/NovyWave_0.2.1_amd64.AppImage`
+  - `target/release/bundle/deb/NovyWave_0.2.1_amd64.deb`
+  - `target/release/bundle/rpm/NovyWave-0.2.1-1.x86_64.rpm`
+- Clean local Chrome AppImage live smoke passed for `target/release/NovyWave_0.2.1_chrome-linux-x64.AppImage`.
+- The refreshed Desktop test folder `v0.2.1_next_release` contains only the verified Linux-compatible files: AppImage, deb, rpm, and Chrome AppImage.
 
 ### 4. Make Chrome Packaging Correct On Every OS
 
@@ -274,6 +281,7 @@ All Chrome packages are built from WEB frontend artifacts and validated the same
 - Local `scripts/smoke_chrome_package_directory.sh target/release/chrome-package-test/NovyWave_test_chrome-linux-x64 novywave-chrome-linux-x64` passed.
 - Local smoke against the older Desktop `v0.2.1-local-build` Chrome package correctly failed because that package still contains Tauri frontend bindings, proving the validator catches the stale-frontend class.
 - `cargo test -p novywave-chrome` passed.
+- Clean local `makers chrome-appimage` rebuilt the one-file Linux Chrome AppImage from WEB frontend artifacts; the live Chrome smoke passed with Google Chrome from `/home/martinkavik/.local/bin/google-chrome-stable`.
 
 ### 5. Make Startup And Config Errors Visible
 
@@ -499,6 +507,8 @@ Updater artifacts are either correctly signed and verified, or not produced.
 - The updater metadata generator requires exactly the supported updater platforms: `linux-x86_64`, `darwin-aarch64`, `darwin-x86_64`, and `windows-x86_64`.
 - Local checks passed for script syntax, workflow YAML parsing, validator rejection paths, and synthetic signed updater artifacts for all supported updater platforms.
 - Existing older local updater signatures are correctly rejected against the configured updater public key, which confirms the previous mismatch would not be published by the hardened release flow.
+- Clean local unsigned `makers tauri-build` printed `TAURI_SIGNING_PRIVATE_KEY is not set; disabling updater artifacts for this local bundle.` and produced no `.sig` files.
+- The local Tauri bundler still warns that `__TAURI_BUNDLE_TYPE` could not be patched into the binary for deb, rpm, and AppImage. This does not block local manual package smoke tests, but final updater confidence still requires GitHub release CI with real signing secrets.
 
 ### 10. Add Release Artifact Manifest And CI Proof
 

@@ -491,10 +491,18 @@ fi
 [tasks.clean]
 description = "Clean all build artifacts"
 script = '''
-./mzoon/bin/mzoon clean
-cd src-tauri && cargo clean
-rm -rf frontend_dist
+if [ -d frontend_dist ]; then
+  find frontend_dist -mindepth 1 -maxdepth 1 ! -name netlify.toml -exec rm -rf {} +
+fi
+rm -rf frontend/pkg
+rm -rf _api
 rm -rf plugins/dist
+rm -rf target/release/bundle
+rm -rf target/release/chrome-appimage
+rm -rf target/release/chrome-package
+rm -rf target/release/chrome-package-test
+rm -f target/release/NovyWave_*_chrome-linux-x64.AppImage
+cd src-tauri && cargo clean
 '''
 
 ######  HELPER TASKS  ######
