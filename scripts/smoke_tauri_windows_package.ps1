@@ -14,6 +14,8 @@ $appData = Join-Path $workDir "AppData\Roaming"
 $localAppData = Join-Path $workDir "AppData\Local"
 $userProfile = Join-Path $workDir "UserProfile"
 $tempDir = Join-Path $workDir "Temp"
+$appStdoutLog = Join-Path $workDir "app.stdout.log"
+$appStderrLog = Join-Path $workDir "app.stderr.log"
 New-Item -ItemType Directory -Force -Path $appData, $localAppData, $userProfile, $tempDir | Out-Null
 
 $port = Get-Random -Minimum 20000 -Maximum 60000
@@ -31,11 +33,30 @@ function Restore-SmokeEnvironment {
 }
 
 function Show-SmokeLogs {
+    if (Test-Path $appStdoutLog) {
+        Write-Host "=== $Label stdout log: $appStdoutLog ==="
+        Get-Content $appStdoutLog -ErrorAction SilentlyContinue
+    }
+    if (Test-Path $appStderrLog) {
+        Write-Host "=== $Label stderr log: $appStderrLog ==="
+        Get-Content $appStderrLog -ErrorAction SilentlyContinue
+    }
     $startupLog = Join-Path $localAppData "NovyWave\novywave-tauri-startup.log"
     if (Test-Path $startupLog) {
         Write-Host "=== $Label startup log: $startupLog ==="
         Get-Content $startupLog -ErrorAction SilentlyContinue
     }
+}
+
+function Get-BackendCwd {
+    if (-not (Test-Path $appStdoutLog)) {
+        return $null
+    }
+    $match = Select-String -Path $appStdoutLog -Pattern "BACKEND cwd = (.+)$" | Select-Object -Last 1
+    if (-not $match) {
+        return $null
+    }
+    return $match.Matches[0].Groups[1].Value.Trim()
 }
 
 function Invoke-SmokeGet {
@@ -57,7 +78,11 @@ try {
     $env:TEMP = $tempDir
     $env:TMP = $tempDir
 
-    $process = Start-Process -FilePath $AppPath -PassThru
+    $process = Start-Process `
+        -FilePath $AppPath `
+        -RedirectStandardOutput $appStdoutLog `
+        -RedirectStandardError $appStderrLog `
+        -PassThru
     try {
         $deadline = (Get-Date).AddSeconds($timeoutSeconds)
         $health = $null
@@ -141,6 +166,15 @@ try {
         if (Test-Path $defaultWorkspaceConfig) {
             Show-SmokeLogs
             throw "$Label created workspace config in default workspace: $defaultWorkspaceConfig"
+        }
+
+        $backendCwd = Get-BackendCwd
+        if ($backendCwd) {
+            $backendCwdConfig = Join-Path $backendCwd ".novywave"
+            if (Test-Path $backendCwdConfig) {
+                Show-SmokeLogs
+                throw "$Label created workspace config in backend cwd: $backendCwdConfig"
+            }
         }
 
         Write-Host "Windows Tauri package smoke passed"

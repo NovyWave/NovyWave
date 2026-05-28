@@ -210,6 +210,7 @@ Every release artifact has non-interactive startup proof before upload.
 - macOS ARM and Intel release CI now mount and smoke the generated DMG through `scripts/smoke_tauri_macos_package.sh`, verifying the `.app` executable, real-window creation, config readiness, platform roots, and fresh no-workspace state.
 - Windows release CI now smoke-tests NSIS and MSI installed layouts through `scripts/smoke_tauri_windows_package.ps1`.
 - Tauri package smokes now print app logs plus the platform startup log on failure, reject blocking startup console errors, and apply the no-resource-workspace checks consistently across Linux, macOS, and Windows.
+- Windows installed-artifact smoke now captures stdout/stderr logs and checks that no `.novywave` is created under the backend cwd reported by the packaged app.
 - Local run against the rebuilt `target/release/bundle/appimage/NovyWave_0.2.1_amd64.AppImage` passed the Tauri package smoke.
 - Local runs against the rebuilt `target/release/bundle/deb/NovyWave_0.2.1_amd64.deb` and `target/release/bundle/rpm/NovyWave-0.2.1-1.x86_64.rpm` passed the extracted-package Tauri smoke.
 - Linux Chrome AppImage CI fake-browser smoke now validates the backend routes while the launcher is alive:
