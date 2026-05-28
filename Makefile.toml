@@ -529,19 +529,85 @@ args = [
 
 [tasks.build_plugins]
 description = "Build all plugin components and copy artifacts to plugins/dist"
-script_runner = "bash"
-script = [
-    "set -eu",
-    "DIST_DIR=plugins/dist",
-    "mkdir -p \"${DIST_DIR}\"",
-    "mapfile -t targets < <(find plugins -maxdepth 2 -name Cargo.toml)",
-    "if [ ${#targets[@]} -eq 0 ]; then echo 'No plugin manifests found under plugins/'; exit 0; fi",
-    "for manifest in \"${targets[@]}\"; do echo \"Building component for ${manifest}\"; cargo component build --release --manifest-path \"${manifest}\"; done",
-    "rm -f \"${DIST_DIR}\"/*.wasm",
-    "find target/wasm32-wasip1/release -maxdepth 1 -name '*.wasm' -print -exec cp {} \"${DIST_DIR}/\" \\;",
-    "scripts/verify_plugin_artifacts.sh \"${DIST_DIR}\"",
-    "echo \"Plugin components copied to ${DIST_DIR}/\""
-]
+script_runner = "@duckscript"
+script = '''
+dist_dir = set "plugins/dist"
+target_dir = set "target/wasm32-wasip1/release"
+
+mkdir ${dist_dir}
+
+manifests = glob_array "plugins/*/Cargo.toml"
+manifest_count = array_length ${manifests}
+if eq ${manifest_count} 0
+    echo "No plugin manifests found under plugins/"
+    exit 0
+fi
+
+for manifest in ${manifests}
+    echo "Building component for ${manifest}"
+    exec --fail-on-error cargo component build --release --manifest-path ${manifest}
+end
+
+existing_artifacts = glob_array "${dist_dir}/*.wasm"
+for artifact in ${existing_artifacts}
+    rm ${artifact}
+end
+
+wasm_artifacts = glob_array "${target_dir}/*.wasm"
+artifact_count = array_length ${wasm_artifacts}
+if eq ${artifact_count} 0
+    echo "ERROR: no plugin artifacts found in ${target_dir}"
+    exit 1
+end
+
+for artifact in ${wasm_artifacts}
+    artifact_name = basename ${artifact}
+    destination = set "${dist_dir}/${artifact_name}"
+    echo ${artifact}
+    cp ${artifact} ${destination}
+end
+
+artifact = set "${dist_dir}/hello_world_plugin.wasm"
+exists = is_file ${artifact}
+if not ${exists}
+    echo "ERROR: expected plugin artifact is missing: ${artifact}"
+    exit 1
+end
+size = filesize ${artifact}
+if eq ${size} 0
+    echo "ERROR: expected plugin artifact is empty: ${artifact}"
+    exit 1
+end
+echo "[OK] plugin artifact: ${artifact} (${size} bytes)"
+
+artifact = set "${dist_dir}/reload_watcher_plugin.wasm"
+exists = is_file ${artifact}
+if not ${exists}
+    echo "ERROR: expected plugin artifact is missing: ${artifact}"
+    exit 1
+end
+size = filesize ${artifact}
+if eq ${size} 0
+    echo "ERROR: expected plugin artifact is empty: ${artifact}"
+    exit 1
+end
+echo "[OK] plugin artifact: ${artifact} (${size} bytes)"
+
+artifact = set "${dist_dir}/files_discovery_plugin.wasm"
+exists = is_file ${artifact}
+if not ${exists}
+    echo "ERROR: expected plugin artifact is missing: ${artifact}"
+    exit 1
+end
+size = filesize ${artifact}
+if eq ${size} 0
+    echo "ERROR: expected plugin artifact is empty: ${artifact}"
+    exit 1
+end
+echo "[OK] plugin artifact: ${artifact} (${size} bytes)"
+
+echo "Plugin components copied to ${dist_dir}/"
+'''
 
 [tasks.watch_plugins]
 description = "Watch plugin sources and rebuild components"
