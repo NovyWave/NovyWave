@@ -575,6 +575,7 @@ jobs:
             $relativeBackend = [System.IO.Path]::GetRelativePath($Root, $backend.FullName)
             Write-Host "$Label NovyWave.exe: $relativeApp"
             Write-Host "$Label backend.exe: $relativeBackend"
+            return $app.FullName
           }
 
           $nsis = Get-ChildItem -Path "target/release/bundle/nsis" -Filter "*.exe" -File | Select-Object -First 1
@@ -587,7 +588,8 @@ jobs:
           if ($nsisProcess.ExitCode -ne 0) {
             throw "NSIS installer exited with $($nsisProcess.ExitCode)"
           }
-          Assert-InstalledBackend -Root $nsisInstallDir -Label "NSIS install"
+          $nsisApp = Assert-InstalledBackend -Root $nsisInstallDir -Label "NSIS install"
+          scripts/smoke_tauri_windows_package.ps1 -AppPath $nsisApp -Label "NSIS install"
 
           $msi = Get-ChildItem -Path "target/release/bundle/msi" -Filter "*.msi" -File | Select-Object -First 1
           if (-not $msi) {
@@ -599,7 +601,8 @@ jobs:
           if ($msiProcess.ExitCode -ne 0) {
             throw "MSI administrative extraction exited with $($msiProcess.ExitCode)"
           }
-          Assert-InstalledBackend -Root $msiExtractDir -Label "MSI extraction"
+          $msiApp = Assert-InstalledBackend -Root $msiExtractDir -Label "MSI extraction"
+          scripts/smoke_tauri_windows_package.ps1 -AppPath $msiApp -Label "MSI extraction"
 
       - name: Package Chrome launcher
         if: inputs.release-build

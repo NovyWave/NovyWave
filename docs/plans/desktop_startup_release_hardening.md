@@ -132,7 +132,8 @@ The local runtime now searches for `backend.exe`, but the release build must pro
 
 - Windows release CI now silently installs the NSIS artifact and fails if the installed layout does not contain both `NovyWave.exe` and `backend.exe`.
 - Windows release CI now administratively extracts the MSI artifact and fails if the extracted layout does not contain both `NovyWave.exe` and `backend.exe`.
-- Full Windows installed-app startup/WebView smoke is still required before issue `#1` can be closed as fixed.
+- Windows release CI now runs the installed NSIS app and the administratively extracted MSI app through the desktop test bridge, verifying real-window creation, config readiness, platform roots, and the fresh no-workspace state.
+- The Windows smoke script is wired into CI but still needs a successful Windows runner execution before issue `#1` can be closed as fixed.
 
 ### 3. Add Package Startup Smoke Modes
 
@@ -206,6 +207,7 @@ Every release artifact has non-interactive startup proof before upload.
   - fails if a fresh packaged run creates `.novywave` in backend cwd or the default-workspace hint
 - Linux release CI now runs the Tauri AppImage smoke before upload with `APPIMAGE_EXTRACT_AND_RUN=1`.
 - Linux release CI now extracts and smokes the Tauri deb and rpm packages before upload by running the installed `usr/bin/novywave` layout through the desktop test bridge.
+- Windows release CI now smoke-tests NSIS and MSI installed layouts through `scripts/smoke_tauri_windows_package.ps1`.
 - Local run against the rebuilt `target/release/bundle/appimage/NovyWave_0.2.1_amd64.AppImage` passed the Tauri package smoke.
 - Local runs against the rebuilt `target/release/bundle/deb/NovyWave_0.2.1_amd64.deb` and `target/release/bundle/rpm/NovyWave-0.2.1-1.x86_64.rpm` passed the extracted-package Tauri smoke.
 - Linux Chrome AppImage CI fake-browser smoke now validates the backend routes while the launcher is alive:
