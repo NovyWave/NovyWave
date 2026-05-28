@@ -908,6 +908,34 @@ mod tests {
 
         fs::remove_dir_all(&dir).expect("remove temp dir");
     }
+
+    #[::std::prelude::v1::test]
+    fn directory_availability_distinguishes_missing_file_and_directory() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("novywave-directory-status-test-{stamp}"));
+        fs::create_dir_all(&dir).expect("create temp dir");
+        let file_path = dir.join("not-a-directory");
+        let missing_path = dir.join("missing");
+        fs::write(&file_path, "file").expect("write file");
+
+        assert_eq!(
+            directory_availability(&dir).expect("inspect dir"),
+            DirectoryAvailability::Available
+        );
+        assert_eq!(
+            directory_availability(&file_path).expect("inspect file"),
+            DirectoryAvailability::NotDirectory
+        );
+        assert_eq!(
+            directory_availability(&missing_path).expect("inspect missing"),
+            DirectoryAvailability::Missing
+        );
+
+        fs::remove_dir_all(&dir).expect("remove temp dir");
+    }
 }
 
 /// Global signal cache manager instance
@@ -1072,8 +1100,19 @@ async fn up_msg_handler(req: UpMsgRequest<UpMsg>) {
             );
         }
         UpMsg::GetPlatformRoots => {
-            let roots = get_platform_roots();
+            let (roots, warnings) = get_platform_roots();
             send_down_msg(DownMsg::PlatformRoots(roots), session_id, cor_id).await;
+            if !warnings.is_empty() {
+                send_down_msg(
+                    DownMsg::DirectoryError {
+                        path: "platform-roots".to_string(),
+                        error: warnings.join("\n"),
+                    },
+                    session_id,
+                    cor_id,
+                )
+                .await;
+            }
         }
         UpMsg::TriggerTestNotifications => {
             println!("🧪 BACKEND: TriggerTestNotifications received - sending test notifications");
@@ -3127,7 +3166,10 @@ fn spawn_directory_preload(expanded_dirs: Vec<String>) {
         for dir_path in expanded_dirs {
             preload_tasks.push(tokio::spawn(async move {
                 let path_obj = Path::new(&dir_path);
-                if path_obj.exists() && path_obj.is_dir() {
+                if matches!(
+                    directory_availability(path_obj),
+                    Ok(DirectoryAvailability::Available)
+                ) {
                     let _ = scan_directory_async(path_obj).await;
                 }
             }));
@@ -3475,129 +3517,136 @@ fn cleanup_parsing_session(file_id: &str) {
     }
 }
 
-fn get_platform_roots() -> Vec<PlatformRoot> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DirectoryAvailability {
+    Available,
+    Missing,
+    NotDirectory,
+}
+
+fn directory_availability(path: &Path) -> Result<DirectoryAvailability, String> {
+    match fs::metadata(path) {
+        Ok(metadata) if metadata.is_dir() => Ok(DirectoryAvailability::Available),
+        Ok(_) => Ok(DirectoryAvailability::NotDirectory),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            Ok(DirectoryAvailability::Missing)
+        }
+        Err(err) => Err(err.to_string()),
+    }
+}
+
+fn push_platform_root_if_available(
+    roots: &mut Vec<PlatformRoot>,
+    warnings: &mut Vec<String>,
+    path: impl AsRef<Path>,
+    label: impl Into<String>,
+    is_quick_access: bool,
+) {
+    let path = path.as_ref();
+    match directory_availability(path) {
+        Ok(DirectoryAvailability::Available) => roots.push(PlatformRoot {
+            path: path.to_string_lossy().to_string(),
+            label: label.into(),
+            is_quick_access,
+        }),
+        Ok(DirectoryAvailability::Missing) => {}
+        Ok(DirectoryAvailability::NotDirectory) => warnings.push(format!(
+            "Platform root '{}' is not a directory",
+            path.display()
+        )),
+        Err(err) => warnings.push(format!(
+            "Failed to inspect platform root '{}': {}",
+            path.display(),
+            err
+        )),
+    }
+}
+
+fn get_platform_roots() -> (Vec<PlatformRoot>, Vec<String>) {
     let mut roots = Vec::new();
+    let mut warnings = Vec::new();
 
     #[cfg(target_os = "macos")]
     {
-        roots.push(PlatformRoot {
-            path: "/".to_string(),
-            label: "Macintosh HD".to_string(),
-            is_quick_access: false,
-        });
+        push_platform_root_if_available(&mut roots, &mut warnings, "/", "Macintosh HD", false);
         if let Some(home) = dirs::home_dir() {
-            let home_str = home.to_string_lossy().to_string();
-            roots.push(PlatformRoot {
-                path: home_str.clone(),
-                label: "Home".to_string(),
-                is_quick_access: true,
-            });
-            let desktop = home.join("Desktop");
-            if desktop.exists() {
-                roots.push(PlatformRoot {
-                    path: desktop.to_string_lossy().to_string(),
-                    label: "Desktop".to_string(),
-                    is_quick_access: true,
-                });
-            }
-            let downloads = home.join("Downloads");
-            if downloads.exists() {
-                roots.push(PlatformRoot {
-                    path: downloads.to_string_lossy().to_string(),
-                    label: "Downloads".to_string(),
-                    is_quick_access: true,
-                });
-            }
+            push_platform_root_if_available(&mut roots, &mut warnings, home, "Home", true);
+        } else {
+            warnings.push("Unable to determine home directory".to_string());
         }
-        if Path::new("/Volumes").exists() {
-            roots.push(PlatformRoot {
-                path: "/Volumes".to_string(),
-                label: "Volumes".to_string(),
-                is_quick_access: false,
-            });
+        if let Some(desktop) = dirs::desktop_dir() {
+            push_platform_root_if_available(&mut roots, &mut warnings, desktop, "Desktop", true);
         }
+        if let Some(downloads) = dirs::download_dir() {
+            push_platform_root_if_available(
+                &mut roots,
+                &mut warnings,
+                downloads,
+                "Downloads",
+                true,
+            );
+        }
+        push_platform_root_if_available(&mut roots, &mut warnings, "/Volumes", "Volumes", false);
     }
 
     #[cfg(target_os = "windows")]
     {
         for drive_letter in b'A'..=b'Z' {
             let drive_path = format!("{}:\\", drive_letter as char);
-            if Path::new(&drive_path).exists() {
-                roots.push(PlatformRoot {
-                    path: drive_path.clone(),
-                    label: format!("{}: Drive", drive_letter as char),
-                    is_quick_access: false,
-                });
-            }
+            push_platform_root_if_available(
+                &mut roots,
+                &mut warnings,
+                &drive_path,
+                format!("{}: Drive", drive_letter as char),
+                false,
+            );
         }
         if let Some(home) = dirs::home_dir() {
-            let home_str = home.to_string_lossy().to_string();
-            roots.push(PlatformRoot {
-                path: home_str.clone(),
-                label: "Home".to_string(),
-                is_quick_access: true,
-            });
-            let desktop = home.join("Desktop");
-            if desktop.exists() {
-                roots.push(PlatformRoot {
-                    path: desktop.to_string_lossy().to_string(),
-                    label: "Desktop".to_string(),
-                    is_quick_access: true,
-                });
-            }
-            let downloads = home.join("Downloads");
-            if downloads.exists() {
-                roots.push(PlatformRoot {
-                    path: downloads.to_string_lossy().to_string(),
-                    label: "Downloads".to_string(),
-                    is_quick_access: true,
-                });
-            }
+            push_platform_root_if_available(&mut roots, &mut warnings, home, "Home", true);
+        } else {
+            warnings.push("Unable to determine home directory".to_string());
+        }
+        if let Some(desktop) = dirs::desktop_dir() {
+            push_platform_root_if_available(&mut roots, &mut warnings, desktop, "Desktop", true);
+        }
+        if let Some(downloads) = dirs::download_dir() {
+            push_platform_root_if_available(
+                &mut roots,
+                &mut warnings,
+                downloads,
+                "Downloads",
+                true,
+            );
         }
     }
 
     #[cfg(target_os = "linux")]
     {
-        roots.push(PlatformRoot {
-            path: "/".to_string(),
-            label: "File System".to_string(),
-            is_quick_access: false,
-        });
+        push_platform_root_if_available(&mut roots, &mut warnings, "/", "File System", false);
         if let Some(home) = dirs::home_dir() {
-            let home_str = home.to_string_lossy().to_string();
-            roots.push(PlatformRoot {
-                path: home_str.clone(),
-                label: "Home".to_string(),
-                is_quick_access: true,
-            });
-            let desktop = home.join("Desktop");
-            if desktop.exists() {
-                roots.push(PlatformRoot {
-                    path: desktop.to_string_lossy().to_string(),
-                    label: "Desktop".to_string(),
-                    is_quick_access: true,
-                });
-            }
-            let downloads = home.join("Downloads");
-            if downloads.exists() {
-                roots.push(PlatformRoot {
-                    path: downloads.to_string_lossy().to_string(),
-                    label: "Downloads".to_string(),
-                    is_quick_access: true,
-                });
-            }
+            push_platform_root_if_available(&mut roots, &mut warnings, home, "Home", true);
+        } else {
+            warnings.push("Unable to determine home directory".to_string());
+        }
+        if let Some(desktop) = dirs::desktop_dir() {
+            push_platform_root_if_available(&mut roots, &mut warnings, desktop, "Desktop", true);
+        }
+        if let Some(downloads) = dirs::download_dir() {
+            push_platform_root_if_available(
+                &mut roots,
+                &mut warnings,
+                downloads,
+                "Downloads",
+                true,
+            );
         }
     }
 
     if roots.is_empty() {
-        roots.push(PlatformRoot {
-            path: "/".to_string(),
-            label: "File System".to_string(),
-            is_quick_access: false,
-        });
+        warnings.push("No platform roots were available".to_string());
     }
 
-    roots
+    (roots, warnings)
 }
 
 async fn browse_directory(dir_path: String, session_id: SessionId, cor_id: CorId) {
@@ -3618,8 +3667,10 @@ async fn browse_directory(dir_path: String, session_id: SessionId, cor_id: CorId
             let drive_path = format!("{}:\\", drive_letter as char);
             let drive_root = Path::new(&drive_path);
 
-            // Check if drive exists and is accessible
-            if drive_root.exists() {
+            if matches!(
+                directory_availability(drive_root),
+                Ok(DirectoryAvailability::Available)
+            ) {
                 drive_items.push(FileSystemItem {
                     name: format!("{}:", drive_letter as char),
                     path: drive_path.clone(),
@@ -3691,33 +3742,46 @@ async fn browse_directory(dir_path: String, session_id: SessionId, cor_id: CorId
 
     let path = Path::new(&expanded_path);
 
-    // Check if directory exists and is readable
-    if !path.exists() {
-        let error_msg = format!("Directory not found: {}", expanded_path);
-        send_down_msg(
-            DownMsg::DirectoryError {
-                path: expanded_path,
-                error: error_msg,
-            },
-            session_id,
-            cor_id,
-        )
-        .await;
-        return;
-    }
-
-    if !path.is_dir() {
-        let error_msg = format!("Path is not a directory: {}", expanded_path);
-        send_down_msg(
-            DownMsg::DirectoryError {
-                path: expanded_path,
-                error: error_msg,
-            },
-            session_id,
-            cor_id,
-        )
-        .await;
-        return;
+    match directory_availability(path) {
+        Ok(DirectoryAvailability::Available) => {}
+        Ok(DirectoryAvailability::Missing) => {
+            let error_msg = format!("Directory not found: {}", expanded_path);
+            send_down_msg(
+                DownMsg::DirectoryError {
+                    path: expanded_path,
+                    error: error_msg,
+                },
+                session_id,
+                cor_id,
+            )
+            .await;
+            return;
+        }
+        Ok(DirectoryAvailability::NotDirectory) => {
+            let error_msg = format!("Path is not a directory: {}", expanded_path);
+            send_down_msg(
+                DownMsg::DirectoryError {
+                    path: expanded_path,
+                    error: error_msg,
+                },
+                session_id,
+                cor_id,
+            )
+            .await;
+            return;
+        }
+        Err(error) => {
+            send_down_msg(
+                DownMsg::DirectoryError {
+                    path: expanded_path.clone(),
+                    error: format!("Failed to inspect directory: {}", error),
+                },
+                session_id,
+                cor_id,
+            )
+            .await;
+            return;
+        }
     }
 
     // Use async parallel directory scanning for maximum performance
@@ -3779,15 +3843,20 @@ async fn browse_directories_batch(dir_paths: Vec<String>, session_id: SessionId,
                 let path = Path::new(&expanded_path);
 
                 // Scan directory with jwalk
-                let result = if !path.exists() {
-                    Err(format!("Path does not exist: {}", expanded_path))
-                } else if !path.is_dir() {
-                    Err(format!("Path is not a directory: {}", expanded_path))
-                } else {
-                    match scan_directory_async(path).await {
-                        Ok(items) => Ok(items),
-                        Err(e) => Err(format!("Failed to scan directory: {}", e)),
+                let result = match directory_availability(path) {
+                    Ok(DirectoryAvailability::Available) => {
+                        match scan_directory_async(path).await {
+                            Ok(items) => Ok(items),
+                            Err(e) => Err(format!("Failed to scan directory: {}", e)),
+                        }
                     }
+                    Ok(DirectoryAvailability::Missing) => {
+                        Err(format!("Path does not exist: {}", expanded_path))
+                    }
+                    Ok(DirectoryAvailability::NotDirectory) => {
+                        Err(format!("Path is not a directory: {}", expanded_path))
+                    }
+                    Err(error) => Err(format!("Failed to inspect directory: {}", error)),
                 };
 
                 (expanded_path, result)

@@ -234,6 +234,12 @@ impl ConnectionMessageActor {
                                     path,
                                     error
                                 );
+                                config.error_display.update_toast(
+                                    crate::error_display::ErrorAlert::new_directory_error(
+                                        path.clone(),
+                                        error.clone(),
+                                    ),
+                                );
                                 config
                                     .file_picker_domain
                                     .on_directory_error(path.clone(), error.clone());
@@ -490,6 +496,7 @@ impl NovyWaveApp {
         {
             let connection = connection_arc.clone();
             let config_for_roots = config.clone();
+            let workspace_picker_domain_for_roots = workspace_picker_domain.clone();
             Task::start(
                 map_ref! {
                     let server_ready = crate::platform::server_ready_signal(),
@@ -504,14 +511,34 @@ impl NovyWaveApp {
                                 .saturating_add(1);
                         });
                         let connection = connection.clone();
+                        let config_for_error = config_for_roots.clone();
+                        let workspace_picker_domain_for_error =
+                            workspace_picker_domain_for_roots.clone();
                         Task::start(async move {
                             if let Err(error) = connection
                                 .send_up_msg(shared::UpMsg::GetPlatformRoots)
                                 .await
                             {
+                                let message = format!("{error:?}");
                                 zoon::println!(
-                                    "ERROR: Failed to request platform roots: {error:?}"
+                                    "ERROR: Failed to request platform roots: {message}"
                                 );
+                                config_for_error.error_display.update_toast(
+                                    crate::error_display::ErrorAlert::new_directory_error(
+                                        "platform-roots".to_string(),
+                                        message.clone(),
+                                    ),
+                                );
+                                config_for_error.file_picker_domain.on_directory_error(
+                                    "platform-roots".to_string(),
+                                    message.clone(),
+                                );
+                                config_for_error
+                                    .file_picker_domain
+                                    .on_platform_roots(Vec::new());
+                                workspace_picker_domain_for_error
+                                    .on_directory_error("platform-roots".to_string(), message);
+                                workspace_picker_domain_for_error.on_platform_roots(Vec::new());
                             }
                         });
                     }
@@ -2113,6 +2140,14 @@ fn workspace_picker_tree(
             } else {
                 Vec::new()
             };
+
+            if matches!(platform_roots.as_ref(), Some(roots) if roots.is_empty()) {
+                return El::new()
+                    .s(Padding::all(20))
+                    .s(Font::new().color_signal(neutral_8()).italic())
+                    .child("No folders available")
+                    .into_element();
+            }
 
             if !tree_data.is_empty() || platform_roots.is_some() || cache.contains_key("/") {
                 // Single Source of Truth: use domain's Mutable directly

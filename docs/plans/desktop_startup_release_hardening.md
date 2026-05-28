@@ -398,6 +398,15 @@ The stuck-loading class includes root loading. Roots are requested after server 
 - Roots unavailable/permission-denied cases produce visible UI, not indefinite loading.
 - Windows smoke does not hang on inaccessible removable/network drives.
 
+**Current Progress**
+
+- Platform root discovery now returns both roots and inspection warnings; if no roots are available, the backend sends `PlatformRoots([])` plus a `DirectoryError` instead of leaving the frontend in an indefinite loading state.
+- Root discovery and directory browsing now use explicit metadata inspection, preserving permission and access errors separately from missing paths.
+- Desktop and Downloads quick-access roots now use `dirs::desktop_dir()` and `dirs::download_dir()` instead of assuming `home/Desktop` and `home/Downloads`.
+- `DirectoryError` now creates a visible frontend toast as well as updating file-picker tree state.
+- File-picker and workspace-picker trees show a terminal empty-roots state instead of "Loading platform roots..." once roots resolution has completed with no available folders.
+- Focused backend tests passed for directory availability classification, and `makers build` passed after the frontend roots UI changes.
+
 ### 8. Rebuild And Prove Plugin Artifacts
 
 **Problem**

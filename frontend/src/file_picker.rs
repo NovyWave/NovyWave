@@ -513,6 +513,14 @@ pub fn file_picker_tree(
             }
             .map(move |(cache, errors, platform_roots)| {
                 if let Some(ref roots) = platform_roots {
+                    if roots.is_empty() {
+                        return El::new()
+                            .s(Padding::all(20))
+                            .s(Font::new().color_signal(neutral_8()).italic())
+                            .child("No folders available")
+                            .into_element();
+                    }
+
                     let tree_data = build_multi_root_tree_data(roots, &cache, &errors);
 
                     {
