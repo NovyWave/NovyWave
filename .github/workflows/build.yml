@@ -334,6 +334,18 @@ jobs:
             target/release/chrome-package
           tar -C target/release/chrome-package -czf "target/release/${PACKAGE_NAME}.tar.gz" "$PACKAGE_NAME"
 
+      - name: Verify Tauri DMG startup (ARM)
+        if: inputs.release-build
+        run: |
+          set -euo pipefail
+          DMG="$(find target/release/bundle/dmg -maxdepth 1 -name '*.dmg' | head -1)"
+          if [ -z "$DMG" ]; then
+            echo "No Tauri DMG found under target/release/bundle/dmg"
+            exit 1
+          fi
+          NOVYWAVE_SMOKE_TIMEOUT_SECONDS=60 \
+          scripts/smoke_tauri_macos_package.sh "$DMG"
+
       - name: Upload Chrome launcher (ARM)
         if: inputs.release-build
         uses: actions/upload-artifact@v7
@@ -441,6 +453,18 @@ jobs:
             backend \
             target/release/chrome-package
           tar -C target/release/chrome-package -czf "target/release/${PACKAGE_NAME}.tar.gz" "$PACKAGE_NAME"
+
+      - name: Verify Tauri DMG startup (x64)
+        if: inputs.release-build
+        run: |
+          set -euo pipefail
+          DMG="$(find target/release/bundle/dmg -maxdepth 1 -name '*.dmg' | head -1)"
+          if [ -z "$DMG" ]; then
+            echo "No Tauri DMG found under target/release/bundle/dmg"
+            exit 1
+          fi
+          NOVYWAVE_SMOKE_TIMEOUT_SECONDS=60 \
+          scripts/smoke_tauri_macos_package.sh "$DMG"
 
       - name: Upload Chrome launcher (x64)
         if: inputs.release-build
