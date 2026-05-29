@@ -41,6 +41,8 @@ See the [full shortcut reference](https://novywave.pages.dev/user-guide/keyboard
 
 **[novywave.pages.dev](https://novywave.pages.dev)** — Installation guides, tutorials (VHDL, Verilog, SpinalHDL, Amaranth, Spade), keyboard reference, plugin docs, and API reference.
 
+See the [cross-platform screenshots gallery](docs/screenshots/README.md) for Linux, macOS, and Windows captures.
+
 HDL example projects with Makefiles are in the [examples/](examples/) directory.
 
 ## Contact
