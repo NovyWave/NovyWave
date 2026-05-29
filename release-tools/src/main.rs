@@ -641,19 +641,18 @@ fn write_release_notes(version: &str, artifacts: &[ManifestEntry], output: &Path
             continue;
         };
         rows.push(format!(
-            "| {} | `{}` | `{}` | {} |",
+            "| {} | `{}` | `{}` |",
             label,
             artifact.filename,
-            &artifact.sha256[..12],
-            artifact.smoke_result
+            &artifact.sha256[..12]
         ));
     }
 
     let content = [
         "## Downloads".to_string(),
         "".to_string(),
-        "| Artifact | File | SHA-256 | Proof |".to_string(),
-        "|----------|------|---------|-------|".to_string(),
+        "| Artifact | File | SHA-256 |".to_string(),
+        "|----------|------|---------|".to_string(),
         rows.join("\n"),
         "".to_string(),
         "## Chrome Launcher".to_string(),
