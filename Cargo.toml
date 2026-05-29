@@ -11,6 +11,7 @@ members = [
     "plugins/reload_watcher",
     "plugins/files_discovery",
     "novywave-mcp",
+    "release-tools",
 ]
 
 [workspace.package]

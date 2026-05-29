@@ -95,6 +95,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Download all artifacts
         uses: actions/download-artifact@v8
         with:
@@ -110,7 +113,7 @@ jobs:
 
       - name: Generate unified latest.json for updater
         run: |
-          scripts/generate_updater_latest.py \
+          cargo run --locked -p release-tools -- generate-latest \
             --artifacts artifacts \
             --version "${{ needs.validate-version.outputs.version }}" \
             --release-url-base "https://github.com/NovyWave/NovyWave/releases/download/v${{ needs.validate-version.outputs.version }}" \
@@ -118,18 +121,19 @@ jobs:
 
       - name: Collect release files
         run: |
-          mkdir -p release-files
-          find artifacts -type f | while read f; do
-            cp "$f" "release-files/$(basename "$f")"
-          done
+          cargo run --locked -p release-tools -- collect-files \
+            --artifacts artifacts \
+            --version "${{ needs.validate-version.outputs.version }}" \
+            --output release-files
           echo "=== Release files ==="
           ls -la release-files/
 
       - name: Generate release manifest and notes
         run: |
           VERSION="${{ needs.validate-version.outputs.version }}"
-          scripts/generate_release_manifest.py \
+          cargo run --locked -p release-tools -- generate-manifest \
             --release-files release-files \
+            --proofs-root artifacts \
             --version "$VERSION" \
             --source-commit "${{ github.sha }}" \
             --output "release-files/release-manifest-${VERSION}.json" \
