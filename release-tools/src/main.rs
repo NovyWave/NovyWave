@@ -433,16 +433,6 @@ fn expected_release_artifacts(version: &str) -> BTreeMap<String, ReleaseArtifact
             release_note_label: Some("Windows MSI"),
         },
         ReleaseArtifact {
-            filename: format!("NovyWave_{version}_chrome-windows-x64.zip"),
-            platform: "windows",
-            architecture: "x86_64",
-            bundle_type: "chrome-zip",
-            smoke: "packaged from validated WEB frontend artifacts",
-            signing: "not updater-signed",
-            updater: false,
-            release_note_label: Some("Windows Chrome launcher"),
-        },
-        ReleaseArtifact {
             filename: "latest.json".to_string(),
             platform: "updater",
             architecture: "multi",
@@ -929,6 +919,7 @@ mod tests {
         assert!(files.contains("NovyWave.app_x64.tar.gz"));
         assert!(files.contains("latest.json"));
         assert!(!files.contains("NovyWave.app_x64.tar.gz.sig"));
+        assert!(!files.contains("NovyWave_0.2.1_chrome-windows-x64.zip"));
         assert!(!files.contains("smoke-proof-linux-x86_64.json"));
     }
 
