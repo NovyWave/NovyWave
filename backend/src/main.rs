@@ -2607,6 +2607,41 @@ fn packaged_default_workspace() -> Option<PathBuf> {
     Some(path)
 }
 
+fn platform_config_dir() -> Option<PathBuf> {
+    dirs::config_dir().or_else(env_config_dir)
+}
+
+fn non_empty_env_path(name: &str) -> Option<PathBuf> {
+    std::env::var_os(name)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
+#[cfg(target_os = "windows")]
+fn env_config_dir() -> Option<PathBuf> {
+    non_empty_env_path("APPDATA")
+        .or_else(|| non_empty_env_path("LOCALAPPDATA"))
+        .or_else(|| {
+            non_empty_env_path("USERPROFILE").map(|home| home.join("AppData").join("Roaming"))
+        })
+}
+
+#[cfg(target_os = "macos")]
+fn env_config_dir() -> Option<PathBuf> {
+    non_empty_env_path("HOME").map(|home| home.join("Library").join("Application Support"))
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn env_config_dir() -> Option<PathBuf> {
+    non_empty_env_path("XDG_CONFIG_HOME")
+        .or_else(|| non_empty_env_path("HOME").map(|home| home.join(".config")))
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos", unix)))]
+fn env_config_dir() -> Option<PathBuf> {
+    None
+}
+
 struct WorkspaceContext {
     root: RwLock<PathBuf>,
     active: RwLock<bool>,
@@ -2678,7 +2713,7 @@ fn global_config_path() -> Option<PathBuf> {
     // Linux: ~/.config/novywave/.novywave_global
     // macOS: ~/Library/Application Support/novywave/.novywave_global
     // Windows: %APPDATA%\novywave\.novywave_global
-    dirs::config_dir()
+    platform_config_dir()
         .map(|dir| dir.join("novywave"))
         .or_else(|| {
             packaged_default_workspace()

@@ -403,7 +403,42 @@ fn format_path_candidates(candidates: &[PathBuf]) -> String {
 }
 
 fn default_workspace_dir() -> Option<PathBuf> {
-    dirs::config_dir().map(|dir| dir.join("novywave").join("default-workspace"))
+    platform_config_dir().map(|dir| dir.join("novywave").join("default-workspace"))
+}
+
+fn platform_config_dir() -> Option<PathBuf> {
+    dirs::config_dir().or_else(env_config_dir)
+}
+
+fn non_empty_env_path(name: &str) -> Option<PathBuf> {
+    std::env::var_os(name)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
+#[cfg(target_os = "windows")]
+fn env_config_dir() -> Option<PathBuf> {
+    non_empty_env_path("APPDATA")
+        .or_else(|| non_empty_env_path("LOCALAPPDATA"))
+        .or_else(|| {
+            non_empty_env_path("USERPROFILE").map(|home| home.join("AppData").join("Roaming"))
+        })
+}
+
+#[cfg(target_os = "macos")]
+fn env_config_dir() -> Option<PathBuf> {
+    non_empty_env_path("HOME").map(|home| home.join("Library").join("Application Support"))
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn env_config_dir() -> Option<PathBuf> {
+    non_empty_env_path("XDG_CONFIG_HOME")
+        .or_else(|| non_empty_env_path("HOME").map(|home| home.join(".config")))
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos", unix)))]
+fn env_config_dir() -> Option<PathBuf> {
+    None
 }
 
 fn startup_io_error(step: &str, detail: &str) -> std::io::Error {
@@ -793,9 +828,7 @@ mod tests {
         assert!(candidates.contains(&PathBuf::from(
             "/opt/NovyWave/../Resources/_up_/target/release/backend.exe"
         )));
-        assert!(candidates.contains(&PathBuf::from(
-            "/opt/NovyWave/../Resources/backend.exe"
-        )));
+        assert!(candidates.contains(&PathBuf::from("/opt/NovyWave/../Resources/backend.exe")));
         assert!(candidates.contains(&PathBuf::from("/opt/NovyWave/../backend.exe")));
     }
 
