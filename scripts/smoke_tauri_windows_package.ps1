@@ -159,7 +159,10 @@ try {
         }
         $blockingConsoleErrors = @($console.value | Where-Object {
             $message = [string]($_.message ?? $_)
-            $message -match "(?i)(Config error|Workspace load timeout|panic|failed to start)"
+            $expectedCiConfigWarning =
+                $message -like "*No platform config directory is available for global workspace history*"
+            (-not $expectedCiConfigWarning) -and
+                ($message -match "(?i)(Config error|Workspace load timeout|panic|failed to start)")
         })
         if ($blockingConsoleErrors.Count -gt 0) {
             Show-SmokeLogs
