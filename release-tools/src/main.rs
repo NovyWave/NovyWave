@@ -624,7 +624,7 @@ fn validate_smoke_proofs(proofs_root: &Path, version: &str, source_commit: &str)
     Ok(())
 }
 
-fn write_release_notes(version: &str, artifacts: &[ManifestEntry], output: &Path) -> Result<()> {
+fn write_release_notes(_version: &str, artifacts: &[ManifestEntry], output: &Path) -> Result<()> {
     let mut rows = Vec::new();
     for artifact in artifacts {
         let Some(label) = artifact.release_note_label.as_deref() else {
@@ -650,23 +650,8 @@ fn write_release_notes(version: &str, artifacts: &[ManifestEntry], output: &Path
         "`novywave-chrome` opens NovyWave in Chrome/Chromium app mode.".to_string(),
         "Use it if the standard desktop app has performance issues, especially on Linux."
             .to_string(),
-        "It requires Chrome, Chromium, Edge, Brave, or another Chromium-based browser installed."
+        "It requires Chrome, Chromium, or another Chromium-based browser installed."
             .to_string(),
-        "".to_string(),
-        "## Auto-Update".to_string(),
-        "".to_string(),
-        "Auto-update is available for Linux AppImage, macOS app, and Windows NSIS installs."
-            .to_string(),
-        "Debian, RPM, and MSI installs update manually by downloading the new package from this release."
-            .to_string(),
-        "macOS `NovyWave.app_*.tar.gz` files are updater payloads; use the `.dmg` files for manual macOS installs."
-            .to_string(),
-        "".to_string(),
-        "## Release Proof".to_string(),
-        "".to_string(),
-        format!(
-            "`release-manifest-{version}.json` contains every uploaded filename, size, SHA-256, source commit, bundle type, signing status, and smoke result."
-        ),
         "".to_string(),
     ]
     .join("\n");
