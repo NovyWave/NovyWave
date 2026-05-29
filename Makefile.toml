@@ -453,6 +453,15 @@ dependencies = [
 
 [tasks.build]
 description = "Build for browser mode (release)"
+dependencies = ["build-web-unix", "build-web-windows"]
+
+[tasks.build-web]
+description = "Build for web mode (MoonZoon)"
+dependencies = ["build-web-unix", "build-web-windows"]
+
+[tasks.build-web-unix]
+description = "Build for web mode (MoonZoon) on Unix"
+condition = { platforms = ["linux", "mac"] }
 env = { NOVYWAVE_PLATFORM = "WEB" }
 script_runner = "bash"
 script = '''
@@ -461,14 +470,24 @@ mkdir -p backend/private frontend/pkg frontend_dist/_api/pkg
 NOVYWAVE_PLATFORM=WEB ./mzoon/bin/mzoon build -r -f
 '''
 
-[tasks.build-web]
-description = "Build for web mode (MoonZoon)"
+[tasks.build-web-windows]
+description = "Build for web mode (MoonZoon) on Windows"
+condition = { platforms = ["windows"] }
 env = { NOVYWAVE_PLATFORM = "WEB" }
-script_runner = "bash"
+script_runner = "powershell"
+script_extension = "ps1"
 script = '''
-set -euo pipefail
-mkdir -p backend/private frontend/pkg frontend_dist/_api/pkg
-NOVYWAVE_PLATFORM=WEB ./mzoon/bin/mzoon build -r -f
+$ErrorActionPreference = "Stop"
+New-Item -ItemType Directory -Force -Path "backend/private", "frontend/pkg", "frontend_dist/_api/pkg" | Out-Null
+$env:NOVYWAVE_PLATFORM = "WEB"
+$mzoon = "mzoon/bin/mzoon.exe"
+if (-not (Test-Path $mzoon)) {
+    throw "MoonZoon CLI for Windows is missing: $mzoon"
+}
+& $mzoon build -r -f
+if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+}
 '''
 
 [tasks.build-tauri]
