@@ -143,9 +143,13 @@ try {
             Show-SmokeLogs
             throw "$Label workspace input is still loading: $($values -join ', ')"
         }
-        if (-not ($values | Where-Object { [string]$_ -eq "No workspace" })) {
+        $workspaceReady = $values | Where-Object {
+            $value = [string]$_
+            $value -eq "No workspace" -or $value -like "Default (*)"
+        }
+        if (-not $workspaceReady) {
             Show-SmokeLogs
-            throw "$Label expected fresh run to show 'No workspace', got: $($values -join ', ')"
+            throw "$Label expected fresh run to show 'No workspace' or packaged default workspace, got: $($values -join ', ')"
         }
 
         $console = Invoke-SmokeGet -Path "/state/console-log"

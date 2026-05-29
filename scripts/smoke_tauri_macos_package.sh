@@ -23,10 +23,10 @@ cleanup() {
     wait "$APP_PID" 2>/dev/null || true
   fi
   if [ "$MOUNTED" -eq 1 ]; then
-    hdiutil detach "$MOUNT_DIR" -quiet || true
+    hdiutil detach "$MOUNT_DIR" -quiet || hdiutil detach "$MOUNT_DIR" -force -quiet || true
   fi
   if [ -z "${NOVYWAVE_SMOKE_KEEP_LOGS:-}" ]; then
-    rm -rf "$WORK_DIR"
+    rm -rf "$WORK_DIR" || true
   else
     echo "macOS smoke logs kept at: $WORK_DIR"
   fi
